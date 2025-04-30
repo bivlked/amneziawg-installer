@@ -14,7 +14,7 @@ readonly SCRIPT_URL="https://raw.githubusercontent.com/bivlked/amneziawg-install
 readonly SCRIPT_SHA256="REPLACE_ME_ON_RELEASE"
 
 # ----------------------- CLI‑параметры ----------------------
-AWG_PORT=${AWG_PORT:-51820}  # default WireGuard port
+AWG_PORT=${AWG_PORT:-39743}  # AmneziaWG port
 FW="ufw"                   # ufw|iptables|firewalld|none
 ALLOWED_PRESET="default"   # default|split
 NON_INTERACTIVE=false
