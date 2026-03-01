@@ -3,7 +3,7 @@
 # ==============================================================================
 # Общая библиотека функций для AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.0
+# Версия: 5.1
 # Дата: 2026-03-01
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
@@ -19,7 +19,26 @@ CONFIG_FILE="${CONFIG_FILE:-$AWG_DIR/awgsetup_cfg.init}"
 SERVER_CONF_FILE="${SERVER_CONF_FILE:-/etc/amnezia/amneziawg/awg0.conf}"
 KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # shellcheck disable=SC2034
-AWG_COMMON_VERSION="5.0"
+AWG_COMMON_VERSION="5.1"
+
+# --- Trap для автоочистки временных файлов ---
+_AWG_TEMP_FILES=()
+
+_awg_cleanup() {
+    local f
+    for f in "${_AWG_TEMP_FILES[@]}"; do
+        [[ -f "$f" ]] && rm -f "$f"
+    done
+}
+trap _awg_cleanup EXIT
+
+# Обёртка mktemp с автоочисткой
+awg_mktemp() {
+    local f
+    f=$(mktemp) || return 1
+    _AWG_TEMP_FILES+=("$f")
+    echo "$f"
+}
 
 # --- Заглушки для логирования (переопределяются вызывающим скриптом) ---
 if ! declare -f log >/dev/null 2>&1; then
@@ -41,7 +60,8 @@ rand_range() {
     local random_val
     random_val=$(od -An -tu4 -N4 /dev/urandom | tr -d ' ')
     if [[ -z "$random_val" || ! "$random_val" =~ ^[0-9]+$ ]]; then
-        random_val=$RANDOM
+        # Fallback: комбинация двух $RANDOM для 30-битного диапазона
+        random_val=$(( (RANDOM << 15) | RANDOM ))
     fi
     echo $(( (random_val % range) + min ))
 }
@@ -56,7 +76,7 @@ get_server_public_ip() {
     local ip=""
     local svc
     for svc in ifconfig.me api.ipify.org icanhazip.com ipinfo.io/ip; do
-        ip=$(curl -4 -s --max-time 5 "$svc" 2>/dev/null)
+        ip=$(curl -4 -sf --max-time 5 "$svc" 2>/dev/null | tr -d '[:space:]')
         if [[ -n "$ip" && "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "$ip"
             return 0
@@ -410,6 +430,14 @@ remove_peer_from_server() {
         if (buf != "" && !is_target) printf "%s", buf
         buf = $0 "\n"
         is_target = 0
+        next
+    }
+    /^\[/ && !/^\[Peer\]/ {
+        # Любая другая секция — сбросить буфер
+        if (buf != "" && !is_target) printf "%s", buf
+        buf = ""
+        is_target = 0
+        print
         next
     }
     {

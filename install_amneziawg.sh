@@ -1,15 +1,30 @@
 #!/bin/bash
 
+# Проверка минимальной версии Bash
+if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+    echo "ОШИБКА: Требуется Bash >= 4.0 (текущая: ${BASH_VERSION})" >&2; exit 1
+fi
+
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 2.0 на Ubuntu 24.04 LTS Minimal
 # Автор: @bivlked
-# Версия: 5.0
+# Версия: 5.1
 # Дата: 2026-03-01
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 set -o pipefail
+
+# Trap для автоочистки временных файлов (до source awg_common.sh)
+_INSTALL_TEMP_FILES=()
+_install_cleanup() {
+    local f
+    for f in "${_INSTALL_TEMP_FILES[@]}"; do
+        [[ -f "$f" ]] && rm -f "$f"
+    done
+}
+trap _install_cleanup EXIT
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -136,7 +151,11 @@ EOF
 update_state() {
     local next_step=$1
     mkdir -p "$(dirname "$STATE_FILE")"
-    echo "$next_step" > "$STATE_FILE" || die "Ошибка записи состояния"
+    # Атомарная запись с flock для предотвращения race condition
+    (
+        flock -x 200
+        echo "$next_step" > "$STATE_FILE" || die "Ошибка записи состояния"
+    ) 200>"${STATE_FILE}.lock"
     log "Состояние: следующий шаг - $next_step"
 }
 
@@ -323,7 +342,8 @@ rand_range() {
     local random_val
     random_val=$(od -An -tu4 -N4 /dev/urandom | tr -d ' ')
     if [[ -z "$random_val" || ! "$random_val" =~ ^[0-9]+$ ]]; then
-        random_val=$RANDOM
+        # Fallback: комбинация двух $RANDOM для 30-битного диапазона
+        random_val=$(( (RANDOM << 15) | RANDOM ))
     fi
     echo $(( (random_val % range) + min ))
 }
@@ -572,7 +592,7 @@ setup_advanced_sysctl() {
 
     cat > "$f" << EOF
 # AmneziaWG 2.0 Security/Performance Settings - $(date)
-# Автоматически сгенерировано install_amneziawg.sh v5.0
+# Автоматически сгенерировано install_amneziawg.sh v5.1
 
 # --- IP Forwarding ---
 net.ipv4.ip_forward = 1
@@ -789,7 +809,7 @@ create_diagnostic_report() {
         echo "=== AMNEZIAWG 2.0 DIAGNOSTIC REPORT ==="
         echo "Generated: $(date)"
         echo "Hostname: $(hostname)"
-        echo "Installer: v5.0"
+        echo "Installer: v5.1"
         echo ""
         echo "--- OS ---"
         lsb_release -ds 2>/dev/null || cat /etc/os-release
@@ -934,7 +954,7 @@ initialize_setup() {
     chown root:root "$AWG_DIR"
     touch "$LOG_FILE" || die "Не удалось создать лог-файл $LOG_FILE"
     chmod 640 "$LOG_FILE"
-    log "--- НАЧАЛО УСТАНОВКИ AmneziaWG 2.0 (v5.0) ---"
+    log "--- НАЧАЛО УСТАНОВКИ AmneziaWG 2.0 (v5.1) ---"
     log "### ШАГ 0: Инициализация и проверка параметров ###"
     if [ "$(id -u)" -ne 0 ]; then die "Запустите скрипт от root (sudo bash $0)."; fi
     cd "$AWG_DIR" || die "Ошибка перехода в $AWG_DIR"

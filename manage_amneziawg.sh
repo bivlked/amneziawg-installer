@@ -1,9 +1,14 @@
 #!/bin/bash
 
+# Проверка минимальной версии Bash
+if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+    echo "ОШИБКА: Требуется Bash >= 4.0 (текущая: ${BASH_VERSION})" >&2; exit 1
+fi
+
 # ==============================================================================
 # Скрипт для управления пользователями (пирами) AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.0
+# Версия: 5.1
 # Дата: 2026-03-01
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
@@ -95,6 +100,16 @@ die()       { log_error "$1"; exit 1; }
 # ==============================================================================
 
 is_interactive() { [[ -t 0 && -t 1 ]]; }
+
+# Экранирование спецсимволов для sed (предотвращает command injection)
+escape_sed() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//&/\\&}"
+    s="${s//#/\\#}"
+    s="${s////\\/}"
+    printf '%s' "$s"
+}
 
 confirm_action() {
     if ! is_interactive; then return 0; fi
@@ -294,7 +309,9 @@ modify_client() {
     cp "$cf" "$bak" || log_warn "Ошибка бэкапа $bak"
     log "Бэкап: $bak"
 
-    if ! sed -i "s#^${param} = .*#${param} = ${value}#" "$cf"; then
+    local escaped_value
+    escaped_value=$(escape_sed "$value")
+    if ! sed -i "s#^${param} = .*#${param} = ${escaped_value}#" "$cf"; then
         log_error "Ошибка sed. Восстановление..."
         cp "$bak" "$cf" || log_warn "Ошибка восстановления."
         return 1
@@ -327,7 +344,7 @@ check_server() {
         log_error " - Интерфейс не найден!"
         ok=0
     else
-        ip addr show awg0 | while IFS= read -r line; do log "  $line"; done
+        while IFS= read -r line; do log "  $line"; done < <(ip addr show awg0)
     fi
 
     log "Прослушивание порта:"
@@ -367,7 +384,7 @@ check_server() {
     fi
 
     log "Статус AmneziaWG 2.0:"
-    awg show | while IFS= read -r line; do log "  $line"; done
+    while IFS= read -r line; do log "  $line"; done < <(awg show)
 
     # AWG 2.0 диагностика
     if awg show awg0 2>/dev/null | grep -q "jc:"; then
@@ -493,7 +510,7 @@ list_clients() {
 usage() {
     exec >&2
     echo ""
-    echo "Скрипт управления AmneziaWG 2.0 (v5.0)"
+    echo "Скрипт управления AmneziaWG 2.0 (v5.1)"
     echo "=============================================="
     echo "Использование: $0 [ОПЦИИ] <КОМАНДА> [АРГУМЕНТЫ]"
     echo ""
