@@ -1,0 +1,33 @@
+name: ShellCheck
+
+on:
+  push:
+    branches: [main]
+    paths: ['*.sh']
+  pull_request:
+    branches: [main]
+    paths: ['*.sh']
+
+jobs:
+  shellcheck:
+    name: Lint and syntax check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck
+        run: |
+          shellcheck -s bash -S warning install_amneziawg.sh
+          shellcheck -s bash -S warning manage_amneziawg.sh
+          shellcheck -s bash -S warning awg_common.sh
+
+      - name: Run bash syntax check
+        run: |
+          bash -n install_amneziawg.sh
+          bash -n manage_amneziawg.sh
+          bash -n awg_common.sh
