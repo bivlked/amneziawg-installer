@@ -6,6 +6,37 @@
 
 ---
 
+## [5.1] — 2026-03-01
+
+### Исправлено
+
+- **CRITICAL:** Command injection через спецсимволы `#`, `&`, `/`, `\` в `modify_client()` — добавлена функция `escape_sed()` для экранирования.
+- **CRITICAL:** Race condition в `update_state()` — добавлена блокировка через `flock -x`.
+- **MEDIUM:** `curl` в `get_server_public_ip()` мог получить HTML вместо IP — добавлен флаг `-f` (fail on error) и очистка whitespace.
+- **MEDIUM:** Fallback `$RANDOM` в `rand_range()` давал макс. 32767 вместо uint32 — заменён на `(RANDOM<<15|RANDOM)` для 30-битного диапазона.
+- **MEDIUM:** Pipe subshell в `check_server()` — заменён на process substitution `< <(...)`.
+- **MEDIUM:** Awk-скрипт `remove_peer_from_server()` не обрабатывал нестандартные секции — добавлена обработка любых `[...]` блоков.
+
+### Добавлено
+
+- **CI:** GitHub Actions workflow — ShellCheck + `bash -n` на push/PR к main.
+- **GitHub:** Issue templates (bug report, feature request) в формате YAML-форм.
+- **GitHub:** PR template с чеклистом (bash -n, shellcheck, VPS test, changelog).
+- **SECURITY.md:** Политика безопасности, ответственное раскрытие уязвимостей.
+- **CONTRIBUTING.md:** Гайд для контрибьюторов с требованиями к коду и тестированию.
+- **.editorconfig:** Единые настройки форматирования (UTF-8, LF, отступы).
+- **Trap cleanup:** Автоматическая очистка временных файлов через `trap EXIT` + `awg_mktemp()`.
+- **Bash version check:** Проверка `Bash >= 4.0` в начале install и manage скриптов.
+- **Документация:** Примеры конфигов, Mermaid-диаграмма архитектуры, расширенный FAQ, troubleshooting.
+
+### Изменено
+
+- **Версия:** 5.0 → 5.1 во всех скриптах и документации.
+- **README.md:** Таблица команд расширена до 10 (+ modify, backup, restore), FAQ до 8 вопросов.
+- **ADVANCED.md:** Добавлены примеры конфигов, команд manage, описание диагностики, инструкция обновления.
+
+---
+
 ## [5.0] — 2026-03-01
 
 ### ⚠️ Breaking Changes

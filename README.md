@@ -1,8 +1,9 @@
 ![Ubuntu 24.04](https://img.shields.io/badge/Ubuntu-24.04-orange)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE)
 ![Status](https://img.shields.io/badge/Status-Stable-success)
-[![Version](https://img.shields.io/badge/Installer_Version-5.0-blue)](https://github.com/bivlked/amneziawg-installer/releases)
+[![Version](https://img.shields.io/badge/Installer_Version-5.1-blue)](https://github.com/bivlked/amneziawg-installer/releases)
 ![AWG 2.0](https://img.shields.io/badge/AmneziaWG-2.0-blueviolet)
+[![ShellCheck](https://github.com/bivlked/amneziawg-installer/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/bivlked/amneziawg-installer/actions/workflows/shellcheck.yml)
 
 <h1 align="center">Автоматическая установка и управление AmneziaWG 2.0</h1>
 
@@ -137,15 +138,18 @@ sudo bash /root/awg/manage_amneziawg.sh <команда> [аргументы]
 
 **Основные команды:** (Полный список см. `... help` или [ADVANCED.md#manage-commands-adv](ADVANCED.md#manage-commands-adv))
 
-| Команда   | Аргументы         | Описание                     | Перезапуск? |
-| :-------- | :---------------- | :--------------------------- | :-----------: |
-| `add`     | `<имя_клиента>`   | Добавить клиента             |      **Да** |
-| `remove`  | `<имя_клиента>`   | Удалить клиента              |      **Да** |
-| `list`    | `[-v]`            | Список клиентов (`-v` детали) |       Нет     |
-| `regen`   | `[имя_клиента]`   | Переген. файлы (всех/одного) |       Нет     |
-| `show`    |                   | Статус `awg show`            |       Нет     |
-| `check`   |                   | Проверка состояния сервера     |       Нет     |
-| `restart` |                   | Перезапуск сервиса AmneziaWG   |       -       |
+| Команда   | Аргументы              | Описание                     | Перезапуск? |
+| :-------- | :--------------------- | :--------------------------- | :-----------: |
+| `add`     | `<имя_клиента>`        | Добавить клиента             |      **Да** |
+| `remove`  | `<имя_клиента>`        | Удалить клиента              |      **Да** |
+| `list`    | `[-v]`                 | Список клиентов (`-v` детали) |       Нет     |
+| `regen`   | `[имя_клиента]`        | Переген. файлы (всех/одного) |       Нет     |
+| `modify`  | `<имя> <пар> <зн>`     | Изменить параметр клиента    |       Нет     |
+| `backup`  |                        | Создать резервную копию      |       Нет     |
+| `restore` | `[файл]`               | Восстановить из резервной копии |    Нет     |
+| `show`    |                        | Статус `awg show`            |       Нет     |
+| `check`   |                        | Проверка состояния сервера     |       Нет     |
+| `restart` |                        | Перезапуск сервиса AmneziaWG   |       -       |
 
 > **❗️ ВАЖНО:** После `add`, `remove` **перезапустите сервис**: `sudo systemctl restart awg-quick@awg0` (или используйте команду `restart` скрипта управления).
 
@@ -185,6 +189,8 @@ sudo bash /root/awg/manage_amneziawg.sh <команда> [аргументы]
 
 Более подробную информацию о деталях конфигурации, настройках безопасности, параметрах AWG 2.0, дополнительных командах управления, технических деталях и ответах на другие вопросы вы можете найти в файле **[ADVANCED.md](ADVANCED.md)**.
 
+Историю изменений смотрите в **[CHANGELOG.md](CHANGELOG.md)**.
+
 ---
 
 <a id="faq-main"></a>
@@ -210,6 +216,32 @@ sudo bash /root/awg/manage_amneziawg.sh <команда> [аргументы]
   **О:** Нет. AWG 2.0 несовместим с AWG 1.x. Все клиенты должны поддерживать протокол 2.0. Для AWG 1.x используйте ветку <a href="https://github.com/bivlked/amneziawg-installer/tree/legacy/v4">legacy/v4</a>.
 </details>
 
+<details>
+  <summary><strong>В: Как обновить скрипты до новой версии?</strong></summary>
+  **О:** Скачайте новый скрипт установки и замените скрипты управления на сервере:
+  <pre>
+  wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/manage_amneziawg.sh
+  wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/awg_common.sh
+  chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
+  </pre>
+  Переустановка сервера не требуется.
+</details>
+
+<details>
+  <summary><strong>В: Какое максимальное количество клиентов?</strong></summary>
+  **О:** Подсеть `/24` по умолчанию позволяет до 253 клиентов (.2 — .254). Для большего числа клиентов используйте подсеть `/16` при установке.
+</details>
+
+<details>
+  <summary><strong>В: Какой хостинг подходит?</strong></summary>
+  **О:** Любой VPS с Ubuntu 24.04, root-доступом и минимум 1 ГБ RAM. Рекомендуем хостинги с незаблокированными IP и неограниченным трафиком. См. <a href="#recomend-hosting">рекомендацию</a>.
+</details>
+
+<details>
+  <summary><strong>В: Как перенести VPN на другой сервер?</strong></summary>
+  **О:** 1. Создайте бэкап: <code>sudo bash /root/awg/manage_amneziawg.sh backup</code>. 2. Скопируйте бэкап на новый сервер. 3. Установите AmneziaWG на новом сервере. 4. Восстановите: <code>sudo bash /root/awg/manage_amneziawg.sh restore /path/to/backup.tar.gz</code>. 5. Перегенерируйте конфиги: <code>sudo bash /root/awg/manage_amneziawg.sh regen</code>.
+</details>
+
 > Больше ответов и решений см. в **[ADVANCED.md](ADVANCED.md)**.
 
 ---
@@ -221,6 +253,7 @@ sudo bash /root/awg/manage_amneziawg.sh <команда> [аргументы]
 3.  **Статус AmneziaWG:** `sudo awg show`
 4.  **Статус UFW:** `sudo ufw status verbose`
 5.  **Диагностический отчет:** `sudo bash ./install_amneziawg.sh --diagnostic`
+    Подробное описание содержимого отчета см. в [ADVANCED.md](ADVANCED.md#diagnostic-report-adv).
 
 ---
 
