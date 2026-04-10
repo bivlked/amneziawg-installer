@@ -1,0 +1,146 @@
+name: ARM prebuilt kernel modules
+
+on:
+  workflow_dispatch:
+    inputs:
+      module_version:
+        description: 'amneziawg-linux-kernel-module tag (leave blank for latest)'
+        required: false
+        default: ''
+  push:
+    tags: ['v*']   # also rebuild on installer releases
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-arm-deb:
+    name: Build ${{ matrix.id }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+
+          # Raspberry Pi 4 / Pi 3 — arm64 (aarch64, Debian Bookworm)
+          - id: rpi-bookworm-arm64
+            platform: linux/arm64
+            image: debian:bookworm
+            extra_sources: rpi
+            headers_pkg: linux-headers-rpi-v8
+            arch: arm64
+
+          # Raspberry Pi 5 — arm64 (Cortex-A76, Debian Bookworm)
+          - id: rpi5-bookworm-arm64
+            platform: linux/arm64
+            image: debian:bookworm
+            extra_sources: rpi
+            headers_pkg: linux-headers-rpi-2712
+            arch: arm64
+
+          # Raspberry Pi 4 / Pi 3 — armhf (32-bit, Debian Bookworm)
+          - id: rpi-bookworm-armhf
+            platform: linux/arm/v7
+            image: debian:bookworm
+            extra_sources: rpi
+            headers_pkg: linux-headers-rpi-v7
+            arch: armhf
+
+          # Ubuntu 24.04 LTS — arm64 (Ampere A1, AWS Graviton, etc.)
+          - id: ubuntu-2404-arm64
+            platform: linux/arm64
+            image: ubuntu:24.04
+            extra_sources: ''
+            headers_pkg: linux-headers-generic
+            arch: arm64
+
+          # Ubuntu 22.04 LTS — arm64
+          - id: ubuntu-2204-arm64
+            platform: linux/arm64
+            image: ubuntu:22.04
+            extra_sources: ''
+            headers_pkg: linux-headers-generic
+            arch: arm64
+
+          # Debian 12 Bookworm — arm64 (mainline kernel, VPS/cloud)
+          - id: debian-bookworm-arm64
+            platform: linux/arm64
+            image: debian:bookworm
+            extra_sources: ''
+            headers_pkg: linux-headers-arm64
+            arch: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ matrix.platform }}
+
+      - name: Build .deb in target container
+        env:
+          KERNEL_ID: ${{ matrix.id }}
+          EXTRA_SOURCES: ${{ matrix.extra_sources }}
+          HEADERS_PKG: ${{ matrix.headers_pkg }}
+          MODULE_VERSION: ${{ inputs.module_version }}
+        uses: addnab/docker-run-action@v3
+        with:
+          image: ${{ matrix.image }}
+          options: >-
+            --platform ${{ matrix.platform }}
+            -v ${{ github.workspace }}:/workspace
+            -v /output:/output
+            -e KERNEL_ID
+            -e OUTPUT_DIR=/output
+            -e MODULE_VERSION
+          run: |
+            set -euo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+
+            apt-get update -qq
+            apt-get install -y --no-install-recommends \
+              build-essential git curl gnupg ca-certificates \
+              kmod dkms dpkg-dev xz-utils
+
+            # Add Raspberry Pi Foundation apt repo if needed
+            if [[ "${EXTRA_SOURCES:-}" == "rpi" ]]; then
+              curl -fsSL https://archive.raspberrypi.com/debian/raspberrypi.gpg.key \
+                | gpg --dearmor -o /etc/apt/keyrings/raspberrypi.gpg
+              echo "deb [signed-by=/etc/apt/keyrings/raspberrypi.gpg] \
+                https://archive.raspberrypi.com/debian/ bookworm main" \
+                > /etc/apt/sources.list.d/raspberrypi.list
+              apt-get update -qq
+            fi
+
+            apt-get install -y --no-install-recommends "${HEADERS_PKG}"
+            mkdir -p /output
+            bash /workspace/scripts/build-arm-deb.sh
+
+      - name: List output
+        run: ls -lh /output/*.deb
+
+      - name: Upload to arm-packages release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Create or update the arm-packages release tag
+          if ! gh release view arm-packages --repo "${{ github.repository }}" &>/dev/null; then
+            gh release create arm-packages \
+              --repo "${{ github.repository }}" \
+              --title "ARM prebuilt kernel modules" \
+              --notes "Precompiled amneziawg.ko packages for ARM targets. Updated automatically on each installer release. See README for supported kernels." \
+              --prerelease
+          fi
+
+          # Upload (overwrite if exists)
+          for deb in /output/*.deb; do
+            gh release upload arm-packages "$deb" \
+              --repo "${{ github.repository }}" \
+              --clobber
+          done

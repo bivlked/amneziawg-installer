@@ -1492,6 +1492,70 @@ step1_update_and_optimize() {
 }
 
 # ==============================================================================
+# ARM prebuilt support
+# ==============================================================================
+
+# _try_install_prebuilt_arm — download and install a prebuilt amneziawg .deb
+# for the current ARM kernel from the arm-packages GitHub release.
+#
+# Returns 0 if a matching prebuilt was installed successfully.
+# Returns 1 if no match was found or installation failed (caller falls back to DKMS).
+#
+# Prebuilt packages are built by .github/workflows/arm-build.yml and published
+# to the arm-packages release tag. The filename encodes both the target ID and
+# the exact kernel version: amneziawg-kmod-<target-id>_<kernel-version>_<arch>.deb
+#
+# Kernel version matching is exact — the module vermagic must match uname -r.
+# DKMS is the preferred path for kernels that haven't been pre-built yet.
+_try_install_prebuilt_arm() {
+    local kernel arch target_id asset_name asset_url tmpfile
+    kernel="$(uname -r)"
+    arch="$(dpkg --print-architecture)"
+
+    # Map kernel string to a build target ID
+    if [[ "$kernel" == *+rpt-rpi-2712* ]]; then
+        target_id="rpi5-bookworm-arm64"
+    elif [[ "$kernel" == *+rpt* && "$arch" == "arm64" ]]; then
+        target_id="rpi-bookworm-arm64"
+    elif [[ "$kernel" == *+rpt* && "$arch" == "armhf" ]]; then
+        target_id="rpi-bookworm-armhf"
+    elif [[ "$kernel" == *-generic* && "${OS_VERSION:-}" == "24.04" ]]; then
+        target_id="ubuntu-2404-arm64"
+    elif [[ "$kernel" == *-generic* && "${OS_VERSION:-}" == "22.04" ]]; then
+        target_id="ubuntu-2204-arm64"
+    elif [[ "$kernel" == *-arm64* && "${OS_ID:-}" == "debian" ]]; then
+        target_id="debian-bookworm-arm64"
+    else
+        log "No prebuilt target for kernel $kernel ($arch)"
+        return 1
+    fi
+
+    # Asset filename encodes the exact kernel version
+    asset_name="amneziawg-kmod-${target_id}_${kernel}_${arch}.deb"
+    asset_url="https://github.com/bivlked/amneziawg-installer/releases/download/arm-packages/${asset_name}"
+
+    log "Trying prebuilt: $asset_name"
+    tmpfile="$(mktemp /tmp/amneziawg-prebuilt-XXXXXX.deb)"
+
+    if curl -fsSL --retry 2 --connect-timeout 10 -o "$tmpfile" "$asset_url" 2>/dev/null; then
+        log "Downloaded prebuilt, installing..."
+        if dpkg -i "$tmpfile" 2>/dev/null; then
+            rm -f "$tmpfile"
+            log "Prebuilt installed: $asset_name"
+            return 0
+        else
+            log_warn "Prebuilt install failed (vermagic mismatch or corrupt package)"
+            rm -f "$tmpfile"
+            return 1
+        fi
+    else
+        log "Prebuilt not available for $kernel — using DKMS"
+        rm -f "$tmpfile"
+        return 1
+    fi
+}
+
+# ==============================================================================
 # STEP 2: Installing AmneziaWG and dependencies
 # ==============================================================================
 
@@ -1596,6 +1660,20 @@ PPASRC
 
     # AmneziaWG + qrencode packages (NO Python!)
     log "Installing AmneziaWG packages..."
+
+    # On ARM: try prebuilt .deb first (no build tools or headers required).
+    # Falls back to DKMS if no matching prebuilt is available or download fails.
+    local arch
+    arch="$(uname -m)"
+    if [[ "$arch" == "aarch64" || "$arch" == "armv7l" ]]; then
+        if _try_install_prebuilt_arm; then
+            log "Prebuilt kernel module installed. Installing userspace tools from PPA..."
+            install_packages "amneziawg-tools" "wireguard-tools" "qrencode"
+            return
+        fi
+        log "No matching prebuilt — falling back to DKMS build."
+    fi
+
     local packages=("amneziawg-dkms" "amneziawg-tools" "wireguard-tools" "dkms"
                     "build-essential" "dpkg-dev" "qrencode")
 

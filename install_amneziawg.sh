@@ -1491,6 +1491,61 @@ step1_update_and_optimize() {
 }
 
 # ==============================================================================
+# Поддержка предсобранных пакетов для ARM
+# ==============================================================================
+
+# _try_install_prebuilt_arm — скачать и установить предсобранный .deb для
+# текущего ARM-ядра из релиза arm-packages на GitHub.
+#
+# Возвращает 0 при успехе, 1 если совпадений нет или установка не удалась
+# (в этом случае вызывающий код переходит к DKMS).
+_try_install_prebuilt_arm() {
+    local kernel arch target_id asset_name asset_url tmpfile
+    kernel="$(uname -r)"
+    arch="$(dpkg --print-architecture)"
+
+    if [[ "$kernel" == *+rpt-rpi-2712* ]]; then
+        target_id="rpi5-bookworm-arm64"
+    elif [[ "$kernel" == *+rpt* && "$arch" == "arm64" ]]; then
+        target_id="rpi-bookworm-arm64"
+    elif [[ "$kernel" == *+rpt* && "$arch" == "armhf" ]]; then
+        target_id="rpi-bookworm-armhf"
+    elif [[ "$kernel" == *-generic* && "${OS_VERSION:-}" == "24.04" ]]; then
+        target_id="ubuntu-2404-arm64"
+    elif [[ "$kernel" == *-generic* && "${OS_VERSION:-}" == "22.04" ]]; then
+        target_id="ubuntu-2204-arm64"
+    elif [[ "$kernel" == *-arm64* && "${OS_ID:-}" == "debian" ]]; then
+        target_id="debian-bookworm-arm64"
+    else
+        log "Предсобранный пакет для ядра $kernel ($arch) не найден"
+        return 1
+    fi
+
+    asset_name="amneziawg-kmod-${target_id}_${kernel}_${arch}.deb"
+    asset_url="https://github.com/bivlked/amneziawg-installer/releases/download/arm-packages/${asset_name}"
+
+    log "Попытка установки предсобранного пакета: $asset_name"
+    tmpfile="$(mktemp /tmp/amneziawg-prebuilt-XXXXXX.deb)"
+
+    if curl -fsSL --retry 2 --connect-timeout 10 -o "$tmpfile" "$asset_url" 2>/dev/null; then
+        log "Пакет скачан, установка..."
+        if dpkg -i "$tmpfile" 2>/dev/null; then
+            rm -f "$tmpfile"
+            log "Предсобранный пакет установлен: $asset_name"
+            return 0
+        else
+            log_warn "Ошибка установки (несовпадение vermagic или повреждённый пакет)"
+            rm -f "$tmpfile"
+            return 1
+        fi
+    else
+        log "Предсобранный пакет недоступен для $kernel — используется DKMS"
+        rm -f "$tmpfile"
+        return 1
+    fi
+}
+
+# ==============================================================================
 # ШАГ 2: Установка AmneziaWG и зависимостей
 # ==============================================================================
 
@@ -1595,6 +1650,20 @@ PPASRC
 
     # Пакеты AmneziaWG + qrencode (БЕЗ Python!)
     log "Установка пакетов AmneziaWG..."
+
+    # На ARM: сначала пробуем предсобранный .deb (не требует build-tools и headers).
+    # Откат на DKMS если совпадения нет или скачивание не удалось.
+    local arch
+    arch="$(uname -m)"
+    if [[ "$arch" == "aarch64" || "$arch" == "armv7l" ]]; then
+        if _try_install_prebuilt_arm; then
+            log "Модуль ядра установлен из предсобранного пакета. Установка утилит из PPA..."
+            install_packages "amneziawg-tools" "wireguard-tools" "qrencode"
+            return
+        fi
+        log "Совпадений не найдено — откат на DKMS."
+    fi
+
     local packages=("amneziawg-dkms" "amneziawg-tools" "wireguard-tools" "dkms"
                     "build-essential" "dpkg-dev" "qrencode")
 
