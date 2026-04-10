@@ -1605,8 +1605,21 @@ PPASRC
         packages+=("$current_headers")
     else
         log_warn "Нет headers для $(uname -r), установка общего пакета..."
-        if [[ "${OS_ID:-ubuntu}" == "debian" ]]; then
-            # На Debian: linux-headers-amd64 (или linux-headers-$(dpkg --print-architecture))
+        local kernel_release
+        kernel_release="$(uname -r)"
+        if [[ "$kernel_release" == *+rpt* || "$kernel_release" == *-rpi* ]]; then
+            # Ядро Raspberry Pi Foundation (+rpt suffix) — использовать мета-пакет RPi
+            # linux-headers-rpi-2712: Pi 5 / Cortex-A76; linux-headers-rpi-v8: Pi 3/4 arm64
+            local rpi_headers
+            if [[ "$kernel_release" == *2712* ]]; then
+                rpi_headers="linux-headers-rpi-2712"
+            else
+                rpi_headers="linux-headers-rpi-v8"
+            fi
+            log "Обнаружено ядро Raspberry Pi, используем $rpi_headers"
+            packages+=("$rpi_headers")
+        elif [[ "${OS_ID:-ubuntu}" == "debian" ]]; then
+            # На Debian: linux-headers-$(dpkg --print-architecture)
             local arch_pkg
             arch_pkg="linux-headers-$(dpkg --print-architecture 2>/dev/null || echo "amd64")"
             packages+=("$arch_pkg")
