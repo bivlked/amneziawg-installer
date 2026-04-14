@@ -1508,7 +1508,7 @@ step1_update_and_optimize() {
 # Kernel version matching is exact — the module vermagic must match uname -r.
 # DKMS is the preferred path for kernels that haven't been pre-built yet.
 _try_install_prebuilt_arm() {
-    local kernel arch target_id asset_name asset_url tmpfile
+    local kernel arch target_id asset_name asset_url tmpfile tmpsha expected_sha actual_sha
     kernel="$(uname -r)"
     arch="$(dpkg --print-architecture)"
 
@@ -1536,9 +1536,29 @@ _try_install_prebuilt_arm() {
 
     log "Trying prebuilt: $asset_name"
     tmpfile="$(mktemp /tmp/amneziawg-prebuilt-XXXXXX.deb)"
+    tmpsha="$(mktemp /tmp/amneziawg-prebuilt-XXXXXX.deb.sha256)"
 
-    if curl -fsSL --retry 2 --connect-timeout 10 -o "$tmpfile" "$asset_url" 2>/dev/null; then
-        log "Downloaded prebuilt, installing..."
+    # Download SHA256 checksum first
+    if ! curl -fsSL --retry 2 --connect-timeout 10 --max-time 60 \
+            -o "$tmpsha" "${asset_url}.sha256" 2>/dev/null; then
+        log "Prebuilt not available for $kernel — using DKMS"
+        rm -f "$tmpfile" "$tmpsha"
+        return 1
+    fi
+
+    if curl -fsSL --retry 2 --connect-timeout 10 --max-time 60 \
+            -o "$tmpfile" "$asset_url" 2>/dev/null; then
+        # Verify integrity before installing a kernel module
+        expected_sha="$(cat "$tmpsha")"
+        actual_sha="$(sha256sum "$tmpfile" | awk '{print $1}')"
+        rm -f "$tmpsha"
+        if [[ "$expected_sha" != "$actual_sha" ]]; then
+            log_warn "Prebuilt SHA256 mismatch — discarding download"
+            rm -f "$tmpfile"
+            return 1
+        fi
+
+        log "Downloaded prebuilt (SHA256 OK), installing..."
         if dpkg -i "$tmpfile" 2>/dev/null; then
             rm -f "$tmpfile"
             log "Prebuilt installed: $asset_name"
@@ -1550,7 +1570,7 @@ _try_install_prebuilt_arm() {
         fi
     else
         log "Prebuilt not available for $kernel — using DKMS"
-        rm -f "$tmpfile"
+        rm -f "$tmpfile" "$tmpsha"
         return 1
     fi
 }

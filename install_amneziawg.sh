@@ -1500,7 +1500,7 @@ step1_update_and_optimize() {
 # Возвращает 0 при успехе, 1 если совпадений нет или установка не удалась
 # (в этом случае вызывающий код переходит к DKMS).
 _try_install_prebuilt_arm() {
-    local kernel arch target_id asset_name asset_url tmpfile
+    local kernel arch target_id asset_name asset_url tmpfile tmpsha expected_sha actual_sha
     kernel="$(uname -r)"
     arch="$(dpkg --print-architecture)"
 
@@ -1526,9 +1526,29 @@ _try_install_prebuilt_arm() {
 
     log "Попытка установки предсобранного пакета: $asset_name"
     tmpfile="$(mktemp /tmp/amneziawg-prebuilt-XXXXXX.deb)"
+    tmpsha="$(mktemp /tmp/amneziawg-prebuilt-XXXXXX.deb.sha256)"
 
-    if curl -fsSL --retry 2 --connect-timeout 10 -o "$tmpfile" "$asset_url" 2>/dev/null; then
-        log "Пакет скачан, установка..."
+    # Сначала скачиваем контрольную сумму SHA256
+    if ! curl -fsSL --retry 2 --connect-timeout 10 --max-time 60 \
+            -o "$tmpsha" "${asset_url}.sha256" 2>/dev/null; then
+        log "Предсобранный пакет недоступен для $kernel — используется DKMS"
+        rm -f "$tmpfile" "$tmpsha"
+        return 1
+    fi
+
+    if curl -fsSL --retry 2 --connect-timeout 10 --max-time 60 \
+            -o "$tmpfile" "$asset_url" 2>/dev/null; then
+        # Проверяем целостность перед установкой модуля ядра
+        expected_sha="$(cat "$tmpsha")"
+        actual_sha="$(sha256sum "$tmpfile" | awk '{print $1}')"
+        rm -f "$tmpsha"
+        if [[ "$expected_sha" != "$actual_sha" ]]; then
+            log_warn "Несовпадение SHA256 предсобранного пакета — скачивание отклонено"
+            rm -f "$tmpfile"
+            return 1
+        fi
+
+        log "Пакет скачан (SHA256 OK), установка..."
         if dpkg -i "$tmpfile" 2>/dev/null; then
             rm -f "$tmpfile"
             log "Предсобранный пакет установлен: $asset_name"
@@ -1540,7 +1560,7 @@ _try_install_prebuilt_arm() {
         fi
     else
         log "Предсобранный пакет недоступен для $kernel — используется DKMS"
-        rm -f "$tmpfile"
+        rm -f "$tmpfile" "$tmpsha"
         return 1
     fi
 }

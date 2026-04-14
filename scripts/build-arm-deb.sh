@@ -109,3 +109,7 @@ DEB_FILE="${OUTPUT_DIR}/${PKG_NAME}_${KERNEL_VERSION}_${ARCH}.deb"
 dpkg-deb --build "$DEB_DIR" "$DEB_FILE"
 echo "--- Built: $DEB_FILE ---"
 ls -lh "$DEB_FILE"
+
+# Generate SHA256 checksum alongside the .deb
+sha256sum "$DEB_FILE" | awk '{print $1}' > "${DEB_FILE}.sha256"
+echo "SHA256: $(cat "${DEB_FILE}.sha256")"

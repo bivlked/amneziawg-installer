@@ -83,6 +83,9 @@ jobs:
         with:
           platforms: ${{ matrix.platform }}
 
+      - name: Prepare output dir
+        run: mkdir -p ${{ github.workspace }}/output
+
       - name: Build .deb in target container
         env:
           KERNEL_ID: ${{ matrix.id }}
@@ -95,7 +98,7 @@ jobs:
           options: >-
             --platform ${{ matrix.platform }}
             -v ${{ github.workspace }}:/workspace
-            -v /output:/output
+            -v ${{ github.workspace }}/output:/output
             -e KERNEL_ID
             -e OUTPUT_DIR=/output
             -e MODULE_VERSION
@@ -122,8 +125,14 @@ jobs:
             mkdir -p /output
             bash /workspace/scripts/build-arm-deb.sh
 
+      - name: Generate SHA256 checksums
+        run: |
+          for deb in ${{ github.workspace }}/output/*.deb; do
+            sha256sum "$deb" | awk '{print $1}' > "${deb}.sha256"
+          done
+
       - name: List output
-        run: ls -lh /output/*.deb
+        run: ls -lh ${{ github.workspace }}/output/
 
       - name: Upload to arm-packages release
         env:
@@ -138,9 +147,12 @@ jobs:
               --prerelease
           fi
 
-          # Upload (overwrite if exists)
-          for deb in /output/*.deb; do
+          # Upload .deb and .deb.sha256 (overwrite if exists)
+          for deb in ${{ github.workspace }}/output/*.deb; do
             gh release upload arm-packages "$deb" \
+              --repo "${{ github.repository }}" \
+              --clobber
+            gh release upload arm-packages "${deb}.sha256" \
               --repo "${{ github.repository }}" \
               --clobber
           done
