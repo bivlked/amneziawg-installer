@@ -14,6 +14,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.10.1] — 2026-04-19
+
+Compatibility with mirrors that don't publish source packages (Hetzner, AWS, and others) — [Discussion #47](https://github.com/bivlked/amneziawg-installer/discussions/47).
+
+### Fixed
+
+- **`apt update` no longer dies on 404 for source packages.** Some mirrors (Hetzner Ubuntu, AWS Ubuntu) don't publish source packages, but the default `/etc/apt/sources.list.d/ubuntu.sources` contains `Types: deb deb-src`. The previous `apt update -y || die` failed in that case. The new `apt_update_tolerant` function (in `awg_common.sh`) ignores 404s only on `source`/`Sources`/`deb-src`, but propagates every other error (GPG, network, unreachable PPA).
+- **Removed modification of `/etc/apt/sources.list.d/ubuntu.sources`.** The installer no longer enables `deb-src` — we never used source packages (kernel module installs via DKMS + binary headers), so the modification was unnecessary and caused the issue.
+
+### Tests
+
+- **+6 new bats tests** (137 total, was 131). `test_apt_tolerant.bats`: clean update, source-only 404, deb-src 404, GPG error, binary 404, mixed errors.
+
+---
+
 ## [5.10.0] — 2026-04-16
 
 Mobile network optimization: `--preset=mobile` and `--jc`/`--jmin`/`--jmax` CLI flags, comprehensive security and reliability audit across the entire codebase ([Discussion #38](https://github.com/bivlked/amneziawg-installer/discussions/38), [Issue #42](https://github.com/bivlked/amneziawg-installer/issues/42)).
@@ -609,7 +624,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.10.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.10.1...HEAD
+[5.10.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.10.0...v5.10.1
 [5.10.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.9.0...v5.10.0
 [5.9.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.8.4...v5.9.0
 [5.8.4]: https://github.com/bivlked/amneziawg-installer/compare/v5.8.3...v5.8.4

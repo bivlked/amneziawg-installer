@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.10.0
+# Version: 5.10.1
 # Date: 2026-04-16
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 set -o pipefail
-SCRIPT_VERSION="5.10.0"
+SCRIPT_VERSION="5.10.1"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="9fa34141c1fc51caa224fca7812680069d12897dbb3461f05416659cbee97da7"
-MANAGE_SCRIPT_SHA256="e7ccba01379ddfe5ad18a7fb3d41f702bc815c7418093a9033bdc0882ab7526b"
+COMMON_SCRIPT_SHA256="02a5bb65a6f294c38ff8720a301384a66e3720a66da13c3b6dc5b4ac0adfd194"
+MANAGE_SCRIPT_SHA256="f5cc1eb920898cba8e40979b15a13549f5c518cd67e7cd13d96fecc99aaac934"
 
 # CLI flags
 UNINSTALL=0; HELP=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
@@ -313,7 +313,7 @@ install_packages() {
     fi
     log "Installing: ${to_install[*]}..."
     if [[ "${_APT_UPDATED:-0}" -eq 0 ]]; then
-        apt update -y || log_warn "Failed to update apt."
+        apt_update_tolerant || log_warn "Failed to update apt."
         _APT_UPDATED=1
     fi
     DEBIAN_FRONTEND=noninteractive apt install -y "${to_install[@]}" || die "Package installation error."
@@ -1571,7 +1571,7 @@ step1_update_and_optimize() {
     fi
 
     log "Updating package lists..."
-    apt update -y || die "apt update error."
+    apt_update_tolerant || die "apt update error."
 
     log "Unlocking dpkg..."
     if ! apt-get check &>/dev/null; then
@@ -1692,38 +1692,7 @@ step2_install_amnezia() {
     log "### STEP 2: Installing AmneziaWG and dependencies ###"
     _APT_UPDATED=0  # Reset: new sources will be added in this step
 
-    # Enabling deb-src (Ubuntu only — Ubuntu uses ubuntu.sources)
-    local sources_file="/etc/apt/sources.list.d/ubuntu.sources"
-    if [[ "${OS_ID:-ubuntu}" == "ubuntu" ]]; then
-        log "Checking/enabling deb-src..."
-        if [[ -f "$sources_file" ]]; then
-            if grep -q "^Types: deb$" "$sources_file"; then
-                log "Enabling deb-src..."
-                local bak
-                bak="${AWG_DIR}/ubuntu.sources.bak-$(date +%F_%H%M%S)"
-                cp "$sources_file" "$bak" || log_warn "Backup error"
-                local tmp_sed
-                tmp_sed=$(mktemp)
-                _install_temp_files+=("$tmp_sed")
-                sed '/^Types: deb$/s/Types: deb/Types: deb deb-src/' "$sources_file" > "$tmp_sed" || {
-                    rm -f "$tmp_sed"; die "sed error."
-                }
-                if ! mv "$tmp_sed" "$sources_file"; then
-                    rm -f "$tmp_sed"; die "mv $sources_file error"
-                fi
-                apt update -y || die "apt update error."
-            else
-                apt update -y
-            fi
-        else
-            log_warn "$sources_file not found, skipping deb-src."
-            apt update -y
-        fi
-    else
-        # Debian: deb-src is usually already configured or not needed
-        log "Debian: skipping deb-src configuration."
-        apt update -y
-    fi
+    apt_update_tolerant || die "apt update error."
 
     # PPA Amnezia (without software-properties-common)
     log "Adding Amnezia PPA..."
@@ -1784,7 +1753,7 @@ PPASRC
         fi
         log "PPA added."
     fi
-    apt update -y || die "apt update error."
+    apt_update_tolerant || die "apt update error."
 
     # AmneziaWG + qrencode packages (NO Python!)
     log "Installing AmneziaWG packages..."

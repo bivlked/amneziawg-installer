@@ -897,7 +897,6 @@ Starting with v5.6.0, the installer fully supports Debian 12 (bookworm) and Debi
 | PPA codename | native | mapped to `focal` | mapped to `noble` |
 | APT format | DEB822 `.sources` | `.list` | DEB822 `.sources` |
 | Headers | `linux-headers-$(uname -r)` | fallback to `linux-headers-amd64` | fallback to `linux-headers-amd64` |
-| deb-src | Yes | No | No |
 | snapd/lxd cleanup | Yes | Skipped | Skipped |
 
 **Debian prerequisites:**

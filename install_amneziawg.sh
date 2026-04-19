@@ -8,15 +8,15 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 2.0 на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 5.10.0
-# Дата: 2026-04-16
+# Версия: 5.10.1
+# Дата: 2026-04-19
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 set -o pipefail
 
-SCRIPT_VERSION="5.10.0"
+SCRIPT_VERSION="5.10.1"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -33,7 +33,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="941b5ba3652027c91c8ea9ec27dbbf5ec5ac5369dfbb55762a07572d0e04ed8d"
+COMMON_SCRIPT_SHA256="f6f2360d54a9890dbf666375aaa43a5514965c22a4c2a1574891d51575ec5dee"
 MANAGE_SCRIPT_SHA256="d81c75b932dc9fb9ed52f82974e70255f7a3a37b7cc0a2b2d613a74344038065"
 
 # Флаги CLI
@@ -313,7 +313,7 @@ install_packages() {
     fi
     log "Установка: ${to_install[*]}..."
     if [[ "${_APT_UPDATED:-0}" -eq 0 ]]; then
-        apt update -y || log_warn "Не удалось обновить apt."
+        apt_update_tolerant || log_warn "Не удалось обновить apt."
         _APT_UPDATED=1
     fi
     DEBIAN_FRONTEND=noninteractive apt install -y "${to_install[@]}" || die "Ошибка установки пакетов."
@@ -1571,7 +1571,7 @@ step1_update_and_optimize() {
     fi
 
     log "Обновление списка пакетов..."
-    apt update -y || die "Ошибка apt update."
+    apt_update_tolerant || die "Ошибка apt update."
 
     log "Разблокировка dpkg..."
     if ! apt-get check &>/dev/null; then
@@ -1683,38 +1683,7 @@ step2_install_amnezia() {
     log "### ШАГ 2: Установка AmneziaWG и зависимостей ###"
     _APT_UPDATED=0  # Reset: new sources will be added in this step
 
-    # Включение deb-src (только Ubuntu — Ubuntu использует ubuntu.sources)
-    local sources_file="/etc/apt/sources.list.d/ubuntu.sources"
-    if [[ "${OS_ID:-ubuntu}" == "ubuntu" ]]; then
-        log "Проверка/включение deb-src..."
-        if [[ -f "$sources_file" ]]; then
-            if grep -q "^Types: deb$" "$sources_file"; then
-                log "Включение deb-src..."
-                local bak
-                bak="${AWG_DIR}/ubuntu.sources.bak-$(date +%F_%H%M%S)"
-                cp "$sources_file" "$bak" || log_warn "Ошибка бэкапа"
-                local tmp_sed
-                tmp_sed=$(mktemp)
-                _install_temp_files+=("$tmp_sed")
-                sed '/^Types: deb$/s/Types: deb/Types: deb deb-src/' "$sources_file" > "$tmp_sed" || {
-                    rm -f "$tmp_sed"; die "Ошибка sed."
-                }
-                if ! mv "$tmp_sed" "$sources_file"; then
-                    rm -f "$tmp_sed"; die "Ошибка mv $sources_file"
-                fi
-                apt update -y || die "Ошибка apt update."
-            else
-                apt update -y
-            fi
-        else
-            log_warn "$sources_file не найден, пропуск deb-src."
-            apt update -y
-        fi
-    else
-        # Debian: deb-src обычно уже настроен или не нужен для нашей задачи
-        log "Debian: пропуск настройки deb-src."
-        apt update -y
-    fi
+    apt_update_tolerant || die "Ошибка apt update."
 
     # PPA Amnezia (без software-properties-common)
     log "Добавление PPA Amnezia..."
@@ -1775,7 +1744,7 @@ PPASRC
         fi
         log "PPA добавлен."
     fi
-    apt update -y || die "Ошибка apt update."
+    apt_update_tolerant || die "Ошибка apt update."
 
     # Пакеты AmneziaWG + qrencode (БЕЗ Python!)
     log "Установка пакетов AmneziaWG..."
