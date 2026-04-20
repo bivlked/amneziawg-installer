@@ -21,6 +21,7 @@ jobs:
   prepare-release:
     name: Ensure arm-packages release exists
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Create arm-packages release if missing
         env:
@@ -38,6 +39,7 @@ jobs:
     name: Build ${{ matrix.id }}
     needs: prepare-release
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     strategy:
       fail-fast: false
