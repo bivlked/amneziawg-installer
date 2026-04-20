@@ -14,13 +14,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.10.2] — 2026-04-20
+
+Urgent hotfix. In v5.10.1 every fresh AmneziaWG 2.0 install died at step 1 with `apt_update_tolerant: command not found` — on all mirrors, not only Hetzner. If you tried v5.10.1 on a new server, or you're about to deploy from scratch, move to v5.10.2. This release also closes an edge case where `apt_update_tolerant` could silently ignore a crash (SIGKILL, OOM).
+
+### Fixed
+
+- **Critical regression in v5.10.1: `apt_update_tolerant: command not found` broke installation.** The function was defined in `awg_common.sh`, but that file is only downloaded at step 5. The first `apt update` at step 1 (before the system upgrade) and the second at step 2 (after adding the PPA) received `command not found`, and installation aborted with `die "apt update error"`. In v5.10.2 the definition moved inline into `install_amneziawg.sh` — next to `log`/`die`, following the existing pattern used for `generate_awg_params`. It has been removed from `awg_common.sh`.
+- **Edge case in `apt_update_tolerant`: silent crash / OOM / SIGKILL are no longer masked.** If `apt-get update` returned non-zero WITHOUT classifiable `E:`/`Err:`/`W:` lines in stderr (SIGKILL from OOM-killer, silent crash, unknown output format), the function erroneously returned 0 with a "source packages unavailable" message. Now, before falling back to that branch, the output is checked for explicit source-markers; if none are present, the error is propagated.
+- **Regex future-proofing.** The pattern `Sources([[:space:]]|$)` is replaced with `Sources([^[:alpha:]]|$)` — catches future variants like `Sources.xz`, while preventing false-match on strings like `SourcesMirror`.
+- **Synced header date in `install_amneziawg_en.sh`** (was `2026-04-16`, now `2026-04-20` to match the release).
+
+### Tests
+
+- **+9 new bats tests** (146 total, was 137).
+  - `test_apt_tolerant.bats`: +3 tests — silent crash (rc!=0, empty stderr), DNS failure without `E:` prefix, regex does not match `SourcesMirror`. Function loading migrated from `source awg_common.sh` to `sed` range extraction from `install_amneziawg.sh`.
+  - `test_install_defines_apt_tolerant.bats` (new, 6 tests) — regression guard: asserts the invariant "definition is inline in both install scripts, absent from awg_common" + all calls follow the definition line.
+
+---
+
 ## [5.10.1] — 2026-04-19
 
 Compatibility with mirrors that don't publish source packages (Hetzner, AWS, and others) — [Discussion #47](https://github.com/bivlked/amneziawg-installer/discussions/47).
 
 ### Fixed
 
-- **`apt update` no longer dies on 404 for source packages.** Some mirrors (Hetzner Ubuntu, AWS Ubuntu) don't publish source packages, but the default `/etc/apt/sources.list.d/ubuntu.sources` contains `Types: deb deb-src`. The previous `apt update -y || die` failed in that case. The new `apt_update_tolerant` function (in `awg_common.sh`) ignores 404s only on `source`/`Sources`/`deb-src`, but propagates every other error (GPG, network, unreachable PPA).
+- **`apt update` no longer dies on 404 for source packages.** Some mirrors (Hetzner Ubuntu, AWS Ubuntu) don't publish source packages, but the default `/etc/apt/sources.list.d/ubuntu.sources` contains `Types: deb deb-src`. The previous `apt update -y || die` failed in that case. The new `apt_update_tolerant` function (in `awg_common.sh`; moved inline into `install_amneziawg.sh` in v5.10.2) ignores 404s only on `source`/`Sources`/`deb-src`, but propagates every other error (GPG, network, unreachable PPA).
 - **Removed modification of `/etc/apt/sources.list.d/ubuntu.sources`.** The installer no longer enables `deb-src` — we never used source packages (kernel module installs via DKMS + binary headers), so the modification was unnecessary and caused the issue.
 
 ### Tests
@@ -624,7 +643,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.10.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.10.2...HEAD
+[5.10.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.10.1...v5.10.2
 [5.10.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.10.0...v5.10.1
 [5.10.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.9.0...v5.10.0
 [5.9.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.8.4...v5.9.0

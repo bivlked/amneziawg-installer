@@ -3,8 +3,8 @@
 # ==============================================================================
 # Общая библиотека функций для AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.10.1
-# Дата: 2026-04-16
+# Версия: 5.10.2
+# Дата: 2026-04-20
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -76,42 +76,8 @@ get_server_public_ip() {
     return 1
 }
 
-# apt-get update, игнорирующий 404 только на source packages (deb-src).
-# Некоторые зеркала (Hetzner, AWS) не раздают source — но в дефолтном
-# ubuntu.sources стоит 'Types: deb deb-src'. Нам source не нужен (ставим
-# kernel-module через DKMS + headers), поэтому такие 404 безопасно игнорировать.
-# Возвращает 0 если update прошёл ИЛИ если ВСЕ ошибки — только на source.
-# Любая другая ошибка (GPG, сетевая на binary-пакетах) → non-zero.
-apt_update_tolerant() {
-    local err_output rc non_src_errors
-    err_output=$(LANG=C LC_ALL=C apt-get update -y 2>&1)
-    rc=$?
-    echo "$err_output"
-
-    if [[ $rc -eq 0 ]]; then
-        return 0
-    fi
-
-    # Filter error lines. Ignore:
-    #   1. Lines mentioning source packages (deb-src / /source/ / Sources)
-    #   2. The generic "Some index files failed to download" — it's a symptom
-    #      of any earlier error and tells us nothing on its own.
-    non_src_errors=$(printf '%s\n' "$err_output" \
-        | grep -E '^(E:|Err:|W:)' \
-        | grep -vE '(deb-src|/source/|Sources([[:space:]]|$))' \
-        | grep -vE 'Some index files failed to download' || true)
-
-    if [[ -z "$non_src_errors" ]]; then
-        log_warn "apt update: source packages недоступны в зеркале (ожидаемо, игнорируется)"
-        return 0
-    fi
-
-    log_error "apt update завершился с non-source ошибками:"
-    printf '%s\n' "$non_src_errors" | while IFS= read -r line; do
-        log_error "  $line"
-    done
-    return "$rc"
-}
+# Note: apt_update_tolerant() определена inline в install_amneziawg.sh
+# (нужна в шагах 1-2 до скачивания этого файла). Здесь её нет — мёртвый код.
 
 # ==============================================================================
 # Генерация AWG 2.0 параметров (используется в тестах + manage)

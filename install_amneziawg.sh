@@ -8,15 +8,15 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 2.0 на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 5.10.1
-# Дата: 2026-04-19
+# Версия: 5.10.2
+# Дата: 2026-04-20
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 set -o pipefail
 
-SCRIPT_VERSION="5.10.1"
+SCRIPT_VERSION="5.10.2"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -33,7 +33,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="f6f2360d54a9890dbf666375aaa43a5514965c22a4c2a1574891d51575ec5dee"
+COMMON_SCRIPT_SHA256="0a87babc87310aebcf739fbdb379ad7acce563c3a81a6f753baca8c67d38c575"
 MANAGE_SCRIPT_SHA256="d81c75b932dc9fb9ed52f82974e70255f7a3a37b7cc0a2b2d613a74344038065"
 
 # Флаги CLI
@@ -123,6 +123,51 @@ log_warn()  { log_msg "WARN" "$1"; }
 log_error() { log_msg "ERROR" "$1"; }
 log_debug() { if [[ "$VERBOSE" -eq 1 ]]; then log_msg "DEBUG" "$1"; fi; }
 die()       { log_error "КРИТИЧЕСКАЯ ОШИБКА: $1"; log_error "Установка прервана. Лог: $LOG_FILE"; exit 1; }
+
+# ==============================================================================
+# apt-get update wrapper, игнорирующий 404 только на source packages (deb-src).
+# INLINE: нужна в шагах 1-2 до скачивания awg_common.sh (Step 5).
+# Некоторые зеркала (Hetzner, AWS) не раздают source, но дефолтный ubuntu.sources
+# содержит 'Types: deb deb-src'. Source не нужен (DKMS + бинарные headers).
+# Возвращает 0 если update прошёл ИЛИ если все ошибки — только на source-маркерах.
+# Любая другая ошибка (GPG, сетевая на binary, silent crash/OOM/SIGKILL) → non-zero.
+# ==============================================================================
+apt_update_tolerant() {
+    local err_output rc non_src_errors
+    err_output=$(LANG=C LC_ALL=C apt-get update -y 2>&1)
+    rc=$?
+    echo "$err_output"
+
+    if [[ $rc -eq 0 ]]; then
+        return 0
+    fi
+
+    # Фильтруем строки ошибок. Игнорируем:
+    #   1. Строки про source-пакеты (deb-src / /source/ / Sources)
+    #   2. Generic 'Some index files failed to download' — симптом, не причина
+    non_src_errors=$(printf '%s\n' "$err_output" \
+        | grep -E '^(E:|Err:|W:)' \
+        | grep -vE '(deb-src|/source/|Sources([^[:alpha:]]|$))' \
+        | grep -vE 'Some index files failed to download' || true)
+
+    if [[ -z "$non_src_errors" ]]; then
+        # Граничный случай: rc != 0, но ни одной классифицируемой строки E:/Err:/W:
+        # не найдено (SIGKILL от OOM, silent crash, неизвестный формат вывода apt).
+        # Игнорировать можно ТОЛЬКО если в выводе есть явные source-маркеры.
+        if printf '%s\n' "$err_output" | grep -qE '(deb-src|/source/|Sources([^[:alpha:]]|$))'; then
+            log_warn "apt update: source packages недоступны в зеркале (ожидаемо, игнорируется)"
+            return 0
+        fi
+        log_error "apt update завершился с rc=$rc без классифицируемых APT-строк — возможен silent crash / OOM / SIGKILL"
+        return "$rc"
+    fi
+
+    log_error "apt update завершился с non-source ошибками:"
+    printf '%s\n' "$non_src_errors" | while IFS= read -r line; do
+        log_error "  $line"
+    done
+    return "$rc"
+}
 
 # ==============================================================================
 # Справка

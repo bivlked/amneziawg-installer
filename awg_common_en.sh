@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 2.0
 # Author: @bivlked
-# Version: 5.10.1
-# Date: 2026-04-16
+# Version: 5.10.2
+# Date: 2026-04-20
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -76,42 +76,8 @@ get_server_public_ip() {
     return 1
 }
 
-# apt-get update that ignores 404 only on source packages (deb-src).
-# Some mirrors (Hetzner, AWS) don't publish source — but the default
-# ubuntu.sources has 'Types: deb deb-src'. We don't need source packages
-# (kernel module via DKMS + binary headers), so those 404s are safe to ignore.
-# Returns 0 if update succeeded OR if all errors are source-only.
-# Any other failure (GPG, network on binary packages) → non-zero.
-apt_update_tolerant() {
-    local err_output rc non_src_errors
-    err_output=$(LANG=C LC_ALL=C apt-get update -y 2>&1)
-    rc=$?
-    echo "$err_output"
-
-    if [[ $rc -eq 0 ]]; then
-        return 0
-    fi
-
-    # Filter error lines. Ignore:
-    #   1. Lines mentioning source packages (deb-src / /source/ / Sources)
-    #   2. The generic "Some index files failed to download" — it's a symptom
-    #      of any earlier error and tells us nothing on its own.
-    non_src_errors=$(printf '%s\n' "$err_output" \
-        | grep -E '^(E:|Err:|W:)' \
-        | grep -vE '(deb-src|/source/|Sources([[:space:]]|$))' \
-        | grep -vE 'Some index files failed to download' || true)
-
-    if [[ -z "$non_src_errors" ]]; then
-        log_warn "apt update: source packages unavailable in mirror (expected, ignoring)"
-        return 0
-    fi
-
-    log_error "apt update failed with non-source errors:"
-    printf '%s\n' "$non_src_errors" | while IFS= read -r line; do
-        log_error "  $line"
-    done
-    return "$rc"
-}
+# Note: apt_update_tolerant() is defined inline in install_amneziawg_en.sh
+# (needed in steps 1-2 before this file is downloaded). Not duplicated here.
 
 # ==============================================================================
 # AWG 2.0 parameter generation (used in tests + manage)

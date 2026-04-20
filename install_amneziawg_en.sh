@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.10.1
-# Date: 2026-04-16
+# Version: 5.10.2
+# Date: 2026-04-20
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 set -o pipefail
-SCRIPT_VERSION="5.10.1"
+SCRIPT_VERSION="5.10.2"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -33,7 +33,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="02a5bb65a6f294c38ff8720a301384a66e3720a66da13c3b6dc5b4ac0adfd194"
+COMMON_SCRIPT_SHA256="5a31301232e51ec040088ddb3bdd9f10261373918f45c46140c4987dc81a3a55"
 MANAGE_SCRIPT_SHA256="f5cc1eb920898cba8e40979b15a13549f5c518cd67e7cd13d96fecc99aaac934"
 
 # CLI flags
@@ -123,6 +123,52 @@ log_warn()  { log_msg "WARN" "$1"; }
 log_error() { log_msg "ERROR" "$1"; }
 log_debug() { if [[ "$VERBOSE" -eq 1 ]]; then log_msg "DEBUG" "$1"; fi; }
 die()       { log_error "CRITICAL ERROR: $1"; log_error "Installation aborted. Log: $LOG_FILE"; exit 1; }
+
+# ==============================================================================
+# apt-get update wrapper that tolerates 404s only for source packages (deb-src).
+# INLINE: needed in steps 1-2 before awg_common.sh is downloaded (Step 5).
+# Some mirrors (Hetzner, AWS) do not serve source packages, but the default
+# ubuntu.sources contains 'Types: deb deb-src'. We do not need source packages
+# (kernel module is built via DKMS using binary headers), so such 404s are safe
+# to ignore. Returns 0 if update succeeded OR if all errors are on source markers.
+# Any other error (GPG, binary-package network, silent crash / OOM / SIGKILL) → non-zero.
+# ==============================================================================
+apt_update_tolerant() {
+    local err_output rc non_src_errors
+    err_output=$(LANG=C LC_ALL=C apt-get update -y 2>&1)
+    rc=$?
+    echo "$err_output"
+
+    if [[ $rc -eq 0 ]]; then
+        return 0
+    fi
+
+    # Filter error lines. Ignore:
+    #   1. Lines about source packages (deb-src / /source/ / Sources)
+    #   2. Generic 'Some index files failed to download' — symptom, not cause
+    non_src_errors=$(printf '%s\n' "$err_output" \
+        | grep -E '^(E:|Err:|W:)' \
+        | grep -vE '(deb-src|/source/|Sources([^[:alpha:]]|$))' \
+        | grep -vE 'Some index files failed to download' || true)
+
+    if [[ -z "$non_src_errors" ]]; then
+        # Edge case: rc != 0 but no classifiable E:/Err:/W: lines found
+        # (OOM-killer SIGKILL, silent crash, unknown apt output format).
+        # Ignore ONLY if the output actually contains source-markers.
+        if printf '%s\n' "$err_output" | grep -qE '(deb-src|/source/|Sources([^[:alpha:]]|$))'; then
+            log_warn "apt update: source packages unavailable in mirror (expected, ignored)"
+            return 0
+        fi
+        log_error "apt update exited with rc=$rc without any classifiable APT lines — possible silent crash / OOM / SIGKILL"
+        return "$rc"
+    fi
+
+    log_error "apt update failed with non-source errors:"
+    printf '%s\n' "$non_src_errors" | while IFS= read -r line; do
+        log_error "  $line"
+    done
+    return "$rc"
+}
 
 # ==============================================================================
 # Help

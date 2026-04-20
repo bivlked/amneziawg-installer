@@ -1,11 +1,21 @@
 #!/usr/bin/env bats
-# Tests for apt_update_tolerant() in awg_common.sh
-# Verifies that source-only 404s are ignored, other errors propagate.
+# Tests for apt_update_tolerant() — inline в install_amneziawg.sh с v5.10.2.
+# До v5.10.2 функция жила в awg_common.sh и грузилась через source; после v5.10.1
+# hotfix — inline в install (нужна в шагах 1-2 до скачивания awg_common.sh).
+# Тесты извлекают функцию через sed range и source'ят в bats setup.
+#
+# Covered: source-only 404s ignored, non-source errors propagate, silent crash
+# (rc!=0 + empty stderr) propagates (WARN-1 fix).
 
 setup() {
+    # shellcheck disable=SC2154
+    # Extract apt_update_tolerant function body from install_amneziawg.sh
+    # and source it. If extraction fails, all tests will fail.
+    local installer="${BATS_TEST_DIRNAME}/../install_amneziawg.sh"
+    [ -f "$installer" ] || { echo "Installer not found: $installer" >&2; return 1; }
     # shellcheck source=/dev/null
-    source "${BATS_TEST_DIRNAME}/../awg_common.sh"
-    # Silence logging in tests
+    source <(sed -n '/^apt_update_tolerant() {$/,/^}$/p' "$installer")
+    # Silence logging
     log()       { :; }
     log_warn()  { :; }
     log_error() { :; }
@@ -78,6 +88,45 @@ E: Failed to fetch http://mirror/ubuntu/dists/noble-updates/main/source/Sources 
 Err:2 http://mirror/ubuntu noble/main amd64 Packages 404
 E: Failed to fetch http://mirror/ubuntu/dists/noble/main/binary-amd64/Packages 404
 ERR
+        return 100
+    }
+    export -f apt-get
+    run apt_update_tolerant
+    [ "$status" -ne 0 ]
+}
+
+# WARN-1 regression: rc != 0 + пустой stderr = SIGKILL / OOM / silent crash.
+# До фикса функция ошибочно возвращала 0 (source-only fallback без проверки
+# что в выводе вообще есть source-маркеры). Теперь — propagates error.
+@test "apt_update_tolerant: fails on silent crash (rc!=0, empty stderr)" {
+    apt-get() { return 137; }   # 137 = SIGKILL
+    export -f apt-get
+    run apt_update_tolerant
+    [ "$status" -ne 0 ]
+}
+
+# WARN-1 regression: DNS failure пишет warning без классических E:/Err:
+# (например, "Temporary failure resolving 'archive.ubuntu.com'"). Функция
+# не должна это скрывать — нет source-маркеров, значит возвращаем ошибку.
+@test "apt_update_tolerant: fails on DNS failure without E: prefix" {
+    apt-get() {
+        cat <<'ERR' >&2
+Temporary failure resolving 'archive.ubuntu.com'
+Temporary failure resolving 'security.ubuntu.com'
+ERR
+        return 100
+    }
+    export -f apt-get
+    run apt_update_tolerant
+    [ "$status" -ne 0 ]
+}
+
+# Regression guard: "Sources" в названии component типа "MainSources" не должно
+# триггерить source-only fallback. Regex Sources([^[:alpha:]]|$) — точнее, чем
+# Sources([[:space:]]|$). С v5.10.2 используется [^[:alpha:]].
+@test "apt_update_tolerant: does not false-match 'Sources<letter>' strings" {
+    apt-get() {
+        echo "E: SourcesMirror config broken" >&2
         return 100
     }
     export -f apt-get
