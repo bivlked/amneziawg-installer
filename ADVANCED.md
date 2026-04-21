@@ -43,6 +43,7 @@
 - [📋 Совместимость клиентов AWG 2.0](#client-compat-adv)
 - [🐧 Поддержка Debian](#debian-support-adv)
 - [🔧 Raspberry Pi и ARM64](#arm-support-adv)
+- [📦 LXC / Docker через amneziawg-go (userspace)](#lxc-userspace-adv)
 - [⚠️ Известные ограничения](#limitations-adv)
 - [🤝 Внесение вклада (Contributing)](#contributing-adv)
 - [💖 Благодарности](#thanks-adv)
@@ -955,10 +956,139 @@ Raspberry Pi 3 имеет 1 ГБ RAM и 4 ядра на 1.2 ГГц. Компил
 
 ---
 
+<a id="lxc-userspace-adv"></a>
+## 📦 LXC / Docker через amneziawg-go (userspace)
+
+Если **кернел-модуль AmneziaWG нельзя установить на хост** — запрет провайдера, shared-kernel LXC без root-доступа к хосту, общий Proxmox с другими контейнерами, который не хочется перезагружать ради DKMS-сборки, — есть альтернатива: userspace-реализация [`amneziawg-go`](https://github.com/amnezia-vpn/amneziawg-go). Это TUN-backed вариант, модуль ядра не нужен. Производительность ниже kernel-native (~30–50% CPU overhead на 1 Gbps), зато работает в любом Linux с `/dev/net/tun`.
+
+Мой инсталлятор `install_amneziawg.sh` **этот путь не покрывает** — я специально ставлю kernel-native ради производительности и чтобы не тащить Go-компилятор на prod. Раздел описывает ручную настройку поверх готового Debian / Ubuntu в LXC.
+
+### ⚠️ Security tradeoff
+
+Для работы `amneziawg-go` внутри LXC обычно требуется:
+
+- **Privileged контейнер** (root мапится на хост) или `unprivileged` с пробросом `/dev/net/tun` и `CAP_NET_ADMIN` — в обоих случаях контейнер получает широкий доступ к сетевому стеку хоста.
+- **Nesting** (`features: nesting=1` в Proxmox) — нужен для `iptables` внутри контейнера. На Proxmox 9 с Debian 13 LXC (systemd 257+) Proxmox сам предупреждает при создании: `WARN: Systemd 257 detected. You may need to enable nesting.` — без nesting контейнер тупит ещё и на уровне systemd.
+- **tun passthrough** через `lxc.cgroup2.devices.allow` и bind-mount `/dev/net`.
+
+Если изоляция контейнера критична (multi-tenant хост, privacy-sensitive workload) — берите KVM/QEMU-виртуалку с обычным инсталлятором вместо LXC.
+
+### Требования к LXC host
+
+**Proxmox LXC config** (`/etc/pve/lxc/<VMID>.conf`):
+
+```conf
+features: nesting=1
+lxc.cgroup2.devices.allow: c 10:200 rwm
+lxc.mount.entry: /dev/net dev/net none bind,create=dir
+```
+
+После правки config перезапустите контейнер: `pct stop <VMID> && pct start <VMID>`.
+
+**Forwarding внутри контейнера:**
+
+```bash
+echo 'net.ipv4.ip_forward=1' | sudo tee /etc/sysctl.d/99-awg-forwarding.conf
+sudo sysctl --system
+```
+
+### Установка amneziawg-go и amneziawg-tools
+
+**Вариант 1 (быстрее): prebuilt binary из релизов.** Скачиваем готовый бинарь, Go toolchain не нужен:
+
+```bash
+# Проверьте актуальную версию: https://github.com/amnezia-vpn/amneziawg-go/releases
+AWG_GO_VERSION="0.2.15"
+ARCH="amd64"  # или arm64 для ARM VPS
+sudo apt install -y iptables git make
+sudo curl -fsSL \
+  "https://github.com/amnezia-vpn/amneziawg-go/releases/download/v${AWG_GO_VERSION}/amneziawg-go-linux-${ARCH}" \
+  -o /usr/local/bin/amneziawg-go
+sudo chmod +x /usr/local/bin/amneziawg-go
+```
+
+**Вариант 2: сборка из source.** Нужен Go 1.21+. На Debian 12 системный `golang-go` — 1.19, поэтому либо ставьте из backports, либо скачайте Go вручную:
+
+```bash
+sudo apt install -y golang-go git make iptables
+git clone https://github.com/amnezia-vpn/amneziawg-go
+cd amneziawg-go && make && sudo make install
+cd ..
+```
+
+**amneziawg-tools** дают `awg` и `awg-quick` CLI. Системный `awg-quick` из `wireguard-tools` не понимает обфускационные параметры (`Jc/Jmin/Jmax/S1-S4/H1-H4/I1-I5`), поэтому именно этот форк нужен:
+
+```bash
+git clone https://github.com/amnezia-vpn/amneziawg-tools
+cd amneziawg-tools/src && make && sudo make install
+cd ../..
+```
+
+### Конфиг и запуск
+
+Создайте `/etc/amnezia/amneziawg/awg0.conf` — замените `YOUR_*` на свои значения. Ключи генерируются через `awg genkey | tee /etc/amnezia/amneziawg/server_private.key | awg pubkey`. Параметры обфускации (`Jc/Jmin/Jmax/S1-S4/H1-H4/I1`) должны совпадать с клиентом:
+
+```conf
+[Interface]
+Address = 10.9.9.1/24
+ListenPort = 39743
+PrivateKey = YOUR_SERVER_PRIVATE_KEY
+Jc = 4
+Jmin = 50
+Jmax = 150
+S1 = 0
+S2 = 0
+H1 = 1234567890
+H2 = 2345678901
+H3 = 3456789012
+H4 = 4012345678
+PostUp   = iptables -I INPUT   -p udp --dport 39743 -j ACCEPT
+PostUp   = iptables -I FORWARD -i eth0 -o awg0      -j ACCEPT
+PostUp   = iptables -I FORWARD -i awg0              -j ACCEPT
+PostUp   = iptables -t nat -A POSTROUTING -o eth0   -j MASQUERADE
+PostDown = iptables -D INPUT   -p udp --dport 39743 -j ACCEPT
+PostDown = iptables -D FORWARD -i eth0 -o awg0      -j ACCEPT
+PostDown = iptables -D FORWARD -i awg0              -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -o eth0   -j MASQUERADE
+
+[Peer]
+PublicKey    = YOUR_CLIENT_PUBLIC_KEY
+PresharedKey = YOUR_PRESHARED_KEY
+AllowedIPs   = 10.9.9.2/32
+```
+
+Имя интерфейса (`awg0`) и внешний NIC (`eth0`) подставьте свои. Для IPv6 добавьте симметричные правила `ip6tables`. Порт `ListenPort` должен быть открыт на уровне хоста (UFW или iptables хоста) и на уровне облачного провайдера.
+
+Smoke-тест:
+
+```bash
+sudo awg-quick up awg0
+sudo awg                 # должен показать интерфейс и пиров
+sudo awg-quick down awg0
+```
+
+Запуск как systemd-сервис:
+
+```bash
+sudo systemctl enable awg-quick@awg0
+sudo systemctl start awg-quick@awg0
+sudo systemctl status awg-quick@awg0
+```
+
+### Работает ли `manage_amneziawg.sh` поверх?
+
+Мой `manage_amneziawg.sh` рассчитан на kernel-native setup (ждёт `/etc/amnezia/amneziawg/awgsetup_cfg.init`, полагается на `awg-quick` + `awg` из `amneziawg-tools`). Теоретически он должен работать поверх ручной установки `amneziawg-go` + `amneziawg-tools`, если интерфейс назван `awg0` и директория `/etc/amnezia/amneziawg/` существует. Этот сценарий я **не тестирую и не поддерживаю** — если нужен полноценный менеджмент клиентов, ведите конфиги руками или возьмите отдельный инструмент под userspace.
+
+### Источник
+
+Рабочий минимальный рецепт для Debian 13 в привилегированном LXC на Proxmox прислал [@Akh-commits](https://github.com/Akh-commits) в [issue #51](https://github.com/bivlked/amneziawg-installer/issues/51#issuecomment-4288953829) — этот раздел построен на нём с расширением по prebuilt-варианту, security-warning и нюансам Debian 12.
+
+---
+
 <a id="limitations-adv"></a>
 ## ⚠️ Известные ограничения
 
-* **LXC-контейнеры не поддерживаются.** AmneziaWG использует ядерный модуль (DKMS). LXC разделяет ядро с хостом — загрузить свой модуль из контейнера нельзя. Используйте полноценную VM или bare-metal сервер.
+* **LXC-контейнеры не поддерживаются моим инсталлятором.** AmneziaWG использует ядерный модуль (DKMS). LXC разделяет ядро с хостом — загрузить свой модуль из контейнера нельзя. Варианты: полноценная VM (KVM/QEMU) или bare-metal сервер для kernel-native установки, либо userspace-реализация `amneziawg-go` внутри LXC (см. [LXC / Docker через amneziawg-go](#lxc-userspace-adv)).
 
 * **Предполагается выделенный сервер.** Скрипт настраивает UFW, Fail2Ban, sysctl и оптимизирует систему под VPN. На сервере с другими сервисами используйте `--no-tweaks`, чтобы пропустить hardening.
 
