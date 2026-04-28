@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 peer management script
 # Author: @bivlked
-# Version: 5.11.2
-# Date: 2026-04-24
+# Version: 5.11.3
+# Date: 2026-04-28
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.11.2"
+SCRIPT_VERSION="5.11.3"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -66,6 +66,7 @@ while [[ $# -gt 0 ]]; do
         --server-conf=*)   SERVER_CONF_FILE="${1#*=}"; shift ;;
         --apply-mode=*)    _CLI_APPLY_MODE="${1#*=}"; export AWG_APPLY_MODE="$_CLI_APPLY_MODE"; shift ;;
         --psk)             CLI_ADD_PSK=1; shift ;;
+        --yes)             CLI_YES=1; shift ;;
         --*)               echo "Unknown option: $1" >&2; COMMAND="help"; break ;;
         *)
             if [[ -z "$COMMAND" ]]; then
@@ -144,6 +145,11 @@ escape_sed() {
 }
 
 confirm_action() {
+    # CLI flag --yes or ENV AWG_YES=1 skip the confirm prompt — useful for
+    # scripts, cron, Ansible and interactive calls that pre-confirmed.
+    if [[ "${CLI_YES:-0}" == "1" || "${AWG_YES:-0}" == "1" ]]; then
+        return 0
+    fi
     if ! is_interactive; then return 0; fi
     local action="$1" subject="$2"
     read -rp "Are you sure you want to $action $subject? [y/N]: " confirm < /dev/tty
@@ -220,7 +226,9 @@ _backup_configs_nolock() {
     mkdir -p "$bd" || die "mkdir error $bd"
     chmod 700 "$bd" 2>/dev/null
     local ts bf td
-    ts=$(date +%F_%H-%M-%S)
+    # Millisecond precision in the timestamp prevents collisions on rapid-fire
+    # backups (e.g. regen → backup → modify → backup within the same second).
+    ts=$(date +%F_%H-%M-%S.%3N)
     bf="$bd/awg_backup_${ts}.tar.gz"
     td=$(manage_mktempdir) || die "Failed to create temp directory"
 
@@ -1104,6 +1112,7 @@ usage() {
     echo "  --server-conf=PATH    Specify server config file"
     echo "  --apply-mode=MODE     syncconf (default) or restart (bypass kernel panic)"
     echo "  --psk                 (add only) generate a PresharedKey for the new client"
+    echo "  --yes                 Skip confirm prompts (equivalent to ENV AWG_YES=1)"
     echo ""
     echo "Commands:"
     echo "  add <name> [name2 ...]       Add client(s). --expires applies to all"

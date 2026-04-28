@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # Скрипт для управления пользователями (пирами) AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.11.2
-# Дата: 2026-04-24
+# Версия: 5.11.3
+# Дата: 2026-04-28
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.11.2"
+SCRIPT_VERSION="5.11.3"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -66,6 +66,7 @@ while [[ $# -gt 0 ]]; do
         --server-conf=*)   SERVER_CONF_FILE="${1#*=}"; shift ;;
         --apply-mode=*)    _CLI_APPLY_MODE="${1#*=}"; export AWG_APPLY_MODE="$_CLI_APPLY_MODE"; shift ;;
         --psk)             CLI_ADD_PSK=1; shift ;;
+        --yes)             CLI_YES=1; shift ;;
         --*)               echo "Неизвестная опция: $1" >&2; COMMAND="help"; break ;;
         *)
             if [[ -z "$COMMAND" ]]; then
@@ -144,6 +145,11 @@ escape_sed() {
 }
 
 confirm_action() {
+    # CLI флаг --yes или ENV AWG_YES=1 пропускают confirm-prompt — для скриптов,
+    # cron, Ansible и интерактивных вызовов где явно подтвердили заранее.
+    if [[ "${CLI_YES:-0}" == "1" || "${AWG_YES:-0}" == "1" ]]; then
+        return 0
+    fi
     if ! is_interactive; then return 0; fi
     local action="$1" subject="$2"
     read -rp "Вы действительно хотите $action $subject? [y/N]: " confirm < /dev/tty
@@ -220,7 +226,9 @@ _backup_configs_nolock() {
     mkdir -p "$bd" || die "Ошибка mkdir $bd"
     chmod 700 "$bd" 2>/dev/null
     local ts bf td
-    ts=$(date +%F_%H-%M-%S)
+    # Миллисекундная точность в timestamp защищает от collision при rapid-fire
+    # backup'ах (например, regen → backup → modify → backup в одной секунде).
+    ts=$(date +%F_%H-%M-%S.%3N)
     bf="$bd/awg_backup_${ts}.tar.gz"
     td=$(manage_mktempdir) || die "Ошибка создания временной директории"
 
@@ -1101,6 +1109,7 @@ usage() {
     echo "  --server-conf=ПУТЬ    Указать файл конфига сервера"
     echo "  --apply-mode=РЕЖИМ    syncconf (умолч.) или restart (обход kernel panic)"
     echo "  --psk                 (только для add) сгенерировать PresharedKey для клиента"
+    echo "  --yes                 Не спрашивать подтверждение (эквивалент ENV AWG_YES=1)"
     echo ""
     echo "Команды:"
     echo "  add <имя> [имя2 ...]        Добавить клиента(ов). --expires применяется ко всем"

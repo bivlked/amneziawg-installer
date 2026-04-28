@@ -664,10 +664,13 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
   <tr><td>Таттелеком (Летай)</td><td>Jc=3, I1=&lt;r 64&gt;</td><td><code>--preset=mobile</code></td><td>✅</td></tr>
   <tr><td>Yota (Москва)</td><td>I1=&lt;b 0xce...&gt;, Jmax=261</td><td><code>--preset=mobile</code></td><td>✅</td></tr>
   <tr><td>Yota/Tele2 (Москва)</td><td>Jc=3, Jmin=40, Jmax=70</td><td><code>--preset=mobile</code></td><td>✅</td></tr>
-  <tr><td>Tele2 (Красноярск)</td><td>Jc=3</td><td><code>--preset=mobile</code></td><td>✅</td></tr>
+  <tr><td>Tele2 (Красноярск)</td><td>Jc=3, <b>I1=отсутствует</b></td><td><code>--preset=mobile</code> + удалить <code>I1</code></td><td>✅</td></tr>
   <tr><td>Beeline</td><td>дефолт</td><td><code>--preset=default</code></td><td>✅</td></tr>
   <tr><td>Megafon (Москва)</td><td>Jc=3, Jmin=80, Jmax=268</td><td><code>--preset=mobile</code></td><td>🔄 тестируется</td></tr>
+  <tr><td>Megafon (регионы)</td><td><b>I1=отсутствует</b></td><td><code>--preset=mobile</code> + удалить <code>I1</code></td><td>✅</td></tr>
   </table>
+  <br>
+  <b>«I1=отсутствует»</b> означает: в <code>/etc/amnezia/amneziawg/awg0.conf</code> и в клиентских <code>.conf</code> удалить строку <code>I1 = ...</code> целиком (не оставлять пустую). Это AWG 1.0 fallback — без CPS-маскировки, но handshake проходит DPI у некоторых региональных операторов, где CPS-пакеты сами триггерят блок (Issue <a href="https://github.com/bivlked/amneziawg-installer/issues/42">#42</a>, @alkorrnd). После правки на сервере: <code>sudo systemctl restart awg-quick@awg0</code>. На клиентах — <code>sudo bash /root/awg/manage_amneziawg.sh regen &lt;имя&gt;</code> для каждого, и раздать новые конфиги.
 </details>
 
 <details>
@@ -679,6 +682,34 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
     <li>Добавь строку <code>kernel.printk = 3 4 1 3</code></li>
     <li><code>sudo sysctl -p /etc/sysctl.d/99-amneziawg-security.conf</code></li>
   </ol>
+</details>
+
+<details>
+  <summary><strong>В: Не работает <code>ping</code> между сервером и клиентами внутри туннеля</strong></summary>
+  <b>О:</b> Скрипт устанавливает <code>ufw default deny incoming</code> — это блокирует всё входящее на всех интерфейсах, включая <code>awg0</code>. Forward-правило <code>ufw route allow in on awg0 out on &lt;public_iface&gt;</code> разрешает только туннель → интернет, а input на <code>awg0</code> (пакеты от клиентов на сам сервер, в том числе ICMP echo-request) под него не попадает.
+  <br><br>
+  Дополнительно: если ты правил <code>/etc/ufw/before.rules</code> и заменил <code>ACCEPT</code> на <code>DROP</code> для ICMP без указания интерфейса, эти правила применяются ко всем интерфейсам — включая <code>awg0</code>.
+  <br><br>
+  <b>Решение:</b>
+  <ol>
+    <li>Открой входящее на <code>awg0</code> в UFW:
+      <pre>sudo ufw allow in on awg0
+sudo ufw reload</pre>
+      Это разрешает входящие на интерфейс туннеля целиком — узкая фильтрация ICMP делается через <code>-i</code> в <code>before.rules</code> (см. ниже).
+    </li>
+    <li>Если ты правил <code>/etc/ufw/before.rules</code>, добавь <code>-i &lt;public_iface&gt;</code> ко всем DROP-строкам ICMP:
+      <pre># вместо
+-A ufw-before-input -p icmp --icmp-type echo-request -j DROP
+# так (ens3 — твой публичный интерфейс)
+-A ufw-before-input -i ens3 -p icmp --icmp-type echo-request -j DROP</pre>
+      То же самое для <code>destination-unreachable</code>, <code>time-exceeded</code>, <code>parameter-problem</code>. Имя публичного интерфейса: <code>ip route get 8.8.8.8 | awk '{for(i=1;i&lt;=NF;i++) if($i=="dev") print $(i+1)}'</code>. Применить: <code>sudo ufw reload</code>.
+    </li>
+  </ol>
+  <b>Не работает:</b> <code>ufw allow in on awg0 proto icmp</code> — UFW не поддерживает <code>icmp</code> через флаг <code>proto</code> (только <code>tcp/udp/esp/ah/gre/ipv6</code>).
+  <br><br>
+  <b>Проверка:</b> с клиента <code>ping &lt;IP_сервера_в_туннеле&gt;</code>. С сервера на клиента (<code>ping &lt;IP_клиента&gt;</code>) может не отвечать сам клиент: на Windows и iOS встроенный фаервол часто режет echo-request — поэтому надёжнее проверять с клиента на сервер.
+  <br><br>
+  <b>Если нужен пинг между клиентами</b> (телефон ↔ роутер через сервер): <code>sudo ufw route allow in on awg0 out on awg0 &amp;&amp; sudo ufw reload</code>. <code>AllowedIPs</code> в клиентских <code>.conf</code> стандартно <code>0.0.0.0/0</code> — подсеть туннеля туда уже попадает. Discussion <a href="https://github.com/bivlked/amneziawg-installer/discussions/63">#63</a>.
 </details>
 
 <details>
@@ -856,12 +887,12 @@ sudo bash /root/awg/manage_amneziawg.sh add guest --expires=7d
 <a id="vpnuri-adv"></a>
 ## 📱 vpn:// URI импорт
 
-При создании клиента автоматически генерируется `.vpnuri` файл с `vpn://` URI и, начиная с v5.11.2, QR-код `<имя>.vpnuri.png` с тем же URI — для быстрого импорта в Amnezia VPN app (Android / iOS / Desktop).
+При создании клиента автоматически генерируется `.vpnuri` файл с `vpn://` URI и, начиная с v5.11.3, QR-код `<имя>.vpnuri.png` с тем же URI — для быстрого импорта в Amnezia VPN app (Android / iOS / Desktop).
 
 **Расположение файлов:**
 
 - `/root/awg/<имя_клиента>.vpnuri` — текстовый `vpn://` URI
-- `/root/awg/<имя_клиента>.vpnuri.png` — QR-код этого URI (с v5.11.2)
+- `/root/awg/<имя_клиента>.vpnuri.png` — QR-код этого URI (с v5.11.3)
 
 **Формат:** конфигурация сжимается через zlib (Perl `Compress::Zlib`) и кодируется в Base64, формируя URI вида `vpn://...`.
 
@@ -881,7 +912,7 @@ sudo bash /root/awg/manage_amneziawg.sh add guest --expires=7d
 
 > Рядом лежит `<имя>.png` — QR из `.conf` для классических WireGuard-совместимых клиентов (AmneziaWG Windows, wireguard-apple, `wg-quick`). Это разные форматы с разными получателями: Amnezia VPN app сканирует `.vpnuri.png`, WireGuard-совместимые — `<имя>.png`. Не путайте.
 
-> Для существующих клиентов, созданных до v5.11.2, `.vpnuri.png` появится после одного `manage regen <имя>`. Новые клиенты получают оба QR-кода сразу.
+> Для существующих клиентов, созданных до v5.11.3, `.vpnuri.png` появится после одного `manage regen <имя>`. Новые клиенты получают оба QR-кода сразу.
 
 **Права доступа:** `.vpnuri` и `.vpnuri.png` имеют права 600 (только root).
 

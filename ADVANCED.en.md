@@ -666,10 +666,13 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
   <tr><td>Tattelecom (Letai)</td><td>Jc=3, I1=&lt;r 64&gt;</td><td><code>--preset=mobile</code></td><td>✅</td></tr>
   <tr><td>Yota (Moscow)</td><td>I1=&lt;b 0xce...&gt;, Jmax=261</td><td><code>--preset=mobile</code></td><td>✅</td></tr>
   <tr><td>Yota/Tele2 (Moscow)</td><td>Jc=3, Jmin=40, Jmax=70</td><td><code>--preset=mobile</code></td><td>✅</td></tr>
-  <tr><td>Tele2 (Krasnoyarsk)</td><td>Jc=3</td><td><code>--preset=mobile</code></td><td>✅</td></tr>
+  <tr><td>Tele2 (Krasnoyarsk)</td><td>Jc=3, <b>I1=absent</b></td><td><code>--preset=mobile</code> + remove <code>I1</code></td><td>✅</td></tr>
   <tr><td>Beeline</td><td>default</td><td><code>--preset=default</code></td><td>✅</td></tr>
   <tr><td>Megafon (Moscow)</td><td>Jc=3, Jmin=80, Jmax=268</td><td><code>--preset=mobile</code></td><td>🔄 testing</td></tr>
+  <tr><td>Megafon (regions)</td><td><b>I1=absent</b></td><td><code>--preset=mobile</code> + remove <code>I1</code></td><td>✅</td></tr>
   </table>
+  <br>
+  <b>"I1=absent"</b> means: in <code>/etc/amnezia/amneziawg/awg0.conf</code> and in client <code>.conf</code> files, remove the <code>I1 = ...</code> line entirely (do not leave it empty). This is the AWG 1.0 fallback — no CPS masking, but the handshake clears DPI at some regional carriers where CPS packets themselves trigger blocks (Issue <a href="https://github.com/bivlked/amneziawg-installer/issues/42">#42</a>, @alkorrnd). On the server: <code>sudo systemctl restart awg-quick@awg0</code>. On clients — <code>sudo bash /root/awg/manage_amneziawg.sh regen &lt;name&gt;</code> for each, then redistribute the configs.
 </details>
 
 <details>
@@ -681,6 +684,34 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
     <li>Add a line <code>kernel.printk = 3 4 1 3</code></li>
     <li><code>sudo sysctl -p /etc/sysctl.d/99-amneziawg-security.conf</code></li>
   </ol>
+</details>
+
+<details>
+  <summary><strong>Q: <code>ping</code> does not work between server and clients inside the tunnel</strong></summary>
+  <b>A:</b> The script applies <code>ufw default deny incoming</code> — this blocks all incoming traffic on every interface, including <code>awg0</code>. The forward rule <code>ufw route allow in on awg0 out on &lt;public_iface&gt;</code> only allows tunnel → internet; input on <code>awg0</code> (packets from clients to the server itself, including ICMP echo-request) is not covered by it.
+  <br><br>
+  Additionally: if you edited <code>/etc/ufw/before.rules</code> and replaced <code>ACCEPT</code> with <code>DROP</code> for ICMP without specifying an interface, those rules apply to every interface — including <code>awg0</code>.
+  <br><br>
+  <b>Fix:</b>
+  <ol>
+    <li>Open incoming on <code>awg0</code> in UFW:
+      <pre>sudo ufw allow in on awg0
+sudo ufw reload</pre>
+      This allows all incoming on the tunnel interface — narrow ICMP filtering is done via <code>-i</code> in <code>before.rules</code> (see below).
+    </li>
+    <li>If you edited <code>/etc/ufw/before.rules</code>, add <code>-i &lt;public_iface&gt;</code> to every ICMP DROP line:
+      <pre># instead of
+-A ufw-before-input -p icmp --icmp-type echo-request -j DROP
+# use (ens3 — your public iface)
+-A ufw-before-input -i ens3 -p icmp --icmp-type echo-request -j DROP</pre>
+      Same for <code>destination-unreachable</code>, <code>time-exceeded</code>, <code>parameter-problem</code>. Find your public interface name: <code>ip route get 8.8.8.8 | awk '{for(i=1;i&lt;=NF;i++) if($i=="dev") print $(i+1)}'</code>. Apply: <code>sudo ufw reload</code>.
+    </li>
+  </ol>
+  <b>Does NOT work:</b> <code>ufw allow in on awg0 proto icmp</code> — UFW does not support <code>icmp</code> via the <code>proto</code> flag (only <code>tcp/udp/esp/ah/gre/ipv6</code>).
+  <br><br>
+  <b>Verify:</b> from the client <code>ping &lt;server_tunnel_IP&gt;</code>. From the server to a client (<code>ping &lt;client_IP&gt;</code>) the client itself may not reply: on Windows and iOS the built-in firewall often drops echo-request — testing client → server is the cleanest path.
+  <br><br>
+  <b>For client-to-client ping</b> (phone ↔ router via the server): <code>sudo ufw route allow in on awg0 out on awg0 &amp;&amp; sudo ufw reload</code>. <code>AllowedIPs</code> in client <code>.conf</code> defaults to <code>0.0.0.0/0</code> — the tunnel subnet is already covered. Discussion <a href="https://github.com/bivlked/amneziawg-installer/discussions/63">#63</a>.
 </details>
 
 <details>
@@ -858,12 +889,12 @@ sudo bash /root/awg/manage_amneziawg.sh add guest --expires=7d
 <a id="vpnuri-adv"></a>
 ## 📱 vpn:// URI Import
 
-When a client is created, a `.vpnuri` file is automatically generated with a `vpn://` URI and, since v5.11.2, a QR code `<name>.vpnuri.png` encoding the same URI — for quick import into the Amnezia VPN app (Android / iOS / Desktop).
+When a client is created, a `.vpnuri` file is automatically generated with a `vpn://` URI and, since v5.11.3, a QR code `<name>.vpnuri.png` encoding the same URI — for quick import into the Amnezia VPN app (Android / iOS / Desktop).
 
 **File locations:**
 
 - `/root/awg/<client_name>.vpnuri` — plain-text `vpn://` URI
-- `/root/awg/<client_name>.vpnuri.png` — QR code of that URI (since v5.11.2)
+- `/root/awg/<client_name>.vpnuri.png` — QR code of that URI (since v5.11.3)
 
 **Format:** the configuration is compressed via zlib (Perl `Compress::Zlib`) and Base64-encoded, forming a URI like `vpn://...`.
 
@@ -883,7 +914,7 @@ When a client is created, a `.vpnuri` file is automatically generated with a `vp
 
 > Alongside sits `<name>.png` — the QR of `.conf` for classic WireGuard-compatible clients (AmneziaWG Windows, wireguard-apple, `wg-quick`). The two formats target different clients: Amnezia VPN app scans `.vpnuri.png`, WireGuard-compatible clients scan `<name>.png`. Do not mix them up.
 
-> For existing clients created before v5.11.2, `.vpnuri.png` appears after one `manage regen <name>`. New clients get both QR codes out of the box.
+> For existing clients created before v5.11.3, `.vpnuri.png` appears after one `manage regen <name>`. New clients get both QR codes out of the box.
 
 **Permissions:** `.vpnuri` and `.vpnuri.png` have 600 permissions (root only).
 

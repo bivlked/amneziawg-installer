@@ -14,6 +14,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.11.3] — 2026-04-28
+
+UX patch on top of v5.11.2: cleanups for interactive commands so they behave well under scripts/cron, collision protection on rapid-fire backups, and FAQ extensions that answer recent questions from issues/discussions — no architectural changes.
+
+### Added
+
+- **CLI flag `--yes` for `manage_amneziawg.sh` (RU+EN)** and the equivalent `AWG_YES=1` environment variable skip every confirm prompt — in `remove`, `restore`, and `restart`. Useful for cron, Ansible, and one-off interactive calls that already pre-confirmed. Default behaviour is unchanged — without the flag and without the env var, confirm still works the same way.
+- **Millisecond precision in backup filenames** — `awg_backup_2026-04-28_15-53-50.123.tar.gz` (`date +%F_%H-%M-%S.%3N` in `_backup_configs_nolock`). Resolves the collision in the "two backups within the same second" scenario (e.g. regen → backup → modify → backup) — previously the second tar overwrote the first. Backwards-compat: legacy backups without the `.NNN` suffix still match the `find` pattern and sort correctly.
+- **FAQ: ICMP inside the tunnel (RU+EN, ADVANCED.md)** — why `ping` server↔clients does not flow after `default deny incoming`, how to open `awg0` in UFW, how to fix a user-edited `before.rules` via `-i <iface>`. Discussion [#63](https://github.com/bivlked/amneziawg-installer/discussions/63) (@PavelVVrn). Explicit warning: `ufw allow ... proto icmp` does not work (UFW does not support `icmp` via the `proto` flag).
+- **Carrier → I1 map extended.** Tele2 (Krasnoyarsk) updated: in addition to `Jc=3` the `I1` line must be removed entirely (AWG 1.0 fallback, no CPS masking). New row Megafon (regions) — also `I1=absent`. Below the table — explainer with the exact commands: `systemctl restart awg-quick@awg0` on the server + `manage regen <name>` for every client. Issue [#42](https://github.com/bivlked/amneziawg-installer/issues/42) (@alkorrnd).
+- **`--psk` highlight in README.md/.en.md** — example in the Quick Reference (`add my_iphone --psk`) + a new FAQ entry "Shadowrocket on iOS/macOS does not connect — needs PresharedKey" with step-by-step instructions for new and existing clients. Previously the feature was documented only in ADVANCED — Issue [#62](https://github.com/bivlked/amneziawg-installer/issues/62) (@andreykorobko) showed it was not discoverable.
+
+### Tests
+
+**+34 new bats** (295 total, up from 261 on v5.11.2):
+
+- `test_yes_flag.bats` (+11) — extract `confirm_action` from manage scripts, exercise CLI_YES / AWG_YES branches in isolation; non-`"1"` values of AWG_YES (`"yes"`, `"true"`, `"0"`) are explicitly proven NOT to match the bypass branch under forced-interactive mode; CLI parser accepts `--yes`; usage help mentions `--yes` + `AWG_YES=1`; RU/EN structural parity.
+- `test_backup_collision.bats` (+8) — `date +%3N` produces distinct values under rapid fire; `find` pattern matches both legacy and ms-suffix names; `sort -r` orders correctly in mixed-format directories; RU/EN parity.
+- `test_v5113_docs.bats` (+15) — Phase 3+4+5 docs invariants: ICMP entry present in both languages, oper-table row count parity, README cheat sheet contains the `--psk` example, FAQ Shadowrocket entry present in both languages, RU README strictly links to `ADVANCED.md#manage-cli-adv`, EN README to `ADVANCED.en.md#manage-cli-adv` (cross-language link-drift guard), anchor `manage-cli-adv` resolvable.
+
+### Compatibility
+
+Fully backwards-compatible. `--yes` is opt-in, default behaviour unchanged. Backup ms-suffix is designed to coexist with legacy filenames. Downgrading to v5.11.2 is safe.
+
+### Dependencies
+
+No new ones. `date +%3N` (milliseconds) — standard GNU coreutils, available out of the box on Ubuntu/Debian.
+
+---
+
 ## [5.11.2] — 2026-04-24
 
 UX patch on top of v5.11.1. A second per-client QR code — rendered from the `vpn://` URI — for one-tap import into the flagship Amnezia VPN app (Android / iOS / Desktop). The existing `<name>.png` (scan of `.conf`) is unchanged and keeps working with WireGuard-compatible clients (AmneziaWG Windows, `wireguard-apple`, `wg-quick`).

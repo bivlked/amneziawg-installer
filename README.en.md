@@ -20,7 +20,7 @@
   <img src="https://img.shields.io/badge/Architecture-x86__64_|_ARM64_|_ARMv7-green" alt="x86_64 | ARM64 | ARMv7">
   <a href="https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE"><img src="https://img.shields.io/github/license/bivlked/amneziawg-installer" alt="License"></a>
   <img src="https://img.shields.io/badge/Status-Stable-success" alt="Status">
-  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-5.11.2-blue" alt="Version"></a>
+  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-5.11.3-blue" alt="Version"></a>
   <img src="https://img.shields.io/badge/AmneziaWG-2.0-blueviolet" alt="AWG 2.0">
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/shellcheck.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/shellcheck.yml/badge.svg" alt="ShellCheck"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
@@ -99,7 +99,7 @@ Works on Ubuntu 24.04/25.10 and Debian 12/13. Any cheap VPS with 1 GB RAM is eno
 ## 🚀 Quick Start
 
 ```bash
-wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.2/install_amneziawg_en.sh
+wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.3/install_amneziawg_en.sh
 chmod +x install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh
 ```
@@ -212,8 +212,8 @@ This installation method ensures correct handling of interactive prompts and col
 
 2.  **Download the script:**
     ```bash
-    wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.2/install_amneziawg_en.sh
-    # or: curl -fLo install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.2/install_amneziawg_en.sh
+    wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.3/install_amneziawg_en.sh
+    # or: curl -fLo install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.3/install_amneziawg_en.sh
     ```
 3.  **Make it executable:**
     ```bash
@@ -227,7 +227,7 @@ This installation method ensures correct handling of interactive prompts and col
 
     > **Russian version:** For Russian output, use `install_amneziawg.sh`:
     > ```bash
-    > wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.2/install_amneziawg.sh
+    > wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.3/install_amneziawg.sh
     > sudo bash ./install_amneziawg.sh
     > ```
     > The Russian version is functionally identical; only user-facing messages and logs are in Russian.
@@ -338,15 +338,16 @@ sudo bash /root/awg/manage_amneziawg.sh <command> [arguments]
 
 ```bash
 # Installation (English)
-wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.2/install_amneziawg_en.sh
+wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.3/install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh       # Run (+ 2 reboots)
 
 # Installation (Russian)
-wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.2/install_amneziawg.sh
+wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.3/install_amneziawg.sh
 sudo bash ./install_amneziawg.sh          # Run (+ 2 reboots)
 
 # Client management
 sudo bash /root/awg/manage_amneziawg.sh add my_phone       # Add
+sudo bash /root/awg/manage_amneziawg.sh add my_iphone --psk  # +PresharedKey (Shadowrocket iOS/macOS)
 sudo bash /root/awg/manage_amneziawg.sh remove my_phone    # Remove
 sudo bash /root/awg/manage_amneziawg.sh list                # List
 sudo bash /root/awg/manage_amneziawg.sh regen               # Regenerate
@@ -408,13 +409,13 @@ For the changelog, see **[CHANGELOG.en.md](CHANGELOG.en.md)**.
   <b>A:</b> Download the updated scripts and replace them on the server:
   <pre>
   # English version:
-  wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.2/manage_amneziawg_en.sh
-  wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.2/awg_common_en.sh
+  wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.3/manage_amneziawg_en.sh
+  wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.3/awg_common_en.sh
   chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
   # Russian version:
-  wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.2/manage_amneziawg.sh
-  wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.2/awg_common.sh
+  wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.3/manage_amneziawg.sh
+  wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.3/awg_common.sh
   chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
   </pre>
   Server reinstallation is not required.
@@ -443,6 +444,11 @@ For the changelog, see **[CHANGELOG.en.md](CHANGELOG.en.md)**.
 <details>
   <summary><strong>Q: What are .vpnuri files?</strong></summary>
   <b>A:</b> <code>.vpnuri</code> files contain <code>vpn://</code> URIs for one-tap config import into Amnezia Client. Copy the file contents → open Amnezia Client → "Add VPN" → "Paste from clipboard".
+</details>
+
+<details>
+  <summary><strong>Q: Shadowrocket on iOS/macOS does not connect — needs PresharedKey</strong></summary>
+  <b>A:</b> Since v5.11.1 the <code>add</code> command supports a <code>--psk</code> flag: <code>sudo bash /root/awg/manage_amneziawg.sh add my_iphone --psk</code>. The client config will include a <code>PresharedKey = ...</code> line matching the server <code>[Peer]</code>. For existing clients: recreate with the flag (<code>remove</code> + <code>add --psk</code>) or manually — generate the key <em>once</em> (<code>PSK=$(awg genpsk)</code>) and paste the <em>same value</em> into both sides (the server <code>[Peer]</code> for that client and the client's <code>[Peer]</code> for the server); the handshake fails if the values differ. <code>regen</code> preserves an existing PSK across rotation. Details — in <a href="ADVANCED.en.md#manage-cli-adv">ADVANCED.en.md</a>.
 </details>
 
 <details>

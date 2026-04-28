@@ -14,6 +14,36 @@
 
 ---
 
+## [5.11.3] — 2026-04-28
+
+UX-патч поверх v5.11.2: чистка интерактивных команд под скрипты/cron, защита от collision при rapid-fire бэкапах, и расширение FAQ — ответы на свежие вопросы из issues/discussions, без архитектурных изменений.
+
+### Добавлено
+
+- **CLI-флаг `--yes` для `manage_amneziawg.sh` (RU+EN)** и эквивалентная переменная окружения `AWG_YES=1` пропускают любой confirm-prompt — в `remove`, `restore` и `restart`. Полезно для cron, Ansible и одноразовых интерактивных вызовов где подтверждение уже сделано заранее. Дефолтное поведение не меняется — без флага и без env confirm работает как раньше.
+- **Миллисекундная точность в имени файла бэкапа** — `awg_backup_2026-04-28_15-53-50.123.tar.gz` (`date +%F_%H-%M-%S.%3N` в `_backup_configs_nolock`). Решает collision в сценарии «два backup'а в одну секунду» (например, regen → backup → modify → backup) — раньше второй tar перезаписывал первый. Backwards-compat: старые бэкапы без `.NNN` суффикса по-прежнему находятся `find`-паттерном и корректно сортируются.
+- **FAQ: ICMP внутри туннеля (RU+EN, ADVANCED.md)** — почему `ping` сервер↔клиенты не идёт после `default deny incoming`, как открыть `awg0` в UFW, как поправить пользовательскую правку `before.rules` через `-i <iface>`. Discussion [#63](https://github.com/bivlked/amneziawg-installer/discussions/63) (@PavelVVrn). Явное предупреждение: `ufw allow ... proto icmp` не работает (UFW не поддерживает `icmp` через флаг `proto`).
+- **Карта операторов оператор → I1 расширена.** Tele2 (Красноярск) обновлён: помимо `Jc=3` нужно удалить строку `I1` целиком (AWG 1.0 fallback, без CPS-маскировки). Добавлена строка Megafon (регионы) — тоже `I1=отсутствует`. Под таблицей пояснение зачем и как: `systemctl restart awg-quick@awg0` на сервере + `manage regen <имя>` на каждого клиента. Issue [#42](https://github.com/bivlked/amneziawg-installer/issues/42) (@alkorrnd).
+- **`--psk` highlight в README.md/.en.md** — пример в Краткой справке (`add my_iphone --psk`) + новый FAQ entry «Не подключается Shadowrocket на iOS/macOS — нужен PresharedKey» с пошаговой инструкцией для новых и существующих клиентов. Раньше фича была документирована только в ADVANCED — Issue [#62](https://github.com/bivlked/amneziawg-installer/issues/62) (@andreykorobko) показал что не discoverable.
+
+### Тесты
+
+**+34 новых bats** (295 total, было 261 на v5.11.2):
+
+- `test_yes_flag.bats` (+11) — извлечение `confirm_action` из manage-скриптов, изоляция логики CLI_YES / AWG_YES путей; non-`"1"` значения AWG_YES (`"yes"`, `"true"`, `"0"`) точно не матчат bypass-ветку при принудительно interactive режиме; CLI parser принимает `--yes`; usage help содержит `--yes` + `AWG_YES=1`; structural parity RU/EN.
+- `test_backup_collision.bats` (+8) — `date +%3N` даёт distinct значения при rapid-fire; `find` pattern матчит и legacy, и ms-suffix имена; `sort -r` правильно сортирует при mixed format; RU/EN parity.
+- `test_v5113_docs.bats` (+15) — invariants для Phase 3+4+5 docs: ICMP entry в обоих языках, oper-table row count parity, README cheat sheet содержит `--psk` пример, FAQ Shadowrocket entry в обоих языках, RU README ссылается строго на `ADVANCED.md#manage-cli-adv`, EN README — на `ADVANCED.en.md#manage-cli-adv` (защита от cross-language link drift), anchor `manage-cli-adv` достижим.
+
+### Совместимость
+
+Полностью обратно-совместимо. `--yes` opt-in, по умолчанию ничего не меняется. Backup ms-suffix рассчитан на сосуществование со старыми именами файлов. Откат на v5.11.2 безопасен.
+
+### Зависимости
+
+Новых нет. `date +%3N` (миллисекунды) — стандартный GNU coreutils, есть в Ubuntu/Debian из коробки.
+
+---
+
 ## [5.11.2] — 2026-04-24
 
 UX-патч к v5.11.1. Второй QR-код на клиента — из `vpn://` URI — для one-tap импорта в flagship Amnezia VPN app (Android / iOS / Desktop). Существующий `<имя>.png` (скан из `.conf`) остаётся как есть и работает с WireGuard-совместимыми клиентами (AmneziaWG Windows, `wireguard-apple`, `wg-quick`).
