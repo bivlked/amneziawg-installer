@@ -53,7 +53,11 @@ setup() {
 @test "confirm_action: non-interactive without flags returns 0 (preserves prior behaviour)" {
     # bats runs in a non-TTY context — is_interactive() returns false, so
     # confirm_action falls through to its existing non-interactive path.
+    # CLI_YES/AWG_YES are read inside the eval-extracted confirm_action,
+    # which shellcheck cannot see; suppress the false-positive SC2034.
+    # shellcheck disable=SC2034
     CLI_YES=0
+    # shellcheck disable=SC2034
     AWG_YES=0
     run confirm_action "удалить" "клиента 'foo'"
     [ "$status" -eq 0 ]
@@ -88,6 +92,7 @@ setup() {
     [ "$status" -ne 0 ]
 
     # Sanity: literal "1" still bypasses under same forced-interactive mode.
+    # shellcheck disable=SC2034
     AWG_YES="1"
     run confirm_action "удалить" "клиента 'foo'"
     [ "$status" -eq 0 ]

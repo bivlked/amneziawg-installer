@@ -22,8 +22,7 @@
     # GNU coreutils on Linux/Git Bash supports %3N. BSD date does not, but
     # the project targets Ubuntu/Debian only.
     local seen=()
-    local i
-    for i in 1 2 3 4 5 6 7 8 9 10; do
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
         seen+=("$(date +%3N)")
     done
     local uniq_count
