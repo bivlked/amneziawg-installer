@@ -8,15 +8,15 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 2.0 на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 5.11.3
-# Дата: 2026-04-28
+# Версия: 5.11.4
+# Дата: 2026-05-04
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 set -o pipefail
 
-SCRIPT_VERSION="5.11.3"
+SCRIPT_VERSION="5.11.4"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="669fe3142302a30efcae930c33f553f0813cbda6e657e2d5e77690b8b7dcebfc"
-MANAGE_SCRIPT_SHA256="387d7999b81de8ae3df988adef7e8103aaa6d6a6c7a578674ba078bff62cbf18"
+COMMON_SCRIPT_SHA256="8fc6d3ad16aa8fa247b6fc2e7a5e7899ab9557837b3e889f088826720008b432"
+MANAGE_SCRIPT_SHA256="697077803b08b0a24fc2b241fcdebc3c144f3c6b86789f5139f67fda1dd02179"
 
 # Флаги CLI
 UNINSTALL=0; HELP=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
@@ -167,6 +167,39 @@ apt_update_tolerant() {
         log_error "  $line"
     done
     return "$rc"
+}
+
+# ==============================================================================
+# apt_update_with_retry [max_attempts] [initial_delay_seconds]
+#   Обёртка над apt_update_tolerant с экспоненциальным backoff. Нужна
+#   на шаге 2 после добавления PPA Amnezia: ppa.launchpadcontent.net
+#   иногда коротко лежит (issue #68), и без ретрая первая холодная
+#   установка валится, хотя через минуту PPA уже доступен.
+#
+#   С дефолтами (3 попытки × initial=30с) сценарий такой: попытка 1 →
+#   sleep 30с → попытка 2 → sleep 60с → попытка 3 (последняя). После
+#   третьего fail возвращаем 1, без финального sleep. Итого ожидание
+#   между попытками ≈1.5 минуты.
+#
+#   Не использовать на шаге 1 / общих apt update — там retry лишь
+#   замедлит выявление реальных проблем (404 codename, broken sources).
+#   Cap на delay (1800с) защищает от арифметического переполнения, если
+#   кто-то вызовет helper с очень большим max.
+# ==============================================================================
+apt_update_with_retry() {
+    local max="${1:-3}" delay="${2:-30}" attempt
+    for ((attempt = 1; attempt <= max; attempt++)); do
+        if apt_update_tolerant; then
+            return 0
+        fi
+        if (( attempt == max )); then
+            return 1
+        fi
+        log_warn "apt update не удался (попытка ${attempt}/${max}), повтор через ${delay}с..."
+        sleep "$delay"
+        delay=$(( delay * 2 > 1800 ? 1800 : delay * 2 ))
+    done
+    return 1
 }
 
 # ==============================================================================
@@ -1840,7 +1873,17 @@ PPASRC
         fi
         log "PPA добавлен."
     fi
-    apt_update_tolerant || die "Ошибка apt update."
+    # После добавления PPA: 3 попытки c sleep 30с и 60с между ними
+    # (≈1.5 мин suммарного ожидания). Кратковременный outage
+    # ppa.launchpadcontent.net (issue #68) не должен валить установку.
+    if ! apt_update_with_retry 3 30; then
+        log_error "apt update не прошёл после 3 попыток с backoff 30с и 60с."
+        log_error "Похоже, ppa.launchpadcontent.net сейчас недоступен — это outage"
+        log_error "инфраструктуры Launchpad, не баг скрипта."
+        log_error "Подождите 10–15 минут и запустите скрипт снова той же командой."
+        log_error "Подробнее: https://github.com/bivlked/amneziawg-installer/issues/68"
+        die "PPA Amnezia временно недоступен."
+    fi
 
     # Пакеты AmneziaWG + qrencode (БЕЗ Python!)
     log "Установка пакетов AmneziaWG..."

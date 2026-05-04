@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.11.3
-# Date: 2026-04-28
+# Version: 5.11.4
+# Date: 2026-05-04
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 set -o pipefail
-SCRIPT_VERSION="5.11.3"
+SCRIPT_VERSION="5.11.4"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="84e110db26ada96a5330edc1b6966545b1bd71c3a51435c347ab390f337eaf15"
-MANAGE_SCRIPT_SHA256="23ca1fd86fb0ec103635f85e24498b09d24cfb2348b43829e80363f4e69abcef"
+COMMON_SCRIPT_SHA256="ca34511e3bc526aa403eb0c341f2f758fc5415fc33a61f6b5e17a68abd0f3ed9"
+MANAGE_SCRIPT_SHA256="42f179e4aef39967ea156938dfdfd499f016a412142ef312ff9a353ece3a08b8"
 
 # CLI flags
 UNINSTALL=0; HELP=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
@@ -168,6 +168,39 @@ apt_update_tolerant() {
         log_error "  $line"
     done
     return "$rc"
+}
+
+# ==============================================================================
+# apt_update_with_retry [max_attempts] [initial_delay_seconds]
+#   Wrapper around apt_update_tolerant with exponential backoff. Used in
+#   step 2 after the Amnezia PPA is added: ppa.launchpadcontent.net
+#   sometimes goes briefly down (issue #68), and without retries the first
+#   cold install fails even though the PPA is back a minute later.
+#
+#   With the defaults (3 attempts × initial=30s) the timeline is:
+#   attempt 1 → sleep 30s → attempt 2 → sleep 60s → attempt 3 (last).
+#   After the third fail we return 1 with no further sleep. Total wait
+#   between attempts is about 1.5 minutes.
+#
+#   Do not use on step 1 / generic apt update — retries there only delay
+#   diagnosing real failures (404 codename, broken sources).
+#   The 1800s delay cap guards against arithmetic overflow if the helper
+#   is ever called with a very large max.
+# ==============================================================================
+apt_update_with_retry() {
+    local max="${1:-3}" delay="${2:-30}" attempt
+    for ((attempt = 1; attempt <= max; attempt++)); do
+        if apt_update_tolerant; then
+            return 0
+        fi
+        if (( attempt == max )); then
+            return 1
+        fi
+        log_warn "apt update failed (attempt ${attempt}/${max}), retrying in ${delay}s..."
+        sleep "$delay"
+        delay=$(( delay * 2 > 1800 ? 1800 : delay * 2 ))
+    done
+    return 1
 }
 
 # ==============================================================================
@@ -1852,7 +1885,17 @@ PPASRC
         fi
         log "PPA added."
     fi
-    apt_update_tolerant || die "apt update error."
+    # After PPA add: 3 attempts with 30s and 60s sleeps between them
+    # (~1.5 min total wait). A brief ppa.launchpadcontent.net outage
+    # (issue #68) must not break the install.
+    if ! apt_update_with_retry 3 30; then
+        log_error "apt update failed after 3 attempts with backoff 30s and 60s."
+        log_error "ppa.launchpadcontent.net appears to be down — this is a"
+        log_error "Launchpad infrastructure outage, not a script bug."
+        log_error "Wait 10–15 minutes and re-run the script with the same args."
+        log_error "Details: https://github.com/bivlked/amneziawg-installer/issues/68"
+        die "Amnezia PPA is temporarily unavailable."
+    fi
 
     # AmneziaWG + qrencode packages (NO Python!)
     log "Installing AmneziaWG packages..."

@@ -14,6 +14,43 @@
 
 ---
 
+## [5.11.4] — 2026-05-04
+
+**v5.11.4** — bug-fix-релиз AmneziaWG 2.0 VPN-инсталлятора: два исправления по горячим следам issues после v5.11.3, без архитектурных изменений. Поддержка Ubuntu 24.04 / 25.10, Debian 12 / 13, x86_64 + ARM (Raspberry Pi, Oracle Ampere, Hetzner CAX) — без изменений.
+
+### Главное
+
+- 🔑 **Импорт `vpn://` в Amnezia VPN app теперь забирает PSK.** При `manage add --psk` PresharedKey корректно писался в `[Peer]` сервера и в клиентский `.conf` ещё с v5.11.1, но в `vpn://` URI поле `psk_key` (которое читает AmneziaVPN-парсер) не попадало — клиент поднимал соединение без PSK, сервер с PSK его не пропускал, handshake висел в «никогда». Заодно подчищены trailing CR / spaces в `PresharedKey =` и `AllowedIPs =` (CRLF-конфиги, отредактированные на Windows, больше не утекают `\r` в JSON). ([#67](https://github.com/bivlked/amneziawg-installer/issues/67), @haritos90)
+- 🔁 **Установка переживает короткий outage Launchpad PPA.** Если `ppa.launchpadcontent.net` коротко недоступен (как 3 мая по [#68](https://github.com/bivlked/amneziawg-installer/issues/68)), скрипт делает 3 попытки `apt update` с задержками 30 и 60 секунд. После трёх фейлов — дружелюбное сообщение про инфраструктурный outage Launchpad с прямой ссылкой на issue, чтобы было понятно: это не баг скрипта. ([#68](https://github.com/bivlked/amneziawg-installer/issues/68), @saligin / @baikov)
+
+### Установка
+
+```bash
+wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.4/install_amneziawg.sh
+chmod +x install_amneziawg.sh
+sudo bash ./install_amneziawg.sh
+```
+
+3 команды → ~20 минут → готовый VPN-сервер с обфускацией трафика. Подробнее — [README → Установка](README.md#ustanovka).
+
+### Обновление существующего сервера
+
+Запустите `install_amneziawg.sh` свежей версии — на 5-м шаге `manage_amneziawg.sh` и `awg_common.sh` обновятся автоматически (с проверкой SHA256). Полные команды — [ADVANCED.md → Как обновить скрипты](ADVANCED.md#-как-обновить-скрипты).
+
+### Тесты
+
+**+16 новых bats** (312 total, было 296 на v5.11.3):
+
+- `test_v5114_psk_uri.bats` (+5) — happy path с PSK; отсутствие PSK → `psk_key` не выводится; indented `PresharedKey`; CRLF-конфиг не утечёт `\r` в JSON; пустое значение `PresharedKey =` не превращается в `psk_key:""` (которое всё равно не совпало бы с серверным PSK).
+- `test_v5114_ppa_retry.bats` (+11) — успех с первой попытки; ретрай до победы; исчерпание max attempts; экспоненциальный backoff с doubling; cap 1800 с против переполнения арифметики; RU/EN структурная parity helper'а; ссылка на issue #68 в обоих installer'ах.
+
+### Совместимость и зависимости
+
+- **Полностью обратно-совместимо.** На устойчивой сети retry-helper не добавляет задержек — первая попытка проходит, и дальше всё как раньше. Поведение `manage add --psk` без импорта через `vpn://` не меняется (PSK всегда корректно писался в `.conf`).
+- **Новых зависимостей нет.** Только bash-арифметика и `sleep` — оба стандартные.
+
+---
+
 ## [5.11.3] — 2026-04-28
 
 **v5.11.3** — UX-релиз AmneziaWG 2.0 VPN-инсталлятора: пять улучшений по горячим следам issues и discussions, без архитектурных изменений. Поддержка Ubuntu 24.04 / 25.10, Debian 12 / 13, x86_64 + ARM (Raspberry Pi, Oracle Ampere, Hetzner CAX) — без изменений.
