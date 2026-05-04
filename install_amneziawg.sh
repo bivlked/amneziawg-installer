@@ -170,33 +170,39 @@ apt_update_tolerant() {
 }
 
 # ==============================================================================
-# apt_update_with_retry [max_attempts] [initial_delay_seconds]
-#   Обёртка над apt_update_tolerant с экспоненциальным backoff. Нужна
-#   на шаге 2 после добавления PPA Amnezia: ppa.launchpadcontent.net
-#   иногда коротко лежит (issue #68), и без ретрая первая холодная
-#   установка валится, хотя через минуту PPA уже доступен.
+# apt_wait_for_ppa_package <package> [max_attempts] [initial_delay_seconds]
+#   Ждёт, пока пакет станет видимым в apt-cache, с экспоненциальным
+#   backoff между попытками. Нужно на шаге 2 после добавления PPA
+#   Amnezia: ppa.launchpadcontent.net иногда коротко лежит (issue #68),
+#   и без ретрая первая холодная установка валится, хотя через минуту
+#   PPA уже доступен.
+#
+#   ВАЖНО: проверяется именно apt-cache show, а не rc от apt-get update.
+#   apt-get update toлerantно возвращает 0 даже когда какой-то InRelease
+#   не скачался — поэтому простого retry на rc недостаточно для outage
+#   PPA. Видимость пакета в apt-cache — единственный надёжный сигнал,
+#   что PPA реально проиндексировался.
 #
 #   С дефолтами (3 попытки × initial=30с) сценарий такой: попытка 1 →
-#   sleep 30с → попытка 2 → sleep 60с → попытка 3 (последняя). После
-#   третьего fail возвращаем 1, без финального sleep. Итого ожидание
-#   между попытками ≈1.5 минуты.
+#   sleep 30с → apt update + попытка 2 → sleep 60с → apt update +
+#   попытка 3 (последняя). После третьего fail возвращаем 1.
+#   Итого ожидание между попытками ≈1.5 минуты.
 #
-#   Не использовать на шаге 1 / общих apt update — там retry лишь
-#   замедлит выявление реальных проблем (404 codename, broken sources).
 #   Cap на delay (1800с) защищает от арифметического переполнения, если
 #   кто-то вызовет helper с очень большим max.
 # ==============================================================================
-apt_update_with_retry() {
-    local max="${1:-3}" delay="${2:-30}" attempt
+apt_wait_for_ppa_package() {
+    local pkg="$1" max="${2:-3}" delay="${3:-30}" attempt
     for ((attempt = 1; attempt <= max; attempt++)); do
-        if apt_update_tolerant; then
+        if apt-cache show "$pkg" >/dev/null 2>&1; then
             return 0
         fi
         if (( attempt == max )); then
             return 1
         fi
-        log_warn "apt update не удался (попытка ${attempt}/${max}), повтор через ${delay}с..."
+        log_warn "Пакет '${pkg}' не появился в apt-cache (попытка ${attempt}/${max}, PPA пока недоступен), повтор через ${delay}с..."
         sleep "$delay"
+        apt_update_tolerant >/dev/null 2>&1 || true
         delay=$(( delay * 2 > 1800 ? 1800 : delay * 2 ))
     done
     return 1
@@ -1873,11 +1879,14 @@ PPASRC
         fi
         log "PPA добавлен."
     fi
-    # После добавления PPA: 3 попытки c sleep 30с и 60с между ними
-    # (≈1.5 мин suммарного ожидания). Кратковременный outage
-    # ppa.launchpadcontent.net (issue #68) не должен валить установку.
-    if ! apt_update_with_retry 3 30; then
-        log_error "apt update не прошёл после 3 попыток с backoff 30с и 60с."
+    apt_update_tolerant || log_warn "apt update вернул не-ноль; продолжаем — apt-cache показывает что есть."
+    # apt-get update толерантен к недоступному InRelease (rc=0 даже когда PPA
+    # лежит). Поэтому проверяем именно появление пакета amneziawg-dkms в
+    # apt-cache, с тремя попытками и backoff 30с/60с (≈1.5 мин total).
+    # Кратковременный outage ppa.launchpadcontent.net (issue #68) не должен
+    # валить установку.
+    if ! apt_wait_for_ppa_package amneziawg-dkms 3 30; then
+        log_error "Пакет amneziawg-dkms не появился в apt-cache после 3 попыток."
         log_error "Похоже, ppa.launchpadcontent.net сейчас недоступен — это outage"
         log_error "инфраструктуры Launchpad, не баг скрипта."
         log_error "Подождите 10–15 минут и запустите скрипт снова той же командой."

@@ -171,33 +171,39 @@ apt_update_tolerant() {
 }
 
 # ==============================================================================
-# apt_update_with_retry [max_attempts] [initial_delay_seconds]
-#   Wrapper around apt_update_tolerant with exponential backoff. Used in
-#   step 2 after the Amnezia PPA is added: ppa.launchpadcontent.net
-#   sometimes goes briefly down (issue #68), and without retries the first
-#   cold install fails even though the PPA is back a minute later.
+# apt_wait_for_ppa_package <package> [max_attempts] [initial_delay_seconds]
+#   Waits until the given package becomes visible in apt-cache, with
+#   exponential backoff between attempts. Needed in step 2 after the
+#   Amnezia PPA is added: ppa.launchpadcontent.net sometimes briefly
+#   goes down (issue #68), and without retries the first cold install
+#   fails even though the PPA is back a minute later.
+#
+#   IMPORTANT: this checks apt-cache show, not the rc of apt-get update.
+#   apt-get update returns 0 tolerantly even when an InRelease file did
+#   not download — so a plain rc-based retry does not catch a PPA outage.
+#   Package visibility in apt-cache is the only reliable signal that
+#   the PPA actually got indexed.
 #
 #   With the defaults (3 attempts × initial=30s) the timeline is:
-#   attempt 1 → sleep 30s → attempt 2 → sleep 60s → attempt 3 (last).
-#   After the third fail we return 1 with no further sleep. Total wait
-#   between attempts is about 1.5 minutes.
+#   attempt 1 → sleep 30s → apt update + attempt 2 → sleep 60s →
+#   apt update + attempt 3 (last). After the third fail we return 1.
+#   Total wait between attempts is about 1.5 minutes.
 #
-#   Do not use on step 1 / generic apt update — retries there only delay
-#   diagnosing real failures (404 codename, broken sources).
 #   The 1800s delay cap guards against arithmetic overflow if the helper
 #   is ever called with a very large max.
 # ==============================================================================
-apt_update_with_retry() {
-    local max="${1:-3}" delay="${2:-30}" attempt
+apt_wait_for_ppa_package() {
+    local pkg="$1" max="${2:-3}" delay="${3:-30}" attempt
     for ((attempt = 1; attempt <= max; attempt++)); do
-        if apt_update_tolerant; then
+        if apt-cache show "$pkg" >/dev/null 2>&1; then
             return 0
         fi
         if (( attempt == max )); then
             return 1
         fi
-        log_warn "apt update failed (attempt ${attempt}/${max}), retrying in ${delay}s..."
+        log_warn "Package '${pkg}' did not appear in apt-cache (attempt ${attempt}/${max}, PPA still unavailable), retrying in ${delay}s..."
         sleep "$delay"
+        apt_update_tolerant >/dev/null 2>&1 || true
         delay=$(( delay * 2 > 1800 ? 1800 : delay * 2 ))
     done
     return 1
@@ -1885,11 +1891,14 @@ PPASRC
         fi
         log "PPA added."
     fi
-    # After PPA add: 3 attempts with 30s and 60s sleeps between them
-    # (~1.5 min total wait). A brief ppa.launchpadcontent.net outage
-    # (issue #68) must not break the install.
-    if ! apt_update_with_retry 3 30; then
-        log_error "apt update failed after 3 attempts with backoff 30s and 60s."
+    apt_update_tolerant || log_warn "apt update returned non-zero; continuing — apt-cache will tell us whether the index is good."
+    # apt-get update is tolerant to an unreachable InRelease (rc=0 even when
+    # the PPA is down). So we check that amneziawg-dkms actually appears in
+    # apt-cache, with three attempts and 30s/60s backoff (~1.5 min total).
+    # A brief ppa.launchpadcontent.net outage (issue #68) must not break
+    # the install.
+    if ! apt_wait_for_ppa_package amneziawg-dkms 3 30; then
+        log_error "Package amneziawg-dkms did not appear in apt-cache after 3 attempts."
         log_error "ppa.launchpadcontent.net appears to be down — this is a"
         log_error "Launchpad infrastructure outage, not a script bug."
         log_error "Wait 10–15 minutes and re-run the script with the same args."
