@@ -180,6 +180,264 @@ generate_awg_h_ranges() {
 }
 
 # ==============================================================================
+# DKMS / amneziawg kernel module auto-recovery
+# ==============================================================================
+#
+# After an apt kernel upgrade the DKMS module must be rebuilt for the new
+# kernel. If that did not happen automatically (or the module was unbound),
+# the 4 functions below perform an idempotent recovery:
+#
+#   _sanitize_awg_dkms_conf       — strip the deprecated REMAKE_INITRD= directive
+#   _install_kernel_headers       — distro-aware fallback chain (Ubuntu/Debian)
+#   _ensure_awg_quick_running     — start awg-quick@awg0 if inactive
+#   ensure_amneziawg_kernel_module — master, public entry point
+#
+# === Use context and safety contract ===
+#
+# Master ensure_amneziawg_kernel_module() assumes that the running kernel
+# (uname -r) is the target kernel — i.e. it is suited for post-reboot
+# contexts only: manage repair-module, manage add/remove (after the user
+# rebooted), the systemd unit (which fires at boot when the new kernel is
+# already running). From a DPkg::Post-Invoke hook uname -r still returns the
+# OLD kernel — for that case the Phase 3 apt-hook helper will use a separate
+# wrapper that iterates target kernels via /lib/modules/*/build.
+#
+# Master does NOT call apt-get install by default (deadlock in any context
+# where a parent process holds /var/lib/dpkg/lock-frontend). The apt step is
+# gated by the AWG_ALLOW_APT_IN_ENSURE=1 environment variable, which is set
+# only by install_amneziawg step 2 / manage repair-module. The apt hook
+# helper and the systemd unit do NOT set it; master skips the headers step.
+#
+# Headers must be set up separately at install time via a meta-package
+# (linux-headers-$(arch) on Debian, linux-headers-generic on Ubuntu) — apt
+# then pulls matching headers automatically on apt kernel upgrade.
+
+# Strip the deprecated REMAKE_INITRD= directive from the amneziawg dkms.conf.
+# Modern DKMS versions consider it deprecated and print noisy warnings.
+_sanitize_awg_dkms_conf() {
+    local conf
+    for conf in /var/lib/dkms/amneziawg/*/source/dkms.conf; do
+        [[ -f "$conf" ]] && sed -i '/^REMAKE_INITRD=/d' "$conf"
+    done
+}
+
+# Install a kernel headers package via a distro-aware fallback chain.
+# Argument: kernel version (defaults to $(uname -r)).
+# Returns: 0 if at least one candidate installed successfully, 1 if all failed.
+#
+# IMPORTANT: only call from contexts where the apt lock is available
+# (install_amneziawg step 2 or manage repair-module). MUST NOT be called from
+# the DPkg::Post-Invoke hook.
+#
+# Recognises Raspberry Pi Foundation kernels (+rpt/-rpi suffix):
+# linux-headers-rpi-2712 (Pi 5 / Cortex-A76) or linux-headers-rpi-v8 (Pi 3/4 arm64).
+_install_kernel_headers() {
+    # Defense-in-depth: this function calls apt-get install and must never
+    # run from a hook context (deadlock on dpkg lock). Master already gates
+    # it via AWG_ALLOW_APT_IN_ENSURE, but the _ prefix is not enforced — the
+    # same gate is added here so an accidental direct call from a third-party
+    # script still cannot bypass the protection.
+    if [[ "${AWG_ALLOW_APT_IN_ENSURE:-0}" != "1" ]]; then
+        log_error "_install_kernel_headers: AWG_ALLOW_APT_IN_ENSURE is not set — apt invocation forbidden in this context."
+        return 1
+    fi
+
+    local kernel_ver="${1:-$(uname -r)}"
+    local candidates=()
+
+    # RPi Foundation kernel (suffix +rpt or -rpi) — separate meta-package
+    # regardless of distro. Pattern check order: 2712 → v7l → v7 → v8 (default).
+    if [[ "$kernel_ver" == *+rpt* || "$kernel_ver" == *-rpi* ]]; then
+        if [[ "$kernel_ver" == *2712* ]]; then
+            candidates+=("linux-headers-rpi-2712")  # Pi 5 / Cortex-A76
+        elif [[ "$kernel_ver" == *-rpi-v7l* ]]; then
+            candidates+=("linux-headers-rpi-v7l")   # armhf 32-bit (LPAE)
+        elif [[ "$kernel_ver" == *-rpi-v7* ]]; then
+            candidates+=("linux-headers-rpi-v7")    # armhf 32-bit older
+        else
+            candidates+=("linux-headers-rpi-v8")    # Pi 3/4 arm64 default
+        fi
+    fi
+
+    case "${OS_ID:-}" in
+        ubuntu)
+            candidates+=(
+                "linux-headers-${kernel_ver}"
+                "linux-headers-generic"
+                "raspberrypi-kernel-headers"
+            )
+            ;;
+        debian)
+            local arch
+            arch=$(dpkg --print-architecture 2>/dev/null)
+            candidates+=("linux-headers-${kernel_ver}")
+            [[ -n "$arch" ]] && candidates+=("linux-headers-${arch}")
+            ;;
+        *)
+            log_error "Installing kernel headers: unknown OS_ID='${OS_ID:-}' (only ubuntu/debian are supported)."
+            return 1
+            ;;
+    esac
+
+    local pkg
+    for pkg in "${candidates[@]}"; do
+        if apt-get install -y "$pkg" >/dev/null 2>&1; then
+            log "Installed kernel headers: $pkg"
+            return 0
+        fi
+        log_warn "Failed to install $pkg, trying next candidate..."
+    done
+    log_error "Failed to install any kernel headers package (${candidates[*]})."
+    return 1
+}
+
+# Start awg-quick@<iface> if the service is inactive.
+# Argument: interface name (defaults to awg0).
+# Returns: 0 on successful start or if already active, 1 on failure.
+_ensure_awg_quick_running() {
+    local iface="${1:-awg0}"
+    local svc="awg-quick@${iface}.service"
+
+    if systemctl is-active --quiet "$svc"; then
+        return 0
+    fi
+
+    log "Starting $svc (was inactive)..."
+    if systemctl start "$svc"; then
+        log "$svc started."
+        return 0
+    fi
+    log_error "Failed to start $svc. Details: systemctl status $svc"
+    return 1
+}
+
+# Master: ensure that the amneziawg kernel module is built and loaded for the running kernel.
+# Idempotent: fast-path returns 0 if the module is already loaded.
+#
+# Argument: mode — "full" (default: module + start awg-quick) or
+#                  "module-only" (module only, no service start).
+#
+# IMPORTANT: master is intended for post-reboot contexts (manage repair-module,
+# manage add/remove after a reboot, the systemd unit at boot). Apt/dpkg hook
+# code MUST NOT call master — uname -r inside Post-Invoke still returns the
+# OLD kernel, so the hook must use a separate wrapper that iterates target
+# kernels via /lib/modules/*/build (Phase 3 helper).
+#
+# Environment: AWG_ALLOW_APT_IN_ENSURE=1 enables the kernel-headers install step
+# via apt-get install (dangerous in hook context — deadlock on dpkg lock).
+# When unset → headers step is skipped with a warning (assumes headers are
+# already on disk via the linux-headers-$(arch) meta-package).
+#
+# When needed, runs a 5-step recovery:
+#   headers → sanitize → dkms autoinstall → depmod → modprobe.
+#
+# Returns:
+#   0 — module loaded successfully (and in "full" mode awg-quick is active).
+#   1 — final modprobe failed, or invalid mode argument
+#       (with a 4-step manual recovery printed to the log).
+ensure_amneziawg_kernel_module() {
+    local mode="${1:-full}"
+    case "$mode" in
+        full|module-only) ;;
+        *)
+            log_error "ensure_amneziawg_kernel_module: invalid mode '$mode' (expected 'full' or 'module-only')."
+            return 1
+            ;;
+    esac
+    local kernel_ver
+    kernel_ver="$(uname -r)"
+
+    # Fast-path: module already loaded.
+    if lsmod 2>/dev/null | awk '{print $1}' | grep -qx 'amneziawg'; then
+        if [[ "$mode" == "full" ]]; then
+            _ensure_awg_quick_running awg0 || \
+                log_warn "Module is active but awg-quick@awg0 did not start (module OK, this is a service issue)."
+        fi
+        return 0
+    fi
+
+    # Module on disk for the running kernel — try modprobe before full repair.
+    if find "/lib/modules/${kernel_ver}" -name 'amneziawg.ko*' -print -quit 2>/dev/null | grep -q .; then
+        if modprobe amneziawg 2>/dev/null && \
+           lsmod 2>/dev/null | awk '{print $1}' | grep -qx 'amneziawg'; then
+            log "amneziawg module found on disk and loaded successfully."
+            if [[ "$mode" == "full" ]]; then
+                _ensure_awg_quick_running awg0 || \
+                    log_warn "Module loaded but awg-quick@awg0 did not start (module OK, this is a service issue)."
+            fi
+            return 0
+        fi
+    fi
+
+    log_warn "amneziawg module is not loaded and not built for kernel ${kernel_ver}."
+    log_warn "Starting automatic recovery..."
+
+    # Step 1: kernel headers — only when apt is allowed by the calling context.
+    if [[ "${AWG_ALLOW_APT_IN_ENSURE:-0}" == "1" ]]; then
+        case "${OS_ID:-}" in
+            ubuntu|debian)
+                local headers_pkg="linux-headers-${kernel_ver}"
+                if ! dpkg-query -W -f='${Status}' "$headers_pkg" 2>/dev/null | grep -q 'install ok installed'; then
+                    log "Kernel headers ($headers_pkg) are not installed. Installing..."
+                    _install_kernel_headers "$kernel_ver" || \
+                        log_warn "Failed to install kernel headers. The DKMS module build may fail."
+                fi
+                ;;
+        esac
+    elif [[ ! -d "/lib/modules/${kernel_ver}/build" ]]; then
+        log_warn "/lib/modules/${kernel_ver}/build is missing, headers are not installed."
+        log_warn "Apt install skipped (context does not allow apt). The DKMS build will most likely fail."
+    fi
+
+    # Step 2: strip the deprecated REMAKE_INITRD from dkms.conf
+    _sanitize_awg_dkms_conf
+
+    # Step 3: dkms autoinstall for the running kernel.
+    # If this step reports an error, still try modprobe below — that's the definitive check.
+    if command -v dkms >/dev/null 2>&1; then
+        log "Running: dkms autoinstall -k ${kernel_ver}"
+        if ! dkms autoinstall -k "${kernel_ver}" >/dev/null 2>&1; then
+            log_warn "dkms autoinstall reported an error for kernel ${kernel_ver}."
+            local dkms_log
+            dkms_log=$(find /var/lib/dkms/amneziawg -name 'make.log' -path "*${kernel_ver}*" 2>/dev/null | head -n 1)
+            if [[ -n "$dkms_log" ]]; then
+                log_warn "Last 20 lines of the DKMS build log (${dkms_log}):"
+                tail -20 "$dkms_log" | while IFS= read -r line; do log_warn "  $line"; done
+            else
+                log_warn "Build log not found. Details under /var/lib/dkms/amneziawg/."
+            fi
+        fi
+    else
+        log_warn "The dkms package is not installed. Cannot rebuild the kernel module."
+    fi
+
+    # Step 4: rebuild module dependency cache for the specific kernel.
+    if command -v depmod >/dev/null 2>&1; then
+        depmod -a "$kernel_ver" 2>/dev/null || \
+            log_warn "depmod -a $kernel_ver reported an error; modprobe below will give the final diagnosis."
+    fi
+
+    # Step 5: final modprobe attempt.
+    if ! modprobe amneziawg 2>/dev/null; then
+        log_error "amneziawg kernel module could not be loaded for kernel ${kernel_ver}."
+        log_error "The module is not present in /lib/modules/${kernel_ver}/."
+        log_error "Manual recovery:"
+        log_error "  1. apt install -y \"linux-headers-${kernel_ver}\""
+        log_error "  2. dkms autoinstall -k \"${kernel_ver}\" && depmod -a"
+        log_error "  3. modprobe amneziawg"
+        log_error "  4. systemctl start \"awg-quick@awg0\""
+        return 1
+    fi
+
+    log "amneziawg module loaded successfully for kernel ${kernel_ver}."
+    if [[ "$mode" == "full" ]]; then
+        _ensure_awg_quick_running awg0 || \
+            log_warn "Module loaded but awg-quick@awg0 did not start (module OK, this is a service issue)."
+    fi
+    return 0
+}
+
+# ==============================================================================
 # Loading / saving parameters
 # ==============================================================================
 
