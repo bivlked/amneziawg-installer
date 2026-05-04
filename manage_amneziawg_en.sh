@@ -1126,6 +1126,8 @@ usage() {
     echo "  check | status        Check server status"
     echo "  show                  Show \`awg show\` status"
     echo "  restart               Restart AmneziaWG service"
+    echo "  repair-module         Repair the kernel module after a kernel upgrade"
+    echo "                        (dkms autoinstall + modprobe + start awg-quick)"
     echo "  help                  Show this help"
     echo ""
     exit 1
@@ -1148,6 +1150,11 @@ _cmd_rc=0
 case $COMMAND in
     add)
         [[ ${#ARGS[@]} -eq 0 ]] && die "Client name not specified."
+
+        # Make sure the amneziawg kernel module is loaded and awg-quick@awg0 is up.
+        # Without it apply_config (awg syncconf) fails. See also 'manage repair-module'.
+        ensure_amneziawg_kernel_module \
+            || die "amneziawg kernel module unavailable. Run 'manage repair-module' and try again."
 
         # --psk: enable optional PresharedKey for every new client.
         # Export CLIENT_PSK="auto" -> generate_client produces a fresh
@@ -1232,6 +1239,10 @@ case $COMMAND in
             else
                 if ! confirm_action "remove" "${#_valid_names[@]} clients"; then exit 1; fi
             fi
+
+            # Ensure module is loaded before any mutations (apply_config / awg syncconf).
+            ensure_amneziawg_kernel_module \
+                || die "amneziawg kernel module unavailable. Run 'manage repair-module' and try again."
 
             _removed=0
             for _rname in "${_valid_names[@]}"; do
@@ -1340,6 +1351,11 @@ case $COMMAND in
     restart)
         log "Restarting service..."
         if ! confirm_action "restart" "service"; then exit 1; fi
+        # Verify kernel module is loaded before systemctl restart (mode=module-only —
+        # the restart below starts the unit explicitly, so an extra start from ensure
+        # would be redundant).
+        ensure_amneziawg_kernel_module module-only \
+            || die "amneziawg kernel module unavailable. Run 'manage repair-module' and try again."
         if ! systemctl restart awg-quick@awg0; then
             log_error "Restart error."
             status_out=$(systemctl status awg-quick@awg0 --no-pager 2>&1) || true
@@ -1347,6 +1363,19 @@ case $COMMAND in
             exit 1
         else
             log "Service restarted."
+        fi
+        ;;
+
+    repair-module|repair)
+        # Explicit user-facing command: after a kernel upgrade the module may
+        # need a DKMS rebuild. Allow apt-installing kernel headers here
+        # (AWG_ALLOW_APT_IN_ENSURE=1) — the user explicitly requested repair.
+        log "Repairing amneziawg kernel module (may take up to 5 minutes — DKMS rebuild)..."
+        if AWG_ALLOW_APT_IN_ENSURE=1 ensure_amneziawg_kernel_module full; then
+            log "amneziawg kernel module repaired, awg-quick@awg0 service is active."
+        else
+            log_error "Could not repair the kernel module. See log above; manual recovery may be required."
+            _cmd_rc=1
         fi
         ;;
 

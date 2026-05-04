@@ -1123,6 +1123,8 @@ usage() {
     echo "  check | status        Проверить состояние сервера"
     echo "  show                  Показать статус \`awg show\`"
     echo "  restart               Перезапустить сервис AmneziaWG"
+    echo "  repair-module         Восстановить модуль ядра после kernel upgrade"
+    echo "                        (dkms autoinstall + modprobe + запуск awg-quick)"
     echo "  help                  Показать эту справку"
     echo ""
     exit 1
@@ -1145,6 +1147,11 @@ _cmd_rc=0
 case $COMMAND in
     add)
         [[ ${#ARGS[@]} -eq 0 ]] && die "Не указано имя клиента."
+
+        # Гарантируем, что модуль ядра amneziawg загружен и awg-quick@awg0 активен.
+        # Без этого apply_config (awg syncconf) упадёт. См. также 'manage repair-module'.
+        ensure_amneziawg_kernel_module \
+            || die "Модуль ядра amneziawg недоступен. Запустите 'manage repair-module' и повторите."
 
         # --psk: включить опциональный PresharedKey для каждого нового клиента.
         # Export CLIENT_PSK="auto" → generate_client сам сгенерирует 32-байт
@@ -1230,6 +1237,10 @@ case $COMMAND in
             else
                 if ! confirm_action "удалить" "${#_valid_names[@]} клиентов"; then exit 1; fi
             fi
+
+            # Гарантируем загруженный модуль до любых мутаций (apply_config / awg syncconf).
+            ensure_amneziawg_kernel_module \
+                || die "Модуль ядра amneziawg недоступен. Запустите 'manage repair-module' и повторите."
 
             _removed=0
             for _rname in "${_valid_names[@]}"; do
@@ -1338,6 +1349,10 @@ case $COMMAND in
     restart)
         log "Перезапуск сервиса..."
         if ! confirm_action "перезапустить" "сервис"; then exit 1; fi
+        # Перед systemctl restart убеждаемся, что модуль ядра загружен (mode=module-only,
+        # т.к. сам systemctl ниже стартует unit явно — повторный start от ensure избыточен).
+        ensure_amneziawg_kernel_module module-only \
+            || die "Модуль ядра amneziawg недоступен. Запустите 'manage repair-module' и повторите."
         if ! systemctl restart awg-quick@awg0; then
             log_error "Ошибка перезапуска."
             status_out=$(systemctl status awg-quick@awg0 --no-pager 2>&1) || true
@@ -1345,6 +1360,19 @@ case $COMMAND in
             exit 1
         else
             log "Сервис перезапущен."
+        fi
+        ;;
+
+    repair-module|repair)
+        # Явная пользовательская команда: после kernel upgrade модуль может
+        # требовать пересборки DKMS. Здесь разрешаем apt-установку headers
+        # (AWG_ALLOW_APT_IN_ENSURE=1) — пользователь явно запросил восстановление.
+        log "Восстановление модуля ядра amneziawg (может занять до 5 минут — DKMS rebuild)..."
+        if AWG_ALLOW_APT_IN_ENSURE=1 ensure_amneziawg_kernel_module full; then
+            log "Модуль ядра amneziawg восстановлен, сервис awg-quick@awg0 активен."
+        else
+            log_error "Не удалось восстановить модуль ядра. См. лог выше; при необходимости выполните ручное восстановление."
+            _cmd_rc=1
         fi
         ;;
 
