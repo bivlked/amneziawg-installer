@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.11.4
-# Date: 2026-05-04
+# Version: 5.11.5
+# Date: 2026-05-05
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 set -o pipefail
-SCRIPT_VERSION="5.11.4"
+SCRIPT_VERSION="5.11.5"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="ca34511e3bc526aa403eb0c341f2f758fc5415fc33a61f6b5e17a68abd0f3ed9"
-MANAGE_SCRIPT_SHA256="42f179e4aef39967ea156938dfdfd499f016a412142ef312ff9a353ece3a08b8"
+COMMON_SCRIPT_SHA256="117c76e6dab567d5089807e90e1044eb417eb4e81dc6f9c032f279bc793ce516"
+MANAGE_SCRIPT_SHA256="dcb9e39631ed9a6a8064752acafd40e12e913ba7a4ac63da47c0139ccd7dff82"
 
 # CLI flags
 UNINSTALL=0; HELP=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
@@ -134,7 +134,18 @@ die()       { log_error "CRITICAL ERROR: $1"; log_error "Installation aborted. L
 # Any other error (GPG, binary-package network, silent crash / OOM / SIGKILL) → non-zero.
 # ==============================================================================
 apt_update_tolerant() {
-    local err_output rc non_src_errors
+    # --ppa-amnezia-tolerant: also ignore errors from the Amnezia PPA. Used
+    # in step 2 — apt_wait_for_ppa_package below already retries for the
+    # ppa.launchpadcontent.net outage scenario (issue #68). Without this
+    # flag we must fail fast on any non-source error, otherwise the script
+    # would continue installing on a stale apt-cache (PR #69 review finding).
+    local ppa_tolerant=0
+    if [[ "${1:-}" == "--ppa-amnezia-tolerant" ]]; then
+        ppa_tolerant=1
+        shift
+    fi
+
+    local err_output rc non_src_errors raw_had_non_src_errors=0
     err_output=$(LANG=C LC_ALL=C apt-get update -y 2>&1)
     rc=$?
     echo "$err_output"
@@ -151,12 +162,32 @@ apt_update_tolerant() {
         | grep -vE '(deb-src|/source/|Sources([^[:alpha:]]|$))' \
         | grep -vE 'Some index files failed to download' || true)
 
+    # Remember pre-PPA-filter state — we need to distinguish "real APT errors,
+    # but all on Amnezia PPA" (tolerant OK) from "no classifiable errors at all"
+    # (OOM / silent crash — NOT tolerant even if the output happens to mention
+    # a PPA URL elsewhere).
+    [[ -n "$non_src_errors" ]] && raw_had_non_src_errors=1
+
+    # Optional (step 2): drop errors that are only on the Amnezia PPA — they
+    # will be re-checked via apt_wait_for_ppa_package against apt-cache (issue #68).
+    if [[ $ppa_tolerant -eq 1 && -n "$non_src_errors" ]]; then
+        non_src_errors=$(printf '%s\n' "$non_src_errors" \
+            | grep -vE 'ppa\.launchpadcontent\.net.*amnezia' || true)
+    fi
+
     if [[ -z "$non_src_errors" ]]; then
         # Edge case: rc != 0 but no classifiable E:/Err:/W: lines found
         # (OOM-killer SIGKILL, silent crash, unknown apt output format).
-        # Ignore ONLY if the output actually contains source-markers.
+        # Ignore ONLY if the output actually contains source-markers, or if
+        # ppa-tolerant + there were real APT lines and all of them were on the
+        # Amnezia PPA.
         if printf '%s\n' "$err_output" | grep -qE '(deb-src|/source/|Sources([^[:alpha:]]|$))'; then
             log_warn "apt update: source packages unavailable in mirror (expected, ignored)"
+            return 0
+        fi
+        if [[ $ppa_tolerant -eq 1 && $raw_had_non_src_errors -eq 1 ]] \
+            && printf '%s\n' "$err_output" | grep -qE 'ppa\.launchpadcontent\.net.*amnezia'; then
+            log_warn "apt update: errors only on Amnezia PPA (issue #68), continuing with retry."
             return 0
         fi
         log_error "apt update exited with rc=$rc without any classifiable APT lines — possible silent crash / OOM / SIGKILL"
@@ -1891,7 +1922,19 @@ PPASRC
         fi
         log "PPA added."
     fi
-    apt_update_tolerant || log_warn "apt update returned non-zero; continuing — apt-cache will tell us whether the index is good."
+    # apt-get update + error classification:
+    #   - Errors only on the Amnezia PPA → continue, apt_wait_for_ppa_package
+    #     below will retry (issue #68: ppa.launchpadcontent.net briefly down).
+    #   - Any other non-source error (DNS / GPG mismatch / dpkg lock on the
+    #     base mirror) → fail fast. Continuing on a stale apt-cache is unsafe —
+    #     the next apt-get install would fail with a less actionable error
+    #     (PR #69 review finding).
+    if ! apt_update_tolerant --ppa-amnezia-tolerant; then
+        log_error "apt-get update failed with a hard error — not a PPA outage (issue #68)."
+        log_error "Check: DNS, access to archive.ubuntu.com / deb.debian.org,"
+        log_error "integrity of keys in /etc/apt/keyrings, dpkg lock contention."
+        die "apt update returned an error (rc!=0, not the Amnezia PPA)."
+    fi
     # apt-get update is tolerant to an unreachable InRelease (rc=0 even when
     # the PPA is down). So we check that amneziawg-dkms actually appears in
     # apt-cache, with three attempts and 30s/60s backoff (~1.5 min total).

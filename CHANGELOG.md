@@ -14,6 +14,46 @@
 
 ---
 
+## [5.11.5] — 2026-05-05
+
+**v5.11.5** — bug-fix-релиз AmneziaWG 2.0 VPN-инсталлятора: два точечных исправления после v5.11.4, без архитектурных изменений. Поддержка Ubuntu 24.04 / 25.10, Debian 12 / 13, x86_64 + ARM (Raspberry Pi, Oracle Ampere, Hetzner CAX) — без изменений.
+
+### Главное
+
+- 🔁 **`manage regen c1 c2 c3` теперь перегенерирует все три клиента, а не только первого.** До v5.11.5 в `regen` использовался только первый аргумент из списка, остальные молча игнорировались — у `add` и `remove` цикл по аргументам уже был, в `regen` я его забыл прописать. Теперь поведение приведено к единому виду: каждое имя валидируется и обрабатывается отдельно, отсутствующий клиент даёт warning + `rc=1`, валидные продолжают обрабатываться, в конце — суммарный счётчик `Обработано: N из M`. Поведение `manage regen` без аргументов («перегенерить всех») сохранено. ([#70](https://github.com/bivlked/amneziawg-installer/issues/70), @Barmem)
+- 🛡 **Шаг 2 установки: hard error apt-get update больше не маскируется.** В v5.11.4 я ослабил проверку `apt-get update` на шаге 2 до warning, чтобы пропустить outage Launchpad PPA (issue #68). Побочный эффект: при настоящих ошибках apt — отказ DNS, GPG mismatch, занятый dpkg-lock на основном зеркале — установка продолжалась на устаревшем `apt-cache` и падала позже с менее понятным сообщением. Теперь логика разделяет два сценария: ошибки только на PPA Amnezia (issue #68) — продолжаем, `apt_wait_for_ppa_package` сделает retry; любая другая non-source ошибка — `die` с указанием, что проверять (DNS / `/etc/apt/keyrings` / dpkg-lock). Заодно поправлено поведение в edge-case OOM/silent-crash apt — теперь не «глотается», даже если в выводе мелькает PPA-URL. (post-merge review на [PR #69](https://github.com/bivlked/amneziawg-installer/pull/69))
+
+### Прочее
+
+- 📚 **Документация: AWG 2.0 vs AWG 1.0 (S3/S4).** В `ADVANCED.md` добавлена FAQ-секция о том, что сервер AmneziaWG 2.0 с `S3>0` или `S4>0` не совместим с клиентами AWG 1.0 (см. upstream-issue [`amnezia-vpn/amneziawg-linux-kernel-module#168`](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/168)). Мой инсталлятор всегда генерирует `S3=8..55`, `S4=4..27` — оба `>0`, поэтому в типичном сценарии (Amnezia VPN client + клиенты, сгенерированные `manage`) проблема не возникает. Риск только при ручном импорте серверного preset в WireGuard/AWG 1.0 клиент.
+
+### Установка
+
+```bash
+wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.5/install_amneziawg.sh
+chmod +x install_amneziawg.sh
+sudo bash ./install_amneziawg.sh
+```
+
+3 команды → ~20 минут → готовый VPN-сервер с обфускацией трафика. Подробнее — [README → Установка](README.md#установка).
+
+### Обновление существующего сервера
+
+Запустите `install_amneziawg.sh` свежей версии — на 5-м шаге `manage_amneziawg.sh` и `awg_common.sh` обновятся автоматически (с проверкой SHA256). Полные команды — [ADVANCED.md → Как обновить скрипты](ADVANCED.md#-как-обновить-скрипты).
+
+### Тесты
+
+**+13 новых bats** (325 total, было 312 на v5.11.4):
+
+- `test_v5115_regen_multiarg.bats` (+13) — RU/EN regen case итерирует `ARGS[@]` (главный fix для #70); счётчик `_regen_count` и сводное сообщение «Обработано: N из M» / «Processed: N of M»; нет регрессии: одиночный `regen <name>` и `regen` без аргументов работают как раньше; ошибочные/несуществующие имена дают warning + `rc=1`, не обрывают batch; RU/EN structural parity по управляющим токенам regen-ветки; `apt_update_tolerant` принимает `--ppa-amnezia-tolerant` flag и `local ppa_tolerant=0` объявлен в обоих installers; шаг 2 вызывает функцию с этим флагом и `die` на hard error; OOM/silent-crash guard через `raw_had_non_src_errors` присутствует в обоих installers; `SCRIPT_VERSION="5.11.5"` обновлён во всех 6 файлах.
+
+### Совместимость и зависимости
+
+- **Полностью обратно-совместимо.** `manage regen <name>` (одно имя) и `manage regen` (без аргументов) — поведение не меняется. Меняется только обработка нескольких аргументов: раньше тихо терялись, теперь обрабатываются. Поведение шага 2 при штатной установке тоже не меняется — strict mode срабатывает только при реальном hard error apt, который и без того блокировал бы установку дальше.
+- **Новых зависимостей нет.**
+
+---
+
 ## [5.11.4] — 2026-05-04
 
 **v5.11.4** — bug-fix-релиз AmneziaWG 2.0 VPN-инсталлятора: два исправления по горячим следам issues после v5.11.3, без архитектурных изменений. Поддержка Ubuntu 24.04 / 25.10, Debian 12 / 13, x86_64 + ARM (Raspberry Pi, Oracle Ampere, Hetzner CAX) — без изменений.

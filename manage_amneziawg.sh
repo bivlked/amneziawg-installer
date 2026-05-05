@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # Скрипт для управления пользователями (пирами) AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.11.4
-# Дата: 2026-05-04
+# Версия: 5.11.5
+# Дата: 2026-05-05
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.11.4"
+SCRIPT_VERSION="5.11.5"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -1272,15 +1272,8 @@ case $COMMAND in
 
     regen)
         log "Перегенерация файлов конфигурации и QR..."
-        if [[ -n "$CLIENT_NAME" ]]; then
-            # Перегенерация одного клиента
-            validate_client_name "$CLIENT_NAME" || exit 1
-            if ! grep -qxF "#_Name = ${CLIENT_NAME}" "$SERVER_CONF_FILE"; then
-                die "Клиент '$CLIENT_NAME' не найден."
-            fi
-            regenerate_client "$CLIENT_NAME" || { log_error "Ошибка перегенерации '$CLIENT_NAME'."; _cmd_rc=1; }
-        else
-            # Перегенерация всех клиентов
+        if [[ ${#ARGS[@]} -eq 0 ]]; then
+            # Без аргументов — все клиенты (сохраняет прежнее поведение).
             all_clients=$(grep '^#_Name = ' "$SERVER_CONF_FILE" | sed 's/^#_Name = //')
             if [[ -z "$all_clients" ]]; then
                 log "Клиенты не найдены."
@@ -1292,6 +1285,29 @@ case $COMMAND in
                     regenerate_client "$cname" || { log_warn "Ошибка перегенерации '$cname'"; _cmd_rc=1; }
                 done <<< "$all_clients"
                 log "Перегенерация завершена."
+            fi
+        else
+            # С аргументами — обрабатываем каждое имя отдельно (паритет с add/remove).
+            # До v5.11.5 здесь читался только $CLIENT_NAME (=ARGS[0]), остальные имена
+            # молча терялись (Issue #70).
+            _regen_count=0
+            for _cname in "${ARGS[@]}"; do
+                validate_client_name "$_cname" || { _cmd_rc=1; continue; }
+                if ! grep -qxF "#_Name = ${_cname}" "$SERVER_CONF_FILE"; then
+                    log_warn "Клиент '$_cname' не найден, пропуск."
+                    _cmd_rc=1
+                    continue
+                fi
+                log "Перегенерация '$_cname'..."
+                if regenerate_client "$_cname"; then
+                    _regen_count=$((_regen_count + 1))
+                else
+                    log_error "Ошибка перегенерации '$_cname'."
+                    _cmd_rc=1
+                fi
+            done
+            if [[ $_regen_count -gt 0 ]]; then
+                log "Перегенерация завершена. Обработано: $_regen_count из ${#ARGS[@]}."
             fi
         fi
         ;;

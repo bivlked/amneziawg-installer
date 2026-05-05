@@ -8,15 +8,15 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 2.0 на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 5.11.4
-# Дата: 2026-05-04
+# Версия: 5.11.5
+# Дата: 2026-05-05
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 set -o pipefail
 
-SCRIPT_VERSION="5.11.4"
+SCRIPT_VERSION="5.11.5"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="8fc6d3ad16aa8fa247b6fc2e7a5e7899ab9557837b3e889f088826720008b432"
-MANAGE_SCRIPT_SHA256="697077803b08b0a24fc2b241fcdebc3c144f3c6b86789f5139f67fda1dd02179"
+COMMON_SCRIPT_SHA256="f292b41ef2165130bd613f71f05a2e4d74ceb01425fd80e487dac2d3375818af"
+MANAGE_SCRIPT_SHA256="550219ce45bd6de587d5bf24ded476d2eb4861801d833295ddf3123d1c33bc40"
 
 # Флаги CLI
 UNINSTALL=0; HELP=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
@@ -133,7 +133,18 @@ die()       { log_error "КРИТИЧЕСКАЯ ОШИБКА: $1"; log_error "У
 # Любая другая ошибка (GPG, сетевая на binary, silent crash/OOM/SIGKILL) → non-zero.
 # ==============================================================================
 apt_update_tolerant() {
-    local err_output rc non_src_errors
+    # --ppa-amnezia-tolerant: дополнительно игнорируем ошибки от PPA Amnezia.
+    # Используется на step 2 — там apt_wait_for_ppa_package сам делает retry
+    # для outage'а ppa.launchpadcontent.net (issue #68). Без этого флага мы
+    # должны fall-fail на любых non-source ошибках, иначе скрипт продолжит
+    # установку на stale apt-cache (PR #69 review finding).
+    local ppa_tolerant=0
+    if [[ "${1:-}" == "--ppa-amnezia-tolerant" ]]; then
+        ppa_tolerant=1
+        shift
+    fi
+
+    local err_output rc non_src_errors raw_had_non_src_errors=0
     err_output=$(LANG=C LC_ALL=C apt-get update -y 2>&1)
     rc=$?
     echo "$err_output"
@@ -150,12 +161,30 @@ apt_update_tolerant() {
         | grep -vE '(deb-src|/source/|Sources([^[:alpha:]]|$))' \
         | grep -vE 'Some index files failed to download' || true)
 
+    # Запоминаем pre-PPA filter состояние: нужно различать «были реальные APT-ошибки,
+    # но все на PPA Amnezia» (tolerant OK) от «классифицируемых ошибок не было
+    # вообще» (OOM / silent crash — НЕ tolerant даже если в выводе мелькает PPA URL).
+    [[ -n "$non_src_errors" ]] && raw_had_non_src_errors=1
+
+    # Опционально (step 2): убираем ошибки только на PPA Amnezia — они будут
+    # повторно проверены через apt_wait_for_ppa_package по apt-cache (issue #68).
+    if [[ $ppa_tolerant -eq 1 && -n "$non_src_errors" ]]; then
+        non_src_errors=$(printf '%s\n' "$non_src_errors" \
+            | grep -vE 'ppa\.launchpadcontent\.net.*amnezia' || true)
+    fi
+
     if [[ -z "$non_src_errors" ]]; then
         # Граничный случай: rc != 0, но ни одной классифицируемой строки E:/Err:/W:
         # не найдено (SIGKILL от OOM, silent crash, неизвестный формат вывода apt).
-        # Игнорировать можно ТОЛЬКО если в выводе есть явные source-маркеры.
+        # Игнорировать можно ТОЛЬКО если в выводе есть явные source-маркеры,
+        # либо ppa-tolerant + были реальные APT-строки и все они — на PPA Amnezia.
         if printf '%s\n' "$err_output" | grep -qE '(deb-src|/source/|Sources([^[:alpha:]]|$))'; then
             log_warn "apt update: source packages недоступны в зеркале (ожидаемо, игнорируется)"
+            return 0
+        fi
+        if [[ $ppa_tolerant -eq 1 && $raw_had_non_src_errors -eq 1 ]] \
+            && printf '%s\n' "$err_output" | grep -qE 'ppa\.launchpadcontent\.net.*amnezia'; then
+            log_warn "apt update: ошибки только на PPA Amnezia (issue #68), продолжаем с retry."
             return 0
         fi
         log_error "apt update завершился с rc=$rc без классифицируемых APT-строк — возможен silent crash / OOM / SIGKILL"
@@ -1879,7 +1908,19 @@ PPASRC
         fi
         log "PPA добавлен."
     fi
-    apt_update_tolerant || log_warn "apt update вернул не-ноль; продолжаем — apt-cache показывает что есть."
+    # apt-get update + классификация ошибок:
+    #   - Ошибки ТОЛЬКО на PPA Amnezia → продолжаем, apt_wait_for_ppa_package
+    #     ниже сделает retry (issue #68: ppa.launchpadcontent.net коротко лежит).
+    #   - Любая другая non-source ошибка (DNS / GPG mismatch / dpkg lock на base
+    #     mirror) → fall-fail. Продолжать на stale apt-cache небезопасно —
+    #     следующий apt-get install упадёт с менее actionable сообщением
+    #     (PR #69 review finding).
+    if ! apt_update_tolerant --ppa-amnezia-tolerant; then
+        log_error "apt-get update завершился с hard error — не PPA outage (issue #68)."
+        log_error "Проверьте: DNS, доступ к archive.ubuntu.com / deb.debian.org,"
+        log_error "целостность ключей в /etc/apt/keyrings, занятость dpkg lock."
+        die "apt update вернул ошибку (rc!=0, не PPA Amnezia)."
+    fi
     # apt-get update толерантен к недоступному InRelease (rc=0 даже когда PPA
     # лежит). Поэтому проверяем именно появление пакета amneziawg-dkms в
     # apt-cache, с тремя попытками и backoff 30с/60с (≈1.5 мин total).

@@ -628,6 +628,19 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 </details>
 
 <details>
+  <summary><strong>В: AWG 2.0-сервер не handshake-ится с моим старым AWG 1.0-клиентом — почему?</strong></summary>
+  <b>О:</b> Когда сервер генерирует <code>S3>0</code> или <code>S4>0</code> (cookie-/data-padding из AWG 2.0), AWG 1.0-клиент не сможет с ним handshake-нуться — это <b>известная upstream-проблема</b>: <a href="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/168">amnezia-vpn/amneziawg-linux-kernel-module#168</a>. Мой инсталлятор всегда генерирует <code>S3=8..55</code>, <code>S4=4..27</code> — оба <code>>0</code>.
+  <br><br>
+  <b>В типичном сценарии</b> (Amnezia VPN client / WireGuard-Tools 2.0+ на клиентах + клиентские <code>.conf</code>, сгенерированные <code>manage add</code>) проблемы нет: <code>manage</code> всегда вписывает <code>S3</code>/<code>S4</code> в клиентский <code>.conf</code> автоматически. Риск возникает <b>только</b> при:
+  <ul>
+    <li>ручной правке клиентских <code>.conf</code> со снятием <code>S3</code>/<code>S4</code>;</li>
+    <li>импорте серверного preset в WireGuard-клиент без AWG-расширений (обычный <code>wg-quick</code> на старом ядре, без <code>amneziawg</code>-модуля);</li>
+    <li>миграции с AWG 1.x setup, где клиенты намеренно использовали <code>S3=0</code>/<code>S4=0</code>.</li>
+  </ul>
+  <b>Решение</b>: использовать AWG 2.0-совместимый клиент (Amnezia VPN >= 4.8.12.7 или amneziawg-windows-client >= 2.0.0) и держать <code>S3</code>/<code>S4</code> в client <code>.conf</code> идентичными серверным. Если очень нужен AWG 1.0 fallback — это отдельная задача за пределами штатного сценария установки, ждите фикса в upstream-issue #168.
+</details>
+
+<details>
   <summary><strong>В: Ошибка DKMS при обновлении ядра — что делать?</strong></summary>
   **О:** 1. Проверьте статус: <code>dkms status</code>. 2. Попробуйте пересобрать: <code>sudo dkms install amneziawg/$(dkms status | grep amneziawg | head -1 | awk -F'[,/ ]+' '{print $2}')</code>. 3. Убедитесь, что установлены заголовки ядра: <code>sudo apt install linux-headers-$(uname -r)</code>. 4. При неустранимой ошибке запустите диагностику: <code>sudo bash ./install_amneziawg.sh --diagnostic</code>.
 </details>

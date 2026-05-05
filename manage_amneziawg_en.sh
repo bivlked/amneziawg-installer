@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 peer management script
 # Author: @bivlked
-# Version: 5.11.4
-# Date: 2026-05-04
+# Version: 5.11.5
+# Date: 2026-05-05
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.11.4"
+SCRIPT_VERSION="5.11.5"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -1274,15 +1274,8 @@ case $COMMAND in
 
     regen)
         log "Regenerating config and QR files..."
-        if [[ -n "$CLIENT_NAME" ]]; then
-            # Regenerate single client
-            validate_client_name "$CLIENT_NAME" || exit 1
-            if ! grep -qxF "#_Name = ${CLIENT_NAME}" "$SERVER_CONF_FILE"; then
-                die "Client '$CLIENT_NAME' not found."
-            fi
-            regenerate_client "$CLIENT_NAME" || { log_error "Regeneration error '$CLIENT_NAME'."; _cmd_rc=1; }
-        else
-            # Regenerate all clients
+        if [[ ${#ARGS[@]} -eq 0 ]]; then
+            # No arguments — regenerate all clients (preserves prior behaviour).
             all_clients=$(grep '^#_Name = ' "$SERVER_CONF_FILE" | sed 's/^#_Name = //')
             if [[ -z "$all_clients" ]]; then
                 log "No clients found."
@@ -1294,6 +1287,29 @@ case $COMMAND in
                     regenerate_client "$cname" || { log_warn "Regeneration error '$cname'"; _cmd_rc=1; }
                 done <<< "$all_clients"
                 log "Regeneration completed."
+            fi
+        else
+            # With arguments — process each name individually (parity with add/remove).
+            # Until v5.11.5 only $CLIENT_NAME (=ARGS[0]) was read here, the rest were
+            # silently dropped (Issue #70).
+            _regen_count=0
+            for _cname in "${ARGS[@]}"; do
+                validate_client_name "$_cname" || { _cmd_rc=1; continue; }
+                if ! grep -qxF "#_Name = ${_cname}" "$SERVER_CONF_FILE"; then
+                    log_warn "Client '$_cname' not found, skipping."
+                    _cmd_rc=1
+                    continue
+                fi
+                log "Regenerating '$_cname'..."
+                if regenerate_client "$_cname"; then
+                    _regen_count=$((_regen_count + 1))
+                else
+                    log_error "Regeneration error '$_cname'."
+                    _cmd_rc=1
+                fi
+            done
+            if [[ $_regen_count -gt 0 ]]; then
+                log "Regeneration completed. Processed: $_regen_count of ${#ARGS[@]}."
             fi
         fi
         ;;
