@@ -113,13 +113,13 @@
 
 # ---------- Version markers ----------
 
-@test "v5.11.5: SCRIPT_VERSION bumped in all six files" {
+@test "v5.12.0: SCRIPT_VERSION bumped in all six files" {
     for f in install_amneziawg.sh install_amneziawg_en.sh manage_amneziawg.sh manage_amneziawg_en.sh; do
-        run grep -E 'SCRIPT_VERSION="5\.11\.5"' "$BATS_TEST_DIRNAME/../$f"
+        run grep -E 'SCRIPT_VERSION="5\.12\.0"' "$BATS_TEST_DIRNAME/../$f"
         [ "$status" -eq 0 ]
     done
-    run grep -E '# Версия: 5\.11\.5' "$BATS_TEST_DIRNAME/../awg_common.sh"
+    run grep -E '# Версия: 5\.12\.0' "$BATS_TEST_DIRNAME/../awg_common.sh"
     [ "$status" -eq 0 ]
-    run grep -E '# Version: 5\.11\.5' "$BATS_TEST_DIRNAME/../awg_common_en.sh"
+    run grep -E '# Version: 5\.12\.0' "$BATS_TEST_DIRNAME/../awg_common_en.sh"
     [ "$status" -eq 0 ]
 }
