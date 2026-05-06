@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.11.5
-# Date: 2026-05-05
+# Version: 5.12.0
+# Date: 2026-05-06
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 set -o pipefail
-SCRIPT_VERSION="5.11.5"
+SCRIPT_VERSION="5.12.0"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="117c76e6dab567d5089807e90e1044eb417eb4e81dc6f9c032f279bc793ce516"
-MANAGE_SCRIPT_SHA256="dcb9e39631ed9a6a8064752acafd40e12e913ba7a4ac63da47c0139ccd7dff82"
+COMMON_SCRIPT_SHA256="526367064c7f8cee919b5b407a80d3c8de45d47e04cbed68f0f15ac3f4f78ef5"
+MANAGE_SCRIPT_SHA256="484ad9e266981b52969aac7774f5afacc37c374c590a26ebe6852467415cf470"
 
 # CLI flags
 UNINSTALL=0; HELP=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
@@ -1405,6 +1405,29 @@ step_uninstall() {
     systemctl stop awg-quick@awg0 2>/dev/null
     systemctl disable awg-quick@awg0 2>/dev/null
     modprobe -r amneziawg 2>/dev/null || true
+    # v5.12.0+: kernel module auto-repair on kernel upgrade.
+    # Remove apt hook and systemd unit BEFORE apt purge so the hook does not
+    # fire during amneziawg-dkms purge (the helper would try to rebuild DKMS,
+    # but the package is already gone). Files may be absent on installs from
+    # before v5.12.0 — all operations are idempotent.
+    log "Removing kernel module auto-repair components (v5.12.0+)..."
+    if systemctl is-enabled amneziawg-ensure-module.service &>/dev/null; then
+        systemctl disable amneziawg-ensure-module.service 2>/dev/null || true
+    fi
+    rm -f /etc/systemd/system/amneziawg-ensure-module.service \
+        /etc/apt/apt.conf.d/99-amneziawg-post-kernel \
+        /etc/logrotate.d/amneziawg-ensure-module \
+        /usr/local/sbin/amneziawg-ensure-module \
+        2>/dev/null
+    # Also clean up staging dotfiles that may be left over from an interrupted install (atomic deploy).
+    rm -f /etc/systemd/system/.amneziawg-ensure-module.service.new \
+        /etc/apt/apt.conf.d/.99-amneziawg-post-kernel.new \
+        /etc/logrotate.d/.amneziawg-ensure-module.new \
+        /usr/local/sbin/.amneziawg-ensure-module.new \
+        2>/dev/null || true
+    rm -f /var/log/amneziawg-ensure-module.log* 2>/dev/null || true
+    rm -rf /var/lib/amneziawg 2>/dev/null || true
+    systemctl daemon-reload 2>/dev/null || true
     if [[ "$saved_no_tweaks" -eq 0 ]]; then
         log "Cleaning up AmneziaWG UFW rules..."
         if command -v ufw &>/dev/null; then

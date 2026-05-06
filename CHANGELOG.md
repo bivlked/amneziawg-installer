@@ -14,6 +14,50 @@
 
 ---
 
+## [5.12.0] — 2026-05-06
+
+**v5.12.0** — feature-релиз AmneziaWG 2.0 VPN-инсталлятора: одна большая фича — **автоматическое восстановление DKMS-модуля при обновлении ядра**. Без архитектурных изменений: совместимо со всеми установками v5.11.x — apt hook, systemd unit и helper доустанавливаются при следующем запуске `install_amneziawg.sh`. Поддержка Ubuntu 24.04 / 25.10, Debian 12 / 13, x86_64 + ARM (Raspberry Pi, Oracle Ampere, Hetzner CAX) — без изменений.
+
+### Главное
+
+- 🛡 **DKMS auto-repair при обновлении ядра — три уровня страховки.** До v5.12.0 после `apt upgrade` ядра DKMS не всегда успевал пересобрать модуль `amneziawg` к моменту следующего `reboot` — `awg-quick@awg0` падал с `modprobe: FATAL: Module amneziawg not found`, и VPN лежал до ручной пересборки. Теперь установлены три страховки, работающие прозрачно:
+  - **apt hook** (`/etc/apt/apt.conf.d/99-amneziawg-post-kernel`) — `DPkg::Post-Invoke` запускает `/usr/local/sbin/amneziawg-ensure-module --hook`, который итерирует `/lib/modules/*/build`, пересобирает DKMS под все целевые ядра с установленными headers, делает `depmod -a`. Лог в `/var/log/amneziawg-ensure-module.log` (logrotate weekly, 4 копии). Stamp-файл `/var/lib/amneziawg/ensure-module.stamp` глушит хук на routine apt-операциях, не связанных с ядром.
+  - **systemd unit** (`amneziawg-ensure-module.service`) — `Type=oneshot`, `Before=awg-quick@awg0.service`, `After=systemd-modules-load.service local-fs.target`. На boot перед `awg-quick` итерирует ядра с уже установленными headers (`/lib/modules/*/build`), пересобирает DKMS, делает `modprobe amneziawg` и проверяет `lsmod`. Если headers не установлены — пишет WARN и завершает успехом, а сами headers ставит либо штатный шаг 2 инсталлятора, либо `manage repair-module`. Логи в journal (`journalctl -u amneziawg-ensure-module.service`). `ConditionPathExists=/usr/local/sbin/amneziawg-ensure-module` — unit не упадёт, если helper удалён.
+  - **manage repair-module** — явный fallback для interactive recovery: `sudo bash /root/awg/manage_amneziawg.sh repair-module`. Включает `AWG_ALLOW_APT_IN_ENSURE=1` (apt-get install kernel-headers разрешён только в этом контексте — apt hook и systemd unit его не используют, чтобы не блокироваться на dpkg-lock).
+- 🧠 **Умное определение kernel-headers meta-package.** Шаг 2 установки теперь ставит meta-пакет под ваше ядро, а не привязывается к `linux-headers-$(uname -r)`: в Ubuntu извлекает flavor из `uname -r` (`aws`/`azure`/`gcp`/`oracle`/`kvm`/`lowlatency`/`raspi`) с fallback на `linux-headers-generic`; в Debian — `linux-headers-cloud-${arch}` для cloud-ядер, иначе `linux-headers-${arch}`. Это страхует от ситуации, когда `apt-get upgrade` поднял ядро, но без headers новый module не собирается.
+
+### Прочее
+
+- 🛠 **`manage_amneziawg.sh` пре-вызывает `ensure_amneziawg_kernel_module` в `add` / `remove` / `restart`.** Если модуль выгружен или не подходит к текущему ядру, он попытается восстановиться до начала операции — это убирает половину запросов «после `apt upgrade` add клиента не работает».
+- 🧹 **`step_uninstall` чистит компоненты автовосстановления.** При `--uninstall` отключается systemd unit, удаляются apt hook, helper, logrotate config, stamp-каталог `/var/lib/amneziawg/`, ротированные логи `/var/log/amneziawg-ensure-module.log*`. Всё idempotent — установки до v5.12.0 не пострадают.
+
+### Установка
+
+```bash
+wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.12.0/install_amneziawg.sh
+chmod +x install_amneziawg.sh
+sudo bash ./install_amneziawg.sh
+```
+
+3 команды → ~20 минут → готовый VPN-сервер с обфускацией трафика. Подробнее — [README → Установка](README.md#ustanovka).
+
+### Обновление существующего сервера
+
+Запустите `install_amneziawg.sh` свежей версии — на 5-м шаге `manage_amneziawg.sh` и `awg_common.sh` обновятся автоматически (с проверкой SHA256), а на шаге 2 будут развёрнуты apt hook, systemd unit, helper и logrotate. Для существующего сервера это безопасный re-run. Полные команды — [ADVANCED.md → Как обновить скрипты](ADVANCED.md#update-scripts-adv).
+
+### Тесты
+
+**+32 новых bats** (357 total, было 325 на v5.11.5):
+
+- `test_v512_dkms_repair.bats` (+32) — структурное покрытие deploy-фаз DKMS auto-repair: 4 функции в `awg_common.sh`+`_en.sh`, ≥3 пре-вызова в manage (`add`/`remove`/`restart`), команда `manage repair-module|repair`, gate-переменная `AWG_ALLOW_APT_IN_ENSURE`; smart kernel-headers candidate-loop (Ubuntu flavor extraction, Debian cloud detection, RPi guard, fallback ordering: flavor BEFORE generic + cloud BEFORE arch); helper `--hook|--systemd` modes, stamp fast-path gated на `--hook`, modprobe+lsmod в `--systemd` + 2 exit-1 paths, helper не использует apt-get; systemd unit 12 директив, atomic deploy, `daemon-reload`+`enable`; byte-identical RU/EN для helper, hook, logrotate, unit; atomic deploy cleanup-on-failure для всех 4 staging vars; helper body parses через `bash -n`. Mock-based runtime тесты (kernel upgrade simulation) выполняются на VPS Ubuntu 24.04 + Debian 13 в рамках release-теста.
+
+### Совместимость и зависимости
+
+- **Полностью обратно-совместимо.** Установки v5.11.x продолжают работать как раньше; auto-repair компоненты деплоятся при следующем запуске `install_amneziawg.sh` — re-run install безопасен. Шаг 2 теперь ставит meta-package для headers, что страхует от kernel-upgrade без headers; дополнительных пакетов вручную ставить не нужно.
+- **Новых зависимостей нет.** Helper использует `dkms`, `depmod`, `modprobe`, `systemctl` — всё из base-установки. Apt hook — POSIX-sh inner command (не bash). Systemd unit — `Type=oneshot`, без timer'ов.
+
+---
+
 ## [5.11.5] — 2026-05-05
 
 **v5.11.5** — bug-fix-релиз AmneziaWG 2.0 VPN-инсталлятора: два точечных исправления после v5.11.4, без архитектурных изменений. Поддержка Ubuntu 24.04 / 25.10, Debian 12 / 13, x86_64 + ARM (Raspberry Pi, Oracle Ampere, Hetzner CAX) — без изменений.

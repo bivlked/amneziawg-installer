@@ -648,6 +648,28 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 </details>
 
 <details>
+  <summary><strong>Q: What changes for me after installing v5.12.0+ when the kernel is upgraded?</strong></summary>
+  <b>A:</b> Before v5.12.0, after <code>apt upgrade</code> of the kernel DKMS did not always rebuild the <code>amneziawg</code> module by the next <code>reboot</code>. Symptom: <code>awg-quick@awg0</code> fails with <code>modprobe: FATAL: Module amneziawg not found</code>, and the VPN is down until manual recovery.
+  <br><br>
+  In v5.12.0 I added three safety nets that work transparently:
+  <ol>
+    <li><b>apt hook</b> <code>/etc/apt/apt.conf.d/99-amneziawg-post-kernel</code> — after <code>apt upgrade</code> the helper <code>/usr/local/sbin/amneziawg-ensure-module --hook</code> rebuilds DKMS for the new kernel. Log: <code>/var/log/amneziawg-ensure-module.log</code> (weekly rotate, 4 copies).</li>
+    <li><b>systemd unit</b> <code>amneziawg-ensure-module.service</code> — at boot, before <code>awg-quick@awg0</code>, the helper iterates kernels with already-installed headers, rebuilds DKMS for the current kernel, runs <code>modprobe amneziawg</code>, and verifies the load via <code>lsmod</code>. If headers are not yet installed, it logs a WARN and exits successfully so it does not block boot. Logs in journal: <code>journalctl -u amneziawg-ensure-module.service</code>.</li>
+    <li><b>manage repair-module</b> — explicit fallback: <code>sudo bash /root/awg/manage_amneziawg.sh repair-module</code> installs kernel-headers (with <code>AWG_ALLOW_APT_IN_ENSURE=1</code>), rebuilds DKMS, restarts <code>awg-quick</code>.</li>
+  </ol>
+  <b>Manual recovery</b> (if none of the three auto paths fired, or you are still on v5.11.x):
+  <pre>sudo apt install linux-headers-$(uname -r)
+sudo dkms autoinstall
+sudo modprobe amneziawg
+sudo systemctl restart awg-quick@awg0</pre>
+  <b>Limitations</b>:
+  <ul>
+    <li><b>ARM prebuilt</b> (Raspberry Pi, Hetzner CAX, Oracle Ampere) uses a prebuilt <code>.deb</code> rather than DKMS — auto-repair is not engaged. After a kernel upgrade either rerun the installer (it will pick a fresh prebuilt or fall back to DKMS), or run <code>manage repair-module</code>.</li>
+    <li><b>Cloud kernels</b> (Azure / AWS / GCP / Oracle / Debian-cloud) — the installer detects the meta-package from the <code>uname -r</code> suffix (e.g. <code>linux-headers-azure</code>). If you have a custom kernel or an unusual flavor, <code>manage repair-module</code> does the same in reactive mode.</li>
+  </ul>
+</details>
+
+<details>
   <summary><strong>Q: Detailed steps for VPN migration to another server?</strong></summary>
   <b>A:</b> 1. On the old server: <code>sudo bash /root/awg/manage_amneziawg.sh backup</code>. 2. Copy the archive: <code>scp root@old_server:/root/awg/backups/awg_backup_*.tar.gz .</code>. 3. Install AmneziaWG on the new server. 4. Copy the backup: <code>scp awg_backup_*.tar.gz root@new_server:/root/awg/backups/</code>. 5. Restore: <code>sudo bash /root/awg/manage_amneziawg.sh restore</code> (interactive selection, or specify the full archive path). 6. Regenerate configs with new IP: <code>sudo bash /root/awg/manage_amneziawg.sh regen</code>. 7. Distribute new configs to clients.
 </details>

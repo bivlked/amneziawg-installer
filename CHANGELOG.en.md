@@ -14,6 +14,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.12.0] — 2026-05-06
+
+**v5.12.0** — feature release of the AmneziaWG 2.0 VPN installer: one big feature — **automatic DKMS module recovery on kernel upgrade**. No architectural changes: compatible with all v5.11.x installs — the apt hook, systemd unit, and helper are deployed on the next run of `install_amneziawg_en.sh`. Support matrix unchanged: Ubuntu 24.04 / 25.10, Debian 12 / 13, x86_64 + ARM (Raspberry Pi, Oracle Ampere, Hetzner CAX).
+
+### Highlights
+
+- 🛡 **DKMS auto-repair on kernel upgrade — three layers of safety net.** Before v5.12.0, after `apt upgrade` of the kernel, DKMS did not always rebuild the `amneziawg` module by the next `reboot` — `awg-quick@awg0` failed with `modprobe: FATAL: Module amneziawg not found`, and the VPN was down until manual recovery. Now three safety nets work transparently:
+  - **apt hook** (`/etc/apt/apt.conf.d/99-amneziawg-post-kernel`) — `DPkg::Post-Invoke` runs `/usr/local/sbin/amneziawg-ensure-module --hook`, which iterates `/lib/modules/*/build`, rebuilds DKMS for every target kernel with installed headers, then `depmod -a`. Log at `/var/log/amneziawg-ensure-module.log` (logrotate weekly, 4 copies). The stamp file `/var/lib/amneziawg/ensure-module.stamp` silences the hook on routine apt operations unrelated to the kernel.
+  - **systemd unit** (`amneziawg-ensure-module.service`) — `Type=oneshot`, `Before=awg-quick@awg0.service`, `After=systemd-modules-load.service local-fs.target`. At boot, before `awg-quick`, it iterates kernels with already-installed headers (`/lib/modules/*/build`), rebuilds DKMS, runs `modprobe amneziawg`, and verifies via `lsmod`. If headers are missing, it logs a WARN and exits successfully — installing the headers themselves is the job of step 2 of the installer or of `manage repair-module`. Logs in journal (`journalctl -u amneziawg-ensure-module.service`). `ConditionPathExists=/usr/local/sbin/amneziawg-ensure-module` — the unit will not fail if the helper has been removed.
+  - **manage repair-module** — explicit fallback for interactive recovery: `sudo bash /root/awg/manage_amneziawg.sh repair-module`. Sets `AWG_ALLOW_APT_IN_ENSURE=1` (apt-get install of kernel-headers is allowed only in this context — the apt hook and systemd unit do not use it to avoid blocking on dpkg-lock).
+- 🧠 **Smart kernel-headers meta-package detection.** Step 2 of the installer now installs a meta-package matched to your kernel rather than pinning to `linux-headers-$(uname -r)`: on Ubuntu it extracts the flavor from `uname -r` (`aws`/`azure`/`gcp`/`oracle`/`kvm`/`lowlatency`/`raspi`) with a fallback to `linux-headers-generic`; on Debian — `linux-headers-cloud-${arch}` for cloud kernels, otherwise `linux-headers-${arch}`. This protects against the case where `apt-get upgrade` raised the kernel, but the new module fails to build without matching headers.
+
+### Other
+
+- 🛠 **`manage_amneziawg.sh` pre-calls `ensure_amneziawg_kernel_module` in `add` / `remove` / `restart`.** If the module is unloaded or doesn't match the current kernel, it tries to recover before the operation — this removes half of the "add a client doesn't work after `apt upgrade`" reports.
+- 🧹 **`step_uninstall` cleans up the auto-repair components.** On `--uninstall` the systemd unit is disabled, and the apt hook, helper, logrotate config, stamp directory `/var/lib/amneziawg/`, and rotated logs `/var/log/amneziawg-ensure-module.log*` are removed. Idempotent — installs from before v5.12.0 are unaffected.
+
+### Install
+
+```bash
+wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.12.0/install_amneziawg_en.sh
+chmod +x install_amneziawg_en.sh
+sudo bash ./install_amneziawg_en.sh
+```
+
+3 commands → ~20 minutes → a working VPN server with traffic obfuscation. Details — [README → Install](README.en.md#installation).
+
+### Upgrading an existing server
+
+Run the fresh `install_amneziawg_en.sh` — at step 5 `manage_amneziawg.sh` and `awg_common.sh` are refreshed automatically (with SHA256 verification), and at step 2 the apt hook, systemd unit, helper, and logrotate config are deployed. For an existing server this is a safe re-run. Full commands — [ADVANCED.en.md → Updating the scripts](ADVANCED.en.md#update-scripts-adv).
+
+### Tests
+
+**+32 new bats** (357 total, was 325 in v5.11.5):
+
+- `test_v512_dkms_repair.bats` (+32) — structural coverage of the DKMS auto-repair deployment phases: 4 functions in `awg_common.sh`+`_en.sh`, ≥3 pre-calls in manage (`add`/`remove`/`restart`), the `manage repair-module|repair` command, the `AWG_ALLOW_APT_IN_ENSURE` gate; smart kernel-headers candidate-loop (Ubuntu flavor extraction, Debian cloud detection, RPi guard, fallback ordering: flavor BEFORE generic + cloud BEFORE arch); helper `--hook|--systemd` modes, stamp fast-path gated to `--hook`, modprobe+lsmod in `--systemd` plus 2 exit-1 paths, helper does not use apt-get; systemd unit 12 directives, atomic deploy, `daemon-reload`+`enable`; byte-identical RU/EN for helper, hook, logrotate, unit; atomic deploy cleanup-on-failure for all 4 staging vars; helper body parses with `bash -n`. Mock-based runtime tests (kernel upgrade simulation) are run on VPS Ubuntu 24.04 + Debian 13 as part of the release test.
+
+### Compatibility and dependencies
+
+- **Fully backwards-compatible.** v5.11.x installs continue to work as before; auto-repair components are deployed on the next run of `install_amneziawg_en.sh` — re-run is safe. Step 2 now installs a meta-package for headers, which protects against kernel-upgrade-without-headers; no extra packages need to be installed manually.
+- **No new dependencies.** The helper uses `dkms`, `depmod`, `modprobe`, `systemctl` — all from the base install. The apt hook is a POSIX-sh inner command (not bash). The systemd unit is `Type=oneshot`, no timers needed.
+
+---
+
 ## [5.11.5] — 2026-05-05
 
 **v5.11.5** — bug-fix release of the AmneziaWG 2.0 VPN installer: two small fixes after v5.11.4, no architectural changes. Support matrix unchanged: Ubuntu 24.04 / 25.10, Debian 12 / 13, x86_64 + ARM (Raspberry Pi, Oracle Ampere, Hetzner CAX).
