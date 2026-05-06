@@ -35,6 +35,7 @@
   <a href="#cli-vs-panel">CLI vs panels</a> •
   <a href="#quickstart">Quick Start</a> •
   <a href="#features">Features</a> •
+  <a href="#carriers">Carriers</a> •
   <a href="#requirements">Requirements</a> •
   <a href="#hosting-recommendation">Hosting</a> •
   <a href="#installation">Installation</a> •
@@ -143,6 +144,24 @@ All parameters are accepted automatically. Details: [ADVANCED.en.md#cli-params-a
 * Resume after reboot — the script picks up from where it left off
 * Choice of port, subnet, IPv6 mode, and routing mode. `--endpoint` flag for servers behind NAT
 </details>
+
+---
+
+<a id="carriers"></a>
+## 📡 Tested mobile carriers (Russia)
+
+If your VPN is unstable on mobile data, run the installer with `--preset=mobile`. Below — working configurations reported in issues and discussions:
+
+- **Yota** — Moscow, `--preset=mobile`
+- **Tele2** — Moscow (`--preset=mobile`); Krasnoyarsk (`--preset=mobile` + remove the `I1` parameter)
+- **Tattelecom / Letai** — Tatarstan, `--preset=mobile`
+- **Megafon** — regional networks, `--preset=mobile` + remove the `I1` parameter
+- **Beeline** — default preset, no flags needed
+- **Home / wired ISPs** — default preset usually works out of the box
+
+Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work — open a thread in [Discussions](https://github.com/bivlked/amneziawg-installer/discussions) or [Issues](https://github.com/bivlked/amneziawg-installer/issues) and I'll add the entry.
+
+> Full operator parameter table (Jc, Jmin, Jmax, I1) — in [ADVANCED.en.md → FAQ "connects over cellular only on the third attempt"](ADVANCED.en.md#faq-advanced-adv). Per-flag overrides via `--jc`/`--jmin`/`--jmax` — in [ADVANCED.en.md → Presets](ADVANCED.en.md#presets-adv).
 
 ---
 

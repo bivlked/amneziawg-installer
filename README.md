@@ -35,6 +35,7 @@
   <a href="#cli-vs-panel">CLI vs панели</a> •
   <a href="#quickstart">Быстрый старт</a> •
   <a href="#vozmozhnosti">Что умеет</a> •
+  <a href="#operatory">Операторы</a> •
   <a href="#trebovaniya">Требования</a> •
   <a href="#recomend-hosting">Хостинг</a> •
   <a href="#ustanovka">Установка</a> •
@@ -143,6 +144,24 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 * Возобновление установки после перезагрузки — скрипт продолжит с нужного шага
 * Выбор порта, подсети, режима IPv6 и маршрутизации. Поддержка `--endpoint` для серверов за NAT
 </details>
+
+---
+
+<a id="operatory"></a>
+## 📡 С какими операторами проверено
+
+Если VPN нестабилен через мобильный интернет, запускайте установку с `--preset=mobile`. Ниже — рабочие конфигурации по отчётам из issues и discussions:
+
+- **Yota** — Москва, `--preset=mobile`
+- **Tele2** — Москва (`--preset=mobile`); Красноярск (`--preset=mobile` + удалить параметр `I1`)
+- **Таттелеком / Летай** — Татарстан, `--preset=mobile`
+- **Мегафон** — регионы, `--preset=mobile` + удалить параметр `I1`
+- **Билайн** — дефолтный preset, флаги не нужны
+- **Домашний/проводной интернет** — дефолт, как правило, «из коробки»
+
+Вашего оператора нет в списке? Попробуйте `--preset=mobile`. Не помогло — заведите тред в [Discussions](https://github.com/bivlked/amneziawg-installer/discussions) или [Issues](https://github.com/bivlked/amneziawg-installer/issues), добавлю в список.
+
+> Полная таблица операторских параметров (Jc, Jmin, Jmax, I1) — в [ADVANCED.md → FAQ «через мобильную сеть»](ADVANCED.md#faq-advanced-adv). Точечная настройка через `--jc`/`--jmin`/`--jmax` — в [ADVANCED.md → Presets](ADVANCED.md#presets-adv).
 
 ---
 
