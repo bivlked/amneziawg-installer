@@ -104,8 +104,25 @@ MODULE_INSTALL_PATH="${DEB_DIR}/lib/modules/${KERNEL_VERSION}/extra"
 mkdir -p "$MODULE_INSTALL_PATH" "${DEB_DIR}/DEBIAN"
 
 cp "$KO_PATH" "$MODULE_INSTALL_PATH/amneziawg.ko"
-if xz -9 "$MODULE_INSTALL_PATH/amneziawg.ko" 2>/dev/null; then
-    echo "Module compressed with xz"
+# xz options chosen to match upstream kernel scripts/Makefile.modinst:
+#   --check=crc32  : in-tree decompressor expects crc32, not the xz-default crc64.
+#   --lzma2=dict=1MiB : 1 MiB dictionary fits in-tree decoder memory budget on
+#                       all supported targets. xz -9 (default 64 MiB) decodes
+#                       fine in userspace via `xz -d` but kernel decompressor
+#                       on Debian 13 trixie 6.12.85-1 returns "decompression
+#                       failed with status 6" (Issue #76). Reverting to the
+#                       conservative preset is the documented fix.
+KO_FILE="$MODULE_INSTALL_PATH/amneziawg.ko"
+if xz --check=crc32 --lzma2=dict=1MiB -f "$KO_FILE" 2>/dev/null; then
+    KO_XZ="${KO_FILE}.xz"
+    # Sanity: kernel-compatible streams round-trip through `xz -d` and `xz -t`.
+    # Catches preset/filter mismatches at build time instead of in users' dmesg.
+    if xz -t "$KO_XZ" 2>/dev/null && xz -d -c "$KO_XZ" >/dev/null 2>&1; then
+        echo "Module compressed with xz (crc32, 1 MiB dict, sanity OK)"
+    else
+        echo "ERROR: xz sanity check failed for $KO_XZ — refusing to ship a broken prebuilt." >&2
+        exit 1
+    fi
 else
     echo "xz compression skipped — packaging uncompressed .ko"
 fi

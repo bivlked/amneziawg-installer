@@ -3,8 +3,8 @@
 # ==============================================================================
 # Общая библиотека функций для AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.12.0
-# Дата: 2026-05-06
+# Версия: 5.12.1
+# Дата: 2026-05-08
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -270,7 +270,18 @@ _install_kernel_headers() {
             local arch
             arch=$(dpkg --print-architecture 2>/dev/null)
             candidates+=("linux-headers-${kernel_ver}")
-            [[ -n "$arch" ]] && candidates+=("linux-headers-${arch}")
+            if [[ -n "$arch" ]]; then
+                # Cloud-images Debian используют отдельный мета-пакет
+                # linux-headers-cloud-${arch} вместо обычного linux-headers-${arch}
+                # (kernel ABI в них другая — sched/IRQ-таймеры урезаны под VM).
+                # Prefer cloud-meta когда running kernel явно cloud — иначе
+                # repair-module падает на AWS/Azure/GCP/cloud-Hetzner после
+                # kernel upgrade, хотя headers доступны через cloud-meta.
+                if [[ "$kernel_ver" == *-cloud-* ]]; then
+                    candidates+=("linux-headers-cloud-${arch}")
+                fi
+                candidates+=("linux-headers-${arch}")
+            fi
             ;;
         *)
             log_error "Установка kernel headers: неизвестный OS_ID='${OS_ID:-}' (поддерживаются только ubuntu/debian)."

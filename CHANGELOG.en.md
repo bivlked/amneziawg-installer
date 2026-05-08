@@ -14,6 +14,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.12.1] — 2026-05-08
+
+**v5.12.1** — patch release of the AmneziaWG 2.0 VPN installer: three small fixes for issues found in the first 48 hours after v5.12.0. No new features, no architectural changes. Support matrix unchanged: Ubuntu 24.04 / 25.10, Debian 12 / 13, x86_64 + ARM (Raspberry Pi, Oracle Ampere, Hetzner CAX).
+
+### Highlights
+
+- 🔧 **`AWG_SKIP_APPLY=1` works again in `manage add` / `manage remove`.** v5.12.0 added an unconditional pre-call to `ensure_amneziawg_kernel_module` before both actions to make `awg syncconf` reliable. Side effect: it broke the offline edit-only flow on dev / CI machines without the kernel module loaded, where `AWG_SKIP_APPLY=1` accumulates changes for batch apply (see [`ADVANCED.en.md`](ADVANCED.en.md) — environment variables section). The pre-call is now wrapped in `if [[ "${AWG_SKIP_APPLY:-0}" != "1" ]]`. `manage restart` is intentionally NOT gated — it is an explicit apply, AWG_SKIP_APPLY has no meaningful semantics for it. Only the literal `1` is honoured; `yes`, `true`, any other string — same behaviour as unset (apply happens).
+- ☁ **`linux-headers-cloud-${arch}` in the repair-module fallback on Debian.** `awg_common.sh:_install_kernel_headers` (used by `manage repair-module`) on Debian only tried `linux-headers-${kernel_ver}` and `linux-headers-${arch}`. On AWS / Azure / GCP / cloud-Hetzner (kernel name contains `-cloud-`) the exact-version package can disappear from the mirror after a kernel upgrade, while the cloud meta `linux-headers-cloud-${arch}` stays available. The installer's step 2 already knew about cloud-headers via smart detection; now `repair-module` knows too and tries the cloud meta before the generic one. Standard kernels (no `-cloud-` in the name) — behaviour unchanged.
+- 📦 **ARM prebuilt packages now decompress correctly with the in-tree kernel decoder** ([Issue #76](https://github.com/bivlked/amneziawg-installer/issues/76)). `scripts/build-arm-deb.sh` used `xz -9` (CRC64 check, 64 MiB dictionary) — the userspace `xz -t` tool considered the stream valid, but the in-tree Linux decoder on Debian 13 trixie kernel `6.12.85+deb13-arm64` (build 2026-04-30) returned `decompression failed with status 6`. Switched to a kernel-compatible preset `xz --check=crc32 --lzma2=dict=1MiB` — matches mainline `scripts/Makefile.modinst`. Plus a build-time sanity gate: after compression, `xz -t` + `xz -d -c` round-trip; if anything fails — `exit 1`, no broken prebuilt ships to the `arm-packages` release. On the v5.12.1 tag push, CI workflow `arm-build.yml` re-publishes all 14 ARM prebuilt packages with the new xz flags.
+
+### Install
+
+```bash
+wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.12.1/install_amneziawg_en.sh
+chmod +x install_amneziawg_en.sh
+sudo bash ./install_amneziawg_en.sh
+```
+
+3 commands → ~20 minutes → a ready-to-use VPN server with traffic obfuscation. Details — [README → Install](README.en.md#install).
+
+### Upgrading an existing server
+
+Run a fresh `install_amneziawg_en.sh` — at step 5, `manage_amneziawg.sh` and `awg_common.sh` are updated automatically (with SHA256 verification). Full commands — [ADVANCED.en.md → How to update the scripts](ADVANCED.en.md#-how-to-update-the-scripts).
+
+### Tests
+
+**+30 new bats tests** (387 in the matrix, was 357 in v5.12.0):
+
+- `test_v5121_skip_apply_regression.bats` (+14) — RU/EN structural greps on `add` / `remove` / `restart` blocks, plus runtime semantics of the gate for every documented value (unset / 0 / 1 / yes / true / YES); confirms `repair-module` keeps the `AWG_ALLOW_APT_IN_ENSURE=1 ensure_amneziawg_kernel_module full` invocation; bash -n syntax sanity.
+- `test_v5121_cloud_headers.bats` (+9) — functional test of `_install_kernel_headers` via mocked `apt-get` and `dpkg`: cloud kernel gets the cloud meta in candidates before the generic one, standard kernel does not, Ubuntu codepath untouched; the EN mirror `awg_common_en.sh` is verified separately.
+- `test_v5121_xz_kernel_compat.bats` (+7) — structural greps for the new xz flags in `build-arm-deb.sh`, fail-fast on sanity-stage failure, local round-trip with the same flags (toolchain smoke test; kernel-decompressor compatibility itself is best validated on a real kernel boot — VPS or QEMU with the target kernel).
+- `test_v5115_regen_multiarg.bats` — version assertion bumped from 5.12.0 to 5.12.1.
+
+### Compatibility and dependencies
+
+- **Fully backwards-compatible.** All three fixes change behaviour only in narrow regression cases (offline edit / cloud-kernel repair / ARM prebuilt on Debian 13 trixie). The standard install + client flow is unchanged.
+- **No new dependencies.**
+
+[Full diff against v5.12.0](https://github.com/bivlked/amneziawg-installer/compare/v5.12.0...v5.12.1)
+
+---
+
 ## [5.12.0] — 2026-05-06
 
 **v5.12.0** — feature release of the AmneziaWG 2.0 VPN installer: one big feature — **automatic DKMS module recovery on kernel upgrade**. No architectural changes: compatible with all v5.11.x installs — the apt hook, systemd unit, and helper are deployed on the next run of `install_amneziawg_en.sh`. Support matrix unchanged: Ubuntu 24.04 / 25.10, Debian 12 / 13, x86_64 + ARM (Raspberry Pi, Oracle Ampere, Hetzner CAX).

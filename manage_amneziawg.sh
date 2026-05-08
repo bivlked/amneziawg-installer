@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # Скрипт для управления пользователями (пирами) AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.12.0
-# Дата: 2026-05-06
+# Версия: 5.12.1
+# Дата: 2026-05-08
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.12.0"
+SCRIPT_VERSION="5.12.1"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -1150,8 +1150,12 @@ case $COMMAND in
 
         # Гарантируем, что модуль ядра amneziawg загружен и awg-quick@awg0 активен.
         # Без этого apply_config (awg syncconf) упадёт. См. также 'manage repair-module'.
-        ensure_amneziawg_kernel_module \
-            || die "Модуль ядра amneziawg недоступен. Запустите 'manage repair-module' и повторите."
+        # AWG_SKIP_APPLY=1 (offline/batch edit без apply): пропускаем проверку модуля —
+        # apply_config сам сделает no-op, и команда должна работать на dev-машине.
+        if [[ "${AWG_SKIP_APPLY:-0}" != "1" ]]; then
+            ensure_amneziawg_kernel_module \
+                || die "Модуль ядра amneziawg недоступен. Запустите 'manage repair-module' и повторите."
+        fi
 
         # --psk: включить опциональный PresharedKey для каждого нового клиента.
         # Export CLIENT_PSK="auto" → generate_client сам сгенерирует 32-байт
@@ -1239,8 +1243,12 @@ case $COMMAND in
             fi
 
             # Гарантируем загруженный модуль до любых мутаций (apply_config / awg syncconf).
-            ensure_amneziawg_kernel_module \
-                || die "Модуль ядра amneziawg недоступен. Запустите 'manage repair-module' и повторите."
+            # AWG_SKIP_APPLY=1 (offline/batch edit без apply): пропускаем проверку модуля —
+            # apply_config сам сделает no-op, и команда должна работать на dev-машине.
+            if [[ "${AWG_SKIP_APPLY:-0}" != "1" ]]; then
+                ensure_amneziawg_kernel_module \
+                    || die "Модуль ядра amneziawg недоступен. Запустите 'manage repair-module' и повторите."
+            fi
 
             _removed=0
             for _rname in "${_valid_names[@]}"; do

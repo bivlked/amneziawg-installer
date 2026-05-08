@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 peer management script
 # Author: @bivlked
-# Version: 5.12.0
-# Date: 2026-05-06
+# Version: 5.12.1
+# Date: 2026-05-08
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.12.0"
+SCRIPT_VERSION="5.12.1"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -1153,8 +1153,12 @@ case $COMMAND in
 
         # Make sure the amneziawg kernel module is loaded and awg-quick@awg0 is up.
         # Without it apply_config (awg syncconf) fails. See also 'manage repair-module'.
-        ensure_amneziawg_kernel_module \
-            || die "amneziawg kernel module unavailable. Run 'manage repair-module' and try again."
+        # AWG_SKIP_APPLY=1 (offline/batch edit without apply): skip the module check —
+        # apply_config will no-op anyway, and the command must work on a dev machine.
+        if [[ "${AWG_SKIP_APPLY:-0}" != "1" ]]; then
+            ensure_amneziawg_kernel_module \
+                || die "amneziawg kernel module unavailable. Run 'manage repair-module' and try again."
+        fi
 
         # --psk: enable optional PresharedKey for every new client.
         # Export CLIENT_PSK="auto" -> generate_client produces a fresh
@@ -1241,8 +1245,12 @@ case $COMMAND in
             fi
 
             # Ensure module is loaded before any mutations (apply_config / awg syncconf).
-            ensure_amneziawg_kernel_module \
-                || die "amneziawg kernel module unavailable. Run 'manage repair-module' and try again."
+            # AWG_SKIP_APPLY=1 (offline/batch edit without apply): skip the module check —
+            # apply_config will no-op anyway, and the command must work on a dev machine.
+            if [[ "${AWG_SKIP_APPLY:-0}" != "1" ]]; then
+                ensure_amneziawg_kernel_module \
+                    || die "amneziawg kernel module unavailable. Run 'manage repair-module' and try again."
+            fi
 
             _removed=0
             for _rname in "${_valid_names[@]}"; do

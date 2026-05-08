@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 2.0
 # Author: @bivlked
-# Version: 5.12.0
-# Date: 2026-05-06
+# Version: 5.12.1
+# Date: 2026-05-08
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -271,7 +271,20 @@ _install_kernel_headers() {
             local arch
             arch=$(dpkg --print-architecture 2>/dev/null)
             candidates+=("linux-headers-${kernel_ver}")
-            [[ -n "$arch" ]] && candidates+=("linux-headers-${arch}")
+            if [[ -n "$arch" ]]; then
+                # Debian cloud images use a dedicated meta-package
+                # linux-headers-cloud-${arch} instead of the generic
+                # linux-headers-${arch} (different kernel ABI — sched/IRQ
+                # timers trimmed for VMs). Prefer cloud-meta when the
+                # running kernel is explicitly a cloud build — otherwise
+                # repair-module fails on AWS/Azure/GCP/cloud-Hetzner after
+                # a kernel upgrade, even though headers are available via
+                # the cloud meta-package.
+                if [[ "$kernel_ver" == *-cloud-* ]]; then
+                    candidates+=("linux-headers-cloud-${arch}")
+                fi
+                candidates+=("linux-headers-${arch}")
+            fi
             ;;
         *)
             log_error "Installing kernel headers: unknown OS_ID='${OS_ID:-}' (only ubuntu/debian are supported)."
