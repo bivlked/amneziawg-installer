@@ -8,15 +8,15 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 2.0 на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 5.12.1
-# Дата: 2026-05-08
+# Версия: 5.13.0
+# Дата: 2026-05-12
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 set -o pipefail
 
-SCRIPT_VERSION="5.12.1"
+SCRIPT_VERSION="5.13.0"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -34,10 +34,11 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="2f75bb5c827f7e3d36ecbb716b0b89096591694c1a636c31c784683738140eb9"
-MANAGE_SCRIPT_SHA256="59958e56a8d8d611c7f88438883b2662fff87c17cf103324916bf8d482c6fb02"
+MANAGE_SCRIPT_SHA256="291c83acb0449aa7e6b1780b06b2eb4f342b47a01cad1b2e2a6e6f980ab3f09e"
 
 # Флаги CLI
 UNINSTALL=0; HELP=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
+FORCE_REINSTALL=0
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"
 CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0
@@ -70,6 +71,7 @@ while [[ $# -gt 0 ]]; do
         --endpoint=*)    CLI_ENDPOINT="${1#*=}" ;;
         --yes|-y)        AUTO_YES=1 ;;
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
+        --force|-f)      FORCE_REINSTALL=1 ;;
         --preset=*)      CLI_PRESET="${1#*=}" ;;
         --jc=*)          CLI_JC="${1#*=}" ;;
         --jmin=*)        CLI_JMIN="${1#*=}" ;;
@@ -261,6 +263,9 @@ show_help() {
   --route-custom=СЕТИ   Использовать режим 'Пользовательский' неинтерактивно
   --endpoint=IP         Указать внешний IP сервера (для серверов за NAT)
   -y, --yes             Автоматическое подтверждение (перезагрузки, UFW и т.д.)
+  -f, --force           Принудительная переустановка поверх уже работающего AmneziaWG
+                        (по умолчанию запуск на сконфигурированном сервере прерывается;
+                        ENV: AWG_FORCE_REINSTALL=1 эквивалентен флагу)
   --no-tweaks           Пропустить hardening/оптимизацию (без UFW, Fail2Ban, sysctl tweaks)
   --preset=ТИП          Набор параметров обфускации: default, mobile
                         mobile: Jc=3, узкий Jmax — для мобильных операторов (Tele2, Yota, Megafon)
@@ -446,7 +451,28 @@ install_packages() {
         apt_update_tolerant || log_warn "Не удалось обновить apt."
         _APT_UPDATED=1
     fi
-    DEBIAN_FRONTEND=noninteractive apt install -y "${to_install[@]}" || die "Ошибка установки пакетов."
+    if ! DEBIAN_FRONTEND=noninteractive apt install -y "${to_install[@]}"; then
+        # v5.13.0: типичный сбой на 25.10/26.04 после in-place upgrade с 24.04 —
+        # dpkg postinst пакета amneziawg-dkms запускает `dkms autoinstall`,
+        # который итерируется по ВСЕМ ядрам в /lib/modules/. Старые 6.8.x
+        # headers скомпилированы gcc-13, а в 25.10 по умолчанию только
+        # gcc-15 → autoinstall фолится, dpkg не configure'ит зависящие
+        # amneziawg-tools / amneziawg. Принудительно собираем модуль для
+        # running ядра и завершаем dpkg --configure -a.
+        if printf '%s\n' "${to_install[@]}" | grep -qx "amneziawg-dkms"; then
+            log_warn "apt install не завершился — пробую DKMS-сборку только для текущего ядра $(uname -r)..."
+            local _mver
+            _mver="$(ls /var/lib/dkms/amneziawg/ 2>/dev/null | head -n1)"
+            if [[ -n "$_mver" ]] \
+               && dkms install -m amneziawg -v "$_mver" -k "$(uname -r)" --force \
+               && DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then
+                log "DKMS-модуль собран для $(uname -r), dpkg сконфигурирован."
+                log "Пакеты установлены."
+                return 0
+            fi
+        fi
+        die "Ошибка установки пакетов."
+    fi
     log "Пакеты установлены."
 }
 
@@ -926,8 +952,11 @@ optimize_swap() {
         chmod 600 /swapfile
         mkswap /swapfile >/dev/null 2>&1 || { log_warn "Ошибка mkswap"; return 1; }
         swapon /swapfile || { log_warn "Ошибка swapon"; return 1; }
-        # Добавляем в fstab если отсутствует
-        if ! grep -q '/swapfile' /etc/fstab; then
+        # Добавляем в fstab если отсутствует. Точная проверка по полям:
+        # игнорируем закомментированные строки и partial matches (например,
+        # `/swapfile.bak` или старая строка в комментарии).
+        if ! awk '!/^[[:space:]]*#/ && $1 == "/swapfile" && $3 == "swap" {found=1} END {exit !(found+0)}' \
+             /etc/fstab; then
             echo '/swapfile none swap sw 0 0' >> /etc/fstab
         fi
         log "Swap файл создан: ${target_swap_mb}MB"
@@ -1878,6 +1907,30 @@ step2_install_amnezia() {
             ;;
         *)
             ppa_codename="$codename"
+            # Для Ubuntu non-LTS (questing/plucky/oracular/...) PPA Amnezia
+            # пакетов не публикует — там 404 на dists/<codename>/Release.
+            # Проверяем доступность через HEAD-запрос и переключаемся на
+            # noble (LTS): сборка для noble корректно DKMS-собирается под
+            # текущее ядро.
+            # Связано: amnezia-vpn/amneziawg-linux-kernel-module#118
+            case "$ppa_codename" in
+                noble|jammy|focal)
+                    # Known LTS — пропускаем pre-check (PPA точно опубликован)
+                    ;;
+                *)
+                    log "Проверка доступности PPA Amnezia для Ubuntu '${ppa_codename}'..."
+                    if ! curl -fsI --max-time 15 --retry 2 --retry-delay 5 \
+                        "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/${ppa_codename}/Release" \
+                        >/dev/null 2>&1; then
+                        log_warn "PPA Amnezia не публикует пакеты для Ubuntu '${ppa_codename}' (HTTP 404 или host недоступен)."
+                        log_warn "Переключаюсь на 'noble' — DKMS соберёт модуль под текущее ядро."
+                        log_warn "Контекст: https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/118"
+                        ppa_codename="noble"
+                    else
+                        log "PPA Amnezia доступен для '${ppa_codename}'."
+                    fi
+                    ;;
+            esac
             ;;
     esac
 
@@ -1888,6 +1941,32 @@ step2_install_amnezia() {
     # Проверка на legacy-файлы (от add-apt-repository предыдущих версий)
     local legacy_list="/etc/apt/sources.list.d/amnezia-ubuntu-ppa-${codename}.list"
     local legacy_sources="/etc/apt/sources.list.d/amnezia-ubuntu-ppa-${codename}.sources"
+    # Повторный запуск на сервере, где предыдущий (≤ v5.12.1) создал .sources
+    # с «битым» Suites=questing/plucky/etc.: если найденный suite не совпадает
+    # с целевым ppa_codename — удаляем файл, чтобы пересоздать ниже с правильным.
+    # Та же проверка для устаревшего .sources (формат от add-apt-repository).
+    # Если файл существует, но строка `Suites:` не парсится — считаем повреждённым
+    # и тоже пересоздаём, иначе сломанный файл проскочит как «PPA уже добавлен».
+    local existing_suite=""
+    if [[ -f "$ppa_sources" ]]; then
+        existing_suite=$(awk '/^Suites:/{print $2; exit}' "$ppa_sources" 2>/dev/null)
+    fi
+    if [[ -f "$ppa_sources" && ( -z "$existing_suite" || "$existing_suite" != "$ppa_codename" ) ]]; then
+        if [[ -z "$existing_suite" ]]; then
+            log_warn "$ppa_sources существует, но строка Suites: не найдена — пересоздание."
+        else
+            log_warn "Существующий PPA suite='${existing_suite}', целевой='${ppa_codename}' — пересоздание $ppa_sources."
+        fi
+        rm -f "$ppa_sources" "$ppa_list"
+    fi
+    local legacy_suite=""
+    if [[ -f "$legacy_sources" ]]; then
+        legacy_suite=$(awk '/^Suites:/{print $2; exit}' "$legacy_sources" 2>/dev/null)
+    fi
+    if [[ -f "$legacy_sources" && ( -z "$legacy_suite" || "$legacy_suite" != "$ppa_codename" ) ]]; then
+        log_warn "Устаревший PPA-файл $legacy_sources (suite='${legacy_suite:-<пусто>}') не соответствует целевому '${ppa_codename}' — удаление."
+        rm -f "$legacy_sources" "$legacy_list"
+    fi
     if [[ -f "$legacy_list" ]] || [[ -f "$legacy_sources" ]]; then
         log "PPA уже добавлен (legacy-формат)."
     elif [[ -f "$ppa_sources" ]] || [[ -f "$ppa_list" ]]; then
@@ -2006,6 +2085,34 @@ PPASRC
             packages+=("$arch_pkg")
         else
             packages+=("linux-headers-generic")
+        fi
+    fi
+    # v5.13.0: на 25.10/26.04 после in-place upgrade с 24.04 в системе могут
+    # остаться kernel headers от 24.04 (6.8.x), скомпилированные gcc-13. В
+    # 25.10 по умолчанию ставится только gcc-15 → dkms autoinstall в postinst
+    # пакета amneziawg-dkms падает при сборке под устаревшие ядра, и dpkg
+    # оставляет amneziawg* unconfigured. Если в системе обнаружены kernel
+    # headers, отличные от running, заранее доставляем gcc-13 (доступен в
+    # questing/universe и 26.04 archive), чтобы autoinstall прошёл для всех
+    # ядер.
+    local _running_kernel _has_stale=0 _hd _hd_kern
+    _running_kernel="$(uname -r)"
+    for _hd in /lib/modules/*/build; do
+        [[ -e "$_hd" ]] || continue
+        _hd_kern="${_hd#/lib/modules/}"
+        _hd_kern="${_hd_kern%/build}"
+        if [[ "$_hd_kern" != "$_running_kernel" ]]; then
+            _has_stale=1
+            break
+        fi
+    done
+    if [[ "$_has_stale" -eq 1 ]] && ! command -v gcc-13 >/dev/null 2>&1; then
+        if apt-cache madison gcc-13 2>/dev/null | grep -q .; then
+            log "Обнаружены устаревшие kernel headers (≠ $_running_kernel) — устанавливаю gcc-13 для совместимости DKMS autoinstall."
+            DEBIAN_FRONTEND=noninteractive apt install -y gcc-13 \
+                || log_warn "Не удалось установить gcc-13 — DKMS autoinstall может падать на устаревших ядрах."
+        else
+            log_warn "Обнаружены устаревшие kernel headers, но gcc-13 недоступен в repo — DKMS autoinstall может падать."
         fi
     fi
     install_packages "${packages[@]}"
@@ -2633,6 +2740,28 @@ if [[ "$HELP" -eq 1 ]]; then show_help; fi
 if [[ "$UNINSTALL" -eq 1 ]]; then step_uninstall; fi
 if [[ "$DIAGNOSTIC" -eq 1 ]]; then create_diagnostic_report; exit 0; fi
 if [[ "$VERBOSE" -eq 1 ]]; then set -x; fi
+
+# v5.13.0: idempotency-страж — если AmneziaWG уже установлен и работает,
+# повторный запуск даром тратит ~20 минут (Step 1 ещё раз настраивает sysctl/swap/BBR,
+# `apt-get upgrade` может подтянуть новое ядро и заставить пользователя
+# заново перезагружаться, Step 7 рестартит awg-quick@awg0 — handshake
+# отваливаются на несколько секунд). Серверные ключи, пиры и параметры
+# обфускации сохраняются при повторе, но без явного opt-in это поведение
+# выглядит как «тихая переустановка». Защищаемся явным флагом.
+# Поднимает ENV AWG_FORCE_REINSTALL=1 ровно так же, как CLI-флаг.
+if [[ "${AWG_FORCE_REINSTALL:-0}" == "1" ]]; then
+    FORCE_REINSTALL=1
+fi
+if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ -f "$SERVER_CONF_FILE" ]] \
+   && systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then
+    log_error "AmneziaWG уже установлен и запущен."
+    log_error "Чтобы переустановить — добавьте --force (или AWG_FORCE_REINSTALL=1)."
+    log_error "ВНИМАНИЕ: переустановка снова прогонит шаги 1 (sysctl/swap/BBR) и 7 (рестарт сервиса),"
+    log_error "          параметры обфускации (Jc/Jmin/Jmax/H1-H4/I1) сохранятся."
+    log_error "Для управления клиентами:  sudo bash $MANAGE_SCRIPT_PATH help"
+    log_error "Для полного удаления:      sudo bash $0 --uninstall"
+    exit 0
+fi
 
 initialize_setup
 

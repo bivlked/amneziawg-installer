@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.12.1
-# Date: 2026-05-08
+# Version: 5.13.0
+# Date: 2026-05-12
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 set -o pipefail
-SCRIPT_VERSION="5.12.1"
+SCRIPT_VERSION="5.13.0"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -34,10 +34,11 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="a788844e9097b373ed5a8cf1ea0e00965a8ccd1e187b607809a2dfe550ae1e62"
-MANAGE_SCRIPT_SHA256="24f64630a0384b8660e4587d8776309f0bb32db8be4281a5dedda0718f54f5f4"
+MANAGE_SCRIPT_SHA256="e030938342a6f2a26ca2060712ba13f23b84579346b410aa1c9641dedc010124"
 
 # CLI flags
 UNINSTALL=0; HELP=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
+FORCE_REINSTALL=0
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"
 CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0
@@ -70,6 +71,7 @@ while [[ $# -gt 0 ]]; do
         --endpoint=*)    CLI_ENDPOINT="${1#*=}" ;;
         --yes|-y)        AUTO_YES=1 ;;
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
+        --force|-f)      FORCE_REINSTALL=1 ;;
         --preset=*)      CLI_PRESET="${1#*=}" ;;
         --jc=*)          CLI_JC="${1#*=}" ;;
         --jmin=*)        CLI_JMIN="${1#*=}" ;;
@@ -264,6 +266,9 @@ Options:
   --route-custom=NETS   Use 'Custom' mode non-interactively
   --endpoint=IP         Specify external server IP (for servers behind NAT)
   -y, --yes             Auto-confirm (reboots, UFW, etc.)
+  -f, --force           Force reinstall on top of an already-running AmneziaWG
+                        (by default a run on a configured server aborts;
+                        ENV: AWG_FORCE_REINSTALL=1 is equivalent to the flag)
   --no-tweaks           Skip hardening/optimization (no UFW, Fail2Ban, sysctl tweaks)
   --preset=TYPE         Obfuscation parameter preset: default, mobile
                         mobile: Jc=3, narrow Jmax — for mobile carriers (Tele2, Yota, Megafon)
@@ -451,7 +456,28 @@ install_packages() {
         apt_update_tolerant || log_warn "Failed to update apt."
         _APT_UPDATED=1
     fi
-    DEBIAN_FRONTEND=noninteractive apt install -y "${to_install[@]}" || die "Package installation error."
+    if ! DEBIAN_FRONTEND=noninteractive apt install -y "${to_install[@]}"; then
+        # v5.13.0: typical failure on 25.10/26.04 after an in-place upgrade
+        # from 24.04 — the amneziawg-dkms postinst runs `dkms autoinstall`
+        # which iterates over ALL kernels in /lib/modules/. The leftover
+        # 6.8.x headers were compiled with gcc-13, but 25.10 ships only
+        # gcc-15 by default → autoinstall fails, dpkg leaves the dependent
+        # amneziawg-tools / amneziawg unconfigured. Force-build the module
+        # for the running kernel only and finish with dpkg --configure -a.
+        if printf '%s\n' "${to_install[@]}" | grep -qx "amneziawg-dkms"; then
+            log_warn "apt install did not complete — trying a DKMS build for the running kernel $(uname -r) only..."
+            local _mver
+            _mver="$(ls /var/lib/dkms/amneziawg/ 2>/dev/null | head -n1)"
+            if [[ -n "$_mver" ]] \
+               && dkms install -m amneziawg -v "$_mver" -k "$(uname -r)" --force \
+               && DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then
+                log "DKMS module built for $(uname -r), dpkg configured."
+                log "Packages installed."
+                return 0
+            fi
+        fi
+        die "Package installation error."
+    fi
     log "Packages installed."
 }
 
@@ -930,8 +956,11 @@ optimize_swap() {
         chmod 600 /swapfile
         mkswap /swapfile >/dev/null 2>&1 || { log_warn "mkswap error"; return 1; }
         swapon /swapfile || { log_warn "swapon error"; return 1; }
-        # Add to fstab if missing
-        if ! grep -q '/swapfile' /etc/fstab; then
+        # Add to fstab if missing. Precise field match: ignore commented
+        # lines and partial matches (e.g. `/swapfile.bak` or an old entry
+        # left in a comment).
+        if ! awk '!/^[[:space:]]*#/ && $1 == "/swapfile" && $3 == "swap" {found=1} END {exit !(found+0)}' \
+             /etc/fstab; then
             echo '/swapfile none swap sw 0 0' >> /etc/fstab
         fi
         log "Swap file created: ${target_swap_mb}MB"
@@ -1892,6 +1921,29 @@ step2_install_amnezia() {
             ;;
         *)
             ppa_codename="$codename"
+            # For Ubuntu non-LTS (questing/plucky/oracular/...) Amnezia PPA does
+            # not publish packages — dists/<codename>/Release returns 404.
+            # Pre-check via HEAD and fall back to noble (LTS): the noble build
+            # gets DKMS-compiled against the running kernel.
+            # Upstream: amnezia-vpn/amneziawg-linux-kernel-module#118
+            case "$ppa_codename" in
+                noble|jammy|focal)
+                    # Known LTS — skip pre-check (PPA is reliably published)
+                    ;;
+                *)
+                    log "Checking Amnezia PPA availability for Ubuntu '${ppa_codename}'..."
+                    if ! curl -fsI --max-time 15 --retry 2 --retry-delay 5 \
+                        "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/${ppa_codename}/Release" \
+                        >/dev/null 2>&1; then
+                        log_warn "Amnezia PPA does not publish packages for Ubuntu '${ppa_codename}' (HTTP 404 or host unreachable)."
+                        log_warn "Falling back to 'noble' — DKMS will build the module against the running kernel."
+                        log_warn "Context: https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/118"
+                        ppa_codename="noble"
+                    else
+                        log "Amnezia PPA is available for '${ppa_codename}'."
+                    fi
+                    ;;
+            esac
             ;;
     esac
 
@@ -1902,6 +1954,34 @@ step2_install_amnezia() {
     # Check for legacy files (from add-apt-repository of previous versions)
     local legacy_list="/etc/apt/sources.list.d/amnezia-ubuntu-ppa-${codename}.list"
     local legacy_sources="/etc/apt/sources.list.d/amnezia-ubuntu-ppa-${codename}.sources"
+    # Re-run on a server where a previous run (≤ v5.12.1) wrote a broken
+    # .sources file with Suites=questing/plucky/etc.: if the existing suite
+    # doesn't match the target ppa_codename, remove the file so it gets
+    # recreated below with the correct suite. Same check for legacy
+    # .sources (add-apt-repository format).
+    # If the file exists but `Suites:` can't be parsed — treat as corrupt
+    # and recreate, otherwise the broken file would slip through as
+    # "PPA already added".
+    local existing_suite=""
+    if [[ -f "$ppa_sources" ]]; then
+        existing_suite=$(awk '/^Suites:/{print $2; exit}' "$ppa_sources" 2>/dev/null)
+    fi
+    if [[ -f "$ppa_sources" && ( -z "$existing_suite" || "$existing_suite" != "$ppa_codename" ) ]]; then
+        if [[ -z "$existing_suite" ]]; then
+            log_warn "$ppa_sources exists but no Suites: line found — recreating."
+        else
+            log_warn "Existing PPA suite='${existing_suite}', target='${ppa_codename}' — recreating $ppa_sources."
+        fi
+        rm -f "$ppa_sources" "$ppa_list"
+    fi
+    local legacy_suite=""
+    if [[ -f "$legacy_sources" ]]; then
+        legacy_suite=$(awk '/^Suites:/{print $2; exit}' "$legacy_sources" 2>/dev/null)
+    fi
+    if [[ -f "$legacy_sources" && ( -z "$legacy_suite" || "$legacy_suite" != "$ppa_codename" ) ]]; then
+        log_warn "Legacy PPA $legacy_sources (suite='${legacy_suite:-<empty>}') does not match target '${ppa_codename}' — removing."
+        rm -f "$legacy_sources" "$legacy_list"
+    fi
     if [[ -f "$legacy_list" ]] || [[ -f "$legacy_sources" ]]; then
         log "PPA already added (legacy format)."
     elif [[ -f "$ppa_sources" ]] || [[ -f "$ppa_list" ]]; then
@@ -2020,6 +2100,34 @@ PPASRC
             packages+=("$arch_pkg")
         else
             packages+=("linux-headers-generic")
+        fi
+    fi
+    # v5.13.0: on 25.10/26.04 after an in-place upgrade from 24.04, the
+    # system may still carry kernel headers from 24.04 (6.8.x) compiled with
+    # gcc-13. 25.10 ships gcc-15 by default → dkms autoinstall in the
+    # amneziawg-dkms postinst fails when building against stale kernels, and
+    # dpkg leaves amneziawg* unconfigured. If we detect kernel headers other
+    # than the running one, install gcc-13 ahead of time (available in
+    # questing/universe and 26.04 archive) so autoinstall succeeds for every
+    # kernel.
+    local _running_kernel _has_stale=0 _hd _hd_kern
+    _running_kernel="$(uname -r)"
+    for _hd in /lib/modules/*/build; do
+        [[ -e "$_hd" ]] || continue
+        _hd_kern="${_hd#/lib/modules/}"
+        _hd_kern="${_hd_kern%/build}"
+        if [[ "$_hd_kern" != "$_running_kernel" ]]; then
+            _has_stale=1
+            break
+        fi
+    done
+    if [[ "$_has_stale" -eq 1 ]] && ! command -v gcc-13 >/dev/null 2>&1; then
+        if apt-cache madison gcc-13 2>/dev/null | grep -q .; then
+            log "Stale kernel headers detected (other than $_running_kernel) — installing gcc-13 for DKMS autoinstall compatibility."
+            DEBIAN_FRONTEND=noninteractive apt install -y gcc-13 \
+                || log_warn "gcc-13 install failed — DKMS autoinstall may fail on stale kernels."
+        else
+            log_warn "Stale kernel headers detected, but gcc-13 is not in the repo — DKMS autoinstall may fail."
         fi
     fi
     install_packages "${packages[@]}"
@@ -2648,6 +2756,28 @@ if [[ "$HELP" -eq 1 ]]; then show_help; fi
 if [[ "$UNINSTALL" -eq 1 ]]; then step_uninstall; fi
 if [[ "$DIAGNOSTIC" -eq 1 ]]; then create_diagnostic_report; exit 0; fi
 if [[ "$VERBOSE" -eq 1 ]]; then set -x; fi
+
+# v5.13.0: idempotency guard — if AmneziaWG is already installed and
+# running, a re-run wastes ~20 minutes (Step 1 re-tunes sysctl/swap/BBR,
+# `apt-get upgrade` can pull a new kernel and force another reboot, Step 7
+# restarts awg-quick@awg0 — handshakes drop for a few seconds). Server
+# keys, peers and obfuscation parameters survive a re-run, but without
+# explicit opt-in this behaviour looks like a silent reinstall. Guarded by
+# an explicit flag.
+# AWG_FORCE_REINSTALL=1 in the environment is equivalent to --force.
+if [[ "${AWG_FORCE_REINSTALL:-0}" == "1" ]]; then
+    FORCE_REINSTALL=1
+fi
+if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ -f "$SERVER_CONF_FILE" ]] \
+   && systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then
+    log_error "AmneziaWG is already installed and running."
+    log_error "To reinstall — pass --force (or AWG_FORCE_REINSTALL=1)."
+    log_error "WARNING: a reinstall will rerun Step 1 (sysctl/swap/BBR) and Step 7 (service restart);"
+    log_error "         obfuscation parameters (Jc/Jmin/Jmax/H1-H4/I1) survive."
+    log_error "To manage clients:  sudo bash $MANAGE_SCRIPT_PATH help"
+    log_error "To fully uninstall: sudo bash $0 --uninstall"
+    exit 0
+fi
 
 initialize_setup
 

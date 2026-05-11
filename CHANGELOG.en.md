@@ -14,6 +14,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.13.0] — 2026-05-12
+
+**v5.13.0** — AmneziaWG 2.0 VPN installer release with Ubuntu 25.10 (questing) and 26.04 support, plus a `--force` safety guard against accidental re-install on a configured server. Ubuntu 24.04, Debian 12 / 13, x86_64 + ARM (Raspberry Pi, Oracle Ampere, Hetzner CAX) support — unchanged.
+
+### Highlights
+
+- 🛡️ **PPA noble fallback for Ubuntu 25.10 / 26.04** ([Issue #46](https://github.com/bivlked/amneziawg-installer/issues/46)). The Amnezia PPA does not yet publish packages for `questing` (25.10) or upcoming Ubuntu codenames. The installer now auto-detects the 404 on `dists/<codename>/Release`, remaps the suite to `noble` in `/etc/apt/sources.list.d/amnezia-ppa.sources` and re-runs `apt update`. If the server has leftover kernel headers from a previous 24.04 install (typical after `do-release-upgrade`), the installer also pulls in `gcc-13` from `questing/universe` so the DKMS autoinstall succeeds for every kernel. No manual `sources.list` edits, no DKMS surprises. The script also repairs a "sticky" `.sources` file from a previous (≤ v5.12.1) run that left `Suites: questing` behind after an apt failure.
+- 🔒 **`--force` safety guard** ([Issue #78](https://github.com/bivlked/amneziawg-installer/issues/78)). Re-running the installer on a server with AmneziaWG already configured now requires an explicit `--force` (or `AWG_FORCE_REINSTALL=1`). Without it, the script early-exits with a clear "already installed and running" message. Server keys, peer configs, and obfuscation parameters survive a re-run, but Step 1 re-tunes sysctl/swap/BBR, `apt-get upgrade` may pull a new kernel (and require another reboot), and Step 7 restarts `awg-quick@awg0` — handshakes drop for a few seconds. The guard removes that foot-gun.
+- 🧹 **`manage_amneziawg.sh` logging: WARN → stderr.** In v5.12.1 `manage_amneziawg.sh:log_msg` routed only ERROR to stderr and leaked WARN to stdout — broke CI/automation parsing (stdout = "data", stderr = "diagnostics"). WARN and ERROR now both go to stderr, symmetric with `install_amneziawg.sh:log_msg`.
+- 💾 **Precise `/swapfile` check in `/etc/fstab`.** The old substring check `grep -q '/swapfile'` matched commented lines and partial-name hits (`/swapfile.bak`); on re-run the installer could mistakenly skip adding a valid entry — swap then failed to mount on reboot. Switched to an anchored field-aware awk check: `!/^[[:space:]]*#/ && $1 == "/swapfile" && $3 == "swap"`. Idempotent and comment-resistant.
+
+### Installation
+
+```bash
+wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.13.0/install_amneziawg_en.sh
+chmod +x install_amneziawg_en.sh
+sudo bash ./install_amneziawg_en.sh
+```
+
+3 commands → ~20 minutes → a working VPN server with traffic obfuscation. Full guide — [README → Installation](README.en.md#installation).
+
+### Upgrading an existing server
+
+Run the latest `install_amneziawg.sh` with `--force` (if AmneziaWG is already running) — Step 5 fetches the fresh `manage_amneziawg.sh` and `awg_common.sh` with SHA256 verification. Full commands — [ADVANCED.en.md → Updating the scripts](ADVANCED.en.md#-updating-scripts).
+
+### Tests
+
+**+68 new bats** (455 in the matrix, was 387 on v5.12.1):
+
+- `test_v5130_ppa_noble_fallback.bats` (+33) — RU/EN structural greps on the pre-check block and suite-mismatch detection, parity counts, functional tests with mocked `curl` (404 → noble, timeout → noble, success → questing), LTS whitelist (noble/jammy/focal skip pre-check), suite mismatch deletes file on mismatch and preserves on match, corrupt `.sources` (missing `Suites:`) gets recreated, legacy `.sources` mismatch is removed, gcc-13 pre-install fires when stale headers are detected.
+- `test_v5130_force_guard.bats` (+19) — RU/EN structural greps on the `--force|-f` CLI flag, the `AWG_FORCE_REINSTALL=1` env bridge, the idempotency guard `[[ -f $SERVER_CONF_FILE ]] && systemctl is-active --quiet awg-quick@awg0`, the help-section mention of `-f, --force`, RU/EN parity by `FORCE_REINSTALL` occurrence count; functional matrix of 6 cases (clean install / configured+active+no-force / configured+inactive+no-force → repair flow / configured+active+--force / env bridge / strict `=1` env vs `yes`).
+- `test_v5130_bundled_fixes.bats` (+16) — rcgr: RU/EN log_msg routes WARN to stderr (structural + functional, INFO still on stdout); i31a: awk check on `/swapfile` correctly detects a valid entry, rejects commented lines, rejects partial-name matches (`/swapfile.bak`), handles indented lines and an empty fstab.
+
+### Compatibility
+
+- **OS**: Ubuntu 24.04 LTS, 25.10, 26.04 (with noble fallback). Debian 12 (bookworm), 13 (trixie).
+- **Arch**: amd64, arm64 (Raspberry Pi 4/5, Oracle Cloud Ampere, Hetzner CAX, AWS Graviton, other ARM VPS)
+- **Russian carriers**: `--preset=mobile` works on Yota, Beeline, MTS, Tattelecom, Tele2 (Moscow), Megafon (Moscow). See the operator matrix in README.
+
+### Out of scope
+
+- v5.13.1: external review fixes (kernel ambiguity in `build-arm-deb.sh`), backlog refinements.
+- v5.14.0: `--preset=mobile-awg1` (I1=none fallback for Tele2 Krasnoyarsk / Megafon regions).
+
+Full roadmap — [Issue #79](https://github.com/bivlked/amneziawg-installer/issues/79).
+
+---
+
 ## [5.12.1] — 2026-05-08
 
 **v5.12.1** — patch release of the AmneziaWG 2.0 VPN installer: three small fixes for issues found in the first 48 hours after v5.12.0. No new features, no architectural changes. Support matrix unchanged: Ubuntu 24.04 / 25.10, Debian 12 / 13, x86_64 + ARM (Raspberry Pi, Oracle Ampere, Hetzner CAX).

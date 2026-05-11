@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 peer management script
 # Author: @bivlked
-# Version: 5.12.1
-# Date: 2026-05-08
+# Version: 5.13.0
+# Date: 2026-05-12
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.12.1"
+SCRIPT_VERSION="5.13.0"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -115,7 +115,9 @@ log_msg() {
         echo "[$ts] ERROR: Log write error $LOG_FILE" >&2
     fi
 
-    if [[ "$type" == "ERROR" ]]; then
+    # WARN and ERROR go to stderr (symmetry with install_amneziawg.sh:110+,
+    # important for CI/automation parsing: stdout = "data", stderr = "diagnostics").
+    if [[ "$type" == "ERROR" || "$type" == "WARN" ]]; then
         printf "${color_start}%s${color_end}\n" "$entry" >&2
     else
         printf "${color_start}%s${color_end}\n" "$entry"

@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # Скрипт для управления пользователями (пирами) AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.12.1
-# Дата: 2026-05-08
+# Версия: 5.13.0
+# Дата: 2026-05-12
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.12.1"
+SCRIPT_VERSION="5.13.0"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -115,7 +115,9 @@ log_msg() {
         echo "[$ts] ERROR: Ошибка записи лога $LOG_FILE" >&2
     fi
 
-    if [[ "$type" == "ERROR" ]]; then
+    # WARN и ERROR в stderr (симметрия с install_amneziawg.sh:110+, важно
+    # для CI/automation парсинга: stdout = «данные», stderr = «диагностика»).
+    if [[ "$type" == "ERROR" || "$type" == "WARN" ]]; then
         printf "${color_start}%s${color_end}\n" "$entry" >&2
     else
         printf "${color_start}%s${color_end}\n" "$entry"
