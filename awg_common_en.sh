@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 2.0
 # Author: @bivlked
-# Version: 5.14.4
-# Date: 2026-05-24
+# Version: 5.14.5
+# Date: 2026-05-25
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #

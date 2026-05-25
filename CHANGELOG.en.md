@@ -14,6 +14,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.14.5] - 2026-05-25
+
+**v5.14.5** - the installer now detects the real SSH port and opens exactly that one in UFW. Previously, with SSH on a non-standard port, the firewall opened only port 22, and access to the server could be lost once it was enabled on the final step. No architectural changes, support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
+
+### Highlights
+
+- 🔧 **Automatic SSH port detection for the UFW rule** in `install_amneziawg.sh`. As observed by @userosos on Debian 13 ([#91](https://github.com/bivlked/amneziawg-installer/issues/91)): with SSH on a non-standard port, the installer opened only the default port 22 in UFW, and access was lost once the firewall was enabled (`ufw enable`). Added real-port detection: first the `--ssh-port` flag, then the effective `sshd -T` config (the `Port` directive and `ListenAddress host:port`, honouring drop-in files in `sshd_config.d`), then the real `sshd` listening sockets via `ss`, then `sshd_config` parsing, and port 22 as the default. UFW now opens every detected SSH port, the pre-enable warning names them explicitly, and the `--yes` mode also detects the port instead of assuming 22.
+- 🆕 **`--ssh-port=PORT` flag** to set the SSH port manually (comma-separated list allowed) for non-standard setups where auto-detection is not desired.
+
+### Tests
+
+- New file `tests/test_ssh_port_detect.bats` (18 tests): port detection from `--ssh-port`, from `sshd -T` (the `Port` directive and `ListenAddress`, IPv4 and bracketed IPv6), union with `ss` sockets, port normalisation and deduplication, UFW rule application in both branches (fresh setup and update), and parity between the RU and EN branches.
+
+### Verification
+
+- Verified on clean servers with SSH on a non-standard port and a `--yes` install: Ubuntu 24.04 (x86_64) and Ubuntu 26.04 (ARM64). UFW opens the right port and server access is preserved.
+
+---
+
 ## [5.14.4] - 2026-05-24
 
 **v5.14.4** - small installer refinement: declining UFW activation during an interactive install (answering `N` to "Enable UFW?") now correctly continues the installation. A minor user-choice handling improvement, no architectural changes. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
