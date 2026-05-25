@@ -40,7 +40,7 @@ MANAGE_SCRIPT_SHA256="403ed49484c212264dc3be91623de6099e4bc03b8be67e3963bdd0b155
 UNINSTALL=0; HELP=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
 FORCE_REINSTALL=0
 _APT_UPDATED=0
-CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"
+CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""
 CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0
 
 # --- Auto-cleanup of temporary files ---
@@ -62,6 +62,7 @@ while [[ $# -gt 0 ]]; do
         --verbose|-v)    VERBOSE=1 ;;
         --no-color)      NO_COLOR=1 ;;
         --port=*)        CLI_PORT="${1#*=}" ;;
+        --ssh-port=*)    CLI_SSH_PORT="${1#*=}" ;;
         --subnet=*)      CLI_SUBNET="${1#*=}" ;;
         --allow-ipv6)    CLI_DISABLE_IPV6=0 ;;
         --disallow-ipv6) CLI_DISABLE_IPV6=1 ;;
@@ -258,6 +259,9 @@ Options:
   -v, --verbose         Verbose output for debugging (including DEBUG)
   --no-color            Disable colored terminal output
   --port=NUMBER         Set UDP port (1024-65535) non-interactively
+  --ssh-port=PORT       SSH port for the UFW rule (auto-detected by default;
+                        comma-separated list). Use if SSH runs on a non-standard
+                        port and auto-detection is unavailable
   --subnet=SUBNET       Set tunnel subnet (x.x.x.x/yy) non-interactively
   --allow-ipv6          Keep IPv6 enabled non-interactively
   --disallow-ipv6       Force-disable IPv6 non-interactively
@@ -1223,6 +1227,73 @@ EOF
 # Firewall and security
 # ==============================================================================
 
+# Detect the real SSH port(s) so the UFW rule does not lock you out.
+# Without this, ufw limit 22/tcp + default deny incoming cuts server access
+# after ufw enable when SSH runs on a non-standard port (Issue #91).
+# Self-contained: called at step 4, BEFORE awg_common.sh is sourced.
+# Sources:
+#   1. CLI_SSH_PORT (--ssh-port=, manual override, comma-separated list) - authoritative
+#   otherwise UNION (not fallback - so we never miss the real port):
+#   2. sshd -T   (effective config: `Port` AND `ListenAddress host:port`, honours drop-ins)
+#   3. ss -tlnp  (real sshd listening sockets: ground truth for ListenAddress)
+#   4. /etc/ssh/sshd_config + sshd_config.d/*.conf (parsing, only if 2-3 are empty)
+#   5. 22 (default, if nothing is found)
+# Prints unique valid ports (1-65535) space-separated to stdout.
+# IMPORTANT: only log_warn/log_error (stderr) inside; log() writes to stdout
+# and would corrupt the $(detect_ssh_ports) capture.
+detect_ssh_ports() {
+    local ports="" p pp valid=""
+    # awk: pulls the port from `port N` and `listenaddress host:port` lines
+    # (IPv4 and [IPv6]); a bare address without a port is skipped.
+    local awk_ports='tolower($1)=="port"&&$2~/^[0-9]+$/{print $2} tolower($1)=="listenaddress"{v=$2; if(v~/\]:[0-9]+$/){sub(/.*\]:/,"",v); print v} else if(v~/^[0-9.]+:[0-9]+$/){sub(/.*:/,"",v); print v}}'
+
+    if [[ -n "$CLI_SSH_PORT" ]]; then
+        # 1. Manual override - authoritative source
+        ports="${CLI_SSH_PORT//,/ }"
+    else
+        # 2. sshd -T: effective configuration (Port + ListenAddress, drop-ins)
+        if command -v sshd &>/dev/null; then
+            ports+=" $(sshd -T 2>/dev/null | awk "$awk_ports" | tr '\n' ' ')"
+        fi
+        # 3. ss: real sshd listening sockets. Merged, not fallback - catches the
+        #    ListenAddress port even when sshd -T prints the default port 22.
+        if command -v ss &>/dev/null; then
+            ports+=" $(ss -H -tlnp 2>/dev/null | awk '/"sshd"/{n=split($4,a,":"); print a[n]}' | tr '\n' ' ')"
+        fi
+        # 4. Parse config files - only if sshd -T and ss yielded nothing
+        if [[ -z "${ports// }" ]]; then
+            local cfgs=() d
+            [[ -f /etc/ssh/sshd_config ]] && cfgs+=(/etc/ssh/sshd_config)
+            for d in /etc/ssh/sshd_config.d/*.conf; do
+                [[ -f "$d" ]] && cfgs+=("$d")
+            done
+            if [[ "${#cfgs[@]}" -gt 0 ]]; then
+                ports+=" $(awk "$awk_ports" "${cfgs[@]}" 2>/dev/null | tr '\n' ' ')"
+            fi
+        fi
+    fi
+
+    # Validate (decimal 1-65535, 10# guards against octal) + dedup preserving order
+    for p in $ports; do
+        if [[ "$p" =~ ^[0-9]+$ ]]; then
+            pp=$((10#$p))
+            if (( pp >= 1 && pp <= 65535 )); then
+                case " $valid " in
+                    *" $pp "*) ;;
+                    *) valid+="${valid:+ }$pp" ;;
+                esac
+            fi
+        fi
+    done
+
+    # 5. Default if detection produced nothing valid
+    if [[ -z "$valid" ]]; then
+        [[ -n "$CLI_SSH_PORT" ]] && log_warn "--ssh-port has no valid ports, falling back to 22."
+        valid="22"
+    fi
+    printf '%s' "$valid"
+}
+
 setup_improved_firewall() {
     log "Configuring UFW..."
     if ! command -v ufw &>/dev/null; then install_packages ufw; fi
@@ -1234,12 +1305,19 @@ setup_improved_firewall() {
         log_warn "Could not detect network interface for UFW route."
     fi
 
+    # Detect the real SSH port(s) so we do not lock out access on a non-standard port (Issue #91)
+    local ssh_ports _sp
+    ssh_ports=$(detect_ssh_ports)
+    log "SSH port(s) for the UFW rule: ${ssh_ports}"
+
     local ufw_errors=0
     if ufw status 2>/dev/null | grep -q inactive; then
         log "UFW is inactive. Configuring..."
         ufw default deny incoming  || { log_warn "UFW: failed to set default deny incoming"; ufw_errors=1; }
         ufw default allow outgoing || { log_warn "UFW: failed to set default allow outgoing"; ufw_errors=1; }
-        ufw limit 22/tcp comment "SSH Rate Limit" || { log_warn "UFW: failed to limit SSH"; ufw_errors=1; }
+        for _sp in $ssh_ports; do
+            ufw limit "${_sp}/tcp" comment "SSH Rate Limit" || { log_warn "UFW: failed to limit SSH (port ${_sp})"; ufw_errors=1; }
+        done
         ufw allow "${AWG_PORT}/udp" comment "AmneziaWG VPN" || { log_warn "UFW: failed to allow VPN port"; ufw_errors=1; }
         if [[ -n "$main_nic" ]]; then
             ufw route allow in on awg0 out on "$main_nic" comment "AmneziaWG Routing" \
@@ -1252,7 +1330,11 @@ setup_improved_firewall() {
         fi
         log "UFW rules added."
         log_warn "--- ENABLING UFW ---"
-        log_warn "Verify SSH access!"
+        log_warn "UFW will allow SSH ONLY on port(s): ${ssh_ports}. Make sure you connect over it."
+        if [[ "$ssh_ports" != "22" ]]; then
+            log_warn "NOTE: SSH on a non-standard port. If the port is detected wrong, you will lose server access."
+            log_warn "Override if needed: --ssh-port=PORT"
+        fi
         local confirm_ufw="y"
         if [[ "$AUTO_YES" -eq 0 ]]; then
             sleep 5
@@ -1275,7 +1357,9 @@ setup_improved_firewall() {
             log_warn "Failed to create UFW marker — uninstall will not disable UFW automatically."
     else
         log "UFW is active. Updating rules..."
-        ufw limit 22/tcp comment "SSH Rate Limit" || { log_warn "UFW: failed to limit SSH"; ufw_errors=1; }
+        for _sp in $ssh_ports; do
+            ufw limit "${_sp}/tcp" comment "SSH Rate Limit" || { log_warn "UFW: failed to limit SSH (port ${_sp})"; ufw_errors=1; }
+        done
         ufw allow "${AWG_PORT}/udp" comment "AmneziaWG VPN" || { log_warn "UFW: failed to allow VPN port"; ufw_errors=1; }
         if [[ -n "$main_nic" ]]; then
             ufw route allow in on awg0 out on "$main_nic" comment "AmneziaWG Routing" \

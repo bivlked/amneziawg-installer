@@ -40,7 +40,7 @@ MANAGE_SCRIPT_SHA256="a2cb19b14a494033db3205539f8f3f0c107b5fe44e40635c98d88ff74c
 UNINSTALL=0; HELP=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
 FORCE_REINSTALL=0
 _APT_UPDATED=0
-CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"
+CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""
 CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0
 
 # --- Автоочистка временных файлов ---
@@ -62,6 +62,7 @@ while [[ $# -gt 0 ]]; do
         --verbose|-v)    VERBOSE=1 ;;
         --no-color)      NO_COLOR=1 ;;
         --port=*)        CLI_PORT="${1#*=}" ;;
+        --ssh-port=*)    CLI_SSH_PORT="${1#*=}" ;;
         --subnet=*)      CLI_SUBNET="${1#*=}" ;;
         --allow-ipv6)    CLI_DISABLE_IPV6=0 ;;
         --disallow-ipv6) CLI_DISABLE_IPV6=1 ;;
@@ -255,6 +256,9 @@ show_help() {
   -v, --verbose         Расширенный вывод для отладки (включая DEBUG)
   --no-color            Отключить цветной вывод в терминале
   --port=НОМЕР          Установить UDP порт (1024-65535) неинтерактивно
+  --ssh-port=ПОРТ       SSH-порт для правила UFW (по умолчанию определяется
+                        автоматически; список через запятую). Используйте, если
+                        SSH на нестандартном порту и автодетект недоступен
   --subnet=ПОДСЕТЬ      Установить подсеть туннеля (x.x.x.x/yy) неинтерактивно
   --allow-ipv6          Оставить IPv6 включенным неинтерактивно
   --disallow-ipv6       Принудительно отключить IPv6 неинтерактивно
@@ -1219,6 +1223,73 @@ EOF
 # Фаервол и безопасность
 # ==============================================================================
 
+# Определение реального SSH-порта(ов) для корректного правила UFW.
+# Без этого ufw limit 22/tcp + default deny incoming отрезает доступ к серверу
+# после ufw enable, если SSH поднят на нестандартном порту (Issue #91).
+# Функция самодостаточна: вызывается на шаге 4, ДО подключения awg_common.sh.
+# Источники:
+#   1. CLI_SSH_PORT (--ssh-port=, ручной override, список через запятую) - авторитетно
+#   иначе ОБЪЕДИНЕНИЕ (union, не fallback - так не пропустим реальный порт):
+#   2. sshd -T   (эффективный конфиг: `Port` И `ListenAddress host:port`, учитывает drop-ins)
+#   3. ss -tlnp  (реальные listening-сокеты sshd: ground truth для ListenAddress)
+#   4. /etc/ssh/sshd_config + sshd_config.d/*.conf (парсинг, только если 2-3 пусты)
+#   5. 22 (дефолт, если ничего не найдено)
+# Выводит уникальные валидные порты (1-65535) через пробел в stdout.
+# ВАЖНО: внутри только log_warn/log_error (stderr); log() пишет в stdout и
+# испортил бы перехват $(detect_ssh_ports).
+detect_ssh_ports() {
+    local ports="" p pp valid=""
+    # awk: достаёт порт из строк `port N` и `listenaddress host:port`
+    # (IPv4 и [IPv6]); голый адрес без порта пропускается.
+    local awk_ports='tolower($1)=="port"&&$2~/^[0-9]+$/{print $2} tolower($1)=="listenaddress"{v=$2; if(v~/\]:[0-9]+$/){sub(/.*\]:/,"",v); print v} else if(v~/^[0-9.]+:[0-9]+$/){sub(/.*:/,"",v); print v}}'
+
+    if [[ -n "$CLI_SSH_PORT" ]]; then
+        # 1. Ручной override - авторитетный источник
+        ports="${CLI_SSH_PORT//,/ }"
+    else
+        # 2. sshd -T: эффективная конфигурация (Port + ListenAddress, drop-ins)
+        if command -v sshd &>/dev/null; then
+            ports+=" $(sshd -T 2>/dev/null | awk "$awk_ports" | tr '\n' ' ')"
+        fi
+        # 3. ss: реальные listening-сокеты sshd. Объединяем, не fallback -
+        #    ловит ListenAddress-порт, даже если sshd -T печатает дефолтный port 22.
+        if command -v ss &>/dev/null; then
+            ports+=" $(ss -H -tlnp 2>/dev/null | awk '/"sshd"/{n=split($4,a,":"); print a[n]}' | tr '\n' ' ')"
+        fi
+        # 4. Парсинг конфигов - только если sshd -T и ss ничего не дали
+        if [[ -z "${ports// }" ]]; then
+            local cfgs=() d
+            [[ -f /etc/ssh/sshd_config ]] && cfgs+=(/etc/ssh/sshd_config)
+            for d in /etc/ssh/sshd_config.d/*.conf; do
+                [[ -f "$d" ]] && cfgs+=("$d")
+            done
+            if [[ "${#cfgs[@]}" -gt 0 ]]; then
+                ports+=" $(awk "$awk_ports" "${cfgs[@]}" 2>/dev/null | tr '\n' ' ')"
+            fi
+        fi
+    fi
+
+    # Валидация (десятичная 1-65535, 10# против octal) + дедуп с сохранением порядка
+    for p in $ports; do
+        if [[ "$p" =~ ^[0-9]+$ ]]; then
+            pp=$((10#$p))
+            if (( pp >= 1 && pp <= 65535 )); then
+                case " $valid " in
+                    *" $pp "*) ;;
+                    *) valid+="${valid:+ }$pp" ;;
+                esac
+            fi
+        fi
+    done
+
+    # 5. Дефолт, если детект ничего валидного не дал
+    if [[ -z "$valid" ]]; then
+        [[ -n "$CLI_SSH_PORT" ]] && log_warn "--ssh-port не содержит валидных портов, использую 22."
+        valid="22"
+    fi
+    printf '%s' "$valid"
+}
+
 setup_improved_firewall() {
     log "Настройка UFW..."
     if ! command -v ufw &>/dev/null; then install_packages ufw; fi
@@ -1230,12 +1301,19 @@ setup_improved_firewall() {
         log_warn "Не удалось определить сетевой интерфейс для UFW route."
     fi
 
+    # Определяем реальный SSH-порт(ы), чтобы не отрезать доступ при нестандартном порту (Issue #91)
+    local ssh_ports _sp
+    ssh_ports=$(detect_ssh_ports)
+    log "SSH-порт(ы) для правила UFW: ${ssh_ports}"
+
     local ufw_errors=0
     if ufw status 2>/dev/null | grep -q inactive; then
         log "UFW неактивен. Настройка..."
         ufw default deny incoming  || { log_warn "UFW: ошибка default deny incoming"; ufw_errors=1; }
         ufw default allow outgoing || { log_warn "UFW: ошибка default allow outgoing"; ufw_errors=1; }
-        ufw limit 22/tcp comment "SSH Rate Limit" || { log_warn "UFW: ошибка limit SSH"; ufw_errors=1; }
+        for _sp in $ssh_ports; do
+            ufw limit "${_sp}/tcp" comment "SSH Rate Limit" || { log_warn "UFW: ошибка limit SSH (порт ${_sp})"; ufw_errors=1; }
+        done
         ufw allow "${AWG_PORT}/udp" comment "AmneziaWG VPN" || { log_warn "UFW: ошибка allow VPN port"; ufw_errors=1; }
         if [[ -n "$main_nic" ]]; then
             ufw route allow in on awg0 out on "$main_nic" comment "AmneziaWG Routing" \
@@ -1248,7 +1326,11 @@ setup_improved_firewall() {
         fi
         log "Правила UFW добавлены."
         log_warn "--- ВКЛЮЧЕНИЕ UFW ---"
-        log_warn "Проверьте SSH доступ!"
+        log_warn "UFW разрешит SSH ТОЛЬКО на порту(ах): ${ssh_ports}. Убедитесь, что подключаетесь по нему."
+        if [[ "$ssh_ports" != "22" ]]; then
+            log_warn "ВНИМАНИЕ: SSH на нестандартном порту. Если порт определён неверно - доступ к серверу пропадёт."
+            log_warn "Override при необходимости: --ssh-port=ПОРТ"
+        fi
         local confirm_ufw="y"
         if [[ "$AUTO_YES" -eq 0 ]]; then
             sleep 5
@@ -1271,7 +1353,9 @@ setup_improved_firewall() {
             log_warn "Не удалось создать UFW marker — uninstall не сможет отключить UFW автоматически."
     else
         log "UFW активен. Обновление правил..."
-        ufw limit 22/tcp comment "SSH Rate Limit" || { log_warn "UFW: ошибка limit SSH"; ufw_errors=1; }
+        for _sp in $ssh_ports; do
+            ufw limit "${_sp}/tcp" comment "SSH Rate Limit" || { log_warn "UFW: ошибка limit SSH (порт ${_sp})"; ufw_errors=1; }
+        done
         ufw allow "${AWG_PORT}/udp" comment "AmneziaWG VPN" || { log_warn "UFW: ошибка allow VPN port"; ufw_errors=1; }
         if [[ -n "$main_nic" ]]; then
             ufw route allow in on awg0 out on "$main_nic" comment "AmneziaWG Routing" \
