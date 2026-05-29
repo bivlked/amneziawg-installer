@@ -1263,7 +1263,7 @@ generate_vpn_uri() {
 
     local client_privkey client_ip server_pubkey endpoint allowed_ips client_psk
     client_privkey=$(grep -oP 'PrivateKey\s*=\s*\K\S+' "$conf_file") || return 1
-    client_ip=$(grep -oP 'Address\s*=\s*\K[0-9./]+' "$conf_file") || return 1
+    client_ip=$(grep -oP 'Address\s*=\s*\K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(?:/[0-9]+)?' "$conf_file") || return 1
     _ensure_server_public_key || return 1
     server_pubkey=$(cat "$AWG_DIR/server_public.key" 2>/dev/null) || return 1
     # PresharedKey is optional. awk instead of grep so an empty result is not
@@ -1596,7 +1596,13 @@ regenerate_client() {
     client_ip=$(awk -v target="$name" '
     /^\[Peer\]/ { in_peer=1; found=0; next }
     in_peer && $0 == "#_Name = " target { found=1; next }
-    in_peer && found && /^AllowedIPs/ { gsub(/AllowedIPs[ \t]*=[ \t]*/, ""); gsub(/\/[0-9]+/, ""); print; exit }
+    in_peer && found && /^AllowedIPs/ {
+      sub(/^AllowedIPs[ \t]*=[ \t]*/, "")
+      n = split($0, ips, /[ \t]*,[ \t]*/)
+      sub(/\/[0-9]+$/, "", ips[1])
+      print ips[1]
+      exit
+    }
     /^\[/ && !/^\[Peer\]/ { in_peer=0; found=0 }
     ' "$SERVER_CONF_FILE")
 
