@@ -508,6 +508,17 @@ configure_ipv6() {
     log "Отключение IPv6: $(if [ "$DISABLE_IPV6" -eq 1 ]; then echo 'Да'; else echo 'Нет'; fi)"
 }
 
+# Определение наличия native IPv6 на VPS.
+# Глобальный scope IPv6 (не link-local fe80::) означает выход в IPv6-интернет.
+# Эхо 1 если найден global IPv6, иначе 0.
+detect_native_ipv6() {
+    if ip -6 addr show scope global 2>/dev/null | grep -q "inet6"; then
+        echo 1
+    else
+        echo 0
+    fi
+}
+
 configure_ipv6_tunnel() {
     if [[ "$CLI_ALLOW_IPV6_TUNNEL" -eq 1 ]]; then
         ALLOW_IPV6_TUNNEL=1
@@ -515,10 +526,14 @@ configure_ipv6_tunnel() {
         ALLOW_IPV6_TUNNEL=0
     fi
     : "${IPV6_SUBNET:=fddd:2c4:2c4:2c4::/64}"
-    : "${SERVER_HAS_NATIVE_IPV6:=0}"
+    # Native IPv6 определяю при каждом запуске (кэширую в init для client render Phase 4).
+    SERVER_HAS_NATIVE_IPV6=$(detect_native_ipv6)
     if [[ "$ALLOW_IPV6_TUNNEL" -eq 1 && "$DISABLE_IPV6" -eq 1 ]]; then
         log_warn "--allow-ipv6-tunnel requires host IPv6 forwarding; overriding --disallow-ipv6 (DISABLE_IPV6=0)"
         DISABLE_IPV6=0
+    fi
+    if [[ "$ALLOW_IPV6_TUNNEL" -eq 1 && "$SERVER_HAS_NATIVE_IPV6" -eq 0 ]]; then
+        log_warn "Native IPv6 не обнаружен на VPS - туннель IPv6 будет работать peer-to-peer без выхода в IPv6-интернет."
     fi
     export ALLOW_IPV6_TUNNEL IPV6_SUBNET SERVER_HAS_NATIVE_IPV6 DISABLE_IPV6
 }

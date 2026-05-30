@@ -19,6 +19,7 @@ setup() {
     export -f log log_warn log_error log_debug
 
     source "$BATS_TEST_DIRNAME/../awg_common.sh"
+    eval "$(sed -n '/^detect_native_ipv6()/,/^}/p' "$BATS_TEST_DIRNAME/../install_amneziawg.sh")"
     eval "$(sed -n '/^configure_ipv6_tunnel()/,/^}/p' "$BATS_TEST_DIRNAME/../install_amneziawg.sh")"
 }
 

@@ -513,6 +513,17 @@ configure_ipv6() {
     log "IPv6 disable: $(if [ "$DISABLE_IPV6" -eq 1 ]; then echo 'Yes'; else echo 'No'; fi)"
 }
 
+# Detect whether the VPS has native IPv6.
+# A global-scope IPv6 (not link-local fe80::) means egress to the IPv6 internet.
+# Echo 1 if a global IPv6 is found, otherwise 0.
+detect_native_ipv6() {
+    if ip -6 addr show scope global 2>/dev/null | grep -q "inet6"; then
+        echo 1
+    else
+        echo 0
+    fi
+}
+
 configure_ipv6_tunnel() {
     if [[ "$CLI_ALLOW_IPV6_TUNNEL" -eq 1 ]]; then
         ALLOW_IPV6_TUNNEL=1
@@ -520,10 +531,14 @@ configure_ipv6_tunnel() {
         ALLOW_IPV6_TUNNEL=0
     fi
     : "${IPV6_SUBNET:=fddd:2c4:2c4:2c4::/64}"
-    : "${SERVER_HAS_NATIVE_IPV6:=0}"
+    # Detect native IPv6 on every run (cached in init for client render in Phase 4).
+    SERVER_HAS_NATIVE_IPV6=$(detect_native_ipv6)
     if [[ "$ALLOW_IPV6_TUNNEL" -eq 1 && "$DISABLE_IPV6" -eq 1 ]]; then
         log_warn "--allow-ipv6-tunnel requires host IPv6 forwarding; overriding --disallow-ipv6 (DISABLE_IPV6=0)"
         DISABLE_IPV6=0
+    fi
+    if [[ "$ALLOW_IPV6_TUNNEL" -eq 1 && "$SERVER_HAS_NATIVE_IPV6" -eq 0 ]]; then
+        log_warn "Native IPv6 not detected on VPS - the IPv6 tunnel will work peer-to-peer only, without IPv6 internet egress."
     fi
     export ALLOW_IPV6_TUNNEL IPV6_SUBNET SERVER_HAS_NATIVE_IPV6 DISABLE_IPV6
 }

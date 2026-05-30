@@ -774,6 +774,20 @@ _ensure_server_public_key() {
 # Config rendering
 # ==============================================================================
 
+# Derive the server IPv6 address (host ::1) from the tunnel subnet.
+# Input: PREFIX::/MASK (e.g. fddd:2c4:2c4:2c4::/64).
+# Output: PREFIX::1/MASK (e.g. fddd:2c4:2c4:2c4::1/64).
+# Assumption: subnet always ends with ::/MASK (that is how the installer writes it).
+# If no trailing ::/ is present I return the input unchanged (defensive fallback).
+_derive_ipv6_server_addr() {
+    local subnet="$1"
+    if [[ "$subnet" == *"::/"* ]]; then
+        echo "${subnet/::\//::1\/}"
+    else
+        echo "$subnet"
+    fi
+}
+
 # Render server config for AWG 2.0
 # Uses global variables from load_awg_params()
 # shellcheck disable=SC2154  # AWG_* vars loaded via load_awg_params -> source
@@ -799,6 +813,18 @@ render_server_config() {
     server_ip=$(echo "$AWG_TUNNEL_SUBNET" | cut -d'/' -f1)
     subnet_mask=$(echo "$AWG_TUNNEL_SUBNET" | cut -d'/' -f2)
 
+    # [Interface] Address: IPv4 always, IPv6 only when the tunnel is enabled.
+    # The server takes host ::1 in the tunnel IPv6 subnet.
+    # IPV6_SUBNET has the form PREFIX::/MASK (default fddd:2c4:2c4:2c4::/64),
+    # so I derive the server address by replacing trailing ::/MASK with ::1/MASK.
+    local address_line="${server_ip}/${subnet_mask}"
+    if [[ "${ALLOW_IPV6_TUNNEL:-0}" -eq 1 ]]; then
+        local ipv6_subnet="${IPV6_SUBNET:-fddd:2c4:2c4:2c4::/64}"
+        local ipv6_server_addr
+        ipv6_server_addr=$(_derive_ipv6_server_addr "$ipv6_subnet")
+        address_line="${address_line}, ${ipv6_server_addr}"
+    fi
+
     local conf_dir
     conf_dir=$(dirname "$SERVER_CONF_FILE")
     mkdir -p "$conf_dir" || {
@@ -810,8 +836,14 @@ render_server_config() {
     local postup="iptables -I FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${nic} -j MASQUERADE"
     local postdown="iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o ${nic} -j MASQUERADE"
 
-    # IPv6 rules if not disabled
-    if [[ "${DISABLE_IPV6:-1}" -eq 0 ]]; then
+    # IPv6 rules: enabled when the IPv6 tunnel is on (FORWARD inside the tunnel +
+    # MASQUERADE to the public interface). MASQUERADE is harmless without native
+    # IPv6 on the VPS - it is a no-op while there is no IPv6 default route, while
+    # peer-to-peer traffic inside the tunnel still works. I reuse the same nic as
+    # the IPv4 MASQUERADE (no hardcoded interface).
+    # The DISABLE_IPV6=0 condition is kept for byte-identical compatibility with v5.14.x:
+    # an install with --allow-ipv6 (no tunnel) gets the same IPv6 filter rules as before.
+    if [[ "${ALLOW_IPV6_TUNNEL:-0}" -eq 1 || "${DISABLE_IPV6:-1}" -eq 0 ]]; then
         postup="${postup}; ip6tables -I FORWARD -i %i -j ACCEPT; ip6tables -t nat -A POSTROUTING -o ${nic} -j MASQUERADE"
         postdown="${postdown}; ip6tables -D FORWARD -i %i -j ACCEPT; ip6tables -t nat -D POSTROUTING -o ${nic} -j MASQUERADE"
     fi
@@ -823,7 +855,7 @@ render_server_config() {
     cat > "$tmpfile" << EOF
 [Interface]
 PrivateKey = ${server_privkey}
-Address = ${server_ip}/${subnet_mask}
+Address = ${address_line}
 MTU = ${AWG_MTU:-1280}
 ListenPort = ${AWG_PORT}
 PostUp = ${postup}

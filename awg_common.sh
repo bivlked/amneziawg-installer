@@ -771,6 +771,20 @@ _ensure_server_public_key() {
 # Рендеринг конфигураций
 # ==============================================================================
 
+# Вычисление IPv6-адреса сервера (хост ::1) из туннельной подсети.
+# Вход: PREFIX::/MASK (например fddd:2c4:2c4:2c4::/64).
+# Выход: PREFIX::1/MASK (например fddd:2c4:2c4:2c4::1/64).
+# Допущение: подсеть всегда оканчивается на ::/MASK (так формирует install-скрипт).
+# Если завершающего ::/ нет - возвращаю вход без изменений (defensive fallback).
+_derive_ipv6_server_addr() {
+    local subnet="$1"
+    if [[ "$subnet" == *"::/"* ]]; then
+        echo "${subnet/::\//::1\/}"
+    else
+        echo "$subnet"
+    fi
+}
+
 # Рендер серверного конфига AWG 2.0
 # Использует глобальные переменные из load_awg_params()
 # shellcheck disable=SC2154  # AWG_* vars loaded via load_awg_params -> source
@@ -796,6 +810,18 @@ render_server_config() {
     server_ip=$(echo "$AWG_TUNNEL_SUBNET" | cut -d'/' -f1)
     subnet_mask=$(echo "$AWG_TUNNEL_SUBNET" | cut -d'/' -f2)
 
+    # Адрес [Interface]: IPv4 всегда, IPv6 только при включённом туннеле.
+    # Сервер берёт хост ::1 в туннельной IPv6-подсети.
+    # IPV6_SUBNET имеет форму PREFIX::/MASK (по умолчанию fddd:2c4:2c4:2c4::/64),
+    # поэтому адрес сервера получаю заменой завершающего ::/MASK на ::1/MASK.
+    local address_line="${server_ip}/${subnet_mask}"
+    if [[ "${ALLOW_IPV6_TUNNEL:-0}" -eq 1 ]]; then
+        local ipv6_subnet="${IPV6_SUBNET:-fddd:2c4:2c4:2c4::/64}"
+        local ipv6_server_addr
+        ipv6_server_addr=$(_derive_ipv6_server_addr "$ipv6_subnet")
+        address_line="${address_line}, ${ipv6_server_addr}"
+    fi
+
     local conf_dir
     conf_dir=$(dirname "$SERVER_CONF_FILE")
     mkdir -p "$conf_dir" || {
@@ -807,8 +833,13 @@ render_server_config() {
     local postup="iptables -I FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${nic} -j MASQUERADE"
     local postdown="iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o ${nic} -j MASQUERADE"
 
-    # IPv6 правила если не отключен
-    if [[ "${DISABLE_IPV6:-1}" -eq 0 ]]; then
+    # IPv6 правила: при включённом IPv6-туннеле (FORWARD внутри туннеля + MASQUERADE
+    # на публичный интерфейс). MASQUERADE безвреден если у VPS нет native IPv6 -
+    # это no-op, пока нет IPv6 default route, зато peer-to-peer внутри туннеля работает.
+    # Использую тот же nic, что и IPv4 MASQUERADE (не хардкожу интерфейс).
+    # Условие DISABLE_IPV6=0 сохранено для байт-в-байт совместимости с v5.14.x:
+    # установка с --allow-ipv6 (без туннеля) получает те же IPv6-правила фильтра, что и раньше.
+    if [[ "${ALLOW_IPV6_TUNNEL:-0}" -eq 1 || "${DISABLE_IPV6:-1}" -eq 0 ]]; then
         postup="${postup}; ip6tables -I FORWARD -i %i -j ACCEPT; ip6tables -t nat -A POSTROUTING -o ${nic} -j MASQUERADE"
         postdown="${postdown}; ip6tables -D FORWARD -i %i -j ACCEPT; ip6tables -t nat -D POSTROUTING -o ${nic} -j MASQUERADE"
     fi
@@ -820,7 +851,7 @@ render_server_config() {
     cat > "$tmpfile" << EOF
 [Interface]
 PrivateKey = ${server_privkey}
-Address = ${server_ip}/${subnet_mask}
+Address = ${address_line}
 MTU = ${AWG_MTU:-1280}
 ListenPort = ${AWG_PORT}
 PostUp = ${postup}
