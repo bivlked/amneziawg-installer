@@ -923,7 +923,14 @@ _extract_mtu_from_server_conf() {
 }
 
 # Render client config for AWG 2.0
-# render_client_config <name> <client_ip> <client_privkey> <server_pubkey> <endpoint> <port>
+# render_client_config <name> <client_ip> <client_privkey> <server_pubkey> <endpoint> <port> [client_ipv6]
+#
+# client_ipv6 (optional 7th argument): client IPv6 address without prefix
+# length (e.g. fddd:2c4:2c4:2c4::5). If non-empty and ALLOW_IPV6_TUNNEL=1:
+#   - Address = <ipv4>/32, <ipv6>/128
+#   - AllowedIPs: SERVER_HAS_NATIVE_IPV6=1 -> 0.0.0.0/0, ::/0
+#                 SERVER_HAS_NATIVE_IPV6=0 -> 0.0.0.0/0, <IPV6_SUBNET>
+# If empty (legacy client): Address = <ipv4>/32, AllowedIPs unchanged.
 render_client_config() {
     local name="$1"
     local client_ip="$2"
@@ -931,11 +938,21 @@ render_client_config() {
     local server_pubkey="$4"
     local endpoint="$5"
     local port="$6"
+    local client_ipv6="${7:-}"
 
     load_awg_params || return 1
 
     local conf_file="$AWG_DIR/${name}.conf"
-    local allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
+    local allowed_ips
+    if [[ -n "$client_ipv6" ]]; then
+        if [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" ]]; then
+            allowed_ips="0.0.0.0/0, ::/0"
+        else
+            allowed_ips="0.0.0.0/0, ${IPV6_SUBNET:-fddd:2c4:2c4:2c4::/64}"
+        fi
+    else
+        allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
+    fi
 
     # MTU resolution order: server awg0.conf > AWG_MTU from awgsetup_cfg.init >
     # 1280 fallback. Server config is the source of truth for a running server -
@@ -955,10 +972,17 @@ render_client_config() {
     local tmpfile
     tmpfile=$(awg_mktemp) || { log_error "mktemp failed"; return 1; }
 
+    local address_line
+    if [[ -n "$client_ipv6" ]]; then
+        address_line="${client_ip}/32, ${client_ipv6}/128"
+    else
+        address_line="${client_ip}/32"
+    fi
+
     cat > "$tmpfile" << EOF
 [Interface]
 PrivateKey = ${client_privkey}
-Address = ${client_ip}/32
+Address = ${address_line}
 DNS = 1.1.1.1
 MTU = ${mtu}
 Jc = ${AWG_Jc}
@@ -1091,6 +1115,27 @@ get_next_client_ip() {
     return 1
 }
 
+# Derive the IPv6 address for a client from its IPv4 address (deterministic
+# by last octet). Used only when ALLOW_IPV6_TUNNEL=1. Allocation mirrors IPv4:
+# client 10.9.9.N gets fddd:2c4:2c4:2c4::N (same index N, /128).
+# Argument: client IPv4 address, e.g. 10.9.9.5 -> fddd:2c4:2c4:2c4::5
+# Returns the address string without a prefix length.
+#
+# get_next_client_ipv6 <ipv4_addr>
+get_next_client_ipv6() {
+    local ipv4="$1"
+    if [[ -z "$ipv4" ]]; then
+        log_error "get_next_client_ipv6: no IPv4 address supplied"
+        return 1
+    fi
+    local n="${ipv4##*.}"
+    local subnet="${IPV6_SUBNET:-fddd:2c4:2c4:2c4::/64}"
+    local prefix="${subnet%%::*}"
+    [[ "$prefix" == *:* ]] || { log_error "get_next_client_ipv6: IPV6_SUBNET does not contain :: (value: $subnet)"; return 1; }
+    echo "${prefix}::${n}"
+    return 0
+}
+
 # [Peer] addition to server config (atomic via tmpfile + mv).
 #
 # LOCKING CONTRACT: the caller MUST hold an exclusive flock on
@@ -1108,11 +1153,16 @@ get_next_client_ip() {
 # the sub-function uses the SAME fd as the parent (via inheritance),
 # which would require passing the fd as an argument.
 #
-# add_peer_to_server <name> <pubkey> <client_ip>
+# add_peer_to_server <name> <pubkey> <client_ip> [client_ipv6]
+#
+# client_ipv6 (optional 4th argument): IPv6 address without prefix length.
+# If non-empty: AllowedIPs = <ipv4>/32, <ipv6>/128
+# If empty (legacy): AllowedIPs = <ipv4>/32
 add_peer_to_server() {
     local name="$1"
     local pubkey="$2"
     local client_ip="$3"
+    local client_ipv6="${4:-}"
 
     if [[ -z "$name" || -z "$pubkey" || -z "$client_ip" ]]; then
         log_error "add_peer_to_server: insufficient arguments"
@@ -1145,7 +1195,11 @@ EOF
     if [[ -n "${CLIENT_PSK:-}" ]]; then
         echo "PresharedKey = ${CLIENT_PSK}" >> "$tmpfile"
     fi
-    echo "AllowedIPs = ${client_ip}/32" >> "$tmpfile"
+    if [[ -n "$client_ipv6" ]]; then
+        echo "AllowedIPs = ${client_ip}/32, ${client_ipv6}/128" >> "$tmpfile"
+    else
+        echo "AllowedIPs = ${client_ip}/32" >> "$tmpfile"
+    fi
 
     if ! mv "$tmpfile" "$SERVER_CONF_FILE"; then
         rm -f "$tmpfile"
@@ -1294,9 +1348,28 @@ generate_vpn_uri() {
 
     load_awg_params || return 1
 
-    local client_privkey client_ip server_pubkey endpoint allowed_ips client_psk
+    local client_privkey client_ip client_ipv6 server_pubkey endpoint allowed_ips client_psk
     client_privkey=$(grep -oP 'PrivateKey\s*=\s*\K\S+' "$conf_file") || return 1
-    client_ip=$(grep -oP 'Address\s*=\s*\K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(?:/[0-9]+)?' "$conf_file") || return 1
+    # Extract IPv4 from Address (first field before comma, without /prefix).
+    # Regex stops at digits and dots - does not capture IPv6 in dual-stack configs.
+    client_ip=$(awk '/^Address[[:space:]]*=/{
+        sub(/^Address[[:space:]]*=[[:space:]]*/, "")
+        n = split($0, parts, /[[:space:]]*,[[:space:]]*/)
+        sub(/\/[0-9]+$/, "", parts[1])
+        print parts[1]; exit
+    }' "$conf_file") || return 1
+    # Extract IPv6 from Address (second field, if present), without /prefix.
+    client_ipv6=$(awk '/^Address[[:space:]]*=/{
+        sub(/^Address[[:space:]]*=[[:space:]]*/, "")
+        n = split($0, parts, /[[:space:]]*,[[:space:]]*/)
+        if (n >= 2) {
+            sub(/\/[0-9]+$/, "", parts[2])
+            gsub(/[[:space:]]/, "", parts[2])
+            print parts[2]
+        }
+        exit
+    }' "$conf_file" 2>/dev/null)
+    client_ipv6="${client_ipv6:-}"
     _ensure_server_public_key || return 1
     server_pubkey=$(cat "$AWG_DIR/server_public.key" 2>/dev/null) || return 1
     # PresharedKey is optional. awk instead of grep so an empty result is not
@@ -1326,7 +1399,7 @@ generate_vpn_uri() {
     # shellcheck disable=SC2016
     vpn_uri=$(perl -MCompress::Zlib -MMIME::Base64 -e '
         my ($conf_path, $h1,$h2,$h3,$h4, $jc,$jmin,$jmax,
-            $s1,$s2,$s3,$s4, $i1, $port, $ep, $cip, $cpk, $spk, $aips, $psk) = @ARGV;
+            $s1,$s2,$s3,$s4, $i1, $port, $ep, $cip, $cipv6, $cpk, $spk, $aips, $psk) = @ARGV;
 
         open my $fh, "<", $conf_path or die;
         local $/; my $raw = <$fh>; close $fh;
@@ -1351,7 +1424,10 @@ generate_vpn_uri() {
         my @ips = split(/,/, $aips);
         my $ips_json = join(",", map { qq("$_") } @ips);
         $inner .= qq("allowed_ips":[$ips_json],);
-        $inner .= qq("client_ip":"$cip","client_priv_key":"$cpk",);
+        $inner .= qq("client_ip":"$cip",);
+        $cipv6 //= "";
+        $inner .= qq("client_ipv6":"$cipv6",);
+        $inner .= qq("client_priv_key":"$cpk",);
         if (defined $psk && $psk ne "") {
             my $epsk = je($psk);
             $inner .= qq("psk_key":"$epsk",);
@@ -1383,7 +1459,7 @@ generate_vpn_uri() {
         "$AWG_Jc" "$AWG_Jmin" "$AWG_Jmax" \
         "$AWG_S1" "$AWG_S2" "$AWG_S3" "$AWG_S4" \
         "$AWG_I1" "$AWG_PORT" "$endpoint" \
-        "$client_ip" "$client_privkey" "$server_pubkey" "$allowed_ips" "$client_psk" 2>"$perl_err"
+        "$client_ip" "$client_ipv6" "$client_privkey" "$server_pubkey" "$allowed_ips" "$client_psk" 2>"$perl_err"
     )
 
     if [[ -z "$vpn_uri" ]]; then
@@ -1495,6 +1571,13 @@ generate_client() {
     local client_ip
     client_ip=$(get_next_client_ip) || { exec {lock_fd}>&-; return 1; }
 
+    # IPv6 address for client (when ALLOW_IPV6_TUNNEL=1)
+    local client_ipv6=""
+    if [[ "${ALLOW_IPV6_TUNNEL:-0}" == "1" ]]; then
+        client_ipv6=$(get_next_client_ipv6 "$client_ip") || { exec {lock_fd}>&-; return 1; }
+        log_debug "Allocated IPv6 address ${client_ipv6} for client ${name}"
+    fi
+
     # Read keys
     local client_privkey client_pubkey server_pubkey
     client_privkey=$(cat "$KEYS_DIR/${name}.private") || { exec {lock_fd}>&-; return 1; }
@@ -1525,7 +1608,7 @@ generate_client() {
     fi
 
     # Client config
-    render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "${AWG_PORT}" || {
+    render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "${AWG_PORT}" "$client_ipv6" || {
         log_error "Rollback: deleting keys for '$name'"
         rm -f "$KEYS_DIR/${name}.private" "$KEYS_DIR/${name}.public"
         exec {lock_fd}>&-
@@ -1533,7 +1616,7 @@ generate_client() {
     }
 
     # Add peer to server config
-    if ! add_peer_to_server "$name" "$client_pubkey" "$client_ip"; then
+    if ! add_peer_to_server "$name" "$client_pubkey" "$client_ip" "$client_ipv6"; then
         log_error "Rollback: deleting files for '$name'"
         rm -f "$AWG_DIR/${name}.conf" "$KEYS_DIR/${name}.private" "$KEYS_DIR/${name}.public"
         exec {lock_fd}>&-

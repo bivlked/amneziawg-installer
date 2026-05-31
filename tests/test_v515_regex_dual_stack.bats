@@ -103,31 +103,27 @@ CONF
     [[ "$result" != *","* ]]
 }
 
-# --- RU/EN parity: both files use the explicit IPv4 regex ---
+# --- RU/EN parity: both files use awk-based IPv4 extraction (Phase 4 upgrade) ---
+# Phase 1 originally used grep -oP with dotted-decimal regex.
+# Phase 4 upgraded to awk split() to also extract IPv6 from dual-stack Address.
+# These tests verify the awk approach is present and consistent.
 
-@test "v5.15: RU awg_common.sh generate_vpn_uri uses explicit IPv4 dotted-decimal regex" {
-    require_grep_P
-    grep -qP 'Address\\s\*=\\s\*\\K\[0-9\]\+\\.\[0-9\]\+\\.\[0-9\]\+\\.\[0-9\]\+' \
-        "${BATS_TEST_DIRNAME}/../awg_common.sh"
+@test "v5.15: RU awg_common.sh generate_vpn_uri uses awk-based Address extraction" {
+    grep -q "awk '/\^Address\[" "${BATS_TEST_DIRNAME}/../awg_common.sh"
 }
 
-@test "v5.15: EN awg_common_en.sh generate_vpn_uri uses explicit IPv4 dotted-decimal regex" {
-    require_grep_P
-    grep -qP 'Address\\s\*=\\s\*\\K\[0-9\]\+\\.\[0-9\]\+\\.\[0-9\]\+\\.\[0-9\]\+' \
-        "${BATS_TEST_DIRNAME}/../awg_common_en.sh"
+@test "v5.15: EN awg_common_en.sh generate_vpn_uri uses awk-based Address extraction" {
+    grep -q "awk '/\^Address\[" "${BATS_TEST_DIRNAME}/../awg_common_en.sh"
 }
 
-@test "v5.15: RU and EN generate_vpn_uri client_ip extraction lines are identical" {
+@test "v5.15: RU and EN generate_vpn_uri awk extraction blocks are structurally identical" {
     local RU_FILE="${BATS_TEST_DIRNAME}/../awg_common.sh"
     local EN_FILE="${BATS_TEST_DIRNAME}/../awg_common_en.sh"
 
-    # Extract the client_ip= assignment line that greps for Address in generate_vpn_uri
-    ru_line=$(grep 'client_ip=.*grep.*Address' "$RU_FILE" | grep -v '^\s*#')
-    en_line=$(grep 'client_ip=.*grep.*Address' "$EN_FILE" | grep -v '^\s*#')
+    # Extract awk blocks used for client_ip and client_ipv6 extraction in generate_vpn_uri
+    # Compare structural content (split/sub/print pattern) without language-specific comments
+    ru_block=$(awk '/^generate_vpn_uri\(\)/,/^}$/' "$RU_FILE" | grep -E '(split.*parts|sub.*parts\[|print parts\[|client_ip[v6]*=)')
+    en_block=$(awk '/^generate_vpn_uri\(\)/,/^}$/' "$EN_FILE" | grep -E '(split.*parts|sub.*parts\[|print parts\[|client_ip[v6]*=)')
 
-    # Both lines must contain the explicit dotted-decimal IPv4 pattern
-    [[ "$ru_line" == *'[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'* ]]
-    [[ "$en_line" == *'[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'* ]]
-    # Both lines must be identical (RU/EN parity)
-    [ "$ru_line" = "$en_line" ]
+    [ "$ru_block" = "$en_block" ]
 }
