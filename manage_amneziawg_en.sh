@@ -1078,7 +1078,11 @@ list_clients() {
     local clients
     clients=$(grep '^#_Name = ' "$SERVER_CONF_FILE" | sed 's/^#_Name = //' | sort) || clients=""
     if [[ -z "$clients" ]]; then
-        log "No clients found."
+        if [[ "$JSON_OUTPUT" -eq 1 ]]; then
+            echo "[]"
+        else
+            log "No clients found."
+        fi
         return 0
     fi
 
@@ -1111,25 +1115,29 @@ list_clients() {
         done < <(echo "$awg_dump" | tail -n +2)
     fi
 
-    if [[ $verbose -eq 1 ]]; then
-        printf "%-20s | %-7s | %-7s | %-15s | %-15s | %s\n" "Client name" "Conf" "QR" "IP address" "Key (start)" "Status"
-        printf -- "-%.0s" {1..95}
-        echo
-    else
-        printf "%-20s | %-7s | %-7s | %s\n" "Client name" "Conf" "QR" "Status"
-        printf -- "-%.0s" {1..50}
-        echo
+    if [[ "$JSON_OUTPUT" -ne 1 ]]; then
+        if [[ $verbose -eq 1 ]]; then
+            printf "%-20s | %-7s | %-7s | %-36s | %-15s | %s\n" "Client name" "Conf" "QR" "IP address" "Key (start)" "Status"
+            printf -- "-%.0s" {1..114}
+            echo
+        else
+            printf "%-20s | %-7s | %-7s | %s\n" "Client name" "Conf" "QR" "Status"
+            printf -- "-%.0s" {1..50}
+            echo
+        fi
     fi
 
     local now
     now=$(date +%s)
+
+    local json_entries=()
 
     while IFS= read -r name; do
         name="${name#"${name%%[![:space:]]*}"}"; name="${name%"${name##*[![:space:]]}"}"
         if [[ -z "$name" ]]; then continue; fi
         ((tot++))
 
-        local cf="?" png="?" pk="-" ip="-" st="No data"
+        local cf="?" png="?" pk="-" ip="-" ip6="-" st="No data"
         local color_start="" color_end=""
         if [[ "$NO_COLOR" -eq 0 ]]; then
             color_end="\033[0m"
@@ -1140,7 +1148,27 @@ list_clients() {
         [[ -f "$AWG_DIR/${name}.png" ]] && png="+"
 
         if [[ "$cf" == "+" ]]; then
-            ip=$(grep -oP 'Address = \K[0-9.]+' "$AWG_DIR/${name}.conf" 2>/dev/null) || ip="?"
+            # Extract IPv4 and optional IPv6 from Address line (dual-stack aware)
+            local _addr_line
+            _addr_line=$(awk '/^Address[ \t]*=/ { sub(/^Address[ \t]*=[ \t]*/, ""); print; exit }' "$AWG_DIR/${name}.conf" 2>/dev/null)
+            if [[ -n "$_addr_line" ]]; then
+                local _a1 _a2
+                _a1="${_addr_line%%,*}"
+                _a1="${_a1// /}"
+                _a1="${_a1%%/*}"
+                ip="${_a1:-?}"
+                if [[ "$_addr_line" == *,* ]]; then
+                    _a2="${_addr_line#*,}"
+                    _a2="${_a2// /}"
+                    _a2="${_a2%%/*}"
+                    ip6="${_a2:-?}"
+                else
+                    ip6="-"
+                fi
+            else
+                ip="?"
+                ip6="-"
+            fi
 
             local current_pk="${_name_to_pk[$name]:-}"
 
@@ -1180,14 +1208,29 @@ list_clients() {
             exp_str=" [$(format_remaining "$exp_ts")]"
         fi
 
-        if [[ $verbose -eq 1 ]]; then
-            printf "%-20s | %-7s | %-7s | %-15s | %-15s | ${color_start}%s${color_end}%s\n" "$name" "$cf" "$png" "$ip" "$pk" "$st" "$exp_str"
+        if [[ "$JSON_OUTPUT" -eq 1 ]]; then
+            local _ip6_val="${ip6}"
+            [[ "$_ip6_val" == "-" ]] && _ip6_val=""
+            json_entries+=("{\"name\":\"$(json_escape "$name")\",\"ip\":\"$(json_escape "$ip")\",\"client_ipv6\":\"$(json_escape "$_ip6_val")\",\"status\":\"$(json_escape "$st")\"}")
+        elif [[ $verbose -eq 1 ]]; then
+            local ip_display
+            if [[ "$ip6" != "-" ]]; then
+                ip_display="${ip} / ${ip6}"
+            else
+                ip_display="${ip} / -"
+            fi
+            printf "%-20s | %-7s | %-7s | %-36s | %-15s | ${color_start}%s${color_end}%s\n" "$name" "$cf" "$png" "$ip_display" "$pk" "$st" "$exp_str"
         else
             printf "%-20s | %-7s | %-7s | ${color_start}%s${color_end}%s\n" "$name" "$cf" "$png" "$st" "$exp_str"
         fi
     done <<< "$clients"
-    echo ""
-    log "Total clients: $tot, Active/Recent: $act"
+
+    if [[ "$JSON_OUTPUT" -eq 1 ]]; then
+        ( IFS=","; echo "[${json_entries[*]}]" )
+    else
+        echo ""
+        log "Total clients: $tot, Active/Recent: $act"
+    fi
 }
 
 # ==============================================================================

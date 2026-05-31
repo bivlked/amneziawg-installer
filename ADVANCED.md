@@ -1218,6 +1218,8 @@ sudo systemctl status awg-quick@awg0
 
 * **Ubuntu 25.10 / 26.04 / Debian 13:** PPA может не содержать готовых пакетов для свежих non-LTS-релизов. Инсталлятор автоматически переключает codename PPA на `noble` (с v5.13.0) и собирает модуль из исходников через DKMS - это занимает больше времени при первой установке.
 
+* **IPv6 Dual-Stack Tunnel - откат `ALLOW_IPV6_TUNNEL=0`:** Установка `ALLOW_IPV6_TUNNEL=0` в `awgsetup_cfg.init` (или повторный запуск без `--allow-ipv6-tunnel`) **не удаляет** dual-stack `AllowedIPs = ..., fddd::.../128` из уже существующих записей `[Peer]` в `awg0.conf`. Записи остаются, ядро продолжает держать IPv6-маршруты для этих клиентов. Для полного удаления IPv6 из конкретного клиента запустите `manage.sh regen <имя>` после отключения флага - функция `regenerate_client` читает `ALLOW_IPV6_TUNNEL` и не добавит IPv6 при воссоздании `.conf`. Для полной очистки всех пиров: `awg-quick down awg0; sed -i 's|, fddd:[^/]*/[0-9]*||g' /etc/amnezia/amneziawg/awg0.conf; awg-quick up awg0`.
+
 ---
 
 <a id="contributing-adv"></a>

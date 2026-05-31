@@ -1222,6 +1222,8 @@ The minimal working recipe for Debian 13 in a privileged LXC on Proxmox was shar
 
 * **Ubuntu 25.10 / 26.04 / Debian 13:** The PPA may not have prebuilt packages for the latest non-LTS releases. The installer remaps the PPA codename to `noble` automatically (since v5.13.0) and builds the kernel module from source via DKMS, which takes longer on first install.
 
+* **IPv6 Dual-Stack Tunnel - rolling back `ALLOW_IPV6_TUNNEL=0`:** Setting `ALLOW_IPV6_TUNNEL=0` in `awgsetup_cfg.init` (or re-running without `--allow-ipv6-tunnel`) does **not** remove existing dual-stack `AllowedIPs = ..., fddd::.../128` entries from `[Peer]` blocks already written to `awg0.conf`. The entries remain and the kernel keeps IPv6 routes for those peers. To fully remove IPv6 from a specific client, run `manage.sh regen <name>` after disabling the flag - `regenerate_client` reads `ALLOW_IPV6_TUNNEL` and will not add IPv6 when rebuilding the `.conf`. To clean up all peers at once: `awg-quick down awg0; sed -i 's|, fddd:[^/]*/[0-9]*||g' /etc/amnezia/amneziawg/awg0.conf; awg-quick up awg0`.
+
 ---
 
 <a id="contributing-adv"></a>

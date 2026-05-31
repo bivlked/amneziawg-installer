@@ -1709,18 +1709,41 @@ regenerate_client() {
 
     # Client IP from server config
     # Find [Peer] block with #_Name = name, then AllowedIPs
-    client_ip=$(awk -v target="$name" '
+    # For dual-stack: ips[1] = IPv4/32, ips[2] = IPv6/128 (if present)
+    local _regen_awk_out
+    _regen_awk_out=$(awk -v target="$name" '
     /^\[Peer\]/ { in_peer=1; found=0; next }
     in_peer && $0 == "#_Name = " target { found=1; next }
     in_peer && found && /^AllowedIPs/ {
       sub(/^AllowedIPs[ \t]*=[ \t]*/, "")
       n = split($0, ips, /[ \t]*,[ \t]*/)
       sub(/\/[0-9]+$/, "", ips[1])
-      print ips[1]
+      gsub(/^[ \t]+|[ \t]+$/, "", ips[1])
+      ipv4 = ips[1]
+      ipv6 = ""
+      if (n >= 2) {
+        sub(/\/[0-9]+$/, "", ips[2])
+        gsub(/^[ \t]+|[ \t]+$/, "", ips[2])
+        ipv6 = ips[2]
+      }
+      print ipv4 " " ipv6
       exit
     }
     /^\[/ && !/^\[Peer\]/ { in_peer=0; found=0 }
     ' "$SERVER_CONF_FILE")
+
+    client_ip="${_regen_awk_out%% *}"
+    local client_ipv6="${_regen_awk_out#* }"
+    # Defensive guard: awk always prints trailing space, so client_ipv6 is "" for IPv4-only.
+    # This guard fires only if awk produces no trailing space (not expected in practice).
+    if [[ "$client_ipv6" == "$client_ip" ]]; then
+        client_ipv6=""
+    fi
+
+    # Only carry IPv6 forward if ALLOW_IPV6_TUNNEL is enabled
+    if [[ "${ALLOW_IPV6_TUNNEL:-0}" != "1" ]]; then
+        client_ipv6=""
+    fi
 
     if [[ -z "$client_ip" ]]; then
         log_error "Client IP for '$name' not found in server config"
@@ -1776,8 +1799,8 @@ regenerate_client() {
         fi
     fi
 
-    # Config regeneration
-    render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "${AWG_PORT}" || {
+    # Config regeneration (pass client_ipv6 if dual-stack)
+    render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "${AWG_PORT}" "$client_ipv6" || {
         exec {lock_fd}>&-
         unset CLIENT_PSK
         return 1
