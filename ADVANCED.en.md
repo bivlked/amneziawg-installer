@@ -849,6 +849,23 @@ The report (`--diagnostic`) includes the following sections:
 </details>
 
 <details>
+<summary><strong>AmneziaWG handshake completes but traffic then dies (Russian DPI / TSPU, Hetzner, endless re-handshakes)</strong></summary>
+
+This symptom is different from the item above: the handshake **completes once** (`Received handshake response` shows up in the client log), traffic may flow for a couple of seconds, then it goes silent. The client loops `Handshake did not complete after 5 seconds` and `stopped hearing back`, while `awg show` on the server shows a sharp asymmetry: the client sent tens of KiB, the server received only a couple of KiB, and `latest handshake` never refreshes.
+
+The server is not the problem here - the config is fine. This is DPI filtering by the host IP/AS: in-path equipment (in Russia, the TSPU) lets the initial handshake through, then chokes the established flow to near zero. The tell in `awg show`: the client received about 92 bytes (a WireGuard-level handshake response; on the wire the packet is larger due to obfuscation) and nothing more, even though it sent tens of KiB.
+
+From my own measurements Hetzner (AS24940) is consistently affected; large datacenter networks (OVH, AWS, Azure and the like) are also a risk zone - test by the specific IP and route, the block is not total.
+
+Quick way to confirm it is the path, not the config: bring the same config up **from a different network** (mobile data, another country). If the tunnel holds from there, the config works and the route to your current host is being cut.
+
+What to do:
+1. Spin up a test server at a different host or in another country. If the handshake holds there, the issue is your current host's AS.
+2. Move the server to a host with clean IPs that are not flagged as datacenter ranges. My pick is in the [Hosting](README.en.md#hosting-recommendation) section (FreakHosting): I tested it on my own Russian routes, and as of this writing AmneziaWG runs through it reliably, unlike Hetzner. This is not a guarantee - DPI shifts, so test a small VPS before migrating.
+3. Or put a relay/bridge in a "clean" network in front: client -> relay -> exit. The client->relay leg is not subject to the destination filter, and relay->exit runs between data centers.
+</details>
+
+<details>
 <summary><strong>Port is occupied by another process</strong></summary>
 
 1. Identify the process: `ss -lunp | grep :<port>`
