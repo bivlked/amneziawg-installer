@@ -928,8 +928,10 @@ _extract_mtu_from_server_conf() {
 # client_ipv6 (optional 7th argument): client IPv6 address without prefix
 # length (e.g. fddd:2c4:2c4:2c4::5). If non-empty and ALLOW_IPV6_TUNNEL=1:
 #   - Address = <ipv4>/32, <ipv6>/128
-#   - AllowedIPs: SERVER_HAS_NATIVE_IPV6=1 -> 0.0.0.0/0, ::/0
-#                 SERVER_HAS_NATIVE_IPV6=0 -> 0.0.0.0/0, <IPV6_SUBNET>
+#   - AllowedIPs (mirror the IPv4 routing mode into IPv6, intent-mirroring):
+#       full tunnel (ALLOWED_IPS=0.0.0.0/0): + ::/0 (native) or + <IPV6_SUBNET> (no-native)
+#       split tunnel (custom ALLOWED_IPS):   IPv4 list UNCHANGED + ONLY <IPV6_SUBNET>,
+#         NEVER ::/0 - there is no IPv6 split-list, hijacking all IPv6 breaks split-tunnel.
 # If empty (legacy client): Address = <ipv4>/32, AllowedIPs unchanged.
 render_client_config() {
     local name="$1"
@@ -945,11 +947,23 @@ render_client_config() {
     local conf_file="$AWG_DIR/${name}.conf"
     local allowed_ips
     if [[ -n "$client_ipv6" ]]; then
-        if [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" ]]; then
-            allowed_ips="0.0.0.0/0, ::/0"
+        # Dual-stack: mirror the IPv4 routing intent into IPv6.
+        # full tunnel (IPv4=0.0.0.0/0) -> ::/0 (native) or tunnel ULA (no-native).
+        # split tunnel (custom ALLOWED_IPS) -> IPv4 split AS-IS + ONLY tunnel ULA,
+        # never ::/0 (no IPv6 split-list, must not hijack all IPv6).
+        local ipv4_part ipv6_part
+        ipv4_part="${ALLOWED_IPS:-0.0.0.0/0}"
+        if [[ "$ipv4_part" == "0.0.0.0/0" && "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" ]]; then
+            ipv6_part="::/0"
         else
-            allowed_ips="0.0.0.0/0, ${IPV6_SUBNET:-fddd:2c4:2c4:2c4::/64}"
+            ipv6_part="${IPV6_SUBNET:-fddd:2c4:2c4:2c4::/64}"
         fi
+        # Defensive de-dup: ALLOWED_IPS is IPv4-only by construction, but do not
+        # duplicate ipv6_part if it is already present as a token in the list.
+        case ",${ipv4_part// /}," in
+            *",${ipv6_part},"*) allowed_ips="$ipv4_part" ;;
+            *)                  allowed_ips="${ipv4_part}, ${ipv6_part}" ;;
+        esac
     else
         allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
     fi
@@ -1396,12 +1410,25 @@ generate_vpn_uri() {
     # captures \r into the value, which breaks JSON.allowed_ips).
     allowed_ips=$(grep -oP 'AllowedIPs\s*=\s*\K.+' "$conf_file" | tr -d ' \r') || allowed_ips="0.0.0.0/0"
 
+    # MTU/PersistentKeepalive/DNS from .conf - these can be changed via manage modify.
+    # On vpn:// import the Amnezia client uses the structured inner-JSON fields
+    # (awgConfigurator takes mtu from the structured field, not the embedded config),
+    # so hardcoding them would desync from .conf - same class as issue #67 (the
+    # structured psk_key field was authoritative).
+    local mtu keepalive dns_line dns1 dns2
+    mtu=$(grep -oP '^MTU\s*=\s*\K[0-9]+' "$conf_file" | head -n1); mtu="${mtu:-1280}"
+    keepalive=$(grep -oP '^PersistentKeepalive\s*=\s*\K[0-9]+' "$conf_file" | head -n1); keepalive="${keepalive:-33}"
+    dns_line=$(grep -oP '^DNS\s*=\s*\K.+' "$conf_file" | head -n1 | tr -d ' \r')
+    dns1="${dns_line%%,*}"; dns1="${dns1:-1.1.1.1}"
+    if [[ "$dns_line" == *,* ]]; then dns2="${dns_line#*,}"; dns2="${dns2%%,*}"; else dns2="$dns1"; fi
+
     local vpn_uri perl_err
     perl_err=$(awg_mktemp) || perl_err="/tmp/awg_perl_err.$$"
     # shellcheck disable=SC2016
     vpn_uri=$(perl -MCompress::Zlib -MMIME::Base64 -e '
         my ($conf_path, $h1,$h2,$h3,$h4, $jc,$jmin,$jmax,
-            $s1,$s2,$s3,$s4, $i1, $port, $ep, $cip, $cipv6, $cpk, $spk, $aips, $psk) = @ARGV;
+            $s1,$s2,$s3,$s4, $i1, $port, $ep, $cip, $cipv6, $cpk, $spk, $aips, $psk,
+            $mtu, $keepalive, $dns1, $dns2) = @ARGV;
 
         open my $fh, "<", $conf_path or die;
         local $/; my $raw = <$fh>; close $fh;
@@ -1435,8 +1462,8 @@ generate_vpn_uri() {
             $inner .= qq("psk_key":"$epsk",);
         }
         $inner .= qq("config":"$eraw",);
-        $inner .= qq("hostName":"$ep","mtu":"1280",);
-        $inner .= qq("persistent_keep_alive":"33","port":$port,);
+        $inner .= qq("hostName":"$ep","mtu":"$mtu",);
+        $inner .= qq("persistent_keep_alive":"$keepalive","port":$port,);
         $inner .= qq("server_pub_key":"$spk"});
 
         my $einner = je($inner);
@@ -1447,7 +1474,8 @@ generate_vpn_uri() {
         $outer .= qq("transport_proto":"udp"\},"container":"amnezia-awg"\}],);
         $outer .= qq("defaultContainer":"amnezia-awg",);
         $outer .= qq("description":"AWG Server",);
-        $outer .= qq("dns1":"1.1.1.1","dns2":"1.0.0.1",);
+        my $ed1 = je($dns1); my $ed2 = je($dns2);
+        $outer .= qq("dns1":"$ed1","dns2":"$ed2",);
         $outer .= qq("hostName":"$ep"});
 
         my $compressed = compress($outer);
@@ -1461,7 +1489,8 @@ generate_vpn_uri() {
         "$AWG_Jc" "$AWG_Jmin" "$AWG_Jmax" \
         "$AWG_S1" "$AWG_S2" "$AWG_S3" "$AWG_S4" \
         "$AWG_I1" "$AWG_PORT" "$endpoint" \
-        "$client_ip" "$client_ipv6" "$client_privkey" "$server_pubkey" "$allowed_ips" "$client_psk" 2>"$perl_err"
+        "$client_ip" "$client_ipv6" "$client_privkey" "$server_pubkey" "$allowed_ips" "$client_psk" \
+        "$mtu" "$keepalive" "$dns1" "$dns2" 2>"$perl_err"
     )
 
     if [[ -z "$vpn_uri" ]]; then
