@@ -247,7 +247,7 @@ apt_wait_for_ppa_package() {
 show_help() {
     cat << 'EOF'
 Использование: sudo bash install_amneziawg.sh [ОПЦИИ]
-Скрипт для установки и настройки AmneziaWG 2.0 на Ubuntu (24.04 / 25.10) и Debian (12 / 13).
+Скрипт для установки и настройки AmneziaWG 2.0 на Ubuntu (24.04 / 25.10 / 26.04) и Debian (12 / 13).
 
 Опции:
   -h, --help            Показать эту справку и выйти
@@ -259,7 +259,7 @@ show_help() {
   --ssh-port=ПОРТ       SSH-порт для правила UFW (по умолчанию определяется
                         автоматически; список через запятую). Используйте, если
                         SSH на нестандартном порту и автодетект недоступен
-  --subnet=ПОДСЕТЬ      Установить подсеть туннеля (x.x.x.x/yy) неинтерактивно
+  --subnet=ПОДСЕТЬ      Подсеть туннеля, только /24 (напр. 10.9.9.1/24) неинтерактивно
   --allow-ipv6          Оставить IPv6 включенным неинтерактивно
   --disallow-ipv6       Принудительно отключить IPv6 неинтерактивно
   --allow-ipv6-tunnel   Включить dual-stack IPv6 внутри туннеля (ULA, opt-in)
@@ -453,7 +453,12 @@ install_packages() {
     fi
     log "Установка: ${to_install[*]}..."
     if [[ "${_APT_UPDATED:-0}" -eq 0 ]]; then
-        apt_update_tolerant || log_warn "Не удалось обновить apt."
+        # C4: жёсткая ошибка apt_update_tolerant (GPG / сеть на binary-репо / OOM) -
+        # это НЕ source-шум, а реальный сбой; продолжать на устаревшем кэше нельзя
+        # (контракт стр.138, как у вызовов 1975/2108). die завершает установку, так
+        # что _APT_UPDATED=1 проставляется только при успехе - иначе повторный
+        # install_packages в этой сессии молча пропустил бы update.
+        apt_update_tolerant || die "Ошибка apt update."
         _APT_UPDATED=1
     fi
     if ! DEBIAN_FRONTEND=noninteractive apt install -y "${to_install[@]}"; then

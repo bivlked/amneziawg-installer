@@ -250,7 +250,7 @@ apt_wait_for_ppa_package() {
 show_help() {
     cat << 'EOF'
 Usage: sudo bash install_amneziawg_en.sh [OPTIONS]
-Script for installation and configuration of AmneziaWG 2.0 on Ubuntu (24.04 / 25.10) and Debian (12 / 13).
+Script for installation and configuration of AmneziaWG 2.0 on Ubuntu (24.04 / 25.10 / 26.04) and Debian (12 / 13).
 
 Options:
   -h, --help            Show this help and exit
@@ -262,7 +262,7 @@ Options:
   --ssh-port=PORT       SSH port for the UFW rule (auto-detected by default;
                         comma-separated list). Use if SSH runs on a non-standard
                         port and auto-detection is unavailable
-  --subnet=SUBNET       Set tunnel subnet (x.x.x.x/yy) non-interactively
+  --subnet=SUBNET       Tunnel subnet, /24 only (e.g. 10.9.9.1/24) non-interactively
   --allow-ipv6          Keep IPv6 enabled non-interactively
   --disallow-ipv6       Force-disable IPv6 non-interactively
   --allow-ipv6-tunnel   Enable dual-stack IPv6 inside the tunnel (ULA, opt-in)
@@ -458,7 +458,12 @@ install_packages() {
     fi
     log "Installing: ${to_install[*]}..."
     if [[ "${_APT_UPDATED:-0}" -eq 0 ]]; then
-        apt_update_tolerant || log_warn "Failed to update apt."
+        # C4: a hard apt_update_tolerant failure (GPG / binary-repo network / OOM)
+        # is NOT source noise but a real error; continuing on a stale cache is not
+        # safe (contract line ~138, same as callers 1975/2108). die aborts the
+        # install, so _APT_UPDATED=1 is set only on success - otherwise a later
+        # install_packages call in this session would silently skip the update.
+        apt_update_tolerant || die "apt update error."
         _APT_UPDATED=1
     fi
     if ! DEBIAN_FRONTEND=noninteractive apt install -y "${to_install[@]}"; then
