@@ -1555,6 +1555,13 @@ generate_qr_vpnuri() {
     return 0
 }
 
+# Removes partially created client artifacts (keys + .conf). Used by the
+# early-error paths of generate_client - C10: do not leave orphan keys when a
+# step fails before the peer is committed to the server config.
+_rollback_client_artifacts() {
+    rm -f "$KEYS_DIR/$1.private" "$KEYS_DIR/$1.public" "$AWG_DIR/$1.conf"
+}
+
 # Full client creation cycle:
 # keypair -> next IP -> client config -> add peer -> QR
 # generate_client <name> [endpoint]
@@ -1595,29 +1602,40 @@ generate_client() {
         return 1
     fi
 
-    # Generate keys
-    generate_keypair "$name" || { exec {lock_fd}>&-; return 1; }
+    # C6: the client must not already exist. Check UNDER the lock, BEFORE
+    # generating keys - otherwise `add <existing_name>` would silently overwrite
+    # a live client's keys (generate_keypair overwrites unconditionally), and a
+    # concurrent same-name add would race to overwrite.
+    if [[ -e "$KEYS_DIR/${name}.private" || -e "$KEYS_DIR/${name}.public" || -e "$AWG_DIR/${name}.conf" ]]; then
+        log_error "Client '$name' already exists. Use 'remove' or a different name."
+        exec {lock_fd}>&-
+        return 1
+    fi
+
+    # Generate keys. From here on, any early failure must remove the freshly
+    # created keys/conf (C10) via _rollback_client_artifacts.
+    generate_keypair "$name" || { _rollback_client_artifacts "$name"; exec {lock_fd}>&-; return 1; }
 
     # Next free IP
     local client_ip
-    client_ip=$(get_next_client_ip) || { exec {lock_fd}>&-; return 1; }
+    client_ip=$(get_next_client_ip) || { _rollback_client_artifacts "$name"; exec {lock_fd}>&-; return 1; }
 
     # IPv6 address for client (when ALLOW_IPV6_TUNNEL=1)
     local client_ipv6=""
     if [[ "${ALLOW_IPV6_TUNNEL:-0}" == "1" ]]; then
-        client_ipv6=$(get_next_client_ipv6 "$client_ip") || { exec {lock_fd}>&-; return 1; }
+        client_ipv6=$(get_next_client_ipv6 "$client_ip") || { _rollback_client_artifacts "$name"; exec {lock_fd}>&-; return 1; }
         log_debug "Allocated IPv6 address ${client_ipv6} for client ${name}"
     fi
 
     # Read keys
     local client_privkey client_pubkey server_pubkey
-    client_privkey=$(cat "$KEYS_DIR/${name}.private") || { exec {lock_fd}>&-; return 1; }
-    client_pubkey=$(cat "$KEYS_DIR/${name}.public") || { exec {lock_fd}>&-; return 1; }
+    client_privkey=$(cat "$KEYS_DIR/${name}.private") || { _rollback_client_artifacts "$name"; exec {lock_fd}>&-; return 1; }
+    client_pubkey=$(cat "$KEYS_DIR/${name}.public") || { _rollback_client_artifacts "$name"; exec {lock_fd}>&-; return 1; }
 
     # Try to reconstruct server_public.key from awg0.conf when the cache
     # is missing (supports manual setups without the installer step 6).
-    _ensure_server_public_key || { exec {lock_fd}>&-; return 1; }
-    server_pubkey=$(cat "$AWG_DIR/server_public.key") || { exec {lock_fd}>&-; return 1; }
+    _ensure_server_public_key || { _rollback_client_artifacts "$name"; exec {lock_fd}>&-; return 1; }
+    server_pubkey=$(cat "$AWG_DIR/server_public.key") || { _rollback_client_artifacts "$name"; exec {lock_fd}>&-; return 1; }
 
     # Endpoint: argument → AWG_ENDPOINT (awgsetup_cfg.init) → curl to
     # external services → local IP on a network interface.
@@ -1634,22 +1652,23 @@ generate_client() {
     fi
     if [[ -z "$endpoint" ]]; then
         log_error "Failed to determine server public IP. Use --endpoint=IP"
+        _rollback_client_artifacts "$name"
         exec {lock_fd}>&-
         return 1
     fi
 
     # Client config
     render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "${AWG_PORT}" "$client_ipv6" || {
-        log_error "Rollback: deleting keys for '$name'"
-        rm -f "$KEYS_DIR/${name}.private" "$KEYS_DIR/${name}.public"
+        log_error "Rollback: removing artifacts for '$name'"
+        _rollback_client_artifacts "$name"
         exec {lock_fd}>&-
         return 1
     }
 
     # Add peer to server config
     if ! add_peer_to_server "$name" "$client_pubkey" "$client_ip" "$client_ipv6"; then
-        log_error "Rollback: deleting files for '$name'"
-        rm -f "$AWG_DIR/${name}.conf" "$KEYS_DIR/${name}.private" "$KEYS_DIR/${name}.public"
+        log_error "Rollback: removing artifacts for '$name'"
+        _rollback_client_artifacts "$name"
         exec {lock_fd}>&-
         return 1
     fi

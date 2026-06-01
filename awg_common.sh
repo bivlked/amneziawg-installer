@@ -1549,6 +1549,13 @@ generate_qr_vpnuri() {
     return 0
 }
 
+# Удаляет частично созданные артефакты клиента (ключи + .conf). Используется
+# в early-error путях generate_client - C10: не оставлять orphan-ключи при сбое
+# до коммита пира в серверный конфиг.
+_rollback_client_artifacts() {
+    rm -f "$KEYS_DIR/$1.private" "$KEYS_DIR/$1.public" "$AWG_DIR/$1.conf"
+}
+
 # Полный цикл создания клиента:
 # keypair → next IP → client config → add peer → QR
 # generate_client <name> [endpoint]
@@ -1590,29 +1597,40 @@ generate_client() {
         return 1
     fi
 
-    # Генерация ключей
-    generate_keypair "$name" || { exec {lock_fd}>&-; return 1; }
+    # C6: клиент не должен уже существовать. Проверяю ПОД локом, ДО генерации
+    # ключей - иначе `add <существующее_имя>` молча перезатёр бы ключи живого
+    # клиента (generate_keypair перезаписывает безусловно), а параллельный add
+    # того же имени гонялся бы за перезапись.
+    if [[ -e "$KEYS_DIR/${name}.private" || -e "$KEYS_DIR/${name}.public" || -e "$AWG_DIR/${name}.conf" ]]; then
+        log_error "Клиент '$name' уже существует. Используйте 'remove' или другое имя."
+        exec {lock_fd}>&-
+        return 1
+    fi
+
+    # Генерация ключей. С этого момента любой ранний сбой обязан удалить уже
+    # созданные ключи/conf (C10) через _rollback_client_artifacts.
+    generate_keypair "$name" || { _rollback_client_artifacts "$name"; exec {lock_fd}>&-; return 1; }
 
     # Следующий свободный IP
     local client_ip
-    client_ip=$(get_next_client_ip) || { exec {lock_fd}>&-; return 1; }
+    client_ip=$(get_next_client_ip) || { _rollback_client_artifacts "$name"; exec {lock_fd}>&-; return 1; }
 
     # IPv6-адрес клиента (при ALLOW_IPV6_TUNNEL=1)
     local client_ipv6=""
     if [[ "${ALLOW_IPV6_TUNNEL:-0}" == "1" ]]; then
-        client_ipv6=$(get_next_client_ipv6 "$client_ip") || { exec {lock_fd}>&-; return 1; }
+        client_ipv6=$(get_next_client_ipv6 "$client_ip") || { _rollback_client_artifacts "$name"; exec {lock_fd}>&-; return 1; }
         log_debug "Выделен IPv6-адрес ${client_ipv6} для клиента ${name}"
     fi
 
     # Читаем ключи
     local client_privkey client_pubkey server_pubkey
-    client_privkey=$(cat "$KEYS_DIR/${name}.private") || { exec {lock_fd}>&-; return 1; }
-    client_pubkey=$(cat "$KEYS_DIR/${name}.public") || { exec {lock_fd}>&-; return 1; }
+    client_privkey=$(cat "$KEYS_DIR/${name}.private") || { _rollback_client_artifacts "$name"; exec {lock_fd}>&-; return 1; }
+    client_pubkey=$(cat "$KEYS_DIR/${name}.public") || { _rollback_client_artifacts "$name"; exec {lock_fd}>&-; return 1; }
 
     # Пытаемся восстановить server_public.key из awg0.conf если кеша нет
     # (поддержка ручных установок без installer-шага 6).
-    _ensure_server_public_key || { exec {lock_fd}>&-; return 1; }
-    server_pubkey=$(cat "$AWG_DIR/server_public.key") || { exec {lock_fd}>&-; return 1; }
+    _ensure_server_public_key || { _rollback_client_artifacts "$name"; exec {lock_fd}>&-; return 1; }
+    server_pubkey=$(cat "$AWG_DIR/server_public.key") || { _rollback_client_artifacts "$name"; exec {lock_fd}>&-; return 1; }
 
     # Endpoint: из аргумента → AWG_ENDPOINT (awgsetup_cfg.init) → curl до
     # внешних сервисов → локальный IP с сетевого интерфейса.
@@ -1629,22 +1647,23 @@ generate_client() {
     fi
     if [[ -z "$endpoint" ]]; then
         log_error "Не удалось определить внешний IP сервера. Используйте --endpoint=IP"
+        _rollback_client_artifacts "$name"
         exec {lock_fd}>&-
         return 1
     fi
 
     # Конфиг клиента
     render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "${AWG_PORT}" "$client_ipv6" || {
-        log_error "Откат: удаление ключей '$name'"
-        rm -f "$KEYS_DIR/${name}.private" "$KEYS_DIR/${name}.public"
+        log_error "Откат: удаление артефактов '$name'"
+        _rollback_client_artifacts "$name"
         exec {lock_fd}>&-
         return 1
     }
 
     # Добавляем пир в серверный конфиг
     if ! add_peer_to_server "$name" "$client_pubkey" "$client_ip" "$client_ipv6"; then
-        log_error "Откат: удаление файлов '$name'"
-        rm -f "$AWG_DIR/${name}.conf" "$KEYS_DIR/${name}.private" "$KEYS_DIR/${name}.public"
+        log_error "Откат: удаление артефактов '$name'"
+        _rollback_client_artifacts "$name"
         exec {lock_fd}>&-
         return 1
     fi
