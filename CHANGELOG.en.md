@@ -21,7 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Highlights
 
 - 🆕 **`--allow-ipv6-tunnel` flag** in `install_amneziawg.sh` (opt-in, off by default). Enables dual-stack IPv6 inside the VPN tunnel: the server and clients get addresses from the ULA subnet `fddd:2c4:2c4:2c4::/64` next to IPv4. The subnet can be overridden via `IPV6_SUBNET=` in `awgsetup_cfg.init`. This is separate from the existing `--allow-ipv6` (host-level IPv6 via sysctl); the behavior of `--allow-ipv6` / `--disallow-ipv6` is unchanged.
-- 🌐 **Dual-stack server and client configuration**. With the flag on, the server `awg0.conf` gets IPv6 in `Address` and `AllowedIPs`, an ip6tables MASQUERADE rule is set up for the tunnel subnet, and the client `.conf` plus `vpn://` URI become dual-stack. The installer detects native IPv6 on the server (`ip -6 addr show scope global`): with native IPv6 the client gets a full `::/0` route, without native IPv6 only the tunnel subnet, so IPv6 traffic does not vanish into a black hole (a warning is logged in that case).
+- 🌐 **Dual-stack server and client configuration**. With the flag on, the server `awg0.conf` gets IPv6 in `Address` and `AllowedIPs`, an ip6tables MASQUERADE rule on the public NIC is set up, and the client `.conf` plus `vpn://` URI become dual-stack. The installer detects native IPv6 on the server (`ip -6 addr show scope global`): with native IPv6 the client gets a full `::/0` route, without native IPv6 only the tunnel subnet, so IPv6 traffic does not vanish into a black hole (a warning is logged in that case).
 - 🔧 **`manage list` and `manage regen` are dual-stack aware**. The client list shows a mixed state (new dual-stack clients next to legacy IPv4-only ones), and config regeneration correctly preserves the IPv6 address.
 
 ### Migration
@@ -38,6 +38,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Verification
 
 - The automated test suite (bats) was extended with dual-stack coverage: server and client config rendering, IPv6 allocation, dual-stack `vpn://` URI, `manage list`/`regen`, and the no-native-IPv6 path. The no-flag regression is identical to v5.14.x.
+- Verified on clean servers: the happy path on ARM64 / Ubuntu 26.04 with native IPv6 (the client gets a full `::/0` route, ip6tables MASQUERADE, IPv6 internet egress), and the warning path on x86_64 / Debian 13 without native IPv6 (the client gets the tunnel subnet only). A cross-host tunnel was confirmed live: both IPv4 and IPv6 pass through it (loss-free ping6 to the server's in-tunnel address).
 
 ---
 

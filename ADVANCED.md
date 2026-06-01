@@ -172,17 +172,25 @@ sudo bash install_amneziawg.sh --jc=2 --jmin=20 --jmax=60 --yes --route-amnezia
 
 **Когда включается:** только при явном флаге `--allow-ipv6-tunnel` у `install_amneziawg.sh`. Без флага поведение идентично предыдущим версиям. Это отдельная настройка от `--allow-ipv6` / `--disallow-ipv6`, которые управляют IPv6 на уровне хоста (sysctl) и не меняются.
 
+**Взаимодействие с `--disallow-ipv6`.** Туннельному IPv6 нужен форвардинг IPv6 на хосте, поэтому при сочетании `--allow-ipv6-tunnel` с `--disallow-ipv6` флаг туннеля побеждает: установщик пишет предупреждение в лог и оставляет форвардинг IPv6 на хосте включённым. Это не происходит молча.
+
+**Полный туннель при dual-stack.** Когда включён `--allow-ipv6-tunnel`, клиентский конфиг использует полный туннель по IPv4 (`AllowedIPs` начинается с `0.0.0.0/0`) независимо от выбранного режима `--route-amnezia` / `--route-custom` (split-tunnel). В v5.15.0 dual-stack подразумевает full-tunnel; сочетание split-tunnel с IPv6 внутри туннеля пока не поддерживается.
+
 **Подсеть:** приватная ULA `fddd:2c4:2c4:2c4::/64`. Сервер занимает `::1`, клиенты получают `::2`, `::3` и т.д. зеркально нумерации IPv4. Подсеть можно переопределить до первого запуска через `IPV6_SUBNET=` в `/root/awg/awgsetup_cfg.init`.
 
 **Поведение с нативным IPv6 и без него.** При установке скрипт проверяет наличие глобального IPv6 на сервере (`ip -6 addr show scope global`):
 
 - **Есть нативный IPv6:** клиент получает `AllowedIPs = 0.0.0.0/0, ::/0` - весь IPv6-трафик идёт через VPN и выходит в интернет.
-- **Нет нативного IPv6:** клиент получает только туннельную подсеть в `AllowedIPs` (без `::/0`), а в лог выводится предупреждение. Так IPv6 работает между пирами внутри туннеля, но не уходит в интернет (иначе пакеты дропались бы в чёрную дыру). Туннель остаётся полностью рабочим по IPv4.
+- **Нет нативного IPv6:** клиент получает только туннельную подсеть в `AllowedIPs` (без `::/0`): `AllowedIPs = 0.0.0.0/0, fddd:2c4:2c4:2c4::/64`. В лог выводится предупреждение. Так IPv6 работает между пирами внутри туннеля, но не уходит в интернет (иначе пакеты дропались бы в чёрную дыру). Туннель остаётся полностью рабочим по IPv4.
 
-**Как добавить к существующей установке.** Включите IPv6 одним из способов:
+**Как добавить к существующей установке.** Запустите установщик повторно с `--force` и флагом туннеля:
 
-1. Повторно запустите установщик с флагом: `sudo bash install_amneziawg.sh --allow-ipv6-tunnel`, либо
-2. Пропишите `ALLOW_IPV6_TUNNEL=1` в `/root/awg/awgsetup_cfg.init`.
+```bash
+sudo bash ./install_amneziawg.sh --force --allow-ipv6-tunnel
+# для EN-версии: sudo bash ./install_amneziawg_en.sh --force --allow-ipv6-tunnel
+```
+
+`--force` обязателен: без него запуск на уже работающем сервере прерывается idempotency-гардом и флаг игнорируется. Именно `--force` заново рендерит серверный конфиг как dual-stack (`[Interface] Address`, sysctl, PostUp с ip6tables). Без него существующая установка остаётся без изменений, и сервер так и не получает IPv6. Одной только записи `ALLOW_IPV6_TUNNEL=1` в `/root/awg/awgsetup_cfg.init` недостаточно - она не перерендеривает серверный конфиг.
 
 Уже выданные IPv4-only клиенты при этом не меняются. Чтобы дать IPv6 такому клиенту, пересоздайте его - только при пересоздании серверу выделяется IPv6 для этого клиента:
 
@@ -417,6 +425,7 @@ PersistentKeepalive = 33
   --subnet=ПОДСЕТЬ      Установить подсеть туннеля (x.x.x.x/yy)
   --allow-ipv6          Оставить IPv6 включенным
   --disallow-ipv6       Принудительно отключить IPv6
+  --allow-ipv6-tunnel   Включить dual-stack IPv6 внутри туннеля (ULA, opt-in)
   --route-all           Режим: Весь трафик (0.0.0.0/0)
   --route-amnezia       Режим: Список Amnezia+DNS (умолч.)
   --route-custom=СЕТИ   Режим: Только указанные сети
@@ -567,7 +576,7 @@ graph TD
 Инсталлятор скачивает `awg_common.sh` и `manage_amneziawg.sh` с URL, привязанных к конкретному тегу версии:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.1/awg_common.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/awg_common.sh
 ```
 
 Это даёт **supply chain pinning**: скачиваемые скрипты соответствуют версии инсталлятора, даже если `main` уже обновлён.
@@ -587,12 +596,12 @@ AWG_BRANCH=my-feature-branch sudo bash ./install_amneziawg.sh
 
 ```bash
 # Русская версия:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.1/manage_amneziawg.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.1/awg_common.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/manage_amneziawg.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/awg_common.sh
 
 # Английская версия:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.1/manage_amneziawg_en.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.1/awg_common_en.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/manage_amneziawg_en.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/awg_common_en.sh
 
 # Установить права
 chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
@@ -1177,7 +1186,7 @@ sudo sysctl --system
 # Проверьте актуальную версию: https://github.com/amnezia-vpn/amneziawg-go/releases
 AWG_GO_VERSION="0.2.15"
 ARCH="amd64"  # или arm64 для ARM VPS
-sudo apt install -y iptables git make
+sudo apt install -y iptables git make curl
 sudo curl -fsSL \
   "https://github.com/amnezia-vpn/amneziawg-go/releases/download/v${AWG_GO_VERSION}/amneziawg-go-linux-${ARCH}" \
   -o /usr/local/bin/amneziawg-go
@@ -1273,7 +1282,7 @@ sudo systemctl status awg-quick@awg0
 
 * **Ubuntu 25.10 / 26.04 / Debian 13:** PPA может не содержать готовых пакетов для свежих non-LTS-релизов. Инсталлятор автоматически переключает codename PPA на `noble` (с v5.13.0) и собирает модуль из исходников через DKMS - это занимает больше времени при первой установке.
 
-* **IPv6 Dual-Stack Tunnel - откат `ALLOW_IPV6_TUNNEL=0`:** Установка `ALLOW_IPV6_TUNNEL=0` в `awgsetup_cfg.init` (или повторный запуск без `--allow-ipv6-tunnel`) **не удаляет** dual-stack `AllowedIPs = ..., fddd::.../128` из уже существующих записей `[Peer]` в `awg0.conf`. Записи остаются, ядро продолжает держать IPv6-маршруты для этих клиентов. Для полного удаления IPv6 из конкретного клиента запустите `manage.sh regen <имя>` после отключения флага - функция `regenerate_client` читает `ALLOW_IPV6_TUNNEL` и не добавит IPv6 при воссоздании `.conf`. Для полной очистки всех пиров: `awg-quick down awg0; sed -i 's|, fddd:[^/]*/[0-9]*||g' /etc/amnezia/amneziawg/awg0.conf; awg-quick up awg0`.
+* **IPv6 Dual-Stack Tunnel - откат `ALLOW_IPV6_TUNNEL=0`:** Установка `ALLOW_IPV6_TUNNEL=0` в `awgsetup_cfg.init` (или повторный запуск без `--allow-ipv6-tunnel`) **не удаляет** dual-stack `AllowedIPs = ..., fddd::.../128` из уже существующих записей `[Peer]` в `awg0.conf`. Записи остаются, ядро продолжает держать IPv6-маршруты для этих клиентов. `manage_amneziawg.sh regen <имя>` (или полный путь `/root/awg/manage_amneziawg.sh regen <имя>`) после отключения флага пересобирает только клиентский `.conf` - он станет IPv4-only, так как `regenerate_client` читает `ALLOW_IPV6_TUNNEL`. Но `regen` **не** убирает IPv6 `AllowedIPs` из блока `[Peer]` на сервере. Чтобы очистить и серверную сторону, используйте sed-очистку всех пиров: `awg-quick down awg0; sed -i 's|, fddd:[^/]*/[0-9]*||g' /etc/amnezia/amneziawg/awg0.conf; awg-quick up awg0`, либо `manage_amneziawg.sh remove <имя>` + `add <имя>`.
 
 ---
 

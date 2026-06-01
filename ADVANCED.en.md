@@ -176,17 +176,25 @@ By default the tunnel carries IPv4 only. Starting with v5.15.0 you can also enab
 
 **When it activates:** only with the explicit `--allow-ipv6-tunnel` flag on `install_amneziawg.sh`. Without the flag the behavior is identical to earlier versions. This is separate from `--allow-ipv6` / `--disallow-ipv6`, which control host-level IPv6 (sysctl) and are unchanged.
 
+**Interaction with `--disallow-ipv6`.** In-tunnel IPv6 needs host IPv6 forwarding, so if you combine `--allow-ipv6-tunnel` with `--disallow-ipv6` the tunnel flag wins: the installer logs a warning and keeps host IPv6 forwarding enabled. This does not happen silently.
+
+**Full-tunnel with dual-stack.** When `--allow-ipv6-tunnel` is enabled, the client config uses full-tunnel IPv4 (`AllowedIPs` starts with `0.0.0.0/0`) regardless of the selected `--route-amnezia` / `--route-custom` (split-tunnel) mode. In v5.15.0 dual-stack implies full-tunnel; combining split-tunnel with in-tunnel IPv6 is not supported yet.
+
 **Subnet:** the private ULA `fddd:2c4:2c4:2c4::/64`. The server takes `::1`, clients get `::2`, `::3`, and so on, mirroring the IPv4 numbering. The subnet can be overridden before the first run via `IPV6_SUBNET=` in `/root/awg/awgsetup_cfg.init`.
 
 **Behavior with and without native IPv6.** During install the script checks for global IPv6 on the server (`ip -6 addr show scope global`):
 
 - **Native IPv6 present:** the client gets `AllowedIPs = 0.0.0.0/0, ::/0` - all IPv6 traffic goes through the VPN and out to the internet.
-- **No native IPv6:** the client gets only the tunnel subnet in `AllowedIPs` (no `::/0`), and a warning is logged. IPv6 then works between peers inside the tunnel but does not reach the internet (otherwise packets would drop into a black hole). The tunnel stays fully functional over IPv4.
+- **No native IPv6:** the client gets only the tunnel subnet in `AllowedIPs` (no `::/0`): `AllowedIPs = 0.0.0.0/0, fddd:2c4:2c4:2c4::/64`. A warning is logged. IPv6 then works between peers inside the tunnel but does not reach the internet (otherwise packets would drop into a black hole). The tunnel stays fully functional over IPv4.
 
-**How to add it to an existing install.** Enable IPv6 in one of two ways:
+**How to add it to an existing install.** Re-run the installer with `--force` and the tunnel flag:
 
-1. Re-run the installer with the flag: `sudo bash install_amneziawg.sh --allow-ipv6-tunnel`, or
-2. Set `ALLOW_IPV6_TUNNEL=1` in `/root/awg/awgsetup_cfg.init`.
+```bash
+sudo bash ./install_amneziawg_en.sh --force --allow-ipv6-tunnel
+# RU version: sudo bash ./install_amneziawg.sh --force --allow-ipv6-tunnel
+```
+
+`--force` is required: without it a run on an already-working server aborts at the idempotency guard and the flag is ignored. It is `--force` that re-renders the server config as dual-stack (`[Interface] Address`, sysctl, PostUp with ip6tables). Without it an existing install is left unchanged and the server never gets its IPv6. Just setting `ALLOW_IPV6_TUNNEL=1` in `/root/awg/awgsetup_cfg.init` is not enough on its own - it does not re-render the server config.
 
 Already-issued IPv4-only clients are not changed by this. To give IPv6 to such a client, recreate it - only recreation allocates an IPv6 for that client on the server:
 
@@ -421,6 +429,7 @@ Options:
   --subnet=SUBNET       Set tunnel subnet (x.x.x.x/yy)
   --allow-ipv6          Keep IPv6 enabled
   --disallow-ipv6       Force-disable IPv6
+  --allow-ipv6-tunnel   Enable dual-stack IPv6 inside the tunnel (ULA, opt-in)
   --route-all           Mode: All traffic (0.0.0.0/0)
   --route-amnezia       Mode: Amnezia List + DNS (default)
   --route-custom=NETS   Mode: Only specified networks
@@ -571,7 +580,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common.sh` and `manage_amneziawg.sh` from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.1/awg_common.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/awg_common.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -591,12 +600,12 @@ To update the management and shared library scripts **without reinstalling the s
 
 ```bash
 # Russian version:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.1/manage_amneziawg.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.1/awg_common.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/manage_amneziawg.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/awg_common.sh
 
 # English version:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.1/manage_amneziawg_en.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.11.1/awg_common_en.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/manage_amneziawg_en.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/awg_common_en.sh
 
 # Set permissions
 chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
@@ -1181,7 +1190,7 @@ sudo sysctl --system
 # Check the latest version: https://github.com/amnezia-vpn/amneziawg-go/releases
 AWG_GO_VERSION="0.2.15"
 ARCH="amd64"  # or arm64 for ARM VPS
-sudo apt install -y iptables git make
+sudo apt install -y iptables git make curl
 sudo curl -fsSL \
   "https://github.com/amnezia-vpn/amneziawg-go/releases/download/v${AWG_GO_VERSION}/amneziawg-go-linux-${ARCH}" \
   -o /usr/local/bin/amneziawg-go
@@ -1277,7 +1286,7 @@ The minimal working recipe for Debian 13 in a privileged LXC on Proxmox was shar
 
 * **Ubuntu 25.10 / 26.04 / Debian 13:** The PPA may not have prebuilt packages for the latest non-LTS releases. The installer remaps the PPA codename to `noble` automatically (since v5.13.0) and builds the kernel module from source via DKMS, which takes longer on first install.
 
-* **IPv6 Dual-Stack Tunnel - rolling back `ALLOW_IPV6_TUNNEL=0`:** Setting `ALLOW_IPV6_TUNNEL=0` in `awgsetup_cfg.init` (or re-running without `--allow-ipv6-tunnel`) does **not** remove existing dual-stack `AllowedIPs = ..., fddd::.../128` entries from `[Peer]` blocks already written to `awg0.conf`. The entries remain and the kernel keeps IPv6 routes for those peers. To fully remove IPv6 from a specific client, run `manage.sh regen <name>` after disabling the flag - `regenerate_client` reads `ALLOW_IPV6_TUNNEL` and will not add IPv6 when rebuilding the `.conf`. To clean up all peers at once: `awg-quick down awg0; sed -i 's|, fddd:[^/]*/[0-9]*||g' /etc/amnezia/amneziawg/awg0.conf; awg-quick up awg0`.
+* **IPv6 Dual-Stack Tunnel - rolling back `ALLOW_IPV6_TUNNEL=0`:** Setting `ALLOW_IPV6_TUNNEL=0` in `awgsetup_cfg.init` (or re-running without `--allow-ipv6-tunnel`) does **not** remove existing dual-stack `AllowedIPs = ..., fddd::.../128` entries from `[Peer]` blocks already written to `awg0.conf`. The entries remain and the kernel keeps IPv6 routes for those peers. `manage_amneziawg.sh regen <name>` (or the full path `/root/awg/manage_amneziawg.sh regen <name>`) after disabling the flag rebuilds only the client `.conf` - it becomes IPv4-only, since `regenerate_client` reads `ALLOW_IPV6_TUNNEL`. But `regen` does **not** remove the IPv6 `AllowedIPs` from the server `[Peer]` block. To clear the server side too, use the sed cleanup across all peers: `awg-quick down awg0; sed -i 's|, fddd:[^/]*/[0-9]*||g' /etc/amnezia/amneziawg/awg0.conf; awg-quick up awg0`, or `manage_amneziawg.sh remove <name>` + `add <name>`.
 
 ---
 

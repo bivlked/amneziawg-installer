@@ -20,7 +20,7 @@
   <img src="https://img.shields.io/badge/Architecture-x86__64_|_ARM64_|_ARMv7-green" alt="x86_64 | ARM64 | ARMv7">
   <a href="https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE"><img src="https://img.shields.io/github/license/bivlked/amneziawg-installer" alt="License"></a>
   <img src="https://img.shields.io/badge/Status-Stable-success" alt="Status">
-  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-5.14.1-blue" alt="Version"></a>
+  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-5.15.0-blue" alt="Version"></a>
   <img src="https://img.shields.io/badge/AmneziaWG-2.0-blueviolet" alt="AWG 2.0">
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/shellcheck.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/shellcheck.yml/badge.svg" alt="ShellCheck"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
@@ -119,7 +119,7 @@
 > 📘 **Полный гайд по развёртыванию (EN):** [Install AmneziaWG VPN server on Ubuntu/Debian VPS](INSTALL_VPS.md) - выбор VPS, ARM, troubleshooting, удаление.
 
 ```bash
-wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.14.1/install_amneziawg.sh
+wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/install_amneziawg.sh
 chmod +x install_amneziawg.sh
 sudo bash ./install_amneziawg.sh
 ```
@@ -252,9 +252,10 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 
 2.  **Скачайте скрипт:**
     ```bash
-    wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.14.1/install_amneziawg.sh
-    # или: curl -fLo install_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.14.1/install_amneziawg.sh
+    wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/install_amneziawg.sh
+    # или: curl -fLo install_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/install_amneziawg.sh
     ```
+    > На минимальном Debian curl может отсутствовать (wget обычно есть) - используйте `wget`. Сам curl установщик доставит на шаге 1.
 3.  **Сделайте его исполняемым:**
     ```bash
     chmod +x install_amneziawg.sh
@@ -267,7 +268,7 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 
     > **English version:** Для вывода на английском используйте `install_amneziawg_en.sh`:
     > ```bash
-    > wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.14.1/install_amneziawg_en.sh
+    > wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/install_amneziawg_en.sh
     > sudo bash ./install_amneziawg_en.sh
     > ```
     > Английская версия функционально идентична; только сообщения и логи на английском.
@@ -378,11 +379,11 @@ sudo bash /root/awg/manage_amneziawg.sh <команда> [аргументы]
 
 ```bash
 # Установка (русский)
-wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.14.1/install_amneziawg.sh
+wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/install_amneziawg.sh
 sudo bash ./install_amneziawg.sh          # Запуск (+ 2 перезагрузки)
 
 # Установка (English)
-wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.14.1/install_amneziawg_en.sh
+wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh       # Запуск (+ 2 перезагрузки)
 
 # Управление клиентами
@@ -454,13 +455,13 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
   <b>О:</b> Скачайте новый скрипт установки и замените скрипты управления на сервере:
   <pre>
   # Русская версия:
-  wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.14.1/manage_amneziawg.sh
-  wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.14.1/awg_common.sh
+  wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/manage_amneziawg.sh
+  wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/awg_common.sh
   chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
   # Английская версия:
-  wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.14.1/manage_amneziawg_en.sh
-  wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.14.1/awg_common_en.sh
+  wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/manage_amneziawg_en.sh
+  wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.0/awg_common_en.sh
   chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
   </pre>
   Переустановка сервера не требуется.
