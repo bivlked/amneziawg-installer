@@ -1350,6 +1350,7 @@ generate_vpn_uri() {
     # Regex останавливается на цифрах и точках - не захватывает IPv6 при dual-stack.
     client_ip=$(awk '/^Address[[:space:]]*=/{
         sub(/^Address[[:space:]]*=[[:space:]]*/, "")
+        sub(/\r$/, "")
         n = split($0, parts, /[[:space:]]*,[[:space:]]*/)
         sub(/\/[0-9]+$/, "", parts[1])
         print parts[1]; exit
@@ -1357,6 +1358,7 @@ generate_vpn_uri() {
     # Извлекаем IPv6 из Address (второе поле, если присутствует), без /prefix.
     client_ipv6=$(awk '/^Address[[:space:]]*=/{
         sub(/^Address[[:space:]]*=[[:space:]]*/, "")
+        sub(/\r$/, "")
         n = split($0, parts, /[[:space:]]*,[[:space:]]*/)
         if (n >= 2) {
             sub(/\/[0-9]+$/, "", parts[2])
