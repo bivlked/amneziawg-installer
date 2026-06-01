@@ -94,11 +94,11 @@ Pros: zero CI changes, signatures generated on the trusted maintainer machine. C
 
 ### Option B: CI uploads signatures generated locally (asymmetric)
 
-Maintainer generates `*.minisig` files locally, commits them transiently to a `signing/` directory (gitignored elsewhere), tags. A new job in `release.yml` reads them and uploads as assets. Same trust model as Option A - just automates the upload step.
+Maintainer generates `*.minisig` files locally, commits them transiently to a `signing/` directory (gitignored elsewhere), tags. A separate, manually dispatched workflow reads them and uploads as assets. Same trust model as Option A - just automates the upload step.
 
 The signing of the files NEVER happens in GitHub Actions. The private key is never exposed to Actions. This is intentional and the whole point.
 
-A draft of Option B is committed at `docs/release-sign.yml.draft` for review. It is NOT placed in `.github/workflows/` until the public key is published.
+A draft of Option B is committed at `docs/release-sign.yml.draft` for review. It is a standalone `workflow_dispatch` workflow (not a job added to `release.yml`), and is NOT placed in `.github/workflows/` until the public key is published. When activated it uploads, for each of the six scripts, the script itself plus its `.minisig`, and also attaches `KEYS.txt` - so everything needed to verify is available from a single release. `release.yml` itself does not publish the `.sh` files as assets; that is intentionally left to the signing workflow to avoid two code paths uploading the same files. Until signing is activated, the canonical way to obtain a script is still the documented `wget` from `raw.githubusercontent.com`.
 
 ## User-side verification
 
