@@ -52,7 +52,7 @@ Before submitting a PR, ensure:
    done
    ```
 
-3. **Unit tests (bats-core)** pass. Current expected baseline on `v5.14.1`: **510 tests** (v5.14.1 added 18 tests for MTU resolution priority + validation).
+3. **Unit tests (bats-core)** pass. The suite grows every release, so there is no fixed count to match - run `bats tests/` and make sure the full suite is green before opening a PR.
    ```bash
    bats tests/
    ```

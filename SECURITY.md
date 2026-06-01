@@ -4,10 +4,9 @@
 
 | Version | Supported          |
 |---------|--------------------|
-| 5.13.x  | :white_check_mark: |
-| 5.12.x  | Security fixes only |
-| 5.11.x  | Security fixes only |
-| < 5.11  | :x:                |
+| 5.15.x  | :white_check_mark: |
+| 5.14.x  | Security fixes only |
+| < 5.14  | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -49,6 +48,6 @@ Coordinated disclosure. 30 days for a fix before public disclosure. If a vulnera
 
 ## Release integrity (planned)
 
-Detached `minisign` signatures for installer and management scripts are planned for v5.14+. Once the maintainer public key is published as `KEYS.txt` in the repository root, users will be able to verify a downloaded script against the maintainer's offline-held private key, independent of GitHub's TLS chain. Design and threat model: [docs/SIGNING_DESIGN.md](docs/SIGNING_DESIGN.md).
+Detached `minisign` signatures for installer and management scripts are planned for a future release and are not active yet. Once the maintainer public key is published as `KEYS.txt` in the repository root, users will be able to verify a downloaded script against the maintainer's offline-held private key, independent of GitHub's TLS chain. Design and threat model: [docs/SIGNING_DESIGN.md](docs/SIGNING_DESIGN.md).
 
 Until activation, fetch the installer over HTTPS from `raw.githubusercontent.com` (default in README) - GitHub's TLS still protects the path on the wire, the missing piece is independent maintainer-level signing.

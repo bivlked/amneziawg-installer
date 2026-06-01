@@ -238,7 +238,7 @@ sudo bash ./install_amneziawg_en.sh
 
 ### Upgrading an existing server
 
-Run the latest `install_amneziawg.sh` with `--force` (if AmneziaWG is already running) — Step 5 fetches the fresh `manage_amneziawg.sh` and `awg_common.sh` with SHA256 verification. Full commands — [ADVANCED.en.md → Updating the scripts](ADVANCED.en.md#-updating-scripts).
+Run the latest `install_amneziawg.sh` with `--force` (if AmneziaWG is already running) — Step 5 fetches the fresh `manage_amneziawg.sh` and `awg_common.sh` with SHA256 verification. Full commands — [ADVANCED.en.md → Updating the scripts](ADVANCED.en.md#update-scripts-adv).
 
 ### Tests
 
@@ -281,11 +281,11 @@ chmod +x install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh
 ```
 
-3 commands → ~20 minutes → a ready-to-use VPN server with traffic obfuscation. Details — [README → Install](README.en.md#install).
+3 commands → ~20 minutes → a ready-to-use VPN server with traffic obfuscation. Details — [README → Install](README.en.md#installation).
 
 ### Upgrading an existing server
 
-Run a fresh `install_amneziawg_en.sh` — at step 5, `manage_amneziawg.sh` and `awg_common.sh` are updated automatically (with SHA256 verification). Full commands — [ADVANCED.en.md → How to update the scripts](ADVANCED.en.md#-how-to-update-the-scripts).
+Run a fresh `install_amneziawg_en.sh` — at step 5, `manage_amneziawg.sh` and `awg_common.sh` are updated automatically (with SHA256 verification). Full commands — [ADVANCED.en.md → How to update the scripts](ADVANCED.en.md#update-scripts-adv).
 
 ### Tests
 
@@ -370,11 +370,11 @@ chmod +x install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh
 ```
 
-3 commands → ~20 minutes → a working VPN server with traffic obfuscation. Details — [README → Install](README.en.md#install).
+3 commands → ~20 minutes → a working VPN server with traffic obfuscation. Details — [README → Install](README.en.md#installation).
 
 ### Upgrading an existing server
 
-Run the fresh `install_amneziawg_en.sh` — at step 5 `manage_amneziawg.sh` and `awg_common.sh` are refreshed automatically (with SHA256 verification). Full commands — [ADVANCED.en.md → Updating the scripts](ADVANCED.en.md#-updating-the-scripts).
+Run the fresh `install_amneziawg_en.sh` — at step 5 `manage_amneziawg.sh` and `awg_common.sh` are refreshed automatically (with SHA256 verification). Full commands — [ADVANCED.en.md → Updating the scripts](ADVANCED.en.md#update-scripts-adv).
 
 ### Tests
 
@@ -406,11 +406,11 @@ chmod +x install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh
 ```
 
-3 commands → ~20 minutes → a working VPN server with traffic obfuscation. Details — [README → Install](README.en.md#install).
+3 commands → ~20 minutes → a working VPN server with traffic obfuscation. Details — [README → Install](README.en.md#installation).
 
 ### Upgrading an existing server
 
-Run the fresh `install_amneziawg_en.sh` — at step 5 `manage_amneziawg.sh` and `awg_common.sh` are refreshed automatically (with SHA256 verification). Full commands — [ADVANCED.en.md → Updating the scripts](ADVANCED.en.md#-updating-the-scripts).
+Run the fresh `install_amneziawg_en.sh` — at step 5 `manage_amneziawg.sh` and `awg_common.sh` are refreshed automatically (with SHA256 verification). Full commands — [ADVANCED.en.md → Updating the scripts](ADVANCED.en.md#update-scripts-adv).
 
 ### Tests
 
@@ -450,7 +450,7 @@ sudo bash ./install_amneziawg_en.sh
 
 ### Upgrading an existing server
 
-Re-run the latest `install_amneziawg_en.sh` — step 5 refreshes `manage_amneziawg.sh` and `awg_common.sh` automatically (with SHA256 verification). Full commands — [ADVANCED.en.md → How to Update Scripts](ADVANCED.en.md#-how-to-update-scripts).
+Re-run the latest `install_amneziawg_en.sh` — step 5 refreshes `manage_amneziawg.sh` and `awg_common.sh` automatically (with SHA256 verification). Full commands — [ADVANCED.en.md → How to Update Scripts](ADVANCED.en.md#update-scripts-adv).
 
 ### Tests
 
@@ -1194,7 +1194,23 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.10.2...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.0...HEAD
+[5.15.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.14.5...v5.15.0
+[5.14.5]: https://github.com/bivlked/amneziawg-installer/compare/v5.14.4...v5.14.5
+[5.14.4]: https://github.com/bivlked/amneziawg-installer/compare/v5.14.3...v5.14.4
+[5.14.3]: https://github.com/bivlked/amneziawg-installer/compare/v5.14.2...v5.14.3
+[5.14.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.14.1...v5.14.2
+[5.14.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.14.0...v5.14.1
+[5.14.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.13.0...v5.14.0
+[5.13.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.12.1...v5.13.0
+[5.12.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.12.0...v5.12.1
+[5.12.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.11.5...v5.12.0
+[5.11.5]: https://github.com/bivlked/amneziawg-installer/compare/v5.11.4...v5.11.5
+[5.11.4]: https://github.com/bivlked/amneziawg-installer/compare/v5.11.3...v5.11.4
+[5.11.3]: https://github.com/bivlked/amneziawg-installer/compare/v5.11.2...v5.11.3
+[5.11.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.11.1...v5.11.2
+[5.11.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.11.0...v5.11.1
+[5.11.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.10.2...v5.11.0
 [5.10.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.10.1...v5.10.2
 [5.10.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.10.0...v5.10.1
 [5.10.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.9.0...v5.10.0

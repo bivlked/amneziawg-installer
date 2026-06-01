@@ -363,7 +363,7 @@ sudo bash /root/awg/manage_amneziawg.sh <команда> [аргументы]
 | :-------- | :--------------------- | :--------------------------- | :-----------: |
 | `add`     | `<имя> [имя2 ...] [--expires=ВРЕМЯ]` | Добавить клиента(ов) (опц. с истечением) | Нет (авто) |
 | `remove`  | `<имя> [имя2 ...]`     | Удалить клиента(ов)          |  Нет (авто) |
-| `list`    | `[-v]`                 | Список клиентов (`-v` детали) |       Нет     |
+| `list`    | `[-v] [--json]`        | Список клиентов (`-v` детали, `--json` машиночитаемый с `client_ipv6`) |       Нет     |
 | `regen`   | `[имя_клиента]`        | Переген. файлы (всех/одного) |       Нет     |
 | `modify`  | `<имя> <пар> <зн>`     | Изменить параметр клиента    |       Нет     |
 | `backup`  |                        | Создать резервную копию      |       Нет     |
@@ -391,6 +391,7 @@ sudo bash /root/awg/manage_amneziawg.sh add my_phone       # Добавить
 sudo bash /root/awg/manage_amneziawg.sh add my_iphone --psk  # +PresharedKey (Shadowrocket iOS/macOS)
 sudo bash /root/awg/manage_amneziawg.sh remove my_phone    # Удалить
 sudo bash /root/awg/manage_amneziawg.sh list                # Список
+sudo bash /root/awg/manage_amneziawg.sh list --json         # Список в JSON (для скриптов)
 sudo bash /root/awg/manage_amneziawg.sh regen               # Перегенерация
 
 # Временный клиент (7 дней)

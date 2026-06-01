@@ -51,7 +51,7 @@ body:
     attributes:
       label: Script Version
       description: Version of the script (shown in the log header or in the script file header comment).
-      placeholder: "e.g., 5.10.0"
+      placeholder: "e.g., 5.15.0"
     validations:
       required: true
 

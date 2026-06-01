@@ -363,7 +363,7 @@ sudo bash /root/awg/manage_amneziawg.sh <command> [arguments]
 | :-------- | :--------------------- | :----------------------------- | :------: |
 | `add`     | `<name> [name2 ...] [--expires=DUR]`  | Add client(s) (opt. with expiry) | No (auto) |
 | `remove`  | `<name> [name2 ...]`   | Remove client(s)               | No (auto) |
-| `list`    | `[-v]`                 | List clients (`-v` for details)|    No     |
+| `list`    | `[-v] [--json]`        | List clients (`-v` for details, `--json` machine-readable with `client_ipv6`)|    No     |
 | `regen`   | `[client_name]`        | Regenerate files (all/one)     |    No     |
 | `modify`  | `<name> <param> <val>` | Modify a client parameter      |    No     |
 | `backup`  |                        | Create a backup                |    No     |
@@ -391,6 +391,7 @@ sudo bash /root/awg/manage_amneziawg.sh add my_phone       # Add
 sudo bash /root/awg/manage_amneziawg.sh add my_iphone --psk  # +PresharedKey (Shadowrocket iOS/macOS)
 sudo bash /root/awg/manage_amneziawg.sh remove my_phone    # Remove
 sudo bash /root/awg/manage_amneziawg.sh list                # List
+sudo bash /root/awg/manage_amneziawg.sh list --json         # List as JSON (for scripts)
 sudo bash /root/awg/manage_amneziawg.sh regen               # Regenerate
 
 # Temporary client (7 days)
