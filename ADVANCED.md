@@ -14,6 +14,7 @@
   - [Presets (v5.10.0+)](#presets-adv)
 - [⚙️ Детали конфигурации клиента](#config-details-adv)
   - [AllowedIPs](#allowedips-adv)
+  - [IPv6 dual-stack в туннеле (v5.15.0+)](#ipv6-tunnel-adv)
   - [PersistentKeepalive](#persistentkeepalive-adv)
   - [DNS](#dns-adv)
   - [Изменение настроек по умолчанию](#change-defaults-adv)
@@ -163,6 +164,40 @@ sudo bash install_amneziawg.sh --jc=2 --jmin=20 --jmax=60 --yes --route-amnezia
     * Пример: `192.168.1.0/24,10.50.0.0/16`
 
 **Калькулятор AllowedIPs:** [WireGuard AllowedIPs Calculator](https://www.procustodibus.com/blog/2021/03/wireguard-allowedips-calculator/).
+
+<a id="ipv6-tunnel-adv"></a>
+### IPv6 dual-stack в туннеле (v5.15.0+)
+
+По умолчанию туннель работает только по IPv4. Начиная с v5.15.0 можно дополнительно включить IPv6 внутри туннеля - клиенты получают IPv6-адрес рядом с IPv4 (dual-stack).
+
+**Когда включается:** только при явном флаге `--allow-ipv6-tunnel` у `install_amneziawg.sh`. Без флага поведение идентично предыдущим версиям. Это отдельная настройка от `--allow-ipv6` / `--disallow-ipv6`, которые управляют IPv6 на уровне хоста (sysctl) и не меняются.
+
+**Подсеть:** приватная ULA `fddd:2c4:2c4:2c4::/64`. Сервер занимает `::1`, клиенты получают `::2`, `::3` и т.д. зеркально нумерации IPv4. Подсеть можно переопределить до первого запуска через `IPV6_SUBNET=` в `/root/awg/awgsetup_cfg.init`.
+
+**Поведение с нативным IPv6 и без него.** При установке скрипт проверяет наличие глобального IPv6 на сервере (`ip -6 addr show scope global`):
+
+- **Есть нативный IPv6:** клиент получает `AllowedIPs = 0.0.0.0/0, ::/0` - весь IPv6-трафик идёт через VPN и выходит в интернет.
+- **Нет нативного IPv6:** клиент получает только туннельную подсеть в `AllowedIPs` (без `::/0`), а в лог выводится предупреждение. Так IPv6 работает между пирами внутри туннеля, но не уходит в интернет (иначе пакеты дропались бы в чёрную дыру). Туннель остаётся полностью рабочим по IPv4.
+
+**Как добавить к существующей установке.** Включите IPv6 одним из способов:
+
+1. Повторно запустите установщик с флагом: `sudo bash install_amneziawg.sh --allow-ipv6-tunnel`, либо
+2. Пропишите `ALLOW_IPV6_TUNNEL=1` в `/root/awg/awgsetup_cfg.init`.
+
+Уже выданные IPv4-only клиенты при этом не меняются. Чтобы дать IPv6 такому клиенту, пересоздайте его - только при пересоздании серверу выделяется IPv6 для этого клиента:
+
+```bash
+sudo bash /root/awg/manage_amneziawg.sh remove <имя>
+sudo bash /root/awg/manage_amneziawg.sh add <имя>
+```
+
+Затем заново импортируйте новый `.conf` на устройство. Обычный `regen` здесь не поможет: он зеркалит адреса из записи `[Peer]` на сервере, а у старого клиента IPv6 в ней ещё нет, так что конфиг останется IPv4-only. `manage list` корректно показывает смешанное состояние (dual-stack рядом с IPv4-only).
+
+**Устранение неполадок:**
+
+- **Конфликт ULA-подсети.** Если `fddd:2c4:2c4:2c4::/64` уже используется в вашей сети, задайте другую ULA-подсеть через `IPV6_SUBNET=` до установки.
+- **IPv6 не маршрутизируется в интернет.** Проверьте, есть ли на сервере глобальный IPv6 (`ip -6 addr show scope global`). Без него выход в IPv6-интернет невозможен - это ожидаемое поведение, туннель работает по IPv4. Если IPv6 на сервере есть, проверьте правило ip6tables MASQUERADE и форвардинг (`sysctl net.ipv6.conf.all.forwarding`).
+- **Откат / очистка IPv6.** Выключение `ALLOW_IPV6_TUNNEL=0` не удаляет уже добавленные dual-stack записи `AllowedIPs` из `awg0.conf`. Для полной очистки: `awg-quick down awg0; sed -i 's|, fddd:[^/]*/[0-9]*||g' /etc/amnezia/amneziawg/awg0.conf; awg-quick up awg0`.
 
 <a id="persistentkeepalive-adv"></a>
 ### PersistentKeepalive

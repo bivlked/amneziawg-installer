@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Phase 4 (Codex 4.7) - upgrade / force-rerun scenario.
+# Phase 4 (review finding 4.7) - upgrade / force-rerun scenario.
 #
 # Verifies that an existing IPv4-only peer in awg0.conf is NOT automatically
 # upgraded when a NEW dual-stack client is added with ALLOW_IPV6_TUNNEL=1.

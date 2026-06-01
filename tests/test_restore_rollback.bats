@@ -146,7 +146,7 @@ extract_func() {
     local body
     body=$(extract_func "$MANAGE_RU" "restore_backup")
     # The cleanup block must gate rollback on `_restore_ok -eq 0` AND
-    # `_destructive_ops_started -eq 1` (Codex Q2 fix).
+    # `_destructive_ops_started -eq 1` (review Q2 fix).
     grep -qE '_restore_ok -eq 0.*_destructive_ops_started -eq 1.*_rollback_snap' <<< "$body"
 }
 
@@ -157,7 +157,7 @@ extract_func() {
 }
 
 # -------------------------------------------------------------------------
-# Post-audit fixes (Codex Q1/Q2/Q3)
+# Post-audit fixes (review Q1/Q2/Q3)
 # -------------------------------------------------------------------------
 
 @test "Q1: RU _restore_cleanup clears RETURN trap to prevent global leak" {

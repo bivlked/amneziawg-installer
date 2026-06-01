@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Phase 4 (Codex 4.6) - render_client_config without native IPv6:
+# Phase 4 (review finding 4.6) - render_client_config without native IPv6:
 # SERVER_HAS_NATIVE_IPV6=0 must produce AllowedIPs = 0.0.0.0/0, <IPV6_SUBNET>
 # (tunnel-subnet only, NOT ::/0, to avoid IPv6 blackhole on the internet).
 

@@ -148,6 +148,7 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 * **4 операционные системы** — Ubuntu 24.04, Ubuntu 25.10/26.04, Debian 12, Debian 13
 * **x86_64 и ARM** — облачные VPS, Raspberry Pi 3/4/5, ARM64-серверы (AWS Graviton, Oracle Ampere, Hetzner)
 * **Оптимизация для мобильных сетей** — `--preset=mobile` для Tele2, Yota, Мегафон и других операторов с DPI-блокировками. Тонкая настройка через `--jc`, `--jmin`, `--jmax` ([подробнее](ADVANCED.md#presets-adv))
+* **Опциональный dual-stack IPv6** - флаг `--allow-ipv6-tunnel` добавляет IPv6 внутри туннеля рядом с IPv4 (по умолчанию выключено, [подробнее](ADVANCED.md#ipv6-tunnel-adv))
 
 <details>
 <summary><strong>Все возможности</strong></summary>

@@ -102,7 +102,7 @@
 }
 
 @test "v5.11.5: ppa-tolerant guard requires raw_had_non_src_errors (OOM/silent crash safety)" {
-    # Codex round-2 MEDIUM: don't tolerate when output mentions PPA Amnezia
+    # Review round-2 MEDIUM: don't tolerate when output mentions PPA Amnezia
     # but no E:/Err:/W: lines were classified — that's an OOM/silent crash
     # path that must surface, not be swallowed.
     for f in install_amneziawg.sh install_amneziawg_en.sh; do

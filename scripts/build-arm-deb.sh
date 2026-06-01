@@ -19,7 +19,7 @@
 # Honours KERNEL_VERSION env when set (must point at an existing build dir).
 # Otherwise auto-detects: zero candidates → fail; exactly one → use it;
 # multiple → fail explicitly and ask caller to set KERNEL_VERSION.
-# Codex / external code review (8 may 2026): the previous loop silently
+# External code review (8 may 2026): the previous loop silently
 # picked the FIRST candidate, which on developer hosts with several installed
 # kernels resulted in building against an unintended target. In our CI matrix
 # each QEMU container installs exactly one headers package so the new

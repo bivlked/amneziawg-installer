@@ -203,7 +203,7 @@ call_cleanup() {
     grep -qE '^apt-mark hold netplan-generator$'   "$TRACE"
     grep -qE '^apt-mark hold systemd-resolved$'    "$TRACE"
     # systemd-networkd is part of the systemd package, NOT a standalone pkg.
-    # Codex review v5.14.3 pass 1 flagged this - hold would be a no-op anyway,
+    # External review v5.14.3 pass 1 flagged this - hold would be a no-op anyway,
     # and the recovery `apt install systemd-networkd` would fail. We keep it
     # out entirely.
     run ! grep -qE '^apt-mark hold systemd-networkd$' "$TRACE"

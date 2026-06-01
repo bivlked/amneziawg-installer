@@ -14,6 +14,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.15.0] - 2026-06-01
+
+**v5.15.0** - optional dual-stack IPv6 inside the tunnel. Requested by users in [#24](https://github.com/bivlked/amneziawg-installer/issues/24): the new `--allow-ipv6-tunnel` flag hands clients an IPv6 address from the private ULA subnet `fddd:2c4:2c4:2c4::/64` alongside the usual IPv4. Off by default - without the flag the install is identical to v5.14.x. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
+
+### Highlights
+
+- 🆕 **`--allow-ipv6-tunnel` flag** in `install_amneziawg.sh` (opt-in, off by default). Enables dual-stack IPv6 inside the VPN tunnel: the server and clients get addresses from the ULA subnet `fddd:2c4:2c4:2c4::/64` next to IPv4. The subnet can be overridden via `IPV6_SUBNET=` in `awgsetup_cfg.init`. This is separate from the existing `--allow-ipv6` (host-level IPv6 via sysctl); the behavior of `--allow-ipv6` / `--disallow-ipv6` is unchanged.
+- 🌐 **Dual-stack server and client configuration**. With the flag on, the server `awg0.conf` gets IPv6 in `Address` and `AllowedIPs`, an ip6tables MASQUERADE rule is set up for the tunnel subnet, and the client `.conf` plus `vpn://` URI become dual-stack. The installer detects native IPv6 on the server (`ip -6 addr show scope global`): with native IPv6 the client gets a full `::/0` route, without native IPv6 only the tunnel subnet, so IPv6 traffic does not vanish into a black hole (a warning is logged in that case).
+- 🔧 **`manage list` and `manage regen` are dual-stack aware**. The client list shows a mixed state (new dual-stack clients next to legacy IPv4-only ones), and config regeneration correctly preserves the IPv6 address.
+
+### Migration
+
+- **Existing clients are unaffected.** After upgrading and enabling IPv6, already-issued IPv4-only configs keep working as before - the server does nothing to them automatically.
+- To add IPv6 to a client that already existed, after enabling `--allow-ipv6-tunnel` (re-run the installer with the flag or set `ALLOW_IPV6_TUNNEL=1` in `awgsetup_cfg.init`) recreate that client: `manage remove <name>`, then `manage add <name>`. Only recreation allocates an IPv6 for the client on the server and issues a dual-stack config. A plain `regen` keeps the client IPv4-only, because its `[Peer]` entry on the server has no IPv6 yet. The new `.conf` must be re-imported on the device.
+- Details and troubleshooting are in [ADVANCED.en.md](ADVANCED.en.md#ipv6-tunnel-adv).
+
+### Tests
+
+- New file `tests/test_v515_sha_pins_lockstep.bats` (4 tests): checks the real `sha256sum` of the four helper scripts against the `COMMON_SCRIPT_SHA256` / `MANAGE_SCRIPT_SHA256` pins in both installers, so a partial bump cannot ship an installer with drifted pins.
+- New helper `scripts/update-sha-pins.sh` (with a `--verify` flag) to recompute and verify the SHA pins, and `scripts/preflight-check.sh` for a single pre-tag check run (syntax, shellcheck, bats, punctuation, version consistency, SHA pins).
+
+### Verification
+
+- The automated test suite (bats) was extended with dual-stack coverage: server and client config rendering, IPv6 allocation, dual-stack `vpn://` URI, `manage list`/`regen`, and the no-native-IPv6 path. The no-flag regression is identical to v5.14.x.
+
+---
+
 ## [5.14.5] - 2026-05-25
 
 **v5.14.5** - the installer now detects the real SSH port and opens exactly that one in UFW. Previously, with SSH on a non-standard port, the firewall opened only port 22, and access to the server could be lost once it was enabled on the final step. No architectural changes, support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.

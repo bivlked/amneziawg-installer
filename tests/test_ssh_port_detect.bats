@@ -115,7 +115,7 @@ setup() {
     command() { return 0; }
     # `port 22` is the default sshd -T always prints; the real listener is on
     # the ListenAddress port. The union must keep BOTH (22 is harmless, 2222 is
-    # the one that matters - missing it would lock the user out). Issue #91 / Codex HIGH.
+    # the one that matters - missing it would lock the user out). Issue #91 / review HIGH.
     sshd() { printf 'port 22\nlistenaddress 0.0.0.0:2222\nlistenaddress [::]:2200\nlistenaddress 2001:db8::1\n'; }
     ss() { :; }
     export -f command sshd ss

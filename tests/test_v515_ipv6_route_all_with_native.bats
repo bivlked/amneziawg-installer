@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Phase 4 (Codex 4.6) - render_client_config with native IPv6:
+# Phase 4 (review finding 4.6) - render_client_config with native IPv6:
 # SERVER_HAS_NATIVE_IPV6=1 must produce AllowedIPs = 0.0.0.0/0, ::/0
 # and a dual-stack Address line.
 
