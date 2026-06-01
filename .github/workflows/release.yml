@@ -12,7 +12,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Gate: a tag must clear the full pre-tag checklist before anything is
+  # published. A fresh install verifies the helper-script SHA pins over the
+  # network, so a tag with stale pins would yield a broken install straight
+  # from the release. This job blocks that.
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Full history so the merge-base for the diff checks is present.
+          fetch-depth: 0
+
+      - name: Fetch main for diff base
+        # The tag checkout does not bring branch refs. preflight-check.sh diffs
+        # against origin/main, so make that ref resolvable. A hard failure here
+        # is intentional: without a base ref the punctuation/marker diff checks
+        # cannot run.
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Install shellcheck and bats
+        run: sudo apt-get update && sudo apt-get install -y shellcheck bats
+
+      - name: Run preflight checks
+        env:
+          BASE_REF: origin/main
+        run: bash scripts/preflight-check.sh
+
   release:
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -25,7 +54,7 @@ jobs:
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
-            echo "Release $TAG already exists — skipping"
+            echo "Release $TAG already exists - skipping"
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
