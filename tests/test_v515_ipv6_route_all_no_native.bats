@@ -8,7 +8,11 @@ load test_helper
 setup_no_native() {
     create_server_config
     create_init_config
+    # "route all" (full tunnel) tests: force ALLOWED_IPS=0.0.0.0/0 (overrides the
+    # split default from create_init_config; safe_load_config is last-wins). With
+    # no native IPv6 a full tunnel maps to the tunnel ULA, never ::/0.
     cat >> "$CONFIG_FILE" << 'CONF'
+export ALLOWED_IPS='0.0.0.0/0'
 export ALLOW_IPV6_TUNNEL=1
 export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
 export SERVER_HAS_NATIVE_IPV6=0

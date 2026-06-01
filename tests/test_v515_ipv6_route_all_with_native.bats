@@ -8,8 +8,12 @@ load test_helper
 setup_common() {
     create_server_config
     create_init_config
-    # Append IPv6 keys to the init config
+    # Append IPv6 keys to the init config. These are the "route all" (full
+    # tunnel) tests, so force ALLOWED_IPS=0.0.0.0/0 (overrides the split default
+    # from create_init_config; safe_load_config is last-wins). Under the
+    # intent-mirroring rule a full IPv4 tunnel maps to ::/0 on native IPv6.
     cat >> "$CONFIG_FILE" << 'CONF'
+export ALLOWED_IPS='0.0.0.0/0'
 export ALLOW_IPV6_TUNNEL=1
 export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
 export SERVER_HAS_NATIVE_IPV6=1
