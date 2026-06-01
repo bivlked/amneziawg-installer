@@ -1,16 +1,19 @@
 #!/bin/bash
 # preflight-check.sh - единый прогон всех pre-tag проверок перед релизом
 #
-# Запускает в одной команде полный pre-tag чеклист (см. CLAUDE.md "Release
-# Process" и memory feedback_awg20_release_checklist). Каждая проверка печатает
-# PASS/FAIL, в конце - сводка. Exit!=0 если хоть одна провалилась.
+# Запускает в одной команде полный pre-tag чеклист (см. docs/RELEASE_PROCESS.md).
+# Каждая проверка печатает PASS/FAIL, в конце - сводка. Exit!=0 если хоть одна
+# провалилась.
 #
 # Использование:
 #   bash scripts/preflight-check.sh
+#   BASE_REF=origin/main bash scripts/preflight-check.sh   # detached checkout
 #
 # Переменные окружения:
-#   BASE_REF   git-ref для diff-проверок пунктуации/маркеров. Default: main.
-#   LOG_RANGE  git-диапазон для проверки commit-сообщений. Default: main..HEAD
+#   BASE_REF   git-ref для diff-проверок пунктуации/маркеров. Если не задан,
+#              берётся первый существующий из: main, origin/main. На detached
+#              checkout без локального main задавайте явно BASE_REF=origin/main.
+#   LOG_RANGE  git-диапазон для проверки commit-сообщений. Default: <base>..HEAD
 #              (только коммиты ветки релиза; merged-from-main коммиты с legacy
 #              human/bot Co-authored-by трейлерами в проверку НЕ попадают).
 #
@@ -18,11 +21,12 @@
 #   1. bash -n на 6 скриптах
 #   2. shellcheck -s bash -S warning на 6 скриптах
 #   3. bats tests/
-#   4. em/en-dash (U+2013/U+2014) в diff BASE_REF...HEAD = 0
+#   4. реально добавленных em/en-dash (U+2013/U+2014) в diff BASE_REF...HEAD = 0
 #   5. AI/tool-mention в diff + commit-логе = 0
 #   6. Co-authored-by в commit-логе = 0
 #   7. SCRIPT_VERSION консистентен в 4 версионированных скриптах
 #   8. SHA-пины синхронны (update-sha-pins.sh --verify)
+#   9. Согласованность документации (check-docs-consistency.sh)
 
 set -o pipefail
 
@@ -30,8 +34,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || { echo "ОШИБКА: не удалось перейти в $REPO_ROOT" >&2; exit 2; }
 
-BASE_REF="${BASE_REF:-main}"
-LOG_RANGE="${LOG_RANGE:-main..HEAD}"
+# BASE_REF fallback: уважаем явно заданный, иначе первый резолвящийся из
+# main / origin/main. Это переживает detached checkout (CI на теге), где
+# локального main нет, но origin/main подтянут (fetch-depth:0 + fetch main).
+if [[ -z "${BASE_REF:-}" ]]; then
+    for _cand in main origin/main; do
+        if git rev-parse --verify "$_cand" >/dev/null 2>&1; then
+            BASE_REF="$_cand"
+            break
+        fi
+    done
+fi
+if [[ -z "${BASE_REF:-}" ]]; then
+    echo "ОШИБКА: не найден base-ref для diff-проверок (пробовал main, origin/main)." >&2
+    echo "        Задайте явно, например: BASE_REF=origin/main bash scripts/preflight-check.sh" >&2
+    exit 2
+fi
+LOG_RANGE="${LOG_RANGE:-${BASE_REF}..HEAD}"
 
 SCRIPTS=(
     install_amneziawg.sh
@@ -97,20 +116,23 @@ else
     _bad "bats not found in PATH"
 fi
 
-# --- 4. em/en-dash in diff ---
-if git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
-    # Байтовые паттерны UTF-8: en-dash U+2013 = E2 80 93, em-dash U+2014 = E2 80 94.
-    # LC_ALL=C + \xHH работает на GNU grep 3.0 (Git Bash), в отличие от \x{2013}
-    # (codepoint-форма падает "character value in \x{} too large" и глоталась || true).
-    dash_hits=$(git diff "${BASE_REF}...HEAD" | LC_ALL=C grep -nP '^\+.*(\xe2\x80\x93|\xe2\x80\x94)' || true)
-    if [[ -z "$dash_hits" ]]; then
-        _ok "no em/en-dash in diff ${BASE_REF}...HEAD"
-    else
-        echo "$dash_hits" >&2
-        _bad "em/en-dash found in diff ${BASE_REF}...HEAD"
-    fi
+# --- 4. newly added em/en-dash in diff ---
+# Политика проекта (CLAUDE.md): новый текст - только hyphen-minus; legacy
+# em/en-dash в существующих строках сохраняется без mass-purge, а point-edit
+# легаси-строки НЕ обязывает переписывать тире на этой строке. Поэтому ловим
+# ТОЛЬКО реально добавленные тире. word-diff=porcelain помечает префиксом '+'
+# лишь изменённые слова, так что тире в неизменённой части правленой строки в
+# '+' не попадает (legacy не даёт ложный FAIL); под флаг идёт только заново
+# внесённый символ тире (новая строка/слово). Байты UTF-8: en-dash U+2013 =
+# E2 80 93, em-dash U+2014 = E2 80 94 (LC_ALL=C + \xHH, codepoint-форма \x{}
+# падает на GNU grep Git Bash).
+dash_added=$(git diff --word-diff=porcelain "${BASE_REF}...HEAD" \
+    | LC_ALL=C grep -nP '^\+.*(\xe2\x80\x93|\xe2\x80\x94)' || true)
+if [[ -z "$dash_added" ]]; then
+    _ok "no newly added em/en-dash in diff ${BASE_REF}...HEAD"
 else
-    _bad "BASE_REF '$BASE_REF' not found (set BASE_REF=<ref>)"
+    echo "$dash_added" >&2
+    _bad "newly added em/en-dash in diff ${BASE_REF}...HEAD"
 fi
 
 # --- 5. AI/tool-mention in diff + commit log ---
@@ -171,6 +193,16 @@ if bash "$SCRIPT_DIR/update-sha-pins.sh" --verify; then
 else
     _bad "SHA pins out of sync (run: bash scripts/update-sha-pins.sh)"
 fi
+
+# --- 9. Docs consistency ---
+# Тот же скрипт гоняет docs-check workflow. Здесь - часть единого pre-tag gate.
+if bash "$SCRIPT_DIR/check-docs-consistency.sh" >/tmp/preflight-docs.$$ 2>&1; then
+    _ok "docs consistency (check-docs-consistency.sh)"
+else
+    cat /tmp/preflight-docs.$$ >&2
+    _bad "docs consistency (run: bash scripts/check-docs-consistency.sh)"
+fi
+rm -f /tmp/preflight-docs.$$
 
 # --- Summary ---
 echo ""
