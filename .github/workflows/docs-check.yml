@@ -1,0 +1,41 @@
+name: Docs consistency
+
+# Lightweight, fast checks for the classes of drift that slip past the
+# shellcheck/test workflows (their paths cover only shell scripts): broken
+# internal markdown anchors, version triple drift, stale OS matrix, changelog
+# heading/reference mismatch. No build, no network, no bats.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/**'
+      - 'install_amneziawg*.sh'
+      - 'manage_amneziawg*.sh'
+      - 'awg_common*.sh'
+  pull_request:
+    paths:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/**'
+      - 'install_amneziawg*.sh'
+      - 'manage_amneziawg*.sh'
+      - 'awg_common*.sh'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs-consistency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Run docs consistency checks
+        run: bash scripts/check-docs-consistency.sh
