@@ -515,10 +515,23 @@ configure_ipv6() {
 }
 
 # Detect whether the VPS has native IPv6.
-# A global-scope IPv6 (not link-local fe80::) means egress to the IPv6 internet.
-# Echo 1 if a global IPv6 is found, otherwise 0.
+# Native IPv6 = a globally routable address (NOT ULA fc00::/7, NOT link-local
+# fe80::) AND a default IPv6 route. Either condition alone is insufficient:
+#   - a global address without a default route -> no IPv6 internet egress (a client
+#     with ::/0 would black-hole);
+#   - a ULA (fddd::/...) has global scope to `ip` but is not internet-routable.
+# Echo 1 only when both conditions hold, otherwise 0.
 detect_native_ipv6() {
-    if ip -6 addr show scope global 2>/dev/null | grep -q "inet6"; then
+    local have_addr=0 have_route=0
+    if ip -6 addr show scope global 2>/dev/null \
+        | grep -oP 'inet6\s+\K[0-9a-fA-F:]+' \
+        | grep -qviE '^(fc|fd)'; then
+        have_addr=1
+    fi
+    if ip -6 route show default 2>/dev/null | grep -q .; then
+        have_route=1
+    fi
+    if [[ "$have_addr" -eq 1 && "$have_route" -eq 1 ]]; then
         echo 1
     else
         echo 0
@@ -532,12 +545,23 @@ configure_ipv6_tunnel() {
         ALLOW_IPV6_TUNNEL=0
     fi
     : "${IPV6_SUBNET:=fddd:2c4:2c4:2c4::/64}"
-    # Detect native IPv6 on every run (cached in init for client render in Phase 4).
-    SERVER_HAS_NATIVE_IPV6=$(detect_native_ipv6)
-    if [[ "$ALLOW_IPV6_TUNNEL" -eq 1 && "$DISABLE_IPV6" -eq 1 ]]; then
-        log_warn "--allow-ipv6-tunnel requires host IPv6 forwarding; overriding --disallow-ipv6 (DISABLE_IPV6=0)"
-        DISABLE_IPV6=0
+    # The IPv6 tunnel requires host IPv6 enabled. Override --disallow-ipv6 AND
+    # actively re-enable IPv6 at runtime BEFORE detection/render: on an upgrade
+    # from a default past install (IPv6 was runtime-disabled), the kernel hides
+    # all IPv6 addresses, so detect_native_ipv6 would false-negative and a client
+    # would be rendered with an IPv6 Address while the kernel has IPv6 off
+    # (awg-quick restart can fail). weaq P1.
+    if [[ "$ALLOW_IPV6_TUNNEL" -eq 1 ]]; then
+        if [[ "$DISABLE_IPV6" -eq 1 ]]; then
+            log_warn "--allow-ipv6-tunnel requires host IPv6 forwarding; overriding --disallow-ipv6 (DISABLE_IPV6=0)"
+            DISABLE_IPV6=0
+        fi
+        sysctl -w net.ipv6.conf.all.disable_ipv6=0 >/dev/null 2>&1 || true
+        sysctl -w net.ipv6.conf.default.disable_ipv6=0 >/dev/null 2>&1 || true
+        sysctl -w net.ipv6.conf.lo.disable_ipv6=0 >/dev/null 2>&1 || true
     fi
+    # Detect native IPv6 AFTER the runtime re-enable (cached in init for client render in Phase 4).
+    SERVER_HAS_NATIVE_IPV6=$(detect_native_ipv6)
     if [[ "$ALLOW_IPV6_TUNNEL" -eq 1 && "$SERVER_HAS_NATIVE_IPV6" -eq 0 ]]; then
         log_warn "Native IPv6 not detected on VPS - the IPv6 tunnel will work peer-to-peer only, without IPv6 internet egress."
     fi
