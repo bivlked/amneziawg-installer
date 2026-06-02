@@ -14,6 +14,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.15.2] - 2026-06-02
+
+**v5.15.2** - a small maintenance release. It points the install and update commands in the documentation at the current tag. No installer or management code changed, behavior is unchanged. Support matrix is unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
+
+### Fixed
+
+- **Install and update commands in the documentation point at the current release.** The `wget` / `curl` examples in README, INSTALL_VPS and ADVANCED were pinned to the previous tag, so copying a command downloaded the previous version. They now point at this release, so following the instructions installs it.
+
+### Internal
+
+- The documentation consistency check now verifies that pinned `raw.githubusercontent.com` links match the current version, so install commands do not fall behind the release in the future.
+
+---
+
 ## [5.15.1] - 2026-06-02
 
 **v5.15.1** - a maintenance release after a round of external code and documentation audits. No new features: it hardens the v5.15.0 dual-stack IPv6 work, tightens several management commands, and fixes a number of correctness and robustness issues. A default install is unchanged. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
@@ -1228,7 +1242,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.2...HEAD
+[5.15.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.1...v5.15.2
 [5.15.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.0...v5.15.1
 [5.15.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.14.5...v5.15.0
 [5.14.5]: https://github.com/bivlked/amneziawg-installer/compare/v5.14.4...v5.14.5

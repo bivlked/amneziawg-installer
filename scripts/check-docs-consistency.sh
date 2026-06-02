@@ -21,6 +21,8 @@
 #   4. Матрица ОС: Ubuntu 26.04 присутствует во всех заявленных местах.
 #   5. SECURITY/CONTRIBUTING не протухли (текущий minor в supported-таблице;
 #      нет захардкоженного test-count baseline).
+#   6. Pinned raw-URL теги в README/ADVANCED/INSTALL_VPS == SCRIPT_VERSION
+#      (CHANGELOG исключён - там теги исторические).
 
 set -o pipefail
 
@@ -185,6 +187,26 @@ if [[ -f CONTRIBUTING.md ]]; then
     fi
 fi
 if [[ "$stale_fail" -eq 0 ]]; then _ok "SECURITY/CONTRIBUTING не протухли"; else _bad "SECURITY/CONTRIBUTING протухли"; fi
+
+# --- 6. Pinned raw-URL tags == SCRIPT_VERSION ---
+# Пользовательские команды установки/обновления закрепляют тег в raw-URL вида
+# raw.githubusercontent.com/bivlked/amneziawg-installer/vX.Y.Z/... . Они обязаны
+# указывать на текущий релиз, иначе copy-paste из README ставит прошлую версию
+# (регрессия, ради которой добавлена эта проверка). CHANGELOG исключён намеренно -
+# там теги исторические (точки появления функций/прошлые релизы).
+url_fail=0
+URL_DOCS=(README.md README.en.md ADVANCED.md ADVANCED.en.md INSTALL_VPS.md)
+for f in "${URL_DOCS[@]}"; do
+    [[ -f "$f" ]] || continue
+    while IFS= read -r tag; do
+        [[ -z "$tag" ]] && continue
+        if [[ "$tag" != "$script_ver" ]]; then
+            echo "  $f: pinned raw-URL тег v$tag != SCRIPT_VERSION v$script_ver" >&2
+            url_fail=1
+        fi
+    done < <(grep -oP 'raw\.githubusercontent\.com/bivlked/amneziawg-installer/v\K[0-9]+\.[0-9]+\.[0-9]+' "$f")
+done
+if [[ "$url_fail" -eq 0 ]]; then _ok "pinned raw-URL теги == SCRIPT_VERSION ($script_ver)"; else _bad "pinned raw-URL теги рассинхронизированы"; fi
 
 # --- Summary ---
 echo ""
