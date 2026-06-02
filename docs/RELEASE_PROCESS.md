@@ -55,6 +55,9 @@ BASE_REF=origin/main bash scripts/preflight-check.sh
 6. No `Co-authored-by` trailers in the commit-message log.
 7. `SCRIPT_VERSION` and the six version headers agree.
 8. SHA pins in lockstep (`update-sha-pins.sh --verify`).
+9. Documentation consistency (`scripts/check-docs-consistency.sh`): internal
+   anchors resolve, changelog headings have reference links and the RU/EN
+   version sets match, the version triple agrees, the OS matrix is current.
 
 `BASE_REF` selects the ref the diff checks compare against. If you do not set
 it, the script tries `main`, then `origin/main`. On a detached checkout with no

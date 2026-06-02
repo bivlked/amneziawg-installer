@@ -47,7 +47,9 @@ DOC_FILES=(
 echo "=== check-docs-consistency ==="
 
 # GitHub-совместимая slug-генерация из текста заголовка:
-# lowercase, убрать всё кроме букв/цифр/пробела/дефиса, пробелы -> дефисы.
+# lowercase, убрать всё кроме букв/цифр/пробела/дефиса, пробелы -> дефисы,
+# срезать ведущие/хвостовые дефисы (их даёт, например, emoji в начале heading -
+# GitHub их тоже не оставляет).
 _slug() {
     local s="$1"
     s="${s#"${s%%[![:space:]]*}"}"   # ltrim
@@ -55,7 +57,17 @@ _slug() {
     printf '%s' "$s" \
         | tr '[:upper:]' '[:lower:]' \
         | LC_ALL=C sed -E 's/[^a-z0-9 _-]//g' \
-        | tr ' ' '-'
+        | tr ' ' '-' \
+        | sed -E 's/^-+//; s/-+$//'
+}
+
+# Удалить из markdown код, чтобы примеры разметки внутри него не парсились как
+# реальные ссылки/якоря: fenced-блоки (``` ... ```) целиком + inline-спаны
+# (`...`). Иначе документированный в backticks пример вида `](#anchor)` дал бы
+# ложный FAIL.
+_strip_code() {
+    awk '/^```/ { infence = !infence; next } !infence { print }' "$1" \
+        | sed 's/`[^`]*`//g'
 }
 
 # --- 1. Внутренние anchor-ссылки резолвятся ---
@@ -63,18 +75,19 @@ anchor_fail=0
 for f in "${DOC_FILES[@]}"; do
     [[ -f "$f" ]] || continue
 
+    # Анализируем файл с вырезанным кодом (примеры в backticks - не разметка).
+    stripped="$(_strip_code "$f")"
+
     # Целевые якоря в файле: явные <a id=..> / <a name=..> + slug'и заголовков.
     declare -A anchors=()
     while IFS= read -r a; do
         [[ -n "$a" ]] && anchors["$a"]=1
-    done < <(grep -oiP '<a\s+(id|name)="\K[^"]+' "$f")
+    done < <(printf '%s\n' "$stripped" | grep -oiP '<a\s+(id|name)="\K[^"]+')
     while IFS= read -r h; do
-        # Заголовки ATX: "# ...". Убираем ведущие # и пробел, slug'им.
-        local_h="${h#"${h%%[![:space:]]*}"}"
-        local_h="${local_h##\#}"; local_h="${local_h##*\#}"
+        # Заголовки ATX: "# ...". Текст уже без ведущих #, slug'им.
         sl="$(_slug "$h")"
         [[ -n "$sl" ]] && anchors["$sl"]=1
-    done < <(grep -E '^#{1,6}[[:space:]]' "$f" | sed -E 's/^#{1,6}[[:space:]]+//')
+    done < <(printf '%s\n' "$stripped" | grep -E '^#{1,6}[[:space:]]' | sed -E 's/^#{1,6}[[:space:]]+//')
 
     # Внутренние ссылки вида ](#anchor) в этом файле.
     while IFS= read -r ref; do
@@ -83,7 +96,7 @@ for f in "${DOC_FILES[@]}"; do
             echo "  $f: битая внутренняя ссылка #$ref" >&2
             anchor_fail=1
         fi
-    done < <(grep -oP '\]\(#\K[^)]+' "$f")
+    done < <(printf '%s\n' "$stripped" | grep -oP '\]\(#\K[^)]+')
 
     unset anchors
 done
