@@ -732,10 +732,10 @@ modify_client() {
             if [[ "$value" == \[*\]:* ]]; then
                 _eh="${value%]:*}"; _eh="${_eh#\[}"   # IPv6 без скобок
                 _ept="${value##*]:}"
-                [[ "$_eh" =~ ^[0-9A-Fa-f:]+$ ]] || { log_error "Невалидный Endpoint '$value': некорректный IPv6-хост"; return 1; }
+                _valid_ipv6 "$_eh" || { log_error "Невалидный Endpoint '$value': некорректный IPv6-хост"; return 1; }
             else
                 _eh="${value%:*}"; _ept="${value##*:}"
-                [[ "$_eh" =~ ^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*|[0-9]{1,3}(\.[0-9]{1,3}){3})$ ]] || { log_error "Невалидный Endpoint '$value': ожидается host:port (FQDN / IPv4 / [IPv6])"; return 1; }
+                _valid_host_or_ipv4 "$_eh" || { log_error "Невалидный Endpoint '$value': ожидается host:port (FQDN / IPv4 / [IPv6])"; return 1; }
             fi
             { [[ "$_ept" =~ ^[0-9]+$ ]] && [[ "$_ept" -ge 1 && "$_ept" -le 65535 ]]; } || { log_error "Невалидный Endpoint '$value': порт должен быть 1-65535"; return 1; }
             ;;
@@ -750,10 +750,14 @@ modify_client() {
             IFS=','
             for _aip_tok in $value; do
                 _aip_tok="${_aip_tok//[[:space:]]/}"
-                [[ -z "$_aip_tok" ]] && continue
-                if ! [[ "$_aip_tok" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$ || "$_aip_tok" =~ ^[0-9A-Fa-f:]+(/[0-9]{1,3})?$ ]]; then
+                if [[ -z "$_aip_tok" ]]; then
                     IFS="$_aip_ifs"
-                    log_error "Невалидный AllowedIPs '$value': '$_aip_tok' не похож на CIDR (a.b.c.d/n или IPv6/n)"
+                    log_error "Невалидный AllowedIPs '$value': пустой элемент списка (лишняя запятая)"
+                    return 1
+                fi
+                if ! _valid_cidr "$_aip_tok"; then
+                    IFS="$_aip_ifs"
+                    log_error "Невалидный AllowedIPs '$value': '$_aip_tok' не похож на CIDR (IPv4/IPv6 с опциональным префиксом /n)"
                     return 1
                 fi
             done

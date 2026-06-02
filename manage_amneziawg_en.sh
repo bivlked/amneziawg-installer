@@ -737,10 +737,10 @@ modify_client() {
             if [[ "$value" == \[*\]:* ]]; then
                 _eh="${value%]:*}"; _eh="${_eh#\[}"   # IPv6 without brackets
                 _ept="${value##*]:}"
-                [[ "$_eh" =~ ^[0-9A-Fa-f:]+$ ]] || { log_error "Invalid Endpoint '$value': malformed IPv6 host"; return 1; }
+                _valid_ipv6 "$_eh" || { log_error "Invalid Endpoint '$value': malformed IPv6 host"; return 1; }
             else
                 _eh="${value%:*}"; _ept="${value##*:}"
-                [[ "$_eh" =~ ^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*|[0-9]{1,3}(\.[0-9]{1,3}){3})$ ]] || { log_error "Invalid Endpoint '$value': expected host:port (FQDN / IPv4 / [IPv6])"; return 1; }
+                _valid_host_or_ipv4 "$_eh" || { log_error "Invalid Endpoint '$value': expected host:port (FQDN / IPv4 / [IPv6])"; return 1; }
             fi
             { [[ "$_ept" =~ ^[0-9]+$ ]] && [[ "$_ept" -ge 1 && "$_ept" -le 65535 ]]; } || { log_error "Invalid Endpoint '$value': port must be 1-65535"; return 1; }
             ;;
@@ -755,10 +755,14 @@ modify_client() {
             IFS=','
             for _aip_tok in $value; do
                 _aip_tok="${_aip_tok//[[:space:]]/}"
-                [[ -z "$_aip_tok" ]] && continue
-                if ! [[ "$_aip_tok" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$ || "$_aip_tok" =~ ^[0-9A-Fa-f:]+(/[0-9]{1,3})?$ ]]; then
+                if [[ -z "$_aip_tok" ]]; then
                     IFS="$_aip_ifs"
-                    log_error "Invalid AllowedIPs '$value': '$_aip_tok' is not a CIDR (a.b.c.d/n or IPv6/n)"
+                    log_error "Invalid AllowedIPs '$value': empty list element (stray comma)"
+                    return 1
+                fi
+                if ! _valid_cidr "$_aip_tok"; then
+                    IFS="$_aip_ifs"
+                    log_error "Invalid AllowedIPs '$value': '$_aip_tok' is not a CIDR (IPv4/IPv6 with optional /n prefix)"
                     return 1
                 fi
             done

@@ -60,6 +60,88 @@ fi
 # Утилиты
 # ==============================================================================
 
+# --- Валидаторы IP / CIDR (общие для install и manage) ---
+# Проверяют не только форму, но и числовые диапазоны: октеты IPv4 0-255,
+# префикс IPv4 0-32, IPv6 0-128. Без префикса адрес валиден (wireguard-tools
+# трактует голый IPv4 как /32, IPv6 как /128 - host-route).
+
+# _valid_ipv4 <addr> : ровно 4 октета, каждый 0-255 (10# защищает от трактовки
+# ведущего нуля как восьмеричного числа в (( )) ).
+_valid_ipv4() {
+    local ip="$1"
+    [[ "$ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+    local o
+    for o in "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; do
+        (( 10#$o <= 255 )) || return 1
+    done
+    return 0
+}
+
+# _valid_ipv6 <addr> : структурная проверка (не только charset). Допускает одну
+# компрессию "::"; без неё требует ровно 8 групп по 1-4 hex; с ней - не более 7.
+# Встроенный IPv4 (::ffff:1.2.3.4) намеренно не поддержан - в AllowedIPs туннеля
+# не встречается, а точки уже отсекаются charset-проверкой.
+_valid_ipv6() {
+    local ip="$1"
+    [[ "$ip" =~ ^[0-9A-Fa-f:]+$ ]] || return 1
+    case "$ip" in
+        *:::*)   return 1 ;;                     # три и более ":" подряд
+        *::*::*) return 1 ;;                     # более одной "::"
+    esac
+    [[ "$ip" == :* && "$ip" != ::* ]] && return 1   # одиночное ведущее ":"
+    [[ "$ip" == *: && "$ip" != *:: ]] && return 1   # одиночное хвостовое ":"
+    local has_dcolon=0
+    [[ "$ip" == *::* ]] && has_dcolon=1
+    local IFS=':' parts=() p ngroups=0
+    read -ra parts <<< "$ip"
+    for p in "${parts[@]}"; do
+        [[ -z "$p" ]] && continue                 # пустые поля от "::"
+        [[ "$p" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+        (( ngroups++ ))
+    done
+    if [[ $has_dcolon -eq 1 ]]; then
+        (( ngroups <= 7 )) || return 1            # "::" заменяет >=1 группу
+    else
+        (( ngroups == 8 )) || return 1
+    fi
+    return 0
+}
+
+# _valid_cidr <token> : IPv4/IPv6 адрес с опциональным префиксом. Префикс, если
+# задан, обязан быть числом в допустимом диапазоне (IPv4 0-32, IPv6 0-128).
+# Пустой префикс после "/" (например "1.2.3.4/") отвергается.
+_valid_cidr() {
+    local tok="$1" addr prefix
+    if [[ "$tok" == */* ]]; then
+        addr="${tok%/*}"; prefix="${tok##*/}"
+        [[ "$prefix" =~ ^[0-9]+$ ]] || return 1
+    else
+        addr="$tok"; prefix=""
+    fi
+    if _valid_ipv4 "$addr"; then
+        [[ -z "$prefix" ]] && return 0
+        (( 10#$prefix <= 32 )) || return 1
+        return 0
+    elif _valid_ipv6 "$addr"; then
+        [[ -z "$prefix" ]] && return 0
+        (( 10#$prefix <= 128 )) || return 1
+        return 0
+    fi
+    return 1
+}
+
+# _valid_host_or_ipv4 <host> : для Endpoint - корректный IPv4 ИЛИ FQDN.
+_valid_host_or_ipv4() {
+    local host="$1"
+    _valid_ipv4 "$host" && return 0
+    [[ "$host" =~ ^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$ ]] || return 1
+    # Полностью числовая последняя метка = не настоящий TLD (RFC 3696), а скорее
+    # битый IPv4 (например "999.1.1.1"); отвергаем, чтобы не принять опечатку в IP.
+    local last="${host##*.}"
+    [[ "$last" =~ ^[0-9]+$ ]] && return 1
+    return 0
+}
+
 # Определение основного сетевого интерфейса
 get_main_nic() {
     ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1); exit}'

@@ -61,6 +61,88 @@ fi
 # Utilities
 # ==============================================================================
 
+# --- IP / CIDR validators (shared by install and manage) ---
+# These check numeric ranges, not just shape: IPv4 octets 0-255, IPv4 prefix
+# 0-32, IPv6 0-128. A bare address (no prefix) is valid (wireguard-tools treats
+# a bare IPv4 as /32 and a bare IPv6 as /128 - a host route).
+
+# _valid_ipv4 <addr> : exactly 4 octets, each 0-255 (10# avoids a leading-zero
+# octet being read as octal inside (( )) ).
+_valid_ipv4() {
+    local ip="$1"
+    [[ "$ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+    local o
+    for o in "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; do
+        (( 10#$o <= 255 )) || return 1
+    done
+    return 0
+}
+
+# _valid_ipv6 <addr> : structural check (not just charset). Allows one "::"
+# compression; without it requires exactly 8 groups of 1-4 hex digits, with it
+# at most 7. Embedded IPv4 (::ffff:1.2.3.4) is intentionally unsupported - it
+# does not occur in tunnel AllowedIPs and the dots are rejected by the charset.
+_valid_ipv6() {
+    local ip="$1"
+    [[ "$ip" =~ ^[0-9A-Fa-f:]+$ ]] || return 1
+    case "$ip" in
+        *:::*)   return 1 ;;                     # three or more ":" in a row
+        *::*::*) return 1 ;;                     # more than one "::"
+    esac
+    [[ "$ip" == :* && "$ip" != ::* ]] && return 1   # lone leading ":"
+    [[ "$ip" == *: && "$ip" != *:: ]] && return 1   # lone trailing ":"
+    local has_dcolon=0
+    [[ "$ip" == *::* ]] && has_dcolon=1
+    local IFS=':' parts=() p ngroups=0
+    read -ra parts <<< "$ip"
+    for p in "${parts[@]}"; do
+        [[ -z "$p" ]] && continue                 # empty fields from "::"
+        [[ "$p" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+        (( ngroups++ ))
+    done
+    if [[ $has_dcolon -eq 1 ]]; then
+        (( ngroups <= 7 )) || return 1            # "::" stands for >=1 group
+    else
+        (( ngroups == 8 )) || return 1
+    fi
+    return 0
+}
+
+# _valid_cidr <token> : IPv4/IPv6 address with an optional prefix. If present,
+# the prefix must be a number in range (IPv4 0-32, IPv6 0-128). An empty prefix
+# after "/" (e.g. "1.2.3.4/") is rejected.
+_valid_cidr() {
+    local tok="$1" addr prefix
+    if [[ "$tok" == */* ]]; then
+        addr="${tok%/*}"; prefix="${tok##*/}"
+        [[ "$prefix" =~ ^[0-9]+$ ]] || return 1
+    else
+        addr="$tok"; prefix=""
+    fi
+    if _valid_ipv4 "$addr"; then
+        [[ -z "$prefix" ]] && return 0
+        (( 10#$prefix <= 32 )) || return 1
+        return 0
+    elif _valid_ipv6 "$addr"; then
+        [[ -z "$prefix" ]] && return 0
+        (( 10#$prefix <= 128 )) || return 1
+        return 0
+    fi
+    return 1
+}
+
+# _valid_host_or_ipv4 <host> : for Endpoint - a valid IPv4 OR an FQDN.
+_valid_host_or_ipv4() {
+    local host="$1"
+    _valid_ipv4 "$host" && return 0
+    [[ "$host" =~ ^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$ ]] || return 1
+    # An all-numeric last label is not a real TLD (RFC 3696) but more likely a
+    # malformed IPv4 (e.g. "999.1.1.1"); reject it so a typo'd IP is not accepted.
+    local last="${host##*.}"
+    [[ "$last" =~ ^[0-9]+$ ]] && return 1
+    return 0
+}
+
 # Detect primary network interface
 get_main_nic() {
     ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1); exit}'
