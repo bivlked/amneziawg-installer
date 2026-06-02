@@ -178,14 +178,21 @@ By default the tunnel carries IPv4 only. Starting with v5.15.0 you can also enab
 
 **Interaction with `--disallow-ipv6`.** In-tunnel IPv6 needs host IPv6 forwarding, so if you combine `--allow-ipv6-tunnel` with `--disallow-ipv6` the tunnel flag wins: the installer logs a warning and keeps host IPv6 forwarding enabled. This does not happen silently.
 
-**Full-tunnel with dual-stack.** When `--allow-ipv6-tunnel` is enabled, the client config uses full-tunnel IPv4 (`AllowedIPs` starts with `0.0.0.0/0`) regardless of the selected `--route-amnezia` / `--route-custom` (split-tunnel) mode. In v5.15.0 dual-stack implies full-tunnel; combining split-tunnel with in-tunnel IPv6 is not supported yet.
+**IPv6 routing mirrors the chosen IPv4 mode (intent-mirroring).** When `--allow-ipv6-tunnel` is enabled, the client's IPv6 `AllowedIPs` mirror the IPv4 mode:
+
+- **Full tunnel** (IPv4 `AllowedIPs` = `0.0.0.0/0`): with native IPv6 on the server the client gets `0.0.0.0/0, ::/0` - all IPv6 traffic goes out to the internet through the VPN; without native IPv6 the client gets `0.0.0.0/0, fddd:2c4:2c4:2c4::/64` - IPv6 only works peer-to-peer inside the tunnel.
+- **Split-tunnel** (custom list via `--route-custom`): the IPv4 list is kept unchanged and ONLY the tunnel ULA subnet `fddd:2c4:2c4:2c4::/64` is added. `::/0` is never added - capturing all IPv6 in split mode would break split routing. IPv6 in a split tunnel reaches other peers but not the internet.
+
+> Historical note: in v5.15.0 dual-stack always implied a full tunnel (split-tunnel with IPv6 behaved differently). Since v5.15.1 split-tunnel and IPv6 combine correctly per the rules above. If a client was created on v5.15.0, recreate it (`manage remove` + `add`) to get the corrected `AllowedIPs`.
 
 **Subnet:** the private ULA `fddd:2c4:2c4:2c4::/64`. The server takes `::1`, clients get `::2`, `::3`, and so on, mirroring the IPv4 numbering. The subnet can be overridden before the first run via `IPV6_SUBNET=` in `/root/awg/awgsetup_cfg.init`.
 
-**Behavior with and without native IPv6.** During install the script checks for global IPv6 on the server (`ip -6 addr show scope global`):
+**How native IPv6 is detected on the server.** The script considers the server to have internet-routable IPv6 only when BOTH conditions hold:
 
-- **Native IPv6 present:** the client gets `AllowedIPs = 0.0.0.0/0, ::/0` - all IPv6 traffic goes through the VPN and out to the internet.
-- **No native IPv6:** the client gets only the tunnel subnet in `AllowedIPs` (no `::/0`): `AllowedIPs = 0.0.0.0/0, fddd:2c4:2c4:2c4::/64`. A warning is logged. IPv6 then works between peers inside the tunnel but does not reach the internet (otherwise packets would drop into a black hole). The tunnel stays fully functional over IPv4.
+1. a global IPv6 address outside the ULA range (`fc00::/7`, i.e. not `fddd:...`) - checked via `ip -6 addr show scope global`;
+2. a default IPv6 route - checked via `ip -6 route show default`.
+
+A ULA address has scope global on its own but is not routed to the internet, so an address alone is not enough - a default route is also required. If either condition is missing, the server is treated as having no native IPv6: the client gets the tunnel ULA instead of `::/0` (per the routing rules above) and a warning is logged. The tunnel stays fully functional over IPv4.
 
 **How to add it to an existing install.** Re-run the installer with `--force` and the tunnel flag:
 
@@ -208,7 +215,7 @@ Then re-import the new `.conf` on the device. A plain `regen` will not help here
 **Troubleshooting:**
 
 - **ULA subnet collision.** If `fddd:2c4:2c4:2c4::/64` is already used in your network, set a different ULA subnet via `IPV6_SUBNET=` before installing.
-- **IPv6 not routing to the internet.** Check whether the server has global IPv6 (`ip -6 addr show scope global`). Without it, IPv6 internet egress is not possible - this is expected, and the tunnel works over IPv4. If the server does have IPv6, check the ip6tables MASQUERADE rule and forwarding (`sysctl net.ipv6.conf.all.forwarding`).
+- **IPv6 not routing to the internet.** Check both signs of native IPv6: a global address outside ULA (`ip -6 addr show scope global`) AND a default route (`ip -6 route show default`). If either is missing, IPv6 internet egress is not possible - this is expected, and the tunnel works over IPv4. If both are present, check the ip6tables MASQUERADE rule and forwarding (`sysctl net.ipv6.conf.all.forwarding`).
 - **Rollback / IPv6 cleanup.** Setting `ALLOW_IPV6_TUNNEL=0` does not remove dual-stack `AllowedIPs` entries already added to `awg0.conf`. For a full cleanup: `awg-quick down awg0; sed -i 's|, fddd:[^/]*/[0-9]*||g' /etc/amnezia/amneziawg/awg0.conf; awg-quick up awg0`.
 
 <a id="persistentkeepalive-adv"></a>

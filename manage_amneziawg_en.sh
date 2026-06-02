@@ -1449,7 +1449,7 @@ usage() {
     echo "  -h, --help            Show this help"
     echo "  -v, --verbose         Verbose output (for list command)"
     echo "  --no-color            Disable colored output"
-    echo "  --json                Machine-readable JSON output (for list / show / stats)"
+    echo "  --json                Machine-readable JSON output (for list / stats)"
     echo "  --expires=DURATION    Expiry time for add (1h, 12h, 1d, 7d, 30d, 4w)"
     echo "  --conf-dir=PATH       Specify AWG directory (default: $AWG_DIR)"
     echo "  --server-conf=PATH    Specify server config file"

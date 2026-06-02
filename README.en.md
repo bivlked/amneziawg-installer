@@ -145,7 +145,7 @@ All parameters are accepted automatically. Details: [ADVANCED.en.md#cli-params-a
 * **One command — working VPN** — from a clean VPS to a running server with client configs and QR codes
 * **Secure by default** — UFW, Fail2Ban, sysctl hardening, strict file permissions (600/700)
 * **Easy management** — add/remove clients, temporary clients with auto-removal, traffic stats, backups
-* **4 operating systems** — Ubuntu 24.04, Ubuntu 25.10/26.04, Debian 12, Debian 13
+* **Broad OS support** - Ubuntu 24.04/25.10/26.04 and Debian 12/13
 * **x86_64 and ARM** — cloud VPS, Raspberry Pi 3/4/5, ARM64 servers (AWS Graviton, Oracle Ampere, Hetzner)
 * **Mobile network optimization** — `--preset=mobile` for Tele2, Yota, Megafon and other carriers with DPI blocking. Fine-tune with `--jc`, `--jmin`, `--jmax` ([details](ADVANCED.en.md#presets-adv))
 * **Optional dual-stack IPv6** - the `--allow-ipv6-tunnel` flag adds IPv6 inside the tunnel next to IPv4 (off by default, [details](ADVANCED.en.md#ipv6-tunnel-adv))
