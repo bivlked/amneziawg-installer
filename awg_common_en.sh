@@ -1426,12 +1426,22 @@ generate_qr() {
         return 1
     fi
 
-    qrencode -t png -o "$png_file" < "$conf_file" || {
+    # C4: generate into a temp file and move it into place atomically, so an
+    # interrupted qrencode cannot leave a partial/corrupt PNG over the working
+    # one (as generate_qr_vpnuri already does). tmp sits in the same directory
+    # as png_file, so mv is an atomic rename on one filesystem.
+    local tmp_png="${png_file}.tmp.$$"
+    if ! qrencode -t png -o "$tmp_png" < "$conf_file"; then
         log_error "Failed to generate QR code for '$name'"
+        rm -f "$tmp_png"
         return 1
-    }
-
-    chmod 600 "$png_file"
+    fi
+    chmod 600 "$tmp_png" 2>/dev/null
+    if ! mv -f "$tmp_png" "$png_file"; then
+        log_error "Failed to save QR code for '$name'"
+        rm -f "$tmp_png"
+        return 1
+    fi
     log_debug "QR code for '$name' created: $png_file"
     return 0
 }

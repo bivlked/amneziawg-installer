@@ -1421,12 +1421,22 @@ generate_qr() {
         return 1
     fi
 
-    qrencode -t png -o "$png_file" < "$conf_file" || {
+    # C4: генерируем во временный файл и атомарно переносим (mv) - чтобы
+    # прерывание qrencode не оставило частичный/битый PNG поверх рабочего
+    # (как уже сделано в generate_qr_vpnuri). tmp лежит в той же папке, что и
+    # png_file, поэтому mv - атомарный rename на одной ФС.
+    local tmp_png="${png_file}.tmp.$$"
+    if ! qrencode -t png -o "$tmp_png" < "$conf_file"; then
         log_error "Ошибка генерации QR-кода для '$name'"
+        rm -f "$tmp_png"
         return 1
-    }
-
-    chmod 600 "$png_file"
+    fi
+    chmod 600 "$tmp_png" 2>/dev/null
+    if ! mv -f "$tmp_png" "$png_file"; then
+        log_error "Ошибка сохранения QR-кода для '$name'"
+        rm -f "$tmp_png"
+        return 1
+    fi
     log_debug "QR-код для '$name' создан: $png_file"
     return 0
 }
