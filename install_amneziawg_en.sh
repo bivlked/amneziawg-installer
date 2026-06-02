@@ -2877,14 +2877,22 @@ step6_generate_configs() {
     log "Creating server config..."
     render_server_config || die "Server config creation error."
 
-    # Restore existing [Peer] blocks from backup (excluding defaults)
+    # Restore ALL existing [Peer] blocks from backup.
+    # C5: defaults my_phone/my_laptop used to be excluded here, but the
+    # generation loop below skips peers that already exist while the guard in
+    # generate_client refuses to recreate one whose artifacts exist - so a
+    # default client became an orphan (files present, no peer block, silent
+    # connectivity loss on --force reinstall). The previous awk also dropped
+    # every peer but the last: each new [Peer] overwrote the buffer without
+    # flushing the previous one. We now flush on every [Peer] and restore ALL
+    # blocks; the idempotent loop below does not recreate what was restored.
     if [[ -n "${s_bak:-}" && -f "$s_bak" ]]; then
         local restored_peers
         restored_peers=$(awk '
-            /^\[Peer\]/ { buf=$0"\n"; in_peer=1; skip=0; next }
-            in_peer && /^\[/ { if (!skip) printf "%s\n", buf; buf=""; in_peer=0; next }
-            in_peer { buf=buf $0"\n"; if ($0 ~ /^#_Name = (my_phone|my_laptop)$/) skip=1; next }
-            END { if (in_peer && !skip) printf "%s", buf }
+            /^\[Peer\]/ { if (in_peer) printf "%s", buf; buf=$0"\n"; in_peer=1; next }
+            in_peer && /^\[/ { printf "%s", buf; buf=""; in_peer=0; next }
+            in_peer { buf=buf $0"\n"; next }
+            END { if (in_peer) printf "%s", buf }
         ' "$s_bak")
         if [[ -n "$restored_peers" ]]; then
             printf '\n%s' "$restored_peers" >> "$SERVER_CONF_FILE"

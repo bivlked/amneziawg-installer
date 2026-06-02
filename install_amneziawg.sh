@@ -2860,14 +2860,22 @@ step6_generate_configs() {
     log "Создание серверного конфига..."
     render_server_config || die "Ошибка создания серверного конфига."
 
-    # Восстановление существующих [Peer] блоков из бэкапа (кроме дефолтных)
+    # Восстановление ВСЕХ существующих [Peer] блоков из бэкапа.
+    # C5: раньше дефолтные my_phone/my_laptop исключались из восстановления, но
+    # цикл генерации ниже пропускает уже существующие пиры, а guard в
+    # generate_client отвергает повторное создание при наличии артефактов -
+    # дефолтный клиент становился orphan (файлы есть, peer-блока нет, связь молча
+    # терялась при --force reinstall). Дополнительно прежняя awk теряла все пиры
+    # кроме последнего: на каждом новом [Peer] буфер перезаписывался без сброса
+    # предыдущего. Теперь сбрасываем буфер на каждом [Peer] и восстанавливаем
+    # ВСЕ блоки; идемпотентный цикл ниже не пересоздаёт уже восстановленные.
     if [[ -n "${s_bak:-}" && -f "$s_bak" ]]; then
         local restored_peers
         restored_peers=$(awk '
-            /^\[Peer\]/ { buf=$0"\n"; in_peer=1; skip=0; next }
-            in_peer && /^\[/ { if (!skip) printf "%s\n", buf; buf=""; in_peer=0; next }
-            in_peer { buf=buf $0"\n"; if ($0 ~ /^#_Name = (my_phone|my_laptop)$/) skip=1; next }
-            END { if (in_peer && !skip) printf "%s", buf }
+            /^\[Peer\]/ { if (in_peer) printf "%s", buf; buf=$0"\n"; in_peer=1; next }
+            in_peer && /^\[/ { printf "%s", buf; buf=""; in_peer=0; next }
+            in_peer { buf=buf $0"\n"; next }
+            END { if (in_peer) printf "%s", buf }
         ' "$s_bak")
         if [[ -n "$restored_peers" ]]; then
             printf '\n%s' "$restored_peers" >> "$SERVER_CONF_FILE"
