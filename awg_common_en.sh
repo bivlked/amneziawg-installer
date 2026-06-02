@@ -23,12 +23,24 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # NOTE: trap is NOT set here to avoid overwriting the caller's trap handler.
 # The calling script must invoke _awg_cleanup() in its own EXIT handler.
 _AWG_TEMP_FILES=()
+# File-backed temp registry: awg_mktemp is usually called via $(...) (a
+# subshell), where the _AWG_TEMP_FILES array mutation is lost in the parent. A
+# file survives the subshell, so _awg_cleanup can reliably remove even a temp
+# created inside command substitution (e.g. an interrupted config write between
+# mktemp and mv). $$ is the calling script's PID, stable across its subshells.
+_AWG_TEMP_REGISTRY="${TMPDIR:-/tmp}/.awg_temp_registry.$$"
 
 _awg_cleanup() {
     local f
     for f in "${_AWG_TEMP_FILES[@]}"; do
         [[ -f "$f" ]] && rm -f "$f"
     done
+    if [[ -n "${_AWG_TEMP_REGISTRY:-}" && -f "$_AWG_TEMP_REGISTRY" ]]; then
+        while IFS= read -r f; do
+            [[ -n "$f" && -f "$f" ]] && rm -f "$f"
+        done < "$_AWG_TEMP_REGISTRY"
+        rm -f "$_AWG_TEMP_REGISTRY"
+    fi
 }
 
 # mktemp wrapper with auto-cleanup.
@@ -46,6 +58,9 @@ awg_mktemp() {
         f=$(mktemp) || return 1
     fi
     _AWG_TEMP_FILES+=("$f")
+    # Mirror the path into the file registry - it survives a subshell
+    # ($(awg_mktemp ...)), unlike the array above.
+    [[ -n "${_AWG_TEMP_REGISTRY:-}" ]] && printf '%s\n' "$f" >> "$_AWG_TEMP_REGISTRY" 2>/dev/null
     echo "$f"
 }
 
@@ -1658,7 +1673,11 @@ generate_qr_vpnuri() {
         return 1
     fi
 
-    mv -f "$tmp_png" "$png_file"
+    if ! mv -f "$tmp_png" "$png_file"; then
+        log_error "Failed to save vpn:// QR for '$name'"
+        rm -f "$tmp_png"
+        return 1
+    fi
     log_debug "vpn:// QR for '$name' created: $png_file"
     return 0
 }

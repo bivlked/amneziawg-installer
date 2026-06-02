@@ -751,6 +751,14 @@ modify_client() {
                     log_error "Invalid AllowedIPs: '$value'"
                     return 1 ;;
             esac
+            # Stray commas: word-splitting on IFS=',' silently drops a TRAILING
+            # empty element (e.g. "10.0.0.0/24,"), so check list structure
+            # separately: leading/trailing/doubled comma.
+            case "$value" in
+                ,*|*,|*,,*)
+                    log_error "Invalid AllowedIPs '$value': empty list element (stray comma)"
+                    return 1 ;;
+            esac
             local _aip_tok _aip_ifs="$IFS"
             IFS=','
             for _aip_tok in $value; do

@@ -94,6 +94,37 @@ load test_helper
 
 # --- RU/EN validator parity ---
 
+# --- AllowedIPs comma-structure guard (trailing comma is dropped by word-split) ---
+
+# Faithful copy of the comma-structure guard added to modify_client.
+allowedips_comma_ok() {
+    case "$1" in
+        ,*|*,|*,,*) return 1 ;;
+    esac
+    return 0
+}
+
+@test "C3 AllowedIPs: leading/trailing/doubled comma is rejected" {
+    for bad in "10.0.0.0/24," ",10.0.0.0/24" "10.0.0.0/24,,10.0.1.0/24" ","; do
+        run allowedips_comma_ok "$bad"
+        [ "$status" -ne 0 ] || { echo "accepted malformed: $bad"; false; }
+    done
+}
+
+@test "C3 AllowedIPs: well-formed lists pass the comma guard" {
+    for ok in "10.0.0.0/24" "10.0.0.0/24, 10.0.1.0/24" "::/0" "1.2.3.4, ::/0"; do
+        run allowedips_comma_ok "$ok"
+        [ "$status" -eq 0 ] || { echo "rejected valid: $ok"; false; }
+    done
+}
+
+@test "C3 source: both manage scripts carry the trailing-comma guard" {
+    run grep -E ',\*\|\*,\|\*,,\*' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+    [ "$status" -eq 0 ]
+    run grep -E ',\*\|\*,\|\*,,\*' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
+    [ "$status" -eq 0 ]
+}
+
 @test "C3 RU/EN parity: validator definitions present in both awg_common" {
     for fn in _valid_ipv4 _valid_ipv6 _valid_cidr _valid_host_or_ipv4; do
         run grep -E "^${fn}\(\) \{" "$BATS_TEST_DIRNAME/../awg_common.sh"

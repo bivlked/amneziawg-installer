@@ -746,6 +746,14 @@ modify_client() {
                     log_error "Невалидный AllowedIPs: '$value'"
                     return 1 ;;
             esac
+            # Лишние запятые: word-splitting по IFS=',' молча отбрасывает
+            # ХВОСТОВОЙ пустой элемент (например "10.0.0.0/24,"), поэтому проверяем
+            # структуру списка отдельно: ведущая/хвостовая/двойная запятая.
+            case "$value" in
+                ,*|*,|*,,*)
+                    log_error "Невалидный AllowedIPs '$value': пустой элемент списка (лишняя запятая)"
+                    return 1 ;;
+            esac
             local _aip_tok _aip_ifs="$IFS"
             IFS=','
             for _aip_tok in $value; do

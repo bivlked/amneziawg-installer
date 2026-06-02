@@ -23,12 +23,24 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # ВАЖНО: trap НЕ устанавливается здесь, чтобы не перезаписать trap вызывающего скрипта.
 # Вызывающий скрипт должен вызвать _awg_cleanup() в своём обработчике EXIT.
 _AWG_TEMP_FILES=()
+# Файл-реестр temp-файлов: awg_mktemp часто вызывается через $(...) (subshell),
+# где правка массива _AWG_TEMP_FILES теряется в родителе. Файл переживает
+# subshell, поэтому _awg_cleanup надёжно удалит даже temp, созданный в
+# подстановке команды (например прерванная запись конфига между mktemp и mv).
+# $$ = PID вызывающего скрипта, стабилен для всех его subshell.
+_AWG_TEMP_REGISTRY="${TMPDIR:-/tmp}/.awg_temp_registry.$$"
 
 _awg_cleanup() {
     local f
     for f in "${_AWG_TEMP_FILES[@]}"; do
         [[ -f "$f" ]] && rm -f "$f"
     done
+    if [[ -n "${_AWG_TEMP_REGISTRY:-}" && -f "$_AWG_TEMP_REGISTRY" ]]; then
+        while IFS= read -r f; do
+            [[ -n "$f" && -f "$f" ]] && rm -f "$f"
+        done < "$_AWG_TEMP_REGISTRY"
+        rm -f "$_AWG_TEMP_REGISTRY"
+    fi
 }
 
 # Обёртка mktemp с автоочисткой.
@@ -45,6 +57,9 @@ awg_mktemp() {
         f=$(mktemp) || return 1
     fi
     _AWG_TEMP_FILES+=("$f")
+    # Дублируем путь в файл-реестр - он переживает subshell ($(awg_mktemp ...)),
+    # в отличие от массива выше.
+    [[ -n "${_AWG_TEMP_REGISTRY:-}" ]] && printf '%s\n' "$f" >> "$_AWG_TEMP_REGISTRY" 2>/dev/null
     echo "$f"
 }
 
@@ -1651,7 +1666,11 @@ generate_qr_vpnuri() {
         return 1
     fi
 
-    mv -f "$tmp_png" "$png_file"
+    if ! mv -f "$tmp_png" "$png_file"; then
+        log_error "Ошибка сохранения QR vpn:// для '$name'"
+        rm -f "$tmp_png"
+        return 1
+    fi
     log_debug "QR vpn:// для '$name' создан: $png_file"
     return 0
 }

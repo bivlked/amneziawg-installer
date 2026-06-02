@@ -75,3 +75,18 @@ SHIM
     [ -f "$AWG_DIR/server_public.key" ]
     [ -s "$AWG_DIR/server_public.key" ]
 }
+
+@test "awg_mktemp: a temp created via \$(...) is still cleaned up (file registry)" {
+    # The array mutation is lost in a command-substitution subshell, so the
+    # registry file is what lets _awg_cleanup reclaim a temp created the way the
+    # real call-sites create theirs (tmp=\$(awg_mktemp ...)).
+    [ -n "${_AWG_TEMP_REGISTRY:-}" ]
+    local f
+    f=$(awg_mktemp "$AWG_DIR")          # subshell - array update does not persist
+    [ -f "$f" ]
+    grep -qxF "$f" "$_AWG_TEMP_REGISTRY"
+
+    _awg_cleanup
+    [ ! -f "$f" ]                       # removed via the registry
+    [ ! -f "$_AWG_TEMP_REGISTRY" ]      # registry itself cleaned
+}
