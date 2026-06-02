@@ -229,6 +229,15 @@ check_dependencies() {
 # On success, sets LAST_BACKUP_PATH (used by restore_backup for rollback
 # snapshot).
 _backup_configs_nolock() {
+    # --no-prune: do not delete old backups after creating one. Used by the
+    # pre-restore snapshot: otherwise, with 10 backups already present, prune
+    # would drop the oldest one, which may be exactly the backup selected for
+    # restore (it lives in the same $AWG_DIR/backups directory).
+    local no_prune=0
+    if [[ "${1:-}" == "--no-prune" ]]; then
+        no_prune=1
+        shift
+    fi
     log "Creating backup..."
     local bd="$AWG_DIR/backups"
     mkdir -p "$bd" || die "mkdir error $bd"
@@ -334,10 +343,12 @@ _backup_configs_nolock() {
     rm -rf "$td"
     chmod 600 "$bf" || log_warn "chmod error on backup"
 
-    # Keep maximum 10 backups
-    find "$bd" -maxdepth 1 -name "awg_backup_*.tar.gz" -printf '%T@ %p\n' | \
-        sort -nr | tail -n +11 | cut -d' ' -f2- | xargs -r rm -f || \
-        log_warn "Error deleting old backups"
+    # Keep maximum 10 backups (unless --no-prune)
+    if [[ "$no_prune" -eq 0 ]]; then
+        find "$bd" -maxdepth 1 -name "awg_backup_*.tar.gz" -printf '%T@ %p\n' | \
+            sort -nr | tail -n +11 | cut -d' ' -f2- | xargs -r rm -f || \
+            log_warn "Error deleting old backups"
+    fi
 
     LAST_BACKUP_PATH="$bf"
     log "Backup created: $bf"
@@ -498,7 +509,9 @@ restore_backup() {
     trap _restore_cleanup RETURN
 
     log "Backing up current config..."
-    if ! _backup_configs_nolock; then
+    # --no-prune: the backup selected for restore ($bf) lives in the same
+    # backups dir; pruning after the pre-restore snapshot could delete it.
+    if ! _backup_configs_nolock --no-prune; then
         log_error "Failed to create backup of current configuration."
         return 1
     fi
@@ -612,12 +625,18 @@ restore_backup() {
         # C11: remove stale client keys absent from the backup (server keys live
         # in AWG_DIR, not KEYS_DIR, so they are not affected).
         rm -f "$KEYS_DIR"/* 2>/dev/null || true
-        if ! cp -a "$td/keys/"* "$KEYS_DIR/"; then
+        # C2: the backup's keys/ may be empty (server with no client keys).
+        # Without a compgen guard the bare glob "$td/keys/*" would stay literal,
+        # cp would fail and the whole restore would roll back. Empty keys/ is OK.
+        if ! compgen -G "$td/keys/*" > /dev/null; then
+            log_debug "Backup has no client keys (keys/ empty) - skipping, not an error."
+        elif ! cp -a "$td/keys/"* "$KEYS_DIR/"; then
             log_error "Error copying keys — restore aborted (triggering rollback)."
             return 1
+        else
+            chmod 600 "$KEYS_DIR"/* 2>/dev/null
+            log_debug "Keys restored to $KEYS_DIR"
         fi
-        chmod 600 "$KEYS_DIR"/* 2>/dev/null
-        log_debug "Keys restored to $KEYS_DIR"
     fi
 
     # Server keys: cp -a preserves the mode from the archive, so we force 600

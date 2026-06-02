@@ -229,6 +229,15 @@ check_dependencies() {
 # По успеху устанавливает LAST_BACKUP_PATH (используется restore_backup
 # для rollback snapshot).
 _backup_configs_nolock() {
+    # --no-prune: не удалять старые бэкапы после создания. Используется
+    # pre-restore snapshot'ом: иначе при уже накопленных 10 бэкапах prune
+    # обрезал бы самый старый, которым может оказаться именно выбранный для
+    # восстановления файл (он лежит в той же папке $AWG_DIR/backups).
+    local no_prune=0
+    if [[ "${1:-}" == "--no-prune" ]]; then
+        no_prune=1
+        shift
+    fi
     log "Создание бэкапа..."
     local bd="$AWG_DIR/backups"
     mkdir -p "$bd" || die "Ошибка mkdir $bd"
@@ -333,10 +342,12 @@ _backup_configs_nolock() {
     rm -rf "$td"
     chmod 600 "$bf" || log_warn "Ошибка chmod бэкапа"
 
-    # Оставляем максимум 10 бэкапов
-    find "$bd" -maxdepth 1 -name "awg_backup_*.tar.gz" -printf '%T@ %p\n' | \
-        sort -nr | tail -n +11 | cut -d' ' -f2- | xargs -r rm -f || \
-        log_warn "Ошибка удаления старых бэкапов"
+    # Оставляем максимум 10 бэкапов (кроме режима --no-prune)
+    if [[ "$no_prune" -eq 0 ]]; then
+        find "$bd" -maxdepth 1 -name "awg_backup_*.tar.gz" -printf '%T@ %p\n' | \
+            sort -nr | tail -n +11 | cut -d' ' -f2- | xargs -r rm -f || \
+            log_warn "Ошибка удаления старых бэкапов"
+    fi
 
     LAST_BACKUP_PATH="$bf"
     log "Бэкап создан: $bf"
@@ -495,7 +506,9 @@ restore_backup() {
     trap _restore_cleanup RETURN
 
     log "Создание бэкапа текущей..."
-    if ! _backup_configs_nolock; then
+    # --no-prune: выбранный для восстановления $bf лежит в той же папке бэкапов;
+    # prune после создания pre-restore снапшота мог бы удалить именно его.
+    if ! _backup_configs_nolock --no-prune; then
         log_error "Не удалось создать бэкап текущей конфигурации."
         return 1
     fi
@@ -608,12 +621,18 @@ restore_backup() {
         # C11: удаляю stale client-ключи, которых нет в бэкапе (server-ключи
         # лежат в AWG_DIR, не в KEYS_DIR, поэтому не затрагиваются).
         rm -f "$KEYS_DIR"/* 2>/dev/null || true
-        if ! cp -a "$td/keys/"* "$KEYS_DIR/"; then
+        # C2: keys/ в бэкапе может быть пустым (сервер без клиентских ключей).
+        # Без compgen-guard голый glob "$td/keys/*" остался бы литералом, cp упал
+        # бы, и весь restore ушёл бы в откат. Пустой keys/ - не ошибка.
+        if ! compgen -G "$td/keys/*" > /dev/null; then
+            log_debug "Бэкап без клиентских ключей (keys/ пуст) - пропуск, не ошибка."
+        elif ! cp -a "$td/keys/"* "$KEYS_DIR/"; then
             log_error "Ошибка копирования keys — восстановление прервано (запуск отката)."
             return 1
+        else
+            chmod 600 "$KEYS_DIR"/* 2>/dev/null
+            log_debug "Ключи восстановлены в $KEYS_DIR"
         fi
-        chmod 600 "$KEYS_DIR"/* 2>/dev/null
-        log_debug "Ключи восстановлены в $KEYS_DIR"
     fi
 
     # Серверные ключи: cp -a сохраняет mode из архива, поэтому форсируем 600
