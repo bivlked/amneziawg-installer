@@ -6,6 +6,9 @@
 #   E / C13:      install --help OS line lists 26.04; --subnet help states /24.
 #   C12:          log_msg must not double percent signs.
 #   weaq P2:      log_msg must route INFO/DEBUG to stderr when JSON_OUTPUT=1.
+#
+# shellcheck disable=SC2034  # mock env vars (NO_COLOR/VERBOSE_LIST/LOG_FILE/JSON_OUTPUT) are consumed by the sourced functions
+# shellcheck disable=SC2154  # $stderr is set by bats `run --separate-stderr`
 
 bats_require_minimum_version 1.5.0
 
