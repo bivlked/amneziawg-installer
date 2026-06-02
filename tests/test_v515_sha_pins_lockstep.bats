@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# v5.15.0 SHA256 pin lockstep test.
+# SHA256 pin lockstep test (5.15.x line).
 #
 # The installers (install_amneziawg.sh / install_amneziawg_en.sh) download the
 # helper scripts over the network and verify them against hardcoded pins
@@ -14,7 +14,7 @@
 
 # ---------- RU installer pins ----------
 
-@test "v5.15.0: RU installer COMMON pin matches awg_common.sh" {
+@test "RU installer COMMON pin matches awg_common.sh" {
     actual=$(sha256sum "$BATS_TEST_DIRNAME/../awg_common.sh" | cut -d' ' -f1)
     pinned=$(grep -oP 'COMMON_SCRIPT_SHA256="\K[0-9a-f]{64}' "$BATS_TEST_DIRNAME/../install_amneziawg.sh")
     [ "$actual" = "$pinned" ] || {
@@ -23,7 +23,7 @@
     }
 }
 
-@test "v5.15.0: RU installer MANAGE pin matches manage_amneziawg.sh" {
+@test "RU installer MANAGE pin matches manage_amneziawg.sh" {
     actual=$(sha256sum "$BATS_TEST_DIRNAME/../manage_amneziawg.sh" | cut -d' ' -f1)
     pinned=$(grep -oP 'MANAGE_SCRIPT_SHA256="\K[0-9a-f]{64}' "$BATS_TEST_DIRNAME/../install_amneziawg.sh")
     [ "$actual" = "$pinned" ] || {
@@ -34,7 +34,7 @@
 
 # ---------- EN installer pins ----------
 
-@test "v5.15.0: EN installer COMMON pin matches awg_common_en.sh" {
+@test "EN installer COMMON pin matches awg_common_en.sh" {
     actual=$(sha256sum "$BATS_TEST_DIRNAME/../awg_common_en.sh" | cut -d' ' -f1)
     pinned=$(grep -oP 'COMMON_SCRIPT_SHA256="\K[0-9a-f]{64}' "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh")
     [ "$actual" = "$pinned" ] || {
@@ -43,7 +43,7 @@
     }
 }
 
-@test "v5.15.0: EN installer MANAGE pin matches manage_amneziawg_en.sh" {
+@test "EN installer MANAGE pin matches manage_amneziawg_en.sh" {
     actual=$(sha256sum "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh" | cut -d' ' -f1)
     pinned=$(grep -oP 'MANAGE_SCRIPT_SHA256="\K[0-9a-f]{64}' "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh")
     [ "$actual" = "$pinned" ] || {
