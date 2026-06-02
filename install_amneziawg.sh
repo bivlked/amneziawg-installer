@@ -1916,8 +1916,12 @@ initialize_setup() {
 
     # Сохранение конфигурации
     log "Сохранение настроек в $CONFIG_FILE..."
-    local temp_conf
-    temp_conf=$(mktemp) || die "Ошибка mktemp."
+    # temp в каталоге итогового конфига -> mv = атомарный rename на той же ФС
+    # (а не cross-fs copy+unlink, если /tmp смонтирован как tmpfs).
+    local temp_conf cfg_dir
+    cfg_dir="$(dirname "$CONFIG_FILE")"
+    mkdir -p "$cfg_dir" 2>/dev/null
+    temp_conf=$(mktemp -p "$cfg_dir") || die "Ошибка mktemp."
     _install_temp_files+=("$temp_conf")
     cat > "$temp_conf" << EOF
 # Конфигурация установки AmneziaWG 2.0 (Авто-генерация)

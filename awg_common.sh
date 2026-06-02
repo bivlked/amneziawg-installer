@@ -31,10 +31,19 @@ _awg_cleanup() {
     done
 }
 
-# Обёртка mktemp с автоочисткой
+# Обёртка mktemp с автоочисткой.
+# Опциональный 1-й аргумент - целевой каталог: temp создаётся в нём же, где
+# окажется итоговый файл, чтобы последующий mv был атомарным rename в пределах
+# одной ФС, а не cross-fs copy+unlink (важно, когда /tmp смонтирован как tmpfs).
+# Без аргумента поведение прежнее (/tmp или $TMPDIR) - обратная совместимость.
 awg_mktemp() {
-    local f
-    f=$(mktemp) || return 1
+    local dir="${1:-}" f
+    if [[ -n "$dir" ]]; then
+        mkdir -p "$dir" 2>/dev/null
+        f=$(mktemp -p "$dir") || return 1
+    else
+        f=$(mktemp) || return 1
+    fi
     _AWG_TEMP_FILES+=("$f")
     echo "$f"
 }
@@ -751,7 +760,7 @@ _ensure_server_public_key() {
     fi
     mkdir -p "$AWG_DIR"
     local _tmp
-    _tmp=$(awg_mktemp) || return 1
+    _tmp=$(awg_mktemp "$AWG_DIR") || return 1
     if ! echo "$_srv_priv" | awg pubkey > "$_tmp"; then
         rm -f "$_tmp"
         log_error "Не удалось вычислить публичный ключ через awg pubkey"
@@ -844,9 +853,11 @@ render_server_config() {
         postdown="${postdown}; ip6tables -D FORWARD -i %i -j ACCEPT; ip6tables -t nat -D POSTROUTING -o ${nic} -j MASQUERADE"
     fi
 
-    # Формируем конфиг через временный файл (атомарная запись)
+    # Формируем конфиг через временный файл (атомарная запись).
+    # temp создаём в каталоге итогового конфига, чтобы mv был атомарным rename
+    # на той же ФС (а не cross-fs copy+unlink, если /tmp = tmpfs).
     local tmpfile
-    tmpfile=$(awg_mktemp) || { log_error "Ошибка mktemp"; return 1; }
+    tmpfile=$(awg_mktemp "$(dirname "$SERVER_CONF_FILE")") || { log_error "Ошибка mktemp"; return 1; }
 
     cat > "$tmpfile" << EOF
 [Interface]
@@ -979,8 +990,9 @@ render_client_config() {
         fi
     fi
 
+    # temp в каталоге клиентского конфига ($AWG_DIR) -> mv = атомарный rename.
     local tmpfile
-    tmpfile=$(awg_mktemp) || { log_error "Ошибка mktemp"; return 1; }
+    tmpfile=$(awg_mktemp "$AWG_DIR") || { log_error "Ошибка mktemp"; return 1; }
 
     local address_line
     if [[ -n "$client_ipv6" ]]; then
@@ -1184,9 +1196,10 @@ add_peer_to_server() {
         return 1
     fi
 
-    # Добавляем пир через временный файл (атомарно)
+    # Добавляем пир через временный файл (атомарно).
+    # temp в каталоге серверного конфига -> mv = атомарный rename на той же ФС.
     local tmpfile
-    tmpfile=$(awg_mktemp) || { log_error "Ошибка mktemp"; return 1; }
+    tmpfile=$(awg_mktemp "$(dirname "$SERVER_CONF_FILE")") || { log_error "Ошибка mktemp"; return 1; }
 
     cp "$SERVER_CONF_FILE" "$tmpfile" || {
         rm -f "$tmpfile"
@@ -1247,8 +1260,9 @@ remove_peer_from_server() {
         return 1
     fi
 
+    # temp в каталоге серверного конфига -> финальный mv = атомарный rename.
     local tmpfile
-    tmpfile=$(awg_mktemp) || { log_error "Ошибка mktemp"; exec {lock_fd}>&-; return 1; }
+    tmpfile=$(awg_mktemp "$(dirname "$SERVER_CONF_FILE")") || { log_error "Ошибка mktemp"; exec {lock_fd}>&-; return 1; }
 
     # Удаляем блок [Peer] содержащий #_Name = name
     # Логика: буферизуем каждый [Peer] блок, проверяем имя, выводим только если не совпадает
@@ -1282,9 +1296,10 @@ remove_peer_from_server() {
     }
     ' "$SERVER_CONF_FILE" > "$tmpfile"
 
-    # Нормализация: сжать множественные пустые строки в одну
+    # Нормализация: сжать множественные пустые строки в одну.
+    # tmpclean - на той же ФС, что и tmpfile (mv tmpclean->tmpfile атомарен).
     local tmpclean
-    tmpclean=$(awg_mktemp) || { log_error "Ошибка mktemp"; exec {lock_fd}>&-; return 1; }
+    tmpclean=$(awg_mktemp "$(dirname "$SERVER_CONF_FILE")") || { log_error "Ошибка mktemp"; exec {lock_fd}>&-; return 1; }
     if cat -s "$tmpfile" > "$tmpclean" 2>/dev/null; then
         mv "$tmpclean" "$tmpfile"
     else

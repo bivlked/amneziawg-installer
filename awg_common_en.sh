@@ -31,10 +31,20 @@ _awg_cleanup() {
     done
 }
 
-# mktemp wrapper with auto-cleanup
+# mktemp wrapper with auto-cleanup.
+# Optional 1st argument - target directory: the temp file is created in the same
+# directory where the final file will live, so the subsequent mv is an atomic
+# rename within one filesystem rather than a cross-fs copy+unlink (matters when
+# /tmp is mounted as tmpfs). With no argument the behaviour is unchanged (/tmp
+# or $TMPDIR) - backward compatible.
 awg_mktemp() {
-    local f
-    f=$(mktemp) || return 1
+    local dir="${1:-}" f
+    if [[ -n "$dir" ]]; then
+        mkdir -p "$dir" 2>/dev/null
+        f=$(mktemp -p "$dir") || return 1
+    else
+        f=$(mktemp) || return 1
+    fi
     _AWG_TEMP_FILES+=("$f")
     echo "$f"
 }
@@ -754,7 +764,7 @@ _ensure_server_public_key() {
     fi
     mkdir -p "$AWG_DIR"
     local _tmp
-    _tmp=$(awg_mktemp) || return 1
+    _tmp=$(awg_mktemp "$AWG_DIR") || return 1
     if ! echo "$_srv_priv" | awg pubkey > "$_tmp"; then
         rm -f "$_tmp"
         log_error "awg pubkey failed to compute the public key"
@@ -848,9 +858,11 @@ render_server_config() {
         postdown="${postdown}; ip6tables -D FORWARD -i %i -j ACCEPT; ip6tables -t nat -D POSTROUTING -o ${nic} -j MASQUERADE"
     fi
 
-    # Build config via temp file (atomic write)
+    # Build config via temp file (atomic write).
+    # Create temp in the target config's directory so mv is an atomic rename on
+    # the same filesystem (not a cross-fs copy+unlink when /tmp is tmpfs).
     local tmpfile
-    tmpfile=$(awg_mktemp) || { log_error "mktemp failed"; return 1; }
+    tmpfile=$(awg_mktemp "$(dirname "$SERVER_CONF_FILE")") || { log_error "mktemp failed"; return 1; }
 
     cat > "$tmpfile" << EOF
 [Interface]
@@ -983,8 +995,9 @@ render_client_config() {
         fi
     fi
 
+    # temp in the client config dir ($AWG_DIR) -> mv = atomic rename.
     local tmpfile
-    tmpfile=$(awg_mktemp) || { log_error "mktemp failed"; return 1; }
+    tmpfile=$(awg_mktemp "$AWG_DIR") || { log_error "mktemp failed"; return 1; }
 
     local address_line
     if [[ -n "$client_ipv6" ]]; then
@@ -1188,9 +1201,10 @@ add_peer_to_server() {
         return 1
     fi
 
-    # Add peer via temp file (atomic)
+    # Add peer via temp file (atomic).
+    # temp in the server config dir -> mv = atomic rename on the same filesystem.
     local tmpfile
-    tmpfile=$(awg_mktemp) || { log_error "mktemp failed"; return 1; }
+    tmpfile=$(awg_mktemp "$(dirname "$SERVER_CONF_FILE")") || { log_error "mktemp failed"; return 1; }
 
     cp "$SERVER_CONF_FILE" "$tmpfile" || {
         rm -f "$tmpfile"
@@ -1251,8 +1265,9 @@ remove_peer_from_server() {
         return 1
     fi
 
+    # temp in the server config dir -> the final mv is an atomic rename.
     local tmpfile
-    tmpfile=$(awg_mktemp) || { log_error "mktemp failed"; exec {lock_fd}>&-; return 1; }
+    tmpfile=$(awg_mktemp "$(dirname "$SERVER_CONF_FILE")") || { log_error "mktemp failed"; exec {lock_fd}>&-; return 1; }
 
     # Remove [Peer] block containing #_Name = name
     # Logic: buffer each [Peer] block, check name, print only if not matching
@@ -1286,9 +1301,10 @@ remove_peer_from_server() {
     }
     ' "$SERVER_CONF_FILE" > "$tmpfile"
 
-    # Normalize: squeeze multiple blank lines into one
+    # Normalize: squeeze multiple blank lines into one.
+    # tmpclean lives on the same filesystem as tmpfile (mv tmpclean->tmpfile atomic).
     local tmpclean
-    tmpclean=$(awg_mktemp) || { log_error "mktemp failed"; exec {lock_fd}>&-; return 1; }
+    tmpclean=$(awg_mktemp "$(dirname "$SERVER_CONF_FILE")") || { log_error "mktemp failed"; exec {lock_fd}>&-; return 1; }
     if cat -s "$tmpfile" > "$tmpclean" 2>/dev/null; then
         mv "$tmpclean" "$tmpfile"
     else

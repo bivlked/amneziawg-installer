@@ -1922,8 +1922,12 @@ initialize_setup() {
 
     # Save configuration
     log "Saving settings to $CONFIG_FILE..."
-    local temp_conf
-    temp_conf=$(mktemp) || die "mktemp error."
+    # temp in the target config's directory -> mv = atomic rename on the same
+    # filesystem (not a cross-fs copy+unlink when /tmp is mounted as tmpfs).
+    local temp_conf cfg_dir
+    cfg_dir="$(dirname "$CONFIG_FILE")"
+    mkdir -p "$cfg_dir" 2>/dev/null
+    temp_conf=$(mktemp -p "$cfg_dir") || die "mktemp error."
     _install_temp_files+=("$temp_conf")
     cat > "$temp_conf" << EOF
 # AmneziaWG 2.0 installation configuration (Auto-generated)
