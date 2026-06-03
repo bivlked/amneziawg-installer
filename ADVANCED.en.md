@@ -433,7 +433,8 @@ Options:
   -v, --verbose         Verbose output (including DEBUG)
   --no-color            Disable colored output
   --port=PORT           Set UDP port (1024-65535)
-  --subnet=SUBNET       Set tunnel subnet (x.x.x.x/yy)
+  --ssh-port=PORT       SSH port for the UFW rule (auto-detected; comma-separated list)
+  --subnet=SUBNET       Tunnel subnet, /24 only (e.g. 10.9.9.1/24)
   --allow-ipv6          Keep IPv6 enabled
   --disallow-ipv6       Force-disable IPv6
   --allow-ipv6-tunnel   Enable dual-stack IPv6 inside the tunnel (ULA, opt-in)
@@ -447,6 +448,7 @@ Options:
   --jmin=N              Set Jmin manually (0-1280, overrides preset)
   --jmax=N              Set Jmax manually (0-1280, overrides preset, must be >= Jmin)
   -y, --yes             Non-interactive mode (all confirmations auto-yes)
+  -f, --force           Reinstall over a working AWG (ENV: AWG_FORCE_REINSTALL=1)
   --no-tweaks           Skip hardening/optimization (no UFW, Fail2Ban, sysctl tweaks)
 ```
 
@@ -460,10 +462,12 @@ Options:
   --no-color            Disable colored output
   --conf-dir=PATH       Specify AWG directory (default: /root/awg)
   --server-conf=PATH    Specify server config file
-  --json                JSON output (for stats command)
+  --json                JSON output (for list / stats; list includes client_ipv6)
   --expires=DURATION    Expiry duration for add (1h, 12h, 1d, 7d, 30d, 4w)
   --apply-mode=MODE     syncconf (default) or restart (bypass kernel panic)
   --psk                 (add only) generate a PresharedKey for the new client (v5.11.1+)
+  --yes                 Do not prompt for confirmation (ENV: AWG_YES=1)
+  --carrier=NAME        (diagnose only) compare parameters against a carrier profile
 ```
 
 > **`--psk`** — optional extra layer on top of AWG 2.0 obfuscation. Generates a 32-byte symmetric key via `awg genpsk` and writes it to both the server `[Peer]` and the client `[Peer]` (`PresharedKey = ...`). Compatible with any WireGuard/AmneziaWG client. In batch mode (`add c1 c2 c3 --psk`) each client gets its own PSK. Without the flag clients are created without `PresharedKey` (default — AWG 2.0 obfuscation is sufficient for most scenarios). The flag only affects the new clients created by this `add` invocation — existing clients without PSK stay untouched and keep connecting as before.
@@ -474,6 +478,7 @@ Options:
 |----------|-------------|
 | `AWG_SKIP_APPLY=1` | Skip apply_config. For automation: accumulate N operations, apply once |
 | `AWG_APPLY_MODE=restart` | Full restart instead of syncconf (can be saved in `awgsetup_cfg.init`) |
+| `AWG_YES=1` | Do not prompt for confirmation (equivalent to the `--yes` flag) |
 
 ---
 
@@ -486,7 +491,7 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 
 * **`add <name> [name2 ...] [--expires=DURATION] [--psk]`:** Add one or multiple clients. In batch mode, `awg syncconf` is called once for all. With `--expires` — expiry applies to all clients. With `--psk` — each client gets its own PresharedKey (v5.11.1+).
 * **`remove <name> [name2 ...]`:** Remove one or multiple clients. In batch mode, apply_config is called once for all.
-* **`list [-v]`:** List clients (with details when using `-v`).
+* **`list [-v] [--json]`:** List clients (with details when using `-v`; `--json` - machine-readable, includes the `client_ipv6` field).
 * **`regen [name]`:** Regenerate `.conf`/`.png` files for one or all clients.
 * **`modify <name> <param> <value>`:** Modify a client parameter in the `.conf` file. Allowed parameters: DNS, Endpoint, AllowedIPs, PersistentKeepalive. QR code and vpn:// URI are automatically regenerated after modification.
 * **`backup`:** Create a backup (configs + keys + client expiry data + cron).
@@ -494,6 +499,8 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 * **`check` / `status`:** Check server status (service, port, AWG 2.0 parameters).
 * **`show`:** Run `awg show`.
 * **`restart`:** Restart the AmneziaWG service.
+* **`diagnose [--carrier=NAME]`:** Self-troubleshooting: checks the kernel module, sysctl and UFW; with `--carrier` it compares AWG parameters against a mobile carrier profile.
+* **`repair-module`:** Rebuild/restore the amneziawg kernel module (DKMS) after a server kernel upgrade.
 * **`help`:** Show help.
 * **`stats [--json]`:** Per-client traffic statistics. With `--json` — machine-readable format for integration.
 
