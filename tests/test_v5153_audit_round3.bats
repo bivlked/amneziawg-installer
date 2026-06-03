@@ -96,6 +96,22 @@ setup() {
     done
 }
 
+@test ".1 validate_port: rejects overlong values that wrap 64-bit arithmetic" {
+    run validate_port 123456
+    [ "$status" -ne 0 ]
+    # 2^64 + 51820: without a length bound (( )) wraps and the range check passes.
+    run validate_port 18446744073709603436
+    [ "$status" -ne 0 ]
+}
+
+@test ".1 validate_cidr_list: rejects embedded newline (config injection)" {
+    # read <<< only sees the first line; the rest would land in the config unchecked.
+    run validate_cidr_list $'10.0.0.0/24\nmalicious'
+    [ "$status" -ne 0 ]
+    run validate_cidr_list $'\n10.0.0.0/24'
+    [ "$status" -ne 0 ]
+}
+
 # ---------- .1 RU/EN parity (source-level) ----------
 
 @test ".1 RU/EN parity: anti-leading-zero octet pattern present in both installers" {

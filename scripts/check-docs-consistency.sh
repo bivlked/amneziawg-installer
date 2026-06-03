@@ -34,6 +34,7 @@ set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || { echo "ОШИБКА: не удалось перейти в $REPO_ROOT" >&2; exit 2; }
+command -v perl >/dev/null 2>&1 || { echo "ОШИБКА: нужен perl (slug-генерация якорей)" >&2; exit 2; }
 
 PASS=0
 FAIL=0

@@ -649,9 +649,11 @@ validate_junk_size() {
 
 validate_port() {
     local port="$1"
-    # ^[1-9][0-9]*$ forbids leading zeros: '0080' would otherwise be parsed as octal
-    # in arithmetic and slip past the range check. Comparison uses plain decimal.
-    if ! [[ "$port" =~ ^[1-9][0-9]*$ ]] || (( port < 1024 )) || (( port > 65535 )); then
+    # ^[1-9][0-9]{0,4}$ forbids leading zeros ('0080' would otherwise be parsed as
+    # octal in arithmetic and slip past the range check) and bounds the length:
+    # without a limit 64-bit (( )) arithmetic wraps, so 2^64+51820 would pass the
+    # range check. Comparison uses plain decimal.
+    if ! [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || (( port < 1024 )) || (( port > 65535 )); then
         die "Invalid port: '$port'. Allowed range: 1024-65535."
     fi
 }
@@ -725,6 +727,9 @@ validate_cidr_list() {
     local input="$1" cidr o nospace
     input="${input//$'\r'/}"
     input="${input//$'\t'/ }"
+    # A newline means injection into awgsetup_cfg.init (read <<< only sees the
+    # first line, the rest would pass unchecked). Same policy as validate_endpoint.
+    [[ "$input" != *$'\n'* ]] || return 1
     # Structural comma check before split: bash IFS drops a trailing empty element,
     # so '10.0.0.0/24,' used to pass. Reject leading/trailing/double comma and empty
     # input (spaces are ignored for this check).
