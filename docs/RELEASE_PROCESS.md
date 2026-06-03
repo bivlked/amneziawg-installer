@@ -31,6 +31,11 @@ When any of them changes in a release:
    A mismatched pin means a fresh install fails the over-the-network integrity
    check, so the pins must be recomputed after the helper scripts are final and
    before the tag is pushed.
+3. Bump the pinned raw-URL tags in `README*.md`, `ADVANCED*.md` and
+   `INSTALL_VPS.md` from the previous `vX.Y.Z` to the new one. Users copy the
+   install and update one-liners verbatim, so a stale tag silently installs the
+   previous release. `check-docs-consistency.sh` (preflight step 9) enforces
+   that these tags equal `SCRIPT_VERSION`, but the bump itself is manual.
 
 ## Pre-tag checklist
 
@@ -78,6 +83,16 @@ Also confirm by hand before tagging:
 - Ubuntu / Debian support matrix is current everywhere it is stated (README,
   installer `--help`, issue template).
 
+## External-review gate (significant releases)
+
+Since v5.15.3, a significant release is developed on a public `dev/vX.Y.Z`
+branch pushed to origin, with a draft PR into `main`, so other teams can review
+the code before it is tagged. Do not merge until the review is addressed,
+`preflight-check.sh` is green, and the maintainer has explicitly approved the
+tag. Keep the PR description to clean public context only (no internal tooling
+notes). This review gate sits between implementation and the tagging steps
+below.
+
 ## Tagging and the two release workflows
 
 A tag push (`git push origin vX.Y.Z`) triggers two independent workflows:
@@ -91,7 +106,10 @@ A tag push (`git push origin vX.Y.Z`) triggers two independent workflows:
   release. This is a separate, slower track and does not block the main
   release.
 
-The release is not finished until both runs are green.
+The release is not finished until both runs are green. After they are, open the
+rendered README on GitHub and confirm the install and update one-liners point at
+the new tag - a final guard against a stale raw-URL slipping past the automated
+check.
 
 If the preflight gate fails on a pushed tag, the release is not published.
 Delete the tag (`git push origin :refs/tags/vX.Y.Z` and `git tag -d vX.Y.Z`),
@@ -109,6 +127,13 @@ gh release edit vX.Y.Z --notes-file body.md
 Follow the established bilingual template: Russian header, a
 `[English version below](#english-version)` link, the Russian content, an
 `<a id="english-version"></a>` anchor, then the English content.
+
+`release.yml` also leaves the release title as the bare tag (for example
+`v5.15.3`). Set a descriptive title by hand:
+
+```bash
+gh release edit vX.Y.Z --title "vX.Y.Z: <short summary>"
+```
 
 ## Release signing
 
