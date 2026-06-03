@@ -642,18 +642,23 @@ validate_junk_size() {
 
 validate_port() {
     local port="$1"
-    if ! [[ "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1024 ]] || [[ "$port" -gt 65535 ]]; then
+    # ^[1-9][0-9]*$ запрещает ведущие нули: '0080' иначе трактуется как octal в
+    # арифметике и проскакивает проверку диапазона. Сравнение - на чистом decimal.
+    if ! [[ "$port" =~ ^[1-9][0-9]*$ ]] || (( port < 1024 )) || (( port > 65535 )); then
         die "Некорректный порт: '$port'. Допустимый диапазон: 1024-65535."
     fi
 }
 
 validate_subnet() {
-    local subnet="$1"
-    if ! [[ "$subnet" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})/24$ ]] \
-       || [[ "${BASH_REMATCH[1]}" -gt 255 ]] || [[ "${BASH_REMATCH[2]}" -gt 255 ]] \
-       || [[ "${BASH_REMATCH[3]}" -gt 255 ]] || [[ "${BASH_REMATCH[4]}" -gt 255 ]]; then
+    local subnet="$1" o
+    # Октеты без ведущих нулей: '010.008...' иначе трактуется как octal в [[ -gt ]]
+    # и проскакивает проверку. Диапазон считаем на чистых decimal-значениях.
+    if ! [[ "$subnet" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})/24$ ]]; then
         die "Некорректная подсеть: '$subnet'. Поддерживается только /24."
     fi
+    for o in "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; do
+        (( o <= 255 )) || die "Некорректная подсеть: '$subnet'. Октет вне диапазона 0-255."
+    done
     if [[ "${BASH_REMATCH[4]}" -eq 0 ]] || [[ "${BASH_REMATCH[4]}" -eq 255 ]]; then
         die "Некорректная подсеть: '$subnet'. Последний октет не может быть 0 (сетевой адрес) или 255 (broadcast)."
     fi
@@ -674,9 +679,34 @@ validate_endpoint() {
     [[ "$ep" != *$'\n'* && "$ep" != *$'\r'* && \
        "$ep" != *"'"* && "$ep" != *'"'* && "$ep" != *'\\'* && \
        "$ep" != *' '* && "$ep" != *$'\t'* ]] || return 1
-    # Один из трёх форматов: FQDN, IPv4, [IPv6]
-    [[ "$ep" =~ ^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*|[0-9]{1,3}(\.[0-9]{1,3}){3}|\[[0-9A-Fa-f:]+\])$ ]] || return 1
-    # Если IPv4 формат — дополнительно проверяем диапазон октетов 0-255
+    # Форма [IPv6]: структурная проверка содержимого скобок. Прежний charset-only
+    # пропускал мусор вроде [:::] / [1:2:3]. Зеркало _valid_ipv6 из awg_common.sh.
+    if [[ "$ep" == \[*\] ]]; then
+        local inner="${ep#\[}"; inner="${inner%\]}"
+        [[ "$inner" =~ ^[0-9A-Fa-f:]+$ ]] || return 1
+        case "$inner" in
+            *:::*|*::*::*) return 1 ;;
+        esac
+        [[ "$inner" == :* && "$inner" != ::* ]] && return 1
+        [[ "$inner" == *: && "$inner" != *:: ]] && return 1
+        local has_dcolon=0; [[ "$inner" == *::* ]] && has_dcolon=1
+        local IFS=':' parts=() p ngroups=0
+        read -ra parts <<< "$inner"
+        for p in "${parts[@]}"; do
+            [[ -z "$p" ]] && continue
+            [[ "$p" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+            ngroups=$((ngroups + 1))
+        done
+        if [[ $has_dcolon -eq 1 ]]; then
+            (( ngroups <= 7 )) || return 1
+        else
+            (( ngroups == 8 )) || return 1
+        fi
+        return 0
+    fi
+    # Иначе FQDN или IPv4
+    [[ "$ep" =~ ^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*|[0-9]{1,3}(\.[0-9]{1,3}){3})$ ]] || return 1
+    # Если IPv4 формат - дополнительно проверяем диапазон октетов 0-255
     if [[ "$ep" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
         [[ "${BASH_REMATCH[1]}" -le 255 && "${BASH_REMATCH[2]}" -le 255 && \
            "${BASH_REMATCH[3]}" -le 255 && "${BASH_REMATCH[4]}" -le 255 ]] || return 1
@@ -685,18 +715,26 @@ validate_endpoint() {
 }
 
 validate_cidr_list() {
-    local input="$1" cidr
+    local input="$1" cidr o nospace
     input="${input//$'\r'/}"
     input="${input//$'\t'/ }"
+    # Структурная проверка запятых до split: bash IFS отбрасывает хвостовой пустой
+    # элемент, поэтому '10.0.0.0/24,' раньше проходил. Отвергаем ведущую/хвостовую/
+    # двойную запятую и пустой ввод (пробелы игнорируем при этой проверке).
+    nospace="${input// /}"
+    case "$nospace" in
+        ""|,*|*,|*,,*) return 1 ;;
+    esac
     IFS=',' read -ra cidrs <<< "$input"
     for cidr in "${cidrs[@]}"; do
-        cidr=$(echo "$cidr" | tr -d ' ')
-        if ! [[ "$cidr" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})/([0-9]{1,2})$ ]] \
-           || [[ "${BASH_REMATCH[1]}" -gt 255 ]] || [[ "${BASH_REMATCH[2]}" -gt 255 ]] \
-           || [[ "${BASH_REMATCH[3]}" -gt 255 ]] || [[ "${BASH_REMATCH[4]}" -gt 255 ]] \
-           || [[ "${BASH_REMATCH[5]}" -gt 32 ]]; then
+        cidr="${cidr// /}"
+        # Октеты без ведущих нулей; префикс 0-32 прямо в regex (без octal-арифметики).
+        if ! [[ "$cidr" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})/([0-9]|[12][0-9]|3[0-2])$ ]]; then
             return 1
         fi
+        for o in "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; do
+            (( o <= 255 )) || return 1
+        done
     done
 }
 

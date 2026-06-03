@@ -648,18 +648,23 @@ validate_junk_size() {
 
 validate_port() {
     local port="$1"
-    if ! [[ "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1024 ]] || [[ "$port" -gt 65535 ]]; then
+    # ^[1-9][0-9]*$ forbids leading zeros: '0080' would otherwise be parsed as octal
+    # in arithmetic and slip past the range check. Comparison uses plain decimal.
+    if ! [[ "$port" =~ ^[1-9][0-9]*$ ]] || (( port < 1024 )) || (( port > 65535 )); then
         die "Invalid port: '$port'. Allowed range: 1024-65535."
     fi
 }
 
 validate_subnet() {
-    local subnet="$1"
-    if ! [[ "$subnet" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})/24$ ]] \
-       || [[ "${BASH_REMATCH[1]}" -gt 255 ]] || [[ "${BASH_REMATCH[2]}" -gt 255 ]] \
-       || [[ "${BASH_REMATCH[3]}" -gt 255 ]] || [[ "${BASH_REMATCH[4]}" -gt 255 ]]; then
+    local subnet="$1" o
+    # Octets without leading zeros: '010.008...' would otherwise be parsed as octal
+    # in [[ -gt ]] and slip past the check. Range is compared on plain decimal values.
+    if ! [[ "$subnet" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})/24$ ]]; then
         die "Invalid subnet: '$subnet'. Only /24 is supported."
     fi
+    for o in "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; do
+        (( o <= 255 )) || die "Invalid subnet: '$subnet'. Octet out of range 0-255."
+    done
     if [[ "${BASH_REMATCH[4]}" -eq 0 ]] || [[ "${BASH_REMATCH[4]}" -eq 255 ]]; then
         die "Invalid subnet: '$subnet'. Last octet cannot be 0 (network address) or 255 (broadcast)."
     fi
@@ -680,9 +685,34 @@ validate_endpoint() {
     [[ "$ep" != *$'\n'* && "$ep" != *$'\r'* && \
        "$ep" != *"'"* && "$ep" != *'"'* && "$ep" != *'\\'* && \
        "$ep" != *' '* && "$ep" != *$'\t'* ]] || return 1
-    # One of three formats: FQDN, IPv4, [IPv6]
-    [[ "$ep" =~ ^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*|[0-9]{1,3}(\.[0-9]{1,3}){3}|\[[0-9A-Fa-f:]+\])$ ]] || return 1
-    # If IPv4 format — additionally validate octet range 0-255
+    # Bracketed [IPv6] form: structural check of the bracket contents. The previous
+    # charset-only test let junk like [:::] / [1:2:3] through. Mirrors _valid_ipv6.
+    if [[ "$ep" == \[*\] ]]; then
+        local inner="${ep#\[}"; inner="${inner%\]}"
+        [[ "$inner" =~ ^[0-9A-Fa-f:]+$ ]] || return 1
+        case "$inner" in
+            *:::*|*::*::*) return 1 ;;
+        esac
+        [[ "$inner" == :* && "$inner" != ::* ]] && return 1
+        [[ "$inner" == *: && "$inner" != *:: ]] && return 1
+        local has_dcolon=0; [[ "$inner" == *::* ]] && has_dcolon=1
+        local IFS=':' parts=() p ngroups=0
+        read -ra parts <<< "$inner"
+        for p in "${parts[@]}"; do
+            [[ -z "$p" ]] && continue
+            [[ "$p" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+            ngroups=$((ngroups + 1))
+        done
+        if [[ $has_dcolon -eq 1 ]]; then
+            (( ngroups <= 7 )) || return 1
+        else
+            (( ngroups == 8 )) || return 1
+        fi
+        return 0
+    fi
+    # Otherwise FQDN or IPv4
+    [[ "$ep" =~ ^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*|[0-9]{1,3}(\.[0-9]{1,3}){3})$ ]] || return 1
+    # If IPv4 format - additionally validate octet range 0-255
     if [[ "$ep" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
         [[ "${BASH_REMATCH[1]}" -le 255 && "${BASH_REMATCH[2]}" -le 255 && \
            "${BASH_REMATCH[3]}" -le 255 && "${BASH_REMATCH[4]}" -le 255 ]] || return 1
@@ -691,18 +721,26 @@ validate_endpoint() {
 }
 
 validate_cidr_list() {
-    local input="$1" cidr
+    local input="$1" cidr o nospace
     input="${input//$'\r'/}"
     input="${input//$'\t'/ }"
+    # Structural comma check before split: bash IFS drops a trailing empty element,
+    # so '10.0.0.0/24,' used to pass. Reject leading/trailing/double comma and empty
+    # input (spaces are ignored for this check).
+    nospace="${input// /}"
+    case "$nospace" in
+        ""|,*|*,|*,,*) return 1 ;;
+    esac
     IFS=',' read -ra cidrs <<< "$input"
     for cidr in "${cidrs[@]}"; do
-        cidr=$(echo "$cidr" | tr -d ' ')
-        if ! [[ "$cidr" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})/([0-9]{1,2})$ ]] \
-           || [[ "${BASH_REMATCH[1]}" -gt 255 ]] || [[ "${BASH_REMATCH[2]}" -gt 255 ]] \
-           || [[ "${BASH_REMATCH[3]}" -gt 255 ]] || [[ "${BASH_REMATCH[4]}" -gt 255 ]] \
-           || [[ "${BASH_REMATCH[5]}" -gt 32 ]]; then
+        cidr="${cidr// /}"
+        # Octets without leading zeros; prefix 0-32 enforced in the regex (no octal).
+        if ! [[ "$cidr" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})/([0-9]|[12][0-9]|3[0-2])$ ]]; then
             return 1
         fi
+        for o in "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; do
+            (( o <= 255 )) || return 1
+        done
     done
 }
 
