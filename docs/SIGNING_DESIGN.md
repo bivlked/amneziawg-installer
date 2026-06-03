@@ -57,7 +57,7 @@ Generated files:
 Per release, after `git tag vX.Y.Z` but before `git push origin vX.Y.Z`. Each signature carries a trusted comment binding it to the tag and filename, so an old signature paired with a different file or a different release fails to verify (rollback / misbinding protection):
 
 ```bash
-TAG=v5.14.0
+TAG=vX.Y.Z   # the release tag being signed
 KEY=~/.minisign/amneziawg-installer.key
 for f in install_amneziawg.sh install_amneziawg_en.sh \
          manage_amneziawg.sh manage_amneziawg_en.sh \
@@ -114,7 +114,7 @@ brew install minisign                # macOS
 curl -O https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/KEYS.txt
 
 # 3. Fetch the installer + signature:
-TAG=v5.14.0
+TAG=vX.Y.Z   # the release tag being signed
 curl -LO "https://github.com/bivlked/amneziawg-installer/releases/download/$TAG/install_amneziawg_en.sh"
 curl -LO "https://github.com/bivlked/amneziawg-installer/releases/download/$TAG/install_amneziawg_en.sh.minisig"
 
@@ -137,7 +137,7 @@ Activation steps, in order:
 5. Add the draft workflow `docs/release-sign.yml.draft` for review. DONE.
 6. After keypair exists and is published as `KEYS.txt`:
    a. Move `docs/release-sign.yml.draft` to `.github/workflows/release-sign.yml`.
-   b. Test on a pre-release tag (e.g., `v5.14.0-rc1`).
+   b. Test on a pre-release tag (e.g., `vX.Y.Z-rc1`).
    c. Flip the README section from "planned" to "active".
 7. Optional follow-up: SBOM generation via `syft` or GitHub's native dependency graph (a separate, smaller task).
 

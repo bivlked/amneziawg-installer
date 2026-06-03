@@ -18,6 +18,9 @@ tracked in issues and discussions, not here:
 - AmneziaWG 2.0 support (H1-H4 ranges, S3/S4, I1-I5 CPS concealment).
 - Dual-stack IPv6 inside the tunnel (`--allow-ipv6-tunnel`), split-tunnel aware.
 - ARM64 / ARMv7 prebuilt kernel modules with DKMS fallback.
+- ARM prebuilt `.deb` assets ship with a build manifest (installer tag,
+  upstream commit, kernel, SHA256) and support pinning the upstream module
+  revision.
 - Ubuntu 24.04 / 25.10 / 26.04 and Debian 12 / 13 support.
 - CI and docs-consistency gates around releases.
 
@@ -29,8 +32,9 @@ issue #79 and the discussions.
 - **Release integrity:** activate detached `minisign` signatures for the
   installer and helper scripts (design: [SIGNING_DESIGN.md](SIGNING_DESIGN.md);
   currently planned, not active - see [SECURITY.md](../SECURITY.md)).
-- **ARM prebuilt reproducibility:** pin the upstream kernel-module revision per
-  release and publish a build manifest alongside the `.deb` assets.
+- **ARM prebuilt reproducibility:** make a non-HEAD upstream kernel-module pin
+  mandatory for release builds (the pin mechanism and the build manifest
+  already ship; `HEAD` remains the default).
 - **Carrier DPI tracking:** keep the operator parameter table current as
   regional blocking waves evolve (community reports welcome in Discussions).
 
@@ -61,6 +65,9 @@ Carrier reports (operator, region, working parameters) are especially useful.
 - Поддержка AmneziaWG 2.0 (диапазоны H1-H4, S3/S4, маскировка I1-I5 CPS).
 - Dual-stack IPv6 внутри туннеля (`--allow-ipv6-tunnel`), с учётом split-tunnel.
 - Готовые модули ядра ARM64 / ARMv7 с fallback на DKMS.
+- ARM-сборки `.deb` поставляются с build-манифестом (тег установщика,
+  upstream-коммит, ядро, SHA256) и поддерживают закрепление ревизии
+  upstream-модуля.
 - Поддержка Ubuntu 24.04 / 25.10 / 26.04 и Debian 12 / 13.
 - CI и проверки согласованности документации вокруг релизов.
 
@@ -72,8 +79,9 @@ Carrier reports (operator, region, working parameters) are especially useful.
 - **Целостность релизов:** активировать detached-подписи `minisign` для
   установщика и helper-скриптов (дизайн: [SIGNING_DESIGN.md](SIGNING_DESIGN.md);
   пока запланировано, не активно - см. [SECURITY.md](../SECURITY.md)).
-- **Воспроизводимость ARM-сборок:** закреплять ревизию upstream-модуля ядра на
-  релиз и публиковать build-манифест рядом с `.deb`.
+- **Воспроизводимость ARM-сборок:** сделать закрепление не-HEAD ревизии
+  upstream-модуля обязательным для релизных сборок (механизм закрепления и
+  build-манифест уже поставляются; по умолчанию остаётся `HEAD`).
 - **Отслеживание DPI операторов:** держать таблицу параметров операторов
   актуальной по мере новых волн региональных блокировок (отчёты приветствуются в
   Discussions).

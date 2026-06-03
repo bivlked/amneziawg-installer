@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to attach signatures to (e.g. v5.14.0)'
+        description: 'Tag to attach signatures to (vX.Y.Z)'
         required: true
 
 permissions:
