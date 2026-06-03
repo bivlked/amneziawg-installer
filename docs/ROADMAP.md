@@ -1,0 +1,85 @@
+# Roadmap
+
+[Русская версия ниже](#дорожная-карта) | English first.
+
+This page is a stable orientation point for where the project is heading. It is
+intentionally high-level and theme-based rather than a dated release schedule,
+so it does not go stale between releases.
+
+The **living backlog** - concrete, prioritised, and open for discussion - is
+tracked in issues and discussions, not here:
+
+- [Roadmap & Public Backlog (issue #79)](https://github.com/bivlked/amneziawg-installer/issues/79) - current priorities and accepted ideas
+- [Discussions](https://github.com/bivlked/amneziawg-installer/discussions) - proposals, carrier reports, Q&A
+- [CHANGELOG.en.md](../CHANGELOG.en.md) - what already shipped
+
+## Recently shipped
+
+- AmneziaWG 2.0 support (H1-H4 ranges, S3/S4, I1-I5 CPS concealment).
+- Dual-stack IPv6 inside the tunnel (`--allow-ipv6-tunnel`), split-tunnel aware.
+- ARM64 / ARMv7 prebuilt kernel modules with DKMS fallback.
+- Ubuntu 24.04 / 25.10 / 26.04 and Debian 12 / 13 support.
+- CI and docs-consistency gates around releases.
+
+## Under consideration
+
+These are directions, not commitments. Priority and timing are decided in
+issue #79 and the discussions.
+
+- **Release integrity:** activate detached `minisign` signatures for the
+  installer and helper scripts (design: [SIGNING_DESIGN.md](SIGNING_DESIGN.md);
+  currently planned, not active - see [SECURITY.md](../SECURITY.md)).
+- **ARM prebuilt reproducibility:** pin the upstream kernel-module revision per
+  release and publish a build manifest alongside the `.deb` assets.
+- **Carrier DPI tracking:** keep the operator parameter table current as
+  regional blocking waves evolve (community reports welcome in Discussions).
+
+## How to influence the roadmap
+
+Open or comment on a [Discussion](https://github.com/bivlked/amneziawg-installer/discussions),
+or add to [issue #79](https://github.com/bivlked/amneziawg-installer/issues/79).
+Carrier reports (operator, region, working parameters) are especially useful.
+
+---
+
+<a id="дорожная-карта"></a>
+
+# Дорожная карта
+
+Эта страница - стабильная точка ориентации: куда движется проект. Она намеренно
+тематическая, а не календарный график релизов, чтобы не устаревать между ними.
+
+**Живой бэклог** - конкретный, приоритизированный и открытый для обсуждения -
+ведётся в issues и discussions, а не здесь:
+
+- [Roadmap & Public Backlog (issue #79)](https://github.com/bivlked/amneziawg-installer/issues/79) - текущие приоритеты и принятые идеи
+- [Discussions](https://github.com/bivlked/amneziawg-installer/discussions) - предложения, отчёты по операторам, вопросы
+- [CHANGELOG.md](../CHANGELOG.md) - что уже вышло
+
+## Уже сделано
+
+- Поддержка AmneziaWG 2.0 (диапазоны H1-H4, S3/S4, маскировка I1-I5 CPS).
+- Dual-stack IPv6 внутри туннеля (`--allow-ipv6-tunnel`), с учётом split-tunnel.
+- Готовые модули ядра ARM64 / ARMv7 с fallback на DKMS.
+- Поддержка Ubuntu 24.04 / 25.10 / 26.04 и Debian 12 / 13.
+- CI и проверки согласованности документации вокруг релизов.
+
+## На рассмотрении
+
+Это направления, а не обязательства. Приоритет и сроки определяются в issue #79
+и обсуждениях.
+
+- **Целостность релизов:** активировать detached-подписи `minisign` для
+  установщика и helper-скриптов (дизайн: [SIGNING_DESIGN.md](SIGNING_DESIGN.md);
+  пока запланировано, не активно - см. [SECURITY.md](../SECURITY.md)).
+- **Воспроизводимость ARM-сборок:** закреплять ревизию upstream-модуля ядра на
+  релиз и публиковать build-манифест рядом с `.deb`.
+- **Отслеживание DPI операторов:** держать таблицу параметров операторов
+  актуальной по мере новых волн региональных блокировок (отчёты приветствуются в
+  Discussions).
+
+## Как повлиять на дорожную карту
+
+Откройте или прокомментируйте [Discussion](https://github.com/bivlked/amneziawg-installer/discussions)
+либо дополните [issue #79](https://github.com/bivlked/amneziawg-installer/issues/79).
+Особенно полезны отчёты по операторам (оператор, регион, рабочие параметры).

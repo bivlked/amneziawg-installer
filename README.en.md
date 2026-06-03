@@ -126,6 +126,8 @@ sudo bash ./install_amneziawg_en.sh
 
 > 3 commands to start. 2 reboots along the way. About 20 minutes to a working VPN. [Learn more →](#installation)
 
+> 🔐 **Integrity:** the script is fetched over HTTPS from `raw.githubusercontent.com` (pinned tag). Detached release signatures are not active yet (planned) - status and threat model in [SECURITY.md](SECURITY.md).
+
 <details>
 <summary><strong>Non-interactive installation (for automation)</strong></summary>
 
@@ -173,7 +175,7 @@ All parameters are accepted automatically. Details: [ADVANCED.en.md#cli-params-a
 If your VPN is unstable on mobile data, run the installer with `--preset=mobile`. Below — working configurations reported in issues and discussions:
 
 - **Yota** — Moscow, `--preset=mobile`
-- **Tele2** — Moscow (`--preset=mobile`); Krasnoyarsk (`--preset=mobile` + remove the `I1` parameter)
+- **Tele2** — Moscow (`--preset=mobile`); Krasnoyarsk (`--preset=mobile`; the May 2026 wave needed `I1=<r 48>`)
 - **Tattelecom / Letai** — Tatarstan, `--preset=mobile`
 - **Megafon** — regional networks, `--preset=mobile` + remove the `I1` parameter
 - **Beeline** — default preset, no flags needed
@@ -214,7 +216,7 @@ Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work —
 
 > On ARM, the installer downloads prebuilt kernel modules when available and falls back to DKMS compilation automatically.
 
-> ⚠️ **Non-standard SSH port:** If SSH is not on port 22, run `sudo ufw allow YOUR_PORT/tcp` **before** starting the installer, otherwise you will lose access to the server.
+> ⚠️ **Non-standard SSH port:** The installer usually detects the SSH port automatically. If SSH runs on a non-standard port or autodetection is unavailable, run with `--ssh-port=YOUR_PORT` (comma-separated for several ports). As an extra conservative safeguard you can run `sudo ufw allow YOUR_PORT/tcp` **before** starting the installer.
 
 **Clients:**
 * **All platforms:** [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) **>= 4.8.12.7** — full-featured VPN client with AWG 2.0. Import via `vpn://` URI
@@ -415,6 +417,8 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Restart
 For detailed information on configuration, security settings, AWG 2.0 parameters, management commands, technical details, and more, see **[ADVANCED.en.md](ADVANCED.en.md)**.
 
 For the changelog, see **[CHANGELOG.en.md](CHANGELOG.en.md)**.
+
+For the roadmap and priorities, see **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
 ---
 
