@@ -90,12 +90,16 @@ Also confirm by hand before tagging:
   all agree.
 - Ubuntu / Debian support matrix is current everywhere it is stated (README,
   installer `--help`, issue template).
+- The public roadmap issue
+  ([#79](https://github.com/bivlked/amneziawg-installer/issues/79)) reflects the
+  release: shipped items move to "Recently shipped" and leave the plan sections,
+  in both the RU and EN halves of the issue body.
 
 ## External-review gate (significant releases)
 
-Since v5.15.3, a significant release is developed on a public `dev/vX.Y.Z`
-branch pushed to origin, with a draft PR into `main`, so other teams can review
-the code before it is tagged. Do not merge until the review is addressed,
+A significant release is developed on a public `dev/vX.Y.Z` branch pushed to
+origin, with a draft PR into `main`, so other teams can review the code before
+it is tagged. Do not merge until the review is addressed,
 `preflight-check.sh` is green, and the maintainer has explicitly approved the
 tag. Keep the PR description to clean public context only (no internal tooling
 notes). This review gate sits between implementation and the tagging steps
@@ -106,9 +110,10 @@ below.
 A tag push (`git push origin vX.Y.Z`) triggers two independent workflows:
 
 - `release.yml` (about 30 seconds): runs the preflight gate, then creates the
-  GitHub Release from the matching `CHANGELOG.en.md` section. The publish step
-  depends on the gate, so a tag that fails preflight does not produce a
-  release.
+  GitHub Release with the bilingual body and title assembled by
+  `scripts/build-release-notes.sh` from both changelogs (see "Release notes"
+  below). The publish step depends on the gate, so a tag that fails preflight
+  does not produce a release.
 - `arm-build.yml` (about 20-30 minutes): builds the ARM prebuilt `.deb`
   packages under QEMU and publishes them to the separate `arm-packages`
   release. This is a separate, slower track and does not block the main

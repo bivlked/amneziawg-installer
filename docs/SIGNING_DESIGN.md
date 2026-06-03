@@ -78,7 +78,7 @@ Two options, pick one when activating:
 
 ### Option A: Manual asset upload (lighter)
 
-After `git push origin vX.Y.Z`, the existing `release.yml` creates the release from `CHANGELOG.en.md`. Add a manual step:
+After `git push origin vX.Y.Z`, the existing `release.yml` creates the release (bilingual notes built by `scripts/build-release-notes.sh`). Add a manual step:
 
 ```bash
 gh release upload vX.Y.Z \
