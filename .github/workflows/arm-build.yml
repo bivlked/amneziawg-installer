@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       module_version:
-        description: 'amneziawg-linux-kernel-module tag (leave blank for latest)'
+        description: 'Upstream module tag/branch. Blank = use scripts/arm-module-version.txt pin, then default-branch HEAD.'
         required: false
         default: ''
   push:
