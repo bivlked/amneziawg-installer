@@ -1,4 +1,8 @@
-blank_issues_enabled: true
+# Blank issues are disabled so reports come through the structured templates
+# (bug_report / feature_request), which collect the OS, arch, version and logs
+# needed to triage an installer issue. Free-form questions go to Discussions
+# (linked below).
+blank_issues_enabled: false
 contact_links:
   - name: "FAQ & Troubleshooting"
     url: https://github.com/bivlked/amneziawg-installer#faq-main
