@@ -32,7 +32,7 @@ Country matters mostly for latency and jurisdiction. ARM versus amd64 has no rea
 
 ## One-command install
 
-Connect as root (or as a sudo-capable user and prepend `sudo`). If your SSH listens on a non-default port, allow it in UFW **before** running the installer, otherwise the firewall step will lock you out of the session:
+Connect as root (or as a sudo-capable user and prepend `sudo`). The installer usually detects the SSH port automatically and allows it in UFW. If SSH runs on a non-standard port or autodetection is unavailable, pass `--ssh-port=YOUR_PORT` to the installer (comma-separated for several ports). As an extra conservative safeguard you can allow the port in UFW **before** running the installer:
 
 ```bash
 sudo ufw allow <your-ssh-port>/tcp
@@ -76,7 +76,7 @@ Verify the handshake from the server side with `sudo awg show awg0` after the cl
 
 ## Update flow
 
-Updating to a newer installer release on a server that already has v5.13.x or v5.14.x running:
+Updating to a newer installer release on a server that already has a supported version running:
 
 ```bash
 wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/vX.Y.Z/install_amneziawg_en.sh
