@@ -112,7 +112,11 @@ A tag push (`git push origin vX.Y.Z`) triggers two independent workflows:
 - `arm-build.yml` (about 20-30 minutes): builds the ARM prebuilt `.deb`
   packages under QEMU and publishes them to the separate `arm-packages`
   release. This is a separate, slower track and does not block the main
-  release.
+  release. For a reproducible build, pin the upstream kernel-module ref (a tag)
+  in `scripts/arm-module-version.txt` before tagging; left at `HEAD` it builds
+  the upstream default branch. Each `.deb` ships with a `.manifest.json`
+  recording the installer tag, the exact upstream commit, the kernel version and
+  the SHA256, so the mutable `arm-packages` assets stay auditable.
 
 The release is not finished until both runs are green. After they are, open the
 rendered README on GitHub and confirm the install and update one-liners point at

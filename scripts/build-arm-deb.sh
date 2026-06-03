@@ -4,16 +4,20 @@
 # Usage (environment variables):
 #   KERNEL_ID       Target ID (e.g. rpi-bookworm-arm64). Used in .deb package name.
 #   OUTPUT_DIR      Directory to write the .deb file. Default: /output
-#   MODULE_VERSION  amneziawg module version tag. Default: upstream default branch HEAD.
+#   MODULE_VERSION  amneziawg module ref override (tag/branch). When empty, falls
+#                   back to scripts/arm-module-version.txt, then default-branch
+#                   HEAD. See _arm_module_ref for precedence.
+#   INSTALLER_TAG   Optional installer release tag, recorded in the build manifest.
 #
 # The script:
 #   1. Detects the installed kernel headers and resolves the exact kernel version
-#   2. Clones amneziawg-linux-kernel-module and builds amneziawg.ko
+#   2. Clones amneziawg-linux-kernel-module (pinned ref if set) and builds amneziawg.ko,
+#      recording the exact upstream commit for reproducibility/audit
 #   3. Packages the .ko into a .deb with a postinst that runs depmod
-#   4. Writes the .deb to OUTPUT_DIR
+#   4. Writes the .deb, its .sha256, and a .manifest.json to OUTPUT_DIR
 #
-# Output filename: amneziawg-kmod-${KERNEL_ID}_${KERNEL_VERSION}_${ARCH}.deb
-# e.g.            amneziawg-kmod-rpi-bookworm-arm64_6.12.75+rpt-rpi-v8_arm64.deb
+# Output: amneziawg-kmod-${KERNEL_ID}_${KERNEL_VERSION}_${ARCH}.deb (+ .sha256, .manifest.json)
+# e.g.    amneziawg-kmod-rpi-bookworm-arm64_6.12.75+rpt-rpi-v8_arm64.deb
 
 # Resolve kernel version from /lib/modules/*/build (or alt root for tests).
 # Honours KERNEL_VERSION env when set (must point at an existing build dir).
@@ -67,6 +71,33 @@ _resolve_kernel_version() {
     esac
 }
 
+# Resolve which upstream amneziawg-linux-kernel-module ref to build, by precedence:
+#   1. MODULE_VERSION env (workflow_dispatch input)  - explicit override
+#   2. scripts/arm-module-version.txt pin            - per-release reproducibility
+#   3. empty -> upstream default branch HEAD          - last resort (logged)
+# The pin file holds a single tag or branch name; "HEAD" or empty means default
+# branch. A commit SHA is not valid here (clone uses --depth=1 --branch), but the
+# build manifest always records the exact commit that was actually built.
+# Arg $1: pin-file path (default: alongside this script). Stdout: the ref or "".
+# Optional arg is exercised by bats; the main body relies on the default path.
+# shellcheck disable=SC2120
+_arm_module_ref() {
+    local pin_file="${1:-$(dirname "${BASH_SOURCE[0]}")/arm-module-version.txt}"
+    if [[ -n "${MODULE_VERSION:-}" ]]; then
+        printf '%s' "$MODULE_VERSION"
+        return 0
+    fi
+    if [[ -f "$pin_file" ]]; then
+        local ref
+        ref="$(grep -vE '^[[:space:]]*(#|$)' "$pin_file" | head -n1 | tr -d '[:space:]')"
+        if [[ -n "$ref" && "$ref" != "HEAD" ]]; then
+            printf '%s' "$ref"
+            return 0
+        fi
+    fi
+    printf ''
+}
+
 # When sourced (e.g. by bats tests), expose helpers and skip the main body.
 # When executed directly (./build-arm-deb.sh), continue with the build flow.
 # `set -euo pipefail` is moved BELOW the source guard so it does not leak into
@@ -78,7 +109,7 @@ set -euo pipefail
 KERNEL_ID="${KERNEL_ID:?KERNEL_ID must be set}"
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 MODULE_REPO="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git"
-MODULE_VERSION="${MODULE_VERSION:-}"
+MODULE_REF="$(_arm_module_ref)"
 
 echo "=== amneziawg ARM .deb builder ==="
 echo "KERNEL_ID: $KERNEL_ID"
@@ -100,8 +131,13 @@ WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 echo "--- Cloning amneziawg-linux-kernel-module ---"
-git clone --depth=1 ${MODULE_VERSION:+--branch "$MODULE_VERSION"} \
+echo "Requested module ref: ${MODULE_REF:-<upstream default branch HEAD>}"
+git clone --depth=1 ${MODULE_REF:+--branch "$MODULE_REF"} \
     "$MODULE_REPO" "$WORK_DIR/src"
+
+# Record the exact commit actually built (reproducibility/audit even on HEAD).
+MODULE_COMMIT="$(git -C "$WORK_DIR/src" rev-parse HEAD 2>/dev/null || echo unknown)"
+echo "Upstream module commit: $MODULE_COMMIT"
 
 # Verify kernel build directory exists
 if [[ ! -d "/lib/modules/${KERNEL_VERSION}/build" ]]; then
@@ -202,3 +238,24 @@ ls -lh "$DEB_FILE"
 # Generate SHA256 checksum alongside the .deb
 sha256sum "$DEB_FILE" | awk '{print $1}' > "${DEB_FILE}.sha256"
 echo "SHA256: $(cat "${DEB_FILE}.sha256")"
+
+# Build manifest alongside the .deb: makes a mutable arm-packages asset auditable
+# (which installer tag, which upstream commit, which kernel) even though the
+# asset filename is keyed on target/kernel/arch and re-uploaded with --clobber.
+MANIFEST_FILE="${DEB_FILE}.manifest.json"
+cat > "$MANIFEST_FILE" <<EOF
+{
+  "installer_tag": "${INSTALLER_TAG:-}",
+  "kernel_id": "${KERNEL_ID}",
+  "kernel_version": "${KERNEL_VERSION}",
+  "arch": "${ARCH}",
+  "module_version": "${MODULE_VER}",
+  "module_ref_requested": "${MODULE_REF:-default-branch}",
+  "module_commit": "${MODULE_COMMIT}",
+  "deb_file": "$(basename "$DEB_FILE")",
+  "deb_sha256": "$(cat "${DEB_FILE}.sha256")",
+  "built_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+echo "--- Manifest: $MANIFEST_FILE ---"
+cat "$MANIFEST_FILE"

@@ -119,6 +119,9 @@ jobs:
           EXTRA_SOURCES: ${{ matrix.extra_sources }}
           HEADERS_PKG: ${{ matrix.headers_pkg }}
           MODULE_VERSION: ${{ inputs.module_version }}
+          # On a tag push this records the installer release in the build manifest;
+          # empty on workflow_dispatch.
+          INSTALLER_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         uses: addnab/docker-run-action@4f65fabd2431ebc8d299f8e5a018d79a769ae185 # v3
         with:
           image: ${{ matrix.image }}
@@ -131,6 +134,7 @@ jobs:
             -e HEADERS_PKG
             -e OUTPUT_DIR=/output
             -e MODULE_VERSION
+            -e INSTALLER_TAG
           run: |
             bash <<'CONTAINER_SCRIPT'
             set -euo pipefail
@@ -177,4 +181,9 @@ jobs:
             gh release upload arm-packages "${deb}.sha256" \
               --repo "${{ github.repository }}" \
               --clobber
+            if [[ -f "${deb}.manifest.json" ]]; then
+              gh release upload arm-packages "${deb}.manifest.json" \
+                --repo "${{ github.repository }}" \
+                --clobber
+            fi
           done

@@ -1,0 +1,14 @@
+# Pinned upstream amneziawg-linux-kernel-module ref for reproducible ARM builds.
+#
+# Put a single tag or branch name on its own line below, e.g.:
+#   v1.0.20260223
+# Leave it as "HEAD" (or empty) to build the upstream default-branch HEAD. That
+# is not reproducible across time, but the per-build manifest still records the
+# exact commit SHA that was built.
+#
+# Precedence (see scripts/build-arm-deb.sh _arm_module_ref):
+#   MODULE_VERSION workflow input  >  this pin  >  default-branch HEAD
+#
+# A commit SHA is NOT valid here: the build clones with --depth=1 --branch, which
+# accepts only a tag or branch. Pin a tag for true reproducibility.
+HEAD

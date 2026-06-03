@@ -91,3 +91,73 @@ ROOT="$BATS_TEST_DIRNAME/.."
     n=$(grep -cF 'scripts/check-docs-consistency.sh' "$ROOT/.github/workflows/docs-check.yml")
     [ "$n" -ge 2 ]
 }
+
+# ---------- C-ARM: reproducible module ref + manifest ----------
+
+_source_arm() {
+    # build-arm-deb.sh has a source guard, so sourcing exposes helpers only.
+    unset MODULE_VERSION
+    source "$ROOT/scripts/build-arm-deb.sh"
+}
+
+@test "C-ARM: _arm_module_ref returns MODULE_VERSION env when set (highest precedence)" {
+    _source_arm
+    local pin; pin="$(mktemp)"; echo "v1.0.PINNED" > "$pin"
+    MODULE_VERSION="v9.9.OVERRIDE"
+    run _arm_module_ref "$pin"
+    [ "$status" -eq 0 ]
+    [ "$output" = "v9.9.OVERRIDE" ]
+    rm -f "$pin"
+}
+
+@test "C-ARM: _arm_module_ref reads a tag from the pin file when env is empty" {
+    _source_arm
+    local pin; pin="$(mktemp)"
+    printf '# comment\nv1.0.20260223\n' > "$pin"
+    run _arm_module_ref "$pin"
+    [ "$status" -eq 0 ]
+    [ "$output" = "v1.0.20260223" ]
+    rm -f "$pin"
+}
+
+@test "C-ARM: _arm_module_ref treats HEAD pin as default-branch (empty output)" {
+    _source_arm
+    local pin; pin="$(mktemp)"
+    printf '# only comments and HEAD\nHEAD\n' > "$pin"
+    run _arm_module_ref "$pin"
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
+    rm -f "$pin"
+}
+
+@test "C-ARM: _arm_module_ref returns empty when pin file has only comments" {
+    _source_arm
+    local pin; pin="$(mktemp)"
+    printf '# a\n#b\n\n' > "$pin"
+    run _arm_module_ref "$pin"
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
+    rm -f "$pin"
+}
+
+@test "C-ARM: shipped pin file defaults to HEAD (current behaviour preserved)" {
+    run _arm_module_ref_shipped_value
+    [ "$status" -eq 0 ]
+    [ "$output" = "HEAD" ]
+}
+
+_arm_module_ref_shipped_value() {
+    grep -vE '^[[:space:]]*(#|$)' "$ROOT/scripts/arm-module-version.txt" | head -n1 | tr -d '[:space:]'
+}
+
+@test "C-ARM: build script writes a manifest with module_commit" {
+    run grep -F 'manifest.json' "$ROOT/scripts/build-arm-deb.sh"
+    [ "$status" -eq 0 ]
+    run grep -F 'module_commit' "$ROOT/scripts/build-arm-deb.sh"
+    [ "$status" -eq 0 ]
+}
+
+@test "C-ARM: arm-build.yml uploads the manifest asset" {
+    run grep -F 'manifest.json' "$ROOT/.github/workflows/arm-build.yml"
+    [ "$status" -eq 0 ]
+}
