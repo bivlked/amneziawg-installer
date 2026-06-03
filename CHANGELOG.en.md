@@ -14,6 +14,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.15.3] - 2026-06-04
+
+**v5.15.3** - a hardening release following four rounds of external code and documentation audits. No new features: it tightens the installer's input validators, fixes a number of correctness issues in `manage`, and hardens file-operation atomicity and the release process. A default install is unchanged. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
+
+### Fixed
+
+- **Early installer validators now match the canonical ones.** The step-0 checks for port, subnet, endpoint and CIDR lists (before the shared library is downloaded) now reject ports with leading zeros (`0080` is no longer accepted via octal interpretation), numbers longer than 5 digits (64-bit overflow guard), non-canonical subnet octets, edge-case bracketed IPv6 endpoints (`[:::]`, double `::`), and newlines or empty items in route lists.
+- **`--route-custom` is validated on the first run regardless of where the value came from:** an invalid route list stops the install before the configuration is written.
+- **An unknown command-line argument exits the installer with code 1** (it used to print help and exit 0); an explicit `--help` still returns 0.
+- **`manage restore` is robust against incomplete backups:** restoring from an empty key set or a truncated backup no longer removes live clients.
+- **Re-running the installer keeps all existing peers** and the default clients when regenerating the server config.
+- **`manage modify` validates IP and CIDR values by range**, not just by shape.
+- **File-operation atomicity:** config temp files are created on the destination filesystem (so `mv` is actually atomic), the client QR PNG is written via temp + `mv`, and temp cleanup, comma validation in lists, and `vpn://` URI QR generation were tightened.
+
+### Internal
+
+- **Reproducible ARM builds:** the upstream module is pinned to an explicit ref, and a build manifest is published alongside the packages.
+- **`release.yml` builds bilingual release notes** (RU + EN from both changelogs) and a descriptive release title automatically.
+- **Preflight and CI hardened:** correct bats verdict, full OS/arch test matrix, the docs checker runs on path triggers, new guards against stale IPv6 wording and version placeholders.
+- **The documentation consistency check is about 8x faster** (single-pass Unicode heading slugger) and now covers the ROADMAP.
+- The test suite grew to 788 checks (new scenarios for the validators, restore, atomicity, the slugger and release notes).
+
+### Documentation
+
+- Corrected descriptions of IPv6 routing, native IPv6 detection, `--json` scope and the supported OS count; the CLI reference in ADVANCED is synced with the actual flags.
+- README and INSTALL_VPS point at `--ssh-port` for changing the SSH port; mobile carrier advice and the script integrity note were refreshed; the ROADMAP was brought up to date.
+- The release process is documented without contradictions (release-notes source, neutral review gate, checklist sync); Code of Conduct reports go to a private channel; blank issues are disabled - questions go to Discussions.
+
+### Verification
+
+- Live runs on clean VPSes: Ubuntu 24.04 (x86_64, full cycle: negative validator tests, install with 2 reboot-resumes, the whole `manage` CRUD), Ubuntu 26.04 (ARM64: PPA questing -> noble remap, DKMS module build), Debian 13 (custom routes via `--route-custom`, kernel headers fallback, DKMS against a kernel upgraded during the install). Real cross-continent AWG 2.0 handshakes and DNS through the tunnel confirmed.
+
+---
+
 ## [5.15.2] - 2026-06-02
 
 **v5.15.2** - a small maintenance release. It points the install and update commands in the documentation at the current tag. No installer or management code changed, behavior is unchanged. Support matrix is unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
@@ -1242,7 +1276,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.2...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.3...HEAD
+[5.15.3]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.2...v5.15.3
 [5.15.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.1...v5.15.2
 [5.15.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.0...v5.15.1
 [5.15.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.14.5...v5.15.0
