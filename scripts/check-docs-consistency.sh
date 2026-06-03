@@ -18,7 +18,8 @@
 #      в RU == EN; [Unreleased] присутствует в обоих.
 #   3. Version triple: README badge == SCRIPT_VERSION == верхний changelog
 #      heading (RU и EN).
-#   4. Матрица ОС: Ubuntu 26.04 присутствует во всех заявленных местах.
+#   4. Матрица ОС: полный набор релизов (Ubuntu 24.04/25.10/26.04, Debian 12/13)
+#      + архитектур (x86_64/ARM64/ARMv7) во всех заявленных местах.
 #   5. SECURITY/CONTRIBUTING не протухли (текущий minor в supported-таблице;
 #      нет захардкоженного test-count baseline).
 #   6. Pinned raw-URL теги в README/ADVANCED/INSTALL_VPS == SCRIPT_VERSION
@@ -160,16 +161,41 @@ if [[ "$top_ru" != "$script_ver" ]]; then echo "  CHANGELOG.md top heading '$top
 if [[ "$top_en" != "$script_ver" ]]; then echo "  CHANGELOG.en.md top heading '$top_en' != SCRIPT_VERSION '$script_ver'" >&2; ver_fail=1; fi
 if [[ "$ver_fail" -eq 0 ]]; then _ok "version triple согласован ($script_ver)"; else _bad "version triple рассинхрон"; fi
 
-# --- 4. Матрица ОС: Ubuntu 26.04 во всех заявленных местах ---
+# --- 4. Матрица ОС + архитектур: полный набор во всех заявленных местах ---
+# Единый источник ожидаемого набора. Прежняя узкая проверка ловила только
+# "26.04" и пропускала общий drift: при будущем добавлении/удалении одной ОС
+# часть документов осталась бы со старой матрицей при зелёном docs-check.
+# Токены подобраны так, чтобы матчиться во всех форматах (badge, таблица
+# совместимости, install --help, issue dropdown): голые версии Ubuntu +
+# "Debian N" с контекстом семейства.
+EXPECTED_OS=("24.04" "25.10" "26.04" "Debian 12" "Debian 13")
+OS_MATRIX_FILES=(README.md README.en.md install_amneziawg.sh install_amneziawg_en.sh .github/ISSUE_TEMPLATE/bug_report.yml)
 os_fail=0
-for f in README.md README.en.md install_amneziawg.sh install_amneziawg_en.sh .github/ISSUE_TEMPLATE/bug_report.yml; do
-    [[ -f "$f" ]] || { echo "  нет $f (проверка 26.04)" >&2; os_fail=1; continue; }
-    if ! grep -q '26\.04' "$f"; then
-        echo "  $f: нет упоминания Ubuntu 26.04 в матрице ОС" >&2
-        os_fail=1
-    fi
+for f in "${OS_MATRIX_FILES[@]}"; do
+    [[ -f "$f" ]] || { echo "  нет $f (проверка матрицы ОС)" >&2; os_fail=1; continue; }
+    for os in "${EXPECTED_OS[@]}"; do
+        if ! grep -qF "$os" "$f"; then
+            echo "  $f: нет '$os' в матрице ОС" >&2
+            os_fail=1
+        fi
+    done
 done
-if [[ "$os_fail" -eq 0 ]]; then _ok "Ubuntu 26.04 присутствует в матрице ОС"; else _bad "Ubuntu 26.04 отсутствует где-то в матрице ОС"; fi
+if [[ "$os_fail" -eq 0 ]]; then _ok "матрица ОС полна во всех заявленных местах (${EXPECTED_OS[*]})"; else _bad "матрица ОС неполна где-то"; fi
+
+# Архитектуры: x86_64 / ARM64 / ARMv7 согласованы между README RU/EN и issue-шаблоном.
+EXPECTED_ARCH=("x86_64" "ARM64" "ARMv7")
+ARCH_MATRIX_FILES=(README.md README.en.md .github/ISSUE_TEMPLATE/bug_report.yml)
+arch_fail=0
+for f in "${ARCH_MATRIX_FILES[@]}"; do
+    [[ -f "$f" ]] || { echo "  нет $f (проверка матрицы архитектур)" >&2; arch_fail=1; continue; }
+    for a in "${EXPECTED_ARCH[@]}"; do
+        if ! grep -qF "$a" "$f"; then
+            echo "  $f: нет '$a' в матрице архитектур" >&2
+            arch_fail=1
+        fi
+    done
+done
+if [[ "$arch_fail" -eq 0 ]]; then _ok "матрица архитектур согласована (${EXPECTED_ARCH[*]})"; else _bad "матрица архитектур неполна где-то"; fi
 
 # --- 5. SECURITY/CONTRIBUTING не протухли ---
 stale_fail=0

@@ -20,7 +20,8 @@
 # Проверки:
 #   1. bash -n на 6 скриптах
 #   2. shellcheck -s bash -S warning на 6 скриптах
-#   3. bats tests/
+#   3. bats tests/ (FAIL при "^not ok" ИЛИ при non-zero exit без "not ok" на
+#      flock-хосте; на flock-less хосте non-zero без "not ok" = WARN)
 #   4. реально добавленных em/en-dash (U+2013/U+2014) в diff BASE_REF...HEAD = 0
 #   5. AI/tool-mention в diff + commit-логе = 0
 #   6. Co-authored-by в commit-логе = 0
@@ -67,10 +68,12 @@ FORBIDDEN_MARKERS='claude|anthropic|\bcodex\b|chatgpt|openai|gpt-[0-9]|copilot|\
 
 PASS=0
 FAIL=0
+WARN=0
 declare -a RESULTS
 
 _ok()   { echo "PASS: $1"; RESULTS+=("PASS: $1"); PASS=$((PASS+1)); }
 _bad()  { echo "FAIL: $1" >&2; RESULTS+=("FAIL: $1"); FAIL=$((FAIL+1)); }
+_warn() { echo "WARN: $1" >&2; RESULTS+=("WARN: $1"); WARN=$((WARN+1)); }
 
 echo "=== preflight-check (BASE_REF=$BASE_REF, LOG_RANGE=$LOG_RANGE) ==="
 
@@ -99,18 +102,35 @@ else
 fi
 
 # --- 3. bats ---
-# Реальные падения = строки "not ok". Полагаться на exit-code нельзя: на Windows
-# 2 flock-теста не исполняются (flock недоступен), bats печатает "Executed N
-# instead of expected M" и возвращает non-zero БЕЗ реальных падений. На Linux CI
-# flock есть, исполняются все тесты. Поэтому провал = только наличие "^not ok".
+# Реальные падения теста = строки "^not ok". Но один лишь grep "not ok" слеп к
+# раннему краху bats (повреждённое окружение, отсутствующий хелпер, ошибка
+# запуска): такой прогон вернёт non-zero БЕЗ строк "not ok" и раньше молча
+# проходил как "0 failures". Поэтому учитываем И exit-code, И "^not ok":
+#   - есть "^not ok"            -> FAIL (реальные падения теста);
+#   - нет "^not ok", но rc != 0 -> на flock-less хосте (Windows/Git Bash, где
+#     require_flock-тесты SKIP, а bats печатает "Executed N instead of expected M"
+#     и возвращает non-zero без падений) ИЛИ при AWG_PREFLIGHT_TOLERATE_BATS_RC=1
+#     это терпимо (WARN); иначе (Linux CI с flock) rc!=0 без "not ok" = аномалия
+#     запуска -> FAIL с полным выводом.
+# Авто-детект flock: на Windows flock отсутствует -> tolerant-ветка без ручного
+# env. На Linux CI flock есть -> строгий режим. Релизный gate не пропустит
+# инфраструктурный сбой как успех.
 if command -v bats >/dev/null 2>&1; then
-    bats_out=$(bats tests/ 2>&1)
-    bats_fails=$(printf '%s\n' "$bats_out" | grep -cE '^not ok')
-    if [[ "$bats_fails" -eq 0 ]]; then
-        _ok "bats tests/ (0 failures)"
-    else
+    bats_rc=0
+    bats_out=$(bats tests/ 2>&1) || bats_rc=$?
+    bats_fails=$(printf '%s\n' "$bats_out" | grep -cE '^not ok' || true)
+    if [[ "$bats_fails" -gt 0 ]]; then
         printf '%s\n' "$bats_out" | grep -E '^not ok' >&2
         _bad "bats tests/ ($bats_fails failing)"
+    elif [[ "$bats_rc" -ne 0 ]]; then
+        if [[ "${AWG_PREFLIGHT_TOLERATE_BATS_RC:-0}" == "1" ]] || ! command -v flock >/dev/null 2>&1; then
+            _warn "bats tests/ exit $bats_rc без 'not ok' (flock-less хост или TOLERATE_BATS_RC=1, терпимо)"
+        else
+            printf '%s\n' "$bats_out" >&2
+            _bad "bats tests/ exit $bats_rc без 'not ok' - вероятный сбой запуска (повреждённое окружение)"
+        fi
+    else
+        _ok "bats tests/ (0 failures)"
     fi
 else
     _bad "bats not found in PATH"
@@ -206,7 +226,7 @@ rm -f /tmp/preflight-docs.$$
 
 # --- Summary ---
 echo ""
-echo "=== preflight summary: $PASS passed, $FAIL failed ==="
+echo "=== preflight summary: $PASS passed, $FAIL failed, $WARN warnings ==="
 for r in "${RESULTS[@]}"; do echo "  $r"; done
 
 if [[ "$FAIL" -gt 0 ]]; then

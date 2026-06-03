@@ -14,6 +14,10 @@ on:
       - 'install_amneziawg*.sh'
       - 'manage_amneziawg*.sh'
       - 'awg_common*.sh'
+      # Сам checker: правка его логики обязана триггерить этот workflow, иначе
+      # PR, ломающий проверку, не получит сигнала на review (preflight поймает
+      # позже, но раньше = лучше).
+      - 'scripts/check-docs-consistency.sh'
   pull_request:
     paths:
       - '**/*.md'
@@ -22,6 +26,7 @@ on:
       - 'install_amneziawg*.sh'
       - 'manage_amneziawg*.sh'
       - 'awg_common*.sh'
+      - 'scripts/check-docs-consistency.sh'
 
 permissions:
   contents: read
