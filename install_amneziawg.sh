@@ -1936,6 +1936,14 @@ initialize_setup() {
     if [[ "$ALLOWED_IPS_MODE" == "default" ]]; then ALLOWED_IPS_MODE=2; fi
     if [[ -z "$ALLOWED_IPS" ]]; then configure_routing_mode; fi
 
+    # Единая обязательная валидация AllowedIPs до сохранения конфига: CLI
+    # --route-custom на первом запуске присваивал ALLOWED_IPS без проверки
+    # (configure_routing_mode пропускался, т.к. режим уже был 3). Проверяем
+    # любой непустой список независимо от источника (CLI / конфиг / выбор режима).
+    if [[ -n "$ALLOWED_IPS" ]] && ! validate_cidr_list "$ALLOWED_IPS"; then
+        die "Некорректный ALLOWED_IPS: '$ALLOWED_IPS'. Ожидается список x.x.x.x/y[,x.x.x.x/y]."
+    fi
+
     # Проверка порта (пропускаем если AWG-сервис уже слушает этот порт)
     if ! systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then
         check_port_availability "$AWG_PORT" || die "Порт $AWG_PORT/udp занят."

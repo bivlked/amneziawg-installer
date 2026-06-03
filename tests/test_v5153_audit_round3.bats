@@ -118,3 +118,28 @@ setup() {
         [ "$status" -eq 0 ] || { echo "missing comma guard in $f"; false; }
     done
 }
+
+# ---------- .2 --route-custom first-run validation guard ----------
+# A first run with --route-custom assigned ALLOWED_IPS straight from the CLI and
+# never validated it (configure_routing_mode was skipped because the mode was
+# already 3). A single mandatory guard now validates any non-empty ALLOWED_IPS
+# before the config is written, regardless of source.
+
+@test ".2 universal ALLOWED_IPS validation guard present in both installers" {
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        run grep -F '[[ -n "$ALLOWED_IPS" ]] && ! validate_cidr_list "$ALLOWED_IPS"' "$ROOT/$f"
+        [ "$status" -eq 0 ] || { echo "missing universal ALLOWED_IPS guard in $f"; false; }
+    done
+}
+
+@test ".2 guard runs after the CLI override and before the config save (both)" {
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        local override guard save
+        override=$(grep -n 'CLI_ROUTING_MODE" -eq 3 \]\]; then ALLOWED_IPS=\$CLI_CUSTOM_ROUTES' "$ROOT/$f" | head -1 | cut -d: -f1)
+        guard=$(grep -nF '[[ -n "$ALLOWED_IPS" ]] && ! validate_cidr_list "$ALLOWED_IPS"' "$ROOT/$f" | head -1 | cut -d: -f1)
+        save=$(grep -n "^export ALLOWED_IPS='" "$ROOT/$f" | head -1 | cut -d: -f1)
+        [ -n "$override" ] && [ -n "$guard" ] && [ -n "$save" ] || { echo "anchor missing in $f"; false; }
+        [ "$guard" -gt "$override" ] || { echo "guard before override in $f"; false; }
+        [ "$guard" -lt "$save" ] || { echo "guard after save in $f"; false; }
+    done
+}
