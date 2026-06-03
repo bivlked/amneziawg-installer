@@ -60,21 +60,26 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Extract changelog for this version
+      - name: Build bilingual release notes and title
         if: steps.check.outputs.exists != 'true'
         id: changelog
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
-          ESCAPED="${VERSION//./\\.}"
 
-          if ! grep -q "^## \\[${ESCAPED}\\]" CHANGELOG.en.md; then
-            echo "::error::Version ${VERSION} not found in CHANGELOG.en.md"
-            exit 1
-          fi
+          # build-release-notes.sh assembles the RU+EN body and a descriptive
+          # title from both changelogs. It exits non-zero if the version section
+          # is missing in either CHANGELOG.md or CHANGELOG.en.md, which fails the
+          # job before any release is created.
+          bash scripts/build-release-notes.sh "$VERSION" > /tmp/release-notes.md
+          TITLE="$(bash scripts/build-release-notes.sh --title "$VERSION")"
+          {
+            echo "title<<__RELEASE_TITLE__"
+            echo "$TITLE"
+            echo "__RELEASE_TITLE__"
+          } >> "$GITHUB_OUTPUT"
 
-          # Extract: from version header to next version header or end of file
-          awk "/^## \\[${ESCAPED}\\]/{found=1; next} /^## \\[/{if(found) exit} found" CHANGELOG.en.md > /tmp/release-notes.md
-
+          echo "--- Release title ---"
+          echo "$TITLE"
           echo "--- Release notes preview ---"
           cat /tmp/release-notes.md
 
@@ -82,6 +87,7 @@ jobs:
         if: steps.check.outputs.exists != 'true'
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
+          name: ${{ steps.changelog.outputs.title }}
           body_path: /tmp/release-notes.md
           draft: false
           prerelease: false

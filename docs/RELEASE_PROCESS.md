@@ -117,22 +117,29 @@ fix the branch, and re-tag.
 
 ## Release notes
 
-`release.yml` fills the English release body from `CHANGELOG.en.md`. Add the
-Russian section by hand afterwards:
+`release.yml` now builds the release body and title automatically via
+`scripts/build-release-notes.sh`. It assembles the bilingual body from both
+changelogs (Russian header, a `[English version below](#english-version)` link,
+the Russian content, an `<a id="english-version"></a>` anchor, then the English
+content) and derives a descriptive title from the EN lead line
+`**vX.Y.Z** - <summary>.` (giving `vX.Y.Z: <summary>`, or just `vX.Y.Z` if no
+lead is present). The job fails before publishing if the version section is
+missing from either `CHANGELOG.md` or `CHANGELOG.en.md`.
+
+Because the title comes from the changelog lead, write each release's EN lead
+line in that form so the generated title reads well.
+
+You can preview locally before tagging:
 
 ```bash
-gh release edit vX.Y.Z --notes-file body.md
+bash scripts/build-release-notes.sh X.Y.Z          # body
+bash scripts/build-release-notes.sh --title X.Y.Z  # title
 ```
 
-Follow the established bilingual template: Russian header, a
-`[English version below](#english-version)` link, the Russian content, an
-`<a id="english-version"></a>` anchor, then the English content.
-
-`release.yml` also leaves the release title as the bare tag (for example
-`v5.15.3`). Set a descriptive title by hand:
+Emergency fallback only (if the automated body needs a manual touch-up):
 
 ```bash
-gh release edit vX.Y.Z --title "vX.Y.Z: <short summary>"
+gh release edit vX.Y.Z --notes-file body.md --title "vX.Y.Z: <short summary>"
 ```
 
 ## Release signing
