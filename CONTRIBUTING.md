@@ -150,10 +150,10 @@ docs: update CHANGELOG for v5.5
 2. Ensure CI checks pass: ShellCheck, syntax (`bash -n`), the bats test suite, and documentation consistency (`scripts/check-docs-consistency.sh`). The quickest way to clear the bar locally is the full gate: `BASE_REF=origin/main bash scripts/preflight-check.sh`
 3. **If your PR adds or modifies a GitHub Actions workflow** (`.github/workflows/*.yml`) or a build script (`scripts/*.sh`), run the workflow on your fork and confirm it passes **before** requesting review. `arm-build.yml` supports `workflow_dispatch` for manual triggering; other workflows run automatically on push. This catches environment-specific failures that local testing cannot.
 4. Update **both** `CHANGELOG.md` and `CHANGELOG.en.md` if applicable
-4. Update `[Unreleased]` comparator link in both CHANGELOGs when bumping version
-5. Request a review from `@bivlked`
-6. Address review feedback
-7. Once approved, the maintainer will merge
+5. Update `[Unreleased]` comparator link in both CHANGELOGs when bumping version
+6. Request a review from `@bivlked`
+7. Address review feedback
+8. Once approved, the maintainer will merge
 
 ## Questions?
 

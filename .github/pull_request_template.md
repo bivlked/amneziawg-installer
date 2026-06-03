@@ -28,3 +28,13 @@
 - [ ] English script versions (`_en.sh`) synchronized (if Russian scripts modified)
 - [ ] Rollback tested: `--uninstall` + fresh install (if installer changes)
 - [ ] vpn:// URI generation verified (if `awg_common` changes)
+
+## If this PR prepares a release
+
+Skip this section for ordinary PRs. For a release-bound PR, the tag is gated by
+`preflight-check.sh`, which checks more than the boxes above:
+
+- [ ] `BASE_REF=origin/main bash scripts/preflight-check.sh` is green (full pre-tag gate)
+- [ ] `bash scripts/update-sha-pins.sh --verify` passes (4 helper SHA pins in lockstep)
+- [ ] Pinned `raw.githubusercontent.com/.../vX.Y.Z/...` tags in README/ADVANCED/INSTALL_VPS equal the release version
+- [ ] No `Co-authored-by` trailers and no AI/tool markers in the diff or commit log

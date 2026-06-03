@@ -8,19 +8,27 @@ clear before it is tagged.
 
 ## Versioned files and the lockstep rule
 
-Six scripts carry a version and must stay in lockstep:
+Six scripts carry a version and must stay in lockstep at the **same** release
+number:
 
 - `install_amneziawg.sh`, `install_amneziawg_en.sh`
 - `manage_amneziawg.sh`, `manage_amneziawg_en.sh`
 - `awg_common.sh`, `awg_common_en.sh`
 
-When any of them changes in a release:
+On every release, regardless of which files changed content:
 
-1. Bump `SCRIPT_VERSION` and the `# Version:` / `# Версия:` header (plus the
-   date) only in the files that actually changed.
-2. The installers download the helper scripts over the network and verify
-   their SHA256 against pinned constants. If `awg_common*.sh` or
-   `manage_amneziawg*.sh` changed, recompute the four pins
+1. Set `SCRIPT_VERSION` in all four scripts that carry it
+   (`install_amneziawg*.sh`, `manage_amneziawg*.sh`) and the
+   `# Version:` / `# Версия:` header in all six scripts to the same new
+   `X.Y.Z`. `preflight-check.sh` step 7 rejects a partial bump: it requires all
+   four `SCRIPT_VERSION` values and all six headers to agree. Update the header
+   date in every file you edited; an untouched file may keep its existing date
+   as long as the version matches. (The version-triple check also ties
+   `SCRIPT_VERSION` to the README badge and the top changelog heading, so this
+   number is the release tag.)
+2. Bumping the `# Version:` / `# Версия:` header in `awg_common*.sh` and
+   `manage_amneziawg*.sh` changes their bytes, so their SHA256 changes on every
+   release even when their logic did not. Recompute the four pins
    (`COMMON_SCRIPT_SHA256` / `MANAGE_SCRIPT_SHA256`, RU + EN) with:
 
    ```bash
