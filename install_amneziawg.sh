@@ -37,7 +37,7 @@ COMMON_SCRIPT_SHA256="44a5705ab0a8422db9de0d0654ec48d4a2efac7081a9824e184e2e40ef
 MANAGE_SCRIPT_SHA256="6721446269c3e2ca8d7fba83a4459243ea636b69ea5911854df1f7e4e85b832a"
 
 # Флаги CLI
-UNINSTALL=0; HELP=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
 FORCE_REINSTALL=0
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""
@@ -79,7 +79,7 @@ while [[ $# -gt 0 ]]; do
         --jc=*)          CLI_JC="${1#*=}" ;;
         --jmin=*)        CLI_JMIN="${1#*=}" ;;
         --jmax=*)        CLI_JMAX="${1#*=}" ;;
-        *) echo "Неизвестный аргумент: $1"; HELP=1 ;;
+        *) echo "Неизвестный аргумент: $1" >&2; HELP=1; HELP_EXIT_RC=1 ;;
     esac
     shift
 done
@@ -288,7 +288,8 @@ show_help() {
 
 Репозиторий: https://github.com/bivlked/amneziawg-installer
 EOF
-    exit 0
+    # Явный --help завершается с 0; неизвестный аргумент - с 1 (ложный успех в CI).
+    exit "${HELP_EXIT_RC:-0}"
 }
 
 # ==============================================================================

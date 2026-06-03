@@ -37,7 +37,7 @@ COMMON_SCRIPT_SHA256="c3d45d5bf289b9aea1db79ec1c3598f4bed3fa30e6718b9c6c1e5f5189
 MANAGE_SCRIPT_SHA256="e144ec611f871c6f8270f9e440acdd2984a1c394927bc43d0fa6edaf9d356822"
 
 # CLI flags
-UNINSTALL=0; HELP=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
 FORCE_REINSTALL=0
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""
@@ -79,7 +79,7 @@ while [[ $# -gt 0 ]]; do
         --jc=*)          CLI_JC="${1#*=}" ;;
         --jmin=*)        CLI_JMIN="${1#*=}" ;;
         --jmax=*)        CLI_JMAX="${1#*=}" ;;
-        *) echo "Unknown argument: $1"; HELP=1 ;;
+        *) echo "Unknown argument: $1" >&2; HELP=1; HELP_EXIT_RC=1 ;;
     esac
     shift
 done
@@ -291,7 +291,8 @@ Examples:
 
 Repository: https://github.com/bivlked/amneziawg-installer
 EOF
-    exit 0
+    # Explicit --help exits 0; an unknown argument exits 1 (false success in CI).
+    exit "${HELP_EXIT_RC:-0}"
 }
 
 # ==============================================================================

@@ -143,3 +143,38 @@ setup() {
         [ "$guard" -lt "$save" ] || { echo "guard after save in $f"; false; }
     done
 }
+
+# ---------- .3 unknown-argument exit code ----------
+# An unknown argument used to print help and exit 0 (false success in CI/Ansible
+# when a flag is mistyped). show_help now exits with HELP_EXIT_RC: 0 for an
+# explicit --help, 1 for an unknown argument. Mirrors manage's HELP_EXIT_RC.
+
+@test ".3 explicit --help / -h exit 0 (both installers)" {
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        run timeout 20 bash "$ROOT/$f" --help
+        [ "$status" -eq 0 ] || { echo "$f --help rc=$status"; false; }
+        run timeout 20 bash "$ROOT/$f" -h
+        [ "$status" -eq 0 ] || { echo "$f -h rc=$status"; false; }
+    done
+}
+
+@test ".3 unknown argument exits non-zero (both installers)" {
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        run timeout 20 bash "$ROOT/$f" --bogus-flag
+        [ "$status" -ne 0 ] || { echo "$f --bogus-flag rc=$status (should be non-zero)"; false; }
+    done
+}
+
+@test ".3 unknown-arg sets HELP_EXIT_RC=1 and writes to stderr (both installers)" {
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        run grep -E '\*\) echo "(Неизвестный аргумент|Unknown argument): \$1" >&2; HELP=1; HELP_EXIT_RC=1' "$ROOT/$f"
+        [ "$status" -eq 0 ] || { echo "missing stderr + rc=1 unknown-arg handler in $f"; false; }
+    done
+}
+
+@test ".3 show_help honors HELP_EXIT_RC (both installers)" {
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        run grep -F 'exit "${HELP_EXIT_RC:-0}"' "$ROOT/$f"
+        [ "$status" -eq 0 ] || { echo "show_help does not honor HELP_EXIT_RC in $f"; false; }
+    done
+}
