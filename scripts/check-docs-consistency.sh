@@ -48,24 +48,28 @@ DOC_FILES=(
     ADVANCED.md ADVANCED.en.md
     CHANGELOG.md CHANGELOG.en.md
     SECURITY.md CONTRIBUTING.md INSTALL_VPS.md
-    docs/SIGNING_DESIGN.md docs/RELEASE_PROCESS.md
+    docs/SIGNING_DESIGN.md docs/RELEASE_PROCESS.md docs/ROADMAP.md
 )
 
 echo "=== check-docs-consistency ==="
 
-# GitHub-совместимая slug-генерация из текста заголовка:
-# lowercase, убрать всё кроме букв/цифр/пробела/дефиса, пробелы -> дефисы,
-# срезать ведущие/хвостовые дефисы (их даёт, например, emoji в начале heading -
-# GitHub их тоже не оставляет).
-_slug() {
-    local s="$1"
-    s="${s#"${s%%[![:space:]]*}"}"   # ltrim
-    s="${s%"${s##*[![:space:]]}"}"   # rtrim
-    printf '%s' "$s" \
-        | tr '[:upper:]' '[:lower:]' \
-        | LC_ALL=C sed -E 's/[^a-z0-9 _-]//g' \
-        | tr ' ' '-' \
-        | sed -E 's/^-+//; s/-+$//'
+# GitHub-совместимая slug-генерация (Unicode-aware, один perl-проход на файл
+# вместо 4 subprocess на КАЖДЫЙ заголовок). Прежняя версия и тормозила
+# (fork-оверхед на сотнях заголовков), и резала кириллицу через LC_ALL=C,
+# из-за чего RU-заголовки давали пустой slug. Читает заголовки построчно из
+# stdin, печатает по slug на строку: Unicode-lowercase, оставить буквы/цифры/
+# пробел/подчёркивание/дефис (кириллица сохраняется, как у GitHub), пробелы ->
+# дефисы, срезать крайние дефисы (их даёт, например, emoji в начале заголовка).
+_slug_stream() {
+    perl -CSD -ne '
+        chomp;
+        s/^\s+//; s/\s+$//;
+        $_ = lc;
+        s/[^\p{L}\p{N} _-]//g;
+        s/ /-/g;
+        s/^-+//; s/-+$//;
+        print "$_\n";
+    '
 }
 
 # Удалить из markdown код, чтобы примеры разметки внутри него не парсились как
@@ -90,11 +94,11 @@ for f in "${DOC_FILES[@]}"; do
     while IFS= read -r a; do
         [[ -n "$a" ]] && anchors["$a"]=1
     done < <(printf '%s\n' "$stripped" | grep -oiP '<a\s+(id|name)="\K[^"]+')
-    while IFS= read -r h; do
-        # Заголовки ATX: "# ...". Текст уже без ведущих #, slug'им.
-        sl="$(_slug "$h")"
+    # Заголовки ATX: "# ...". Снимаем ведущие #, слугаем все заголовки файла
+    # одним perl-проходом (а не subprocess на каждый заголовок).
+    while IFS= read -r sl; do
         [[ -n "$sl" ]] && anchors["$sl"]=1
-    done < <(printf '%s\n' "$stripped" | grep -E '^#{1,6}[[:space:]]' | sed -E 's/^#{1,6}[[:space:]]+//')
+    done < <(printf '%s\n' "$stripped" | grep -E '^#{1,6}[[:space:]]' | sed -E 's/^#{1,6}[[:space:]]+//' | _slug_stream)
 
     # Внутренние ссылки вида ](#anchor) в этом файле.
     while IFS= read -r ref; do
