@@ -23,6 +23,10 @@
 #      нет захардкоженного test-count baseline).
 #   6. Pinned raw-URL теги в README/ADVANCED/INSTALL_VPS == SCRIPT_VERSION
 #      (CHANGELOG исключён - там теги исторические).
+#   7. ADVANCED: устаревшие IPv6 split-tunnel формулировки не вернулись
+#      (present-tense "не поддерживается / implies full-tunnel"; past-tense
+#      историческая заметка разрешена).
+#   8. Issue-template: placeholder версии нейтральный (не протухающий X.Y.Z).
 
 set -o pipefail
 
@@ -207,6 +211,33 @@ for f in "${URL_DOCS[@]}"; do
     done < <(grep -oP 'raw\.githubusercontent\.com/bivlked/amneziawg-installer/v\K[0-9]+\.[0-9]+\.[0-9]+' "$f")
 done
 if [[ "$url_fail" -eq 0 ]]; then _ok "pinned raw-URL теги == SCRIPT_VERSION ($script_ver)"; else _bad "pinned raw-URL теги рассинхронизированы"; fi
+
+# --- 7. ADVANCED: устаревшие IPv6 split-tunnel формулировки не вернулись ---
+# После переписывания IPv6-раздела (v5.15.1 split-tunnel + dual-stack корректно
+# сочетаются) present-tense заявления о неподдержке не должны появиться снова.
+# Историческая заметка в past tense ("подразумевал", "implied") разрешена.
+ipv6_phrase_fail=0
+for f in ADVANCED.md ADVANCED.en.md; do
+    [[ -f "$f" ]] || continue
+    if grep -qE 'подразумевает full-tunnel|implies full-tunnel|пока не поддерживается|is not supported yet' "$f"; then
+        echo "  $f: устаревшая IPv6 split-tunnel формулировка (см. T2 v5.15.3)" >&2
+        ipv6_phrase_fail=1
+    fi
+done
+if [[ "$ipv6_phrase_fail" -eq 0 ]]; then _ok "ADVANCED: нет устаревших IPv6 split-tunnel формулировок"; else _bad "ADVANCED: вернулась устаревшая IPv6 формулировка"; fi
+
+# --- 8. Issue-template: placeholder версии нейтральный (не протухающий) ---
+# bug_report.yml не должен фиксировать конкретный X.Y.Z в placeholder версии -
+# он устаревает с каждым релизом. Нейтральный вид: "5.x.y".
+tmpl_fail=0
+bug_tmpl=".github/ISSUE_TEMPLATE/bug_report.yml"
+if [[ -f "$bug_tmpl" ]]; then
+    if grep -qE 'placeholder:[[:space:]]*"e\.g\.,[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+"' "$bug_tmpl"; then
+        echo "  $bug_tmpl: конкретный X.Y.Z в placeholder версии (протухает; используйте 5.x.y)" >&2
+        tmpl_fail=1
+    fi
+fi
+if [[ "$tmpl_fail" -eq 0 ]]; then _ok "issue-template: placeholder версии нейтральный"; else _bad "issue-template: протухающий placeholder версии"; fi
 
 # --- Summary ---
 echo ""
