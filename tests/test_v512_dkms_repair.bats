@@ -111,7 +111,7 @@ _extract_logrotate() {
     grep -qF 'linux-headers-cloud-' "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"
 }
 
-@test "v5.12: meta_candidates fallback ordering — flavor BEFORE generic, cloud BEFORE arch" {
+@test "v5.12: meta_candidates fallback ordering - flavor BEFORE generic, cloud BEFORE arch" {
     # Ubuntu: linux-headers-${flavor} must precede linux-headers-generic so the
     # flavor-specific meta is tried first; only on its failure do we fall to generic.
     flavor_line=$(grep -nE 'meta_candidates\+=\("linux-headers-\$\{flavor\}"\)' \

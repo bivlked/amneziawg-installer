@@ -23,7 +23,7 @@
     [[ "$block" == *'for _cname in "${ARGS[@]}"'* ]]
 }
 
-@test "v5.11.5: RU regen has counter and 'Обработано N из M' summary" {
+@test "v5.11.5: RU regen has counter and localized 'Processed N of M' summary" {
     block=$(awk '/^    regen\)/,/^[[:space:]]+;;[[:space:]]*$/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")
     [[ "$block" == *'_regen_count'* ]]
     [[ "$block" == *'Обработано'* ]]
