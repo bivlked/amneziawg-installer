@@ -14,6 +14,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.15.4] - 2026-06-06
+
+**v5.15.4** - a companion release: a new documentation section on a host being unreachable from Russia (autonomous-system blocking) and the I1/CPS workaround, plus housekeeping. The default install behavior and the support matrix are unchanged.
+
+### Documentation
+
+- **ADVANCED: a new section on host blocking by autonomous system (AS).** It covers the symptom (the handshake completes, then traffic stalls), the AS-level cut on the operator's network, and the workaround via I1/CPS QUIC mimicry with an allowlisted SNI. The section includes field observations across several operators and links to the relevant discussion (Issue #71).
+
+### Internal
+
+- **Two bats test names were converted to ASCII.** The full suite of 790 checks now also runs under bats on Windows (two tests with non-ASCII names were previously skipped there); the Linux CI always ran the full suite.
+
+---
+
 ## [5.15.3] - 2026-06-04
 
 **v5.15.3** - a hardening release following four rounds of external code and documentation audits. No new features: it tightens the installer's input validators, fixes a number of correctness issues in `manage`, and hardens file-operation atomicity and the release process. A default install is unchanged. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
@@ -34,7 +48,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`release.yml` builds bilingual release notes** (RU + EN from both changelogs) and a descriptive release title automatically.
 - **Preflight and CI hardened:** correct bats verdict, full OS/arch test matrix, the docs checker runs on path triggers, new guards against stale IPv6 wording and version placeholders.
 - **The documentation consistency check is about 8x faster** (single-pass Unicode heading slugger) and now covers the ROADMAP.
-- The test suite grew to 788 checks (new scenarios for the validators, restore, atomicity, the slugger and release notes).
+- The test suite grew to 790 checks (new scenarios for the validators, restore, atomicity, the slugger and release notes).
 
 ### Documentation
 
@@ -1276,7 +1290,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.3...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.4...HEAD
+[5.15.4]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.3...v5.15.4
 [5.15.3]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.2...v5.15.3
 [5.15.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.1...v5.15.2
 [5.15.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.0...v5.15.1
