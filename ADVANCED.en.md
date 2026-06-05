@@ -43,6 +43,7 @@ For a step-by-step VPS deployment guide (VPS choice, OS choice, install flow, fi
 - [⏳ Temporary Clients (--expires)](#expires-adv)
 - [📱 vpn:// URI Import](#vpnuri-adv)
 - [📱 MTU and Mobile Clients](#mtu-mobile-adv)
+- [🚧 Host Unreachable from Russia (Hetzner): AS-based Blocking](#as-blocking-adv)
 - [📋 AWG 2.0 Client Compatibility](#client-compat-adv)
 - [🐧 Debian Support](#debian-support-adv)
 - [🔧 Raspberry Pi and ARM64 Support](#arm-support-adv)
@@ -665,6 +666,11 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 </details>
 
 <details>
+  <summary><strong>Q: My Hetzner server is unreachable from Russia: the handshake completes, then traffic freezes. What do I do?</strong></summary>
+  <b>A:</b> The server most likely landed in an AS that is not on Russia's allowlist (Hetzner is <code>AS24940</code>). Ordinary junk does not help; what gets through is an <code>I1</code>/CPS packet disguised as QUIC with an allowlisted SNI (<code>7-zip.org</code> for Hetzner). The method does not work on every ISP. Field results and instructions are in the <a href="#as-blocking-adv">Host Unreachable from Russia</a> section.
+</details>
+
+<details>
   <summary><strong>Q: Server behind NAT — how do I specify the external IP?</strong></summary>
   <b>A:</b> Use the <code>--endpoint=&lt;external_IP&gt;</code> flag during installation: <code>sudo bash ./install_amneziawg_en.sh --endpoint=1.2.3.4</code>. Or specify it later via <code>sudo bash /root/awg/manage_amneziawg.sh regen</code> (the script will attempt to detect the IP automatically).
 </details>
@@ -1056,6 +1062,38 @@ sudo systemctl restart awg-quick@awg0
 ```
 
 > vpn:// URIs for Amnezia Client have always included MTU = 1280 in all script versions.
+
+---
+
+<a id="as-blocking-adv"></a>
+## 🚧 Host Unreachable from Russia (Hetzner and others): AS-based Blocking and the I1/CPS Workaround
+
+**Symptom.** A VPN server on Hetzner behaves like this: the handshake completes, the client shows a recent handshake and receives a few kilobytes, after which the flow stops. The in-tunnel ping to the server (`10.x.x.x`) goes to 100% loss, incoming traffic freezes, and new handshakes never complete. It looks like the server died, even though it is alive and reachable over SSH.
+
+**Mechanism.** It looks like this is not a per-IP block but the server address landing in an autonomous system (AS) that is not on the allowlist. According to DPI researcher 0ka ([Habr, article 997088](https://habr.com/ru/articles/997088/)), the filtering relies on an allowlist of roughly 72 ASes; it excludes, for example, Hetzner `AS24940` as well as ranges of OVH, DigitalOcean, AWS and Cloudflare, and traffic to them is degraded at the carrier (TSPU) level. The key point: ordinary junk parameters (`Jc`/`Jmin`/`Jmax`) do not help here, because they change the packet signature rather than the destination AS. In our tests, what got through was an `I1`/CPS packet disguised as a QUIC handshake to an allowlisted SNI. The SNI is chosen per hoster; for Hetzner, `7-zip.org` worked.
+
+**Field test (June 2026).** The recipe was verified live on a clean Hetzner server (AS24940) from a Russian client across three Moscow ISPs, comparing the default configuration (generic `I1 = <r N>`) against the QUIC mimicry (`I1` generated for SNI `7-zip.org`).
+
+| ISP | Default (generic I1) | QUIC I1 (SNI 7-zip.org) |
+|-----|----------------------|--------------------------|
+| Rostelecom | blocked (handshake, then silence) | **access restored**: 0% loss, real web through the tunnel |
+| ecotelecom | blocked | **access restored**: 0% loss |
+| Seven Sky | blocked | **no effect** (two SNIs tested: `7-zip.org` and `www.google.com`) |
+
+Control: a tunnel to a server in a different AS (US) came up and held on all three ISPs, so in our test on Seven Sky it was Hetzner specifically that stayed unreachable, not VPN as such. On Seven Sky the block reproduced consistently, both evening and night, and the QUIC mimicry with two different SNIs did not lift it. In summary: 0ka's method does work, but not universally - the outcome depends on the ISP and the regional TSPU configuration.
+
+**How to apply manually.** The installer does not yet generate the QUIC mimicry `I1` on its own (planned, [issue #71](https://github.com/bivlked/amneziawg-installer/issues/71)); for now it is a manual step:
+
+1. Generate the `I1` string for your hoster in [Mini QUIC Generator](https://sageptr.github.io/mini_quic_generator/) (by SagePtr): enter the SNI (`7-zip.org` for Hetzner) and copy the value from the "AmneziaWG 1.5+ (I1 = )" field.
+2. Replace the `I1 = ...` line in the `[Interface]` section of the server config `/etc/amnezia/amneziawg/awg0.conf` (`I1`-`I5` are case-sensitive, uppercase only).
+3. Restart the service and regenerate clients - `regen` writes the new `I1` into the client configs from `awg0.conf`, then redistribute the updated `.conf` files:
+   ```bash
+   sudo systemctl restart awg-quick@awg0
+   sudo bash /root/awg/manage_amneziawg.sh regen <name>
+   ```
+4. If access is not restored, try a different SNI or a different hoster: on some ISPs (like Seven Sky in our test) the mimicry did not pass with any of the SNIs we tried.
+
+> Method discussion and SNI selection: [ntc.party #12845](https://ntc.party/t/12845). If your Hetzner server goes silent after the handshake, first check whether this is the cause: bring up a test server with a different hoster (for example, in the US), and if the tunnel there works, the cause is destination-AS blocking.
 
 ---
 
