@@ -1707,9 +1707,12 @@ generate_client() {
     # Опциональный PresharedKey: "auto" → `awg genpsk`, иначе используем
     # переданное значение как есть. Пустое/unset → без PSK.
     if [[ "${CLIENT_PSK:-}" == "auto" ]]; then
+        # --psk запрошен явно: при сбое awg genpsk НЕ деградируем молча в клиента
+        # без PSK (это ослабило бы запрошенную безопасность). Fail-closed; здесь
+        # ещё нет созданных артефактов (ключи/конфиг создаются ниже), откат не нужен.
         CLIENT_PSK=$(awg genpsk) || {
-            log_warn "awg genpsk не сработал — клиент будет создан без PresharedKey"
-            CLIENT_PSK=""
+            log_error "awg genpsk не сработал - клиент с PresharedKey (--psk) НЕ создан. Повторите."
+            return 1
         }
     fi
 

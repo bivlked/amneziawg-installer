@@ -1543,6 +1543,15 @@ case $COMMAND in
             log "PresharedKey будет сгенерирован для каждого нового клиента (--psk)."
         fi
 
+        # --expires валидируем ОДИН раз ДО создания первого клиента. Иначе при
+        # неверном формате (--expires=bad) клиенты создавались permanent, а
+        # set_client_expiry молча падал per-client - временный клиент незаметно
+        # становился постоянным. Плохой формат теперь рушит команду до изменений.
+        if [[ -n "$EXPIRES_DURATION" ]]; then
+            parse_duration "$EXPIRES_DURATION" >/dev/null \
+                || die "Некорректный --expires='$EXPIRES_DURATION'. Используйте: 1h, 12h, 1d, 7d, 4w."
+        fi
+
         _added=0
         for _cname in "${ARGS[@]}"; do
             validate_client_name "$_cname" || { _cmd_rc=1; continue; }
@@ -1568,6 +1577,12 @@ case $COMMAND in
                 if [[ -n "$EXPIRES_DURATION" ]]; then
                     if set_client_expiry "$_cname" "$EXPIRES_DURATION"; then
                         install_expiry_cron
+                    else
+                        # Формат проверен выше, значит сбой записи expiry (FS/права).
+                        # Клиент создан и рабочий, но БЕЗ авто-срока - сигналим явно,
+                        # чтобы временный клиент не остался незаметно постоянным.
+                        log_error "Клиент '$_cname' создан, но срок действия НЕ установлен (ошибка записи expiry). Клиент постоянный - задайте срок повторно или удалите."
+                        _cmd_rc=1
                     fi
                 fi
                 ((_added++))

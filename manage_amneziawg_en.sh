@@ -1547,6 +1547,15 @@ case $COMMAND in
             log "PresharedKey will be generated for each new client (--psk)."
         fi
 
+        # Validate --expires ONCE before creating the first client. Otherwise a
+        # bad format (--expires=bad) created permanent clients while
+        # set_client_expiry failed silently per-client - a temporary client
+        # quietly became permanent. A bad format now aborts before any change.
+        if [[ -n "$EXPIRES_DURATION" ]]; then
+            parse_duration "$EXPIRES_DURATION" >/dev/null \
+                || die "Invalid --expires='$EXPIRES_DURATION'. Use: 1h, 12h, 1d, 7d, 4w."
+        fi
+
         _added=0
         for _cname in "${ARGS[@]}"; do
             validate_client_name "$_cname" || { _cmd_rc=1; continue; }
@@ -1572,6 +1581,13 @@ case $COMMAND in
                 if [[ -n "$EXPIRES_DURATION" ]]; then
                     if set_client_expiry "$_cname" "$EXPIRES_DURATION"; then
                         install_expiry_cron
+                    else
+                        # Format is validated above, so this is a write failure
+                        # (FS/permissions). The client exists and works but has NO
+                        # auto-expiry - signal it so a temporary client does not
+                        # silently stay permanent.
+                        log_error "Client '$_cname' created, but expiry was NOT set (expiry write error). The client is permanent - set the expiry again or remove it."
+                        _cmd_rc=1
                     fi
                 fi
                 ((_added++))
