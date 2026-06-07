@@ -14,6 +14,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.15.5] - 2026-06-07
+
+**v5.15.5** - fail2ban bugfix on Ubuntu 24.04 (thanks @stereomonk).
+
+### Fixed
+
+- fail2ban failed to start on minimal Ubuntu 24.04 without rsyslog ("Have not found any log file for sshd jail"): the sshd jail now uses `backend = systemd` on Ubuntu as well, matching Debian since v5.7.12 (PR #106, thanks @stereomonk)
+- fail2ban status after restart is now checked honestly: `systemctl restart` returns 0 even when the service dies right after start, so the installer used to report success on a crashed service. The state is now verified via `systemctl is-active` (PR #106)
+
+---
+
 ## [5.15.4] - 2026-06-06
 
 **v5.15.4** - a companion release: a new documentation section on a host being unreachable from Russia (autonomous-system blocking) and the I1/CPS workaround, plus housekeeping. The default install behavior and the support matrix are unchanged.
@@ -1290,7 +1301,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.4...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.5...HEAD
+[5.15.5]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.4...v5.15.5
 [5.15.4]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.3...v5.15.4
 [5.15.3]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.2...v5.15.3
 [5.15.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.1...v5.15.2
