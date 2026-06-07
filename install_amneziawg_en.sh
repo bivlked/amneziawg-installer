@@ -1518,11 +1518,8 @@ setup_fail2ban() {
 
     mkdir -p /etc/fail2ban/jail.d 2>/dev/null
 
-    # Backend: systemd for Debian (no rsyslog), auto for Ubuntu
-    local f2b_backend="auto"
-    if [[ "${OS_ID:-}" == "debian" ]]; then
-        f2b_backend="systemd"
-    fi
+    # Backend: systemd for Debian and Ubuntu (no rsyslog)
+    local f2b_backend="systemd"
 
     cat > /etc/fail2ban/jail.d/amneziawg.conf << JAILEOF || { log_warn "jail.d/amneziawg.conf write error"; return 1; }
 # AmneziaWG — SSH protection (managed by amneziawg-installer)
@@ -1535,7 +1532,11 @@ bantime  = 1h
 banaction = ufw
 JAILEOF
 
-    if systemctl restart fail2ban; then
+    systemctl restart fail2ban
+    # Wait a second, service is restarting...
+    sleep 1
+
+    if systemctl is-active --quiet fail2ban; then
         log "Fail2Ban configured and restarted."
     else
         log_warn "fail2ban restart error"
