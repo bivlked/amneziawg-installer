@@ -2308,19 +2308,31 @@ check_expired_clients() {
 
 # Install cron job for auto-removal
 install_expiry_cron() {
-    if [[ -f "$EXPIRY_CRON" ]]; then
-        log_debug "Expiry cron job already installed."
-        return 0
-    fi
-    cat > "$EXPIRY_CRON" << CRONEOF
-# AmneziaWG client expiry check — every 5 minutes
+    # Idempotent by CONTENT, not by file existence. The old early-out on "file
+    # exists" left stale paths after restore/migration/--conf-dir: the cron kept
+    # pointing at the old AWG_DIR. Generate the expected text and replace the file
+    # only when it differs.
+    local _cron_tmp
+    _cron_tmp=$(awg_mktemp "$(dirname "$EXPIRY_CRON")") || { log_error "mktemp error for expiry cron"; return 1; }
+    cat > "$_cron_tmp" << CRONEOF
+# AmneziaWG client expiry check - every 5 minutes
 AWG_DIR="${AWG_DIR}"
 CONFIG_FILE="${CONFIG_FILE}"
 SERVER_CONF_FILE="${SERVER_CONF_FILE}"
 */5 * * * * root /bin/bash -c 'source "${AWG_DIR}/awg_common.sh" || exit 1; check_expired_clients' >> "${AWG_DIR}/expiry.log" 2>&1
 CRONEOF
-    chmod 644 "$EXPIRY_CRON"
-    log "Expiry cron job installed: $EXPIRY_CRON"
+    if [[ -f "$EXPIRY_CRON" ]] && cmp -s "$_cron_tmp" "$EXPIRY_CRON"; then
+        rm -f "$_cron_tmp"
+        log_debug "Expiry cron job already current."
+        return 0
+    fi
+    chmod 644 "$_cron_tmp"
+    if ! mv -f "$_cron_tmp" "$EXPIRY_CRON"; then
+        rm -f "$_cron_tmp"
+        log_error "Error installing expiry cron job: $EXPIRY_CRON"
+        return 1
+    fi
+    log "Expiry cron job installed/updated: $EXPIRY_CRON"
 }
 
 # Remove client expiry data

@@ -578,6 +578,15 @@ restore_backup() {
         return 1
     fi
 
+    # Проверка полноты бэкапа ДО остановки сервиса. Бэкап без серверного конфига
+    # бесполезен (VPN без него не поднять), а пустой server/ ронял `cp "$td/server/"*`
+    # уже ПОСЛЕ stop и форсил откат рабочей системы. Проверяем до destructive-фазы:
+    # сервис не трогаем, откат не нужен.
+    if [[ ! -d "$td/server" ]] || ! compgen -G "$td/server/*" > /dev/null; then
+        log_error "Бэкап неполный: отсутствует серверный конфиг (server/ пуст) - восстановление отменено."
+        return 1
+    fi
+
     log "Остановка сервиса..."
     systemctl stop awg-quick@awg0 || log_warn "Сервис не остановлен."
 
@@ -604,15 +613,22 @@ restore_backup() {
         # orphan .conf/.png/.vpnuri). Scope строго managed client-globs - НЕ
         # трогаю скрипты, server-ключи, backups/, логи, .lock, awgsetup_cfg.init.
         rm -f "$AWG_DIR"/*.conf "$AWG_DIR"/*.png "$AWG_DIR"/*.vpnuri 2>/dev/null || true
-        if ! cp -a "$td/clients/"* "$AWG_DIR/"; then
-            log_error "Ошибка копирования clients — восстановление прервано (запуск отката)."
-            return 1
+        # Пустой clients/ - валидный случай (сервер без клиентских конфигов):
+        # prune выше уже дал чистую замену, copy просто пропускаем (без compgen
+        # голый glob "$td/clients/"* остался бы литералом и уронил cp -> откат).
+        if compgen -G "$td/clients/*" > /dev/null; then
+            if ! cp -a "$td/clients/"* "$AWG_DIR/"; then
+                log_error "Ошибка копирования clients — восстановление прервано (запуск отката)."
+                return 1
+            fi
+            chmod 600 "$AWG_DIR"/*.conf 2>/dev/null
+            chmod 600 "$AWG_DIR"/*.png 2>/dev/null
+            chmod 600 "$AWG_DIR"/*.vpnuri 2>/dev/null
+            chmod 600 "$CONFIG_FILE" 2>/dev/null
+            log_debug "Файлы клиентов восстановлены в $AWG_DIR"
+        else
+            log_debug "Бэкап без клиентских файлов (clients/ пуст) - пропуск копирования."
         fi
-        chmod 600 "$AWG_DIR"/*.conf 2>/dev/null
-        chmod 600 "$AWG_DIR"/*.png 2>/dev/null
-        chmod 600 "$AWG_DIR"/*.vpnuri 2>/dev/null
-        chmod 600 "$CONFIG_FILE" 2>/dev/null
-        log_debug "Файлы клиентов восстановлены в $AWG_DIR"
     fi
 
     if [[ -d "$td/keys" ]]; then

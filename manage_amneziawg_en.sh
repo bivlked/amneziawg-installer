@@ -581,6 +581,16 @@ restore_backup() {
         return 1
     fi
 
+    # Check backup completeness BEFORE stopping the service. A backup without a
+    # server config is useless (a VPN cannot come up without it), and an empty
+    # server/ used to crash `cp "$td/server/"*` AFTER the stop, forcing a rollback
+    # of a working system. Checking before the destructive phase leaves the
+    # service untouched and needs no rollback.
+    if [[ ! -d "$td/server" ]] || ! compgen -G "$td/server/*" > /dev/null; then
+        log_error "Incomplete backup: missing server config (server/ is empty) - restore aborted."
+        return 1
+    fi
+
     log "Stopping service..."
     systemctl stop awg-quick@awg0 || log_warn "Service not stopped."
 
@@ -608,15 +618,23 @@ restore_backup() {
         # globs - never touch scripts, server keys, backups/, logs, .lock,
         # awgsetup_cfg.init.
         rm -f "$AWG_DIR"/*.conf "$AWG_DIR"/*.png "$AWG_DIR"/*.vpnuri 2>/dev/null || true
-        if ! cp -a "$td/clients/"* "$AWG_DIR/"; then
-            log_error "Error copying clients — restore aborted (triggering rollback)."
-            return 1
+        # An empty clients/ is a valid case (a server with no client configs):
+        # the prune above already gives a clean replacement, so we just skip the
+        # copy (without compgen the bare glob "$td/clients/"* would stay literal
+        # and crash cp -> rollback).
+        if compgen -G "$td/clients/*" > /dev/null; then
+            if ! cp -a "$td/clients/"* "$AWG_DIR/"; then
+                log_error "Error copying clients — restore aborted (triggering rollback)."
+                return 1
+            fi
+            chmod 600 "$AWG_DIR"/*.conf 2>/dev/null
+            chmod 600 "$AWG_DIR"/*.png 2>/dev/null
+            chmod 600 "$AWG_DIR"/*.vpnuri 2>/dev/null
+            chmod 600 "$CONFIG_FILE" 2>/dev/null
+            log_debug "Client files restored to $AWG_DIR"
+        else
+            log_debug "Backup has no client files (clients/ empty) - skipping copy."
         fi
-        chmod 600 "$AWG_DIR"/*.conf 2>/dev/null
-        chmod 600 "$AWG_DIR"/*.png 2>/dev/null
-        chmod 600 "$AWG_DIR"/*.vpnuri 2>/dev/null
-        chmod 600 "$CONFIG_FILE" 2>/dev/null
-        log_debug "Client files restored to $AWG_DIR"
     fi
 
     if [[ -d "$td/keys" ]]; then

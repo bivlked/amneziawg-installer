@@ -2300,19 +2300,31 @@ check_expired_clients() {
 
 # Установка cron-задачи для автоудаления
 install_expiry_cron() {
-    if [[ -f "$EXPIRY_CRON" ]]; then
-        log_debug "Cron-задача expiry уже установлена."
-        return 0
-    fi
-    cat > "$EXPIRY_CRON" << CRONEOF
-# AmneziaWG client expiry check — every 5 minutes
+    # Идемпотентность по СОДЕРЖИМОМУ, не по факту существования файла. Раньше
+    # ранний выход «файл есть» оставлял stale-пути после restore/переноса/
+    # --conf-dir: cron продолжал смотреть в старый AWG_DIR. Генерируем ожидаемый
+    # текст и заменяем файл, только если он отличается.
+    local _cron_tmp
+    _cron_tmp=$(awg_mktemp "$(dirname "$EXPIRY_CRON")") || { log_error "Ошибка mktemp для cron expiry"; return 1; }
+    cat > "$_cron_tmp" << CRONEOF
+# AmneziaWG client expiry check - every 5 minutes
 AWG_DIR="${AWG_DIR}"
 CONFIG_FILE="${CONFIG_FILE}"
 SERVER_CONF_FILE="${SERVER_CONF_FILE}"
 */5 * * * * root /bin/bash -c 'source "${AWG_DIR}/awg_common.sh" || exit 1; check_expired_clients' >> "${AWG_DIR}/expiry.log" 2>&1
 CRONEOF
-    chmod 644 "$EXPIRY_CRON"
-    log "Cron-задача expiry установлена: $EXPIRY_CRON"
+    if [[ -f "$EXPIRY_CRON" ]] && cmp -s "$_cron_tmp" "$EXPIRY_CRON"; then
+        rm -f "$_cron_tmp"
+        log_debug "Cron-задача expiry уже актуальна."
+        return 0
+    fi
+    chmod 644 "$_cron_tmp"
+    if ! mv -f "$_cron_tmp" "$EXPIRY_CRON"; then
+        rm -f "$_cron_tmp"
+        log_error "Ошибка установки cron-задачи expiry: $EXPIRY_CRON"
+        return 1
+    fi
+    log "Cron-задача expiry установлена/обновлена: $EXPIRY_CRON"
 }
 
 # Удаление expiry-данных клиента
