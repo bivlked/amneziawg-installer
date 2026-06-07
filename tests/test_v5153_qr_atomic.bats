@@ -88,14 +88,16 @@ SHIM
 }
 
 @test "C4: generate_qr uses a temp file and checks the mv (RU source)" {
-    run grep -E 'tmp_png="\$\{png_file\}\.tmp\.\$\$"' "$BATS_TEST_DIRNAME/../awg_common.sh"
+    # Temp now comes from awg_mktemp (shared cleanup registry) instead of a
+    # manual ${png_file}.tmp.$$; the atomic mv check is unchanged.
+    run grep -E 'tmp_png=\$\(awg_mktemp "\$AWG_DIR"\)' "$BATS_TEST_DIRNAME/../awg_common.sh"
     [ "$status" -eq 0 ]
     run grep -E 'if ! mv -f "\$tmp_png" "\$png_file"' "$BATS_TEST_DIRNAME/../awg_common.sh"
     [ "$status" -eq 0 ]
 }
 
 @test "C4: generate_qr uses a temp file and checks the mv (EN source)" {
-    run grep -E 'tmp_png="\$\{png_file\}\.tmp\.\$\$"' "$BATS_TEST_DIRNAME/../awg_common_en.sh"
+    run grep -E 'tmp_png=\$\(awg_mktemp "\$AWG_DIR"\)' "$BATS_TEST_DIRNAME/../awg_common_en.sh"
     [ "$status" -eq 0 ]
     run grep -E 'if ! mv -f "\$tmp_png" "\$png_file"' "$BATS_TEST_DIRNAME/../awg_common_en.sh"
     [ "$status" -eq 0 ]

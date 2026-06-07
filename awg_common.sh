@@ -1437,10 +1437,12 @@ generate_qr() {
     fi
 
     # C4: генерируем во временный файл и атомарно переносим (mv) - чтобы
-    # прерывание qrencode не оставило частичный/битый PNG поверх рабочего
-    # (как уже сделано в generate_qr_vpnuri). tmp лежит в той же папке, что и
-    # png_file, поэтому mv - атомарный rename на одной ФС.
-    local tmp_png="${png_file}.tmp.$$"
+    # прерывание qrencode не оставило частичный/битый PNG поверх рабочего.
+    # awg_mktemp "$AWG_DIR" кладёт tmp в ту же папку (mv = атомарный rename на
+    # одной ФС) И регистрирует его в общем cleanup-реестре, поэтому SIGKILL
+    # между qrencode и mv не оставит осиротевший tmp.
+    local tmp_png
+    tmp_png=$(awg_mktemp "$AWG_DIR") || { log_error "Ошибка mktemp для QR '$name'"; return 1; }
     if ! qrencode -t png -o "$tmp_png" < "$conf_file"; then
         log_error "Ошибка генерации QR-кода для '$name'"
         rm -f "$tmp_png"
@@ -1618,8 +1620,17 @@ generate_vpn_uri() {
     fi
     rm -f "$perl_err"
 
-    echo "$vpn_uri" > "$uri_file"
-    chmod 600 "$uri_file"
+    # Пишем через tmp + atomic mv (как .conf/.png), чтобы обрыв записи не оставил
+    # пустой/обрезанный .vpnuri поверх рабочего.
+    local _uri_tmp
+    _uri_tmp=$(awg_mktemp "$AWG_DIR") || { log_error "Ошибка mktemp для vpn:// URI '$name'"; return 1; }
+    printf '%s\n' "$vpn_uri" > "$_uri_tmp" || { rm -f "$_uri_tmp"; log_error "Ошибка записи vpn:// URI для '$name'"; return 1; }
+    chmod 600 "$_uri_tmp"
+    if ! mv -f "$_uri_tmp" "$uri_file"; then
+        rm -f "$_uri_tmp"
+        log_error "Ошибка сохранения vpn:// URI для '$name'"
+        return 1
+    fi
     log_debug "vpn:// URI для '$name' создан: $uri_file"
     return 0
 }
@@ -1634,7 +1645,7 @@ generate_qr_vpnuri() {
     local name="$1"
     local uri_file="$AWG_DIR/${name}.vpnuri"
     local png_file="$AWG_DIR/${name}.vpnuri.png"
-    local tmp_png="${png_file}.tmp.$$"
+    local tmp_png
 
     if [[ ! -f "$uri_file" ]]; then
         log_error "vpn:// URI для '$name' не найден: $uri_file"
@@ -1645,6 +1656,9 @@ generate_qr_vpnuri() {
         log_warn "qrencode не установлен, QR vpn:// не создан для '$name'."
         return 1
     fi
+
+    # tmp через awg_mktemp (общий cleanup-реестр + atomic mv в той же ФС).
+    tmp_png=$(awg_mktemp "$AWG_DIR") || { log_error "Ошибка mktemp для QR vpn:// '$name'"; return 1; }
 
     # Флаги qrencode для длинных vpn:// URI с PSK (issue #72):
     #   -s 6  размер модуля 6 пикселей вместо дефолтных 3 - это и есть основной фикс.
@@ -1680,6 +1694,17 @@ generate_qr_vpnuri() {
 # до коммита пира в серверный конфиг.
 _rollback_client_artifacts() {
     rm -f "$KEYS_DIR/$1.private" "$KEYS_DIR/$1.public" "$AWG_DIR/$1.conf"
+}
+
+# Полный набор клиентских артефактов (conf/png/vpnuri/vpnuri.png + ключи).
+# Единый список для `manage remove` и автоудаления истёкших, чтобы пути не
+# расходились (раньше expiry-cleanup забывал .vpnuri.png). НЕ трогает expiry-метку
+# и cron - это делает вызывающий (remove_client_expiry / rm "$efile").
+_remove_client_files() {
+    local name="$1"
+    rm -f "$AWG_DIR/${name}.conf" "$AWG_DIR/${name}.png" \
+        "$AWG_DIR/${name}.vpnuri" "$AWG_DIR/${name}.vpnuri.png" \
+        "$KEYS_DIR/${name}.private" "$KEYS_DIR/${name}.public"
 }
 
 # Полный цикл создания клиента:
@@ -2253,8 +2278,7 @@ check_expired_clients() {
         if [[ $now -ge $expires_at ]]; then
             log "Клиент '$name' истёк. Удаление..."
             if remove_peer_from_server "$name" 2>/dev/null; then
-                rm -f "$AWG_DIR/$name.conf" "$AWG_DIR/$name.png" "$AWG_DIR/$name.vpnuri"
-                rm -f "$KEYS_DIR/${name}.private" "$KEYS_DIR/${name}.public"
+                _remove_client_files "$name"
                 rm -f "$efile"
                 log "Клиент '$name' удалён (истёк)."
                 ((removed++))

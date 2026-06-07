@@ -1646,9 +1646,7 @@ case $COMMAND in
             for _rname in "${_valid_names[@]}"; do
                 log "Удаление '$_rname'..."
                 if remove_peer_from_server "$_rname"; then
-                    rm -f "$AWG_DIR/$_rname.conf" "$AWG_DIR/$_rname.png" \
-                        "$AWG_DIR/$_rname.vpnuri" "$AWG_DIR/$_rname.vpnuri.png"
-                    rm -f "$KEYS_DIR/${_rname}.private" "$KEYS_DIR/${_rname}.public"
+                    _remove_client_files "$_rname"
                     remove_client_expiry "$_rname"
                     log "Клиент '$_rname' удалён."
                     ((_removed++))

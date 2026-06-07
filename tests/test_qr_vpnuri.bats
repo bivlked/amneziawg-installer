@@ -145,8 +145,11 @@ SHIM
 }
 
 @test "manage remove cleans up .vpnuri.png (RU+EN scripts)" {
+    # Cleanup is now delegated to the shared _remove_client_files helper (which
+    # includes .vpnuri.png - asserted in test_codereview_artifacts.bats), so
+    # manage remove must call that helper rather than inline-rm the artifacts.
     local RU_MGMT="${BATS_TEST_DIRNAME}/../manage_amneziawg.sh"
     local EN_MGMT="${BATS_TEST_DIRNAME}/../manage_amneziawg_en.sh"
-    grep -qE '_rname\.vpnuri\.png' "$RU_MGMT"
-    grep -qE '_rname\.vpnuri\.png' "$EN_MGMT"
+    grep -qE '_remove_client_files "\$_rname"' "$RU_MGMT"
+    grep -qE '_remove_client_files "\$_rname"' "$EN_MGMT"
 }

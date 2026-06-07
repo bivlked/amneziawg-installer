@@ -1442,10 +1442,12 @@ generate_qr() {
     fi
 
     # C4: generate into a temp file and move it into place atomically, so an
-    # interrupted qrencode cannot leave a partial/corrupt PNG over the working
-    # one (as generate_qr_vpnuri already does). tmp sits in the same directory
-    # as png_file, so mv is an atomic rename on one filesystem.
-    local tmp_png="${png_file}.tmp.$$"
+    # interrupted qrencode cannot leave a partial/corrupt PNG over the working one.
+    # awg_mktemp "$AWG_DIR" puts the tmp in the same directory (mv = atomic rename
+    # on one filesystem) AND registers it in the shared cleanup registry, so a
+    # SIGKILL between qrencode and mv leaves no orphan tmp.
+    local tmp_png
+    tmp_png=$(awg_mktemp "$AWG_DIR") || { log_error "mktemp error for QR '$name'"; return 1; }
     if ! qrencode -t png -o "$tmp_png" < "$conf_file"; then
         log_error "Failed to generate QR code for '$name'"
         rm -f "$tmp_png"
@@ -1624,8 +1626,17 @@ generate_vpn_uri() {
     fi
     rm -f "$perl_err"
 
-    echo "$vpn_uri" > "$uri_file"
-    chmod 600 "$uri_file"
+    # Write via tmp + atomic mv (like .conf/.png) so an interrupted write never
+    # leaves an empty/truncated .vpnuri on top of a working one.
+    local _uri_tmp
+    _uri_tmp=$(awg_mktemp "$AWG_DIR") || { log_error "mktemp error for vpn:// URI '$name'"; return 1; }
+    printf '%s\n' "$vpn_uri" > "$_uri_tmp" || { rm -f "$_uri_tmp"; log_error "Error writing vpn:// URI for '$name'"; return 1; }
+    chmod 600 "$_uri_tmp"
+    if ! mv -f "$_uri_tmp" "$uri_file"; then
+        rm -f "$_uri_tmp"
+        log_error "Error saving vpn:// URI for '$name'"
+        return 1
+    fi
     log_debug "vpn:// URI for '$name' created: $uri_file"
     return 0
 }
@@ -1640,7 +1651,7 @@ generate_qr_vpnuri() {
     local name="$1"
     local uri_file="$AWG_DIR/${name}.vpnuri"
     local png_file="$AWG_DIR/${name}.vpnuri.png"
-    local tmp_png="${png_file}.tmp.$$"
+    local tmp_png
 
     if [[ ! -f "$uri_file" ]]; then
         log_error "vpn:// URI for '$name' not found: $uri_file"
@@ -1651,6 +1662,9 @@ generate_qr_vpnuri() {
         log_warn "qrencode is not installed, vpn:// QR not created for '$name'."
         return 1
     fi
+
+    # tmp via awg_mktemp (shared cleanup registry + atomic mv on the same FS).
+    tmp_png=$(awg_mktemp "$AWG_DIR") || { log_error "mktemp error for vpn:// QR '$name'"; return 1; }
 
     # qrencode flags for long vpn:// URIs with PSK (issue #72):
     #   -s 6  module size of 6 pixels instead of the default 3 - this is the real fix.
@@ -1687,6 +1701,17 @@ generate_qr_vpnuri() {
 # step fails before the peer is committed to the server config.
 _rollback_client_artifacts() {
     rm -f "$KEYS_DIR/$1.private" "$KEYS_DIR/$1.public" "$AWG_DIR/$1.conf"
+}
+
+# Full set of client artifacts (conf/png/vpnuri/vpnuri.png + keys). A single
+# list for `manage remove` and expired-client auto-removal so the paths do not
+# diverge (expiry-cleanup used to forget .vpnuri.png). Does NOT touch the expiry
+# marker or cron - the caller does that (remove_client_expiry / rm "$efile").
+_remove_client_files() {
+    local name="$1"
+    rm -f "$AWG_DIR/${name}.conf" "$AWG_DIR/${name}.png" \
+        "$AWG_DIR/${name}.vpnuri" "$AWG_DIR/${name}.vpnuri.png" \
+        "$KEYS_DIR/${name}.private" "$KEYS_DIR/${name}.public"
 }
 
 # Full client creation cycle:
@@ -2261,8 +2286,7 @@ check_expired_clients() {
         if [[ $now -ge $expires_at ]]; then
             log "Client '$name' expired. Removing..."
             if remove_peer_from_server "$name" 2>/dev/null; then
-                rm -f "$AWG_DIR/$name.conf" "$AWG_DIR/$name.png" "$AWG_DIR/$name.vpnuri"
-                rm -f "$KEYS_DIR/${name}.private" "$KEYS_DIR/${name}.public"
+                _remove_client_files "$name"
                 rm -f "$efile"
                 log "Client '$name' removed (expired)."
                 ((removed++))
