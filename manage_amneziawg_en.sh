@@ -512,9 +512,12 @@ restore_backup() {
         # not invoke functions, and once `trap - RETURN` runs, our
         # trap is off.
         local _rc=$?
-        # Clear RETURN and the local INT/TERM (set below) - otherwise they would
-        # leak past restore_backup (traps have global lifetime).
-        trap - RETURN INT TERM
+        # Clear RETURN and RESTORE the global INT/TERM (restore's local hooks are
+        # set below). A plain `trap -` would reset them to default and the manager
+        # would lose its B1 signal -> cleanup+exit behavior after a restore.
+        trap - RETURN
+        trap '_manage_on_signal 130' INT
+        trap '_manage_on_signal 143' TERM
         if [[ $_restore_ok -eq 0 && $_destructive_ops_started -eq 1 && -n "$_rollback_snap" ]]; then
             _restore_do_rollback "$_rollback_snap" || true
         fi
@@ -610,8 +613,10 @@ restore_backup() {
     # server/ used to crash `cp "$td/server/"*` AFTER the stop, forcing a rollback
     # of a working system. Checking before the destructive phase leaves the
     # service untouched and needs no rollback.
-    if [[ ! -d "$td/server" ]] || ! compgen -G "$td/server/*" > /dev/null; then
-        log_error "Incomplete backup: missing server config (server/ is empty) - restore aborted."
+    local _srv_base
+    _srv_base=$(basename "$SERVER_CONF_FILE")
+    if [[ ! -f "$td/server/$_srv_base" ]]; then
+        log_error "Incomplete backup: missing server config ($_srv_base) - restore aborted."
         return 1
     fi
 
@@ -1622,7 +1627,7 @@ case $COMMAND in
                 fi
                 if [[ -n "$EXPIRES_DURATION" ]]; then
                     if set_client_expiry "$_cname" "$EXPIRES_DURATION"; then
-                        install_expiry_cron
+                        install_expiry_cron || { log_error "Client '$_cname' created with an expiry, but the auto-removal cron was NOT installed - the expired client will not be removed automatically."; _cmd_rc=1; }
                     else
                         # Format is validated above, so this is a write failure
                         # (FS/permissions). The client exists and works but has NO

@@ -43,10 +43,11 @@ load test_helper
 
 # --- A7: restore completeness + empty-clients no-op ------------------------
 
-# Mirror of the A7 pre-stop server-completeness check.
+# Mirror of the A7 pre-stop server-completeness check (looks for the actual
+# server config by basename, not just any file in server/).
 server_complete_ok() {
     local td="$1"
-    [[ -d "$td/server" ]] && compgen -G "$td/server/*" > /dev/null
+    [[ -f "$td/server/$(basename "$SERVER_CONF_FILE")" ]]
 }
 
 # Mirror of the A7-guarded clients-restore fragment.
@@ -61,9 +62,12 @@ restore_clients_fragment() {
     return 0
 }
 
-@test "A7 server completeness: empty or missing server/ is rejected" {
+@test "A7 server completeness: empty, missing, or non-config server/ is rejected" {
     local td="$TEST_DIR/x"
     mkdir -p "$td/server"            # present but empty
+    run server_complete_ok "$td"
+    [ "$status" -ne 0 ]
+    echo readme > "$td/server/README"   # a file, but not the server config
     run server_complete_ok "$td"
     [ "$status" -ne 0 ]
     rm -rf "$td/server"             # missing entirely
@@ -71,10 +75,10 @@ restore_clients_fragment() {
     [ "$status" -ne 0 ]
 }
 
-@test "A7 server completeness: a populated server/ passes" {
+@test "A7 server completeness: a server/ holding the actual config passes" {
     local td="$TEST_DIR/x"
     mkdir -p "$td/server"
-    echo "[Interface]" > "$td/server/awg0.conf"
+    echo "[Interface]" > "$td/server/$(basename "$SERVER_CONF_FILE")"
     run server_complete_ok "$td"
     [ "$status" -eq 0 ]
 }
@@ -100,9 +104,9 @@ restore_clients_fragment() {
 @test "A7 source: server completeness is checked BEFORE the service stop" {
     for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
         local check_line stop_line
-        check_line=$(grep -n 'compgen -G "\$td/server/\*"' "$BATS_TEST_DIRNAME/../$f" | head -1 | cut -d: -f1)
+        check_line=$(grep -n '! -f "\$td/server/\$_srv_base"' "$BATS_TEST_DIRNAME/../$f" | head -1 | cut -d: -f1)
         stop_line=$(grep -n 'systemctl stop awg-quick@awg0' "$BATS_TEST_DIRNAME/../$f" | head -1 | cut -d: -f1)
-        [ -n "$check_line" ] || { echo "$f: no server completeness check"; false; }
+        [ -n "$check_line" ] || { echo "$f: no server config completeness check"; false; }
         [ "$check_line" -lt "$stop_line" ] || { echo "$f: completeness check not before stop"; false; }
     done
 }

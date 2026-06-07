@@ -509,9 +509,12 @@ restore_backup() {
         # Реентранс невозможен: `local` и `trap -` не вызывают функций,
         # а после `trap - RETURN` наш trap уже снят.
         local _rc=$?
-        # Снимаем и RETURN, и локальные INT/TERM (выставлены ниже) - иначе они
-        # «утекли» бы за пределы restore_backup (trap имеет global lifetime).
-        trap - RETURN INT TERM
+        # Снимаем RETURN и ВОССТАНАВЛИВАЕМ глобальные INT/TERM (локальные хуки
+        # restore выставлены ниже). Просто `trap -` сбросил бы их в default и
+        # менеджер после restore потерял бы B1-поведение signal -> cleanup+exit.
+        trap - RETURN
+        trap '_manage_on_signal 130' INT
+        trap '_manage_on_signal 143' TERM
         if [[ $_restore_ok -eq 0 && $_destructive_ops_started -eq 1 && -n "$_rollback_snap" ]]; then
             _restore_do_rollback "$_rollback_snap" || true
         fi
@@ -606,8 +609,10 @@ restore_backup() {
     # бесполезен (VPN без него не поднять), а пустой server/ ронял `cp "$td/server/"*`
     # уже ПОСЛЕ stop и форсил откат рабочей системы. Проверяем до destructive-фазы:
     # сервис не трогаем, откат не нужен.
-    if [[ ! -d "$td/server" ]] || ! compgen -G "$td/server/*" > /dev/null; then
-        log_error "Бэкап неполный: отсутствует серверный конфиг (server/ пуст) - восстановление отменено."
+    local _srv_base
+    _srv_base=$(basename "$SERVER_CONF_FILE")
+    if [[ ! -f "$td/server/$_srv_base" ]]; then
+        log_error "Бэкап неполный: отсутствует серверный конфиг ($_srv_base) - восстановление отменено."
         return 1
     fi
 
@@ -1616,7 +1621,7 @@ case $COMMAND in
                 fi
                 if [[ -n "$EXPIRES_DURATION" ]]; then
                     if set_client_expiry "$_cname" "$EXPIRES_DURATION"; then
-                        install_expiry_cron
+                        install_expiry_cron || { log_error "Клиент '$_cname' создан со сроком, но cron автоудаления НЕ установлен - истёкший клиент сам не удалится."; _cmd_rc=1; }
                     else
                         # Формат проверен выше, значит сбой записи expiry (FS/права).
                         # Клиент создан и рабочий, но БЕЗ авто-срока - сигналим явно,

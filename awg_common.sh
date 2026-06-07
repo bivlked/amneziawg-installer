@@ -2306,13 +2306,20 @@ install_expiry_cron() {
     # текст и заменяем файл, только если он отличается.
     local _cron_tmp
     _cron_tmp=$(awg_mktemp "$(dirname "$EXPIRY_CRON")") || { log_error "Ошибка mktemp для cron expiry"; return 1; }
-    cat > "$_cron_tmp" << CRONEOF
+    # Проверяем успех записи ДО cmp/mv: иначе сбой (диск/права) мог бы атомарно
+    # заменить рабочий cron пустым/частичным tmp.
+    if ! cat > "$_cron_tmp" << CRONEOF
 # AmneziaWG client expiry check - every 5 minutes
 AWG_DIR="${AWG_DIR}"
 CONFIG_FILE="${CONFIG_FILE}"
 SERVER_CONF_FILE="${SERVER_CONF_FILE}"
 */5 * * * * root /bin/bash -c 'source "${AWG_DIR}/awg_common.sh" || exit 1; check_expired_clients' >> "${AWG_DIR}/expiry.log" 2>&1
 CRONEOF
+    then
+        rm -f "$_cron_tmp"
+        log_error "Ошибка записи cron-задачи expiry"
+        return 1
+    fi
     if [[ -f "$EXPIRY_CRON" ]] && cmp -s "$_cron_tmp" "$EXPIRY_CRON"; then
         rm -f "$_cron_tmp"
         log_debug "Cron-задача expiry уже актуальна."

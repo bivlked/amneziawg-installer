@@ -76,8 +76,12 @@ EOF
         [ "$status" -eq 0 ] || { echo "$f restore missing INT rollback hook"; false; }
         run grep -E "_restore_cleanup; exit 143' TERM" "$BATS_TEST_DIRNAME/../$f"
         [ "$status" -eq 0 ] || { echo "$f restore missing TERM rollback hook"; false; }
-        # _restore_cleanup must clear RETURN and the local INT/TERM hooks.
-        run grep -E 'trap - RETURN INT TERM' "$BATS_TEST_DIRNAME/../$f"
-        [ "$status" -eq 0 ] || { echo "$f restore does not clear INT/TERM"; false; }
+        # _restore_cleanup must clear RETURN and RESTORE the global INT/TERM
+        # handlers (not reset them to default), so B1 survives a restore.
+        run grep -E 'trap - RETURN$' "$BATS_TEST_DIRNAME/../$f"
+        [ "$status" -eq 0 ] || { echo "$f restore does not clear RETURN"; false; }
+        run grep -cE "_manage_on_signal 1(30|43)'" "$BATS_TEST_DIRNAME/../$f"
+        # 2 global installs + 2 re-arms inside _restore_cleanup = 4 occurrences.
+        [ "$output" -ge 4 ] || { echo "$f does not re-arm global signal handlers after restore"; false; }
     done
 }

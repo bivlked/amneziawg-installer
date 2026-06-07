@@ -36,10 +36,14 @@ load test_helper
 }
 
 @test "A1 source: post-create expiry failure sets a non-zero command result" {
-    # The else branch on set_client_expiry must exist and flag _cmd_rc=1.
+    # The set_client_expiry if/else block must flag _cmd_rc=1 on failure, and the
+    # cron-install rc inside the then-branch must also be checked (Codex #3).
     for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
-        run grep -Pzo 'set_client_expiry "\$_cname" "\$EXPIRES_DURATION"; then\s*\n\s*install_expiry_cron\s*\n\s*else' "$BATS_TEST_DIRNAME/../$f"
-        [ "$status" -eq 0 ] || { echo "$f missing else branch on set_client_expiry"; false; }
+        local block
+        block=$(grep -A10 'if set_client_expiry "\$_cname" "\$EXPIRES_DURATION"; then' "$BATS_TEST_DIRNAME/../$f")
+        echo "$block" | grep -q 'else' || { echo "$f: no else on set_client_expiry"; false; }
+        echo "$block" | grep -q '_cmd_rc=1' || { echo "$f: expiry failure does not set _cmd_rc=1"; false; }
+        echo "$block" | grep -qE 'install_expiry_cron \|\|' || { echo "$f: cron-install rc not checked"; false; }
     done
 }
 
