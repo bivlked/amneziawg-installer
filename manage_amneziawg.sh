@@ -44,14 +44,29 @@ manage_mktempdir() {
     echo "$d"
 }
 
+_manage_cleaned=0
 _manage_cleanup() {
+    # Идемпотентно: на INT/TERM зовётся из сигнального обработчика, затем ещё раз
+    # на EXIT - повтор должен быть no-op.
+    [[ "$_manage_cleaned" -eq 1 ]] && return 0
+    _manage_cleaned=1
     local d
     for d in "${_manage_temp_dirs[@]}"; do
         [[ -d "$d" ]] && rm -rf "$d"
     done
     type _awg_cleanup &>/dev/null && _awg_cleanup
 }
-trap _manage_cleanup EXIT INT TERM
+# На INT/TERM раньше cleanup срабатывал, но скрипт НЕ завершался - выполнение шло
+# дальше после прерванной команды, и cleanup повторялся на EXIT. Теперь сигнал =
+# cleanup + явный выход 130/143. restore_backup на время destructive-фазы ставит
+# СВОЙ INT/TERM-обработчик (с откатом), затем снимает его в _restore_cleanup.
+_manage_on_signal() {
+    _manage_cleanup
+    exit "$1"
+}
+trap _manage_cleanup EXIT
+trap '_manage_on_signal 130' INT
+trap '_manage_on_signal 143' TERM
 
 # --- Обработка аргументов ---
 COMMAND=""
@@ -494,7 +509,9 @@ restore_backup() {
         # Реентранс невозможен: `local` и `trap -` не вызывают функций,
         # а после `trap - RETURN` наш trap уже снят.
         local _rc=$?
-        trap - RETURN
+        # Снимаем и RETURN, и локальные INT/TERM (выставлены ниже) - иначе они
+        # «утекли» бы за пределы restore_backup (trap имеет global lifetime).
+        trap - RETURN INT TERM
         if [[ $_restore_ok -eq 0 && $_destructive_ops_started -eq 1 && -n "$_rollback_snap" ]]; then
             _restore_do_rollback "$_rollback_snap" || true
         fi
@@ -504,6 +521,13 @@ restore_backup() {
         return $_rc
     }
     trap _restore_cleanup RETURN
+    # INT/TERM в ходе restore: тот же rollback+cleanup, что и на обычном return
+    # (_restore_cleanup видит локальные _restore_ok/_rollback_snap/td), затем выход
+    # с сигнальным кодом. Перекрывает глобальный _manage_on_signal, чтобы прерывание
+    # destructive-фазы не оставило систему без отката. _restore_cleanup сам снимет
+    # эти хуки (trap - INT TERM выше).
+    trap '_restore_cleanup; exit 130' INT
+    trap '_restore_cleanup; exit 143' TERM
 
     log "Создание бэкапа текущей..."
     # --no-prune: выбранный для восстановления $bf лежит в той же папке бэкапов;

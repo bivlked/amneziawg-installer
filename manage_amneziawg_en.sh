@@ -44,14 +44,29 @@ manage_mktempdir() {
     echo "$d"
 }
 
+_manage_cleaned=0
 _manage_cleanup() {
+    # Idempotent: on INT/TERM it is called from the signal handler, then again on
+    # EXIT - the repeat must be a no-op.
+    [[ "$_manage_cleaned" -eq 1 ]] && return 0
+    _manage_cleaned=1
     local d
     for d in "${_manage_temp_dirs[@]}"; do
         [[ -d "$d" ]] && rm -rf "$d"
     done
     type _awg_cleanup &>/dev/null && _awg_cleanup
 }
-trap _manage_cleanup EXIT INT TERM
+# On INT/TERM the cleanup used to run but the script did NOT exit - execution
+# continued past the interrupted command and cleanup ran again on EXIT. A signal
+# now means cleanup + explicit 130/143. restore_backup installs its OWN INT/TERM
+# handler (with rollback) for its destructive phase and clears it in _restore_cleanup.
+_manage_on_signal() {
+    _manage_cleanup
+    exit "$1"
+}
+trap _manage_cleanup EXIT
+trap '_manage_on_signal 130' INT
+trap '_manage_on_signal 143' TERM
 
 # --- Argument handling ---
 COMMAND=""
@@ -497,7 +512,9 @@ restore_backup() {
         # not invoke functions, and once `trap - RETURN` runs, our
         # trap is off.
         local _rc=$?
-        trap - RETURN
+        # Clear RETURN and the local INT/TERM (set below) - otherwise they would
+        # leak past restore_backup (traps have global lifetime).
+        trap - RETURN INT TERM
         if [[ $_restore_ok -eq 0 && $_destructive_ops_started -eq 1 && -n "$_rollback_snap" ]]; then
             _restore_do_rollback "$_rollback_snap" || true
         fi
@@ -507,6 +524,13 @@ restore_backup() {
         return $_rc
     }
     trap _restore_cleanup RETURN
+    # INT/TERM during restore: same rollback+cleanup as a normal return
+    # (_restore_cleanup sees the local _restore_ok/_rollback_snap/td), then exit
+    # with the signal code. Overrides the global _manage_on_signal so interrupting
+    # the destructive phase does not leave the system without a rollback.
+    # _restore_cleanup clears these hooks itself (trap - INT TERM above).
+    trap '_restore_cleanup; exit 130' INT
+    trap '_restore_cleanup; exit 143' TERM
 
     log "Backing up current config..."
     # --no-prune: the backup selected for restore ($bf) lives in the same

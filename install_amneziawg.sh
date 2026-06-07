@@ -34,7 +34,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="e6c6aa4c9155efa1528fb8befb64130ea1b81faa6d83549a3c8f37c78b6bb612"
-MANAGE_SCRIPT_SHA256="1af119e5431058806dfd297ea76f0cb4d50cecd1278372453497b899e943b1b9"
+MANAGE_SCRIPT_SHA256="24c61ed37bf1697396a9dd8ddcae92c4be327ddae8ad82453be680102894aaa5"
 
 # Флаги CLI
 UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
@@ -46,13 +46,27 @@ CLI_ALLOW_IPV6_TUNNEL=0
 
 # --- Автоочистка временных файлов ---
 _install_temp_files=()
+_install_cleaned=0
 _install_cleanup() {
+    # Идемпотентно: на INT/TERM зовётся из сигнального обработчика, затем ещё раз
+    # на EXIT - второй вызов должен быть no-op.
+    [[ "$_install_cleaned" -eq 1 ]] && return 0
+    _install_cleaned=1
     local f
     for f in "${_install_temp_files[@]}"; do [[ -f "$f" ]] && rm -f "$f"; done
     # Очистка временных файлов из awg_common.sh (если уже подключён через source)
     type _awg_cleanup &>/dev/null && _awg_cleanup
 }
-trap _install_cleanup EXIT INT TERM
+# На INT/TERM раньше cleanup срабатывал, но скрипт НЕ завершался - выполнение
+# продолжалось после прерванной команды (опасно посреди apt/dpkg/правки конфигов),
+# и cleanup ещё раз шёл на EXIT. Теперь сигнал = cleanup + явный выход 130/143.
+_install_on_signal() {
+    _install_cleanup
+    exit "$1"
+}
+trap _install_cleanup EXIT
+trap '_install_on_signal 130' INT
+trap '_install_on_signal 143' TERM
 
 # --- Обработка аргументов ---
 while [[ $# -gt 0 ]]; do
