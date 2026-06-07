@@ -717,10 +717,37 @@ modify_client() {
 
     case "$param" in
         DNS)
-            if ! [[ "$value" =~ ^[0-9a-fA-F.:,\ ]+$ ]]; then
-                log_error "Invalid DNS: '$value' (expected comma-separated IPs)"
-                return 1
-            fi ;;
+            # Structural validation of the DNS list. The old charset-only regex
+            # ^[0-9a-fA-F.:,\ ]+$ let garbage through ('abc' - a-f letters;
+            # '999.999.999.999' - out of range). DNS is IP-only by contract (no
+            # FQDN), so each element must be a bare IPv4 or IPv6, like Endpoint/AllowedIPs.
+            case "$value" in
+                *$'\n'*|*$'\r'*|*\\*|*\"*|*\'*|"")
+                    log_error "Invalid DNS: '$value'"
+                    return 1 ;;
+            esac
+            case "$value" in
+                ,*|*,|*,,*)
+                    log_error "Invalid DNS '$value': empty list element (stray comma)"
+                    return 1 ;;
+            esac
+            local _dns_tok _dns_ifs="$IFS"
+            IFS=','
+            for _dns_tok in $value; do
+                _dns_tok="${_dns_tok//[[:space:]]/}"
+                if [[ -z "$_dns_tok" ]]; then
+                    IFS="$_dns_ifs"
+                    log_error "Invalid DNS '$value': empty list element (stray comma)"
+                    return 1
+                fi
+                if ! _valid_ipv4 "$_dns_tok" && ! _valid_ipv6 "$_dns_tok"; then
+                    IFS="$_dns_ifs"
+                    log_error "Invalid DNS '$value': '$_dns_tok' is not a valid IPv4/IPv6 address"
+                    return 1
+                fi
+            done
+            IFS="$_dns_ifs"
+            ;;
         PersistentKeepalive)
             if ! [[ "$value" =~ ^[0-9]+$ ]] || [[ "$value" -gt 65535 ]]; then
                 log_error "Invalid PersistentKeepalive: '$value' (expected: 0-65535)"

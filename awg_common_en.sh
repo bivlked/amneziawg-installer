@@ -189,7 +189,7 @@ get_server_public_ip() {
         https://ipinfo.io/ip
     do
         ip=$(curl -4 -sf --max-time 5 "$svc" 2>/dev/null | tr -d '[:space:]')
-        if [[ -n "$ip" && "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        if [[ -n "$ip" ]] && _valid_ipv4 "$ip"; then
             _CACHED_PUBLIC_IP="$ip"
             # Observability: write trace to LOG_FILE directly. Never to stdout
             # (the function's stdout IS the IP; any extra bytes corrupt the
@@ -224,7 +224,7 @@ _try_local_ip() {
         | cut -d/ -f1 \
         | grep -v '^127\.' \
         | head -1)
-    [[ -n "$ip" && "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+    { [[ -n "$ip" ]] && _valid_ipv4 "$ip"; } || return 1
     echo "$ip"
     return 0
 }

@@ -712,10 +712,37 @@ modify_client() {
 
     case "$param" in
         DNS)
-            if ! [[ "$value" =~ ^[0-9a-fA-F.:,\ ]+$ ]]; then
-                log_error "Невалидный DNS: '$value' (допустимы IP-адреса через запятую)"
-                return 1
-            fi ;;
+            # Структурная проверка списка DNS. Старый charset-only regex
+            # ^[0-9a-fA-F.:,\ ]+$ пропускал мусор ('abc' - буквы a-f; '999.999.999.999' -
+            # вне диапазона). DNS по контракту - только IP через запятую (без FQDN),
+            # поэтому каждый элемент = bare IPv4 или IPv6, как у Endpoint/AllowedIPs.
+            case "$value" in
+                *$'\n'*|*$'\r'*|*\\*|*\"*|*\'*|"")
+                    log_error "Невалидный DNS: '$value'"
+                    return 1 ;;
+            esac
+            case "$value" in
+                ,*|*,|*,,*)
+                    log_error "Невалидный DNS '$value': пустой элемент списка (лишняя запятая)"
+                    return 1 ;;
+            esac
+            local _dns_tok _dns_ifs="$IFS"
+            IFS=','
+            for _dns_tok in $value; do
+                _dns_tok="${_dns_tok//[[:space:]]/}"
+                if [[ -z "$_dns_tok" ]]; then
+                    IFS="$_dns_ifs"
+                    log_error "Невалидный DNS '$value': пустой элемент списка (лишняя запятая)"
+                    return 1
+                fi
+                if ! _valid_ipv4 "$_dns_tok" && ! _valid_ipv6 "$_dns_tok"; then
+                    IFS="$_dns_ifs"
+                    log_error "Невалидный DNS '$value': '$_dns_tok' не похож на IPv4/IPv6-адрес"
+                    return 1
+                fi
+            done
+            IFS="$_dns_ifs"
+            ;;
         PersistentKeepalive)
             if ! [[ "$value" =~ ^[0-9]+$ ]] || [[ "$value" -gt 65535 ]]; then
                 log_error "Невалидный PersistentKeepalive: '$value' (допустимо: 0-65535)"
