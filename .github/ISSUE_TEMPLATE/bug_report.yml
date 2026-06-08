@@ -95,9 +95,26 @@ body:
   - type: textarea
     id: diagnostic-output
     attributes:
-      label: Diagnostic output
-      description: Output from the built-in diagnostic command.
-      placeholder: "Paste output of: sudo bash install_amneziawg.sh --diagnostic"
+      label: Installer diagnostic report
+      description: >-
+        Run `sudo bash install_amneziawg.sh --diagnostic`. The command prints only
+        the PATH to a report file; attach the CONTENTS of that file (default
+        /root/awg/diag_<timestamp>.txt). Mask anything sensitive (public IPs,
+        ports, routes) before pasting.
+      placeholder: "Contents of /root/awg/diag_<timestamp>.txt"
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: runtime-diagnose
+    attributes:
+      label: Runtime diagnostics
+      description: >-
+        For an already-running server, also attach the output of
+        `sudo bash /root/awg/manage_amneziawg.sh diagnose` (for mobile-network
+        problems add `--carrier=NAME`), plus `dkms status`. Mask sensitive values.
+      placeholder: "Output of: sudo bash /root/awg/manage_amneziawg.sh diagnose"
       render: text
     validations:
       required: false
