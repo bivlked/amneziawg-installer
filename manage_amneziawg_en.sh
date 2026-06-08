@@ -1286,7 +1286,7 @@ list_clients() {
         if [[ -z "$name" ]]; then continue; fi
         ((tot++))
 
-        local cf="?" png="?" pk="-" ip="-" ip6="-" st="No data"
+        local cf="?" png="?" pk="-" ip="-" ip6="-" st="No data" st_code="no_data"
         local color_start="" color_end=""
         if [[ "$NO_COLOR" -eq 0 ]]; then
             color_end="\033[0m"
@@ -1327,24 +1327,24 @@ list_clients() {
                 if [[ "$handshake" =~ ^[0-9]+$ && "$handshake" -gt 0 ]]; then
                     local diff=$((now - handshake))
                     if [[ $diff -lt 180 ]]; then
-                        st="Active"
+                        st="Active"; st_code="active"
                         [[ "$NO_COLOR" -eq 0 ]] && color_start="\033[0;32m"
                         ((act++))
                     elif [[ $diff -lt 86400 ]]; then
-                        st="Recent"
+                        st="Recent"; st_code="recent"
                         [[ "$NO_COLOR" -eq 0 ]] && color_start="\033[0;33m"
                         ((act++))
                     else
-                        st="No handshake"
+                        st="No handshake"; st_code="no_handshake"
                         [[ "$NO_COLOR" -eq 0 ]] && color_start="\033[0;37m"
                     fi
                 else
-                    st="No handshake"
+                    st="No handshake"; st_code="no_handshake"
                     [[ "$NO_COLOR" -eq 0 ]] && color_start="\033[0;37m"
                 fi
             else
                 pk="?"
-                st="Key error"
+                st="Key error"; st_code="key_error"
                 [[ "$NO_COLOR" -eq 0 ]] && color_start="\033[0;31m"
             fi
         fi
@@ -1360,7 +1360,7 @@ list_clients() {
         if [[ "$JSON_OUTPUT" -eq 1 ]]; then
             local _ip6_val="${ip6}"
             [[ "$_ip6_val" == "-" ]] && _ip6_val=""
-            json_entries+=("{\"name\":\"$(json_escape "$name")\",\"ip\":\"$(json_escape "$ip")\",\"client_ipv6\":\"$(json_escape "$_ip6_val")\",\"status\":\"$(json_escape "$st")\"}")
+            json_entries+=("{\"name\":\"$(json_escape "$name")\",\"ip\":\"$(json_escape "$ip")\",\"client_ipv6\":\"$(json_escape "$_ip6_val")\",\"status\":\"$(json_escape "$st")\",\"status_code\":\"${st_code}\"}")
         elif [[ $verbose -eq 1 ]]; then
             local ip_display
             if [[ "$ip6" != "-" ]]; then
@@ -1462,15 +1462,15 @@ stats_clients() {
         fi
 
         local hs_str="never"
-        local status="Inactive"
+        local status="Inactive" status_code="inactive"
         if [[ "$handshake" =~ ^[0-9]+$ && "$handshake" -gt 0 ]]; then
             local now
             now=$(date +%s)
             local diff=$((now - handshake))
             if [[ $diff -lt 180 ]]; then
-                status="Active"
+                status="Active"; status_code="active"
             elif [[ $diff -lt 86400 ]]; then
-                status="Recent"
+                status="Recent"; status_code="recent"
             fi
             hs_str=$(date -d "@$handshake" '+%F %T' 2>/dev/null || echo "$handshake")
         fi
@@ -1479,7 +1479,7 @@ stats_clients() {
         total_tx=$((total_tx + tx))
 
         if [[ "$JSON_OUTPUT" -eq 1 ]]; then
-            json_entries+=("{\"name\":\"$(json_escape "$cname")\",\"ip\":\"$(json_escape "$ip")\",\"rx\":$rx,\"tx\":$tx,\"last_handshake\":$handshake,\"status\":\"$(json_escape "$status")\"}")
+            json_entries+=("{\"name\":\"$(json_escape "$cname")\",\"ip\":\"$(json_escape "$ip")\",\"rx\":$rx,\"tx\":$tx,\"last_handshake\":$handshake,\"status\":\"$(json_escape "$status")\",\"status_code\":\"${status_code}\"}")
         else
             local rx_h tx_h
             rx_h=$(format_bytes "$rx")

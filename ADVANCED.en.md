@@ -973,12 +973,13 @@ sudo bash /root/awg/manage_amneziawg.sh stats --json
     "rx": 1332477952,
     "tx": 374083174,
     "last_handshake": 1710312180,
-    "status": "Active"
+    "status": "Active",
+    "status_code": "active"
   }
 ]
 ```
 
-> **Note:** the `status` field is localized (depends on the script language): the EN version emits `Active` / `Recent` / `Inactive`, the RU version emits `Активен` / `Недавно` / `Неактивен`. The same applies to `list --json` (which additionally has `No handshake` / `Key error`). For machine processing, check the actual output of your script version.
+> **Note:** the `status` field is localized (EN `Active` / `Recent` / `Inactive`, RU `Активен` / `Недавно` / `Неактивен`) and is meant for humans. For automation, use the machine-stable `status_code` field - it does not depend on the script language and takes values from a fixed set: `active` (handshake < 3 min), `recent` (< 24 h), `inactive` (stats: no or stale handshake), `no_handshake` (list: no or stale handshake), `key_error` (list: client key not found in the server config), `no_data` (list: not enough data). The `status_code` field is present in both `list --json` and `stats --json`.
 
 ---
 
