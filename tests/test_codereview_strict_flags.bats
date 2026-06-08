@@ -37,7 +37,7 @@ load test_helper
 
 @test "A1 source: post-create expiry failure sets a non-zero command result" {
     # The set_client_expiry if/else block must flag _cmd_rc=1 on failure, and the
-    # cron-install rc inside the then-branch must also be checked (Codex #3).
+    # cron-install rc inside the then-branch must also be checked (review finding #3).
     for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
         local block
         block=$(grep -A10 'if set_client_expiry "\$_cname" "\$EXPIRES_DURATION"; then' "$BATS_TEST_DIRNAME/../$f")
