@@ -52,6 +52,8 @@ Before submitting a PR, ensure:
    done
    ```
 
+   > Note: these two loops cover the six runtime scripts as a quick local shortcut. CI (`shellcheck.yml`) and `scripts/preflight-check.sh` check a wider scope - all tracked `*.sh`, including `scripts/*.sh` and `tests/`. The full local gate is `BASE_REF=origin/main bash scripts/preflight-check.sh`.
+
 3. **Unit tests (bats-core)** pass. The suite grows every release, so there is no fixed count to match - run `bats tests/` and make sure the full suite is green before opening a PR.
    ```bash
    bats tests/

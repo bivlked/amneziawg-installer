@@ -24,6 +24,8 @@
   <img src="https://img.shields.io/badge/AmneziaWG-2.0-blueviolet" alt="AWG 2.0">
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/shellcheck.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/shellcheck.yml/badge.svg" alt="ShellCheck"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/docs-check.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/docs-check.yml/badge.svg" alt="Docs Check"></a>
+  <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/arm-build.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/arm-build.yml/badge.svg" alt="ARM Build"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/stargazers"><img src="https://img.shields.io/github/stars/bivlked/amneziawg-installer?style=flat" alt="Stars"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/network/members"><img src="https://img.shields.io/github/forks/bivlked/amneziawg-installer?style=flat" alt="Forks"></a>
   <img src="https://img.shields.io/github/last-commit/bivlked/amneziawg-installer" alt="Last commit">

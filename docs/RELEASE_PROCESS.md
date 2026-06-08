@@ -128,10 +128,20 @@ A tag push (`git push origin vX.Y.Z`) triggers two independent workflows:
   recording the installer tag, the exact upstream commit, the kernel version and
   the SHA256, so the mutable `arm-packages` assets stay auditable.
 
-The release is not finished until both runs are green. After they are, open the
-rendered README on GitHub and confirm the install and update one-liners point at
-the new tag - a final guard against a stale raw-URL slipping past the automated
-check.
+The release is not finished until both runs are green. Then run this post-publish
+health check:
+
+- The Releases page shows the new tag as "Latest", and that tag equals
+  `SCRIPT_VERSION` and the README version badge.
+- The `arm-packages` release was refreshed by `arm-build.yml` (its assets carry
+  the new installer tag in their `.manifest.json`).
+- Open the rendered README on GitHub and confirm the install and update
+  one-liners point at the new tag - a final guard against a stale raw-URL
+  slipping past the automated check.
+
+Note: `release.yml` only depends on the preflight gate, so the GitHub Release can
+appear before `arm-build.yml` finishes. For a release that advertises ARM
+prebuilt packages, wait for the ARM run to go green before announcing.
 
 If the preflight gate fails on a pushed tag, the release is not published.
 Delete the tag (`git push origin :refs/tags/vX.Y.Z` and `git tag -d vX.Y.Z`),

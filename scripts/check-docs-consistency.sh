@@ -45,14 +45,21 @@ declare -a RESULTS
 _ok()  { echo "PASS: $1"; RESULTS+=("PASS: $1"); PASS=$((PASS+1)); }
 _bad() { echo "FAIL: $1" >&2; RESULTS+=("FAIL: $1"); FAIL=$((FAIL+1)); }
 
-# Файлы документации с внутренними якорями.
-DOC_FILES=(
-    README.md README.en.md
-    ADVANCED.md ADVANCED.en.md
-    CHANGELOG.md CHANGELOG.en.md
-    SECURITY.md CONTRIBUTING.md INSTALL_VPS.md
-    docs/SIGNING_DESIGN.md docs/RELEASE_PROCESS.md docs/ROADMAP.md
-)
+# Файлы документации с внутренними якорями. Обнаруживаются динамически: ВСЕ
+# tracked *.md, чтобы новый markdown (например CODE_OF_CONDUCT.md) автоматически
+# попадал под anchor-валидацию. Раньше список был захардкожен (#4 docs-audit), и
+# новый MD проходил CI без проверки якорей. Спец-проверки ниже (README/CHANGELOG/
+# SECURITY/CONTRIBUTING/ОС-матрица) остаются точечными по своим файлам.
+mapfile -t DOC_FILES < <(git ls-files '*.md' 2>/dev/null | sort)
+if [[ "${#DOC_FILES[@]}" -eq 0 ]]; then
+    # Fallback вне git-дерева: явный базовый набор.
+    DOC_FILES=(
+        README.md README.en.md ADVANCED.md ADVANCED.en.md
+        CHANGELOG.md CHANGELOG.en.md SECURITY.md CONTRIBUTING.md
+        CODE_OF_CONDUCT.md INSTALL_VPS.md
+        docs/SIGNING_DESIGN.md docs/RELEASE_PROCESS.md docs/ROADMAP.md
+    )
+fi
 
 echo "=== check-docs-consistency ==="
 
