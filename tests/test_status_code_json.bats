@@ -6,6 +6,8 @@
 #   active | recent | inactive | no_handshake | key_error | no_data
 # Behavioral tests run list_clients with JSON output; source-level tests cover
 # both list and stats emitters in both language variants.
+#
+# shellcheck disable=SC2034  # VERBOSE_LIST/NO_COLOR are consumed by the eval'd list_clients
 
 load test_helper
 

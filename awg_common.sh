@@ -2148,7 +2148,7 @@ validate_awg_config() {
 # ==============================================================================
 
 EXPIRY_DIR="${AWG_DIR}/expiry"
-EXPIRY_CRON="/etc/cron.d/awg-expiry"
+EXPIRY_CRON="${EXPIRY_CRON:-/etc/cron.d/awg-expiry}"
 
 # Парсинг длительности в секунды: 1h, 12h, 1d, 7d, 30d
 # parse_duration <duration_string>
