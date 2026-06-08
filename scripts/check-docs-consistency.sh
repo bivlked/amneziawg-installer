@@ -28,6 +28,8 @@
 #      (present-tense "не поддерживается / implies full-tunnel"; past-tense
 #      историческая заметка разрешена).
 #   8. Issue-template: placeholder версии нейтральный (не протухающий X.Y.Z).
+#   9. Матрица OS×arch×prebuilt-target: supported Ubuntu-версии без ARM
+#      prebuilt-таргета в arm-build.yml помечены DKMS-only для ARM в INSTALL_VPS.
 
 set -o pipefail
 
@@ -269,6 +271,33 @@ if [[ -f "$bug_tmpl" ]]; then
     fi
 fi
 if [[ "$tmpl_fail" -eq 0 ]]; then _ok "issue-template: placeholder версии нейтральный"; else _bad "issue-template: протухающий placeholder версии"; fi
+
+# --- 9. Матрица OS×arch×prebuilt-target: ARM prebuilt-покрытие согласовано ---
+# arm-build.yml собирает prebuilt ARM .deb только для образов из своей matrix.
+# Заявленные supported Ubuntu-версии без ARM prebuilt-таргета обязаны быть явно
+# помечены DKMS-only для ARM, иначе матрица ОС создаёт впечатление prebuilt там,
+# где его нет (docs-audit #3: docs-check проверял OS и arch как независимые
+# токены, не их пересечение с prebuilt-таргетом). Источник prebuilt-набора - сам
+# arm-build.yml, поэтому проверка не протухнет при добавлении/удалении таргета.
+arm_yml=".github/workflows/arm-build.yml"
+arm_matrix_fail=0
+if [[ -f "$arm_yml" ]]; then
+    mapfile -t arm_ubuntu < <(grep -oP 'image:[[:space:]]*ubuntu:\K[0-9]+\.[0-9]+' "$arm_yml" | sort -u)
+    for os in "${EXPECTED_OS[@]}"; do
+        [[ "$os" =~ ^[0-9]+\.[0-9]+$ ]] || continue   # только Ubuntu version-токены
+        has_prebuilt=0
+        for u in "${arm_ubuntu[@]}"; do [[ "$u" == "$os" ]] && has_prebuilt=1; done
+        [[ "$has_prebuilt" -eq 1 ]] && continue
+        os_re="${os//./\\.}"
+        if ! grep -qiE "${os_re} ARM64.*(DKMS|from source)" INSTALL_VPS.md 2>/dev/null; then
+            echo "  INSTALL_VPS.md: Ubuntu $os без ARM prebuilt-таргета и не помечен DKMS-only для ARM" >&2
+            arm_matrix_fail=1
+        fi
+    done
+else
+    echo "  нет $arm_yml (проверка ARM prebuilt-матрицы)" >&2; arm_matrix_fail=1
+fi
+if [[ "$arm_matrix_fail" -eq 0 ]]; then _ok "ARM prebuilt-покрытие согласовано (OS×arch×target)"; else _bad "ARM prebuilt-покрытие рассинхронизировано"; fi
 
 # --- Summary ---
 echo ""

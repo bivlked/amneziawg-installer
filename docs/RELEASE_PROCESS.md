@@ -89,7 +89,12 @@ Also confirm by hand before tagging:
 - The README version badge, `SCRIPT_VERSION`, and the newest changelog heading
   all agree.
 - Ubuntu / Debian support matrix is current everywhere it is stated (README,
-  installer `--help`, issue template).
+  installer `--help`, issue template). When adding a new OS version, decide its
+  ARM story explicitly: either add a prebuilt target (an `arm-build.yml` matrix
+  entry plus the mapping in `_try_install_prebuilt_arm`) or keep it DKMS-only and
+  document that in INSTALL_VPS.md / ADVANCED. `check-docs-consistency.sh` fails
+  if a supported Ubuntu version has no ARM prebuilt target and is not marked
+  DKMS-only (e.g. Ubuntu 26.04 ARM64 is DKMS-only today).
 - The public roadmap issue
   ([#79](https://github.com/bivlked/amneziawg-installer/issues/79)) reflects the
   release: shipped items move to "Recently shipped" and leave the plan sections,
