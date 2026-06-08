@@ -442,7 +442,7 @@ Options:
   --route-all           Mode: All traffic (0.0.0.0/0)
   --route-amnezia       Mode: Amnezia List + DNS (default)
   --route-custom=NETS   Mode: Only specified networks
-  --endpoint=IP         Specify external IP (for servers behind NAT)
+  --endpoint=ADDR       External server endpoint: FQDN, IPv4 or [IPv6] (NAT)
   --preset=TYPE         Obfuscation parameter preset: default, mobile
                         mobile: Jc=3, narrow Jmax — for mobile carriers (Tele2, Yota, Megafon)
   --jc=N                Set Jc manually (1-128, overrides preset)
@@ -450,7 +450,8 @@ Options:
   --jmax=N              Set Jmax manually (0-1280, overrides preset, must be >= Jmin)
   -y, --yes             Non-interactive mode (all confirmations auto-yes)
   -f, --force           Reinstall over a working AWG (ENV: AWG_FORCE_REINSTALL=1)
-  --no-tweaks           Skip hardening/optimization (no UFW, Fail2Ban, sysctl tweaks)
+  --no-tweaks           Skip optional hardening/optimization (UFW, Fail2Ban);
+                        the minimal forwarding sysctl is always applied
 ```
 
 <a id="manage-cli-adv"></a>
@@ -972,10 +973,12 @@ sudo bash /root/awg/manage_amneziawg.sh stats --json
     "rx": 1332477952,
     "tx": 374083174,
     "last_handshake": 1710312180,
-    "status": "active"
+    "status": "Active"
   }
 ]
 ```
+
+> **Note:** the `status` field is localized (depends on the script language): the EN version emits `Active` / `Recent` / `Inactive`, the RU version emits `Активен` / `Недавно` / `Неактивен`. The same applies to `list --json` (which additionally has `No handshake` / `Key error`). For machine processing, check the actual output of your script version.
 
 ---
 

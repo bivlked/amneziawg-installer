@@ -438,7 +438,7 @@ PersistentKeepalive = 33
   --route-all           Режим: Весь трафик (0.0.0.0/0)
   --route-amnezia       Режим: Список Amnezia+DNS (умолч.)
   --route-custom=СЕТИ   Режим: Только указанные сети
-  --endpoint=IP         Указать внешний IP (для серверов за NAT)
+  --endpoint=АДРЕС      Внешний endpoint сервера: FQDN, IPv4 или [IPv6] (для NAT)
   --preset=ТИП          Набор параметров обфускации: default, mobile
                         mobile: Jc=3, узкий Jmax — для мобильных операторов (Tele2, Yota, Мегафон)
   --jc=N                Задать Jc вручную (1-128, поверх preset)
@@ -446,7 +446,8 @@ PersistentKeepalive = 33
   --jmax=N              Задать Jmax вручную (0-1280, поверх preset, ≥ Jmin)
   -y, --yes             Неинтерактивный режим (все подтверждения auto-yes)
   -f, --force           Переустановка поверх работающего AWG (ENV: AWG_FORCE_REINSTALL=1)
-  --no-tweaks           Пропустить hardening/оптимизацию (без UFW, Fail2Ban, sysctl tweaks)
+  --no-tweaks           Пропустить необязательный hardening/оптимизацию (UFW,
+                        Fail2Ban); минимальный forwarding-sysctl применяется всегда
 ```
 
 <a id="manage-cli-adv"></a>
@@ -968,10 +969,12 @@ sudo bash /root/awg/manage_amneziawg.sh stats --json
     "rx": 1332477952,
     "tx": 374083174,
     "last_handshake": 1710312180,
-    "status": "active"
+    "status": "Активен"
   }
 ]
 ```
+
+> **Примечание:** поле `status` локализовано (зависит от языка скрипта): в RU-версии `Активен` / `Недавно` / `Неактивен`, в EN-версии `Active` / `Recent` / `Inactive`. То же относится к `list --json` (там дополнительно `Нет handshake` / `Ошибка ключа`). Для машинной обработки сверяйтесь с фактическим выводом вашей версии скрипта.
 
 ---
 

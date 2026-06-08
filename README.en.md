@@ -373,6 +373,8 @@ sudo bash /root/awg/manage_amneziawg.sh <command> [arguments]
 | `stats`   | `[--json]`                | Per-client traffic statistics    |    No     |
 | `show`    |                        | Run `awg show`                 |    No     |
 | `check`   |                        | Check server status            |    No     |
+| `diagnose`| `[--carrier=NAME]`     | Diagnostics (opt. per carrier) |    No     |
+| `repair-module` |                  | Rebuild kernel module (DKMS)   |    Yes    |
 | `restart` |                        | Restart AmneziaWG service      |    -      |
 
 > **💡 Note:** `add` and `remove` commands auto-apply changes via `awg syncconf` — no service restart needed.
