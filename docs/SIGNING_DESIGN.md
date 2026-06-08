@@ -94,7 +94,7 @@ Pros: zero CI changes, signatures generated on the trusted maintainer machine. C
 
 ### Option B: CI uploads signatures generated locally (asymmetric)
 
-Maintainer generates `*.minisig` files locally, commits them transiently to a `signing/` directory (gitignored elsewhere), tags. A separate, manually dispatched workflow reads them and uploads as assets. Same trust model as Option A - just automates the upload step.
+Maintainer generates `*.minisig` files locally, commits them transiently to a `signing/` directory (tracked, so they land in the tagged commit - `signing/` is intentionally NOT gitignored; remove them in a follow-up commit once the dispatch workflow has uploaded them), tags. A separate, manually dispatched workflow reads them and uploads as assets. Same trust model as Option A - just automates the upload step.
 
 The signing of the files NEVER happens in GitHub Actions. The private key is never exposed to Actions. This is intentional and the whole point.
 
@@ -136,7 +136,7 @@ Activation steps, in order:
 4. Add README section "Verifying releases" with placeholder link to this design doc. TODO - add when the public key is published as `KEYS.txt` so the section is actionable, not vapor.
 5. Add the draft workflow `docs/release-sign.yml.draft` for review. DONE.
 6. After keypair exists and is published as `KEYS.txt`:
-   a. Move `docs/release-sign.yml.draft` to `.github/workflows/release-sign.yml`.
+   a. Refresh all action pins in the draft to match the active workflows (e.g. `actions/checkout`), then move `docs/release-sign.yml.draft` to `.github/workflows/release-sign.yml`.
    b. Test on a pre-release tag (e.g., `vX.Y.Z-rc1`).
    c. Flip the README section from "planned" to "active".
 7. Optional follow-up: SBOM generation via `syft` or GitHub's native dependency graph (a separate, smaller task).

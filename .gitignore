@@ -33,3 +33,8 @@ output/
 # Secrets
 .env
 .env.*
+
+# Signing: the minisign offline secret key must never be committed. The signing/
+# directory itself is intentionally NOT ignored - Option B lands *.minisig there
+# in the tagged commit (see docs/SIGNING_DESIGN.md).
+*.key
