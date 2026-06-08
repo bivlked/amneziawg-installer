@@ -14,6 +14,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.15.6] - 2026-06-08
+
+**v5.15.6** - input validation, atomicity and a JSON status field. This release continues the code-audit hardening cycle: it sharpens input validation in `manage`, makes client-artifact writes atomic, refines interrupt handling, and adds a stable machine-readable `status_code` to `list`/`stats --json`. The default install is unchanged. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
+
+### Added
+
+- `list --json` and `stats --json` now emit an extra `status_code` field with a stable, language-independent value (`active` | `recent` | `inactive` | `no_handshake` | `key_error` | `no_data`). The existing localized `status` field is kept - the change is additive and backward-compatible, and convenient for `jq` and automation (the contract is documented in `ADVANCED.en.md`)
+
+### Improved
+
+- `manage modify <client>` validates each DNS entry as a real IPv4/IPv6 address (via the shared `_valid_ipv4`/`_valid_ipv6` helpers) rather than a character set, so values like `abc` or `999.999.999.999` are no longer accepted. The same octet-range check (0-255) now applies to the auto-detected server public IP
+- `--expires` duration is validated once before the client is created: an invalid value aborts the command up front without changing anything. A failure to write the expiry after creation is now reflected in a non-zero result and the log
+- `--psk` is treated as an explicit request for a key: if the PSK cannot be generated, the command fails instead of silently degrading to a PSK-less client, and no artifacts are created
+- `.vpnuri` and the temporary QR PNGs are written through the shared safe-temp mechanism with an atomic `mv`, so an interrupted write cannot leave an empty or truncated file over a working one. Client removal (manual and automatic on expiry) uses one shared helper that covers every client artifact
+- The expired-client auto-removal cron is compared by content and refreshed when the working directory changes (for example after a restore), not only when the file is absent
+- Restore checks for the server config before stopping the service (an interruption no longer touches a working system), and an empty clients directory is treated as a valid case
+- Ctrl+C or a termination signal now aborts the script with the correct exit code (130/143) instead of continuing past the interrupted operation; an interrupted restore still rolls back
+
+### Documentation
+
+- Installer built-in help and the option tables in `ADVANCED.en.md`: `--endpoint` accepts an FQDN, IPv4 or `[IPv6]`; clarified that `--no-tweaks` still applies the minimal forwarding sysctl
+- The command tables in `README.en.md` now include `diagnose` and `repair-module`
+- ARM support for Ubuntu 26.04 (built via DKMS) is documented; the OS / architecture / prebuilt-package matrix is now checked automatically for consistency
+
+### Tests
+
+- Expanded automated coverage (bats): input validators, file-operation atomicity, signal handling, and the `status_code` contract
+
+---
+
 ## [5.15.5] - 2026-06-07
 
 **v5.15.5** - fail2ban bugfix on Ubuntu 24.04 (thanks @stereomonk).
@@ -1302,6 +1332,7 @@ Major security and reliability update after several consecutive code audits. The
 - Full uninstall (`--uninstall`).
 
 [Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.5...HEAD
+[5.15.6]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.5...v5.15.6
 [5.15.5]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.4...v5.15.5
 [5.15.4]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.3...v5.15.4
 [5.15.3]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.2...v5.15.3
