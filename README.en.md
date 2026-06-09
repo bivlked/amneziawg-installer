@@ -78,7 +78,7 @@ All parameters are accepted automatically. Details: [ADVANCED.en.md#cli-params-a
 <a id="why"></a>
 ## 💡 Why this project
 
-[AmneziaWG](https://github.com/amnezia-vpn) is a fork of WireGuard with traffic obfuscation. DPI systems cannot distinguish it from random noise, so the connection is not blocked.
+[AmneziaWG](https://github.com/amnezia-vpn) is a fork of WireGuard with traffic obfuscation. The obfuscation makes the traffic hard for DPI systems to tell apart from random noise, so where plain WireGuard gets detected and blocked, AmneziaWG usually keeps working.
 
 This set of scripts turns a clean VPS into a ready-to-use VPN server. No Linux knowledge required - the script configures the firewall, optimizes the system, and generates client configs and QR codes automatically.
 
@@ -100,7 +100,7 @@ Works on Ubuntu 24.04/25.10/26.04 and Debian 12/13. Any cheap VPS with 1 GB RAM 
 | **Client management** | Edit configs by hand, restart | `add`/`remove`/`list`/`stats` with hot-reload |
 | **Temporary access** | Not built-in | `--expires=7d` with auto-cleanup |
 | **Server requirements** | - | Same - any $3-5/mo VPS, 1 GB RAM |
-| **Speed overhead** | Baseline | Negligible (<2%) |
+| **Speed overhead** | Baseline | Negligible (<2% in typical tests) |
 
 > If WireGuard works for you and isn't blocked - keep using it. If it's blocked or throttled - AmneziaWG 2.0 is the drop-in replacement.
 
@@ -114,11 +114,11 @@ Works on Ubuntu 24.04/25.10/26.04 and Debian 12/13. Any cheap VPS with 1 GB RAM 
 | | This project (CLI) | Docker-based web panels |
 |---|---|---|
 | **AWG module** | Kernel module - runs at kernel level | Userspace inside a container |
-| **Server requirements** | Any VPS with 512 MB RAM | Needs PHP/Python, database, web server, Docker |
+| **Server requirements** | Any VPS with 1 GB RAM | Needs PHP/Python, database, web server, Docker |
 | **Attack surface** | SSH + UDP VPN port | + HTTP panel, database, Docker |
 | **Installation** | Single command on the server, 20 minutes | docker-compose + giving SSH access to the panel |
 | **After reboot** | Resumes installation from the same step | Depends on container and database state |
-| **Web interface** | ❌ None - SSH only | ✅ GUI, browser-based management |
+| **Web interface** | ❌ None, SSH only (managed via the `manage` script) | ✅ GUI, browser-based management |
 | **Multiple protocols** | AmneziaWG only | WireGuard, OpenVPN, VLESS and others |
 
 > Need a VPN without GUI on a dedicated server - this project. Need a web panel with multiple protocols - look for Docker-based solutions.
@@ -173,7 +173,7 @@ This installer is the headless SSH path: minimum footprint, no web panel, kernel
 <a id="carriers"></a>
 ## 📡 Tested mobile carriers (Russia)
 
-If your VPN is unstable on mobile data, run the installer with `--preset=mobile`. Below - working configurations reported in issues and discussions:
+If your VPN is unstable on mobile data, run the installer with `--preset=mobile`. Below - configurations reported by users in issues and discussions (not a guarantee: blocking and carrier parameters change over time):
 
 - **Yota** - Moscow, `--preset=mobile`
 - **Tele2** - Moscow (`--preset=mobile`); Krasnoyarsk (`--preset=mobile`; the May 2026 wave needed `I1=<r 48>`)
@@ -232,6 +232,11 @@ Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work - o
 
 For a stable, high-throughput VPN server, you need reliable hosting with a good network.
 
+**What to look for in a VPS for VPN:**
+- IPs not flagged as datacenter ranges - lower risk of range-based blocks.
+- Generous or unlimited traffic and a 1 Gbps+ port.
+- Your target OS (Ubuntu 24.04+ / Debian 12+) and root access.
+
 I've tested and recommend [**FreakHosting**](https://freakhosting.com/clientarea/aff.php?aff=392). Their **BUDGET VPS** lineup offers excellent value for money.
 
 Their IPs are not flagged as datacenter - they are not blocked by services that restrict hosting/datacenter IP ranges (unlike Azure and some major clouds).
@@ -239,7 +244,7 @@ Their IPs are not flagged as datacenter - they are not blocked by services that 
 * **Recommended plan:** **BVPS-2**
 * **Specs:** 2 vCPU, 2 GB RAM, 40 GB NVMe SSD.
 * **Key advantage:** **10 Gbps** port with **unlimited traffic**. Perfect for VPN!
-* **Price:** Just **€25 per year**.
+* **Price:** Just **€25 per year** (at time of writing; may change).
 
 This configuration is more than enough for comfortable AmneziaWG operation with many connections and heavy traffic.
 
@@ -360,19 +365,26 @@ The `manage_amneziawg.sh` script is downloaded automatically during installation
 sudo bash /root/awg/manage_amneziawg.sh <command> [arguments]
 ```
 
-**Main commands:** (Full list: `... help` or [ADVANCED.en.md#manage-commands-adv](ADVANCED.en.md#manage-commands-adv))
+Full list: `... help` or [ADVANCED.en.md#manage-commands-adv](ADVANCED.en.md#manage-commands-adv).
+
+**Everyday commands:**
 
 | Command   | Arguments              | Description                    | Restart? |
 | :-------- | :--------------------- | :----------------------------- | :------: |
 | `add`     | `<name> [name2 ...] [--expires=DUR]`  | Add client(s) (opt. with expiry) | No (auto) |
 | `remove`  | `<name> [name2 ...]`   | Remove client(s)               | No (auto) |
 | `list`    | `[-v] [--json]`        | List clients (`-v` for details, `--json` machine-readable with `client_ipv6`)|    No     |
+| `show`    |                        | Run `awg show`                 |    No     |
+| `stats`   | `[--json]`             | Per-client traffic statistics  |    No     |
+
+**Maintenance and recovery:**
+
+| Command   | Arguments              | Description                    | Restart? |
+| :-------- | :--------------------- | :----------------------------- | :------: |
 | `regen`   | `[client_name]`        | Regenerate files (all/one)     |    No     |
 | `modify`  | `<name> <param> <val>` | Modify a client parameter      |    No     |
 | `backup`  |                        | Create a backup                |    No     |
 | `restore` | `[file]`               | Restore from backup            |    No     |
-| `stats`   | `[--json]`                | Per-client traffic statistics    |    No     |
-| `show`    |                        | Run `awg show`                 |    No     |
 | `check`   |                        | Check server status            |    No     |
 | `diagnose`| `[--carrier=NAME]`     | Diagnostics (opt. per carrier) |    No     |
 | `repair-module` |                  | Rebuild kernel module (DKMS)   |    Yes    |
@@ -427,6 +439,8 @@ For the roadmap and priorities, see **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
 <a id="faq"></a>
 ## ❓ FAQ
+
+> **In this section:** install and updates, connecting clients, mobile networks, choosing a host and migrating, security and parameters. Expand the relevant question below.
 
 <details>
   <summary><strong>Q: Will it survive a kernel update?</strong></summary>
