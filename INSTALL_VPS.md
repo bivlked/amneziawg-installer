@@ -6,7 +6,7 @@ A step-by-step guide for deploying an AmneziaWG 2.0 VPN server on a clean Ubuntu
 
 - One command, MIT-licensed, fully self-hosted, no third-party dependencies at runtime.
 - Works on Ubuntu 24.04 LTS, Ubuntu 25.10/26.04, Debian 12 (bookworm), Debian 13 (trixie).
-- Built for cheap VPS budgets: $3 to $5 a month, 1 vCPU, 512 MB RAM, 5 GB disk minimum.
+- Built for cheap VPS budgets: $3 to $5 a month, 1 vCPU, 512 MB RAM minimum (1 GB recommended), 5 GB disk.
 - Both x86_64 (amd64) and ARM64 (aarch64), with prebuilt kernel modules covering Raspberry Pi 4/5, Ubuntu 24.04/25.10 ARM64, and Debian 12/13 ARM64 (Hetzner CAX, Oracle Ampere A1, AWS Graviton all run on these stock kernels). Ubuntu 26.04 ARM64 builds the module from source via DKMS.
 - DPI bypass for Russia (ТСПУ), Iran, China, school and corporate firewalls.
 - Survives kernel upgrades automatically via DKMS auto-repair (since v5.12.0).
@@ -112,7 +112,7 @@ The uninstall path is symmetric: it removes the AmneziaWG service, the kernel mo
 
 ## Related reading
 
-- [Hetzner Community Tutorial #1443](https://community.hetzner.com/tutorials/install-amneziawg-on-ubuntu-debian) - Hetzner-specific deployment guide using this installer.
+- [Hetzner Community: Making a website accessible from restricted regions](https://community.hetzner.com/tutorials/making-website-accessible-from-restricted-regions) - Hetzner tutorial that references this installer.
 - [Pinggy: Top 5 Best Self-Hosted VPNs in 2026](https://pinggy.io/blog/top_5_best_self_hosted_vpns/) - third-party listing.
 - [VPN Status (RU): AmneziaWG catalog](https://vpnstatus.site/protocols/amneziawg) - Russian-language directory of AmneziaWG server-side options.
 - [LowEndTalk Tutorial #217191](https://lowendtalk.com/discussion/217191) - the short version of this guide, with reader Q&A.

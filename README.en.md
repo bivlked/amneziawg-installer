@@ -93,7 +93,7 @@ Works on Ubuntu 24.04/25.10/26.04 and Debian 12/13. Any cheap VPS with 1 GB RAM 
 
 | | WireGuard | AmneziaWG 2.0 |
 |---|---|---|
-| **DPI detection** | Fingerprinted by fixed packet sizes and magic bytes | Undetectable - randomized headers, padding, protocol mimicry |
+| **DPI detection** | Fingerprinted by fixed packet sizes and magic bytes | Hard to fingerprint - randomized headers, padding, protocol mimicry |
 | **Blocked in** | China, Russia, Iran, UAE, Turkmenistan | No known blocks (as of April 2026) |
 | **Server setup** | Manual: keys, iptables, sysctl, systemd | One command, 20 min, fully automatic |
 | **Hardening** | DIY: UFW, Fail2Ban, sysctl | Automatic: firewall + brute-force protection + kernel tuning |
@@ -114,7 +114,7 @@ Works on Ubuntu 24.04/25.10/26.04 and Debian 12/13. Any cheap VPS with 1 GB RAM 
 | | This project (CLI) | Docker-based web panels |
 |---|---|---|
 | **AWG module** | Kernel module - runs at kernel level | Userspace inside a container |
-| **Server requirements** | Any VPS with 1 GB RAM | Needs PHP/Python, database, web server, Docker |
+| **Server requirements** | Any VPS with 512 MB RAM | Needs PHP/Python, database, web server, Docker |
 | **Attack surface** | SSH + UDP VPN port | + HTTP panel, database, Docker |
 | **Installation** | Single command on the server, 20 minutes | docker-compose + giving SSH access to the panel |
 | **After reboot** | Resumes installation from the same step | Depends on container and database state |
@@ -194,7 +194,7 @@ Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work - o
 * **OS:** A **clean** installation of **Ubuntu Server 24.04 LTS** / **Ubuntu 25.10** / **Ubuntu 26.04** / **Debian 12** / **Debian 13** Minimal
 * **Access:** `root` privileges (via `sudo`)
 * **Internet:** Stable connection
-* **Resources:** ~1 GB RAM (2+ GB recommended), minimum ~2 GB disk (3+ GB recommended)
+* **Resources:** 512 MB RAM minimum, 1 GB recommended (2+ GB comfortable); minimum ~2 GB disk (3+ GB recommended)
 * **SSH:** SSH access to the server
 
 **OS Compatibility:**
@@ -496,7 +496,7 @@ For the roadmap and priorities, see **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
 <details>
   <summary><strong>Q: Which hosting providers work well?</strong></summary>
-  <b>A:</b> Any VPS with Ubuntu 24.04 LTS / Ubuntu 25.10 / Ubuntu 26.04 / Debian 12 / Debian 13, root access, and at least 1 GB RAM. Pick providers with clean (non-blacklisted) IPs and unlimited traffic. See the <a href="#hosting-recommendation">recommendation</a> below.
+  <b>A:</b> Any VPS with Ubuntu 24.04 LTS / Ubuntu 25.10 / Ubuntu 26.04 / Debian 12 / Debian 13, root access, and at least 512 MB RAM (1 GB recommended). Pick providers with clean (non-blacklisted) IPs and unlimited traffic. See the <a href="#hosting-recommendation">recommendation</a> below.
 </details>
 
 <details>
