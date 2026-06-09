@@ -3,33 +3,58 @@
   <b>RU</b> Русский | <b>EN</b> <a href="README.en.md">English</a>
 </p>
 
-<p align="center"><em>VPN за одну команду — работает там, где WireGuard блокируют. Любой VPS за $3, без знания Linux</em></p>
-
 <p align="center">
-  <img src="logo.jpg" alt="AmneziaWG 2.0 VPN Installer — Ubuntu, Debian, Raspberry Pi, ARM64, мобильные сети" width="600">
+  <img src="logo.jpg" alt="AmneziaWG 2.0 VPN installer for Ubuntu, Debian, Raspberry Pi and ARM64 VPS" width="600">
 </p>
 
-<p align="center">
-  <strong>Набор Bash-скриптов для быстрой, безопасной и удобной установки,<br>
-  настройки и управления VPN-сервером AmneziaWG 2.0 на Ubuntu (24.04 LTS / 25.10 / 26.04) и Debian (12 / 13)</strong>
-</p>
+<h1 align="center">Install AmneziaWG 2.0 VPN on Ubuntu and Debian VPS</h1>
+
+<p align="center"><em>VPN за одну команду - работает там, где WireGuard блокируют. Любой VPS за $3, без знания Linux.</em></p>
+<p align="center"><em>One-command, self-hosted AmneziaWG 2.0 VPN for Ubuntu 24.04 / 25.10 and Debian 12 / 13. Kernel-native DKMS, no Docker, no web panel, runs on any cheap VPS.</em></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_|_25.10_|_26.04-orange" alt="Ubuntu 24.04 | 25.10 | 26.04">
   <img src="https://img.shields.io/badge/Debian-12_|_13-A81D33" alt="Debian 12 | 13">
   <img src="https://img.shields.io/badge/Architecture-x86__64_|_ARM64_|_ARMv7-green" alt="x86_64 | ARM64 | ARMv7">
-  <a href="https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE"><img src="https://img.shields.io/github/license/bivlked/amneziawg-installer" alt="License"></a>
-  <img src="https://img.shields.io/badge/Status-Stable-success" alt="Status">
-  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-5.15.6-blue" alt="Version"></a>
   <img src="https://img.shields.io/badge/AmneziaWG-2.0-blueviolet" alt="AWG 2.0">
-  <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/shellcheck.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/shellcheck.yml/badge.svg" alt="ShellCheck"></a>
+  <a href="https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE"><img src="https://img.shields.io/github/license/bivlked/amneziawg-installer" alt="License"></a>
+  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-5.15.6-blue" alt="Version"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
-  <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/docs-check.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/docs-check.yml/badge.svg" alt="Docs Check"></a>
-  <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/arm-build.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/arm-build.yml/badge.svg" alt="ARM Build"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/stargazers"><img src="https://img.shields.io/github/stars/bivlked/amneziawg-installer?style=flat" alt="Stars"></a>
-  <a href="https://github.com/bivlked/amneziawg-installer/network/members"><img src="https://img.shields.io/github/forks/bivlked/amneziawg-installer?style=flat" alt="Forks"></a>
   <img src="https://img.shields.io/github/last-commit/bivlked/amneziawg-installer" alt="Last commit">
 </p>
+
+<p align="center">
+  <b>В ядре, без Docker и панелей - нет накладных расходов</b> &nbsp;|&nbsp; <b>сервер только под VPN, защита из коробки</b> &nbsp;|&nbsp; <b>поставил и забыл</b> &nbsp;|&nbsp; <b>QR-код или vpn:// в один тап</b>
+</p>
+
+<a id="quickstart"></a>
+## 🚀 Быстрый старт
+
+```bash
+wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.6/install_amneziawg.sh
+chmod +x install_amneziawg.sh
+sudo bash ./install_amneziawg.sh
+```
+
+> Что делает: ставит AmneziaWG 2.0 (модуль ядра через DKMS), настраивает firewall и форвардинг, создаёт первого клиента, печатает QR-код и `vpn://` ссылку для импорта в Amnezia Client. Добавить друга или устройство потом - одна команда `add`.
+> 3 команды. 2 перезагрузки по ходу. Около 20 минут до готового VPN. Для чистого Ubuntu/Debian VPS, не роутер и не shared-хостинг. [Подробнее →](#ustanovka)
+
+> 📘 Полный гайд по развёртыванию (EN): [Install AmneziaWG VPN server on Ubuntu/Debian VPS](INSTALL_VPS.md) - выбор VPS, ARM, troubleshooting, удаление.
+
+> 🔐 Целостность: скрипт качается по HTTPS с `raw.githubusercontent.com` (тег закреплён). Отдельные detached-подписи релизов пока не активны (запланированы) - статус и модель угроз в [SECURITY.md](SECURITY.md).
+
+<details>
+<summary><strong>Неинтерактивная установка (для автоматизации)</strong></summary>
+
+```bash
+sudo bash ./install_amneziawg.sh --yes --route-all
+```
+
+Все параметры принимаются автоматически. Подробнее: [ADVANCED.md#cli-params-adv](ADVANCED.md#cli-params-adv)
+</details>
+
+---
 
 <p align="center">
   <a href="#zachem">Зачем это нужно</a> •
@@ -57,6 +82,8 @@
 [AmneziaWG](https://github.com/amnezia-vpn) — форк WireGuard с обфускацией трафика. Системы DPI не могут отличить его от обычного шума, поэтому подключение не блокируется.
 
 Этот набор скриптов превращает чистый VPS в готовый VPN-сервер. Не нужны знания Linux — скрипт сам настроит firewall, оптимизирует систему, создаст конфиги и QR-коды для клиентов.
+
+Сервер настраивается под одну задачу - VPN: лишние пакеты убираются, ядро, сеть и swap тюнингуются под железо, включаются firewall и базовая защита. AmneziaWG работает в ядре, поэтому накладных расходов почти нет - быстро и экономно. Поставил один раз для дома или семьи и забыл: добавить друга или новое устройство через месяц - минута, конфиг и QR готовятся одной командой.
 
 Работает на Ubuntu 24.04/25.10/26.04 и Debian 12/13. Хватит любого дешёвого VPS с 1 ГБ RAM.
 
@@ -112,33 +139,6 @@
 | **[Amnezia VPN](https://amnezia.org/)** | Десктоп-клиент + SSH deploy | Установка кликами без терминала; нужен графический клиент |
 
 Этот скрипт - путь без панели через SSH: минимальный footprint, kernel-level AmneziaWG, ARM-prebuilt'ы для дешёвых боксов. Если у вас уже стоит Docker и хочется веб-панель управления клиентами - удобнее **wg-easy**. Если нужна установка кликами - десктоп-клиент **Amnezia VPN** имеет свой SSH-deploy.
-
----
-
-<a id="quickstart"></a>
-## 🚀 Быстрый старт
-
-> 📘 **Полный гайд по развёртыванию (EN):** [Install AmneziaWG VPN server on Ubuntu/Debian VPS](INSTALL_VPS.md) - выбор VPS, ARM, troubleshooting, удаление.
-
-```bash
-wget https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.15.6/install_amneziawg.sh
-chmod +x install_amneziawg.sh
-sudo bash ./install_amneziawg.sh
-```
-
-> 3 команды для запуска. 2 перезагрузки по ходу. Около 20 минут до готового VPN. [Подробнее →](#ustanovka)
-
-> 🔐 **Целостность:** скрипт качается по HTTPS с `raw.githubusercontent.com` (тег закреплён). Отдельные detached-подписи релизов пока не активны (запланированы) - статус и модель угроз в [SECURITY.md](SECURITY.md).
-
-<details>
-<summary><strong>Неинтерактивная установка (для автоматизации)</strong></summary>
-
-```bash
-sudo bash ./install_amneziawg.sh --yes --route-all
-```
-
-Все параметры принимаются автоматически. Подробнее: [ADVANCED.md#cli-params-adv](ADVANCED.md#cli-params-adv)
-</details>
 
 ---
 
