@@ -79,9 +79,9 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 <a id="zachem"></a>
 ## 💡 Зачем это нужно
 
-[AmneziaWG](https://github.com/amnezia-vpn) — форк WireGuard с обфускацией трафика. Системы DPI не могут отличить его от обычного шума, поэтому подключение не блокируется.
+[AmneziaWG](https://github.com/amnezia-vpn) - форк WireGuard с обфускацией трафика. Системы DPI не могут отличить его от обычного шума, поэтому подключение не блокируется.
 
-Этот набор скриптов превращает чистый VPS в готовый VPN-сервер. Не нужны знания Linux — скрипт сам настроит firewall, оптимизирует систему, создаст конфиги и QR-коды для клиентов.
+Этот набор скриптов превращает чистый VPS в готовый VPN-сервер. Не нужны знания Linux - скрипт сам настроит firewall, оптимизирует систему, создаст конфиги и QR-коды для клиентов.
 
 Сервер настраивается под одну задачу - VPN: лишние пакеты убираются, ядро, сеть и swap тюнингуются под железо, включаются firewall и базовая защита. AmneziaWG работает в ядре, поэтому накладных расходов почти нет - быстро и экономно. Поставил один раз для дома или семьи и забыл: добавить друга или новое устройство через месяц - минута, конфиг и QR готовятся одной командой.
 
@@ -94,35 +94,35 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 
 | | WireGuard | AmneziaWG 2.0 |
 |---|---|---|
-| **Обнаружение DPI** | Детектируется по фиксированным размерам пакетов и magic bytes | Не обнаруживается — случайные заголовки, padding, имитация протоколов |
+| **Обнаружение DPI** | Детектируется по фиксированным размерам пакетов и magic bytes | Не обнаруживается - случайные заголовки, padding, имитация протоколов |
 | **Блокируется в** | Китай, Россия, Иран, ОАЭ, Туркменистан | Не известно о блокировках (по состоянию на апрель 2026) |
 | **Настройка сервера** | Вручную: ключи, iptables, sysctl, systemd | Одна команда, 20 минут, полностью автоматически |
 | **Безопасность** | Сами: UFW, Fail2Ban, sysctl | Автоматически: firewall + защита от брутфорса + тюнинг ядра |
 | **Управление клиентами** | Ручное редактирование конфигов, рестарт | `add`/`remove`/`list`/`stats` с hot-reload |
 | **Временный доступ** | Нет | `--expires=7d` с автоматическим удалением |
-| **Требования к серверу** | — | Те же — любой VPS за $3-5/мес, 1 ГБ RAM |
+| **Требования к серверу** | - | Те же - любой VPS за $3-5/мес, 1 ГБ RAM |
 | **Потеря скорости** | Базовая | Минимальная (<2%) |
 
-> Если WireGuard у вас работает и не блокируется — используйте его. Если блокируется или режется — AmneziaWG 2.0 является прямой заменой.
+> Если WireGuard у вас работает и не блокируется - используйте его. Если блокируется или режется - AmneziaWG 2.0 является прямой заменой.
 
 ---
 
 <a id="cli-vs-panel"></a>
 ## ⚙️ CLI-инсталлер vs веб-панели
 
-> **Задача — поднять VPN на дешёвом VPS за 20 минут.** Скрипт не тянет за собой Docker, веб-сервер или базу данных. После установки на сервере работает только AWG и firewall — минимум нагрузки, максимум ресурсов для VPN.
+> **Задача - поднять VPN на дешёвом VPS за 20 минут.** Скрипт не тянет за собой Docker, веб-сервер или базу данных. После установки на сервере работает только AWG и firewall - минимум нагрузки, максимум ресурсов для VPN.
 
 | | Этот проект (CLI) | Веб-панели на Docker |
 |---|---|---|
-| **Модуль AWG** | Kernel module — работает на уровне ядра | Userspace в контейнере |
+| **Модуль AWG** | Kernel module - работает на уровне ядра | Userspace в контейнере |
 | **Требования к серверу** | Любой VPS от 512 МБ RAM | Нужны PHP/Python, БД, веб-сервер, Docker |
 | **Поверхность атаки** | SSH + UDP-порт VPN | + HTTP-панель, база данных, Docker |
 | **Установка** | Одна команда на сервере, 20 минут | docker-compose + передача SSH-доступа панели |
 | **После перезагрузки** | Продолжит установку с того же шага | Зависит от состояния контейнеров и БД |
-| **Веб-интерфейс** | ❌ Нет — только SSH | ✅ GUI, управление через браузер |
+| **Веб-интерфейс** | ❌ Нет - только SSH | ✅ GUI, управление через браузер |
 | **Несколько протоколов** | Только AmneziaWG | WireGuard, OpenVPN, VLESS и другие |
 
-> Нужен VPN без GUI на выделенном сервере — этот проект. Нужна веб-панель с несколькими протоколами — ищите Docker-решения.
+> Нужен VPN без GUI на выделенном сервере - этот проект. Нужна веб-панель с несколькими протоколами - ищите Docker-решения.
 
 ---
 
@@ -145,27 +145,27 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 <a id="vozmozhnosti"></a>
 ## ✨ Что умеет
 
-* **Обход блокировок** — AmneziaWG 2.0 с обфускацией трафика. DPI не детектирует подключение
-* **Одна команда — готовый VPN** — от чистого VPS до работающего сервера с клиентскими конфигами и QR-кодами
-* **Безопасность из коробки** — UFW, Fail2Ban, sysctl hardening, строгие права доступа (600/700)
-* **Удобное управление** — добавление/удаление клиентов, временные клиенты с авто-удалением, статистика, бэкапы
+* **Обход блокировок** - AmneziaWG 2.0 с обфускацией трафика. DPI не детектирует подключение
+* **Одна команда - готовый VPN** - от чистого VPS до работающего сервера с клиентскими конфигами и QR-кодами
+* **Безопасность из коробки** - UFW, Fail2Ban, sysctl hardening, строгие права доступа (600/700)
+* **Удобное управление** - добавление/удаление клиентов, временные клиенты с авто-удалением, статистика, бэкапы
 * **Широкая поддержка ОС** - Ubuntu 24.04/25.10/26.04 и Debian 12/13
-* **x86_64 и ARM** — облачные VPS, Raspberry Pi 3/4/5, ARM64-серверы (AWS Graviton, Oracle Ampere, Hetzner)
-* **Оптимизация для мобильных сетей** — `--preset=mobile` для Tele2, Yota, Мегафон и других операторов с DPI-блокировками. Тонкая настройка через `--jc`, `--jmin`, `--jmax` ([подробнее](ADVANCED.md#presets-adv))
+* **x86_64 и ARM** - облачные VPS, Raspberry Pi 3/4/5, ARM64-серверы (AWS Graviton, Oracle Ampere, Hetzner)
+* **Оптимизация для мобильных сетей** - `--preset=mobile` для Tele2, Yota, Мегафон и других операторов с DPI-блокировками. Тонкая настройка через `--jc`, `--jmin`, `--jmax` ([подробнее](ADVANCED.md#presets-adv))
 * **Опциональный dual-stack IPv6** - флаг `--allow-ipv6-tunnel` добавляет IPv6 внутри туннеля рядом с IPv4 (по умолчанию выключено, [подробнее](ADVANCED.md#ipv6-tunnel-adv))
 
 <details>
 <summary><strong>Все возможности</strong></summary>
 
-* Нативная генерация ключей и конфигов через `awg` — без Python и внешних зависимостей
+* Нативная генерация ключей и конфигов через `awg` - без Python и внешних зависимостей
 * Hardware-aware оптимизация: swap, NIC offloads, сетевые буферы на основе характеристик сервера
-* DKMS — автоматическая пересборка модуля ядра при обновлении
+* DKMS - автоматическая пересборка модуля ядра при обновлении
 * `vpn://` URI для импорта в Amnezia Client одним тапом (`.vpnuri` файлы)
 * Статистика трафика по клиентам (`stats`, `stats --json`)
 * Временные клиенты с авто-удалением (`--expires=1h`, `7d`, `4w` и др.)
 * Диагностический отчёт (`--diagnostic`) и полная деинсталляция (`--uninstall`)
 * Логирование всех действий в `/root/awg/`
-* Возобновление установки после перезагрузки — скрипт продолжит с нужного шага
+* Возобновление установки после перезагрузки - скрипт продолжит с нужного шага
 * Выбор порта, подсети, режима IPv6 и маршрутизации. Поддержка `--endpoint` для серверов за NAT
 </details>
 
@@ -174,18 +174,18 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 <a id="operatory"></a>
 ## 📡 С какими операторами проверено
 
-Если VPN нестабилен через мобильный интернет, запускайте установку с `--preset=mobile`. Ниже — рабочие конфигурации по отчётам из issues и discussions:
+Если VPN нестабилен через мобильный интернет, запускайте установку с `--preset=mobile`. Ниже - рабочие конфигурации по отчётам из issues и discussions:
 
-- **Yota** — Москва, `--preset=mobile`
-- **Tele2** — Москва (`--preset=mobile`); Красноярск (`--preset=mobile`; в майскую волну 2026 заработал `I1=<r 48>`)
-- **Таттелеком / Летай** — Татарстан, `--preset=mobile`
-- **Мегафон** — регионы, `--preset=mobile` + удалить параметр `I1`
-- **Билайн** — дефолтный preset, флаги не нужны
-- **Домашний/проводной интернет** — дефолт, как правило, «из коробки»
+- **Yota** - Москва, `--preset=mobile`
+- **Tele2** - Москва (`--preset=mobile`); Красноярск (`--preset=mobile`; в майскую волну 2026 заработал `I1=<r 48>`)
+- **Таттелеком / Летай** - Татарстан, `--preset=mobile`
+- **Мегафон** - регионы, `--preset=mobile` + удалить параметр `I1`
+- **Билайн** - дефолтный preset, флаги не нужны
+- **Домашний/проводной интернет** - дефолт, как правило, «из коробки»
 
-Вашего оператора нет в списке? Попробуйте `--preset=mobile`. Не помогло — заведите тред в [Discussions](https://github.com/bivlked/amneziawg-installer/discussions) или [Issues](https://github.com/bivlked/amneziawg-installer/issues), добавлю в список.
+Вашего оператора нет в списке? Попробуйте `--preset=mobile`. Не помогло - заведите тред в [Discussions](https://github.com/bivlked/amneziawg-installer/discussions) или [Issues](https://github.com/bivlked/amneziawg-installer/issues), добавлю в список.
 
-> Полная таблица операторских параметров (Jc, Jmin, Jmax, I1) — в [ADVANCED.md → FAQ «через мобильную сеть»](ADVANCED.md#faq-advanced-adv). Точечная настройка через `--jc`/`--jmin`/`--jmax` — в [ADVANCED.md → Presets](ADVANCED.md#presets-adv).
+> Полная таблица операторских параметров (Jc, Jmin, Jmax, I1) - в [ADVANCED.md → FAQ «через мобильную сеть»](ADVANCED.md#faq-advanced-adv). Точечная настройка через `--jc`/`--jmin`/`--jmax` - в [ADVANCED.md → Presets](ADVANCED.md#presets-adv).
 
 ---
 
@@ -221,8 +221,8 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 > ⚠️ **Нестандартный порт SSH:** Установщик обычно определяет SSH-порт автоматически. Если SSH на нестандартном порту или автодетект недоступен, запускайте с `--ssh-port=ВАШ_ПОРТ` (несколько портов - списком через запятую). Как дополнительная консервативная страховка можно заранее выполнить `sudo ufw allow ВАШ_ПОРТ/tcp` **до** запуска установки.
 
 **Клиенты:**
-* **Все платформы:** [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) **>= 4.8.12.7** — полнофункциональный VPN-клиент с AWG 2.0. Импорт через `vpn://` URI
-* **Windows:** [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) **>= 2.0.0** — легковесный tunnel manager с AWG 2.0. Импорт через `.conf` файлы
+* **Все платформы:** [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) **>= 4.8.12.7** - полнофункциональный VPN-клиент с AWG 2.0. Импорт через `vpn://` URI
+* **Windows:** [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) **>= 2.0.0** - легковесный tunnel manager с AWG 2.0. Импорт через `.conf` файлы
 
 > [Полная таблица совместимости клиентов →](ADVANCED.md#client-compat-adv)
 
@@ -284,7 +284,7 @@ sudo bash ./install_amneziawg.sh --yes --route-all
     * **Отключение IPv6:** Рекомендуется отключить (`Y`) для избежания утечек трафика.
     * **Режим маршрутизации:** Определяет, какой трафик пойдет через VPN. По умолчанию `2` (Список Amnezia+DNS) - рекомендуется для лучшей совместимости и обхода блокировок.
 
-    Параметры AWG 2.0 (Jc, S1-S4, H1-H4, I1) генерируются **автоматически** — никаких действий не требуется.
+    Параметры AWG 2.0 (Jc, S1-S4, H1-H4, I1) генерируются **автоматически** - никаких действий не требуется.
 
 6.  **Перезагрузки:** Потребуется **ДВЕ** перезагрузки. Скрипт запросит подтверждение `[y/N]`. Введите `y` и нажмите Enter.
 
@@ -379,7 +379,7 @@ sudo bash /root/awg/manage_amneziawg.sh <команда> [аргументы]
 | `repair-module` |                  | Пересобрать модуль ядра (DKMS)   |     Да      |
 | `restart` |                        | Перезапуск сервиса AmneziaWG   |       -       |
 
-> **💡 Примечание:** Команды `add` и `remove` автоматически применяют изменения через `awg syncconf` — перезапуск сервиса не требуется.
+> **💡 Примечание:** Команды `add` и `remove` автоматически применяют изменения через `awg syncconf` - перезапуск сервиса не требуется.
 
 ### 📌 Краткая справка
 
@@ -455,8 +455,8 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 </details>
 
 <details>
-  <summary><strong>В: Ошибка импорта конфига «Неверный ключ: s3» — что делать?</strong></summary>
-  <b>О:</b> Вы используете устаревшую версию <code>amneziawg-windows-client</code> (< 2.0.0). Обновите до <a href="https://github.com/amnezia-vpn/amneziawg-windows-client/releases"><b>версии 2.0.0+</b></a>, которая поддерживает AWG 2.0. Альтернатива — <a href="https://github.com/amnezia-vpn/amnezia-client/releases"><b>Amnezia VPN</b></a> >= 4.8.12.7.
+  <summary><strong>В: Ошибка импорта конфига «Неверный ключ: s3» - что делать?</strong></summary>
+  <b>О:</b> Вы используете устаревшую версию <code>amneziawg-windows-client</code> (< 2.0.0). Обновите до <a href="https://github.com/amnezia-vpn/amneziawg-windows-client/releases"><b>версии 2.0.0+</b></a>, которая поддерживает AWG 2.0. Альтернатива - <a href="https://github.com/amnezia-vpn/amnezia-client/releases"><b>Amnezia VPN</b></a> >= 4.8.12.7.
 </details>
 
 <details>
@@ -478,7 +478,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 <details>
   <summary><strong>В: Какое максимальное количество клиентов?</strong></summary>
-  <b>О:</b> Подсеть <code>/24</code> позволяет до 253 клиентов (.2 — .254), что достаточно для большинства сценариев.
+  <b>О:</b> Подсеть <code>/24</code> позволяет до 253 клиентов (.2 - .254), что достаточно для большинства сценариев.
 </details>
 
 <details>
@@ -502,8 +502,8 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 </details>
 
 <details>
-  <summary><strong>В: Не подключается Shadowrocket на iOS/macOS — нужен PresharedKey</strong></summary>
-  <b>О:</b> С v5.11.1 добавлен флаг <code>--psk</code> для команды <code>add</code>: <code>sudo bash /root/awg/manage_amneziawg.sh add my_iphone --psk</code>. В файле клиента появится строка <code>PresharedKey = ...</code> совпадающая с серверным <code>[Peer]</code>. Для уже созданных клиентов: пересоздать с флагом (<code>remove</code> + <code>add --psk</code>) или вручную — сгенерировать ключ <em>один раз</em> (<code>PSK=$(awg genpsk)</code>) и вставить <em>одно и то же значение</em> в обе стороны (серверный <code>[Peer]</code> клиента и клиентский <code>[Peer]</code> сервера); если значения различаются — handshake не пройдёт. <code>regen</code> сохраняет существующий PSK через rotation. Подробнее — в <a href="ADVANCED.md#manage-cli-adv">ADVANCED.md</a>.
+  <summary><strong>В: Не подключается Shadowrocket на iOS/macOS - нужен PresharedKey</strong></summary>
+  <b>О:</b> С v5.11.1 добавлен флаг <code>--psk</code> для команды <code>add</code>: <code>sudo bash /root/awg/manage_amneziawg.sh add my_iphone --psk</code>. В файле клиента появится строка <code>PresharedKey = ...</code> совпадающая с серверным <code>[Peer]</code>. Для уже созданных клиентов: пересоздать с флагом (<code>remove</code> + <code>add --psk</code>) или вручную - сгенерировать ключ <em>один раз</em> (<code>PSK=$(awg genpsk)</code>) и вставить <em>одно и то же значение</em> в обе стороны (серверный <code>[Peer]</code> клиента и клиентский <code>[Peer]</code> сервера); если значения различаются - handshake не пройдёт. <code>regen</code> сохраняет существующий PSK через rotation. Подробнее - в <a href="ADVANCED.md#manage-cli-adv">ADVANCED.md</a>.
 </details>
 
 <details>
@@ -513,12 +513,12 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 <details>
   <summary><strong>В: Нужен ли Perl на сервере?</strong></summary>
-  <b>О:</b> Perl используется опционально для генерации <code>vpn://</code> URI (<code>.vpnuri</code> файлов). Если Perl отсутствует, <code>.conf</code> файлы создаются как обычно — ими можно пользоваться через импорт файла или QR-код. На Ubuntu и Debian Perl установлен по умолчанию.
+  <b>О:</b> Perl используется опционально для генерации <code>vpn://</code> URI (<code>.vpnuri</code> файлов). Если Perl отсутствует, <code>.conf</code> файлы создаются как обычно - ими можно пользоваться через импорт файла или QR-код. На Ubuntu и Debian Perl установлен по умолчанию.
 </details>
 
 <details>
   <summary><strong>В: Безопасно ли запускать скрипт повторно?</strong></summary>
-  <b>О:</b> Да. При повторном запуске серверный конфиг пересоздаётся, но существующие клиенты автоматически восстанавливаются из бэкапа. Дефолтные клиенты (<code>my_phone</code>, <code>my_laptop</code>) пересоздаются, остальные — сохраняются.
+  <b>О:</b> Да. При повторном запуске серверный конфиг пересоздаётся, но существующие клиенты автоматически восстанавливаются из бэкапа. Дефолтные клиенты (<code>my_phone</code>, <code>my_laptop</code>) пересоздаются, остальные - сохраняются.
 </details>
 
 > Больше ответов и решений см. в **[ADVANCED.md](ADVANCED.md)**.
@@ -542,7 +542,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 ### Клиенты
 
-> **Какой клиент выбрать?** Установите [**Amnezia VPN**](https://github.com/amnezia-vpn/amnezia-client/releases) (>= 4.8.12.7) — работает на всех платформах, поддерживает импорт `vpn://` URI.
+> **Какой клиент выбрать?** Установите [**Amnezia VPN**](https://github.com/amnezia-vpn/amnezia-client/releases) (>= 4.8.12.7) - работает на всех платформах, поддерживает импорт `vpn://` URI.
 > Для легковесного подключения (только `.conf`) используйте **AmneziaWG** для вашей платформы.
 
 | Клиент | Платформа | AWG 2.0 | Тип | Примечание |
@@ -560,7 +560,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 | Проект | Описание |
 |--------|----------|
-| [Junker](https://spatiumstas.github.io/junker/) | Веб-генератор подписей AmneziaWG от @spatiumstas — для ручной настройки без установочного скрипта |
+| [Junker](https://spatiumstas.github.io/junker/) | Веб-генератор подписей AmneziaWG от @spatiumstas - для ручной настройки без установочного скрипта |
 | [AmneziaWG-Architect](https://vadim-khristenko.github.io/AmneziaWG-Architect/) | Веб-генератор CPS/мимикрии для AWG 2.0 от @Vadim-Khristenko ([GitHub](https://github.com/Vadim-Khristenko/AmneziaWG-Architect)) |
 
 ### Прошивки для роутеров
@@ -576,21 +576,21 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 **📖 Гайды и туториалы**
 - [Hetzner Community - Making a website accessible from restricted regions](https://community.hetzner.com/tutorials/making-website-accessible-from-restricted-regions) (cross-link в Resources)
-- [Debian Forums — HowTo: Install AmneziaWG 2.0 on Debian 12/13](https://forums.debian.net/viewtopic.php?t=166105)
+- [Debian Forums - HowTo: Install AmneziaWG 2.0 on Debian 12/13](https://forums.debian.net/viewtopic.php?t=166105)
 - [LowEndTalk - [Tutorial] One-command AmneziaWG VPN server install on Ubuntu / Debian / ARM](https://lowendtalk.com/discussion/217191)
 
 **📰 Статьи и обзоры**
-- [XDA Developers — «I found a self-hosted VPN that works where WireGuard gets blocked»](https://www.xda-developers.com/self-hosted-vpn-works-where-wireguard-gets-blocked/)
-- [Pinggy — Top 5 Best Self-Hosted VPNs in 2026](https://pinggy.io/blog/top_5_best_self_hosted_vpns/)
-- [gHacks Tech News — AmneziaWG 2.0](https://www.ghacks.net/2026/03/25/amnezia-releases-amneziawg-2-0-to-bypass-advanced-internet-censorship-systems/)
+- [XDA Developers - «I found a self-hosted VPN that works where WireGuard gets blocked»](https://www.xda-developers.com/self-hosted-vpn-works-where-wireguard-gets-blocked/)
+- [Pinggy - Top 5 Best Self-Hosted VPNs in 2026](https://pinggy.io/blog/top_5_best_self_hosted_vpns/)
+- [gHacks Tech News - AmneziaWG 2.0](https://www.ghacks.net/2026/03/25/amnezia-releases-amneziawg-2-0-to-bypass-advanced-internet-censorship-systems/)
 
 **📋 Каталоги и подборки**
-- [VPN Статус — каталог AmneziaWG-сервисов и серверных решений](https://vpnstatus.site/protocols/amneziawg)
+- [VPN Статус - каталог AmneziaWG-сервисов и серверных решений](https://vpnstatus.site/protocols/amneziawg)
 - [AlternativeTo - amneziawg-installer (42 альтернативы)](https://alternativeto.net/software/amneziawg-installer/about/)
 - [LibHunt - #1 в категории Shell VPN](https://www.libhunt.com/r/amneziawg-installer)
 
 **💬 Форумы и сообщества**
-- [Qubes OS Forum — AmneziaWG for censored regions](https://forum.qubes-os.org/t/installation-of-amnezia-vpn-and-amnezia-wg-effective-tools-against-internet-blocks-via-dpi-for-china-russia-belarus-turkmenistan-iran-vpn-with-vless-xray-reality-best-obfuscation-for-wireguard-easy-self-hosted-vpn-bypass/39005)
+- [Qubes OS Forum - AmneziaWG for censored regions](https://forum.qubes-os.org/t/installation-of-amnezia-vpn-and-amnezia-wg-effective-tools-against-internet-blocks-via-dpi-for-china-russia-belarus-turkmenistan-iran-vpn-with-vless-xray-reality-best-obfuscation-for-wireguard-easy-self-hosted-vpn-bypass/39005)
 - [Lemmy.world /c/selfhosted - amneziawg-installer announce (143 upvotes / 39 comments)](https://lemmy.world/post/45242153)
 
 </details>
@@ -601,7 +601,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 ## 📝 Лицензия и Автор
 
 * **Автор скриптов:** @bivlked - [GitHub](https://github.com/bivlked)
-* **Лицензия:** MIT — свободное ПО с открытым исходным кодом (см. `LICENSE`)
+* **Лицензия:** MIT - свободное ПО с открытым исходным кодом (см. `LICENSE`)
 
 ---
 
