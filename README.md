@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/Debian-12_|_13-A81D33" alt="Debian 12 | 13">
   <img src="https://img.shields.io/badge/Architecture-x86__64_|_ARM64_|_ARMv7-green" alt="x86_64 | ARM64 | ARMv7">
   <img src="https://img.shields.io/badge/AmneziaWG-2.0-blueviolet" alt="AWG 2.0">
-  <a href="https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE"><img src="https://img.shields.io/github/license/bivlked/amneziawg-installer" alt="License"></a>
+  <a href="https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-5.15.6-blue" alt="Version"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/stargazers"><img src="https://img.shields.io/github/stars/bivlked/amneziawg-installer?style=flat" alt="Stars"></a>
@@ -133,12 +133,23 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 
 | Инструмент | Способ | Кому подходит |
 |---|---|---|
-| **Этот установщик** | SSH + одна bash-команда | Headless VPS, single-purpose сервер, без Docker, ARM-prebuilt'ы |
+| **Этот установщик** | SSH + одна bash-команда | Headless VPS, single-purpose сервер, без Docker и панели, ARM-prebuilt'ы |
+| **[wiresock/amneziawg-install](https://github.com/wiresock/amneziawg-install)** | SSH + bash + опциональная нативная веб-панель | Часто заводишь/меняешь клиентов, удобна веб-панель (без Docker) |
 | **[wg-easy](https://github.com/wg-easy/wg-easy)** | Docker + веб-интерфейс | Домашние боксы, на которых уже крутится Docker; нужна панель для клиентов |
 | **[spcfox/amnezia-wg-easy](https://github.com/spcfox/amnezia-wg-easy)** | Docker-форк wg-easy | Те, кто уже на wg-easy и хочет именно AmneziaWG вместо обычного WireGuard |
 | **[Amnezia VPN](https://amnezia.org/)** | Десктоп-клиент + SSH deploy | Установка кликами без терминала; нужен графический клиент |
 
-Этот скрипт - путь без панели через SSH: минимальный footprint, kernel-level AmneziaWG, ARM-prebuilt'ы для дешёвых боксов. Если у вас уже стоит Docker и хочется веб-панель управления клиентами - удобнее **wg-easy**. Если нужна установка кликами - десктоп-клиент **Amnezia VPN** имеет свой SSH-deploy.
+**Быстрый выбор:**
+
+* Часто заводишь и меняешь клиентов, удобнее мышкой в браузере - веб-панель: **wiresock** (нативная, без Docker) или **wg-easy** (Docker). Учти: панель - это лишний постоянно работающий сервис, открытый порт и расход ресурсов сервера; для режима «поставил и забыл» это ненужная нагрузка.
+* Дешёвый или слабый VPS, ARM (Raspberry Pi, Oracle Ampere) - **этот установщик** с готовыми prebuilt'ами, без ожидания сборки модуля.
+* Импорт в телефон одним тапом (QR или `vpn://`), клиенты по сроку (`--expires`), пресеты под мобильных операторов - **этот установщик**.
+* Установка мышкой без терминала - десктоп-клиент **Amnezia VPN**.
+
+**Когда этот проект - не лучший выбор:**
+
+* Часто заводишь и меняешь клиентов и хочется браузерную панель - возьми **wiresock** или **wg-easy**. Здесь панели нет осознанно: если клиенты меняются изредка, постоянно работающая панель только ест ресурсы сервера, а управление и так делается из CLI (`manage` add/remove/list) по SSH.
+* Нужен графический клиент или установка мышкой без терминала - десктоп-клиент **Amnezia VPN**.
 
 ---
 
