@@ -54,6 +54,15 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 Все параметры принимаются автоматически. Подробнее: [ADVANCED.md#cli-params-adv](ADVANCED.md#cli-params-adv)
 </details>
 
+### 🎯 Выберите свой случай
+
+| Ваша ситуация | Что добавить |
+|---|---|
+| Обычный дешёвый VPS, просто нужен VPN | Ничего - команда выше уже всё делает |
+| Мобильный интернет, DPI режет (ТСПУ, Иран, школа или корпоратив) | При установке добавьте `--preset=mobile` ([проверенные операторы](#operatory)) |
+| ARM: Raspberry Pi, Oracle Ampere, Hetzner CAX | Та же команда - готовые ARM-модули ядра выберутся автоматически ([детали](INSTALL_VPS.md)) |
+| Доступ другу или гостю на время | После установки: `manage_amneziawg.sh add guest --expires=7d` |
+
 ---
 
 <p align="center">
