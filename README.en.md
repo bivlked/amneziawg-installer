@@ -639,5 +639,9 @@ For the roadmap and priorities, see **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 ---
 
 <p align="center">
+  If this project helped you, a ⭐ helps others find it.
+</p>
+
+<p align="center">
   <a href="#top">↑ Back to top</a>
 </p>

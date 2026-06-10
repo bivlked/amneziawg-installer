@@ -1,0 +1,39 @@
+name: Working setup / field report
+description: Share a working setup, or report which VPS provider and network it works on
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Sharing what worked helps others choose a provider and network. Field reports also feed the carrier and provider notes in the docs. Mask public IPs and ports.
+  - type: input
+    id: provider
+    attributes:
+      label: VPS provider
+      placeholder: "e.g., Hetzner CAX11, Oracle Ampere, a generic budget VPS"
+    validations:
+      required: false
+  - type: input
+    id: network
+    attributes:
+      label: Client network or carrier (optional)
+      placeholder: "e.g., home ISP, a mobile carrier, office Wi-Fi"
+    validations:
+      required: false
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Architecture
+      options:
+        - x86_64 (amd64)
+        - ARM64 (aarch64)
+        - ARMv7 (armhf)
+        - Other
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: What works (and what did not)
+      description: Client app, presets used, any tweaks that helped.
+    validations:
+      required: true

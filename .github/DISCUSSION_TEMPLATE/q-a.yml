@@ -1,0 +1,45 @@
+name: Help & questions
+description: Ask for help with installation, clients, or troubleshooting
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before asking, please skim the [FAQ](https://github.com/bivlked/amneziawg-installer#faq-main) and [ADVANCED.md](https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.md). The details below help answer faster. Mask public IPs and ports before pasting.
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS version
+      options:
+        - Ubuntu 24.04 LTS
+        - Ubuntu 25.10
+        - Ubuntu 26.04
+        - Debian 12 (bookworm)
+        - Debian 13 (trixie)
+        - Other
+    validations:
+      required: false
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Architecture
+      options:
+        - x86_64 (amd64)
+        - ARM64 (aarch64)
+        - ARMv7 (armhf)
+        - Other
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Installer version
+      placeholder: "e.g., 5.15.6"
+    validations:
+      required: false
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What are you trying to do, and what actually happens?
+    validations:
+      required: true
