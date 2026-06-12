@@ -33,6 +33,13 @@ if [[ -z "$version" ]]; then
     echo "usage: build-release-notes.sh [--title] <X.Y.Z>" >&2
     exit 2
 fi
+# Версия интерполируется в awk-программу (_section): нестандартный тег вида
+# 'v1.0.0[' дал бы битый regex с криптичной ошибкой awk. Валидируем формат
+# заранее и падаем с понятным сообщением.
+if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "::error::invalid version format: '${version}' (expected X.Y.Z)" >&2
+    exit 2
+fi
 
 # Allow overriding the changelog paths for testing.
 RU_CHANGELOG="${RU_CHANGELOG:-$REPO_ROOT/CHANGELOG.md}"

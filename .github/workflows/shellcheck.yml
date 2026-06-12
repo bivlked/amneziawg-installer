@@ -33,7 +33,8 @@ jobs:
 
       - name: Run ShellCheck and syntax check
         run: |
-          mapfile -t scripts < <(git ls-files '*.sh' 'scripts/*.sh')
+          # pathspec '*.sh' в git ls-files матчится рекурсивно (включая scripts/)
+          mapfile -t scripts < <(git ls-files '*.sh')
           mapfile -t test_helpers < <(git ls-files 'tests/*.bash')
           mapfile -t test_bats < <(git ls-files 'tests/*.bats')
 

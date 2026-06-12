@@ -63,6 +63,9 @@ _write_pin() {
     tmp="$(mktemp "${src}.XXXXXX")" || return 1
     # Заменяем только значение в кавычках для конкретного пина.
     sed -E "s|^(${pin_name}=\")[0-9a-f]{64}(\")|\\1${new_hash}\\2|" "$src" > "$tmp" || { rm -f "$tmp"; return 1; }
+    # mktemp создаёт файл 0600: без выравнивания прав mv молча заменил бы
+    # installer на 0600 (git mode не меняется, diff-сигнала нет).
+    chmod --reference="$src" "$tmp" 2>/dev/null || chmod 644 "$tmp"
     mv "$tmp" "$src" || { rm -f "$tmp"; return 1; }
     return 0
 }

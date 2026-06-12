@@ -179,7 +179,13 @@ echo "Module version: $MODULE_VER"
 
 # Package as .deb
 PKG_NAME="amneziawg-kmod-${KERNEL_ID}"
-PKG_VERSION="${MODULE_VER}-${KERNEL_VERSION//+/\~}"   # dpkg-safe: + → ~
+# Историческая замена '+' -> '~' в kernel-части ревизии сохранена ради
+# непрерывности имён артефактов в релизе arm-packages (инсталлер матчит
+# .deb по имени). Замечание: '+' валиден в Debian-версиях, а '~' сортируется
+# РАНЬШЕ пустой строки - для версионного сравнения замена не нужна и даже
+# инвертирует порядок, но пакеты ставятся из файла (dpkg -i), не из архива,
+# так что на практике это только схема имён.
+PKG_VERSION="${MODULE_VER}-${KERNEL_VERSION//+/\~}"
 DEB_DIR="$WORK_DIR/deb"
 MODULE_INSTALL_PATH="${DEB_DIR}/lib/modules/${KERNEL_VERSION}/extra"
 
@@ -195,7 +201,10 @@ cp "$KO_PATH" "$MODULE_INSTALL_PATH/amneziawg.ko"
 #                       failed with status 6" (Issue #76). Reverting to the
 #                       conservative preset is the documented fix.
 KO_FILE="$MODULE_INSTALL_PATH/amneziawg.ko"
-if xz --check=crc32 --lzma2=dict=1MiB -f "$KO_FILE" 2>/dev/null; then
+# stderr xz сохраняем: реальный сбой (диск/OOM под QEMU) не должен быть
+# неотличим в логе сборки от намеренного пропуска компрессии.
+XZ_ERR="$WORK_DIR/xz_err.txt"
+if xz --check=crc32 --lzma2=dict=1MiB -f "$KO_FILE" 2>"$XZ_ERR"; then
     KO_XZ="${KO_FILE}.xz"
     # Sanity: kernel-compatible streams round-trip through `xz -d` and `xz -t`.
     # Catches preset/filter mismatches at build time instead of in users' dmesg.
@@ -206,8 +215,10 @@ if xz --check=crc32 --lzma2=dict=1MiB -f "$KO_FILE" 2>/dev/null; then
         exit 1
     fi
 else
-    echo "xz compression skipped — packaging uncompressed .ko"
+    echo "xz compression failed - packaging uncompressed .ko. xz stderr:"
+    cat "$XZ_ERR" 2>/dev/null || true
 fi
+rm -f "$XZ_ERR" 2>/dev/null || true
 
 cat > "${DEB_DIR}/DEBIAN/control" <<EOF
 Package: ${PKG_NAME}

@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # Скрипт для управления пользователями (пирами) AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.15.6
-# Дата: 2026-06-08
+# Версия: 5.16.0
+# Дата: 2026-06-12
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.15.6"
+SCRIPT_VERSION="5.16.0"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -81,7 +81,17 @@ while [[ $# -gt 0 ]]; do
         --expires=*)       EXPIRES_DURATION="${1#*=}"; shift ;;
         --conf-dir=*)      AWG_DIR="${1#*=}"; shift ;;
         --server-conf=*)   SERVER_CONF_FILE="${1#*=}"; shift ;;
-        --apply-mode=*)    _CLI_APPLY_MODE="${1#*=}"; export AWG_APPLY_MODE="$_CLI_APPLY_MODE"; shift ;;
+        --apply-mode=*)
+            _CLI_APPLY_MODE="${1#*=}"
+            # Валидация сразу при парсинге: опечатка (--apply-mode=restrat)
+            # молча работала бы как syncconf - пользователь, обходящий проблему
+            # режимом restart, не узнал бы, что режим не применился.
+            case "$_CLI_APPLY_MODE" in
+                syncconf|restart) ;;
+                *) echo "Недопустимое значение --apply-mode: '$_CLI_APPLY_MODE' (ожидается: syncconf или restart)" >&2; exit 1 ;;
+            esac
+            export AWG_APPLY_MODE="$_CLI_APPLY_MODE"
+            shift ;;
         --psk)             CLI_ADD_PSK=1; shift ;;
         --yes)             CLI_YES=1; shift ;;
         --carrier=*)       CLI_CARRIER="${1#*=}"; shift ;;
@@ -377,8 +387,25 @@ backup_configs() {
         exec {backup_lock_fd}>&-
         return 1
     fi
+    # Дополнительно берём конфиг-лок: параллельный `manage add/remove` мог
+    # изменить awg0.conf/keys МЕЖДУ копированием server/ и clients/ в tmpdir -
+    # каждый файл в бэкапе цел (atomic mv), но набор рассинхронизирован
+    # (peer-mismatch при restore). restore_backup держит оба лока - бэкап
+    # должен делать так же. ВАЖНО: в restore _backup_configs_nolock вызывается
+    # под уже взятым конфиг-локом - здесь лок берётся только для прямой
+    # команды backup (flock non-reentrant, см. контракт в awg_common.sh).
+    local config_lockfile="${AWG_DIR}/.awg_config.lock"
+    local config_lock_fd
+    exec {config_lock_fd}>"$config_lockfile"
+    if ! flock -x -w 30 "$config_lock_fd"; then
+        log_error "Таймаут ожидания блокировки конфига (30 сек)."
+        exec {config_lock_fd}>&-
+        exec {backup_lock_fd}>&-
+        return 1
+    fi
     _backup_configs_nolock
     local _rc=$?
+    exec {config_lock_fd}>&-
     exec {backup_lock_fd}>&-
     return "$_rc"
 }
@@ -553,7 +580,8 @@ restore_backup() {
     # использовать path traversal (../), абсолютные пути, symlinks или device
     # файлы для перезаписи произвольных системных файлов при распаковке от root.
 
-    # Проверка типов через verbose listing: отклоняем block/char/FIFO/hardlink
+    # Проверка типов через verbose listing: отклоняем block/char/FIFO/symlink ('l')
+    # и hardlink ('h') - оба класса ссылок небезопасны при распаковке.
     local _tar_verbose _vline _tc
     _tar_verbose=$(tar -tvzf "$bf" 2>/dev/null) || {
         log_error "Не удалось прочитать содержимое архива $bf"
@@ -701,7 +729,8 @@ restore_backup() {
         log "Восстановление данных expiry..."
         mkdir -p "${EXPIRY_DIR:-$AWG_DIR/expiry}"
         # C11: expiry НЕ пруним намеренно. Orphan-метки для несуществующих клиентов
-        # безвредны (cron-чистка их игнорирует), а prune здесь был бы небезопасен:
+        # безвредны: check_expired_clients при истечении распознаёт отсутствие peer
+        # в конфиге и зачищает метку с артефактами сам. Prune здесь был бы небезопасен:
         # и rm, и последующий cp - best-effort (|| true), так что сбой copy после
         # prune молча оставил бы expiry пустым. Сами client-артефакты пруним выше.
         cp -a "$td/expiry/"* "${EXPIRY_DIR:-$AWG_DIR/expiry}/" 2>/dev/null || true
@@ -885,13 +914,15 @@ modify_client() {
     escaped_value=$(escape_sed "$value")
     if ! sed -i "s#^${param}[[:space:]]*=[[:space:]]*.*#${param} = ${escaped_value}#" "$cf"; then
         log_error "Ошибка sed. Восстановление..."
-        cp "$bak" "$cf" || log_warn "Ошибка восстановления."
+        # После успешного отката .bak идентичен конфигу - удаляем, чтобы
+        # повторные неудачные modify не копили .bak-файлы в $AWG_DIR.
+        if cp "$bak" "$cf"; then rm -f "$bak"; else log_warn "Ошибка восстановления."; fi
         exec {modify_lock_fd}>&-
         return 1
     fi
     if ! grep -q -E "^${param} = " "$cf"; then
         log_error "Замена не выполнена для '$param'. Восстановление..."
-        cp "$bak" "$cf" || log_warn "Ошибка восстановления."
+        if cp "$bak" "$cf"; then rm -f "$bak"; else log_warn "Ошибка восстановления."; fi
         exec {modify_lock_fd}>&-
         return 1
     fi
@@ -932,7 +963,6 @@ check_server() {
     fi
 
     log "Прослушивание порта:"
-    # shellcheck source=/dev/null
     safe_load_config "$CONFIG_FILE" 2>/dev/null
     local port=${AWG_PORT:-0}
     if [[ "$port" -eq 0 ]]; then
@@ -958,7 +988,10 @@ check_server() {
 
     log "Правила UFW:"
     if command -v ufw &>/dev/null; then
-        if ! ufw status | grep -qw "${port}/udp"; then
+        if [[ "$port" -eq 0 ]]; then
+            # Порт не определился выше - grep по "0/udp" дал бы ложный warning.
+            log_warn " - Порт не определён, проверка правила UFW пропущена."
+        elif ! ufw status | grep -qw "${port}/udp"; then
             log_warn " - Правило UFW для ${port}/udp не найдено!"
         else
             log " - Правило UFW для ${port}/udp есть."
@@ -1097,7 +1130,6 @@ diagnose_server() {
     fi
 
     # 6. UFW state + AWG port
-    # shellcheck source=/dev/null
     safe_load_config "$CONFIG_FILE" 2>/dev/null
     local awg_port="${AWG_PORT:-39743}"
     if command -v ufw &>/dev/null; then
@@ -1122,12 +1154,13 @@ diagnose_server() {
     peer_count=$(awg show awg0 peers 2>/dev/null | wc -l)
     _diag_line INFO "Peers сконфигурировано: $peer_count"
 
-    # 8. AWG params snapshot
-    local jc jmin jmax i1
-    jc=$(awg show awg0 2>/dev/null   | awk '/^[[:space:]]*jc:/   {print $2; exit}')
-    jmin=$(awg show awg0 2>/dev/null | awk '/^[[:space:]]*jmin:/ {print $2; exit}')
-    jmax=$(awg show awg0 2>/dev/null | awk '/^[[:space:]]*jmax:/ {print $2; exit}')
-    i1=$(awg show awg0 2>/dev/null   | awk -F': ' '/^[[:space:]]*i1:/ {print $2; exit}')
+    # 8. AWG params snapshot (один вызов awg show вместо четырёх)
+    local _awg_show jc jmin jmax i1
+    _awg_show=$(awg show awg0 2>/dev/null)
+    jc=$(awk '/^[[:space:]]*jc:/   {print $2; exit}' <<< "$_awg_show")
+    jmin=$(awk '/^[[:space:]]*jmin:/ {print $2; exit}' <<< "$_awg_show")
+    jmax=$(awk '/^[[:space:]]*jmax:/ {print $2; exit}' <<< "$_awg_show")
+    i1=$(awk -F': ' '/^[[:space:]]*i1:/ {print $2; exit}' <<< "$_awg_show")
     _diag_line INFO "AWG params: Jc=${jc:-?} Jmin=${jmin:-?} Jmax=${jmax:-?} I1=${i1:-absent}"
 
     # 9. Carrier comparison
@@ -1343,12 +1376,19 @@ list_clients() {
             fi
         fi
 
-        # Expiry info
+        # Expiry info: только для табличного вывода (JSON его не печатает -
+        # лишнее чтение файла на каждого клиента). Принимаем только числовой
+        # timestamp: повреждённый expiry-файл дал бы ошибку bash-арифметики
+        # из format_remaining прямо в таблице.
         local exp_str=""
-        local exp_ts
-        exp_ts=$(get_client_expiry "$name" 2>/dev/null)
-        if [[ -n "$exp_ts" ]]; then
-            exp_str=" [$(format_remaining "$exp_ts")]"
+        if [[ "$JSON_OUTPUT" -ne 1 ]]; then
+            local exp_ts
+            exp_ts=$(get_client_expiry "$name" 2>/dev/null)
+            if [[ "$exp_ts" =~ ^[0-9]+$ ]]; then
+                exp_str=" [$(format_remaining "$exp_ts")]"
+            elif [[ -n "$exp_ts" ]]; then
+                exp_str=" [expiry повреждён]"
+            fi
         fi
 
         if [[ "$JSON_OUTPUT" -eq 1 ]]; then
@@ -1443,6 +1483,10 @@ stats_clients() {
     local json_entries=()
     local table_rows=()
     local total_rx=0 total_tx=0
+    # date +%s один раз до цикла (а не subprocess на каждого пира);
+    # точности секундного среза для статусов active/recent достаточно.
+    local _stats_now
+    _stats_now=$(date +%s)
 
     # awg show dump: каждая строка пира = pubkey psk endpoint allowed-ips latest-handshake rx tx keepalive
     # shellcheck disable=SC2034
@@ -1458,9 +1502,7 @@ stats_clients() {
         local hs_str="никогда"
         local status="Неактивен" status_code="inactive"
         if [[ "$handshake" =~ ^[0-9]+$ && "$handshake" -gt 0 ]]; then
-            local now
-            now=$(date +%s)
-            local diff=$((now - handshake))
+            local diff=$((_stats_now - handshake))
             if [[ $diff -lt 180 ]]; then
                 status="Активен"; status_code="active"
             elif [[ $diff -lt 86400 ]]; then
@@ -1534,7 +1576,7 @@ usage() {
     echo "  remove <имя> [имя2 ...]     Удалить клиента(ов)"
     echo "  list [-v] [--json]    Показать список клиентов (--json: машиночитаемый, с client_ipv6)"
     echo "  stats [--json]        Статистика трафика по клиентам"
-    echo "  regen [имя]           Перегенерировать файлы клиента(ов)"
+    echo "  regen [имя ...]       Перегенерировать файлы клиента(ов), можно несколько имён"
     echo "  modify <имя> <пар> <зн> Изменить параметр клиента"
     echo "  backup                Создать бэкап"
     echo "  restore [файл]        Восстановить из бэкапа"
@@ -1542,7 +1584,7 @@ usage() {
     echo "  diagnose [--carrier=N] Self-troubleshooting: kernel/sysctl/UFW + сравнение с оператором"
     echo "  show                  Показать статус \`awg show\`"
     echo "  restart               Перезапустить сервис AmneziaWG"
-    echo "  repair-module         Восстановить модуль ядра после kernel upgrade"
+    echo "  repair-module         Восстановить модуль ядра после kernel upgrade (alias: repair)"
     echo "                        (dkms autoinstall + modprobe + запуск awg-quick)"
     echo "  help                  Показать эту справку"
     echo ""
@@ -1615,7 +1657,13 @@ case $COMMAND in
             log "Добавление '$_cname'..."
             if generate_client "$_cname"; then
                 log "Клиент '$_cname' добавлен."
-                log "Файлы: $AWG_DIR/${_cname}.conf, $AWG_DIR/${_cname}.png"
+                # .png упоминаем только если QR реально создан (qrencode может
+                # отсутствовать) - симметрично проверке .vpnuri ниже.
+                if [[ -f "$AWG_DIR/${_cname}.png" ]]; then
+                    log "Файлы: $AWG_DIR/${_cname}.conf, $AWG_DIR/${_cname}.png"
+                else
+                    log "Файлы: $AWG_DIR/${_cname}.conf"
+                fi
                 if [[ -f "$AWG_DIR/${_cname}.vpnuri" ]]; then
                     log "vpn:// URI: $AWG_DIR/${_cname}.vpnuri"
                 fi
@@ -1638,7 +1686,6 @@ case $COMMAND in
         done
 
         if [[ $_added -gt 0 ]]; then
-            [[ -n "${_CLI_APPLY_MODE:-}" ]] && export AWG_APPLY_MODE="$_CLI_APPLY_MODE"
             if [[ "${AWG_SKIP_APPLY:-0}" == "1" ]]; then
                 # apply_config сам залогирует и вернёт 0
                 apply_config
@@ -1702,7 +1749,6 @@ case $COMMAND in
             done
 
             if [[ $_removed -gt 0 ]]; then
-                [[ -n "${_CLI_APPLY_MODE:-}" ]] && export AWG_APPLY_MODE="$_CLI_APPLY_MODE"
                 if [[ "${AWG_SKIP_APPLY:-0}" == "1" ]]; then
                     apply_config
                     log "Удалено клиентов: $_removed. Применение отложено (AWG_SKIP_APPLY=1)."
@@ -1823,9 +1869,9 @@ case $COMMAND in
         diagnose_server || _cmd_rc=1
         ;;
 
-    help)
-        usage
-        ;;
+    # Ветки help) здесь нет намеренно: все пути, выставляющие COMMAND="help"
+    # (-h/--help, неизвестная опция, позиционный help), перехватываются ДО
+    # диспетчера ранним `usage` (он завершает процесс через exit).
 
     *)
         log_error "Неизвестная команда: '$COMMAND'"

@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 2.0
 # Author: @bivlked
-# Version: 5.15.6
-# Date: 2026-06-08
+# Version: 5.16.0
+# Date: 2026-06-12
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -28,14 +28,20 @@ _AWG_TEMP_FILES=()
 # file survives the subshell, so _awg_cleanup can reliably remove even a temp
 # created inside command substitution (e.g. an interrupted config write between
 # mktemp and mv). $$ is the calling script's PID, stable across its subshells.
-_AWG_TEMP_REGISTRY="${TMPDIR:-/tmp}/.awg_temp_registry.$$"
+# The registry lives in $AWG_DIR (root-only 0700), NOT in world-writable /tmp:
+# a predictable name in /tmp would let a local user pre-plant a file listing
+# arbitrary paths, which _awg_cleanup would then delete as root.
+_AWG_TEMP_REGISTRY="${AWG_DIR}/.awg_temp_registry.$$"
 
 _awg_cleanup() {
     local f
     for f in "${_AWG_TEMP_FILES[@]}"; do
         [[ -f "$f" ]] && rm -f "$f"
     done
-    if [[ -n "${_AWG_TEMP_REGISTRY:-}" && -f "$_AWG_TEMP_REGISTRY" ]]; then
+    # File-backed public IP cache (see get_server_public_ip) - per-PID, clean it up.
+    rm -f "${AWG_DIR}/.public_ip.cache.$$" 2>/dev/null
+    # Guard against symlink substitution of the registry: read regular files only.
+    if [[ -n "${_AWG_TEMP_REGISTRY:-}" && -f "$_AWG_TEMP_REGISTRY" && ! -L "$_AWG_TEMP_REGISTRY" ]]; then
         while IFS= read -r f; do
             [[ -n "$f" && -f "$f" ]] && rm -f "$f"
         done < "$_AWG_TEMP_REGISTRY"
@@ -174,10 +180,26 @@ get_main_nic() {
 # for tests and diffs). First-wins: when one service returns a valid IP,
 # the rest are skipped.
 _CACHED_PUBLIC_IP=""
+# File-backed twin of the cache: get_server_public_ip is almost always called
+# as $(...) (a subshell), where the _CACHED_PUBLIC_IP assignment is lost in the
+# parent and the cache variable never kicks in. A PID-suffixed file survives
+# the subshell (same trick as _AWG_TEMP_REGISTRY) and is removed in
+# _awg_cleanup. Without it `manage regen` over N clients would do N curl
+# rounds (up to 6 services at 5 sec each) when AWG_ENDPOINT is empty.
+_PUBLIC_IP_CACHE="${AWG_DIR}/.public_ip.cache.$$"
 get_server_public_ip() {
     if [[ -n "$_CACHED_PUBLIC_IP" ]]; then
         echo "$_CACHED_PUBLIC_IP"
         return 0
+    fi
+    if [[ -f "$_PUBLIC_IP_CACHE" && ! -L "$_PUBLIC_IP_CACHE" ]]; then
+        local cached
+        cached=$(<"$_PUBLIC_IP_CACHE")
+        if [[ -n "$cached" ]] && _valid_ipv4 "$cached"; then
+            _CACHED_PUBLIC_IP="$cached"
+            echo "$cached"
+            return 0
+        fi
     fi
     local ip="" svc
     for svc in \
@@ -191,6 +213,7 @@ get_server_public_ip() {
         ip=$(curl -4 -sf --max-time 5 "$svc" 2>/dev/null | tr -d '[:space:]')
         if [[ -n "$ip" ]] && _valid_ipv4 "$ip"; then
             _CACHED_PUBLIC_IP="$ip"
+            printf '%s\n' "$ip" > "$_PUBLIC_IP_CACHE" 2>/dev/null || true
             # Observability: write trace to LOG_FILE directly. Never to stdout
             # (the function's stdout IS the IP; any extra bytes corrupt the
             # caller's $(get_server_public_ip) capture and the generated
@@ -244,14 +267,17 @@ rand_range() {
     local random_val
     random_val=$(od -An -tu4 -N4 /dev/urandom 2>/dev/null | tr -d ' ')
     if [[ -z "$random_val" || ! "$random_val" =~ ^[0-9]+$ ]]; then
-        random_val=$(( (RANDOM << 15) | RANDOM ))
+        # Fallback: three $RANDOM (15 bits) with XOR overlap = full 31 bits.
+        random_val=$(( (RANDOM << 16) ^ (RANDOM << 8) ^ RANDOM ))
     fi
     echo $(( (random_val % range) + min ))
 }
 
 # Generate 4 non-overlapping ranges for AWG H1-H4.
 # Algorithm: 8 random values → sort → 4 (low, high) pairs.
-# Sorting guarantees low ≤ high and non-overlap between pairs.
+# Sorting gives low <= high; the strict checks below guarantee a gap between
+# pairs (touching bounds = overlap at a single point) and a lower bound >= 5
+# (values 1-4 are reserved for vanilla WireGuard message types).
 # Minimum width per range = 1000.
 # Prints 4 "low-high" lines to stdout. Returns 1 on failure.
 # Mitigates Russian DPI fingerprinting of static H values (#38).
@@ -298,11 +324,17 @@ generate_awg_h_ranges() {
         sorted=$(printf '%s\n' "${arr[@]}" | sort -n)
         arr=()
         while IFS= read -r _v; do arr+=("$_v"); done <<< "$sorted"
-        # Minimum width per pair
-        if (( ${arr[1]} - ${arr[0]} >= 1000 )) && \
+        # Check: minimum width per pair, strict gap between pairs (no
+        # touching bounds) and lower bound outside the reserved values 1-4
+        # (vanilla WireGuard message types).
+        if (( ${arr[0]} >= 5 )) && \
+           (( ${arr[1]} - ${arr[0]} >= 1000 )) && \
            (( ${arr[3]} - ${arr[2]} >= 1000 )) && \
            (( ${arr[5]} - ${arr[4]} >= 1000 )) && \
-           (( ${arr[7]} - ${arr[6]} >= 1000 )); then
+           (( ${arr[7]} - ${arr[6]} >= 1000 )) && \
+           (( ${arr[2]} > ${arr[1]} )) && \
+           (( ${arr[4]} > ${arr[3]} )) && \
+           (( ${arr[6]} > ${arr[5]} )); then
             printf '%s-%s\n' "${arr[0]}" "${arr[1]}"
             printf '%s-%s\n' "${arr[2]}" "${arr[3]}"
             printf '%s-%s\n' "${arr[4]}" "${arr[5]}"
@@ -782,6 +814,10 @@ generate_keypair() {
         log_error "Failed to create $KEYS_DIR"
         return 1
     }
+    # 700 right at creation: mkdir -p with the default umask would give 755,
+    # and until the installer's secure_files the keys directory would be
+    # world-readable.
+    chmod 700 "$KEYS_DIR"
 
     local privkey pubkey
     privkey=$(awg genkey) || {
@@ -793,11 +829,14 @@ generate_keypair() {
         return 1
     }
 
-    echo "$privkey" > "$KEYS_DIR/${name}.private" || {
+    # umask 077 in a subshell: the file is born 600 right away, no
+    # world-readable window between write and chmod (with the default umask
+    # 022 the key would briefly be 644).
+    ( umask 077; echo "$privkey" > "$KEYS_DIR/${name}.private" ) || {
         log_error "Failed to write private key for '$name'"
         return 1
     }
-    echo "$pubkey" > "$KEYS_DIR/${name}.public" || {
+    ( umask 077; echo "$pubkey" > "$KEYS_DIR/${name}.public" ) || {
         log_error "Failed to write public key for '$name'"
         return 1
     }
@@ -822,8 +861,9 @@ generate_server_keys() {
         return 1
     }
 
-    echo "$privkey" > "$AWG_DIR/server_private.key" || return 1
-    echo "$pubkey" > "$AWG_DIR/server_public.key" || return 1
+    # umask 077: no world-readable window between write and chmod (see generate_keypair).
+    ( umask 077; echo "$privkey" > "$AWG_DIR/server_private.key" ) || return 1
+    ( umask 077; echo "$pubkey" > "$AWG_DIR/server_public.key" ) || return 1
     chmod 600 "$AWG_DIR/server_private.key" "$AWG_DIR/server_public.key" || {
         log_error "Failed to set permissions on server keys"
         return 1
@@ -896,9 +936,17 @@ _derive_ipv6_server_addr() {
 }
 
 # Render server config for AWG 2.0
+# render_server_config [peers_source_file]
 # Uses global variables from load_awg_params()
+# peers_source_file (optional): a file whose [Peer] blocks are carried over
+# into the new config BEFORE the atomic mv (usually a backup of the live
+# awg0.conf). Thanks to this the live config is never left peer-less even for
+# an instant - a failure between render and a separate append would leave a
+# peer-less file, and the next run of step 6 would back up that already
+# peer-less file (losing all peers on --force reinstall).
 # shellcheck disable=SC2154  # AWG_* vars loaded via load_awg_params -> source
 render_server_config() {
+    local peers_source="${1:-}"
     load_awg_params || return 1
 
     local server_privkey
@@ -985,6 +1033,25 @@ EOF
     # Add I1 only if set (CPS is optional)
     if [[ -n "${AWG_I1}" ]]; then
         echo "I1 = ${AWG_I1}" >> "$tmpfile"
+    fi
+
+    # Carry [Peer] blocks from peers_source into the temp BEFORE mv (see doc comment).
+    # The buffer is flushed on every new [Peer]: ALL blocks are carried over.
+    if [[ -n "$peers_source" && -f "$peers_source" ]]; then
+        local _peers
+        _peers=$(awk '
+            /^\[Peer\]/ { if (in_peer) printf "%s", buf; buf=$0"\n"; in_peer=1; next }
+            in_peer && /^\[/ { printf "%s", buf; buf=""; in_peer=0; next }
+            in_peer { buf=buf $0"\n"; next }
+            END { if (in_peer) printf "%s", buf }
+        ' "$peers_source")
+        if [[ -n "$_peers" ]]; then
+            printf '\n%s' "$_peers" >> "$tmpfile" || {
+                rm -f "$tmpfile"
+                log_error "Failed to carry [Peer] blocks into the new config"
+                return 1
+            }
+        fi
     fi
 
     if ! mv "$tmpfile" "$SERVER_CONF_FILE"; then
@@ -1292,6 +1359,12 @@ add_peer_to_server() {
         log_error "add_peer_to_server: insufficient arguments"
         return 1
     fi
+    # The name goes into the config heredoc (#_Name = ...): a newline in the
+    # name would inject a [Peer] section. Defense-in-depth, see generate_client.
+    if ! [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        log_error "add_peer_to_server: invalid client name '$name'"
+        return 1
+    fi
 
     if grep -qxF "#_Name = ${name}" "$SERVER_CONF_FILE" 2>/dev/null; then
         log_error "Peer '$name' already exists in config"
@@ -1345,6 +1418,11 @@ remove_peer_from_server() {
         log_error "remove_peer_from_server: name not specified"
         return 1
     fi
+    # Defense-in-depth: same contract as in add_peer_to_server.
+    if ! [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        log_error "remove_peer_from_server: invalid client name '$name'"
+        return 1
+    fi
 
     # Inter-process lock
     local lockfile="${AWG_DIR}/.awg_config.lock"
@@ -1396,7 +1474,23 @@ remove_peer_from_server() {
     END {
         if (buf != "" && !is_target) printf "%s", buf
     }
-    ' "$SERVER_CONF_FILE" > "$tmpfile"
+    ' "$SERVER_CONF_FILE" > "$tmpfile" || {
+        log_error "Failed to filter the server config (awk)"
+        rm -f "$tmpfile"
+        exec {lock_fd}>&-
+        return 1
+    }
+
+    # Sanity-check BEFORE mv: on ENOSPC/I/O failure awk would leave an
+    # empty/truncated tmpfile, and the atomic mv would replace a working
+    # config with a broken one (losing the server PrivateKey and all peers).
+    # [Interface] must survive.
+    if ! grep -q '^\[Interface\]' "$tmpfile"; then
+        log_error "Peer removal result looks corrupt ([Interface] is missing) - config left unchanged"
+        rm -f "$tmpfile"
+        exec {lock_fd}>&-
+        return 1
+    fi
 
     # Normalize: squeeze multiple blank lines into one.
     # tmpclean lives on the same filesystem as tmpfile (mv tmpclean->tmpfile atomic).
@@ -1487,6 +1581,14 @@ generate_vpn_uri() {
 
     load_awg_params || return 1
 
+    # AWG_PORT is the only UNquoted numeric field of the inner JSON ("port":N).
+    # An empty/non-numeric value would produce "port":, - syntactically broken
+    # JSON, which Amnezia Client silently fails to import.
+    if ! [[ "${AWG_PORT:-}" =~ ^[0-9]+$ ]]; then
+        log_warn "AWG_PORT is unset or not a number ('${AWG_PORT:-}') - vpn:// URI not created for '$name'."
+        return 1
+    fi
+
     local client_privkey client_ip client_ipv6 server_pubkey endpoint allowed_ips client_psk
     client_privkey=$(grep -oP 'PrivateKey\s*=\s*\K\S+' "$conf_file") || return 1
     # Extract IPv4 from Address (first field before comma, without /prefix).
@@ -1531,7 +1633,7 @@ generate_vpn_uri() {
         # IPv4/hostname: addr:port
         endpoint="${raw_endpoint%:*}"
     fi
-    # tr -d ' \r' — strips spaces AND CR (on CRLF configs '.+' greedily
+    # tr -d ' \r' - strips spaces AND CR (on CRLF configs '.+' greedily
     # captures \r into the value, which breaks JSON.allowed_ips).
     allowed_ips=$(grep -oP 'AllowedIPs\s*=\s*\K.+' "$conf_file" | tr -d ' \r') || allowed_ips="0.0.0.0/0"
 
@@ -1548,12 +1650,19 @@ generate_vpn_uri() {
     if [[ "$dns_line" == *,* ]]; then dns2="${dns_line#*,}"; dns2="${dns2%%,*}"; else dns2="$dns1"; fi
 
     local vpn_uri perl_err
-    perl_err=$(awg_mktemp) || perl_err="/tmp/awg_perl_err.$$"
+    perl_err=$(awg_mktemp "$AWG_DIR") || { log_warn "mktemp failed - vpn:// URI not created for '$name'."; return 1; }
+    # Secrets (client privkey, PSK) are passed to perl via env, NOT via argv:
+    # the process command line is visible to all users in /proc/<pid>/cmdline
+    # while perl runs. server_pubkey is not a secret but travels with the group.
     # shellcheck disable=SC2016
-    vpn_uri=$(perl -MCompress::Zlib -MMIME::Base64 -e '
+    vpn_uri=$(AWG_URI_CPK="$client_privkey" AWG_URI_PSK="$client_psk" AWG_URI_SPK="$server_pubkey" \
+      perl -MCompress::Zlib -MMIME::Base64 -e '
         my ($conf_path, $h1,$h2,$h3,$h4, $jc,$jmin,$jmax,
-            $s1,$s2,$s3,$s4, $i1, $port, $ep, $cip, $cipv6, $cpk, $spk, $aips, $psk,
+            $s1,$s2,$s3,$s4, $i1, $port, $ep, $cip, $cipv6, $aips,
             $mtu, $keepalive, $dns1, $dns2) = @ARGV;
+        my $cpk = $ENV{AWG_URI_CPK} // "";
+        my $psk = $ENV{AWG_URI_PSK} // "";
+        my $spk = $ENV{AWG_URI_SPK} // "";
 
         open my $fh, "<", $conf_path or die;
         local $/; my $raw = <$fh>; close $fh;
@@ -1614,7 +1723,7 @@ generate_vpn_uri() {
         "$AWG_Jc" "$AWG_Jmin" "$AWG_Jmax" \
         "$AWG_S1" "$AWG_S2" "$AWG_S3" "$AWG_S4" \
         "$AWG_I1" "$AWG_PORT" "$endpoint" \
-        "$client_ip" "$client_ipv6" "$client_privkey" "$server_pubkey" "$allowed_ips" "$client_psk" \
+        "$client_ip" "$client_ipv6" "$allowed_ips" \
         "$mtu" "$keepalive" "$dns1" "$dns2" 2>"$perl_err"
     )
 
@@ -1731,6 +1840,13 @@ generate_client() {
         log_error "generate_client: name not specified"
         return 1
     fi
+    # Library contract (defense-in-depth): a name with metacharacters/newlines
+    # would inject into paths and the server config heredoc. Same regex as
+    # validate_client_name in manage and set_client_expiry here.
+    if ! [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        log_error "generate_client: invalid client name '$name'"
+        return 1
+    fi
 
     # Load parameters
     load_awg_params || return 1
@@ -1807,7 +1923,7 @@ generate_client() {
         endpoint=$(_try_local_ip) && log_warn "Using local server IP as Endpoint ('$endpoint') — curl to external services did not go through. If the server is behind NAT, hand-edit the Endpoint in the client .conf files."
     fi
     if [[ -z "$endpoint" ]]; then
-        log_error "Failed to determine server public IP. Use --endpoint=IP"
+        log_error "Failed to detect the server public IP. Set AWG_ENDPOINT in awgsetup_cfg.init (or reinstall with --endpoint=IP)."
         _rollback_client_artifacts "$name"
         exec {lock_fd}>&-
         return 1
@@ -1875,6 +1991,14 @@ regenerate_client() {
 
     if [[ -z "$name" ]]; then
         log_error "regenerate_client: name not specified"
+        return 1
+    fi
+    # Library contract (defense-in-depth): the name is interpolated into paths
+    # and the config, so validate it right here instead of relying on the
+    # caller (manage does its own validate_client_name, but cron / third-party
+    # scripts do not).
+    if ! [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        log_error "regenerate_client: invalid client name '$name'"
         return 1
     fi
 
@@ -2003,6 +2127,27 @@ regenerate_client() {
         else
             unset CLIENT_PSK
         fi
+    else
+        # The client .conf is lost (regen as recovery): restore the
+        # PresharedKey from the server [Peer] block, otherwise the recreated
+        # config would come out without a PSK while the server still has one -
+        # the handshake silently breaks. We control the field order in the
+        # block (add_peer_to_server writes #_Name first), so found-then-PSK
+        # is sufficient.
+        local _psk
+        _psk=$(awk -v target="$name" '
+            /^\[Peer\]/ { in_peer=1; found=0; next }
+            in_peer && $0 == "#_Name = " target { found=1; next }
+            in_peer && found && /^PresharedKey[ \t]*=/ {
+                sub(/^PresharedKey[ \t]*=[ \t]*/, ""); sub(/\r$/, ""); print; exit
+            }
+            /^\[/ && !/^\[Peer\]/ { in_peer=0; found=0 }
+        ' "$SERVER_CONF_FILE" 2>/dev/null | tr -d '[:space:]')
+        if [[ -n "$_psk" ]]; then
+            export CLIENT_PSK="$_psk"
+        else
+            unset CLIENT_PSK
+        fi
     fi
 
     # Config regeneration (pass client_ipv6 if dual-stack)
@@ -2030,7 +2175,9 @@ regenerate_client() {
         unset CLIENT_PSK
         return 1
     fi
-    if ! sed -i "s|^AllowedIPs = .*|AllowedIPs = ${_aip}|" "$_client_conf"; then
+    # Delimiter '/' (not '|'): the escaping class above covers & \ / - a '|'
+    # character in the value would break a sed expression using the '|' delimiter.
+    if ! sed -i "s/^AllowedIPs = .*/AllowedIPs = ${_aip}/" "$_client_conf"; then
         log_error "sed error writing AllowedIPs to $_client_conf"
         exec {lock_fd}>&-
         unset CLIENT_PSK
@@ -2074,8 +2221,13 @@ validate_awg_config() {
     local int_params=("Jc" "Jmin" "Jmax" "S1" "S2" "S3" "S4")
     local range_params=("H1" "H2" "H3" "H4")
 
+    # Parsing aligned with load_awg_params_from_server_conf: arbitrary spaces
+    # around '=', last-wins for duplicate lines (validate the value that will
+    # actually load), trim spaces/CR. Previously the validator required exactly
+    # one space and took first-wins - a hand-edited 'Jc=4' loaded fine but
+    # failed validation with a bogus "parameter not found".
     for param in "${int_params[@]}"; do
-        val=$(sed -n "s/^${param} = //p" "$SERVER_CONF_FILE" | head -1)
+        val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
         if [[ -z "$val" ]]; then
             log_error "Parameter '$param' not found in server config"
             ok=0
@@ -2087,11 +2239,11 @@ validate_awg_config() {
 
     # Protocol boundary checks (defense-in-depth for restored backups)
     local jc jmin jmax s3 s4
-    jc=$(sed -n 's/^Jc = //p' "$SERVER_CONF_FILE" | head -1)
-    jmin=$(sed -n 's/^Jmin = //p' "$SERVER_CONF_FILE" | head -1)
-    jmax=$(sed -n 's/^Jmax = //p' "$SERVER_CONF_FILE" | head -1)
-    s3=$(sed -n 's/^S3 = //p' "$SERVER_CONF_FILE" | head -1)
-    s4=$(sed -n 's/^S4 = //p' "$SERVER_CONF_FILE" | head -1)
+    jc=$(sed -n 's/^[[:space:]]*Jc[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
+    jmin=$(sed -n 's/^[[:space:]]*Jmin[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
+    jmax=$(sed -n 's/^[[:space:]]*Jmax[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
+    s3=$(sed -n 's/^[[:space:]]*S3[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
+    s4=$(sed -n 's/^[[:space:]]*S4[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
     if [[ "$jc" =~ ^[0-9]+$ ]]; then
         if [[ "$jc" -lt 1 || "$jc" -gt 128 ]]; then
             log_error "Jc=$jc is out of range (1-128)"
@@ -2121,8 +2273,9 @@ validate_awg_config() {
         ok=0
     fi
 
+    local _h_ranges=()
     for param in "${range_params[@]}"; do
-        val=$(sed -n "s/^${param} = //p" "$SERVER_CONF_FILE" | head -1)
+        val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
         if [[ -z "$val" ]]; then
             log_error "Parameter '$param' not found in server config"
             ok=0
@@ -2134,9 +2287,28 @@ validate_awg_config() {
             if [[ "$range_lo" -ge "$range_hi" ]]; then
                 log_error "Parameter '$param': lower bound ($range_lo) >= upper bound ($range_hi)"
                 ok=0
+            else
+                _h_ranges+=("$range_lo $range_hi $param")
             fi
         fi
     done
+
+    # Pairwise non-overlap of H1-H4 is a key AWG 2.0 invariant. Without this
+    # check a config from a foreign backup with overlapping ranges passed
+    # validation even though the protocol does not allow it.
+    if [[ ${#_h_ranges[@]} -eq 4 ]]; then
+        local _i _j _lo1 _hi1 _n1 _lo2 _hi2 _n2
+        for ((_i = 0; _i < 4; _i++)); do
+            for ((_j = _i + 1; _j < 4; _j++)); do
+                read -r _lo1 _hi1 _n1 <<< "${_h_ranges[$_i]}"
+                read -r _lo2 _hi2 _n2 <<< "${_h_ranges[$_j]}"
+                if (( _lo1 <= _hi2 && _lo2 <= _hi1 )); then
+                    log_error "Ranges ${_n1} (${_lo1}-${_hi1}) and ${_n2} (${_lo2}-${_hi2}) overlap"
+                    ok=0
+                fi
+            done
+        done
+    fi
 
     # I1 is optional but recommended for AWG 2.0
     if ! grep -q "^I1 = " "$SERVER_CONF_FILE"; then
@@ -2285,9 +2457,22 @@ check_expired_clients() {
         now=$(date +%s)
         if [[ $now -ge $expires_at ]]; then
             log "Client '$name' expired. Removing..."
-            if remove_peer_from_server "$name" 2>/dev/null; then
+            if [[ -r "$SERVER_CONF_FILE" ]] && ! grep -qxF "#_Name = ${name}" "$SERVER_CONF_FILE"; then
+                # Orphan marker: the peer is already gone from the config
+                # (removed manually, via awg, or by restoring an old backup).
+                # Without this branch cron would forever retry
+                # remove_peer_from_server every 5 minutes, piling warns into
+                # expiry.log, and the client artifacts would never be cleaned.
+                # The [[ -r ]] guard: a temporarily missing/unreadable config
+                # (mid-restore, fs failure) is NOT a reason to wipe client
+                # artifacts - that case falls through to the warn branch and
+                # is retried later.
                 _remove_client_files "$name"
-                rm -f "$efile"
+                remove_client_expiry "$name"
+                log "Client '$name': peer is absent from the config - cleaned up orphaned artifacts and the expiry marker."
+            elif remove_peer_from_server "$name" 2>/dev/null; then
+                _remove_client_files "$name"
+                remove_client_expiry "$name"
                 log "Client '$name' removed (expired)."
                 ((removed++))
             else
@@ -2321,7 +2506,7 @@ install_expiry_cron() {
 AWG_DIR="${AWG_DIR}"
 CONFIG_FILE="${CONFIG_FILE}"
 SERVER_CONF_FILE="${SERVER_CONF_FILE}"
-*/5 * * * * root /bin/bash -c 'source "${AWG_DIR}/awg_common.sh" || exit 1; check_expired_clients' >> "${AWG_DIR}/expiry.log" 2>&1
+*/5 * * * * root /bin/bash -c 'source "${AWG_DIR}/awg_common.sh" || exit 1; trap _awg_cleanup EXIT; check_expired_clients' >> "${AWG_DIR}/expiry.log" 2>&1
 CRONEOF
     then
         rm -f "$_cron_tmp"

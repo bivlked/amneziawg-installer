@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.15.6
-# Date: 2026-06-08
+# Version: 5.16.0
+# Date: 2026-06-12
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 set -o pipefail
-SCRIPT_VERSION="5.15.6"
+SCRIPT_VERSION="5.16.0"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="e444e54f4156895483cb5fc8c57d505fd3d341e6d5c62b851c818cdd6c33a327"
-MANAGE_SCRIPT_SHA256="6d1149ed4edfec4e3961d3a8641b14c4799adfa0109584049b28f5b7dda4757a"
+COMMON_SCRIPT_SHA256="660539a1553ac57f250b6096e9e03852bbc1783c120ee55a47b092dc655ee2c7"
+MANAGE_SCRIPT_SHA256="7e56616dfbe5ab31fc049f640927509f825968ff479ea749a97a9861dd19d30f"
 
 # CLI flags
 UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
@@ -174,10 +174,16 @@ apt_update_tolerant() {
     # Filter error lines. Ignore:
     #   1. Lines about source packages (deb-src / /source/ / Sources)
     #   2. Generic 'Some index files failed to download' — symptom, not cause
+    # Additionally exclude known informational W: lines that are never the
+    # CAUSE of rc!=0 but used to survive the filters and turn a tolerable
+    # failure (e.g. deb-src 404 with duplicated sources) into a false fatal:
+    #   - "Target ... is configured multiple times" (duplicate sources entries)
+    #   - "... stored in legacy trusted.gpg keyring" (old key format)
     non_src_errors=$(printf '%s\n' "$err_output" \
         | grep -E '^(E:|Err:|W:)' \
         | grep -vE '(deb-src|/source/|Sources([^[:alpha:]]|$))' \
-        | grep -vE 'Some index files failed to download' || true)
+        | grep -vE 'Some index files failed to download' \
+        | grep -vE '^W: (Target .* is configured multiple times|.* stored in legacy trusted\.gpg)' || true)
 
     # Remember pre-PPA-filter state — we need to distinguish "real APT errors,
     # but all on Amnezia PPA" (tolerant OK) from "no classifiable errors at all"
@@ -820,15 +826,20 @@ rand_range() {
     local random_val
     random_val=$(od -An -tu4 -N4 /dev/urandom | tr -d ' ')
     if [[ -z "$random_val" || ! "$random_val" =~ ^[0-9]+$ ]]; then
-        # Fallback: combining two $RANDOM for 30-bit range
-        random_val=$(( (RANDOM << 15) | RANDOM ))
+        # Fallback: three $RANDOM (15 bits each) with XOR overlap cover bits
+        # 0-30, i.e. the full [0, 2^31-1]. The previous variant
+        # (RANDOM<<15|RANDOM) gave only 30 bits - the upper half of the H
+        # range could never come up.
+        random_val=$(( (RANDOM << 16) ^ (RANDOM << 8) ^ RANDOM ))
     fi
     echo $(( (random_val % range) + min ))
 }
 
 # Generate 4 non-overlapping ranges for AWG H1-H4.
 # Algorithm: 8 random values → sort → 4 (low, high) pairs.
-# Sorting guarantees low ≤ high and non-overlap between pairs.
+# Sorting gives low <= high; the strict checks below guarantee a gap between
+# pairs (touching bounds = overlap at a single point) and a lower bound >= 5
+# (values 1-4 are reserved for vanilla WireGuard message types).
 # Minimum width per range = 1000 (for proper obfuscation).
 # Prints 4 "low-high" lines to stdout. Returns 1 on failure.
 # Mitigates Russian DPI fingerprinting of static H values (#38).
@@ -872,10 +883,14 @@ generate_awg_h_ranges() {
         sorted=$(printf '%s\n' "${arr[@]}" | sort -n)
         arr=()
         while IFS= read -r _v; do arr+=("$_v"); done <<< "$sorted"
-        if (( ${arr[1]} - ${arr[0]} >= 1000 )) && \
+        if (( ${arr[0]} >= 5 )) && \
+           (( ${arr[1]} - ${arr[0]} >= 1000 )) && \
            (( ${arr[3]} - ${arr[2]} >= 1000 )) && \
            (( ${arr[5]} - ${arr[4]} >= 1000 )) && \
-           (( ${arr[7]} - ${arr[6]} >= 1000 )); then
+           (( ${arr[7]} - ${arr[6]} >= 1000 )) && \
+           (( ${arr[2]} > ${arr[1]} )) && \
+           (( ${arr[4]} > ${arr[3]} )) && \
+           (( ${arr[6]} > ${arr[5]} )); then
             printf '%s-%s\n' "${arr[0]}" "${arr[1]}"
             printf '%s-%s\n' "${arr[2]}" "${arr[3]}"
             printf '%s-%s\n' "${arr[4]}" "${arr[5]}"
@@ -1520,10 +1535,27 @@ secure_files() {
 
 setup_fail2ban() {
     log "Configuring Fail2Ban..."
-    if ! command -v fail2ban-client &>/dev/null; then install_packages fail2ban; fi
+    if ! command -v fail2ban-client &>/dev/null; then
+        install_packages fail2ban
+        # Marker: the fail2ban package was installed by our installer (rather
+        # than being present before it). step_uninstall purges fail2ban only
+        # when the marker exists, so it never wipes SSH protection the user
+        # had set up beforehand (symmetric to .ufw_enabled_by_installer).
+        if command -v fail2ban-client &>/dev/null; then
+            touch "$AWG_DIR/.fail2ban_installed_by_installer" 2>/dev/null || \
+                log_warn "Failed to create the fail2ban marker - uninstall will not remove the fail2ban package."
+        fi
+    fi
     if ! command -v fail2ban-client &>/dev/null; then
         log_warn "Fail2Ban not installed, skipping."
         return 1
+    fi
+
+    # banaction=ufw only takes effect with UFW active: if the user declined to
+    # enable UFW at step 4, bans land in an inactive ruleset and effectively
+    # do nothing (while fail2ban itself looks "green").
+    if ufw status 2>/dev/null | grep -q inactive; then
+        log_warn "UFW is not active: fail2ban bans (banaction=ufw) have no effect while UFW is off. Enable with: sudo ufw enable"
     fi
 
     # Debian: journald instead of rsyslog, needs python3-systemd
@@ -1616,6 +1648,10 @@ check_service_status() {
 # ==============================================================================
 
 create_diagnostic_report() {
+    # --diagnostic runs BEFORE initialize_setup (home of the main root check):
+    # as a regular user every log_msg write into /root/awg fails, the report
+    # is not created, and exit 0 would look like a false success.
+    if [ "$(id -u)" -ne 0 ]; then die "Run the script as root (sudo bash $0 --diagnostic)."; fi
     log "Creating diagnostics..."
     local rf
     rf="$AWG_DIR/diag_$(date +%F_%T).txt"
@@ -1802,7 +1838,18 @@ step_uninstall() {
     fi
     log "Removing packages..."
     if [[ "$saved_no_tweaks" -eq 0 ]]; then
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg-tools fail2ban qrencode 2>/dev/null || log_warn "Purge error."
+        local _purge_pkgs=(amneziawg-dkms amneziawg-tools qrencode)
+        # Purge fail2ban only if we installed it ourselves (marker from
+        # setup_fail2ban) - otherwise SSH protection the user had before the
+        # installer must not disappear together with the VPN. Our jail file
+        # is removed below in any case. Backwards compat: old installs
+        # without the marker keep fail2ban installed.
+        if [[ -f "$AWG_DIR/.fail2ban_installed_by_installer" ]]; then
+            _purge_pkgs+=(fail2ban)
+        else
+            log "fail2ban left installed (was present before the installer or an older installer version)."
+        fi
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y "${_purge_pkgs[@]}" 2>/dev/null || log_warn "Purge error."
     else
         DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg-tools qrencode 2>/dev/null || log_warn "Purge error."
     fi
@@ -1826,12 +1873,20 @@ step_uninstall() {
         # If a user still has a jail.local from very old installer versions,
         # leave it for them to deal with.
         rm -f /etc/fail2ban/jail.d/amneziawg.conf 2>/dev/null
+        # If fail2ban was not purged (it predates us) - restart it without our
+        # jail: it was stopped above (systemctl stop fail2ban).
+        if command -v fail2ban-client &>/dev/null && [[ ! -f "$AWG_DIR/.fail2ban_installed_by_installer" ]]; then
+            systemctl restart fail2ban 2>/dev/null || log_warn "Failed to restart fail2ban after removing our jail."
+        fi
     fi
     log "Removing DKMS..."
     rm -rf /var/lib/dkms/amneziawg* || log_warn "DKMS removal error."
     log "Restoring sysctl..."
-    if grep -q "disable_ipv6" /etc/sysctl.conf 2>/dev/null; then
-        sed -i '/disable_ipv6/d' /etc/sysctl.conf || log_warn "sed sysctl.conf error"
+    # Only the exact lines legacy versions of our installer wrote (=1 for
+    # all/default/lo). Previously ANY line containing disable_ipv6 was removed -
+    # including lines added by the user themselves (e.g. an =0 override).
+    if grep -qE '^net\.ipv6\.conf\.(all|default|lo)\.disable_ipv6[[:space:]]*=[[:space:]]*1[[:space:]]*$' /etc/sysctl.conf 2>/dev/null; then
+        sed -i -E '/^net\.ipv6\.conf\.(all|default|lo)\.disable_ipv6[[:space:]]*=[[:space:]]*1[[:space:]]*$/d' /etc/sysctl.conf || log_warn "sed sysctl.conf error"
     fi
     sysctl -p --system 2>/dev/null
     rm -f /etc/apt/sources.list.d/*.bak-* "$AWG_DIR"/ubuntu.sources.bak-* 2>/dev/null || true
@@ -1937,14 +1992,27 @@ initialize_setup() {
     # Request settings from user only on first run
     if [[ "$config_exists" -eq 0 ]]; then
         log "Requesting settings from user (first run)."
+        # Interactive input: a typo does not kill the install (the validator
+        # runs in a subshell -> die prints the error but only terminates the
+        # subshell, and the prompt repeats). The final validate_* calls
+        # outside the loop stay authoritative for CLI/config values (die is
+        # appropriate there).
         if [[ "$AUTO_YES" -eq 0 ]]; then
-            read -rp "Enter AmneziaWG UDP port (1024-65535) [${AWG_PORT}]: " input_port < /dev/tty
-            if [[ -n "$input_port" ]]; then AWG_PORT=$input_port; fi
+            while true; do
+                read -rp "Enter AmneziaWG UDP port (1024-65535) [${AWG_PORT}]: " input_port < /dev/tty
+                [[ -z "$input_port" ]] && break
+                if ( validate_port "$input_port" ); then AWG_PORT=$input_port; break; fi
+                log_warn "Please re-enter the port."
+            done
         fi
         validate_port "$AWG_PORT"
         if [[ "$AUTO_YES" -eq 0 ]]; then
-            read -rp "Enter tunnel subnet [${AWG_TUNNEL_SUBNET}]: " input_subnet < /dev/tty
-            if [[ -n "$input_subnet" ]]; then AWG_TUNNEL_SUBNET=$input_subnet; fi
+            while true; do
+                read -rp "Enter tunnel subnet [${AWG_TUNNEL_SUBNET}]: " input_subnet < /dev/tty
+                [[ -z "$input_subnet" ]] && break
+                if ( validate_subnet "$input_subnet" ); then AWG_TUNNEL_SUBNET=$input_subnet; break; fi
+                log_warn "Please re-enter the subnet."
+            done
         fi
         validate_subnet "$AWG_TUNNEL_SUBNET"
         if [[ "$DISABLE_IPV6" == "default" ]]; then configure_ipv6; fi
@@ -1983,6 +2051,14 @@ initialize_setup() {
     # Regenerate if: first run OR explicit CLI override (--preset/--jc/--jmin/--jmax)
     if [[ -z "${AWG_Jc:-}" ]] || [[ -n "${CLI_PRESET:-}" ]] || [[ -n "${CLI_JC:-}" ]] \
         || [[ -n "${CLI_JMIN:-}" ]] || [[ -n "${CLI_JMAX:-}" ]]; then
+        # generate_awg_params regenerates the WHOLE set (S1-S4, H1-H4, I1),
+        # not just the requested parameter: on a reinstall over a live server
+        # every issued client config still holds the old H1-H4 and will stop
+        # connecting. Warn loudly.
+        if [[ "$config_exists" -eq 1 && -n "${AWG_Jc:-}" ]]; then
+            log_warn "WARNING: --preset/--jc/--jmin/--jmax on a reinstall regenerate ALL obfuscation parameters (including H1-H4/S1-S4/I1)."
+            log_warn "All existing client configs will stop connecting - reissue them after the install: sudo bash $MANAGE_SCRIPT_PATH regen"
+        fi
         generate_awg_params
     else
         log "AWG 2.0 parameters already set from config."
@@ -2077,6 +2153,9 @@ step1_update_and_optimize() {
 
     log "Updating package lists..."
     apt_update_tolerant || die "apt update error."
+    # Cache is fresh: install_packages below must not rerun apt update
+    # (sources do not change in step 1).
+    _APT_UPDATED=1
 
     log "Unlocking dpkg..."
     if ! apt-get check &>/dev/null; then
@@ -2300,6 +2379,23 @@ step2_install_amnezia() {
         log_warn "Legacy PPA $legacy_sources (suite='${legacy_suite:-<empty>}') does not match target '${ppa_codename}' — removing."
         rm -f "$legacy_sources" "$legacy_list"
     fi
+    # Same repair for the traditional .list (Debian 12): the suite is the token
+    # after the URL in a 'deb [opts] URL <suite> main' line. Without this check
+    # a file with an old/foreign suite (e.g. after an in-place upgrade
+    # bookworm->trixie) would slip through below as "PPA already added" and apt
+    # would keep pulling the wrong suite.
+    local list_suite=""
+    if [[ -f "$ppa_list" ]]; then
+        list_suite=$(awk '/^deb([[:space:]]|$)/ {
+            for (i = 2; i <= NF; i++) {
+                if ($i ~ /^https?:/) { print $(i+1); exit }
+            }
+        }' "$ppa_list" 2>/dev/null)
+        if [[ -z "$list_suite" || "$list_suite" != "$ppa_codename" ]]; then
+            log_warn "Existing $ppa_list (suite='${list_suite:-<empty>}') does not match target '${ppa_codename}' - recreating."
+            rm -f "$ppa_list"
+        fi
+    fi
     if [[ -f "$legacy_list" ]] || [[ -f "$legacy_sources" ]]; then
         log "PPA already added (legacy format)."
     elif [[ -f "$ppa_sources" ]] || [[ -f "$ppa_list" ]]; then
@@ -2316,10 +2412,24 @@ step2_install_amnezia() {
         # SSH, cloud-init, Ansible, etc.) and must not abort with "File exists"
         # when overwriting the mktemp-created tmp file. Without --yes gpg in
         # batch mode refuses to write into the pre-existing empty tmp file.
-        if ! curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x57290828" \
+        # Request by the FULL 40-character fingerprint, not the short ID:
+        # short 32-bit IDs have preimage collisions (evil32), and
+        # keyserver.ubuntu.com accepts uploads of arbitrary keys. A swapped
+        # key would not give RCE (package signatures would not match), but it
+        # would break the install with a cryptic apt error.
+        local _ppa_key_fpr="75C9DD72C799870E310542E24166F2C257290828"
+        if ! curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${_ppa_key_fpr}" \
              | gpg --batch --no-tty --yes --dearmor -o "$_kf_tmp"; then
             rm -f "$_kf_tmp" 2>/dev/null
             die "Amnezia PPA GPG key import error."
+        fi
+        # Verify the downloaded key fingerprint against the expected one (pin).
+        local _got_fpr
+        _got_fpr=$(gpg --batch --no-tty --show-keys --with-colons "$_kf_tmp" 2>/dev/null \
+            | awk -F: '/^fpr:/{print $10; exit}')
+        if [[ "$_got_fpr" != "$_ppa_key_fpr" ]]; then
+            rm -f "$_kf_tmp" 2>/dev/null
+            die "Amnezia PPA GPG key failed the fingerprint check (got: '${_got_fpr:-<empty>}')."
         fi
         chmod 644 "$_kf_tmp" || { rm -f "$_kf_tmp" 2>/dev/null; die "chmod GPG key error."; }
         mv -f "$_kf_tmp" "$keyring_file" \
@@ -2356,6 +2466,10 @@ PPASRC
         log_error "integrity of keys in /etc/apt/keyrings, dpkg lock contention."
         die "apt update returned an error (rc!=0, not the Amnezia PPA)."
     fi
+    # PPA added, cache refreshed: sources do not change further in step 2, so
+    # install_packages must not repeat apt update (on slow mirrors every run
+    # is 10-60 seconds).
+    _APT_UPDATED=1
     # apt-get update is tolerant to an unreachable InRelease (rc=0 even when
     # the PPA is down). So we check that amneziawg-dkms actually appears in
     # apt-cache, with three attempts and 30s/60s backoff (~1.5 min total).
@@ -2382,8 +2496,8 @@ PPASRC
             log "Prebuilt kernel module installed. Installing userspace tools from PPA..."
             install_packages "amneziawg-tools" "wireguard-tools" "qrencode"
             log "Step 2 completed (prebuilt ARM)."
+            # request_reboot always terminates the process (exit), we never return here.
             request_reboot 3
-            return
         fi
         log "No matching prebuilt — falling back to DKMS build."
     fi
@@ -2941,31 +3055,21 @@ step6_generate_configs() {
         log "Server config backup: $s_bak"
     fi
 
-    # Create AWG 2.0 server config
+    # Create the AWG 2.0 server config, carrying ALL existing [Peer] blocks
+    # over from the backup in ONE atomic write (render_server_config appends
+    # the peers into the temp BEFORE mv). Previously the append ran AFTER
+    # render as a separate operation: a failure in the window between them
+    # left the live config peer-less, and the next run of step 6 backed up
+    # the already peer-less file - all clients were lost on --force reinstall
+    # (recovery only by hand from a timestamped .bak).
+    # C5 history (semantics worth keeping): ALL blocks are restored, including
+    # the defaults my_phone/my_laptop - the idempotent loop below skips peers
+    # that already exist, and the guard in generate_client refuses to recreate
+    # one whose artifacts exist.
     log "Creating server config..."
-    render_server_config || die "Server config creation error."
-
-    # Restore ALL existing [Peer] blocks from backup.
-    # C5: defaults my_phone/my_laptop used to be excluded here, but the
-    # generation loop below skips peers that already exist while the guard in
-    # generate_client refuses to recreate one whose artifacts exist - so a
-    # default client became an orphan (files present, no peer block, silent
-    # connectivity loss on --force reinstall). The previous awk also dropped
-    # every peer but the last: each new [Peer] overwrote the buffer without
-    # flushing the previous one. We now flush on every [Peer] and restore ALL
-    # blocks; the idempotent loop below does not recreate what was restored.
-    if [[ -n "${s_bak:-}" && -f "$s_bak" ]]; then
-        local restored_peers
-        restored_peers=$(awk '
-            /^\[Peer\]/ { if (in_peer) printf "%s", buf; buf=$0"\n"; in_peer=1; next }
-            in_peer && /^\[/ { printf "%s", buf; buf=""; in_peer=0; next }
-            in_peer { buf=buf $0"\n"; next }
-            END { if (in_peer) printf "%s", buf }
-        ' "$s_bak")
-        if [[ -n "$restored_peers" ]]; then
-            printf '\n%s' "$restored_peers" >> "$SERVER_CONF_FILE"
-            log "Existing peers restored from backup."
-        fi
+    render_server_config "${s_bak:-}" || die "Server config creation error."
+    if [[ -n "${s_bak:-}" && -f "$s_bak" ]] && grep -q '^\[Peer\]' "$s_bak" 2>/dev/null; then
+        log "Existing peers restored from backup."
     fi
 
     # Generate default clients
@@ -3098,8 +3202,10 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ -f "$SERVER_CONF_FILE" ]] \
    && systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then
     log_error "AmneziaWG is already installed and running."
     log_error "To reinstall — pass --force (or AWG_FORCE_REINSTALL=1)."
-    log_error "WARNING: a reinstall will rerun Step 1 (sysctl/swap/BBR) and Step 7 (service restart);"
-    log_error "         obfuscation parameters (Jc/Jmin/Jmax/H1-H4/I1) survive."
+    log_error "WARNING: a reinstall will rerun Step 1 (sysctl/swap/BBR) and Step 7 (service restart)."
+    log_error "         Obfuscation parameters (Jc/Jmin/Jmax/H1-H4/I1) survive UNLESS you pass"
+    log_error "         --preset/--jc/--jmin/--jmax (those flags regenerate the whole set - every"
+    log_error "         issued client config would have to be reissued via regen)."
     log_error "To manage clients:  sudo bash $MANAGE_SCRIPT_PATH help"
     log_error "To fully uninstall: sudo bash $0 --uninstall"
     exit 0

@@ -14,6 +14,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.16.0] - 2026-06-12
+
+**v5.16.0** - comprehensive code audit: security, file-operation reliability and validation accuracy. This release closes the findings of a full review of all six scripts: it eliminates the peer-loss window on `--force` reinstall, removes secrets from process argv, pins the PPA GPG key by full fingerprint, makes the AWG parameter validator check H1-H4 non-overlap, and stops expired orphan clients from looping the cron job forever. The default install behavior is unchanged. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
+
+### Security
+
+- The temp-file registry moved from world-writable `/tmp` into `$AWG_DIR` (0700): a predictable name in `/tmp` would let a local user plant a list of arbitrary paths that cleanup would then delete as root; registry reads are additionally guarded against symlink swaps
+- Private keys (client and server) are now born with 0600 permissions via `umask 077` - the brief world-readable window between write and `chmod` is gone; the `keys/` directory is created with 0700
+- The client private key and PSK are passed to the perl vpn:// URI generator via environment variables instead of argv (a process command line is visible to all users in `/proc/<pid>/cmdline`)
+- The Amnezia PPA GPG key is requested by its full 40-character fingerprint instead of the short 32-bit ID (short IDs have known evil32 collisions) and is verified against the pin after download
+- `uninstall` no longer purges the `fail2ban` package if it was installed before our installer (the `.fail2ban_installed_by_installer` marker, symmetric to the UFW marker); a user-owned fail2ban is restarted without our jail
+- `uninstall` removes only the exact lines written by legacy versions of this installer from `/etc/sysctl.conf` instead of any line containing `disable_ipv6` (it could previously wipe user-added settings)
+- Library functions `generate_client` / `add_peer_to_server` / `remove_peer_from_server` / `regenerate_client` now validate the client name themselves (defense-in-depth for cron and third-party scripts sourcing the library)
+
+### Fixed
+
+- Step 6: existing [Peer] blocks are now carried over inside a single atomic write of the server config (`render_server_config` appends peers before the `mv`). Previously a crash between render and the separate append left the config without peers, and a re-run of the step backed up the already peer-less file - all clients were lost on `--force` reinstall
+- `remove_peer_from_server` checks the awk exit code and the presence of `[Interface]` in the result before replacing the server config - an awk failure on a full disk can no longer atomically replace a working config with a broken one
+- An expired client whose peer was already removed from the config manually or by a restore (an orphan expiry label) is now cleaned up properly: previously cron retried the failing removal every 5 minutes forever and the client artifacts were never reclaimed
+- `regen` recovers the PresharedKey from the server config when the client `.conf` is lost - previously the recreated config came out without a PSK while the server peer still had one, silently breaking the handshake
+- The public IP detection cache actually works now (file-based, survives subshells): previously the assignment inside `$(...)` was lost, so `regen` over all clients performed a full curl round (up to 6 services, 5 s each) per client
+- `validate_awg_config` checks pairwise non-overlap of the H1-H4 ranges (the key AWG 2.0 invariant) and parses parameters the same way the loader does: arbitrary whitespace around `=`, last-wins on duplicates - a hand-edited `Jc=4` no longer produces a false "parameter not found"
+- H1-H4 generation guarantees a strict gap between ranges (boundary touching is excluded) and a lower bound >= 5 (values 1-4 are reserved by the WireGuard protocol)
+- `--apply-mode` is validated at argument parse time: a typo like `--apply-mode=restrat` used to silently behave as `syncconf`
+- `--diagnostic` checks for root before doing anything (previously it failed on every log write under a regular user and exited with a false success)
+- Debian 12: the PPA suite-mismatch repair now also covers the traditional `.list` format (previously only DEB822 `.sources` was handled)
+- `check`: when the port cannot be determined, the UFW rule check is skipped (previously it printed a meaningless warning about `0/udp`)
+- `list`: a corrupted expiry file no longer causes a bash arithmetic error in the table
+- `generate_vpn_uri` verifies the port is numeric before generating the URI (an empty port produced syntactically broken JSON that Amnezia Client silently refused to import)
+- The public-IP detection error message in `manage add` no longer suggests the `--endpoint` flag that manage does not have
+
+### Improved
+
+- Installer steps 1-2 no longer re-run `apt-get update` without a sources change (saves 10-60 seconds per run on slow mirrors, up to two redundant runs per install)
+- `backup` additionally takes the config lock: a parallel `add`/`remove` can no longer produce a desynchronized file set inside the backup
+- Interactive port and subnet prompts during install re-ask on a typo instead of aborting the whole installation
+- Reinstalling with `--preset`/`--jc`/`--jmin`/`--jmax` prints an explicit warning that the ENTIRE obfuscation parameter set is regenerated and existing client configs will need `regen` (the idempotency-guard message was clarified too)
+- `setup_fail2ban` warns when UFW is inactive (bans with `banaction=ufw` are effectively inert in that case)
+- The `apt-get update` error classification ignores known informational lines `W: Target ... is configured multiple times` and `W: ... legacy trusted.gpg` - they no longer turn a tolerable failure into a false fatal
+- `diagnose` makes one `awg show` call instead of four; `stats` no longer spawns `date` per peer; `list --json` does not read expiry files (the field is not part of the JSON output)
+- The expiry cron job runs the temp-file cleanup (fixes a registry-file leak on every firing)
+- The random number generator fallback (when `/dev/urandom` is unavailable) covers the full 31-bit range instead of 30 bits
+- `manage` help: `regen` documents accepting multiple names, `repair-module` lists its `repair` alias; the client-creation message mentions `.png` only when the QR was actually created
+- Dead code removed: the unreachable `help)` dispatcher branch in manage, the unreachable `return` after `request_reboot` in the installer, two redundant `AWG_APPLY_MODE` re-exports, stale shellcheck directives
+- CI/release scripts: `update-sha-pins.sh` preserves file permissions on rewrite; `build-arm-deb.sh` surfaces xz stderr on failure; `build-release-notes.sh` validates the version format before interpolating it into awk
+
+---
+
 ## [5.15.6] - 2026-06-08
 
 **v5.15.6** - input validation, atomicity and a JSON status field. This release continues the code-audit hardening cycle: it sharpens input validation in `manage`, makes client-artifact writes atomic, refines interrupt handling, and adds a stable machine-readable `status_code` to `list`/`stats --json`. The default install is unchanged. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
@@ -1332,6 +1380,7 @@ Major security and reliability update after several consecutive code audits. The
 - Full uninstall (`--uninstall`).
 
 [Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.5...HEAD
+[5.16.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.6...v5.16.0
 [5.15.6]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.5...v5.15.6
 [5.15.5]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.4...v5.15.5
 [5.15.4]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.3...v5.15.4
