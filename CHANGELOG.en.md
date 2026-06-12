@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [5.16.0] - 2026-06-12
 
-**v5.16.0** - comprehensive code audit: security, file-operation reliability and validation accuracy. This release closes the findings of a full review of all six scripts: it eliminates the peer-loss window on `--force` reinstall, removes secrets from process argv, pins the PPA GPG key by full fingerprint, makes the AWG parameter validator check H1-H4 non-overlap, and stops expired orphan clients from looping the cron job forever. The default install behavior is unchanged. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
+**v5.16.0** - security and reliability hardening from a full code audit. This release closes the findings of a full review of all six scripts of the AmneziaWG 2.0 VPN installer for Ubuntu and Debian: it eliminates the peer-loss window on `--force` reinstall, removes secrets from process argv, pins the PPA GPG key by full fingerprint, makes the AWG parameter validator check H1-H4 non-overlap, and stops expired orphan clients from looping the cron job forever. The default install behavior is unchanged. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
 
 ### Security
 
