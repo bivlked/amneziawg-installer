@@ -2280,7 +2280,13 @@ step2_install_amnezia() {
     log "### ШАГ 2: Установка AmneziaWG и зависимостей ###"
     _APT_UPDATED=0  # Reset: new sources will be added in this step
 
-    apt_update_tolerant || die "Ошибка apt update."
+    # --ppa-amnezia-tolerant ОБЯЗАТЕЛЕН уже здесь: если на диске остался
+    # PPA-файл с битым suite (404 Release; например questing от старой версии
+    # или после in-place upgrade), строгий update умирал ДО repair-блоков ниже
+    # и ремонт никогда не срабатывал (live-репро на Debian 12, v5.16.0 cycle).
+    # Ошибки базовых репозиториев по-прежнему fail-closed; PPA-ошибки чинит
+    # repair + post-PPA update + apt_wait_for_ppa_package ниже.
+    apt_update_tolerant --ppa-amnezia-tolerant || die "Ошибка apt update."
 
     # PPA Amnezia (без software-properties-common)
     log "Добавление PPA Amnezia..."

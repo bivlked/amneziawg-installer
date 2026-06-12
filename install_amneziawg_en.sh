@@ -2297,7 +2297,14 @@ step2_install_amnezia() {
     log "### STEP 2: Installing AmneziaWG and dependencies ###"
     _APT_UPDATED=0  # Reset: new sources will be added in this step
 
-    apt_update_tolerant || die "apt update error."
+    # --ppa-amnezia-tolerant is REQUIRED already here: if a PPA file with a
+    # broken suite is left on disk (404 Release; e.g. questing from an older
+    # version or after an in-place upgrade), a strict update died BEFORE the
+    # repair blocks below ever ran, so the repair never fired (live repro on
+    # Debian 12, v5.16.0 cycle). Base repository errors remain fail-closed;
+    # PPA errors are handled by the repair + post-PPA update +
+    # apt_wait_for_ppa_package below.
+    apt_update_tolerant --ppa-amnezia-tolerant || die "apt update error."
 
     # PPA Amnezia (without software-properties-common)
     log "Adding Amnezia PPA..."

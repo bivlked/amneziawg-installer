@@ -40,6 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `--apply-mode` is validated at argument parse time: a typo like `--apply-mode=restrat` used to silently behave as `syncconf`
 - `--diagnostic` checks for root before doing anything (previously it failed on every log write under a regular user and exited with a false success)
 - Debian 12: the PPA suite-mismatch repair now also covers the traditional `.list` format (previously only DEB822 `.sources` was handled)
+- Step 2: the early apt update is now tolerant to Amnezia PPA errors - a leftover PPA file with a broken suite (404 Release) no longer kills the install BEFORE the repair logic runs (live repro on Debian 12); base repository errors remain fatal
 - `check`: when the port cannot be determined, the UFW rule check is skipped (previously it printed a meaningless warning about `0/udp`)
 - `list`: a corrupted expiry file no longer causes a bash arithmetic error in the table
 - `generate_vpn_uri` verifies the port is numeric before generating the URI (an empty port produced syntactically broken JSON that Amnezia Client silently refused to import)
