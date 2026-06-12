@@ -213,9 +213,10 @@ extract_func() {
     body=$(extract_func "$COMMON_RU" "regenerate_client")
     # Lock must be closed before generate_qr; otherwise non-critical
     # QR/URI ops hold the config lock and block add/modify.
-    # Extract the section between the last sed -i and generate_qr.
+    # Extract the section between the last sed -i (AllowedIPs; v5.16.0
+    # switched its delimiter from | to /) and generate_qr.
     local tail
-    tail=$(awk '/if ! sed -i "s\|/,/generate_qr/' <<< "$body" | tail -n 20)
+    tail=$(awk '/if ! sed -i "s\/\^AllowedIPs/,/generate_qr/' <<< "$body" | tail -n 20)
     grep -qE 'exec \{lock_fd\}>&-' <<< "$tail"
 }
 
@@ -223,7 +224,7 @@ extract_func() {
     local body
     body=$(extract_func "$COMMON_EN" "regenerate_client")
     local tail
-    tail=$(awk '/if ! sed -i "s\|/,/generate_qr/' <<< "$body" | tail -n 20)
+    tail=$(awk '/if ! sed -i "s\/\^AllowedIPs/,/generate_qr/' <<< "$body" | tail -n 20)
     grep -qE 'exec \{lock_fd\}>&-' <<< "$tail"
 }
 

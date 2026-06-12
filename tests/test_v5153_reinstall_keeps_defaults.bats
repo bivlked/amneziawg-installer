@@ -113,8 +113,17 @@ CONF
 }
 
 @test "C5: RU and EN peer-restore awk programs are identical" {
-    ru=$(awk '/restored_peers=\$\(awk/,/\x27 "\$s_bak"\)/' "$BATS_TEST_DIRNAME/../install_amneziawg.sh" | tr -d ' \t')
-    en=$(awk '/restored_peers=\$\(awk/,/\x27 "\$s_bak"\)/' "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh" | tr -d ' \t')
+    # v5.16.0: peer carry-over moved from installer step 6 into
+    # render_server_config (awg_common.sh, optional peers_source argument) so
+    # the peers land in the same atomic mv as the interface section. Compare
+    # the library copies instead of the removed installer blocks.
+    ru=$(awk '/_peers=\$\(awk/,/\x27 "\$peers_source"\)/' "$BATS_TEST_DIRNAME/../awg_common.sh" | tr -d ' \t')
+    en=$(awk '/_peers=\$\(awk/,/\x27 "\$peers_source"\)/' "$BATS_TEST_DIRNAME/../awg_common_en.sh" | tr -d ' \t')
     [ -n "$ru" ]
     [ "$ru" = "$en" ]
+}
+
+@test "C5: installers hand the backup to render_server_config (atomic carry-over)" {
+    grep -qF 'render_server_config "${s_bak:-}"' "$BATS_TEST_DIRNAME/../install_amneziawg.sh"
+    grep -qF 'render_server_config "${s_bak:-}"' "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"
 }
