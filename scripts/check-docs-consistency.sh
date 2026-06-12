@@ -30,6 +30,9 @@
 #   8. Issue-template: placeholder версии нейтральный (не протухающий X.Y.Z).
 #   9. Матрица OS×arch×prebuilt-target: supported Ubuntu-версии без ARM
 #      prebuilt-таргета в arm-build.yml помечены DKMS-only для ARM в INSTALL_VPS.
+#  10. Установочные/update wget-сниппеты качают install_amneziawg*.sh через -O
+#      (голый wget <url> пишет .1 при повторном запуске, и chmod/bash берут
+#      старый файл; злейший кейс - update-флоу с --force).
 
 set -o pipefail
 
@@ -305,6 +308,31 @@ else
     echo "  нет $arm_yml (проверка ARM prebuilt-матрицы)" >&2; arm_matrix_fail=1
 fi
 if [[ "$arm_matrix_fail" -eq 0 ]]; then _ok "ARM prebuilt-покрытие согласовано (OS×arch×target)"; else _bad "ARM prebuilt-покрытие рассинхронизировано"; fi
+
+# --- 10. Установочные wget-сниппеты используют -O (re-run .1-ловушка) ---
+# Голый `wget <url>/install_amneziawg*.sh` без -O при повторном запуске пишет
+# install_amneziawg.sh.1, а следующий `chmod +x` / `bash install_amneziawg.sh`
+# берут СТАРЫЙ первый файл. Злейший кейс - update-флоу с `--force`: старый скрипт
+# присутствует всегда, и юзер переустанавливает прошлую версию, думая что
+# обновился. Все сниппеты обязаны пинить имя через `-O` (паттерн как в FAQ
+# recovery). Регрессия, ради которой добавлена проверка (PR #114). Детект (два
+# шага): строка вызывает `wget` и качает install_amneziawg*.sh по raw-URL, но в
+# ней нет `-O`/`--output-document` (пин имени). Ловит и `wget -q <url>` с флагами
+# перед URL, не только голую форму. `wget -O name url`, `wget -O- url | bash` и
+# `curl`-альтернативы (без `wget`) под паттерн не попадают.
+wget_o_fail=0
+WGET_DOCS=(README.md README.en.md ADVANCED.md ADVANCED.en.md INSTALL_VPS.md)
+for f in "${WGET_DOCS[@]}"; do
+    [[ -f "$f" ]] || continue
+    while IFS= read -r hit; do
+        [[ -z "$hit" ]] && continue
+        echo "  $f:$hit" >&2
+        echo "    ^ wget без -O: повторный запуск возьмёт .1; используйте 'wget -O <файл> <url>'" >&2
+        wget_o_fail=1
+    done < <(grep -nE 'wget[[:space:]].*https?://[^[:space:]]*install_amneziawg[a-z_]*\.sh' "$f" \
+             | grep -vE -- '(^|[[:space:]])(-O|--output-document)')
+done
+if [[ "$wget_o_fail" -eq 0 ]]; then _ok "установочные wget-сниппеты используют -O (нет .1-ловушки)"; else _bad "wget-сниппет без -O (.1-ловушка вернулась)"; fi
 
 # --- Summary ---
 echo ""
