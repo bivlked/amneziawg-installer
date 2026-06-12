@@ -52,8 +52,8 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
-@test ".4 integration: docs-check still passes 10/10 with ROADMAP included" {
+@test ".4 integration: docs-check still passes 11/11 with ROADMAP included" {
     run bash "$SCRIPT"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"10 passed, 0 failed"* ]]
+    [[ "$output" == *"11 passed, 0 failed"* ]]
 }

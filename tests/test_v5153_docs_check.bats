@@ -17,8 +17,9 @@ TMPL_STALE_RE='placeholder:[[:space:]]*"e\.g\.,[[:space:]]*[0-9]+\.[0-9]+\.[0-9]
 @test "T6: check-docs-consistency passes on the current repo" {
     run bash "$SCRIPT"
     [ "$status" -eq 0 ]
-    # 10 checks since 1bkk added the OS x arch x prebuilt-target matrix check (#9).
-    [[ "$output" == *"10 passed, 0 failed"* ]]
+    # 11 checks since the installer wget -O guard (#10) joined the OS x arch x
+    # prebuilt-target matrix check (#9).
+    [[ "$output" == *"11 passed, 0 failed"* ]]
 }
 
 @test "T6: script defines checks #7 and #8" {
