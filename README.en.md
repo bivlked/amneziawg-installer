@@ -48,12 +48,12 @@ sudo bash ./install_amneziawg_en.sh
 
 The script runs as root - here is a short list of what it does to the system:
 
-- **Packages**: updates the system, installs dependencies (amneziawg-tools, qrencode, etc.); on Ubuntu removes leftovers from the minimal install (snapd, modemmanager).
+- **Packages**: updates the system, installs dependencies (amneziawg-tools, qrencode, etc.); purges packages a VPN-only server does not need - including `unattended-upgrades` (so security updates stop installing automatically) and `cloud-init` when it does not manage the network (full list in [ADVANCED.en.md](ADVANCED.en.md)).
 - **Kernel**: adds the Amnezia PPA (GPG key verified by full fingerprint) and builds the AmneziaWG module via DKMS.
 - **Network**: sysctl - forwarding, network buffers, BBR (as separate files in `/etc/sysctl.d/`); host IPv6 is disabled by default (keep it with `--allow-ipv6`); swap is sized to fit the RAM.
 - **Protection**: UFW - incoming denied, SSH rate-limited, only the VPN UDP port open; Fail2Ban for SSH.
 - **Files and services**: the main files live in `/root/awg/` and `/etc/amnezia/amneziawg/` with 600/700 permissions; the `awg-quick@awg0` service; a cron job that removes expired clients.
-- **Rollback**: `--uninstall` removes everything of its own (module, configs, sysctl files, firewall rules, cron jobs). It disables UFW and purges the Fail2Ban package only if it installed them itself. It does not restore: swap settings and removed packages.
+- **Rollback**: `--uninstall` removes its own module, configs, sysctl files, cron jobs, the VPN-port UFW allow rule and the `awg0` UFW route rule. It disables UFW and purges Fail2Ban only if it enabled/installed them itself; if UFW was already active before install, the SSH rate-limit rule it added stays. It does not restore swap settings or removed packages.
 
 Step-by-step details in [ADVANCED.en.md](ADVANCED.en.md), threat model in [SECURITY.md](SECURITY.md).
 </details>
