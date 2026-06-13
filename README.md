@@ -42,7 +42,22 @@ sudo bash ./install_amneziawg.sh
 
 > 📘 Полный гайд по развёртыванию (EN): [Install AmneziaWG VPN server on Ubuntu/Debian VPS](INSTALL_VPS.md) - выбор VPS, ARM, troubleshooting, удаление.
 
-> 🔐 Целостность: скрипт качается по HTTPS с `raw.githubusercontent.com` (тег закреплён). Отдельные detached-подписи релизов пока не активны (запланированы) - статус и модель угроз в [SECURITY.md](SECURITY.md).
+> 🔐 Целостность: скрипт качается по HTTPS с `raw.githubusercontent.com` (тег закреплён), вспомогательные скрипты (`awg_common`, `manage`) проверяются по закреплённым SHA256-хешам. Отдельные detached-подписи релизов пока не активны (запланированы) - статус и модель угроз в [SECURITY.md](SECURITY.md).
+
+<details>
+<summary><strong>Что установщик меняет на сервере (прозрачность)</strong></summary>
+
+Скрипт получает root - вот краткий список того, что он делает с системой:
+
+- **Пакеты**: обновляет систему, ставит зависимости (amneziawg-tools, qrencode и т.д.); на Ubuntu убирает лишнее из минимальной установки (snapd, modemmanager).
+- **Ядро**: подключает PPA Amnezia (GPG-ключ проверяется по полному отпечатку) и собирает модуль AmneziaWG через DKMS.
+- **Сеть**: sysctl - форвардинг, сетевые буферы, BBR (отдельными файлами в `/etc/sysctl.d/`); IPv6 на хосте по умолчанию выключается (оставить: `--allow-ipv6`); swap подгоняется под размер RAM.
+- **Защита**: UFW - входящие запрещены, SSH с rate-limit, открыт только UDP-порт VPN; Fail2Ban для SSH.
+- **Файлы и сервисы**: основные файлы в `/root/awg/` и `/etc/amnezia/amneziawg/` с правами 600/700; сервис `awg-quick@awg0`; крон автоудаления истёкших клиентов.
+- **Откат**: `--uninstall` убирает всё своё (модуль, конфиги, sysctl-файлы, правила firewall, кроны). UFW отключает и пакет Fail2Ban удаляет только если сам их ставил. Не возвращает: swap и удалённые пакеты.
+
+Пошаговые детали - в [ADVANCED.md](ADVANCED.md), модель угроз - в [SECURITY.md](SECURITY.md).
+</details>
 
 <details>
 <summary><strong>Неинтерактивная установка (для автоматизации)</strong></summary>

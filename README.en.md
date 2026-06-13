@@ -41,7 +41,22 @@ sudo bash ./install_amneziawg_en.sh
 
 > 📘 Full deployment guide: [Install AmneziaWG VPN server on Ubuntu/Debian VPS](INSTALL_VPS.md) - covers VPS choice, ARM, troubleshooting, and uninstall.
 
-> 🔐 Integrity: the script is fetched over HTTPS from `raw.githubusercontent.com` (pinned tag). Detached release signatures are not active yet (planned) - status and threat model in [SECURITY.md](SECURITY.md).
+> 🔐 Integrity: the script is fetched over HTTPS from `raw.githubusercontent.com` (pinned tag), and the helper scripts (`awg_common`, `manage`) are verified against pinned SHA256 hashes. Detached release signatures are not active yet (planned) - status and threat model in [SECURITY.md](SECURITY.md).
+
+<details>
+<summary><strong>What the installer changes on your server (transparency)</strong></summary>
+
+The script runs as root - here is a short list of what it does to the system:
+
+- **Packages**: updates the system, installs dependencies (amneziawg-tools, qrencode, etc.); on Ubuntu removes leftovers from the minimal install (snapd, modemmanager).
+- **Kernel**: adds the Amnezia PPA (GPG key verified by full fingerprint) and builds the AmneziaWG module via DKMS.
+- **Network**: sysctl - forwarding, network buffers, BBR (as separate files in `/etc/sysctl.d/`); host IPv6 is disabled by default (keep it with `--allow-ipv6`); swap is sized to fit the RAM.
+- **Protection**: UFW - incoming denied, SSH rate-limited, only the VPN UDP port open; Fail2Ban for SSH.
+- **Files and services**: the main files live in `/root/awg/` and `/etc/amnezia/amneziawg/` with 600/700 permissions; the `awg-quick@awg0` service; a cron job that removes expired clients.
+- **Rollback**: `--uninstall` removes everything of its own (module, configs, sysctl files, firewall rules, cron jobs). It disables UFW and purges the Fail2Ban package only if it installed them itself. It does not restore: swap settings and removed packages.
+
+Step-by-step details in [ADVANCED.en.md](ADVANCED.en.md), threat model in [SECURITY.md](SECURITY.md).
+</details>
 
 <details>
 <summary><strong>Non-interactive installation (for automation)</strong></summary>
