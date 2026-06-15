@@ -635,6 +635,11 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 ## ❓ FAQ (Additional Questions)
 
 <details>
+  <summary><strong>Q: How do I get a split exit - Russian traffic direct, the rest abroad?</strong></summary>
+  <b>A:</b> This is built as a two-server cascade: the client connects to an entry server (ideally in Russia), Russian traffic exits directly from it, and everything else goes through a second server abroad. The cascade is not part of the installer (different scale), but there is a separate step-by-step guide - <a href="CASCADE.en.md">CASCADE.en.md</a>.
+</details>
+
+<details>
   <summary><strong>Q: How do I change the AmneziaWG port after installation?</strong></summary>
   <b>A:</b> 1. Change <code>ListenPort</code> in <code>/etc/amnezia/amneziawg/awg0.conf</code>. 2. Change <code>AWG_PORT</code> in <code>/root/awg/awgsetup_cfg.init</code>. 3. Update UFW (<code>sudo ufw delete allow &lt;old_port&gt;/udp</code>, <code>sudo ufw allow &lt;new_port&gt;/udp</code>). 4. Restart the service (<code>sudo systemctl restart awg-quick@awg0</code>). 5. <b>Regenerate ALL client configs</b> (<code>sudo bash /root/awg/manage_amneziawg.sh regen</code>) and distribute them.
 </details>

@@ -631,6 +631,11 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 ## ❓ FAQ (Дополнительные вопросы)
 
 <details>
+  <summary><strong>В: Как сделать раздельный выход - российский трафик напрямую, остальное через заграницу?</strong></summary>
+  <b>О:</b> Это собирается каскадом из двух серверов: клиент подключается к серверу-входу (лучше в РФ), российский трафик уходит напрямую с него, остальное - через второй сервер за границей. Каскад не входит в установщик (другой масштаб), но есть отдельная пошаговая инструкция - <a href="CASCADE.md">CASCADE.md</a>.
+</details>
+
+<details>
   <summary><strong>В: Как изменить порт AmneziaWG после установки?</strong></summary>
   **О:** 1. Измените `ListenPort` в `/etc/amnezia/amneziawg/awg0.conf`. 2. Измените `AWG_PORT` в `/root/awg/awgsetup_cfg.init`. 3. Обновите UFW (`sudo ufw delete allow <старый_порт>/udp`, `sudo ufw allow <новый_порт>/udp`). 4. Перезапустите сервис (`sudo systemctl restart awg-quick@awg0`). 5. **Перегенерируйте конфиги ВСЕХ клиентов** (`sudo bash /root/awg/manage_amneziawg.sh regen`) и передайте их клиентам.
 </details>

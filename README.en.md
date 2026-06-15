@@ -485,6 +485,8 @@ For the changelog, see **[CHANGELOG.en.md](CHANGELOG.en.md)**.
 
 For the roadmap and priorities, see **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
+For a two-server cascade with a split exit for Russian and foreign traffic (split-tunnel), see **[CASCADE.en.md](CASCADE.en.md)**.
+
 ---
 
 <a id="faq"></a>
@@ -510,6 +512,11 @@ For the roadmap and priorities, see **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 <details>
   <summary><strong>Q: Handshake completes but no traffic flows - what's wrong?</strong></summary>
   <b>A:</b> A common cause is the split-tunneling AllowedIPs gotcha during manual customization. If you want to ping or SSH to the server by its inner tunnel IP (<code>10.9.9.1</code> in the default subnet), add the <b>tunnel subnet</b> (default <code>10.9.9.0/24</code>, or your custom one if you changed <code>--subnet</code>) to the client's <code>AllowedIPs</code>. Otherwise the client does not route traffic to the server even from inside the tunnel. The <code>--route-all</code> mode (full tunnel <code>0.0.0.0/0</code>) covers the subnet automatically; the default <code>--route-amnezia</code> (Amnezia List) and <code>--route-custom=</code> do not, add it explicitly. See <a href="ADVANCED.en.md#allowedips-adv">ADVANCED.en.md → AllowedIPs</a>.
+</details>
+
+<details>
+  <summary><strong>Q: Can I make Russian traffic go directly while the rest exits abroad?</strong></summary>
+  <b>A:</b> Yes, via a two-server cascade: the client connects to an entry server (ideally in Russia), Russian traffic exits directly from it, and everything else goes through a second server abroad. The split is on the server side, nothing special is needed on the client. Step-by-step guide in <a href="CASCADE.en.md">CASCADE.en.md</a>.
 </details>
 
 <details>
