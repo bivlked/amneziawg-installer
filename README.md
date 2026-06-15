@@ -187,6 +187,8 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 
 Протокол и стойкость к DPI при этом одинаковые - под капотом тот же AmneziaWG 2.0. Код открыт под MIT, это читаемый bash, его можно просмотреть перед запуском, на нём 800+ автотестов. Ставится тот же upstream AmneziaWG - это автоматизация и тюнинг сервера, а не форк протокола.
 
+Подробное сравнение: [amneziawg-installer и официальное приложение Amnezia](https://bivlked.github.io/amneziawg-installer/ru/compare/).
+
 ---
 
 <a id="vozmozhnosti"></a>

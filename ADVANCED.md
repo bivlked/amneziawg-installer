@@ -672,7 +672,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
     <li>Доступна тонкая настройка: пресет для мобильных сетей и прямой доступ к параметрам AWG 2.0.</li>
     <li>Управление из CLI (<code>manage</code> add/remove/list/<code>--expires</code>), готовые сборки под ARM, headless-режим для автоматизации.</li>
   </ul>
-  Разбор с примерами - на <a href="https://bivlked.github.io/amneziawg-installer/ru/compare/">странице сравнения</a>.
+  Подробное сравнение - на <a href="https://bivlked.github.io/amneziawg-installer/ru/compare/">отдельной странице</a>.
 </details>
 
 <details>

@@ -676,7 +676,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
     <li>Fine tuning is available: a mobile-network preset and direct access to the AWG 2.0 parameters.</li>
     <li>Management is from the CLI (<code>manage</code> add/remove/list/<code>--expires</code>), with prebuilt ARM modules and a headless mode for automation.</li>
   </ul>
-  A breakdown with examples is on the <a href="https://bivlked.github.io/amneziawg-installer/compare/">comparison page</a>.
+  A detailed comparison is on the <a href="https://bivlked.github.io/amneziawg-installer/compare/">comparison page</a>.
 </details>
 
 <details>

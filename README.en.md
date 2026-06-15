@@ -186,6 +186,8 @@ The official Amnezia app is the official graphical client: you install the app, 
 
 The protocol and the DPI resistance are the same - it is the same AmneziaWG 2.0 underneath. The code is open under the MIT license, it is readable bash you can review before running, and it has 800+ automated tests. It installs the same upstream AmneziaWG - this is automation and server tuning, not a fork of the protocol.
 
+Detailed comparison: [amneziawg-installer vs the official Amnezia app](https://bivlked.github.io/amneziawg-installer/compare/).
+
 ---
 
 <a id="features"></a>
