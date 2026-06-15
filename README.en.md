@@ -160,7 +160,7 @@ There are a few other ways to get AmneziaWG running. Each picks a different trad
 | **[wiresock/amneziawg-install](https://github.com/wiresock/amneziawg-install)** | SSH + bash + optional native web panel | Frequently add/rotate peers and want a browser panel (no Docker) |
 | **[wg-easy](https://github.com/wg-easy/wg-easy)** | Docker + web UI | Home-lab boxes that already run Docker; want a browser panel for peers |
 | **[spcfox/amnezia-wg-easy](https://github.com/spcfox/amnezia-wg-easy)** | Docker fork of wg-easy | Existing wg-easy users who specifically want AmneziaWG instead of plain WireGuard |
-| **[Amnezia VPN app](https://amnezia.org/)** | Desktop GUI + SSH deploy | Click-through setup with no terminal; prefer a graphical client |
+| **[Amnezia VPN app](https://amnezia.org/)** | Desktop/mobile GUI, deploys the server side in Docker over SSH | Click-through setup with no terminal; want a graphical client |
 
 **Quick pick:**
 
@@ -173,6 +173,18 @@ There are a few other ways to get AmneziaWG running. Each picks a different trad
 
 * Frequently add and rotate peers and want a browser panel - pick **wiresock** or **wg-easy**. There is no panel here by design: if peers change rarely, an always-on panel only burns server resources, and management is done from the CLI (`manage` add/remove/list) over SSH.
 * You want a graphical client or point-and-click setup with no terminal - the **Amnezia VPN** desktop client.
+
+### How it differs from the official Amnezia app
+
+The official Amnezia app is the official graphical client: you install the app, point it at a server, and it deploys the server side in Docker over SSH. Handy when all you want is a GUI. This installer is built for a different goal - to get the most out of a single dedicated VPS as a VPN server. That is where the differences come from:
+
+* **No Docker, and none of its overhead.** AmneziaWG runs as a kernel module rather than inside a container. There is no Docker daemon sitting in the background, so RAM and CPU use stay lower. On a cheap VPS that matters a lot, and it does no harm on a bigger one either.
+* **The whole server is tuned to the hardware.** The script reads the server's RAM and network card, then sets sysctl buffers, swap size, and NIC offloads and turns on BBR - it wrings the most out of the plan you are paying for. The official app deploys its containers and does not optimize or tune the server itself.
+* **Smaller attack surface.** Unneeded packages and services are stripped, so the box does one thing - VPN. On top of that: UFW deny-all, Fail2Ban, strict file permissions, and sysctl hardening.
+* **Fine control over the obfuscation.** A mobile-network preset (`--preset=mobile`), direct access to the AmneziaWG 2.0 parameters, and field data on carriers and DPI - you can tune it for a specific network or carrier.
+* **Headless and scriptable.** One SSH command, every parameter as a flag, CLI client management, time-limited guests (`--expires`), QR or `vpn://` import, and prebuilt modules for ARM.
+
+The protocol and the DPI resistance are the same - it is the same AmneziaWG 2.0 underneath. The code is open under the MIT license, it is readable bash you can review before running, and it has 800+ automated tests. It installs the same upstream AmneziaWG - this is automation and server tuning, not a fork of the protocol.
 
 ---
 

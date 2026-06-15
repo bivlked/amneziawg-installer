@@ -667,6 +667,19 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 </details>
 
 <details>
+  <summary><strong>Q: How is this different from the official Amnezia app?</strong></summary>
+  <b>A:</b> The protocol underneath is the same - AmneziaWG 2.0 with the same obfuscation. What differs is how the server is deployed and run. The official Amnezia app is a graphical client: you point it at a server and it installs the server side in Docker containers over SSH, without the host-wide tuning and hardening this installer does. This installer is built to get the most out of a dedicated VPS as a VPN server, so it works differently:
+  <ul>
+    <li>AmneziaWG runs as a kernel module (DKMS), with no Docker - no background daemon and none of its RAM/CPU cost.</li>
+    <li>The whole server is tuned to the hardware: sysctl buffers, swap, NIC offloads, BBR, unneeded packages stripped.</li>
+    <li>The attack surface is kept small: UFW deny-all, Fail2Ban, strict permissions, sysctl hardening, one service instead of a stack.</li>
+    <li>Fine tuning is available: a mobile-network preset and direct access to the AWG 2.0 parameters.</li>
+    <li>Management is from the CLI (<code>manage</code> add/remove/list/<code>--expires</code>), with prebuilt ARM modules and a headless mode for automation.</li>
+  </ul>
+  A breakdown with examples is on the <a href="https://bivlked.github.io/amneziawg-installer/compare/">comparison page</a>.
+</details>
+
+<details>
   <summary><strong>Q: My Hetzner server is unreachable from Russia: the handshake completes, then traffic freezes. What do I do?</strong></summary>
   <b>A:</b> The server most likely landed in an AS that is not on Russia's allowlist (Hetzner is <code>AS24940</code>). Ordinary junk does not help; what gets through is an <code>I1</code>/CPS packet disguised as QUIC with an allowlisted SNI (<code>7-zip.org</code> for Hetzner). The method does not work on every ISP. Field results and instructions are in the <a href="#as-blocking-adv">Host Unreachable from Russia</a> section.
 </details>
