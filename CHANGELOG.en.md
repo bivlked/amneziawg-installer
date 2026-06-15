@@ -14,6 +14,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.16.1] - 2026-06-16
+
+**v5.16.1** - hotfix: iOS tunnel drop on the default routing mode (Issue #42). The default install behavior is otherwise unchanged. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
+
+### Fixed
+
+- iOS: on the default routing mode (mode 2, "Amnezia List + DNS") the tunnel came up but traffic stopped after ~10 seconds (easy to mistake for DPI). The AllowedIPs list started with the `0.0.0.0/5` range, which covers the reserved `0.0.0.0/8`; the iOS kernel chokes on that block and never reaches the rest of the routes. The first range is split into `1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6` - the same coverage without the problematic zero block, and split-tunnel is preserved. Traced and fixed by @LiaNdrY (Issue #42)
+- The `--expires` error message now lists `30d` among the valid formats (matching `--help`)
+
+### Documentation
+
+- README and ADVANCED (RU + EN): added an FAQ entry about the iOS drop with instructions for already-installed servers (before v5.16.1)
+- Cascade (CASCADE.md / CASCADE.en.md): the client config example now uses this installer's default Endpoint port `39743` (was `51820` from upstream WireGuard); the troubleshooting section no longer references a nonexistent `after-awg1.conf` drop-in - the autostart check now points at the `awg-routing.service` unit; removed a duplicated paragraph in step 1
+- Full documentation audit: fixed minor inaccuracies (a duplicated pointer line in ADVANCED.en.md, an install-link anchor mismatch between README RU and EN, the import-files wording in INSTALL_VPS.md)
+
+### CI
+
+- The ShellCheck workflow ("Lint and syntax check") is no longer path-filtered: the required status check now runs on docs-only PRs too, so it no longer blocks them (previously needed an admin override)
+
+### Tests
+
+- Added `tests/test_v5161_ios_allowedips.bats` - a structural guard against the mode-2 list reverting to `0.0.0.0/5`
+
+---
+
 ## [5.16.0] - 2026-06-12
 
 **v5.16.0** - security and reliability hardening from a full code audit. This release closes the findings of a full review of all six scripts of the AmneziaWG 2.0 VPN installer for Ubuntu and Debian: it eliminates the peer-loss window on `--force` reinstall, removes secrets from process argv, pins the PPA GPG key by full fingerprint, makes the AWG parameter validator check H1-H4 non-overlap, and stops expired orphan clients from looping the cron job forever. The default install behavior is unchanged. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
@@ -1380,7 +1405,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.5...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.16.1...HEAD
+[5.16.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.16.0...v5.16.1
 [5.16.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.6...v5.16.0
 [5.15.6]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.5...v5.15.6
 [5.15.5]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.4...v5.15.5

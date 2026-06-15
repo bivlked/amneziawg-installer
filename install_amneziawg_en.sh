@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.16.0
-# Date: 2026-06-12
+# Version: 5.16.1
+# Date: 2026-06-16
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 set -o pipefail
-SCRIPT_VERSION="5.16.0"
+SCRIPT_VERSION="5.16.1"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="660539a1553ac57f250b6096e9e03852bbc1783c120ee55a47b092dc655ee2c7"
-MANAGE_SCRIPT_SHA256="7e56616dfbe5ab31fc049f640927509f825968ff479ea749a97a9861dd19d30f"
+COMMON_SCRIPT_SHA256="e25f3c6e0dbd0139fc2b0211823d0cf4070497e4a34cbb472e20b960d7c82876"
+MANAGE_SCRIPT_SHA256="0e04dd6d427e7680626891a5de5017649ce02a8e3db3ba71c483c3fad502cbdf"
 
 # CLI flags
 UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
@@ -808,7 +808,11 @@ configure_routing_mode() {
            fi
            log "Selected mode: Custom ($ALLOWED_IPS)" ;;
         *) ALLOWED_IPS_MODE=2
-           ALLOWED_IPS="0.0.0.0/5, 8.0.0.0/7, 11.0.0.0/8, 12.0.0.0/6, 16.0.0.0/4, 32.0.0.0/3, 64.0.0.0/2, 128.0.0.0/3, 160.0.0.0/5, 168.0.0.0/6, 172.0.0.0/12, 172.32.0.0/11, 172.64.0.0/10, 172.128.0.0/9, 173.0.0.0/8, 174.0.0.0/7, 176.0.0.0/4, 192.0.0.0/9, 192.128.0.0/11, 192.160.0.0/13, 192.169.0.0/16, 192.170.0.0/15, 192.172.0.0/14, 192.176.0.0/12, 192.192.0.0/10, 193.0.0.0/8, 194.0.0.0/7, 196.0.0.0/6, 200.0.0.0/5, 208.0.0.0/4, 8.8.8.8/32, 1.1.1.1/32"
+           # iOS breaks the tunnel if the list starts with 0.0.0.0/5: that block covers
+           # the reserved 0.0.0.0/8 which the iOS kernel chokes on, so it never reaches the
+           # rest of the routes. 1.0.0.0/8 + 2.0.0.0/7 + 4.0.0.0/6 is the same range minus the
+           # zero block (0.0.0.0/8 is non-routable anyway). Do not revert to 0.0.0.0/5 (Issue #42).
+           ALLOWED_IPS="1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6, 8.0.0.0/7, 11.0.0.0/8, 12.0.0.0/6, 16.0.0.0/4, 32.0.0.0/3, 64.0.0.0/2, 128.0.0.0/3, 160.0.0.0/5, 168.0.0.0/6, 172.0.0.0/12, 172.32.0.0/11, 172.64.0.0/10, 172.128.0.0/9, 173.0.0.0/8, 174.0.0.0/7, 176.0.0.0/4, 192.0.0.0/9, 192.128.0.0/11, 192.160.0.0/13, 192.169.0.0/16, 192.170.0.0/15, 192.172.0.0/14, 192.176.0.0/12, 192.192.0.0/10, 193.0.0.0/8, 194.0.0.0/7, 196.0.0.0/6, 200.0.0.0/5, 208.0.0.0/4, 8.8.8.8/32, 1.1.1.1/32"
            log "Selected mode: Amnezia List+DNS." ;;
     esac
     if [ -z "$ALLOWED_IPS" ]; then die "Failed to determine AllowedIPs."; fi

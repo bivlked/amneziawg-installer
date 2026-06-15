@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 peer management script
 # Author: @bivlked
-# Version: 5.16.0
-# Date: 2026-06-12
+# Version: 5.16.1
+# Date: 2026-06-16
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.16.0"
+SCRIPT_VERSION="5.16.1"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -1644,7 +1644,7 @@ case $COMMAND in
         # quietly became permanent. A bad format now aborts before any change.
         if [[ -n "$EXPIRES_DURATION" ]]; then
             parse_duration "$EXPIRES_DURATION" >/dev/null \
-                || die "Invalid --expires='$EXPIRES_DURATION'. Use: 1h, 12h, 1d, 7d, 4w."
+                || die "Invalid --expires='$EXPIRES_DURATION'. Use: 1h, 12h, 1d, 7d, 30d, 4w."
         fi
 
         _added=0

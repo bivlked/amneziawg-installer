@@ -43,7 +43,7 @@ sudo ufw allow <your-ssh-port>/tcp
 Then:
 
 ```bash
-wget -O install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.0/install_amneziawg_en.sh
+wget -O install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.1/install_amneziawg_en.sh
 chmod +x install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh
 ```
@@ -62,7 +62,7 @@ The default install creates two clients (`my_phone`, `my_laptop`) so you can con
 sudo bash /root/awg/manage_amneziawg.sh add my_iphone
 ```
 
-Three import paths land in `/root/awg/`:
+The client import files land in `/root/awg/`:
 
 - `<name>.conf` for desktop AmneziaWG clients, Linux `wg-quick`, and routers.
 - `<name>.png` QR code for the Amnezia VPN mobile app.

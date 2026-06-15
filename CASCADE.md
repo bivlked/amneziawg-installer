@@ -71,9 +71,7 @@ flowchart LR
 <a id="step1"></a>
 ## Шаг 1. Установка пакета на оба сервера
 
-Поставьте `amneziawg-installer` на каждый сервер по [основной инструкции](README.md#quickstart). Неинтерактивно это выглядит так (подставьте свои подсети):
-
-Скачайте скрипт установки на каждый сервер так, как описано в [Быстром старте](README.md#quickstart), и запустите с нужными подсетями:
+Поставьте `amneziawg-installer` на каждый сервер по [основной инструкции](README.md#quickstart) и запустите неинтерактивно с нужными подсетями:
 
 ```bash
 # на AWG1 (выход)
@@ -112,7 +110,7 @@ Jc = ... (параметры обфускации)
 
 [Peer]
 PublicKey = ...
-Endpoint = ВНЕШНИЙ_IP_AWG1:51820
+Endpoint = ВНЕШНИЙ_IP_AWG1:39743
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 33
 ```
@@ -134,7 +132,7 @@ Jc = ... (параметры обфускации)
 
 [Peer]
 PublicKey = ...
-Endpoint = ВНЕШНИЙ_IP_AWG1:51820
+Endpoint = ВНЕШНИЙ_IP_AWG1:39743
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 33
 ```
@@ -351,7 +349,7 @@ echo '0 5 * * 1 root systemctl restart awg-routing' > /etc/cron.d/awg-routing-re
 
 - **Все сайты, включая российские, идут через заграницу.** Проверьте, что список загрузился: `ipset list ru | grep "Number of entries"` должно быть не ноль. Если ноль - сервер не смог скачать зону ipdeny; проверьте доступ к `www.ipdeny.com` и запустите скрипт ещё раз.
 - **Туннель к AWG1 не поднимается** (`awg show awg1` без `latest handshake`). Проверьте `Endpoint` в `awg1.conf`, что порт AWG1 открыт, и что сам сервис на AWG1 работает (`systemctl status awg-quick@awg0` на AWG1).
-- **После перезагрузки каскад не работает.** Проверьте автозапуск: `systemctl is-enabled awg-quick@awg1 awg-routing` (оба `enabled`) и наличие drop-in `after-awg1.conf`.
+- **После перезагрузки каскад не работает.** Проверьте автозапуск: `systemctl is-enabled awg-quick@awg1 awg-routing` (оба `enabled`) и что юнит `awg-routing.service` отработал после перезагрузки (`systemctl status awg-routing`).
 - **Конкретный российский сайт всё равно открывается через заграницу.** Скорее всего он размещён не на российском IP (часто бывает с сайтами за Cloudflare и зарубежными CDN). Деление идёт по IP назначения, поэтому такой сайт уходит в туннель - это ожидаемо.
 
 <a id="security"></a>

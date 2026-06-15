@@ -1,12 +1,16 @@
 name: ShellCheck
 
+# Без paths-фильтра намеренно: 'Lint and syntax check' - обязательный статус в
+# branch-protection main. С paths-фильтром docs-only PR не запускал этот workflow,
+# обязательный чек висел 'expected', и PR блокировался (mergeStateStatus=BLOCKED).
+# Линт прогоняет все .sh через git ls-files и на docs-only диффе тривиально зелёный.
+# workflow_dispatch - чтобы прогнать на форке перед merge (правило проекта для CI-правок).
 on:
   push:
     branches: [main]
-    paths: ['*.sh', 'scripts/**', 'tests/**']
   pull_request:
     branches: [main]
-    paths: ['*.sh', 'scripts/**', 'tests/**']
+  workflow_dispatch:
 
 permissions:
   contents: read

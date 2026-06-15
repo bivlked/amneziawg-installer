@@ -301,7 +301,7 @@ export AWG_PORT=39743
 export AWG_TUNNEL_SUBNET='10.9.9.1/24'
 export DISABLE_IPV6=1
 export ALLOWED_IPS_MODE=2
-export ALLOWED_IPS='0.0.0.0/5, 8.0.0.0/7, ...'
+export ALLOWED_IPS='1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6, 8.0.0.0/7, ...'
 export AWG_ENDPOINT=''
 export AWG_Jc=6
 export AWG_Jmin=55
@@ -409,7 +409,7 @@ I1 = <r 128>
 [Peer]
 PublicKey = [SERVER_PUBLIC_KEY]
 Endpoint = 203.0.113.1:39743
-AllowedIPs = 0.0.0.0/5, 8.0.0.0/7, ...
+AllowedIPs = 1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6, 8.0.0.0/7, ...
 PersistentKeepalive = 33
 ```
 </details>
@@ -592,7 +592,7 @@ graph TD
 Инсталлятор скачивает `awg_common.sh` и `manage_amneziawg.sh` с URL, привязанных к конкретному тегу версии:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.0/awg_common.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.1/awg_common.sh
 ```
 
 Это даёт **supply chain pinning**: скачиваемые скрипты соответствуют версии инсталлятора, даже если `main` уже обновлён.
@@ -612,12 +612,12 @@ AWG_BRANCH=my-feature-branch sudo bash ./install_amneziawg.sh
 
 ```bash
 # Русская версия:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.0/manage_amneziawg.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.0/awg_common.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.1/manage_amneziawg.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.1/awg_common.sh
 
 # Английская версия:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.0/manage_amneziawg_en.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.0/awg_common_en.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.1/manage_amneziawg_en.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.1/awg_common_en.sh
 
 # Установить права
 chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
@@ -758,6 +758,13 @@ sudo systemctl restart awg-quick@awg0</pre>
 <details>
   <summary><strong>В: Не подключается смартфон через мобильную сеть / не работает на iPhone</strong></summary>
   <b>О:</b> Добавьте <code>MTU = 1280</code> в секцию <code>[Interface]</code> серверного и клиентского конфигов. Сотовые сети имеют MTU ниже стандартных 1420, а iOS строго обрабатывает PMTU. Подробнее — в разделе <a href="#mtu-mobile-adv">MTU и мобильные клиенты</a>.
+</details>
+
+<details>
+  <summary><strong>В: iPhone подключается, но через ~10 секунд трафик пропадает (туннель «висит»)</strong></summary>
+  <b>О:</b> Исправлено в v5.16.1. Причина - режим маршрутизации по умолчанию (mode 2, «Список Amnezia+DNS») начинался с диапазона <code>0.0.0.0/5</code>, который включает служебный <code>0.0.0.0/8</code>. Ядро iOS спотыкается на этом блоке и не доходит до остальных маршрутов, поэтому туннель поднимается и через ~10 секунд встаёт (симптом легко спутать с DPI). Разобрался и предложил фикс @LiaNdrY (Issue #42). В v5.16.1 первый диапазон списка разбит на <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code> - это тот же охват без проблемного нулевого блока, split-tunnel сохраняется.
+  <br><br>
+  <b>На уже установленном сервере (до v5.16.1)</b> сохранённый список лежит в <code>/root/awg/awgsetup_cfg.init</code> и обычной переустановкой с <code>--force</code> не меняется (берётся из конфига). Поэтому: (1) быстрый разовый фикс - в конфиге iOS-клиента заменить строку <code>AllowedIPs = ...</code> на <code>AllowedIPs = 0.0.0.0/0</code>; (2) с сохранением split-tunnel - отредактировать <code>/root/awg/awgsetup_cfg.init</code>, заменив начальный <code>0.0.0.0/5</code> на <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code>, затем пересоздать клиента (<code>remove</code> + <code>add</code>); (3) либо чистая установка заново (<code>--uninstall</code>, затем установка v5.16.1) - тогда список сгенерируется корректно.
 </details>
 
 <details>

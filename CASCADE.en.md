@@ -110,7 +110,7 @@ Jc = ... (obfuscation parameters)
 
 [Peer]
 PublicKey = ...
-Endpoint = AWG1_PUBLIC_IP:51820
+Endpoint = AWG1_PUBLIC_IP:39743
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 33
 ```
@@ -132,7 +132,7 @@ Jc = ... (obfuscation parameters)
 
 [Peer]
 PublicKey = ...
-Endpoint = AWG1_PUBLIC_IP:51820
+Endpoint = AWG1_PUBLIC_IP:39743
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 33
 ```
@@ -350,7 +350,7 @@ echo '0 5 * * 1 root systemctl restart awg-routing' > /etc/cron.d/awg-routing-re
 
 - **All sites, including Russian ones, go through the foreign exit.** Check that the list loaded: `ipset list ru | grep "Number of entries"` should be non-zero. If it is zero, the server could not download the ipdeny zone; check access to `www.ipdeny.com` and run the script again.
 - **The tunnel to AWG1 does not come up** (`awg show awg1` has no `latest handshake`). Check the `Endpoint` in `awg1.conf`, that the AWG1 port is open, and that the service on AWG1 is running (`systemctl status awg-quick@awg0` on AWG1).
-- **The cascade does not work after a reboot.** Check autostart: `systemctl is-enabled awg-quick@awg1 awg-routing` (both `enabled`) and that the `after-awg1.conf` drop-in exists.
+- **The cascade does not work after a reboot.** Check autostart: `systemctl is-enabled awg-quick@awg1 awg-routing` (both `enabled`) and that the `awg-routing.service` unit ran after the reboot (`systemctl status awg-routing`).
 - **A specific Russian site still opens through the foreign exit.** It is most likely not hosted on a Russian IP (common for sites behind Cloudflare and foreign CDNs). The split is by destination IP, so such a site goes into the tunnel - this is expected.
 
 <a id="security"></a>
