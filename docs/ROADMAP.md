@@ -23,6 +23,9 @@ tracked in issues and discussions, not here:
   revision.
 - Ubuntu 24.04 / 25.10 / 26.04 and Debian 12 / 13 support.
 - CI and docs-consistency gates around releases.
+- Security and reliability hardening across installation and client management (atomic peer carry-over in the server config on `--force` reinstall, strict key permissions, careful temp-file and secret handling, Amnezia PPA GPG key pinned by full fingerprint).
+- iOS clients work correctly in the default routing mode (Amnezia List + DNS): the bundled route list no longer stalls the iOS tunnel.
+- Companion guides: how the project compares to the official Amnezia app, and a two-server cascade with split-tunnel routing.
 
 ## Under consideration
 
@@ -70,6 +73,9 @@ Carrier reports (operator, region, working parameters) are especially useful.
   upstream-модуля.
 - Поддержка Ubuntu 24.04 / 25.10 / 26.04 и Debian 12 / 13.
 - CI и проверки согласованности документации вокруг релизов.
+- Закалка безопасности и надёжности при установке и управлении клиентами (атомарный перенос peer-блоков в серверном конфиге при переустановке `--force`, строгие права на ключи, аккуратная работа с временными файлами и секретами, GPG-ключ Amnezia PPA закреплён по полному отпечатку).
+- Клиенты iOS работают корректно в дефолтном режиме маршрутизации (Amnezia List + DNS): встроенный список маршрутов больше не подвешивает туннель на iOS.
+- Сопутствующие гайды: сравнение проекта с официальным приложением Amnezia и каскад из двух серверов со split-tunnel-маршрутизацией.
 
 ## На рассмотрении
 
