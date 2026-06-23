@@ -158,7 +158,7 @@ There are a few other ways to get AmneziaWG running. Each picks a different trad
 | Tool | Path | Best for |
 |---|---|---|
 | **This installer** | SSH + one bash command | Headless VPS, single-purpose box, no Docker or panel, ARM prebuilts |
-| **[wiresock/amneziawg-install](https://github.com/wiresock/amneziawg-install)** | SSH + bash + optional native web panel | Frequently add/rotate peers and want a browser panel (no Docker) |
+| **[wiresock/amneziawg-install](https://github.com/wiresock/amneziawg-install)** | SSH + bash, optional native web panel and obfuscation proxy (Rust) | Want a browser panel without Docker, or traffic masking via a separate service |
 | **[wg-easy](https://github.com/wg-easy/wg-easy)** | Docker + web UI | Home-lab boxes that already run Docker; want a browser panel for peers |
 | **[spcfox/amnezia-wg-easy](https://github.com/spcfox/amnezia-wg-easy)** | Docker fork of wg-easy | Existing wg-easy users who specifically want AmneziaWG instead of plain WireGuard |
 | **[Amnezia VPN app](https://amnezia.org/)** | Desktop/mobile GUI, deploys the server side in Docker over SSH | Click-through setup with no terminal; want a graphical client |
@@ -173,6 +173,7 @@ There are a few other ways to get AmneziaWG running. Each picks a different trad
 **When this project is not your best fit:**
 
 * Frequently add and rotate peers and want a browser panel - pick **wiresock** or **wg-easy**. There is no panel here by design: if peers change rarely, an always-on panel only burns server resources, and management is done from the CLI (`manage` add/remove/list) over SSH.
+* You want resistance to active probing - masking the traffic as another protocol (such as QUIC or DNS): **wiresock** has a separate obfuscation proxy for that (the server-side masking works with any standard client; the full bidirectional capability pairs with their commercial WireSock Secure Connect client). Here the obfuscation lives in the protocol itself - the AmneziaWG 2.0 I1-I5/CPS parameters - and is aimed at everyday mobile DPI, with no separate proxy daemon and no paid client.
 * You want a graphical client or point-and-click setup with no terminal - the **Amnezia VPN** desktop client.
 
 ### How it differs from the official Amnezia app
