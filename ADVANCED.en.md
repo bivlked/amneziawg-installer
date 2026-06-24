@@ -42,6 +42,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 - [📱 vpn:// URI Import](#vpnuri-adv)
 - [📱 MTU and Mobile Clients](#mtu-mobile-adv)
 - [🚧 Host Unreachable from Russia (Hetzner): AS-based Blocking](#as-blocking-adv)
+- [🛡️ Active Probing and Obfuscation Without a Proxy](#active-probing-adv)
 - [📋 AWG 2.0 Client Compatibility](#client-compat-adv)
 - [🐧 Debian Support](#debian-support-adv)
 - [🔧 Raspberry Pi and ARM64 Support](#arm-support-adv)
@@ -101,6 +102,8 @@ All parameters are generated automatically during installation and saved to `/ro
 * H1-H4 ranges **must not overlap** (guaranteed by the generation algorithm).
 * `S1 + 56 ≠ S2` — prevents init and response messages from having the same size.
 * All nodes (server + clients) **must** use identical parameters.
+
+> `I1`-`I5` (CPS) disguise the handshake as another protocol - the basis of resistance to active probing. Details: [Active Probing and Obfuscation Without a Proxy](#active-probing-adv).
 
 <a id="presets-adv"></a>
 ### Presets (v5.10.0+)
@@ -172,6 +175,8 @@ Defines which traffic the **client** routes through the VPN tunnel.
 ### IPv6 Dual-Stack Tunnel (v5.15.0+)
 
 By default the tunnel carries IPv4 only. Starting with v5.15.0 you can also enable IPv6 inside the tunnel - clients get an IPv6 address next to IPv4 (dual-stack).
+
+> **IPv6 in the default IPv4-only mode.** When the tunnel is IPv4-only, your device's IPv6 traffic goes out directly, outside the VPN - by design: an IPv4-only tunnel does not carry IPv6, and the server has no say in it (this is a property of the mode, not a server-side leak). If you want IPv6 inside the tunnel, enable `--allow-ipv6-tunnel` (below). If instead you want a guarantee that nothing goes outside the VPN, turn IPv6 off on the device itself: a server-side filter does not help here, because that direct IPv6 traffic never reaches the server.
 
 **When it activates:** only with the explicit `--allow-ipv6-tunnel` flag on `install_amneziawg.sh`. Without the flag the behavior is identical to earlier versions. This is separate from `--allow-ipv6` / `--disallow-ipv6`, which control host-level IPv6 (sysctl) and are unchanged.
 
@@ -1131,6 +1136,22 @@ Control: a tunnel to a server in a different AS (US) came up and held on all thr
 4. If access is not restored, try a different SNI or a different hoster: on some ISPs (like Seven Sky in our test) the mimicry did not pass with any of the SNIs we tried.
 
 > Method discussion and SNI selection: [ntc.party #12845](https://ntc.party/t/12845). If your Hetzner server goes silent after the handshake, first check whether this is the cause: bring up a test server with a different hoster (for example, in the US), and if the tunnel there works, the cause is destination-AS blocking.
+
+---
+
+<a id="active-probing-adv"></a>
+## 🛡️ Active Probing and Obfuscation Without a Proxy
+
+**What it is.** Deep packet inspection (DPI) does not always work passively. In active-probing mode it sends crafted or replayed packets to the server's UDP port and treats the endpoint's behavior as one signal: a real service answers as expected, while the absence of an expected cover-service response can raise suspicion (though it is not decisive on its own). DPI also passively inspects the signature of the handshake packets themselves.
+
+**What the protocol does on its own (no separate daemon).** AmneziaWG 2.0 conceals the handshake shape at the protocol level and reduces WireGuard-identifying responses for valid AWG traffic, without standing up extra services:
+
+- **`I1`-`I5` (CPS concealment).** Concealment packets can make the handshake resemble allowed traffic - for example QUIC-like traffic associated with a whitelisted SNI, depending on configuration - so the observable handshake signature, and any response to a valid AWG initiation, look unlike stock WireGuard. It does not actively answer arbitrary QUIC/TLS/DNS probes as a real service. This is the mechanism used by the AS-based-blocking recipe; the concrete SNI selection is in [AS-based blocking and the I1/CPS workaround](#as-blocking-adv).
+- **A whitelisted port.** Running the VPN on port 443 or 53 (`--port=443`) places it on commonly allowed service ports, which may reduce simple port-based blocking but does not by itself defeat active probing.
+
+**An honest boundary: where a separate proxy goes further.** In the most aggressive active-probing scenarios a separate responding proxy (for example wiresock's `amneziawg-proxy`) is objectively stronger: it actually answers a probe as a real service - it speaks QUIC/TLS on 443, answers DNS on 53, handles STUN and SIP. That is a different engineering trade-off: an always-on daemon, an extra port, a Rust build, and for full bidirectional masking their own client. Here the obfuscation is built into the protocol itself and targets common passive and mobile DPI patterns without a separate daemon, an extra port, or a paid client; stronger active-probing resistance is the proxy's role. Which one you want depends on how aggressive the probing is on your network.
+
+> A comparison with the official Amnezia app and other tools is on the [comparison page](https://bivlked.github.io/amneziawg-installer/compare/).
 
 ---
 
