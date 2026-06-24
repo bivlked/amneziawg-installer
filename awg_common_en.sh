@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 2.0
 # Author: @bivlked
-# Version: 5.16.1
-# Date: 2026-06-16
+# Version: 5.17.0
+# Date: 2026-06-24
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -991,6 +991,20 @@ render_server_config() {
     local postup="iptables -I FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${nic} -j MASQUERADE"
     local postdown="iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o ${nic} -j MASQUERADE"
 
+    # MSS/PMTU clamp: pin the TCP MSS to the tunnel MTU so large segments do not
+    # stall against the 1280 tunnel when ICMP "frag needed" is filtered (PMTU
+    # blackhole: VPN connects but large pages/downloads hang on mobile/double-NAT/
+    # cascade paths). A fixed MSS derived from AWG_MTU is deterministic with the
+    # hard-set MTU and auto-syncs with it; clamp-to-pmtu would depend on the egress
+    # route. Bidirectional (-o %i and -i %i) caps the MSS both ways. IPv4: MTU-40,
+    # IPv6: MTU-60. SYN only, mangle table (separate from UFW/filter). The -A/-D
+    # style mirrors the MASQUERADE rules above.
+    local awg_mtu="${AWG_MTU:-1280}"
+    local mss4=$(( awg_mtu - 40 ))
+    local mss6=$(( awg_mtu - 60 ))
+    postup="${postup}; iptables -t mangle -A FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss4}; iptables -t mangle -A FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss4}"
+    postdown="${postdown}; iptables -t mangle -D FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss4}; iptables -t mangle -D FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss4}"
+
     # IPv6 rules: enabled when the IPv6 tunnel is on (FORWARD inside the tunnel +
     # MASQUERADE to the public interface). MASQUERADE is harmless without native
     # IPv6 on the VPS - it is a no-op while there is no IPv6 default route, while
@@ -999,8 +1013,8 @@ render_server_config() {
     # The DISABLE_IPV6=0 condition is kept for byte-identical compatibility with v5.14.x:
     # an install with --allow-ipv6 (no tunnel) gets the same IPv6 filter rules as before.
     if [[ "${ALLOW_IPV6_TUNNEL:-0}" -eq 1 || "${DISABLE_IPV6:-1}" -eq 0 ]]; then
-        postup="${postup}; ip6tables -I FORWARD -i %i -j ACCEPT; ip6tables -t nat -A POSTROUTING -o ${nic} -j MASQUERADE"
-        postdown="${postdown}; ip6tables -D FORWARD -i %i -j ACCEPT; ip6tables -t nat -D POSTROUTING -o ${nic} -j MASQUERADE"
+        postup="${postup}; ip6tables -I FORWARD -i %i -j ACCEPT; ip6tables -t nat -A POSTROUTING -o ${nic} -j MASQUERADE; ip6tables -t mangle -A FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss6}; ip6tables -t mangle -A FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss6}"
+        postdown="${postdown}; ip6tables -D FORWARD -i %i -j ACCEPT; ip6tables -t nat -D POSTROUTING -o ${nic} -j MASQUERADE; ip6tables -t mangle -D FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss6}; ip6tables -t mangle -D FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss6}"
     fi
 
     # Build config via temp file (atomic write).

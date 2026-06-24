@@ -594,7 +594,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common.sh` and `manage_amneziawg.sh` from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.1/awg_common.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.17.0/awg_common.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -614,12 +614,12 @@ To update the management and shared library scripts **without reinstalling the s
 
 ```bash
 # Russian version:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.1/manage_amneziawg.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.1/awg_common.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.17.0/manage_amneziawg.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.17.0/awg_common.sh
 
 # English version:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.1/manage_amneziawg_en.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.16.1/awg_common_en.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.17.0/manage_amneziawg_en.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.17.0/awg_common_en.sh
 
 # Set permissions
 chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
@@ -1089,6 +1089,16 @@ sudo systemctl restart awg-quick@awg0
 ```
 
 > vpn:// URIs for Amnezia Client have always included MTU = 1280 in all script versions.
+
+### Automatic MSS clamp (since v5.17.0)
+
+Starting with v5.17.0 the server additionally clamps the TCP MSS to the tunnel size. This is a `TCPMSS` rule in the `mangle` table's `FORWARD` chain, added as separate commands in the `PostUp`/`PostDown` of `awg0.conf`. The value is derived from `MTU` (1280 by default): MSS 1240 for IPv4 and 1220 for IPv6, in both directions.
+
+**Why:** even with `MTU = 1280`, large pages and downloads sometimes stall on mobile carriers, behind double-NAT, and in a two-server cascade. The cause is a PMTU blackhole: when ICMP "Fragmentation needed" (or ICMPv6 "Packet Too Big" for IPv6) is filtered along the path, oversized TCP segments with the DF flag are silently dropped at the tunnel, and the connection hangs on large transfers (small requests still go through). The MSS clamp tells both sides a tunnel-safe segment size up front, so those packets never appear. It complements `MTU = 1280` rather than replacing it.
+
+The rule is applied automatically on install and reinstall (`--force`) for v5.17.0 and later. It needs no client config regeneration - it lives on the server and applies to every client. The MSS value is derived from `MTU` when the config is generated; if you change `MTU` manually after install, re-run the installer with `--force` (or edit the `PostUp` rule) so the clamp value updates.
+
+> The MSS clamp only affects TCP. Video and QUIC/HTTP3 (UDP) are untouched: if that is the traffic that stalls, the cause is elsewhere - see the obfuscation parameters and carrier presets.
 
 ---
 

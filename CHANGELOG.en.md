@@ -14,6 +14,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.17.0] - 2026-06-24
+
+**v5.17.0** - the server firewall now clamps the TCP MSS to the tunnel MTU so large pages and downloads no longer hang on paths that filter ICMP (mobile carriers, double-NAT, two-server cascade). The install behavior is otherwise unchanged; update an existing server by re-running the installer. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
+
+### Added
+
+- MSS/PMTU clamp in the server config PostUp/PostDown: a `TCPMSS --set-mss` rule in the `mangle` table's `FORWARD` chain caps the advertised TCP MSS to a tunnel-safe value in both directions (`-o %i` and `-i %i`). This removes the PMTU blackhole - when ICMP "Fragmentation needed" is filtered along the path, oversized TCP segments with DF set are silently dropped at the 1280 tunnel and the page or download stalls. A common complaint on mobile carriers, behind double-NAT, and in cascade setups
+- The MSS value is derived from `AWG_MTU` when the config is generated (IPv4: MTU-40 = 1240, IPv6: MTU-60 = 1220); a manual MTU change is picked up by re-running the installer with `--force`. IPv6 rules are only added when the IPv6 tunnel is enabled. It complements the existing conservative `MTU = 1280` rather than replacing it
+
+### Tests
+
+- Added `tests/test_v5170_mss_clamp.bats` - asserts the rules in both directions, the mirrored `-D` in PostDown, IPv6 gating, and MSS auto-derivation from `AWG_MTU`
+
+---
+
 ## [5.16.1] - 2026-06-16
 
 **v5.16.1** - hotfix: iOS tunnel drop on the default routing mode (Issue #42). The default install behavior is otherwise unchanged. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
@@ -1405,7 +1420,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.16.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.17.0...HEAD
+[5.17.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.16.1...v5.17.0
 [5.16.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.16.0...v5.16.1
 [5.16.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.6...v5.16.0
 [5.15.6]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.5...v5.15.6

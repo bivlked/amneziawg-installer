@@ -4,9 +4,9 @@
 
 | Version | Supported          |
 |---------|--------------------|
-| 5.16.x  | :white_check_mark: |
-| 5.15.x  | Security fixes only |
-| < 5.15  | :x:                |
+| 5.17.x  | :white_check_mark: |
+| 5.16.x  | Security fixes only |
+| < 5.16  | :x:                |
 
 ## Reporting a Vulnerability
 

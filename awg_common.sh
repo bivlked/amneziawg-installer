@@ -3,8 +3,8 @@
 # ==============================================================================
 # Общая библиотека функций для AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.16.1
-# Дата: 2026-06-16
+# Версия: 5.17.0
+# Дата: 2026-06-24
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -984,6 +984,19 @@ render_server_config() {
     local postup="iptables -I FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${nic} -j MASQUERADE"
     local postdown="iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o ${nic} -j MASQUERADE"
 
+    # MSS/PMTU-clamp: фиксируем TCP MSS под туннельный MTU, чтобы крупные сегменты
+    # не упирались в 1280-туннель при фильтрованном ICMP "frag needed" (PMTUD-блэкхол:
+    # VPN подключается, но крупные страницы/закачки виснут на мобильных/double-NAT/
+    # каскадных путях). Фикс из AWG_MTU детерминирован при жёстко заданном MTU и
+    # авто-синхронен с ним; clamp-to-pmtu зависел бы от egress-маршрута. Би-directional
+    # (-o %i и -i %i) кэпит MSS в обе стороны. IPv4: MTU-40, IPv6: MTU-60. Только SYN,
+    # таблица mangle (отдельная от UFW/filter). Стиль -A/-D зеркалит MASQUERADE выше.
+    local awg_mtu="${AWG_MTU:-1280}"
+    local mss4=$(( awg_mtu - 40 ))
+    local mss6=$(( awg_mtu - 60 ))
+    postup="${postup}; iptables -t mangle -A FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss4}; iptables -t mangle -A FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss4}"
+    postdown="${postdown}; iptables -t mangle -D FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss4}; iptables -t mangle -D FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss4}"
+
     # IPv6 правила: при включённом IPv6-туннеле (FORWARD внутри туннеля + MASQUERADE
     # на публичный интерфейс). MASQUERADE безвреден если у VPS нет native IPv6 -
     # это no-op, пока нет IPv6 default route, зато peer-to-peer внутри туннеля работает.
@@ -991,8 +1004,8 @@ render_server_config() {
     # Условие DISABLE_IPV6=0 сохранено для байт-в-байт совместимости с v5.14.x:
     # установка с --allow-ipv6 (без туннеля) получает те же IPv6-правила фильтра, что и раньше.
     if [[ "${ALLOW_IPV6_TUNNEL:-0}" -eq 1 || "${DISABLE_IPV6:-1}" -eq 0 ]]; then
-        postup="${postup}; ip6tables -I FORWARD -i %i -j ACCEPT; ip6tables -t nat -A POSTROUTING -o ${nic} -j MASQUERADE"
-        postdown="${postdown}; ip6tables -D FORWARD -i %i -j ACCEPT; ip6tables -t nat -D POSTROUTING -o ${nic} -j MASQUERADE"
+        postup="${postup}; ip6tables -I FORWARD -i %i -j ACCEPT; ip6tables -t nat -A POSTROUTING -o ${nic} -j MASQUERADE; ip6tables -t mangle -A FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss6}; ip6tables -t mangle -A FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss6}"
+        postdown="${postdown}; ip6tables -D FORWARD -i %i -j ACCEPT; ip6tables -t nat -D POSTROUTING -o ${nic} -j MASQUERADE; ip6tables -t mangle -D FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss6}; ip6tables -t mangle -D FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mss6}"
     fi
 
     # Формируем конфиг через временный файл (атомарная запись).
