@@ -8,15 +8,15 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 2.0 на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 5.17.0
-# Дата: 2026-06-24
+# Версия: 5.18.0
+# Дата: 2026-06-26
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 set -o pipefail
 
-SCRIPT_VERSION="5.17.0"
+SCRIPT_VERSION="5.18.0"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="d31c464fa5f06b7742bac9f6d1fa65b97733b828626b5e85900647da8f1d22b3"
-MANAGE_SCRIPT_SHA256="4f7bde7b87a061445cb2d8376d82c1c5e1aab09a5c8d71e12784a944dd583007"
+COMMON_SCRIPT_SHA256="e45faa7de3db15dc105292072c6cbfe562fe0161783fa862fe866666a1205cd8"
+MANAGE_SCRIPT_SHA256="06e91e69a612b1fc57643d1c0d21459dc7816c7084e38fee55c7319ca9c2d927"
 
 # Флаги CLI
 UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
@@ -616,7 +616,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_PRESET|NO_TWEAKS|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6)
                     export "$key=$value"
                     ;;
@@ -982,6 +982,12 @@ generate_awg_params() {
 
     # I1: CPS concealment
     AWG_I1=$(generate_cps_i1)
+
+    # I2-I5 здесь НЕ генерируются (admin задаёт их вручную в awg0.conf, issue #71).
+    # Свежая генерация набора (первая установка или --preset/--jc/--jmin/--jmax)
+    # сбрасывает возможные stale I2-I5, загруженные из awgsetup_cfg.init, чтобы новый
+    # набор обфускации не тащил старые значения (--preset перегенерирует весь набор).
+    unset AWG_I2 AWG_I3 AWG_I4 AWG_I5
 
     export AWG_Jc AWG_Jmin AWG_Jmax AWG_S1 AWG_S2 AWG_S3 AWG_S4 AWG_PRESET
     export AWG_H1 AWG_H2 AWG_H3 AWG_H4 AWG_I1
@@ -2095,6 +2101,10 @@ export AWG_H2='${AWG_H2}'
 export AWG_H3='${AWG_H3}'
 export AWG_H4='${AWG_H4}'
 export AWG_I1='${AWG_I1}'
+export AWG_I2='${AWG_I2:-}'
+export AWG_I3='${AWG_I3:-}'
+export AWG_I4='${AWG_I4:-}'
+export AWG_I5='${AWG_I5:-}'
 export AWG_PRESET='${AWG_PRESET:-default}'
 export NO_TWEAKS=${NO_TWEAKS}
 export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'

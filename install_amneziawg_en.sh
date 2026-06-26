@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.17.0
-# Date: 2026-06-24
+# Version: 5.18.0
+# Date: 2026-06-26
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 set -o pipefail
-SCRIPT_VERSION="5.17.0"
+SCRIPT_VERSION="5.18.0"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="22b1f2773a4181183f26e1ba97e7f84b39f669d62b4dcded8fe0fb4f4815a27d"
-MANAGE_SCRIPT_SHA256="a4581d8c874e1e6b0678e80c01a6a7131dc54d661eea10ee38a6a6e0a235fc56"
+COMMON_SCRIPT_SHA256="63ddb57418cab5fad6569ea5c253b6032a4c3bd9c3e42a9c9abc811b22032aea"
+MANAGE_SCRIPT_SHA256="2cb5f4b1928b659a106a9d9efd7e7099825e73eeadae1a34faf2b7b395a678ec"
 
 # CLI flags
 UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0
@@ -622,7 +622,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_PRESET|NO_TWEAKS|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6)
                     export "$key=$value"
                     ;;
@@ -988,6 +988,12 @@ generate_awg_params() {
 
     # I1: CPS concealment
     AWG_I1=$(generate_cps_i1)
+
+    # I2-I5 are NOT generated here (the admin sets them manually in awg0.conf, issue #71).
+    # A fresh param set (first install or --preset/--jc/--jmin/--jmax) clears any stale
+    # I2-I5 loaded from awgsetup_cfg.init so the new obfuscation set does not carry old
+    # values (--preset regenerates the whole set).
+    unset AWG_I2 AWG_I3 AWG_I4 AWG_I5
 
     export AWG_Jc AWG_Jmin AWG_Jmax AWG_S1 AWG_S2 AWG_S3 AWG_S4 AWG_PRESET
     export AWG_H1 AWG_H2 AWG_H3 AWG_H4 AWG_I1
@@ -2103,6 +2109,10 @@ export AWG_H2='${AWG_H2}'
 export AWG_H3='${AWG_H3}'
 export AWG_H4='${AWG_H4}'
 export AWG_I1='${AWG_I1}'
+export AWG_I2='${AWG_I2:-}'
+export AWG_I3='${AWG_I3:-}'
+export AWG_I4='${AWG_I4:-}'
+export AWG_I5='${AWG_I5:-}'
 export AWG_PRESET='${AWG_PRESET:-default}'
 export NO_TWEAKS=${NO_TWEAKS}
 export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'

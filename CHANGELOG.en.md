@@ -14,6 +14,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.18.0] - 2026-06-26
+
+**v5.18.0** - the special-junk params `I2`-`I5` now reach clients. Previously only `I1` made it into the client config; `I2`-`I5` were hard-coded empty in the `vpn://` URI and never rendered into the `.conf`, so even if the admin set them in `awg0.conf` they could not reach the client. Now all five CPS params are carried into the client `.conf`, the QR code, and the `vpn://` link. Workflow: set `I2`-`I5` in the `[Interface]` of `awg0.conf`, restart the service, and distribute to clients with `manage regen`. No new install flags; when `I2`-`I5` are unset, behavior is identical to before. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM (issue #71).
+
+### Added
+
+- Pass-through of `I1`-`I5` (not just `I1`) from the server `awg0.conf` into client configs on generation and `regen`: the live-config parser reads `I2`-`I5`, the client `.conf` render appends the set values, and the previously hard-coded empty `I2`-`I5` in the `vpn://` URI are replaced with the real ones. Values are carried verbatim; the admin picks the tag format (`<r N>`, `<b 0xHEX>`, `<c>`, `<t>`) - see the VoidWaifu list. `I2`-`I5` are optional and independent: unset ones are simply not emitted
+- The params inherit the same preservation semantics as the rest of the obfuscation: `--force` without `--preset/--jc/--jmin/--jmax` reads `I2`-`I5` from the live `awg0.conf` and keeps them; `--preset`/`--jc` regenerate the whole obfuscation set, which drops manually set `I2`-`I5` (same as `H1-H4/S1-S4/I1`)
+
+### Tests
+
+- Added `tests/test_v5180_i2i5_passthrough.bats` - parsing `I2`-`I5` from `awg0.conf`, anti-stale protection across calls, client `.conf` render (present when set, absent when empty), and a real `vpn://` decode (values present in both the structured fields and the embedded raw config), plus RU/EN parity of every touched site
+
+---
+
 ## [5.17.0] - 2026-06-24
 
 **v5.17.0** - the server firewall now clamps the TCP MSS to the tunnel MTU so large pages and downloads no longer hang on paths that filter ICMP (mobile carriers, double-NAT, two-server cascade). The install behavior is otherwise unchanged; update an existing server by re-running the installer. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
@@ -1421,6 +1436,7 @@ Major security and reliability update after several consecutive code audits. The
 - Full uninstall (`--uninstall`).
 
 [Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.17.0...HEAD
+[5.18.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.17.0...v5.18.0
 [5.17.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.16.1...v5.17.0
 [5.16.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.16.0...v5.16.1
 [5.16.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.15.6...v5.16.0

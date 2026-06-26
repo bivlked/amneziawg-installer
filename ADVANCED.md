@@ -97,6 +97,7 @@
 | `H3` | Идентификатор cookie-сообщения | Диапазон uint32 | `56789012-67890123` |
 | `H4` | Идентификатор data-сообщения | Диапазон uint32 | `456789012-567890123` |
 | `I1` | CPS concealment packet | Формат `<r N>` | `<r 128>` |
+| `I2`-`I5` | Доп. CPS / special-junk пакеты, опциональны (с v5.18.0 переносятся в клиентов) | Теги `<r N>` / `<b 0xHEX>` / `<c>` / `<t>` | `<b 0xf1>` |
 
 **Критические ограничения:**
 * H1-H4 диапазоны **не должны пересекаться** (гарантируется алгоритмом генерации).
@@ -382,7 +383,7 @@ H4 = 4567890
 
 - **S3/S4** — параметры AWG 2.0, добавлены в протокол позже S1/S2. В конфигах от предыдущих версий (AWG 1.x) их может не быть — надо дописать руками, значения любые в диапазоне 0-127, главное что вообще есть.
 - **H1–H4** могут быть single-value (`H1 = 1234567`) или range (`H1 = 100000-200000`), диапазоны не должны пересекаться. Безопасный верхний предел — 2147483647 (`INT32_MAX`), иначе `amneziawg-windows-client` может подсвечивать значения как invalid.
-- **I1** (CPS-пакеты) опционален: без него AWG-клиент работает в AWG 1.0 fallback режиме. Для полной AWG 2.0 обфускации — добавить `I1 = <r 128>` (random 128 байт) или `I1 = <b 0xHEX>` (binary).
+- **I1-I5** (CPS / special-junk пакеты) опциональны. Без `I1` AWG-клиент работает в AWG 1.0 fallback режиме; для полной AWG 2.0 обфускации добавьте `I1 = <r 128>` (random 128 байт) или `I1 = <b 0xHEX>` (binary). С версии 5.18.0 в клиентские конфиги переносятся все пять (`I1`-`I5`), а не только `I1`: пропишите `I2`-`I5` в секции `[Interface]` файла `awg0.conf`, перезапустите сервис (`sudo systemctl restart awg-quick@awg0`) и раздайте клиентам через `sudo bash /root/awg/manage_amneziawg.sh regen <имя>` - значения разойдутся в `.conf`, QR и `vpn://`. Готовые наборы берут, например, из списка VoidWaifu; форматы тегов: `<r N>`, `<b 0xHEX>`, `<c>`, `<t>`. Значения обязаны совпадать на сервере и клиентах. Незаданные `I2`-`I5` просто не выводятся.
 - **MTU**, **PostUp/PostDown** — опциональны, зависят от сетапа (см. `amneziawg-go` секцию про iptables MASQUERADE в LXC).
 
 После создания такого `awg0.conf` `manage_amneziawg.sh` требует ещё два файла: `/root/awg/server_public.key` (вычисляется: `awg pubkey < /etc/amnezia/amneziawg/server_private.key > /root/awg/server_public.key`) и минимальный `/root/awg/awgsetup_cfg.init` с `AWG_PORT`, `AWG_TUNNEL_SUBNET`, `AWG_ENDPOINT`.
@@ -597,7 +598,7 @@ graph TD
 Инсталлятор скачивает `awg_common.sh` и `manage_amneziawg.sh` с URL, привязанных к конкретному тегу версии:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.17.0/awg_common.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.18.0/awg_common.sh
 ```
 
 Это даёт **supply chain pinning**: скачиваемые скрипты соответствуют версии инсталлятора, даже если `main` уже обновлён.
@@ -617,12 +618,12 @@ AWG_BRANCH=my-feature-branch sudo bash ./install_amneziawg.sh
 
 ```bash
 # Русская версия:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.17.0/manage_amneziawg.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.17.0/awg_common.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.18.0/manage_amneziawg.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.18.0/awg_common.sh
 
 # Английская версия:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.17.0/manage_amneziawg_en.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.17.0/awg_common_en.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.18.0/manage_amneziawg_en.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.18.0/awg_common_en.sh
 
 # Установить права
 chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
@@ -657,14 +658,14 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>В: Где хранятся параметры AWG 2.0?</strong></summary>
-  **О:** В файле `/root/awg/awgsetup_cfg.init` (переменные AWG_Jc, AWG_S1..S4, AWG_H1..H4, AWG_I1). Эти же параметры записываются в серверный и клиентские конфиги.
+  **О:** В файле `/root/awg/awgsetup_cfg.init` (переменные AWG_Jc, AWG_S1..S4, AWG_H1..H4, AWG_I1..I5). Эти же параметры записываются в серверный и клиентские конфиги.
 </details>
 
 <details>
   <summary><strong>В: Можно ли изменить параметры AWG 2.0 после установки?</strong></summary>
   <b>О:</b> Да. Это полезно если оператор начал детектировать ваш сервер по статическим параметрам обфускации (например, ТСПУ заблокировал определённые H1-H4 диапазоны). Порядок действий с v5.8.0:
   <ol>
-    <li>Отредактируйте параметры (Jc, S1-S4, H1-H4, I1) в <code>/etc/amnezia/amneziawg/awg0.conf</code> в секции <code>[Interface]</code>.</li>
+    <li>Отредактируйте параметры (Jc, S1-S4, H1-H4, I1-I5) в <code>/etc/amnezia/amneziawg/awg0.conf</code> в секции <code>[Interface]</code>.</li>
     <li>Перезапустите сервис: <code>sudo systemctl restart awg-quick@awg0</code>.</li>
     <li>Перегенерируйте конфиги всех клиентов: <code>sudo bash /root/awg/manage_amneziawg.sh regen &lt;имя&gt;</code> для каждого. С v5.8.0 <code>regen</code> читает актуальные значения прямо из <code>awg0.conf</code> (источник истины), а не из закешированного <code>awgsetup_cfg.init</code>.</li>
     <li>Раздайте новые <code>.conf</code> / QR-коды / vpn:// URI клиентам.</li>

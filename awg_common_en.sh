@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 2.0
 # Author: @bivlked
-# Version: 5.17.0
-# Date: 2026-06-24
+# Version: 5.18.0
+# Date: 2026-06-26
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -651,7 +651,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_PRESET|NO_TWEAKS|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6)
                     export "$key=$value"
                     ;;
@@ -665,7 +665,7 @@ safe_load_config() {
 # ATOMICALLY: either all 11 required parameters (Jc/Jmin/Jmax/S1-S4/H1-H4)
 # are found and exported, or nothing changes in the environment and 1
 # is returned. Protects against mixed state when awg0.conf is partially
-# corrupt. I1, ListenPort are optional — exported only if found.
+# corrupt. I1-I5, ListenPort are optional - exported only if found.
 # Fixes #38: regen used stale values from the init file instead of the
 # actual awg0.conf after manual edits.
 # shellcheck disable=SC2120  # Optional argument is only used in tests
@@ -677,7 +677,7 @@ load_awg_params_from_server_conf() {
     local _Jc="" _Jmin="" _Jmax=""
     local _S1="" _S2="" _S3="" _S4=""
     local _H1="" _H2="" _H3="" _H4=""
-    local _I1="" _Port="" _MTU=""
+    local _I1="" _I2="" _I3="" _I4="" _I5="" _Port="" _MTU=""
 
     local in_iface=0 line key value
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -704,6 +704,10 @@ load_awg_params_from_server_conf() {
                 H3)         _H3="$value" ;;
                 H4)         _H4="$value" ;;
                 I1)         _I1="$value" ;;
+                I2)         _I2="$value" ;;
+                I3)         _I3="$value" ;;
+                I4)         _I4="$value" ;;
+                I5)         _I5="$value" ;;
                 ListenPort) _Port="$value" ;;
                 MTU)        _MTU="$value" ;;
             esac
@@ -720,6 +724,10 @@ load_awg_params_from_server_conf() {
     export AWG_S1="$_S1" AWG_S2="$_S2" AWG_S3="$_S3" AWG_S4="$_S4"
     export AWG_H1="$_H1" AWG_H2="$_H2" AWG_H3="$_H3" AWG_H4="$_H4"
     [[ -n "$_I1"   ]] && export AWG_I1="$_I1"
+    [[ -n "$_I2"   ]] && export AWG_I2="$_I2"
+    [[ -n "$_I3"   ]] && export AWG_I3="$_I3"
+    [[ -n "$_I4"   ]] && export AWG_I4="$_I4"
+    [[ -n "$_I5"   ]] && export AWG_I5="$_I5"
     [[ -n "$_Port" ]] && export AWG_PORT="$_Port"
     if _validate_mtu "${_MTU:-}"; then
         export AWG_MTU="$_MTU"
@@ -737,7 +745,7 @@ load_awg_params_from_server_conf() {
 #     when present.
 #   * Live server config ($SERVER_CONF_FILE = /etc/amnezia/amneziawg/awg0.conf)
 #     — the SOLE source of truth for AWG protocol parameters
-#     (Jc/Jmin/Jmax/S1-S4/H1-H4/I1) when the file exists.
+#     (Jc/Jmin/Jmax/S1-S4/H1-H4/I1-I5) when the file exists.
 #
 # If the live server config exists but does NOT contain a complete set of
 # AWG parameters (corruption / incomplete manual edit) — the function
@@ -764,9 +772,9 @@ load_awg_params() {
     elif [[ -f "$SERVER_CONF_FILE" ]]; then
         # Live config exists — it is the sole source of truth.
         # No fallback to init: that would create split-brain.
-        # Unset I1 before parsing: I1 is optional, if absent from live conf
-        # it must not leak stale value from init file.
-        unset AWG_I1
+        # Unset I1-I5 before parsing: they are optional, if absent from live conf
+        # they must not leak stale values from init file.
+        unset AWG_I1 AWG_I2 AWG_I3 AWG_I4 AWG_I5
         if ! load_awg_params_from_server_conf; then
             log_error "$SERVER_CONF_FILE is missing required AWG parameters"
             log_error "(Jc/Jmin/Jmax/S1-S4/H1-H4). Refusing to use stale values from"
@@ -1044,10 +1052,13 @@ H3 = ${AWG_H3}
 H4 = ${AWG_H4}
 EOF
 
-    # Add I1 only if set (CPS is optional)
-    if [[ -n "${AWG_I1}" ]]; then
-        echo "I1 = ${AWG_I1}" >> "$tmpfile"
-    fi
+    # Add I1-I5 only if set (CPS params are optional).
+    # I2-I5 are set by the admin manually in awg0.conf (issue #71), copied as-is.
+    [[ -n "${AWG_I1:-}" ]] && echo "I1 = ${AWG_I1}" >> "$tmpfile"
+    [[ -n "${AWG_I2:-}" ]] && echo "I2 = ${AWG_I2}" >> "$tmpfile"
+    [[ -n "${AWG_I3:-}" ]] && echo "I3 = ${AWG_I3}" >> "$tmpfile"
+    [[ -n "${AWG_I4:-}" ]] && echo "I4 = ${AWG_I4}" >> "$tmpfile"
+    [[ -n "${AWG_I5:-}" ]] && echo "I5 = ${AWG_I5}" >> "$tmpfile"
 
     # Carry [Peer] blocks from peers_source into the temp BEFORE mv (see doc comment).
     # The buffer is flushed on every new [Peer]: ALL blocks are carried over.
@@ -1203,9 +1214,13 @@ H3 = ${AWG_H3}
 H4 = ${AWG_H4}
 EOF
 
-    if [[ -n "${AWG_I1}" ]]; then
-        echo "I1 = ${AWG_I1}" >> "$tmpfile"
-    fi
+    # I1-I5: copy the set CPS params into the client config (issue #71).
+    # Values must match the server side - regen distributes them to clients.
+    [[ -n "${AWG_I1:-}" ]] && echo "I1 = ${AWG_I1}" >> "$tmpfile"
+    [[ -n "${AWG_I2:-}" ]] && echo "I2 = ${AWG_I2}" >> "$tmpfile"
+    [[ -n "${AWG_I3:-}" ]] && echo "I3 = ${AWG_I3}" >> "$tmpfile"
+    [[ -n "${AWG_I4:-}" ]] && echo "I4 = ${AWG_I4}" >> "$tmpfile"
+    [[ -n "${AWG_I5:-}" ]] && echo "I5 = ${AWG_I5}" >> "$tmpfile"
 
     cat >> "$tmpfile" << EOF
 
@@ -1672,7 +1687,7 @@ generate_vpn_uri() {
     vpn_uri=$(AWG_URI_CPK="$client_privkey" AWG_URI_PSK="$client_psk" AWG_URI_SPK="$server_pubkey" \
       perl -MCompress::Zlib -MMIME::Base64 -e '
         my ($conf_path, $h1,$h2,$h3,$h4, $jc,$jmin,$jmax,
-            $s1,$s2,$s3,$s4, $i1, $port, $ep, $cip, $cipv6, $aips,
+            $s1,$s2,$s3,$s4, $i1,$i2,$i3,$i4,$i5, $port, $ep, $cip, $cipv6, $aips,
             $mtu, $keepalive, $dns1, $dns2) = @ARGV;
         my $cpk = $ENV{AWG_URI_CPK} // "";
         my $psk = $ENV{AWG_URI_PSK} // "";
@@ -1693,9 +1708,10 @@ generate_vpn_uri() {
         $inner .= qq("H1":"$h1","H2":"$h2","H3":"$h3","H4":"$h4",);
         $inner .= qq("Jc":"$jc","Jmin":"$jmin","Jmax":"$jmax",);
         $inner .= qq("S1":"$s1","S2":"$s2","S3":"$s3","S4":"$s4",);
-        if ($i1 ne "") {
-            my $ei1 = je($i1);
-            $inner .= qq("I1":"$ei1","I2":"","I3":"","I4":"","I5":"",);
+        if ($i1 ne "" || $i2 ne "" || $i3 ne "" || $i4 ne "" || $i5 ne "") {
+            my $ei1 = je($i1); my $ei2 = je($i2); my $ei3 = je($i3);
+            my $ei4 = je($i4); my $ei5 = je($i5);
+            $inner .= qq("I1":"$ei1","I2":"$ei2","I3":"$ei3","I4":"$ei4","I5":"$ei5",);
         }
         my $eraw = je($raw);
         my @ips = split(/,/, $aips);
@@ -1736,7 +1752,7 @@ generate_vpn_uri() {
         "$AWG_H1" "$AWG_H2" "$AWG_H3" "$AWG_H4" \
         "$AWG_Jc" "$AWG_Jmin" "$AWG_Jmax" \
         "$AWG_S1" "$AWG_S2" "$AWG_S3" "$AWG_S4" \
-        "$AWG_I1" "$AWG_PORT" "$endpoint" \
+        "$AWG_I1" "${AWG_I2:-}" "${AWG_I3:-}" "${AWG_I4:-}" "${AWG_I5:-}" "$AWG_PORT" "$endpoint" \
         "$client_ip" "$client_ipv6" "$allowed_ips" \
         "$mtu" "$keepalive" "$dns1" "$dns2" 2>"$perl_err"
     )
