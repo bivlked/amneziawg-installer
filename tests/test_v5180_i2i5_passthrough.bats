@@ -116,10 +116,9 @@ PY
     render_client_config "c2" "10.9.9.3" "CLIENTPRIV" "SERVERPUB" "1.2.3.4" "39743"
     local conf="$AWG_DIR/c2.conf"
     [ -f "$conf" ]
-    ! grep -qE "^I2 = " "$conf"
-    ! grep -qE "^I3 = " "$conf"
-    ! grep -qE "^I4 = " "$conf"
-    ! grep -qE "^I5 = " "$conf"
+    # None of I2-I5 should appear in the rendered client config.
+    run grep -E '^I[2-5] = ' "$conf"
+    [ "$status" -ne 0 ]
 }
 
 # --- vpn:// URI (structured fields + embedded raw config) ---
