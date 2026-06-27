@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [5.18.1] - 2026-06-27
 
-**v5.18.1** - bug-fix release. Fixes `--port` on reinstall: `install --force --port=N` now actually changes the server port (previously the new port was silently ignored). Full-tunnel clients now get `0.0.0.0/0, ::/0` so AmneziaVPN on iOS accepts the "all traffic" mode. The default DNS is now a resolver pair `1.1.1.1, 1.0.0.1`. Plus documentation fixes. Behaviour of existing installs and connected clients is unchanged; the improvements apply to new and re-issued (`manage regen`) configs. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
+**v5.18.1** - bug-fix release. Fixes `--port` on reinstall: `install --force --port=N` now actually changes the server port (previously the new port was silently ignored). Full-tunnel clients now get `0.0.0.0/0, ::/0` so AmneziaVPN on iOS accepts the "all traffic" mode. The default DNS is now a resolver pair `1.1.1.1, 1.0.0.1`. `--port` now accepts any port 1-65535, including 443 (useful for mobile carriers that drop a non-standard high UDP port). Plus documentation fixes. Behaviour of existing installs and connected clients is unchanged; the improvements apply to new and re-issued (`manage regen`) configs. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
 
 ### Fixed
 
@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - The default DNS in client configs is now a pair `1.1.1.1, 1.0.0.1` instead of a single resolver (a fallback DNS in case the first one is unreachable)
+- `--port` now accepts ports 1-65535 (previously only 1024-65535). Low ports like 443/80/53 help with DPI evasion on mobile carriers: MTS, for example, drops a non-standard high UDP port but passes 443/udp. The VPN service runs as root, so privileged ports bind fine
 
 ### Documentation
 

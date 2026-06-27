@@ -278,7 +278,7 @@ Options:
   --diagnostic          Generate diagnostic report and exit
   -v, --verbose         Verbose output for debugging (including DEBUG)
   --no-color            Disable colored terminal output
-  --port=NUMBER         Set UDP port (1024-65535) non-interactively
+  --port=NUMBER         Set UDP port (1-65535) non-interactively
   --ssh-port=PORT       SSH port for the UFW rule (auto-detected by default;
                         comma-separated list). Use if SSH runs on a non-standard
                         port and auto-detection is unavailable
@@ -674,8 +674,8 @@ validate_port() {
     # octal in arithmetic and slip past the range check) and bounds the length:
     # without a limit 64-bit (( )) arithmetic wraps, so 2^64+51820 would pass the
     # range check. Comparison uses plain decimal.
-    if ! [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || (( port < 1024 )) || (( port > 65535 )); then
-        die "Invalid port: '$port'. Allowed range: 1024-65535."
+    if ! [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || (( port > 65535 )); then
+        die "Invalid port: '$port'. Allowed range: 1-65535."
     fi
 }
 
@@ -2009,7 +2009,7 @@ initialize_setup() {
         # appropriate there).
         if [[ "$AUTO_YES" -eq 0 ]]; then
             while true; do
-                read -rp "Enter AmneziaWG UDP port (1024-65535) [${AWG_PORT}]: " input_port < /dev/tty
+                read -rp "Enter AmneziaWG UDP port (1-65535) [${AWG_PORT}]: " input_port < /dev/tty
                 [[ -z "$input_port" ]] && break
                 if ( validate_port "$input_port" ); then AWG_PORT=$input_port; break; fi
                 log_warn "Please re-enter the port."

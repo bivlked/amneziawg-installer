@@ -6,7 +6,8 @@
 # canonical _valid_* in awg_common.sh. This file pins the hardening.
 #
 # .1 validators:
-#    - validate_port: reject leading-zero/octal ('0080'), enforce 1024-65535
+#    - validate_port: reject leading-zero/octal ('0080'), enforce 1-65535
+#      (low ports like 443/80/53 allowed since v5.18.1 for DPI evasion)
 #    - validate_subnet / validate_cidr_list: decimal octets, reject leading zeros
 #    - validate_endpoint: structural [IPv6] check instead of charset-only
 #    - validate_cidr_list: reject leading/trailing/double comma before split
@@ -30,14 +31,16 @@ setup() {
 # ---------- .1 validate_port ----------
 
 @test ".1 validate_port: rejects leading-zero/octal and out-of-range" {
-    for bad in 0080 080 80 0 23 65536 99999 abc ""; do
+    # v5.18.1: low ports (1-1023) are now allowed; only zero, leading-zero/octal,
+    # over-max and non-numeric stay rejected.
+    for bad in 0080 080 0 65536 99999 abc ""; do
         run validate_port "$bad"
         [ "$status" -ne 0 ] || { echo "accepted invalid port: $bad"; false; }
     done
 }
 
-@test ".1 validate_port: accepts valid high ports" {
-    for ok in 1024 51820 65535; do
+@test ".1 validate_port: accepts valid ports incl. low DPI-evasion ports (v5.18.1)" {
+    for ok in 1 53 80 443 1024 51820 65535; do
         run validate_port "$ok"
         [ "$status" -eq 0 ] || { echo "rejected valid port: $ok"; false; }
     done
