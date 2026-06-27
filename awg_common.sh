@@ -3,8 +3,8 @@
 # ==============================================================================
 # Общая библиотека функций для AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.18.0
-# Дата: 2026-06-26
+# Версия: 5.18.1
+# Дата: 2026-06-27
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -950,6 +950,16 @@ render_server_config() {
     local peers_source="${1:-}"
     load_awg_params || return 1
 
+    # Порт для НОВОГО awg0.conf берём из init-файла (намерение пользователя:
+    # флаг --port или сохранённый прежний порт), а НЕ из перезаписываемого
+    # старого awg0.conf. load_awg_params перечитывает ListenPort из живого
+    # конфига, поэтому без этого --port при --force молча игнорировался бы.
+    # render_server_config вызывается только из install, regen клиентов
+    # (regenerate_client) идёт своим путём и не затрагивается.
+    local _init_port
+    _init_port=$(grep -oP '^\s*export AWG_PORT=\K[0-9]+' "$CONFIG_FILE" 2>/dev/null | head -n1)
+    [[ -n "$_init_port" ]] && AWG_PORT="$_init_port"
+
     local server_privkey
     if [[ -f "$AWG_DIR/server_private.key" ]]; then
         server_privkey=$(cat "$AWG_DIR/server_private.key")
@@ -1158,6 +1168,15 @@ render_client_config() {
         esac
     else
         allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
+        # iOS AmneziaVPN в режиме "весь трафик" требует обе семьи адресов: при
+        # голом 0.0.0.0/0 он считает это незавершённой раздельной маршрутизацией
+        # и не поднимает туннель. Для full-tunnel добавляем ::/0 - IPv6 уходит в
+        # туннель (и отсекается, если у сервера нет нативного IPv6), наружу мимо
+        # VPN не утекает. Затрагивает только mode-1: split-режим = кастомный
+        # список, не равен 0.0.0.0/0 и под условие не попадает.
+        if [[ "$allowed_ips" == "0.0.0.0/0" ]]; then
+            allowed_ips="0.0.0.0/0, ::/0"
+        fi
     fi
 
     # MTU: приоритет server awg0.conf > AWG_MTU из awgsetup_cfg.init > 1280 fallback.
@@ -1190,7 +1209,7 @@ render_client_config() {
 [Interface]
 PrivateKey = ${client_privkey}
 Address = ${address_line}
-DNS = 1.1.1.1
+DNS = 1.1.1.1, 1.0.0.1
 MTU = ${mtu}
 Jc = ${AWG_Jc}
 Jmin = ${AWG_Jmin}
@@ -2123,7 +2142,7 @@ regenerate_client() {
     fi
 
     # Сохраняем пользовательские настройки из текущего .conf (modify)
-    local current_dns="1.1.1.1" current_keepalive="33" current_allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
+    local current_dns="1.1.1.1, 1.0.0.1" current_keepalive="33" current_allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
     if [[ -f "$AWG_DIR/${name}.conf" ]]; then
         local _v
         _v=$(sed -n 's/^DNS[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | tr -d '[:space:]')
@@ -2171,6 +2190,13 @@ regenerate_client() {
         unset CLIENT_PSK
         return 1
     }
+
+    # При regen подтягиваем новые дефолты для НЕ-кастомизированных клиентов:
+    # полнотуннельный 0.0.0.0/0 получает ::/0 (нужно iOS AmneziaVPN), одиночный
+    # DNS 1.1.1.1 становится парой с резервом. Значения, заданные пользователем
+    # через modify, не равны старым дефолтам и потому сохраняются как есть.
+    [[ "$current_allowed_ips" == "0.0.0.0/0" ]] && current_allowed_ips="0.0.0.0/0, ::/0"
+    [[ "$current_dns" == "1.1.1.1" ]] && current_dns="1.1.1.1, 1.0.0.1"
 
     # Восстанавливаем пользовательские настройки (экранируем & и \ для sed replacement)
     local _dns _ka _aip

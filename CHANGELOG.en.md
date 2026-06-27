@@ -14,6 +14,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.18.1] - 2026-06-27
+
+**v5.18.1** - bug-fix release. Fixes `--port` on reinstall: `install --force --port=N` now actually changes the server port (previously the new port was silently ignored). Full-tunnel clients now get `0.0.0.0/0, ::/0` so AmneziaVPN on iOS accepts the "all traffic" mode. The default DNS is now a resolver pair `1.1.1.1, 1.0.0.1`. Plus documentation fixes. Behaviour of existing installs and connected clients is unchanged; the improvements apply to new and re-issued (`manage regen`) configs. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
+
+### Fixed
+
+- `install --force --port=N` now changes the server port. Previously the new port was silently ignored: when rendering the server config, the port was re-read from the old `awg0.conf`, overwriting the value passed via `--port`. The port for the new config is now taken from the saved install parameters (the user's intent), which correctly survives the reboots during `--force`. Client `regen` is unaffected - it still reads the port from the live `awg0.conf`
+- Full-tunnel clients (`AllowedIPs = 0.0.0.0/0`) now get `0.0.0.0/0, ::/0`. With a bare `0.0.0.0/0`, AmneziaVPN on iOS treated the config as incomplete split tunneling and refused to bring the tunnel up. `::/0` sends IPv6 into the tunnel (and drops it if the server has no native IPv6), so nothing leaks past the VPN. Split tunneling (a custom route list) is not affected
+
+### Changed
+
+- The default DNS in client configs is now a pair `1.1.1.1, 1.0.0.1` instead of a single resolver (a fallback DNS in case the first one is unreachable)
+
+### Documentation
+
+- ADVANCED: fixed the `S3`/`S4` range in the minimal-config example (`S3`: 0-64, `S4`: 0-32 instead of the wrong 0-127); removed the stale link of the active-probing section to the already-closed issue #71; added notes on the mobile port and on direct IPv6 traffic bypassing the tunnel
+- README: added Ubuntu 26.04 to the subtitle; clarified the `--force` gate in the re-run FAQ
+
+### Tests
+
+- Added `tests/test_v5181_bugfix.bats` - the port from the saved parameters wins over the old `awg0.conf` on render; a full-tunnel client gets `::/0`, a split one does not; the default DNS pair; RU/EN parity of all three fixes
+
+---
+
 ## [5.18.0] - 2026-06-26
 
 **v5.18.0** - the special-junk params `I2`-`I5` now reach clients. Previously only `I1` made it into the client config; `I2`-`I5` were hard-coded empty in the `vpn://` URI and never rendered into the `.conf`, so even if the admin set them in `awg0.conf` they could not reach the client. Now all five CPS params are carried into the client `.conf`, the QR code, and the `vpn://` link. Workflow: set `I2`-`I5` in the `[Interface]` of `awg0.conf`, restart the service, and distribute to clients with `manage regen`. No new install flags; when `I2`-`I5` are unset, behavior is identical to before. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM (issue #71).
@@ -1435,7 +1459,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.17.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.1...HEAD
+[5.18.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.0...v5.18.1
 [5.18.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.17.0...v5.18.0
 [5.17.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.16.1...v5.17.0
 [5.16.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.16.0...v5.16.1

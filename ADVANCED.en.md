@@ -233,7 +233,7 @@ Then re-import the new `.conf` on the device. A plain `regen` will not help here
 <a id="dns-adv"></a>
 ### DNS
 
-* **Default value:** `1.1.1.1` (Cloudflare).
+* **Default value:** `1.1.1.1, 1.0.0.1` (Cloudflare, primary + fallback).
 * DNS server for the client inside the VPN.
 * **Change:** `sudo bash /root/awg/manage_amneziawg.sh modify <name> DNS "8.8.8.8,1.0.0.1"`
 
@@ -383,7 +383,7 @@ H4 = 4567890
 
 Notes for manual setups:
 
-- **S3/S4** are AWG 2.0 parameters added to the protocol later than S1/S2. Configs from the earlier AWG 1.x release may not have them — add by hand, any value in `0-127` works, the key point is that the keys exist at all.
+- **S3/S4** are AWG 2.0 parameters added to the protocol later than S1/S2. Configs from the earlier AWG 1.x release may not have them - add by hand, `S3` takes `0-64` and `S4` takes `0-32`, the key point is that the keys exist at all.
 - **H1–H4** can be single-value (`H1 = 1234567`) or a range (`H1 = 100000-200000`); ranges must not overlap. Keep the upper bound at `2147483647` (`INT32_MAX`) or below, otherwise `amneziawg-windows-client` may flag the value as invalid.
 - **I1-I5** (CPS / special-junk packets) are optional. Without `I1` the AWG client falls back to AWG 1.0 mode; for full AWG 2.0 obfuscation add `I1 = <r 128>` (random 128 bytes) or `I1 = <b 0xHEX>` (binary). Since v5.18.0 all five (`I1`-`I5`) are carried into client configs, not just `I1`: set `I2`-`I5` in the `[Interface]` section of `awg0.conf`, restart the service (`sudo systemctl restart awg-quick@awg0`), and distribute to clients with `sudo bash /root/awg/manage_amneziawg.sh regen <name>` - the values flow into the `.conf`, QR, and `vpn://`. Ready-made sets come from, e.g., the VoidWaifu list; tag formats: `<r N>`, `<b 0xHEX>`, `<c>`, `<t>`. The values must match on server and clients. Unset `I2`-`I5` are simply not emitted.
 - **MTU**, **PostUp/PostDown** are optional and depend on the setup (see the `amneziawg-go` LXC section on `iptables` MASQUERADE).
@@ -600,7 +600,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common.sh` and `manage_amneziawg.sh` from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.18.0/awg_common.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.18.1/awg_common.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -620,12 +620,12 @@ To update the management and shared library scripts **without reinstalling the s
 
 ```bash
 # Russian version:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.18.0/manage_amneziawg.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.18.0/awg_common.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.18.1/manage_amneziawg.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.18.1/awg_common.sh
 
 # English version:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.18.0/manage_amneziawg_en.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.18.0/awg_common_en.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.18.1/manage_amneziawg_en.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.18.1/awg_common_en.sh
 
 # Set permissions
 chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
@@ -1106,6 +1106,23 @@ The rule is applied automatically on install and reinstall (`--force`) for v5.17
 
 > The MSS clamp only affects TCP. Video and QUIC/HTTP3 (UDP) are untouched: if that is the traffic that stalls, the cause is elsewhere - see the obfuscation parameters and carrier presets.
 
+### Carrier blocks the port (no connection)
+
+If the tunnel does not come up at all on cellular (the handshake never completes) while it works fine on Wi-Fi, the problem may be the port rather than the obfuscation. By default the server listens on UDP 39743; some carriers (MTS, for example) drop that non-standard UDP port but reliably pass `443/udp` - it looks like QUIC/HTTP3. In this case `--preset=mobile` does not help (it changes the traffic disguise, not the port).
+
+Set the port at install time - `sudo bash install_amneziawg.sh --port=443 ...`. On an already running server, change the port without reinstalling:
+
+```bash
+sudo sed -i 's/^ListenPort = .*/ListenPort = 443/' /etc/amnezia/amneziawg/awg0.conf
+sudo sed -i 's/^export AWG_PORT=.*/export AWG_PORT=443/' /root/awg/awgsetup_cfg.init
+sudo ufw allow 443/udp
+sudo systemctl restart awg-quick@awg0
+```
+
+Then re-issue the client configs (`sudo bash /root/awg/manage_amneziawg.sh regen <name>`) - the new port lands in `Endpoint` - and re-import them on the devices. Port 443 also works on regular networks, so you can move all devices to it.
+
+> If, on the other hand, the tunnel comes up but some sites (YouTube, ChatGPT) do not open while the VPN is connected, the cause is usually not the port but the device's IPv6 going around the tunnel. See the [IPv6 in IPv4-only mode](#ipv6-tunnel-adv) section for the explanation and fix.
+
 ---
 
 <a id="as-blocking-adv"></a>
@@ -1125,7 +1142,7 @@ The rule is applied automatically on install and reinstall (`--force`) for v5.17
 
 Control: a tunnel to a server in a different AS (US) came up and held on all three ISPs, so in our test on Seven Sky it was Hetzner specifically that stayed unreachable, not VPN as such. On Seven Sky the block reproduced consistently, both evening and night, and the QUIC mimicry with two different SNIs did not lift it. In summary: 0ka's method does work, but not universally - the outcome depends on the ISP and the regional TSPU configuration.
 
-**How to apply manually.** The installer does not yet generate the QUIC mimicry `I1` on its own (planned, [issue #71](https://github.com/bivlked/amneziawg-installer/issues/71)); for now it is a manual step:
+**How to apply manually.** The installer does not generate the QUIC mimicry `I1` on its own - this is a manual step:
 
 1. Generate the `I1` string for your hoster in [Mini QUIC Generator](https://sageptr.github.io/mini_quic_generator/) (by SagePtr): enter the SNI (`7-zip.org` for Hetzner) and copy the value from the "AmneziaWG 1.5+ (I1 = )" field.
 2. Replace the `I1 = ...` line in the `[Interface]` section of the server config `/etc/amnezia/amneziawg/awg0.conf` (`I1`-`I5` are case-sensitive, uppercase only).

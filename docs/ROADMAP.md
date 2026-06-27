@@ -28,6 +28,7 @@ tracked in issues and discussions, not here:
 - Reliability on mobile, double-NAT and cascade paths: the TCP MSS is clamped to the tunnel size, which fixes the common PMTU-blackhole stall where large TCP pages and downloads hang when path-MTU discovery is blocked along the way.
 - Full special-junk pass-through: all CPS concealment params `I1`-`I5` set in the server `awg0.conf` now reach clients (`.conf`, QR, `vpn://`), not just `I1`. Multi-packet concealment profiles can be configured server-side and distributed with `manage regen`.
 - Companion guides: how the project compares to the official Amnezia app, and a two-server cascade with split-tunnel routing.
+- Bug fixes: `install --force --port=N` now actually changes the server port; full-tunnel clients get `0.0.0.0/0, ::/0` so iOS AmneziaVPN accepts the all-traffic mode; the default client DNS is a `1.1.1.1, 1.0.0.1` pair.
 
 ## Under consideration
 
@@ -80,6 +81,7 @@ Carrier reports (operator, region, working parameters) are especially useful.
 - Надёжность на мобильных, double-NAT и каскадных путях: TCP MSS ограничивается под размер туннеля, что устраняет типичный PMTU-блэкхол, когда крупные TCP-страницы и закачки зависают при заблокированном по пути обнаружении path-MTU.
 - Полный проброс special-junk: все CPS-параметры маскировки `I1`-`I5`, заданные в серверном `awg0.conf`, теперь доходят до клиентов (`.conf`, QR, `vpn://`), а не только `I1`. Многопакетные профили маскировки можно задать на сервере и раздать через `manage regen`.
 - Сопутствующие гайды: сравнение проекта с официальным приложением Amnezia и каскад из двух серверов со split-tunnel-маршрутизацией.
+- Багфиксы: `install --force --port=N` теперь действительно меняет порт сервера; полнотуннельные клиенты получают `0.0.0.0/0, ::/0`, чтобы iOS AmneziaVPN принимал режим всего трафика; DNS клиента по умолчанию - пара `1.1.1.1, 1.0.0.1`.
 
 ## На рассмотрении
 

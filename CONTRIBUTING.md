@@ -118,7 +118,7 @@ The same mirror rule applies to user-facing markdown documents:
 When updating any of them, keep the following in sync between the two versions:
 
 - Section headings and order
-- Commands and code examples (identical — commands are bash)
+- Commands and code examples (identical - commands are bash)
 - Release facts: version numbers, test counts, supported distros
 - Internal links (each RU anchor should have an EN counterpart at the same place)
 - Tables (same rows and columns)
