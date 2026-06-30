@@ -960,6 +960,21 @@ What to do:
 </details>
 
 <details>
+<summary><strong>AmneziaWG won't connect: the handshake never completes, though plain WireGuard works on the same server</strong></summary>
+
+Symptom: the client tries to connect, but the server does not process the AmneziaWG handshake - `tcpdump` shows packets arriving on the right port and the server accepting them, yet `latest handshake` in `awg show awg0` stays empty. Meanwhile plain WireGuard comes up fine on the same server. This happens outside Russia too, where DPI is not involved at all.
+
+Since vanilla WireGuard works, the network, the port and the firewall are ruled out. The only difference from AmneziaWG is the obfuscation layer: `Jc`/`Jmin`/`Jmax`, `S1`-`S4`, `H1`-`H4`, and in version 2.0 `I1`-`I5`. If any one of these does not match byte-for-byte between server and client, the server cannot parse the incoming handshake and silently drops it - from the outside it looks like "packets arrive but are not processed".
+
+What to check:
+
+1. Compare the obfuscation parameters in the `[Interface]` section on the server and the client - they must be identical. `I1`-`I5` are case-sensitive (uppercase only); if `I1` is present on one side and absent on the other, that side falls back to AWG 1.0 while the other stays on 2.0, and the handshake never agrees.
+2. Compare versions on both ends: `awg --version`. A client built separately (for example `amneziawg-tools` from the AUR on Arch) is often older and does not speak AWG 2.0 - then the server expects a 2.0 envelope while the client sends the old format. See [AWG 2.0 Client Compatibility](#client-compat-adv) for the list of compatible clients.
+
+The specific case (an AWG 2.0 server with `S3`/`S4` > 0 and an old AWG 1.0 client) is a known upstream issue, covered in the [FAQ](#faq-advanced-adv).
+</details>
+
+<details>
 <summary><strong>Port is occupied by another process</strong></summary>
 
 1. Identify the process: `ss -lunp | grep :<port>`
