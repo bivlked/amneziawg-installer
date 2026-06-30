@@ -964,7 +964,7 @@ What to do:
 
 Symptom: the client tries to connect, but the server does not process the AmneziaWG handshake - `tcpdump` shows packets arriving on the right port and the server accepting them, yet `latest handshake` in `awg show awg0` stays empty. Meanwhile plain WireGuard comes up fine on the same server. This happens outside Russia too, where DPI is not involved at all.
 
-Since vanilla WireGuard works, the network, the port and the firewall are ruled out. The only difference from AmneziaWG is the obfuscation layer: `Jc`/`Jmin`/`Jmax`, `S1`-`S4`, `H1`-`H4`, and in version 2.0 `I1`-`I5`. If any one of these does not match byte-for-byte between server and client, the server cannot parse the incoming handshake and silently drops it - from the outside it looks like "packets arrive but are not processed".
+Since vanilla WireGuard works, the network, the port and the firewall are ruled out. The only difference from AmneziaWG 2.0 is the obfuscation layer: `Jc`/`Jmin`/`Jmax`, `S1`-`S4`, `H1`-`H4`, and in version 2.0 `I1`-`I5`. If any one of these does not match byte-for-byte between server and client, the server cannot parse the incoming handshake and silently drops it - from the outside it looks like "packets arrive but are not processed".
 
 What to check:
 
