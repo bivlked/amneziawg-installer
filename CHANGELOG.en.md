@@ -14,6 +14,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.18.2] - 2026-07-01
+
+**v5.18.2** - installation robustness. On fresh Ubuntu servers the built-in `unattended-upgrades` often holds the `dpkg` lock for several minutes on first boot, which made the installer fail at the system-update step with an `apt full-upgrade` error. The installer now waits for the lock to be released instead of failing immediately. Existing installations are unaffected. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
+
+### Fixed
+
+- A fresh-server install no longer aborts when the `dpkg` lock is busy. At the start of step 1 the installer sets `DPkg::Lock::Timeout` (via `/etc/apt/apt.conf.d`), so every `apt` call waits for the lock that `unattended-upgrades` / `apt-daily` hold on first boot. If `apt full-upgrade` still does not go through, the installer logs the process holding the lock, runs `dpkg --configure -a` and retries, and on a repeated failure exits with a clear message and recovery steps (issue #150)
+
 ## [5.18.1] - 2026-06-27
 
 **v5.18.1** - bug-fix release. Fixes `--port` on reinstall: `install --force --port=N` now actually changes the server port (previously the new port was silently ignored). Full-tunnel clients now get `0.0.0.0/0, ::/0` so AmneziaVPN on iOS accepts the "all traffic" mode. The default DNS is now a resolver pair `1.1.1.1, 1.0.0.1`. `--port` now accepts any port 1-65535, including 443 (useful for mobile carriers that drop a non-standard high UDP port). Plus documentation fixes. Behaviour of existing installs and connected clients is unchanged; the improvements apply to new and re-issued (`manage regen`) configs. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
@@ -1461,6 +1469,7 @@ Major security and reliability update after several consecutive code audits. The
 - Full uninstall (`--uninstall`).
 
 [Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.1...HEAD
+[5.18.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.1...v5.18.2
 [5.18.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.0...v5.18.1
 [5.18.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.17.0...v5.18.0
 [5.17.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.16.1...v5.17.0
