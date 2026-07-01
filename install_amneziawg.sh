@@ -2150,6 +2150,14 @@ step1_update_and_optimize() {
     update_state 1
     log "### ШАГ 1: Обновление, очистка и оптимизация системы ###"
 
+    # Устойчивость к dpkg-lock на первой загрузке сервера: unattended-upgrades
+    # и apt-daily нередко держат блокировку несколько минут (issue #150 - тогда
+    # apt full-upgrade падал сразу). DPkg::Lock::Timeout заставляет apt дождаться
+    # освобождения блокировки, а не завершаться с ошибкой.
+    mkdir -p /etc/apt/apt.conf.d
+    printf 'DPkg::Lock::Timeout "300";\n' > /etc/apt/apt.conf.d/99-amneziawg-lock-timeout \
+        || log_warn "Не удалось записать apt lock-timeout (митигация issue #150)."
+
     # Очистка ненужных компонентов (ДО обновления для экономии трафика/времени)
     if [[ "$NO_TWEAKS" -eq 0 ]]; then
         cleanup_system
@@ -2170,7 +2178,16 @@ step1_update_and_optimize() {
     fi
 
     log "Обновление системы..."
-    DEBIAN_FRONTEND=noninteractive apt full-upgrade -y || die "Ошибка apt full-upgrade."
+    if ! DEBIAN_FRONTEND=noninteractive apt full-upgrade -y; then
+        _lock_holder="$(fuser /var/lib/dpkg/lock-frontend 2>/dev/null | tr -s ' ' || true)"
+        if [[ -n "$_lock_holder" ]]; then
+            log_warn "dpkg-lock занят процессами:${_lock_holder} (обычно first-boot unattended-upgrades)."
+        fi
+        log_warn "apt full-upgrade не прошёл, чиню dpkg и повторяю..."
+        DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+        DEBIAN_FRONTEND=noninteractive apt full-upgrade -y \
+            || die "Ошибка apt full-upgrade. Похоже, другой процесс apt/unattended-upgrades держит dpkg-lock. Дождитесь его завершения (проверить: fuser /var/lib/dpkg/lock-frontend) либо выполните: systemctl stop unattended-upgrades; dpkg --configure -a - и запустите скрипт снова."
+    fi
     log "Система обновлена."
 
     install_packages curl wget gpg sudo ethtool

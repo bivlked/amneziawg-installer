@@ -2158,6 +2158,14 @@ step1_update_and_optimize() {
     update_state 1
     log "### STEP 1: System update, cleanup, and optimization ###"
 
+    # First-boot dpkg-lock resilience: unattended-upgrades and apt-daily often
+    # hold the lock for several minutes (issue #150 - apt full-upgrade used to
+    # fail immediately). DPkg::Lock::Timeout makes apt wait for the lock to be
+    # released instead of erroring out.
+    mkdir -p /etc/apt/apt.conf.d
+    printf 'DPkg::Lock::Timeout "300";\n' > /etc/apt/apt.conf.d/99-amneziawg-lock-timeout \
+        || log_warn "Failed to write apt lock-timeout (issue #150 mitigation)."
+
     # Clean unnecessary components (BEFORE update to save bandwidth/time)
     if [[ "$NO_TWEAKS" -eq 0 ]]; then
         cleanup_system
@@ -2178,7 +2186,16 @@ step1_update_and_optimize() {
     fi
 
     log "Updating system..."
-    DEBIAN_FRONTEND=noninteractive apt full-upgrade -y || die "apt full-upgrade error."
+    if ! DEBIAN_FRONTEND=noninteractive apt full-upgrade -y; then
+        _lock_holder="$(fuser /var/lib/dpkg/lock-frontend 2>/dev/null | tr -s ' ' || true)"
+        if [[ -n "$_lock_holder" ]]; then
+            log_warn "dpkg-lock is held by:${_lock_holder} (usually first-boot unattended-upgrades)."
+        fi
+        log_warn "apt full-upgrade failed, fixing dpkg and retrying..."
+        DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+        DEBIAN_FRONTEND=noninteractive apt full-upgrade -y \
+            || die "apt full-upgrade error. Another apt/unattended-upgrades process is likely holding the dpkg lock. Wait for it to finish (check: fuser /var/lib/dpkg/lock-frontend) or run: systemctl stop unattended-upgrades; dpkg --configure -a - then run the script again."
+    fi
     log "System updated."
 
     install_packages curl wget gpg sudo ethtool
