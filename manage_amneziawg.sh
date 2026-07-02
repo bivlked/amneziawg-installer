@@ -186,7 +186,8 @@ confirm_action() {
     if ! is_interactive; then return 0; fi
     local action="$1" subject="$2"
     read -rp "Вы действительно хотите $action $subject? [y/N]: " confirm < /dev/tty
-    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+    # Принимаем y/yes (регистронезависимо) + случайные пробелы/CR по краям.
+    if [[ "$confirm" =~ ^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$ ]]; then
         return 0
     else
         log "Действие отменено."

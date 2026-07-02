@@ -10,7 +10,7 @@
 # strip the `< /dev/tty` redirect so the prompt can be fed over a pipe, mock
 # every external command (ufw/ip/command/log/...), and assert:
 #   * answering N returns 0 and never calls `ufw enable`
-#   * answering y returns 0 and DOES call `ufw enable`
+#   * answering y returns 0 and DOES call `ufw --force enable`
 #   * AUTO_YES=1 auto-enables without reading stdin
 # Plus a RU/EN structural parity guard.
 
@@ -68,14 +68,14 @@ setup() {
     _load_firewall_fn "$RU_SCRIPT"
     run bash -c 'printf "N\n" | setup_improved_firewall'
     [ "$status" -eq 0 ]
-    run ! grep -qx 'enable' "$UFW_CALLS"
+    run ! grep -qx -- '--force enable' "$UFW_CALLS"
 }
 
 @test "RU: accepting UFW (y) returns 0 and calls enable" {
     _load_firewall_fn "$RU_SCRIPT"
     run bash -c 'printf "y\n" | setup_improved_firewall'
     [ "$status" -eq 0 ]
-    grep -qx 'enable' "$UFW_CALLS"
+    grep -qx -- '--force enable' "$UFW_CALLS"
 }
 
 @test "RU: AUTO_YES=1 auto-enables without reading stdin" {
@@ -83,21 +83,21 @@ setup() {
     AUTO_YES=1
     run bash -c 'setup_improved_firewall < /dev/null'
     [ "$status" -eq 0 ]
-    grep -qx 'enable' "$UFW_CALLS"
+    grep -qx -- '--force enable' "$UFW_CALLS"
 }
 
 @test "EN: declining UFW (N) returns 0 and does not enable" {
     _load_firewall_fn "$EN_SCRIPT"
     run bash -c 'printf "N\n" | setup_improved_firewall'
     [ "$status" -eq 0 ]
-    run ! grep -qx 'enable' "$UFW_CALLS"
+    run ! grep -qx -- '--force enable' "$UFW_CALLS"
 }
 
 @test "EN: accepting UFW (y) returns 0 and calls enable" {
     _load_firewall_fn "$EN_SCRIPT"
     run bash -c 'printf "y\n" | setup_improved_firewall'
     [ "$status" -eq 0 ]
-    grep -qx 'enable' "$UFW_CALLS"
+    grep -qx -- '--force enable' "$UFW_CALLS"
 }
 
 @test "RU/EN parity: both return 0 (not 1) on declined UFW" {

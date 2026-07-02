@@ -186,7 +186,8 @@ confirm_action() {
     if ! is_interactive; then return 0; fi
     local action="$1" subject="$2"
     read -rp "Are you sure you want to $action $subject? [y/N]: " confirm < /dev/tty
-    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+    # Accept y/yes (case-insensitive) plus stray whitespace/CR around it.
+    if [[ "$confirm" =~ ^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$ ]]; then
         return 0
     else
         log "Action cancelled."

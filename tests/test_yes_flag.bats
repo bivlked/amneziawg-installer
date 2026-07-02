@@ -128,3 +128,38 @@ setup() {
         | grep -E 'CLI_YES|AWG_YES' | grep -vE '^\s*#')
     [ "$ru_block" = "$en_block" ]
 }
+
+# v5.18.3: confirm_action accepts "yes"/"YES" (not only bare "y") and tolerates
+# stray whitespace / trailing CR. Force is_interactive TRUE and stub read() to
+# inject a chosen answer, then assert accept/reject through the real regex.
+# Test the affirmative regex itself (the actual logic changed in v5.18.3).
+# confirm_action() reads from /dev/tty, which is absent under detached/CI
+# execution, so we can't exercise its read path here. Instead we pin the exact
+# regex used by the RU script (grep) and run accept/reject vectors against it.
+# The RU/EN parity test below guarantees the EN script uses the same pattern.
+@test "confirm_action affirmative regex: accepts y/yes + whitespace/CR, rejects others" {
+    re='^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$'
+    # The regex under test must be the one actually in the script.
+    grep -qF "=~ $re" "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+    for a in "y" "Y" "yes" "YES" "Yes" " y " "yes " "$(printf 'y\r')"; do
+        [[ "$a" =~ $re ]] || { echo "should ACCEPT: [$a]"; return 1; }
+    done
+    for a in "n" "N" "no" "NO" "yeah" "yess" "sure" ""; do
+        ! [[ "$a" =~ $re ]] || { echo "should REJECT: [$a]"; return 1; }
+    done
+}
+
+@test "RU/EN parity: confirm_action affirmative regex is identical" {
+    pat='=~ ^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$'
+    ru=$(grep -F "$pat" "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")
+    en=$(grep -F "$pat" "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh")
+    [ -n "$ru" ] && [ "$ru" = "$en" ]
+}
+
+@test "no bare ^[Yy]\$ confirm regex remains in install/manage scripts" {
+    for f in install_amneziawg.sh install_amneziawg_en.sh \
+             manage_amneziawg.sh manage_amneziawg_en.sh; do
+        run grep -F '=~ ^[Yy]$' "$BATS_TEST_DIRNAME/../$f"
+        [ "$status" -ne 0 ] || { echo "stale strict regex in $f"; return 1; }
+    done
+}
