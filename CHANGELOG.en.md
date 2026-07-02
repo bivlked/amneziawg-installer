@@ -14,6 +14,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.18.3] - 2026-07-02
+
+**v5.18.3** - convenience and documentation. Confirmation prompts (for example, when removing a client or enabling UFW) now accept not only `y` but also `yes` in any case and with stray surrounding whitespace. UFW is enabled more reliably via `ufw --force enable`, so on some systems the firewall is no longer left disabled. The docs gain the T-Mobile (Moscow) mobile carrier and a Keenetic Speedster router note. Existing installs are unaffected. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
+
+### Fixed
+
+- Confirmation prompts accept `yes`, not only `y`. Previously `confirm_action` (in `manage`) and five installer prompts (reboot, unsupported OS, low RAM, UFW enable, backup on removal) matched a bare `y` only, and answering `yes` read as "no". They now accept `y`/`Y`/`yes`/`YES` with any surrounding whitespace (issue #154)
+- UFW is enabled via `ufw --force enable`. The old approach (feeding `y` into `ufw enable`) silently left the firewall off on some systems - only `--force` helped, and the installer now uses it directly (issue #154)
+
+### Documentation
+
+- Added **T-Mobile (Moscow)** to the mobile carrier table: a narrow app-style profile (Jc=6, Jmin=10, Jmax=50 + DNS-mimic I1 + full tunnel), verifiable with `diagnose --carrier=tmobile_us` (Discussion #45)
+- Added a **Keenetic Speedster** (firmware 5.0.6) router note: older firmware does not parse H1-H4 as ranges (`invalid H1`), needs concrete values and calmer junk, with a userspace AWG Manager workaround (Discussion #81)
+- Added a diagnostics tip: the ByeByeVPN scanner helps tell whether a carrier blocks the server IP itself, separating an obfuscation issue from an AS/IP-level block
+
 ## [5.18.2] - 2026-07-01
 
 **v5.18.2** - installation robustness. On fresh Ubuntu servers the built-in `unattended-upgrades` often holds the `dpkg` lock for several minutes on first boot, which made the installer fail at the system-update step with an `apt full-upgrade` error. The installer now waits for the lock to be released instead of failing immediately. Existing installations are unaffected. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
@@ -1469,6 +1484,7 @@ Major security and reliability update after several consecutive code audits. The
 - Full uninstall (`--uninstall`).
 
 [Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.1...HEAD
+[5.18.3]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.2...v5.18.3
 [5.18.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.1...v5.18.2
 [5.18.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.0...v5.18.1
 [5.18.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.17.0...v5.18.0
