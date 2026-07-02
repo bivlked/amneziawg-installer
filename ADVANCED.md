@@ -800,6 +800,7 @@ sudo systemctl restart awg-quick@awg0</pre>
   <tr><td>Beeline</td><td>дефолт</td><td><code>--preset=default</code></td><td>✅</td></tr>
   <tr><td>Megafon (Москва)</td><td>Jc=3, Jmin=80, Jmax=268</td><td><code>--preset=mobile</code></td><td>🔄 тестируется</td></tr>
   <tr><td>Megafon (регионы)</td><td><b>I1=отсутствует</b></td><td><code>--preset=mobile</code> + удалить <code>I1</code></td><td>✅</td></tr>
+  <tr><td>Т-Мобайл (Москва/МО)</td><td>узкий профиль (как в приложении Amnezia): Jc=6, Jmin=10, Jmax=50, DNS-мимик I1=&lt;r 2&gt;&lt;b 0x8580...&gt; (полный вид в разделе про роутеры ниже); полный туннель <code>0.0.0.0/0, ::/0</code></td><td>ручные параметры (сверка <code>diagnose --carrier=tmobile_us</code>); <code>--preset=mobile</code> здесь не подходит</td><td>✅</td></tr>
   <tr><td>Tele2 + Мегафон (Кемерово, 42)</td><td>случайный I1 (&lt;r N&gt;) перестал держаться через 2+ дня; работает QUIC-мимикрия I1=&lt;b 0xc3...&gt; либо I1=отсутствует</td><td><code>--preset=mobile</code> + I1=&lt;b 0xc3...&gt; (QUIC) либо удалить <code>I1</code></td><td>✅</td></tr>
   </table>
   <br>
@@ -808,6 +809,8 @@ sudo systemctl restart awg-quick@awg0</pre>
   <b>Обновление, май 2026:</b> в майскую волну блокировок вариант <code>I1=отсутствует</code> на Tele2 (Красноярск) перестал срабатывать, а короткий <code>I1 = &lt;r 48&gt;</code> прошёл DPI. То же сработало на МТС (Приморье). Похоже, для этих операторов важен размер I1: меньшее значение <code>&lt;r 48&gt;</code> менее заметно для DPI. Если <code>--preset=mobile</code> или <code>I1=отсутствует</code> не помогают - попробуйте <code>I1 = &lt;r 48&gt;</code>. Профиль <code>diagnose --carrier=tele2_krasnoyarsk</code> пока отражает прежнее <code>I1=отсутствует</code> (Issue #42), так что для майской волны задайте <code>I1 = &lt;r 48&gt;</code> вручную (Discussion <a href="https://github.com/bivlked/amneziawg-installer/discussions/38">#38</a>, @alkorrnd + @etotent).
   <br>
   <b>QUIC-мимикрия I1 (экспериментально):</b> вместо случайного <code>&lt;r N&gt;</code> можно задать I1 как блок, имитирующий начало QUIC-пакета: <code>I1 = &lt;b 0xc30000000108&gt;&lt;r 8&gt;&lt;b 0x08&gt;&lt;r 8&gt;&lt;b 0x0045dc&gt;&lt;t&gt;&lt;r 16&gt;</code>. Первые байты (<code>0xC3</code> + версия) похожи на QUIC v1 long-header, и DPI, который классифицирует UDP/443 как QUIC, в этом отчёте поток пропустил. На Tele2/Мегафон (Кемерово) держится 2+ дня (Issue <a href="https://github.com/bivlked/amneziawg-installer/issues/42">#42</a>, @Fourdot-co). Это client-side параметр, меняется только в клиентских <code>.conf</code>, синхронизировать с сервером не нужно; учтите, что правка только одного экспортированного <code>.conf</code> потеряется при следующей перегенерации клиента (<code>regen</code>). Важно: не берите за основу TLS ClientHello (<code>&lt;b 0x160301...&gt;</code>) - это TCP-формат, в UDP DPI распознает TCP-структуру и дропнет пакет. Для UDP-мимикрии подходят QUIC long-header или DTLS (тот же тип handshake ClientHello, но с record header, где добавлены epoch и sequence number).
+  <br>
+  <b>Как проверить, блокирует ли оператор ваш VPN-сервер (диагностика ТСПУ):</b> если AmneziaWG не пробивается на конкретном операторе, сначала стоит понять, блокируется ли сам IP сервера и по какому признаку. Открытый сканер <a href="https://github.com/pwnnex/ByeByeVPN">ByeByeVPN</a> смотрит на адрес со стороны цензуры и помогает отличить проблему параметров обфускации (тогда подбирайте Jc/I1 по таблице выше) от блокировки по AS/IP (тогда см. раздел <a href="#as-blocking-adv">Хостинг недоступен из России</a>).
 </details>
 
 <details>
@@ -1212,6 +1215,8 @@ AWG 2.0 поддерживается не всеми клиентами. Пер�
 | [awg-proxy](https://github.com/timbrs/amneziawg-mikrotik-c) | MikroTik (RouterOS Container) | Docker-контейнер, преобразует WireGuard-трафик MikroTik в AmneziaWG |
 
 > **Keenetic нативный AWG 2.0:** Прошивки Keenetic 4.x поддерживают AWG 2.0 без дополнительных пакетов. Если туннель поднимается, но трафик не идёт — проблема в формате I1. Рабочие варианты: `I1 = <r 64>` или DNS-имитирующий паттерн `I1 = <r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>`. После замены I1 в серверном конфиге: `sudo systemctl restart awg-quick@awg0` + `manage regen <клиент>`. [Discussion #45](https://github.com/bivlked/amneziawg-installer/discussions/45).
+
+> **Keenetic Speedster (прошивка 5.0.6), AmneziaWG не подключается:** старые прошивки ещё не парсят H1-H4 как диапазоны (`нижняя-верхняя`) и выдают ошибку `invalid H1`. Задайте H1-H4 конкретными числами - остальные слои обфускации (Jc/Jmin/Jmax, I1, S1-S4) при этом продолжают работать. Если handshake проходит, но трафика нет - снизьте junk (`Jc=3`, `Jmin=10`, `Jmax=50`), при необходимости уберите строку `I1` и обнулите `S3`/`S4`. Универсальный обход прошивочных ограничений - userspace [AWG Manager](https://github.com/hoaxisr/awg-manager) (не зависит от версии прошивки Keenetic). [Discussion #81](https://github.com/bivlked/amneziawg-installer/discussions/81).
 
 ---
 
