@@ -802,7 +802,7 @@ sudo systemctl restart awg-quick@awg0</pre>
   <tr><td>Beeline</td><td>default</td><td><code>--preset=default</code></td><td>✅</td></tr>
   <tr><td>Megafon (Moscow)</td><td>Jc=3, Jmin=80, Jmax=268</td><td><code>--preset=mobile</code></td><td>🔄 testing</td></tr>
   <tr><td>Megafon (regions)</td><td><b>I1=absent</b></td><td><code>--preset=mobile</code> + remove <code>I1</code></td><td>✅</td></tr>
-  <tr><td>T-Mobile (Moscow)</td><td>narrow profile (like the Amnezia app): Jc=6, Jmin=10, Jmax=50, DNS-mimic I1=&lt;r 2&gt;&lt;b 0x8580...&gt; (full value in the routers section below); full tunnel <code>0.0.0.0/0, ::/0</code></td><td>manual parameters (verify with <code>diagnose --carrier=tmobile_us</code>); <code>--preset=mobile</code> does not fit here</td><td>✅</td></tr>
+  <tr><td>T-Mobile (Moscow)</td><td>narrow profile (like the Amnezia app): Jc=6, Jmin=10, Jmax=50, DNS-mimic I1=&lt;r 2&gt;&lt;b 0x8580...&gt; (full value in the routers section below); full tunnel <code>0.0.0.0/0, ::/0</code></td><td>manual parameters; the <code>diagnose --carrier=tmobile_us</code> profile checks Jc/Jmin/Jmax and that I1 is binary; <code>--preset=mobile</code> does not fit here</td><td>✅</td></tr>
   <tr><td>Tele2 + Megafon (Kemerovo, region 42)</td><td>random I1 (&lt;r N&gt;) stopped passing after 2+ days; works with QUIC-mimicry I1=&lt;b 0xc3...&gt; or I1=absent</td><td><code>--preset=mobile</code> + I1=&lt;b 0xc3...&gt; (QUIC) or remove <code>I1</code></td><td>✅</td></tr>
   </table>
   <br>

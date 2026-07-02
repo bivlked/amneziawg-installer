@@ -800,7 +800,7 @@ sudo systemctl restart awg-quick@awg0</pre>
   <tr><td>Beeline</td><td>дефолт</td><td><code>--preset=default</code></td><td>✅</td></tr>
   <tr><td>Megafon (Москва)</td><td>Jc=3, Jmin=80, Jmax=268</td><td><code>--preset=mobile</code></td><td>🔄 тестируется</td></tr>
   <tr><td>Megafon (регионы)</td><td><b>I1=отсутствует</b></td><td><code>--preset=mobile</code> + удалить <code>I1</code></td><td>✅</td></tr>
-  <tr><td>Т-Мобайл (Москва/МО)</td><td>узкий профиль (как в приложении Amnezia): Jc=6, Jmin=10, Jmax=50, DNS-мимик I1=&lt;r 2&gt;&lt;b 0x8580...&gt; (полный вид в разделе про роутеры ниже); полный туннель <code>0.0.0.0/0, ::/0</code></td><td>ручные параметры (сверка <code>diagnose --carrier=tmobile_us</code>); <code>--preset=mobile</code> здесь не подходит</td><td>✅</td></tr>
+  <tr><td>Т-Мобайл (Москва)</td><td>узкий профиль (как в приложении Amnezia): Jc=6, Jmin=10, Jmax=50, DNS-мимик I1=&lt;r 2&gt;&lt;b 0x8580...&gt; (полный вид в разделе про роутеры ниже); полный туннель <code>0.0.0.0/0, ::/0</code></td><td>ручные параметры; профиль в <code>diagnose --carrier=tmobile_us</code> (сверяет Jc/Jmin/Jmax и что I1 бинарного вида); <code>--preset=mobile</code> здесь не подходит</td><td>✅</td></tr>
   <tr><td>Tele2 + Мегафон (Кемерово, 42)</td><td>случайный I1 (&lt;r N&gt;) перестал держаться через 2+ дня; работает QUIC-мимикрия I1=&lt;b 0xc3...&gt; либо I1=отсутствует</td><td><code>--preset=mobile</code> + I1=&lt;b 0xc3...&gt; (QUIC) либо удалить <code>I1</code></td><td>✅</td></tr>
   </table>
   <br>

@@ -20,12 +20,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- Confirmation prompts accept `yes`, not only `y`. Previously `confirm_action` (in `manage`) and five installer prompts (reboot, unsupported OS, low RAM, UFW enable, backup on removal) matched a bare `y` only, and answering `yes` read as "no". They now accept `y`/`Y`/`yes`/`YES` with any surrounding whitespace (issue #154)
+- Confirmation prompts accept `yes`, not only `y`. Previously `confirm_action` (in `manage`) and five installer prompts (reboot, unsupported OS, low disk space, UFW enable, backup on removal) matched a bare `y` only, and answering `yes` read as "no". They now accept `y`/`Y`/`yes`/`YES` with any surrounding whitespace (issue #154)
 - UFW is enabled via `ufw --force enable`. The old approach (feeding `y` into `ufw enable`) silently left the firewall off on some systems - only `--force` helped, and the installer now uses it directly (issue #154)
 
 ### Documentation
 
-- Added **T-Mobile (Moscow)** to the mobile carrier table: a narrow app-style profile (Jc=6, Jmin=10, Jmax=50 + DNS-mimic I1 + full tunnel), verifiable with `diagnose --carrier=tmobile_us` (Discussion #45)
+- Added **T-Mobile (Moscow)** to the mobile carrier table: a narrow app-style profile (Jc=6, Jmin=10, Jmax=50 + DNS-mimic I1 + full tunnel); the `diagnose --carrier=tmobile_us` profile checks Jc/Jmin/Jmax and that I1 is binary-shaped (Discussion #45)
 - Added a **Keenetic Speedster** (firmware 5.0.6) router note: older firmware does not parse H1-H4 as ranges (`invalid H1`), needs concrete values and calmer junk, with a userspace AWG Manager workaround (Discussion #81)
 - Added a diagnostics tip: the ByeByeVPN scanner helps tell whether a carrier blocks the server IP itself, separating an obfuscation issue from an AS/IP-level block
 
@@ -1483,7 +1483,7 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.3...HEAD
 [5.18.3]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.2...v5.18.3
 [5.18.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.1...v5.18.2
 [5.18.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.0...v5.18.1
