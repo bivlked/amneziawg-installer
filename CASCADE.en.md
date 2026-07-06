@@ -168,10 +168,12 @@ TABLE_ID=100                            # routing table number for "to the exit"
 FWMARK="0x1"                            # mark for traffic leaving via awg1
 RULE_PRIO=10000                        # ip rule priority (uncommon, to avoid collisions)
 RU_ZONE_URL="https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone"
+RU_ZONE_FALLBACK_URL="https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/cascade/ru.zone"
 AWG_DIR="/root/awg"
 # =============================================
 
 RU_ZONE="$AWG_DIR/ru.zone"
+trap 'rm -f "$RU_ZONE.tmp"' EXIT         # do not leave the temp list file behind on exit/interrupt
 
 [ "$AWG1_ENDPOINT" != "CHANGE_ME" ] || { echo "ERROR: set AWG1_ENDPOINT (external IP of AWG1)" >&2; exit 1; }
 
@@ -189,16 +191,23 @@ if [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo 1)" = "
     echo "WARN: IPv6 is enabled - IPv6 traffic will bypass the cascade. Disable IPv6 (installer: --disallow-ipv6)." >&2
 fi
 
-# 1) Refresh the RU list into a temp file; replace the working file only on a successful download.
+# 1) Refresh the RU list. Sources in order: ipdeny (current) -> the snapshot bundled in the repository
+#    (if ipdeny is unreachable) -> whatever local list is already there. Replace the working file only on
+#    a successful, non-empty download, so a failed fetch never wipes the previous list.
+fetch_ru_zone() {                                # $1 = URL; downloads into a temp file, 0 on success and non-empty
+    curl -fsS --retry 2 -o "$RU_ZONE.tmp" "$1" && [ -s "$RU_ZONE.tmp" ]
+}
 mkdir -p "$AWG_DIR"
-if curl -fsS --retry 2 -o "$RU_ZONE.tmp" "$RU_ZONE_URL" && [ -s "$RU_ZONE.tmp" ]; then
+if fetch_ru_zone "$RU_ZONE_URL"; then
     mv -f "$RU_ZONE.tmp" "$RU_ZONE"
+elif fetch_ru_zone "$RU_ZONE_FALLBACK_URL"; then
+    mv -f "$RU_ZONE.tmp" "$RU_ZONE"
+    echo "WARN: ipdeny unreachable - using the RU snapshot bundled in the repository (may lag slightly behind the live list)" >&2
 else
-    rm -f "$RU_ZONE.tmp"
-    echo "WARN: ru.zone download failed, keeping the previous list" >&2
+    echo "WARN: could not download the list from ipdeny or the repository - keeping the previous local one" >&2
 fi
 # Do not continue without a list: an empty ipset would send ALL traffic abroad (the split silently breaks).
-[ -s "$RU_ZONE" ] || { echo "ERROR: the RU network list is empty and was not downloaded - aborting to avoid breaking the split" >&2; exit 1; }
+[ -s "$RU_ZONE" ] || { echo "ERROR: the RU network list is empty and was not found anywhere - aborting to avoid breaking the split" >&2; exit 1; }
 
 # 2) Load RU networks into ipset via a temp set (atomic swap, no empty window).
 ipset create ru hash:net -exist
@@ -253,7 +262,7 @@ bash /root/awg/awg-routing.sh
 
 What the script does, step by step:
 
-1. Downloads the list of Russian networks into a temp file and swaps the working file only on a successful download - a failed download will not wipe the already-loaded list.
+1. Downloads the list of Russian networks into a temp file and swaps the working file only on a successful download. Sources are tried in order: ipdeny (the current list), then the snapshot bundled in this repository (`cascade/ru.zone`) if ipdeny is unreachable, then whatever local list is already there. A failed download will not wipe the already-loaded list.
 2. Loads the networks into `ipset` through a temp set and atomically swaps the working one (`ipset swap`) - with no window where the set is empty.
 3. Creates a routing table for marked traffic and an `ip rule` by mark. The table is addressed by number, so no `rt_tables` file is needed.
 4. Lays a route to AWG1 itself outside the tunnel, otherwise packets to it would loop.
@@ -352,7 +361,7 @@ echo '0 5 * * 1 root systemctl restart awg-routing' > /etc/cron.d/awg-routing-re
 <a id="trouble"></a>
 ## Troubleshooting
 
-- **All sites, including Russian ones, go through the foreign exit.** Check that the list loaded: `ipset list ru | grep "Number of entries"` should be non-zero. If it is zero, the server could not download the ipdeny zone; check access to `www.ipdeny.com` and run the script again.
+- **All sites, including Russian ones, go through the foreign exit.** Check that the list loaded: `ipset list ru | grep "Number of entries"` should be non-zero. If `www.ipdeny.com` is blocked on your provider, the script falls back to the snapshot bundled in the repository (`cascade/ru.zone`) - its output will mention the repository. Zero entries means no source worked: check access to `www.ipdeny.com` and `raw.githubusercontent.com`, then run the script again.
 - **The tunnel to AWG1 does not come up** (`awg show awg1` has no `latest handshake`). Check the `Endpoint` in `awg1.conf`, that the AWG1 port is open, and that the service on AWG1 is running (`systemctl status awg-quick@awg0` on AWG1).
 - **The cascade does not work after a reboot.** Check autostart: `systemctl is-enabled awg-quick@awg1 awg-routing` (both `enabled`) and that the `awg-routing.service` unit ran after the reboot (`systemctl status awg-routing`).
 - **A specific Russian site still opens through the foreign exit.** It is most likely not hosted on a Russian IP (common for sites behind Cloudflare and foreign CDNs). The split is by destination IP, so such a site goes into the tunnel - this is expected.
