@@ -14,6 +14,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [5.18.4] - 2026-07-06
+
+**v5.18.4** - cascade reliability and documentation. Cascade split-routing now survives ipdeny being unreachable: a snapshot of the Russian network list (`cascade/ru.zone`) is bundled in the repository, and the `awg-routing.sh` script uses it when `www.ipdeny.com` is blocked by the provider and no local copy exists yet - previously a fresh server in that situation would not bring the cascade up at all. The script also gained a workaround for the route error on VPSes whose default gateway sits outside the server subnet (Hetzner Cloud and similar with a `/32` interface). The installer itself is functionally unchanged, so existing installs do not need updating. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
+
+### Documentation
+
+- Cascade: bundled a snapshot of Russian networks `cascade/ru.zone` (ipdeny aggregated zone, snapshot 2026-07-06, 8626 networks) as a fallback source. The order in `awg-routing.sh` is now: ipdeny (the live list) -> the repo snapshot over `raw.githubusercontent.com` -> the previous local list; it aborts only if all three are unavailable. This brings the cascade up on a fresh server even when ipdeny is blocked (from Discussion #120)
+- Cascade: `awg-routing.sh` retries adding the route to the exit server with the `onlink` flag when the default gateway sits outside the server subnet - otherwise on VPSes like Hetzner (real public IP on a `/32` interface, private gateway) the route failed with `Error: Nexthop has invalid gateway` (#158, Discussion #120)
+- Added a `cascade/README.md` note for the snapshot (source, date, how to refresh) and an Ask DeepWiki badge in both READMEs for quick code navigation (#161)
+
+### Infrastructure
+
+- CI: bumped `docker/setup-qemu-action` from 4.1 to 4.2 in the ARM package build (#157)
+
+---
+
 ## [5.18.3] - 2026-07-02
 
 **v5.18.3** - convenience and documentation. Confirmation prompts (for example, when removing a client or enabling UFW) now accept not only `y` but also `yes` in any case and with stray surrounding whitespace. UFW is enabled more reliably via `ufw --force enable`, so on some systems the firewall is no longer left disabled. The docs gain the T-Mobile (Moscow) mobile carrier and a Keenetic Speedster router note. Existing installs are unaffected. Support matrix unchanged: Ubuntu 24.04 / 25.10 / 26.04, Debian 12 / 13, x86_64 + ARM.
@@ -1484,6 +1500,7 @@ Major security and reliability update after several consecutive code audits. The
 - Full uninstall (`--uninstall`).
 
 [Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.3...HEAD
+[5.18.4]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.3...v5.18.4
 [5.18.3]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.2...v5.18.3
 [5.18.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.1...v5.18.2
 [5.18.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.0...v5.18.1
