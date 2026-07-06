@@ -15,6 +15,8 @@
 - Сетей: 8626 (IPv4 CIDR, по одной на строку, окончания строк LF)
 - Данные агрегированы из публичных записей о распределении адресов RIR, редистрибуция разрешена.
 
+Скрипт `awg-routing.sh` из [CASCADE.md](../CASCADE.md) тянет этот файл по URL, закреплённому на тег релиза (`raw.githubusercontent.com/.../vX.Y.Z/cascade/ru.zone`), а не на `main` - так снимок иммутабелен для уже развёрнутых установок. Этот тег обновляется каждый релиз (проверяется `scripts/check-docs-consistency.sh`).
+
 ### Как обновить снимок
 
 Обновляйте примерно раз в 6-12 месяцев (российские диапазоны меняются медленно):
@@ -39,6 +41,8 @@ with a working RU network list.
 - Snapshot date: 2026-07-06
 - Networks: 8626 (IPv4 CIDR, one per line, LF line endings)
 - The data is aggregated from public RIR allocation records; redistribution is allowed.
+
+The `awg-routing.sh` script in [CASCADE.en.md](../CASCADE.en.md) fetches this file via a URL pinned to the release tag (`raw.githubusercontent.com/.../vX.Y.Z/cascade/ru.zone`), not `main`, so the snapshot is immutable for already-deployed installs. That tag is bumped every release (enforced by `scripts/check-docs-consistency.sh`).
 
 ### Refreshing the snapshot
 
