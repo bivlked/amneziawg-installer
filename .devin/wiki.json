@@ -1,0 +1,16 @@
+{
+  "repo_notes": [
+    {
+      "content": "amneziawg-installer is an installer and management toolkit for AmneziaWG 2.0 VPN on dedicated Ubuntu (24.04, 25.10, 26.04) and Debian (12, 13) servers, on x86_64 and ARM64/ARMv7. It targets users with no advanced Linux knowledge: a short quick start (download the script, make it executable, run it with sudo) sets up the DKMS kernel module, UFW firewall, Fail2Ban, sysctl hardening, and generates server and client configs with QR codes and vpn:// URIs for the Amnezia client. The overview should state the tool name, the quick-start commands, and the differentiators up front, since this wiki is used as a quick reference. Documentation is bilingual: Russian (README.md, ADVANCED.md, CASCADE.md) and English (the .en.md docs and _en.sh scripts). The server must be a dedicated host or a full VM; the installer does not support LXC containers because it builds a kernel module (a manual amneziawg-go userspace path for LXC is documented separately in ADVANCED).",
+      "author": "maintainer"
+    },
+    {
+      "content": "Prioritize the current 2026 feature set, which older snapshots miss: Debian 12/13 and Ubuntu 25.10/26.04 support (PPA codename remapping plus a from-source DKMS fallback), ARM prebuilt kernel modules when a matching target exists with a DKMS source fallback otherwise, a documented two-server cascade guide where Russian traffic goes direct and everything else exits abroad (CASCADE.md and CASCADE.en.md), automatic TCP MSS clamping for reliability on mobile carriers, double-NAT and cascade (added in v5.17.0), time-limited clients via the --expires=DURATION option, optional in-tunnel IPv6 via --allow-ipv6-tunnel (off by default), and mobile-carrier DPI tuning using AmneziaWG 2.0 concealment (the installer auto-generates the I1 CPS parameter; I2 to I5 are optional and manual; plus Jc/Jmin/Jmax junk) with per-carrier diagnostics. Note: the default split-tunnel routing was corrected in v5.16.1, so document the current default (1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6, 8.0.0.0/7 and so on) and not the old 0.0.0.0/5 plus 8.0.0.0/7 default that broke iOS.",
+      "author": "maintainer"
+    },
+    {
+      "content": "Cover how the tool differs from alternatives, since readers compare. Versus the official Amnezia application: no Docker, no GUI, a kernel-native module, single-purpose server optimization and hardening, and a headless SSH workflow. Versus other AmneziaWG install scripts: deeper automation, client expiry, mobile-carrier DPI tuning and diagnostics, backup and restore, bilingual Russian and English, security hardening by default (including PPA GPG fingerprint verification and SHA256-pinned helper scripts), and no web panel required.",
+      "author": "maintainer"
+    }
+  ]
+}
