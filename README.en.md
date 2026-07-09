@@ -550,7 +550,7 @@ For a two-server cascade with a split exit for Russian and foreign traffic (spli
 
 <details>
   <summary><strong>Q: What is the maximum number of clients?</strong></summary>
-  <b>A:</b> A <code>/24</code> subnet supports up to 253 clients (.2 - .254), which is sufficient for most use cases.
+  <b>A:</b> The default <code>/24</code> subnet supports up to 253 clients (.2 - .254), which is sufficient for most use cases. Need more? Pass a wider CIDR via <code>--subnet</code> (e.g. <code>/16</code>) to raise the limit.
 </details>
 
 <details>

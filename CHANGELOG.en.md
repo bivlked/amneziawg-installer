@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Full CIDR for the tunnel subnet.** `--subnet` and the interactive prompt now accept /16–/30 masks (previously /24 only). The server address is the first host (network+1); input is in network or network+1 form. The `10.9.9.1/24` default and existing installs are unaffected. The IPv6 tunnel maps clients by host offset (no collisions on masks wider than /24).
+
 ---
 
 ## [5.18.4] - 2026-07-06

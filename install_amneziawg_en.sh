@@ -33,7 +33,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="6fe5296e869e6c8d84f753eed2dcc19365ae716142b82bf661360c0f8952623d"
+COMMON_SCRIPT_SHA256="ff38ac4efbde0c376a0936a8c29ece87f9b15a16555ec38a1142d3190482b99a"
 MANAGE_SCRIPT_SHA256="94dd4bdbac1a1c840299e22fe5d2731f67e8b0fb54c20a9fc423848d627efdec"
 
 # CLI flags
@@ -282,7 +282,7 @@ Options:
   --ssh-port=PORT       SSH port for the UFW rule (auto-detected by default;
                         comma-separated list). Use if SSH runs on a non-standard
                         port and auto-detection is unavailable
-  --subnet=SUBNET       Tunnel subnet, /24 only (e.g. 10.9.9.1/24) non-interactively
+  --subnet=SUBNET       Tunnel subnet, CIDR /16-/30 (e.g. 10.9.0.0/16) non-interactively
   --allow-ipv6          Keep IPv6 enabled non-interactively
   --disallow-ipv6       Force-disable IPv6 non-interactively
   --allow-ipv6-tunnel   Enable dual-stack IPv6 inside the tunnel (ULA, opt-in)
@@ -681,20 +681,28 @@ validate_port() {
 
 validate_subnet() {
     local subnet="$1" o
-    # Octets without leading zeros: '010.008...' would otherwise be parsed as octal
-    # in [[ -gt ]] and slip past the check. Range is compared on plain decimal values.
-    if ! [[ "$subnet" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})/24$ ]]; then
-        die "Invalid subnet: '$subnet'. Only /24 is supported."
+    # Self-contained (step 4, BEFORE awg_common.sh is downloaded): does not use
+    # _valid_ipv4/_cidr_bounds. Octets without leading zeros ('010...' would
+    # otherwise be parsed as octal).
+    if ! [[ "$subnet" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})/([0-9]{1,2})$ ]]; then
+        die "Invalid subnet: '$subnet'. Expected CIDR /16-/30, e.g. 10.9.0.0/16."
     fi
-    for o in "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; do
-        (( o <= 255 )) || die "Invalid subnet: '$subnet'. Octet out of range 0-255."
+    local a="${BASH_REMATCH[1]}" b="${BASH_REMATCH[2]}" c="${BASH_REMATCH[3]}" d="${BASH_REMATCH[4]}" prefix="${BASH_REMATCH[5]}"
+    for o in "$a" "$b" "$c" "$d"; do
+        (( 10#$o <= 255 )) || die "Invalid subnet: '$subnet'. Octet out of range 0-255."
     done
-    if [[ "${BASH_REMATCH[4]}" -eq 0 ]] || [[ "${BASH_REMATCH[4]}" -eq 255 ]]; then
-        die "Invalid subnet: '$subnet'. Last octet cannot be 0 (network address) or 255 (broadcast)."
+    (( 10#$prefix >= 16 && 10#$prefix <= 30 )) || die "Invalid subnet: '$subnet'. Only /16-/30 masks are supported."
+    # Inline arithmetic: the address must be network or network+1.
+    local ip=$(( (10#$a << 24) | (10#$b << 16) | (10#$c << 8) | 10#$d ))
+    local mask=$(( (0xFFFFFFFF << (32 - 10#$prefix)) & 0xFFFFFFFF ))
+    local network=$(( ip & mask ))
+    local n1=$(( network + 1 ))
+    if (( ip != network && ip != network + 1 )); then
+        local srv="$(( (n1 >> 24) & 255 )).$(( (n1 >> 16) & 255 )).$(( (n1 >> 8) & 255 )).$(( n1 & 255 ))"
+        die "Invalid subnet: '$subnet'. Server address must be ${srv} (network+1), or specify the network."
     fi
-    if [[ "${BASH_REMATCH[4]}" -ne 1 ]]; then
-        die "Invalid subnet: '$subnet'. Last octet must be 1 (server address in subnet)."
-    fi
+    # Normalize the global to <network+1>/<prefix> (server = network+1).
+    AWG_TUNNEL_SUBNET="$(( (n1 >> 24) & 255 )).$(( (n1 >> 16) & 255 )).$(( (n1 >> 8) & 255 )).$(( n1 & 255 ))/${prefix}"
 }
 
 # Endpoint validation (FQDN / IPv4 / [IPv6]).

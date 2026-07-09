@@ -47,6 +47,48 @@ load test_helper
     [ "$status" -ne 0 ]
 }
 
+# --- v5.19: полноценный CIDR, IPv6-маппинг по смещению хоста ---
+
+@test "v5.19: /24 regression — offset==last octet, ::100 for 10.9.9.100" {
+    export IPV6_SUBNET="fddd:2c4:2c4:2c4::/64"
+    export AWG_TUNNEL_SUBNET="10.9.9.1/24"
+    result=$(get_next_client_ipv6 "10.9.9.100")
+    [ "$result" = "fddd:2c4:2c4:2c4::100" ]
+}
+
+@test "v5.19: /24 regression — ::254 for 10.9.9.254" {
+    export IPV6_SUBNET="fddd:2c4:2c4:2c4::/64"
+    export AWG_TUNNEL_SUBNET="10.9.9.1/24"
+    result=$(get_next_client_ipv6 "10.9.9.254")
+    [ "$result" = "fddd:2c4:2c4:2c4::254" ]
+}
+
+@test "v5.19: /16 no collision — 10.9.0.5 and 10.9.1.5 differ" {
+    export IPV6_SUBNET="fddd:2c4:2c4:2c4::/64"
+    export AWG_TUNNEL_SUBNET="10.9.0.1/16"
+    local a b
+    a=$(get_next_client_ipv6 "10.9.0.5")
+    b=$(get_next_client_ipv6 "10.9.1.5")
+    [ "$a" != "$b" ]
+    # offset(10.9.0.5)=5 -> ::5 ; offset(10.9.1.5)=261=0x105 -> ::105
+    [ "$a" = "fddd:2c4:2c4:2c4::5" ]
+    [ "$b" = "fddd:2c4:2c4:2c4::105" ]
+}
+
+@test "v5.19: /16 offset hex-encoded — 10.9.0.16 -> ::10" {
+    export IPV6_SUBNET="fddd:2c4:2c4:2c4::/64"
+    export AWG_TUNNEL_SUBNET="10.9.0.1/16"
+    result=$(get_next_client_ipv6 "10.9.0.16")
+    [ "$result" = "fddd:2c4:2c4:2c4::10" ]
+}
+
+@test "v5.19: get_next_client_ipv6 rejects IPv4 outside the tunnel subnet" {
+    export IPV6_SUBNET="fddd:2c4:2c4:2c4::/64"
+    export AWG_TUNNEL_SUBNET="10.9.0.1/16"
+    run get_next_client_ipv6 "10.10.0.5"
+    [ "$status" -ne 0 ]
+}
+
 # --- RU/EN parity ---
 
 @test "v5.15: RU awg_common.sh defines get_next_client_ipv6" {

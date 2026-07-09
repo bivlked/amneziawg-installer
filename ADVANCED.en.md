@@ -439,7 +439,7 @@ Options:
   --no-color            Disable colored output
   --port=PORT           Set UDP port (1024-65535)
   --ssh-port=PORT       SSH port for the UFW rule (auto-detected; comma-separated list)
-  --subnet=SUBNET       Tunnel subnet, /24 only (e.g. 10.9.9.1/24)
+  --subnet=SUBNET       Tunnel subnet, CIDR /16-/30 (e.g. 10.9.0.0/16)
   --allow-ipv6          Keep IPv6 enabled
   --disallow-ipv6       Force-disable IPv6
   --allow-ipv6-tunnel   Enable dual-stack IPv6 inside the tunnel (ULA, opt-in)

@@ -48,8 +48,8 @@ setup() {
 
 # ---------- .1 validate_subnet ----------
 
-@test ".1 validate_subnet: rejects octal/leading-zero, out-of-range, wrong last octet" {
-    for bad in 010.008.009.001/24 300.0.0.1/24 256.0.0.1/24 10.0.0.0/24 10.0.0.255/24 10.0.0.2/24 10.0.0.1/16; do
+@test ".1 validate_subnet: rejects octal/leading-zero, out-of-range, non-network host" {
+    for bad in 010.008.009.001/24 300.0.0.1/24 256.0.0.1/24 10.0.0.255/24 10.0.0.2/24 10.0.0.5/16; do
         run validate_subnet "$bad"
         [ "$status" -ne 0 ] || { echo "accepted invalid subnet: $bad"; false; }
     done
