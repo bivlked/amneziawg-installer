@@ -705,6 +705,33 @@ validate_subnet() {
     AWG_TUNNEL_SUBNET="$(( (n1 >> 24) & 255 )).$(( (n1 >> 16) & 255 )).$(( (n1 >> 8) & 255 )).$(( n1 & 255 ))/${prefix}"
 }
 
+# Subnet-change guard: [Peer] blocks are carried over verbatim on reinstall
+# (render_server_config), and their addresses were issued in the OLD subnet.
+# Changing the subnet under live clients breaks them: old IPv4s can fall
+# outside the new range, and IPv6 suffixes can collide (the decimal /24
+# encoding vs hex for /16-/23 yields two peers with the same ::x). So the
+# install aborts when peers exist and the subnet differs (PR #167 review).
+# Self-contained (step 0, BEFORE awg_common.sh is downloaded). The old
+# subnet is the first Address value in the awg0.conf [Interface]: it is the
+# normalized <network+1>/<prefix>, and the new AWG_TUNNEL_SUBNET has been
+# normalized by validate_subnet by the time of the call - a plain string
+# comparison is enough.
+guard_subnet_change_with_peers() {
+    [[ -f "$SERVER_CONF_FILE" ]] || return 0
+    grep -q '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null || return 0
+    local old_subnet
+    old_subnet=$(sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null \
+        | head -n1 | cut -d',' -f1 | tr -d '[:space:]')
+    if [[ -z "$old_subnet" ]]; then
+        log_warn "Could not read Address from $SERVER_CONF_FILE - skipping the subnet-change check."
+        return 0
+    fi
+    if [[ "$old_subnet" != "$AWG_TUNNEL_SUBNET" ]]; then
+        die "The tunnel subnet changed (${old_subnet} -> ${AWG_TUNNEL_SUBNET}), but ${SERVER_CONF_FILE} already contains peers: their addresses were issued in the old subnet, and changing it breaks the clients. Options: keep the previous subnet; remove all clients (sudo bash $MANAGE_SCRIPT_PATH remove <name>); or run --uninstall and reinstall from scratch."
+    fi
+    return 0
+}
+
 # Endpoint validation (FQDN / IPv4 / [IPv6]).
 # Returns 0 if the endpoint is safe and matches one of the formats,
 # otherwise 1 (the caller decides between die or log_warn + unset).
@@ -2043,6 +2070,11 @@ initialize_setup() {
             fi
         fi
     fi
+
+    # Changing the subnet with live peers is forbidden - check before the
+    # init file is saved and before any on-disk changes (AWG_TUNNEL_SUBNET
+    # is final here).
+    guard_subnet_change_with_peers
 
     # Default values
     if [[ "$DISABLE_IPV6" == "default" ]]; then DISABLE_IPV6=1; fi

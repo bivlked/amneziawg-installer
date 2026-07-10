@@ -1,0 +1,166 @@
+#!/usr/bin/env bats
+# v5.19: guard_subnet_change_with_peers - запрет смены подсети туннеля при
+# существующих [Peer] в awg0.conf (ответ на ревью PR #167). Harness как в
+# test_cidr_subnet_validation.bats: extract + eval с заглушками die/log.
+
+ROOT="$BATS_TEST_DIRNAME/.."
+
+setup() {
+    die()       { echo "DIE: $*"; exit 1; }
+    log()       { :; }
+    log_warn()  { echo "WARN: $*"; }
+    log_error() { :; }
+    MANAGE_SCRIPT_PATH="/root/awg/manage_amneziawg.sh"
+    eval "$(awk '/^validate_port\(\) \{/{f=1} f{print} /^configure_routing_mode\(\) \{/{exit}' \
+        "$ROOT/install_amneziawg.sh" | sed '/^configure_routing_mode/d')"
+    SERVER_CONF_FILE="$BATS_TEST_TMPDIR/awg0.conf"
+}
+
+# Собрать awg0.conf: $1 - значение Address (пусто = без строки Address),
+# $2 - 1 чтобы добавить [Peer]-блок.
+mk_conf() {
+    local address="$1" with_peers="$2"
+    {
+        echo "[Interface]"
+        if [[ -n "$address" ]]; then echo "Address = $address"; fi
+        echo "ListenPort = 39743"
+        echo "PrivateKey = xxx"
+        if [[ "$with_peers" == "1" ]]; then
+            echo ""
+            echo "[Peer]"
+            echo "#_Name = my_phone"
+            echo "PublicKey = yyy"
+            echo "AllowedIPs = 10.9.9.2/32"
+        fi
+    } > "$SERVER_CONF_FILE"
+}
+
+@test "guard: нет awg0.conf -> ok" {
+    AWG_TUNNEL_SUBNET="10.9.0.1/16"
+    run guard_subnet_change_with_peers
+    [ "$status" -eq 0 ]
+}
+
+@test "guard: конфиг без пиров + смена подсети -> ok" {
+    mk_conf "10.9.9.1/24" 0
+    AWG_TUNNEL_SUBNET="10.9.0.1/16"
+    run guard_subnet_change_with_peers
+    [ "$status" -eq 0 ]
+}
+
+@test "guard: пиры + та же подсеть -> ok" {
+    mk_conf "10.9.9.1/24" 1
+    AWG_TUNNEL_SUBNET="10.9.9.1/24"
+    run guard_subnet_change_with_peers
+    [ "$status" -eq 0 ]
+}
+
+@test "guard: пиры + смена подсети -> die" {
+    mk_conf "10.9.9.1/24" 1
+    AWG_TUNNEL_SUBNET="10.9.0.1/16"
+    run guard_subnet_change_with_peers
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"DIE:"* ]]
+    [[ "$output" == *"10.9.9.1/24"* ]]
+    [[ "$output" == *"10.9.0.1/16"* ]]
+}
+
+@test "guard: network-форма нормализуется validate_subnet до сравнения -> ok" {
+    mk_conf "10.9.9.1/24" 1
+    AWG_TUNNEL_SUBNET="10.9.9.0/24"
+    validate_subnet "$AWG_TUNNEL_SUBNET"
+    run guard_subnet_change_with_peers
+    [ "$status" -eq 0 ]
+}
+
+@test "guard: Address с IPv6-хвостом через запятую - берётся первое значение" {
+    mk_conf "10.9.9.1/24, fddd:2c4:2c4:2c4::1/64" 1
+    AWG_TUNNEL_SUBNET="10.9.9.1/24"
+    run guard_subnet_change_with_peers
+    [ "$status" -eq 0 ]
+    AWG_TUNNEL_SUBNET="10.9.0.1/16"
+    run guard_subnet_change_with_peers
+    [ "$status" -ne 0 ]
+}
+
+@test "guard: пиры, но нет строки Address -> warn + ok" {
+    mk_conf "" 1
+    AWG_TUNNEL_SUBNET="10.9.0.1/16"
+    run guard_subnet_change_with_peers
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WARN:"* ]]
+}
+
+# --- edge cases: без пробелов вокруг "=" и CRLF-концы строк ---
+# Пин для sed 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' и
+# последующего tr -d '[:space:]': оба должны корректно есть "Address=..."
+# без пробелов и \r в конце строки (CRLF-конфиг).
+
+@test "guard: Address без пробелов вокруг '=' + пиры + та же подсеть -> ok" {
+    {
+        echo "[Interface]"
+        echo "Address=10.9.9.1/24"
+        echo "ListenPort = 39743"
+        echo "PrivateKey = xxx"
+        echo ""
+        echo "[Peer]"
+        echo "#_Name = my_phone"
+        echo "PublicKey = yyy"
+        echo "AllowedIPs = 10.9.9.2/32"
+    } > "$SERVER_CONF_FILE"
+    AWG_TUNNEL_SUBNET="10.9.9.1/24"
+    run guard_subnet_change_with_peers
+    [ "$status" -eq 0 ]
+}
+
+@test "guard: CRLF-конфиг + пиры + та же подсеть -> ok" {
+    {
+        echo "[Interface]"
+        echo "Address = 10.9.9.1/24"
+        echo "ListenPort = 39743"
+        echo "PrivateKey = xxx"
+        echo ""
+        echo "[Peer]"
+        echo "#_Name = my_phone"
+        echo "PublicKey = yyy"
+        echo "AllowedIPs = 10.9.9.2/32"
+    } | sed 's/$/\r/' > "$SERVER_CONF_FILE"
+    AWG_TUNNEL_SUBNET="10.9.9.1/24"
+    run guard_subnet_change_with_peers
+    [ "$status" -eq 0 ]
+}
+
+@test "guard: CRLF-конфиг + пиры + смена подсети -> die" {
+    {
+        echo "[Interface]"
+        echo "Address = 10.9.9.1/24"
+        echo "ListenPort = 39743"
+        echo "PrivateKey = xxx"
+        echo ""
+        echo "[Peer]"
+        echo "#_Name = my_phone"
+        echo "PublicKey = yyy"
+        echo "AllowedIPs = 10.9.9.2/32"
+    } | sed 's/$/\r/' > "$SERVER_CONF_FILE"
+    AWG_TUNNEL_SUBNET="10.9.0.1/16"
+    run guard_subnet_change_with_peers
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"DIE:"* ]]
+}
+
+# --- RU/EN parity (тело функции идентично без учёта комментариев и
+# локализованных сообщений log_warn/die) ---
+
+@test "guard: RU/EN тела guard_subnet_change_with_peers идентичны без учёта комментариев и сообщений" {
+    local ru en
+    ru=$(awk '/^guard_subnet_change_with_peers\(\) \{$/,/^}$/' "$ROOT/install_amneziawg.sh" \
+        | grep -v '^[[:space:]]*#' \
+        | grep -v 'log_warn "' \
+        | grep -v 'die "')
+    en=$(awk '/^guard_subnet_change_with_peers\(\) \{$/,/^}$/' "$ROOT/install_amneziawg_en.sh" \
+        | grep -v '^[[:space:]]*#' \
+        | grep -v 'log_warn "' \
+        | grep -v 'die "')
+    [ -n "$ru" ]
+    [ "$ru" = "$en" ]
+}

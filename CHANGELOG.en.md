@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **Full CIDR for the tunnel subnet.** `--subnet` and the interactive prompt now accept /16–/30 masks (previously /24 only). The server address is the first host (network+1); input is in network or network+1 form. The `10.9.9.1/24` default and existing installs are unaffected. The IPv6 tunnel maps clients by host offset (no collisions on masks wider than /24).
+- **Subnet-change guard.** A reinstall (`--force`) with a different tunnel subnet aborts when awg0.conf already contains peers: their addresses were issued in the old subnet (old IPv4s can fall outside the new range, IPv6 suffixes can collide). Remove the clients or run `--uninstall` and reinstall from scratch before changing the subnet.
 
 ---
 

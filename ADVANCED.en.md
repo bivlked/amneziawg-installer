@@ -650,7 +650,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>Q: How do I change the internal VPN subnet?</strong></summary>
-  <b>A:</b> The easiest way is to uninstall (<code>sudo bash ./install_amneziawg_en.sh --uninstall</code>) and reinstall, specifying the new subnet during initial setup.
+  <b>A:</b> The easiest way is to uninstall (<code>sudo bash ./install_amneziawg_en.sh --uninstall</code>) and reinstall, specifying the new subnet during initial setup. A reinstall over a live server (<code>--force</code>) with a different subnet aborts while clients exist in the config — their addresses were issued in the old subnet.
 </details>
 
 <details>

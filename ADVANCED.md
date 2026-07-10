@@ -648,7 +648,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>В: Как изменить внутреннюю подсеть VPN?</strong></summary>
-  **О:** Проще всего выполнить деинсталляцию (`sudo bash ./install_amneziawg.sh --uninstall`) и установить заново, указав новую подсеть при первом запуске.
+  **О:** Проще всего выполнить деинсталляцию (`sudo bash ./install_amneziawg.sh --uninstall`) и установить заново, указав новую подсеть при первом запуске. Переустановка поверх живого сервера (`--force`) с другой подсетью прерывается, пока в конфиге есть клиенты — их адреса выданы в старой подсети.
 </details>
 
 <details>

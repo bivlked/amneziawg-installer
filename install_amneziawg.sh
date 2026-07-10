@@ -698,6 +698,32 @@ validate_subnet() {
     AWG_TUNNEL_SUBNET="$(( (n1 >> 24) & 255 )).$(( (n1 >> 16) & 255 )).$(( (n1 >> 8) & 255 )).$(( n1 & 255 ))/${prefix}"
 }
 
+# Guard смены подсети: [Peer]-блоки переносятся при переустановке как есть
+# (render_server_config), их адреса выданы в СТАРОЙ подсети. Смена подсети
+# под живыми клиентами ломает их: старые IPv4 могут выпасть из нового
+# диапазона, а IPv6-суффиксы - столкнуться (decimal-кодировка /24 против
+# hex у /16-/23 даёт два пира с одним ::x). Поэтому при наличии пиров
+# установка с другой подсетью прерывается (ревью PR #167). Самодостаточно
+# (шаг 0, ДО загрузки awg_common.sh). Старая подсеть - первое значение
+# Address в [Interface] awg0.conf: это нормализованный <network+1>/<prefix>,
+# а новый AWG_TUNNEL_SUBNET к моменту вызова нормализован validate_subnet -
+# строкового сравнения достаточно.
+guard_subnet_change_with_peers() {
+    [[ -f "$SERVER_CONF_FILE" ]] || return 0
+    grep -q '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null || return 0
+    local old_subnet
+    old_subnet=$(sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null \
+        | head -n1 | cut -d',' -f1 | tr -d '[:space:]')
+    if [[ -z "$old_subnet" ]]; then
+        log_warn "Не удалось прочитать Address из $SERVER_CONF_FILE - пропускаю проверку смены подсети."
+        return 0
+    fi
+    if [[ "$old_subnet" != "$AWG_TUNNEL_SUBNET" ]]; then
+        die "Подсеть туннеля изменена (${old_subnet} -> ${AWG_TUNNEL_SUBNET}), но в ${SERVER_CONF_FILE} уже есть пиры: их адреса выданы в старой подсети, смена сломает клиентов. Варианты: оставьте прежнюю подсеть; удалите всех клиентов (sudo bash $MANAGE_SCRIPT_PATH remove <имя>); либо --uninstall и чистая установка."
+    fi
+    return 0
+}
+
 # Валидация endpoint (FQDN / IPv4 / [IPv6]).
 # Возвращает 0 если endpoint безопасен и попадает под один из форматов,
 # иначе 1 (caller сам решает die или log_warn + unset).
@@ -2034,6 +2060,10 @@ initialize_setup() {
             fi
         fi
     fi
+
+    # Смена подсети при живых пирах запрещена - проверка до сохранения
+    # init-файла и любых изменений на диске (AWG_TUNNEL_SUBNET финален).
+    guard_subnet_change_with_peers
 
     # Значения по умолчанию
     if [[ "$DISABLE_IPV6" == "default" ]]; then DISABLE_IPV6=1; fi
