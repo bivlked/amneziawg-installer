@@ -1018,6 +1018,13 @@ render_server_config() {
     local peers_source="${1:-}"
     load_awg_params || return 1
 
+    # --no-cps (issue #159): load_awg_params перечитывает I1 из живого awg0.conf
+    # при переустановке. При NO_CPS=1 намеренно обнуляем I1, иначе серверный
+    # конфиг тихо восстановил бы CPS вопреки флагу.
+    if grep -qE '^[[:space:]]*(export[[:space:]]+)?NO_CPS=1' "$CONFIG_FILE" 2>/dev/null; then
+        AWG_I1=''
+    fi
+
     # Порт для НОВОГО awg0.conf берём из init-файла (намерение пользователя:
     # флаг --port или сохранённый прежний порт), а НЕ из перезаписываемого
     # старого awg0.conf. load_awg_params перечитывает ListenPort из живого
@@ -2465,9 +2472,14 @@ validate_awg_config() {
         done
     fi
 
-    # I1 опционален, но рекомендован для AWG 2.0
-    if ! grep -q "^I1 = " "$SERVER_CONF_FILE"; then
-        log_warn "Параметр I1 (CPS) не найден — CPS concealment не активен"
+    # I1 опционален. Отсутствие = либо не задан, либо намеренно отключён через
+    # --no-cps (issue #159): десктопный AmneziaVPN на macOS не поддерживает CPS.
+    if ! grep -qE '^[[:space:]]*I1[[:space:]]*=' "$SERVER_CONF_FILE"; then
+        if grep -qE '^[[:space:]]*(export[[:space:]]+)?NO_CPS=1' "$CONFIG_FILE" 2>/dev/null; then
+            log "I1 (CPS) отключён намеренно (--no-cps) - ожидаемо для десктопного AmneziaVPN на macOS"
+        else
+            log_warn "Параметр I1 (CPS) не найден - CPS concealment не активен"
+        fi
     fi
 
     if [[ $ok -eq 1 ]]; then

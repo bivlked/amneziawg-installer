@@ -648,6 +648,11 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 </details>
 
 <details>
+  <summary><strong>В: Десктопный AmneziaVPN на macOS виснет при подключении. Что делать?</strong></summary>
+  <b>О:</b> Десктопное приложение AmneziaVPN на macOS пока не поддерживает CPS (параметр <code>I1</code>) - новейший слой обфускации AmneziaWG 2.0, поэтому на подключении оно зависает. Мобильные (iOS/Android) и CLI-клиенты CPS понимают и подключаются нормально. Ставьте с флагом <code>--no-cps</code>: установщик уберёт <code>I1</code> из серверного конфига и всех клиентов, и десктоп подключится. Теряется только слой CPS, остальная обфускация (Jc/S1-S4/H1-H4) остаётся - это ровно то, что работало в России до появления CPS. На уже установленном сервере то же самое через переустановку: <code>sudo bash install_amneziawg.sh --force --no-cps</code>, затем перевыпустите существующих клиентов <code>sudo bash /root/awg/manage_amneziawg.sh regen</code> (без этого клиент с <code>I1</code> не сойдётся с сервером без <code>I1</code>). Чтобы позже вернуть CPS, переустановите с любым флагом перегенерации набора, например <code>--preset=default</code>. Issue <a href="https://github.com/bivlked/amneziawg-installer/issues/159">#159</a>.
+</details>
+
+<details>
   <summary><strong>В: Как изменить порт AmneziaWG после установки?</strong></summary>
   **О:** 1. Измените `ListenPort` в `/etc/amnezia/amneziawg/awg0.conf`. 2. Измените `AWG_PORT` в `/root/awg/awgsetup_cfg.init`. 3. Обновите UFW (`sudo ufw delete allow <старый_порт>/udp`, `sudo ufw allow <новый_порт>/udp`). 4. Перезапустите сервис (`sudo systemctl restart awg-quick@awg0`). 5. **Перегенерируйте конфиги ВСЕХ клиентов** (`sudo bash /root/awg/manage_amneziawg.sh regen`) и передайте их клиентам.
 </details>
