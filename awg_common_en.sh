@@ -1850,6 +1850,12 @@ generate_qr_vpnuri() {
     tmp_png=$(awg_mktemp "$AWG_DIR") || { log_error "mktemp error for vpn:// QR '$name'"; return 1; }
 
     # qrencode flags for long vpn:// URIs with PSK (issue #72):
+    #   -8    single 8-bit byte mode. Without it qrencode's optimizer splits the
+    #         base64 URI into alternating alnum/byte segments, and the mode-switch
+    #         overhead inflates the stream past the v40-L capacity (2953 bytes).
+    #         Large I1-I5/CPS configs failed with "Input data too large" even
+    #         though the data itself is under the limit (URI ~2929 bytes < 2953)
+    #         and fits in a single byte segment. Reporter: pqqsnupl (ntc.party).
     #   -s 6  module size of 6 pixels instead of the default 3 - this is the real fix.
     #         At the default scale modules were too small for the iPhone camera to
     #         distinguish when scanning the PNG off a computer screen, producing
@@ -1858,8 +1864,8 @@ generate_qr_vpnuri() {
     #   -l L  lowest error correction level - this is already the qrencode default,
     #         pinned explicitly to guard against future default changes in libqrencode.
     #   -m 4  standard quiet zone of 4 modules - also the default, pinned explicitly.
-    if ! qrencode -t png -l L -s 6 -m 4 -o "$tmp_png" < "$uri_file"; then
-        log_error "Failed to generate vpn:// QR for '$name'"
+    if ! qrencode -8 -t png -l L -s 6 -m 4 -o "$tmp_png" < "$uri_file"; then
+        log_error "Failed to generate vpn:// QR for '$name' (config may be too large for a single QR - import the vpn:// from ${name}.vpnuri manually)."
         rm -f "$tmp_png"
         return 1
     fi
