@@ -33,7 +33,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="3ac9c1c6be9f9872f7195b4cda19437578693c282c627d1ba3fe9ca060285994"
+COMMON_SCRIPT_SHA256="d21f5d5315111959c433996e5d482cb8a3a6032cff2d34dabcfb21687ecb3a28"
 MANAGE_SCRIPT_SHA256="94dd4bdbac1a1c840299e22fe5d2731f67e8b0fb54c20a9fc423848d627efdec"
 
 # CLI flags
@@ -282,7 +282,7 @@ Options:
   --ssh-port=PORT       SSH port for the UFW rule (auto-detected by default;
                         comma-separated list). Use if SSH runs on a non-standard
                         port and auto-detection is unavailable
-  --subnet=SUBNET       Tunnel subnet, /24 only (e.g. 10.9.9.1/24) non-interactively
+  --subnet=SUBNET       Tunnel subnet, CIDR /16-/30 (e.g. 10.9.0.0/16) non-interactively
   --allow-ipv6          Keep IPv6 enabled non-interactively
   --disallow-ipv6       Force-disable IPv6 non-interactively
   --allow-ipv6-tunnel   Enable dual-stack IPv6 inside the tunnel (ULA, opt-in)
@@ -681,20 +681,55 @@ validate_port() {
 
 validate_subnet() {
     local subnet="$1" o
-    # Octets without leading zeros: '010.008...' would otherwise be parsed as octal
-    # in [[ -gt ]] and slip past the check. Range is compared on plain decimal values.
-    if ! [[ "$subnet" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})/24$ ]]; then
-        die "Invalid subnet: '$subnet'. Only /24 is supported."
+    # Self-contained (step 4, BEFORE awg_common.sh is downloaded): does not use
+    # _valid_ipv4/_cidr_bounds. Octets without leading zeros ('010...' would
+    # otherwise be parsed as octal).
+    if ! [[ "$subnet" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})/([0-9]{1,2})$ ]]; then
+        die "Invalid subnet: '$subnet'. Expected CIDR /16-/30, e.g. 10.9.0.0/16."
     fi
-    for o in "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; do
-        (( o <= 255 )) || die "Invalid subnet: '$subnet'. Octet out of range 0-255."
+    local a="${BASH_REMATCH[1]}" b="${BASH_REMATCH[2]}" c="${BASH_REMATCH[3]}" d="${BASH_REMATCH[4]}" prefix="${BASH_REMATCH[5]}"
+    for o in "$a" "$b" "$c" "$d"; do
+        (( 10#$o <= 255 )) || die "Invalid subnet: '$subnet'. Octet out of range 0-255."
     done
-    if [[ "${BASH_REMATCH[4]}" -eq 0 ]] || [[ "${BASH_REMATCH[4]}" -eq 255 ]]; then
-        die "Invalid subnet: '$subnet'. Last octet cannot be 0 (network address) or 255 (broadcast)."
+    (( 10#$prefix >= 16 && 10#$prefix <= 30 )) || die "Invalid subnet: '$subnet'. Only /16-/30 masks are supported."
+    # Inline arithmetic: the address must be network or network+1.
+    local ip=$(( (10#$a << 24) | (10#$b << 16) | (10#$c << 8) | 10#$d ))
+    local mask=$(( (0xFFFFFFFF << (32 - 10#$prefix)) & 0xFFFFFFFF ))
+    local network=$(( ip & mask ))
+    local n1=$(( network + 1 ))
+    if (( ip != network && ip != network + 1 )); then
+        local srv="$(( (n1 >> 24) & 255 )).$(( (n1 >> 16) & 255 )).$(( (n1 >> 8) & 255 )).$(( n1 & 255 ))"
+        die "Invalid subnet: '$subnet'. Server address must be ${srv} (network+1), or specify the network."
     fi
-    if [[ "${BASH_REMATCH[4]}" -ne 1 ]]; then
-        die "Invalid subnet: '$subnet'. Last octet must be 1 (server address in subnet)."
+    # Normalize the global to <network+1>/<prefix> (server = network+1).
+    AWG_TUNNEL_SUBNET="$(( (n1 >> 24) & 255 )).$(( (n1 >> 16) & 255 )).$(( (n1 >> 8) & 255 )).$(( n1 & 255 ))/${prefix}"
+}
+
+# Subnet-change guard: [Peer] blocks are carried over verbatim on reinstall
+# (render_server_config), and their addresses were issued in the OLD subnet.
+# Changing the subnet under live clients breaks them: old IPv4s can fall
+# outside the new range, and IPv6 suffixes can collide (the decimal /24
+# encoding vs hex for /16-/23 yields two peers with the same ::x). So the
+# install aborts when peers exist and the subnet differs (PR #167 review).
+# Self-contained (step 0, BEFORE awg_common.sh is downloaded). The old
+# subnet is the first Address value in the awg0.conf [Interface]: it is the
+# normalized <network+1>/<prefix>, and the new AWG_TUNNEL_SUBNET has been
+# normalized by validate_subnet by the time of the call - a plain string
+# comparison is enough.
+guard_subnet_change_with_peers() {
+    [[ -f "$SERVER_CONF_FILE" ]] || return 0
+    grep -q '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null || return 0
+    local old_subnet
+    old_subnet=$(sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null \
+        | head -n1 | cut -d',' -f1 | tr -d '[:space:]')
+    if [[ -z "$old_subnet" ]]; then
+        log_warn "Could not read Address from $SERVER_CONF_FILE - skipping the subnet-change check."
+        return 0
     fi
+    if [[ "$old_subnet" != "$AWG_TUNNEL_SUBNET" ]]; then
+        die "The tunnel subnet changed (${old_subnet} -> ${AWG_TUNNEL_SUBNET}), but ${SERVER_CONF_FILE} already contains peers: their addresses were issued in the old subnet, and changing it breaks the clients. Options: keep the previous subnet; remove all clients (sudo bash $MANAGE_SCRIPT_PATH remove <name>); or run --uninstall and reinstall from scratch."
+    fi
+    return 0
 }
 
 # Endpoint validation (FQDN / IPv4 / [IPv6]).
@@ -2035,6 +2070,11 @@ initialize_setup() {
             fi
         fi
     fi
+
+    # Changing the subnet with live peers is forbidden - check before the
+    # init file is saved and before any on-disk changes (AWG_TUNNEL_SUBNET
+    # is final here).
+    guard_subnet_change_with_peers
 
     # Default values
     if [[ "$DISABLE_IPV6" == "default" ]]; then DISABLE_IPV6=1; fi

@@ -12,6 +12,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Full CIDR for the tunnel subnet.** `--subnet` and the interactive prompt now accept /16–/30 masks (previously /24 only). The server address is the first host (network+1); input is in network or network+1 form. The `10.9.9.1/24` default and existing installs are unaffected. The IPv6 tunnel maps clients by host offset (no collisions on masks wider than /24).
+- **Subnet-change guard.** A reinstall (`--force`) with a different tunnel subnet aborts when awg0.conf already contains peers: their addresses were issued in the old subnet (old IPv4s can fall outside the new range, IPv6 suffixes can collide). Remove the clients or run `--uninstall` and reinstall from scratch before changing the subnet.
+
 ### Fixed
 
 - Network-interface detection no longer aborts the install on hosts where the `1.1.1.1` probe returns no interface - the provider blocks or null-routes that address, policy-routing, or IPv6-only egress (seen on Ubuntu 26.04 / Timeweb). `get_main_nic` now tries a chain: `ip route get`, the default IPv4 route, the first global-IPv4 interface, the default IPv6 route; on total failure it prints the available interfaces and a hint. The interface can be set manually with `AWG_MAIN_NIC=<iface>`. Previously step 6 aborted with "Failed to detect network interface" (#166)

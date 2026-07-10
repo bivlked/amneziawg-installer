@@ -440,7 +440,7 @@ Options:
   --no-color            Disable colored output
   --port=PORT           Set UDP port (1024-65535)
   --ssh-port=PORT       SSH port for the UFW rule (auto-detected; comma-separated list)
-  --subnet=SUBNET       Tunnel subnet, /24 only (e.g. 10.9.9.1/24)
+  --subnet=SUBNET       Tunnel subnet, CIDR /16-/30 (e.g. 10.9.0.0/16)
   --allow-ipv6          Keep IPv6 enabled
   --disallow-ipv6       Force-disable IPv6
   --allow-ipv6-tunnel   Enable dual-stack IPv6 inside the tunnel (ULA, opt-in)
@@ -656,7 +656,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>Q: How do I change the internal VPN subnet?</strong></summary>
-  <b>A:</b> The easiest way is to uninstall (<code>sudo bash ./install_amneziawg_en.sh --uninstall</code>) and reinstall, specifying the new subnet during initial setup.
+  <b>A:</b> The easiest way is to uninstall (<code>sudo bash ./install_amneziawg_en.sh --uninstall</code>) and reinstall, specifying the new subnet during initial setup. A reinstall over a live server (<code>--force</code>) with a different subnet aborts while clients exist in the config — their addresses were issued in the old subnet.
 </details>
 
 <details>

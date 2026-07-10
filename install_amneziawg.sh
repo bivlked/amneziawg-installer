@@ -33,7 +33,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="ffad2de0575b2eb895c24e106fb151a048092e452c4decb22464bd3c6b03510f"
+COMMON_SCRIPT_SHA256="564eb37f54249266de1cbc5ab9db14b370b3ab64b41de70883e44650cf55a50e"
 MANAGE_SCRIPT_SHA256="4ba519911f706693c5ea1b88e1b9789502c8ea4b4195d53245b4929b0463b814"
 
 # Флаги CLI
@@ -279,7 +279,7 @@ show_help() {
   --ssh-port=ПОРТ       SSH-порт для правила UFW (по умолчанию определяется
                         автоматически; список через запятую). Используйте, если
                         SSH на нестандартном порту и автодетект недоступен
-  --subnet=ПОДСЕТЬ      Подсеть туннеля, только /24 (напр. 10.9.9.1/24) неинтерактивно
+  --subnet=ПОДСЕТЬ      Подсеть туннеля, CIDR /16-/30 (напр. 10.9.0.0/16) неинтерактивно
   --allow-ipv6          Оставить IPv6 включенным неинтерактивно
   --disallow-ipv6       Принудительно отключить IPv6 неинтерактивно
   --allow-ipv6-tunnel   Включить dual-stack IPv6 внутри туннеля (ULA, opt-in)
@@ -675,20 +675,53 @@ validate_port() {
 
 validate_subnet() {
     local subnet="$1" o
-    # Октеты без ведущих нулей: '010.008...' иначе трактуется как octal в [[ -gt ]]
-    # и проскакивает проверку. Диапазон считаем на чистых decimal-значениях.
-    if ! [[ "$subnet" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})/24$ ]]; then
-        die "Некорректная подсеть: '$subnet'. Поддерживается только /24."
+    # Самодостаточно (шаг 4, ДО загрузки awg_common.sh): не используем _valid_ipv4/
+    # _cidr_bounds. Октеты без ведущих нулей ('010...' иначе трактуется как octal).
+    if ! [[ "$subnet" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})/([0-9]{1,2})$ ]]; then
+        die "Некорректная подсеть: '$subnet'. Ожидается CIDR /16-/30, напр. 10.9.0.0/16."
     fi
-    for o in "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; do
-        (( o <= 255 )) || die "Некорректная подсеть: '$subnet'. Октет вне диапазона 0-255."
+    local a="${BASH_REMATCH[1]}" b="${BASH_REMATCH[2]}" c="${BASH_REMATCH[3]}" d="${BASH_REMATCH[4]}" prefix="${BASH_REMATCH[5]}"
+    for o in "$a" "$b" "$c" "$d"; do
+        (( 10#$o <= 255 )) || die "Некорректная подсеть: '$subnet'. Октет вне диапазона 0-255."
     done
-    if [[ "${BASH_REMATCH[4]}" -eq 0 ]] || [[ "${BASH_REMATCH[4]}" -eq 255 ]]; then
-        die "Некорректная подсеть: '$subnet'. Последний октет не может быть 0 (сетевой адрес) или 255 (broadcast)."
+    (( 10#$prefix >= 16 && 10#$prefix <= 30 )) || die "Некорректная подсеть: '$subnet'. Поддерживается только маска /16-/30."
+    # Инлайн-арифметика: адрес обязан быть network или network+1.
+    local ip=$(( (10#$a << 24) | (10#$b << 16) | (10#$c << 8) | 10#$d ))
+    local mask=$(( (0xFFFFFFFF << (32 - 10#$prefix)) & 0xFFFFFFFF ))
+    local network=$(( ip & mask ))
+    local n1=$(( network + 1 ))
+    if (( ip != network && ip != network + 1 )); then
+        local srv="$(( (n1 >> 24) & 255 )).$(( (n1 >> 16) & 255 )).$(( (n1 >> 8) & 255 )).$(( n1 & 255 ))"
+        die "Некорректная подсеть: '$subnet'. Адрес сервера должен быть ${srv} (network+1) или укажите сеть."
     fi
-    if [[ "${BASH_REMATCH[4]}" -ne 1 ]]; then
-        die "Некорректная подсеть: '$subnet'. Последний октет должен быть 1 (адрес сервера в подсети)."
+    # Нормализация глобала к <network+1>/<prefix> (сервер = network+1).
+    AWG_TUNNEL_SUBNET="$(( (n1 >> 24) & 255 )).$(( (n1 >> 16) & 255 )).$(( (n1 >> 8) & 255 )).$(( n1 & 255 ))/${prefix}"
+}
+
+# Guard смены подсети: [Peer]-блоки переносятся при переустановке как есть
+# (render_server_config), их адреса выданы в СТАРОЙ подсети. Смена подсети
+# под живыми клиентами ломает их: старые IPv4 могут выпасть из нового
+# диапазона, а IPv6-суффиксы - столкнуться (decimal-кодировка /24 против
+# hex у /16-/23 даёт два пира с одним ::x). Поэтому при наличии пиров
+# установка с другой подсетью прерывается (ревью PR #167). Самодостаточно
+# (шаг 0, ДО загрузки awg_common.sh). Старая подсеть - первое значение
+# Address в [Interface] awg0.conf: это нормализованный <network+1>/<prefix>,
+# а новый AWG_TUNNEL_SUBNET к моменту вызова нормализован validate_subnet -
+# строкового сравнения достаточно.
+guard_subnet_change_with_peers() {
+    [[ -f "$SERVER_CONF_FILE" ]] || return 0
+    grep -q '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null || return 0
+    local old_subnet
+    old_subnet=$(sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null \
+        | head -n1 | cut -d',' -f1 | tr -d '[:space:]')
+    if [[ -z "$old_subnet" ]]; then
+        log_warn "Не удалось прочитать Address из $SERVER_CONF_FILE - пропускаю проверку смены подсети."
+        return 0
     fi
+    if [[ "$old_subnet" != "$AWG_TUNNEL_SUBNET" ]]; then
+        die "Подсеть туннеля изменена (${old_subnet} -> ${AWG_TUNNEL_SUBNET}), но в ${SERVER_CONF_FILE} уже есть пиры: их адреса выданы в старой подсети, смена сломает клиентов. Варианты: оставьте прежнюю подсеть; удалите всех клиентов (sudo bash $MANAGE_SCRIPT_PATH remove <имя>); либо --uninstall и чистая установка."
+    fi
+    return 0
 }
 
 # Валидация endpoint (FQDN / IPv4 / [IPv6]).
@@ -2027,6 +2060,10 @@ initialize_setup() {
             fi
         fi
     fi
+
+    # Смена подсети при живых пирах запрещена - проверка до сохранения
+    # init-файла и любых изменений на диске (AWG_TUNNEL_SUBNET финален).
+    guard_subnet_change_with_peers
 
     # Значения по умолчанию
     if [[ "$DISABLE_IPV6" == "default" ]]; then DISABLE_IPV6=1; fi

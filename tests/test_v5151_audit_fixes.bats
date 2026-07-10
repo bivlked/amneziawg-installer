@@ -74,8 +74,8 @@ setup_detect() {
     grep -q "Ubuntu (24.04 / 25.10 / 26.04)" "${BATS_TEST_DIRNAME}/../install_amneziawg_en.sh"
 }
 
-@test "v5.15.1 C13: RU installer --subnet help states /24 only" {
-    grep -qP 'subnet.*/24' "${BATS_TEST_DIRNAME}/../install_amneziawg.sh"
+@test "v5.15.1 C13: RU installer --subnet help states supported CIDR range (v5.19: /16-/30)" {
+    grep -qP 'subnet.*/16-/30' "${BATS_TEST_DIRNAME}/../install_amneziawg.sh"
 }
 
 # ---------------------------------------------------------------------------

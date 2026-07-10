@@ -164,6 +164,40 @@ _valid_host_or_ipv4() {
     return 0
 }
 
+# --- CIDR arithmetic (shared by the IPv4/IPv6 allocator) ---
+# Pure functions, bash arithmetic only ($(( ))), no external dependencies.
+# set-e-safe: read values via $(( ))/local, guard with "|| return".
+
+# _ipv4_to_int <a.b.c.d> : 32-bit integer from IPv4. Input guard is _valid_ipv4
+# (do not reinvent octet checks). 10# guards against a leading-zero octet being
+# parsed as octal.
+_ipv4_to_int() {
+    _valid_ipv4 "$1" || return 1
+    local IFS=. o
+    read -ra o <<< "$1"
+    echo $(( (10#${o[0]} << 24) | (10#${o[1]} << 16) | (10#${o[2]} << 8) | 10#${o[3]} ))
+}
+
+# _int_to_ipv4 <int> : IPv4 from a 32-bit integer.
+_int_to_ipv4() {
+    local n="$1"
+    echo "$(( (n >> 24) & 255 )).$(( (n >> 16) & 255 )).$(( (n >> 8) & 255 )).$(( n & 255 ))"
+}
+
+# _cidr_bounds <addr/prefix> : prints "network_int broadcast_int".
+# The single source of the network/broadcast formula in awg_common.
+_cidr_bounds() {
+    local cidr="$1" addr prefix ip mask net bcast
+    addr="${cidr%/*}"; prefix="${cidr##*/}"
+    [[ "$prefix" =~ ^[0-9]+$ ]] || return 1
+    (( 10#$prefix >= 0 && 10#$prefix <= 32 )) || return 1
+    ip=$(_ipv4_to_int "$addr") || return 1
+    if (( 10#$prefix == 0 )); then mask=0; else mask=$(( (0xFFFFFFFF << (32 - 10#$prefix)) & 0xFFFFFFFF )); fi
+    net=$(( ip & mask ))
+    bcast=$(( net | (0xFFFFFFFF ^ mask) ))
+    echo "$net $bcast"
+}
+
 # Detect primary (egress) network interface.
 # Fallback chain so we don't abort on hosts where the 1.1.1.1 probe returns no
 # interface: the provider null-routes/blocks the address, policy-routing, or
@@ -1352,14 +1386,21 @@ apply_config() {
 # Peer management
 # ==============================================================================
 
-# Get next free IP in subnet
+# Get the next free IP in the subnet (arbitrary /16-/30 mask). Server = network+1;
+# host range is [network+1 .. broadcast-1]. Returns the lowest free address
+# (early exit) — up to 65534 slots for /16, but no full scan in the common case.
 get_next_client_ip() {
-    local subnet_base
-    subnet_base=$(echo "${AWG_TUNNEL_SUBNET:-10.9.9.1/24}" | cut -d'/' -f1 | cut -d'.' -f1-3)
+    local subnet="${AWG_TUNNEL_SUBNET:-10.9.9.1/24}"
+    local net_int bcast_int
+    read -r net_int bcast_int < <(_cidr_bounds "$subnet") || {
+        log_error "get_next_client_ip: could not parse subnet '$subnet'"
+        return 1
+    }
+    local server_int=$(( net_int + 1 ))
 
-    # Associative array for O(1) lookup
+    # Associative array for O(1) lookup. Server (network+1) is taken.
     declare -A used_set
-    used_set["${subnet_base}.1"]=1
+    used_set["$(_int_to_ipv4 "$server_int")"]=1
     if [[ -f "$SERVER_CONF_FILE" ]]; then
         while IFS= read -r ip; do
             used_set["$ip"]=1
@@ -1367,22 +1408,25 @@ get_next_client_ip() {
     fi
 
     local i candidate
-    for i in $(seq 2 254); do
-        candidate="${subnet_base}.${i}"
+    for (( i = net_int + 1; i <= bcast_int - 1; i++ )); do
+        candidate=$(_int_to_ipv4 "$i")
         if [[ -z "${used_set[$candidate]+x}" ]]; then
             echo "$candidate"
             return 0
         fi
     done
 
-    log_error "No free IPs in subnet ${subnet_base}.0/24"
+    log_error "No free IPs in subnet ${subnet}"
     return 1
 }
 
-# Derive the IPv6 address for a client from its IPv4 address (deterministic
-# by last octet). Used only when ALLOW_IPV6_TUNNEL=1. Allocation mirrors IPv4:
-# client 10.9.9.N gets fddd:2c4:2c4:2c4::N (same index N, /128).
-# Argument: client IPv4 address, e.g. 10.9.9.5 -> fddd:2c4:2c4:2c4::5
+# Derive the client IPv6 from its IPv4. Used only when ALLOW_IPV6_TUNNEL=1.
+# Index = host offset in the subnet (offset = ipv4 - network), which is unique
+# for any mask. Suffix encoding depends on the mask:
+#   prefix == 24 -> decimal offset (== last octet; byte-identical to before),
+#   otherwise    -> proper hex (printf '%x').
+# The server (network+1, offset 1) yields "1" in both modes -> ::1 (see
+# _derive_ipv6_server_addr, unchanged). Clients have offset >= 2.
 # Returns the address string without a prefix length.
 #
 # get_next_client_ipv6 <ipv4_addr>
@@ -1392,11 +1436,28 @@ get_next_client_ipv6() {
         log_error "get_next_client_ipv6: no IPv4 address supplied"
         return 1
     fi
-    local n="${ipv4##*.}"
+    local tunnel="${AWG_TUNNEL_SUBNET:-10.9.9.1/24}"
+    local tprefix="${tunnel##*/}"
+    local net_int bcast_int ip_int offset suffix
+    read -r net_int bcast_int < <(_cidr_bounds "$tunnel") || {
+        log_error "get_next_client_ipv6: could not parse subnet '$tunnel'"
+        return 1
+    }
+    ip_int=$(_ipv4_to_int "$ipv4") || {
+        log_error "get_next_client_ipv6: invalid IPv4 '$ipv4'"
+        return 1
+    }
+    offset=$(( ip_int - net_int ))
+    (( offset >= 1 && offset <= bcast_int - net_int )) || { log_error "get_next_client_ipv6: IPv4 '$ipv4' outside subnet '$tunnel'"; return 1; }
+    if [[ "$tprefix" == "24" ]]; then
+        suffix="$offset"
+    else
+        suffix=$(printf '%x' "$offset")
+    fi
     local subnet="${IPV6_SUBNET:-fddd:2c4:2c4:2c4::/64}"
     local prefix="${subnet%%::*}"
     [[ "$prefix" == *:* ]] || { log_error "get_next_client_ipv6: IPV6_SUBNET does not contain :: (value: $subnet)"; return 1; }
-    echo "${prefix}::${n}"
+    echo "${prefix}::${suffix}"
     return 0
 }
 
