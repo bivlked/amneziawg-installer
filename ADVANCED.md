@@ -46,6 +46,7 @@
 - [📋 Совместимость клиентов AWG 2.0](#client-compat-adv)
 - [🐧 Поддержка Debian](#debian-support-adv)
 - [🔧 Raspberry Pi и ARM64](#arm-support-adv)
+- [🐧 Подключение Linux-машины как клиента](#linux-client-adv)
 - [📦 LXC / Docker через amneziawg-go (userspace)](#lxc-userspace-adv)
 - [⚠️ Известные ограничения](#limitations-adv)
 - [🤝 Внесение вклада (Contributing)](#contributing-adv)
@@ -639,6 +640,11 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 <details>
   <summary><strong>В: Как сделать раздельный выход - российский трафик напрямую, остальное через заграницу?</strong></summary>
   <b>О:</b> Это собирается каскадом из двух серверов: клиент подключается к серверу-входу (лучше в РФ), российский трафик уходит напрямую с него, остальное - через второй сервер за границей. Каскад не входит в установщик (другой масштаб), но есть отдельная пошаговая инструкция - <a href="CASCADE.md">CASCADE.md</a>.
+</details>
+
+<details>
+  <summary><strong>В: AmneziaVPN пишет "данный сервер не поддерживает раздельное туннелирование". Как включить?</strong></summary>
+  <b>О:</b> Это ограничение самого клиента, а не сервера. Встроенное раздельное туннелирование по сайтам и приложениям в приложении AmneziaVPN включается только когда конфиг гонит в туннель весь трафик. Клиент смотрит на <code>AllowedIPs</code>: полный туннель разблокирует функцию, а частичный список подсетей клиент считает уже разделённым на уровне маршрутов и прячет свой переключатель с этой надписью. Надёжная форма полного туннеля, которую он распознаёт, - пара <code>0.0.0.0/0, ::/0</code>. Режим "Amnezia" (по умолчанию) даёт список подсетей, поэтому функция и недоступна. Решение, docker не нужен: переведите клиента на полный туннель - замените строку в его <code>.conf</code> на <code>AllowedIPs = 0.0.0.0/0, ::/0</code> и переимпортируйте, либо перевыпустите клиента в режиме "Весь трафик" (<code>--route-all</code>). После этого страница раздельного туннелирования в приложении откроется, и сайты/приложения выбираются уже там. Если же нужно просто пустить в туннель часть трафика (сплит на уровне сети), это делает сам <code>AllowedIPs</code> - отдельная функция приложения для этого не требуется.
 </details>
 
 <details>
@@ -1305,6 +1311,57 @@ Raspberry Pi 3 имеет 1 ГБ RAM и 4 ядра на 1.2 ГГц. Компил
 <summary><strong>В: Как узнать, был ли использован готовый модуль?</strong></summary>
 Ищите <code>Prebuilt module installed</code> в логе установки (<code>/root/awg/install_amneziawg.log</code>). Если использовался DKMS, вы увидите вывод <code>dkms install</code>.
 </details>
+
+---
+
+<a id="linux-client-adv"></a>
+## 🐧 Подключение Linux-машины как клиента
+
+Мобильные и десктопные клиенты берут конфиг через приложение, QR или vpn:// URI. Чтобы подключить как клиента обычный Linux (домашний сервер, вторую машину, роутер на Linux), нужен тот же userspace, что понимает обфускацию AWG 2.0 - штатный `wireguard` не подойдёт, он не знает про Jc/S/H/I. Два пути.
+
+### 1. Ядерный модуль + инструменты (Ubuntu / Debian)
+
+На СЕРВЕРЕ выпустите клиентский конфиг и заберите его:
+
+```bash
+sudo bash /root/awg/manage_amneziawg.sh add my-linux-box
+# готовый конфиг: /root/awg/my-linux-box.conf
+```
+
+На КЛИЕНТЕ поставьте модуль и инструменты AmneziaWG. Это те же пакеты, что ставит установщик, но клиенту не нужны UFW / Fail2Ban / оптимизации сервера:
+
+```bash
+# Ubuntu
+sudo add-apt-repository -y ppa:amnezia/ppa
+sudo apt update
+sudo apt install -y amneziawg-dkms amneziawg-tools linux-headers-$(uname -r)
+```
+
+Для Debian отдельных пакетов PPA нет. Установщик обходит это, ремапя suite на ближайшую Ubuntu (bookworm -> focal, trixie -> noble), но как ручной шаг на клиенте это ненадёжно - для Debian-клиента проще userspace `amneziawg-go` (путь 2) или сборка модуля из исходников.
+
+Положите конфиг под именем `awg0` и поднимите туннель:
+
+```bash
+sudo mkdir -p /etc/amnezia/amneziawg
+sudo cp my-linux-box.conf /etc/amnezia/amneziawg/awg0.conf
+sudo chmod 600 /etc/amnezia/amneziawg/awg0.conf
+sudo awg-quick up awg0
+sudo systemctl enable awg-quick@awg0   # автозапуск при загрузке
+```
+
+Проверка: `sudo awg show` покажет `latest handshake` - это главный признак живого туннеля. При полном туннеле `curl ifconfig.me` вернёт IP сервера; при split-туннеле проверяйте по трафику к адресу, попадающему в `AllowedIPs`. Остановить туннель - `sudo awg-quick down awg0`.
+
+### 2. amneziawg-go (userspace, без модуля ядра)
+
+Если модуль поставить нельзя (нет заголовков ядра, запрет DKMS, экзотическая архитектура), userspace [`amneziawg-go`](https://github.com/amnezia-vpn/amneziawg-go) работает поверх `/dev/net/tun` в любом Linux ценой ~30-50% CPU overhead. Клиенту нужны `amneziawg-go` плюс `amneziawg-tools`. `awg-quick up awg0` подхватит userspace-реализацию, если бинарь `amneziawg-go` лежит в `PATH` (или задайте `WG_QUICK_USERSPACE_IMPLEMENTATION=/путь/к/amneziawg-go`); нужен доступ к `/dev/net/tun` и `CAP_NET_ADMIN`. Сборка и запуск разобраны в разделе [LXC / Docker через amneziawg-go](#lxc-userspace-adv).
+
+### Осторожно на удалённой машине (риск потерять SSH)
+
+Если Linux-клиент - это удалённый сервер, которым вы управляете по SSH, полный туннель (`AllowedIPs = 0.0.0.0/0`) заворачивает в туннель весь трафик, включая ваш обратный SSH: машина начнёт отвечать через VPN, и текущая сессия почти наверняка отвалится.
+
+- Клиенту, которому в VPN нужна лишь часть трафика, дайте split-конфиг: `manage_amneziawg.sh modify my-linux-box AllowedIPs "нужные-подсети"`. SSH останется на прямом маршруте.
+- Если полный туннель всё же нужен, перед `awg-quick up` пропишите исключение для своего админского IP через исходный шлюз (policy-route), иначе доступ к машине пропадёт.
+- Проверяйте полный туннель на машине с локальной консолью или KVM/IPMI, а не вслепую по SSH.
 
 ---
 

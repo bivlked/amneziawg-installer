@@ -17,6 +17,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Network-interface detection no longer aborts the install on hosts where the `1.1.1.1` probe returns no interface - the provider blocks or null-routes that address, policy-routing, or IPv6-only egress (seen on Ubuntu 26.04 / Timeweb). `get_main_nic` now tries a chain: `ip route get`, the default IPv4 route, the first global-IPv4 interface, the default IPv6 route; on total failure it prints the available interfaces and a hint. The interface can be set manually with `AWG_MAIN_NIC=<iface>`. Previously step 6 aborted with "Failed to detect network interface" (#166)
 - The vpn:// QR is now generated with `-8` (single 8-bit byte mode). Large configs with I1-I5/CPS parameters failed with "Input data too large" even though the data itself (the URI is around 2929 bytes) fit the QR capacity: qrencode's optimizer split the base64 into alternating segments and the mode-switch overhead pushed the stream past the v40-L limit (2953 bytes). If a config still does not fit a single QR, the error now suggests importing the vpn:// from the `.vpnuri` file manually
 
+### Documentation
+
+- New ADVANCED section "Connecting a Linux machine as a client": installing the AmneziaWG module and tools or userspace `amneziawg-go`, bringing it up with `awg-quick`, and a warning about losing SSH on a full tunnel to a remote machine (#165)
+- ADVANCED FAQ: why the AmneziaVPN client says "this server does not support split tunneling" and how to enable the feature (full tunnel `0.0.0.0/0, ::/0`, no docker needed)
+
 ---
 
 ## [5.18.4] - 2026-07-06

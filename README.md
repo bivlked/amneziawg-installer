@@ -656,6 +656,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 - [Hetzner Community - Making a website accessible from restricted regions](https://community.hetzner.com/tutorials/making-website-accessible-from-restricted-regions) (cross-link в Resources)
 - [Debian Forums - HowTo: Install AmneziaWG 2.0 on Debian 12/13](https://forums.debian.net/viewtopic.php?t=166105)
 - [LowEndTalk - [Tutorial] One-command AmneziaWG VPN server install on Ubuntu / Debian / ARM](https://lowendtalk.com/discussion/217191)
+- [AVA Hosting - Self-Hosted VPN: Setup AmneziaWG Easily (пошаговый гайд на основе установщика)](https://ava.hosting/information/amneziawg/)
 
 **📰 Статьи и обзоры**
 - [XDA Developers - «I found a self-hosted VPN that works where WireGuard gets blocked»](https://www.xda-developers.com/self-hosted-vpn-works-where-wireguard-gets-blocked/)
