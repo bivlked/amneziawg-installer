@@ -96,7 +96,8 @@ render_reinstall_fixture() {
     echo "export NO_CPS=1" >> "$CONFIG_FILE"
     run render_server_config
     [ "$status" -eq 0 ]
-    ! grep -qE '^[[:space:]]*I1[[:space:]]*=' "$SERVER_CONF_FILE"
+    # Счётная форма вместо "! grep": в Bats голый ! не валит тест (SC2314).
+    [ "$(grep -cE '^[[:space:]]*I1[[:space:]]*=' "$SERVER_CONF_FILE")" -eq 0 ]
     grep -q '^Jc = ' "$SERVER_CONF_FILE"
     grep -q '^I2 = <t>' "$SERVER_CONF_FILE"
 }
