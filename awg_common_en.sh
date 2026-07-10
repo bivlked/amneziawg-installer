@@ -226,6 +226,16 @@ get_main_nic() {
     printf '%s\n' "$nic"
 }
 
+# Returns 0 if the host has no IPv4 egress: no default IPv4 route AND interface
+# $1 has no global IPv4 address. Such a host is IPv6-only (issue #166: Timeweb
+# Ubuntu 26.04) - the IPv4 tunnel (10.x) cannot be NATed out. Both conditions
+# must hold: on dual-stack/IPv4 hosts the function returns 1.
+host_lacks_ipv4_egress() {
+    local nic="$1"
+    ! ip -4 route show default 2>/dev/null | grep -q . \
+        && ! ip -o -4 addr show dev "$nic" up scope global 2>/dev/null | grep -q .
+}
+
 # Detect server public IP (with caching).
 #
 # The 6-service list covers common NAT and cloud scenarios without
@@ -1039,6 +1049,16 @@ render_server_config() {
         log_error "Set it manually and re-run step 6: export AWG_MAIN_NIC=<iface>"
         log_error "Available interfaces: $(ip -br link 2>/dev/null | awk '$1!="lo"{printf "%s ", $1}')"
         return 1
+    fi
+
+    # IPv6-only egress: interface exists, but there is no IPv4 egress. The IPv4
+    # tunnel (10.x) is NATed via MASQUERADE - on such a host IPv4 client traffic
+    # will not leave (issue #166). Warn, do not block: peer-to-peer inside the
+    # tunnel and the IPv6 tunnel (--allow-ipv6) still work.
+    if host_lacks_ipv4_egress "$nic"; then
+        log_warn "Host appears to be IPv6-only: $nic has no IPv4 egress."
+        log_warn "The VPN tunnels IPv4, so IPv4 client traffic will not leave the host."
+        log_warn "A host with an IPv4 address (dual-stack) or NAT64 is required."
     fi
 
     local server_ip subnet_mask

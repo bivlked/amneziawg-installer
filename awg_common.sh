@@ -226,6 +226,16 @@ get_main_nic() {
     printf '%s\n' "$nic"
 }
 
+# Возвращает 0, если у хоста нет IPv4-выхода: нет дефолтного IPv4-маршрута И у
+# интерфейса $1 нет глобального IPv4-адреса. Такой хост IPv6-only (issue #166:
+# Timeweb Ubuntu 26.04) - IPv4-туннель (10.x) не сможет NAT'иться наружу.
+# Оба условия должны совпасть: на dual-stack/IPv4 хостах функция вернёт 1.
+host_lacks_ipv4_egress() {
+    local nic="$1"
+    ! ip -4 route show default 2>/dev/null | grep -q . \
+        && ! ip -o -4 addr show dev "$nic" up scope global 2>/dev/null | grep -q .
+}
+
 # Определение внешнего IP-адреса сервера (с кэшированием).
 #
 # Список 6 сервисов покрывает основные NAT и cloud-сценарии без
@@ -1033,6 +1043,16 @@ render_server_config() {
         log_error "Укажите его вручную и перезапустите шаг 6: export AWG_MAIN_NIC=<iface>"
         log_error "Доступные интерфейсы: $(ip -br link 2>/dev/null | awk '$1!="lo"{printf "%s ", $1}')"
         return 1
+    fi
+
+    # IPv6-only egress: интерфейс есть, но IPv4-выхода нет. Туннель на IPv4 (10.x)
+    # NAT'ится через MASQUERADE - на таком хосте IPv4-трафик клиентов наружу не
+    # пойдёт (issue #166). Предупреждаем, не блокируем: peer-to-peer внутри
+    # туннеля и IPv6-туннель (--allow-ipv6) работают.
+    if host_lacks_ipv4_egress "$nic"; then
+        log_warn "Похоже, хост IPv6-only: у $nic нет IPv4-выхода."
+        log_warn "VPN туннелирует IPv4, поэтому IPv4-трафик клиентов наружу не пойдёт."
+        log_warn "Нужен хост с IPv4-адресом (dual-stack) или NAT64."
     fi
 
     local server_ip subnet_mask
