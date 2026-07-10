@@ -63,10 +63,33 @@ mock_ip() {
     mock_ip
     export MOCK_PROBE=""
     export MOCK_DEF4=""
-    export MOCK_ADDR="5: wg-site@if3    inet 100.64.0.2/32 scope global wg-site"
+    export MOCK_ADDR="5: ens7@if3    inet 100.64.0.2/32 scope global ens7"
     run get_main_nic
     [ "$status" -eq 0 ]
-    [ "$output" = "wg-site" ]
+    [ "$output" = "ens7" ]
+}
+
+@test "v5.19.0: addr fallback skips tunnel/virtual ifaces (awg0, docker0) and picks the real NIC" {
+    mock_ip
+    export MOCK_PROBE=""
+    export MOCK_DEF4=""
+    export MOCK_ADDR="4: awg0    inet 10.9.9.1/24 scope global awg0
+5: docker0    inet 172.17.0.1/16 scope global docker0
+6: enp1s0    inet 203.0.113.7/24 scope global enp1s0"
+    run get_main_nic
+    [ "$status" -eq 0 ]
+    [ "$output" = "enp1s0" ]
+}
+
+@test "v5.19.0: awg0-only global IPv4 falls through to the IPv6 default route (reinstall on IPv6-only host)" {
+    mock_ip
+    export MOCK_PROBE=""
+    export MOCK_DEF4=""
+    export MOCK_ADDR="4: awg0    inet 10.9.9.1/24 scope global awg0"
+    export MOCK_DEF6="default via fe80::1 dev eth0 proto ra metric 100"
+    run get_main_nic
+    [ "$status" -eq 0 ]
+    [ "$output" = "eth0" ]
 }
 
 @test "v5.19.0 hy3g: falls back to default IPv6 route on IPv6-only egress" {
@@ -93,8 +116,10 @@ mock_ip() {
 @test "v5.19.0 hy3g: override with shell metacharacters is rejected (falls through)" {
     mock_ip
     export MOCK_PROBE="1.1.1.1 dev eth0"
-    export MOCK_LINKS="eth0"
-    export AWG_MAIN_NIC="eth0; rm -rf /"
+    # The metachar name IS a known link in the mock, so only the safety regex
+    # can reject it - deleting the regex fails this test (injection guard).
+    export MOCK_LINKS='eth0 eth0$(reboot)'
+    export AWG_MAIN_NIC='eth0$(reboot)'
     run get_main_nic
     [ "$status" -eq 0 ]
     [ "$output" = "eth0" ]
@@ -120,4 +145,19 @@ mock_ip() {
     run get_main_nic
     [ "$status" -eq 1 ]
     [ -z "$output" ]
+}
+
+# --- RU/EN parity (function bodies identical ignoring comments and localized
+# log messages) ---
+
+@test "v5.19.0: RU/EN bodies of get_main_nic and host_lacks_ipv4_egress are identical (sans comments/messages)" {
+    local fn ru en
+    for fn in get_main_nic host_lacks_ipv4_egress; do
+        ru=$(awk "/^${fn}\(\) \{\$/,/^}\$/" "$BATS_TEST_DIRNAME/../awg_common.sh" \
+            | grep -v '^[[:space:]]*#' | grep -v 'log_warn "')
+        en=$(awk "/^${fn}\(\) \{\$/,/^}\$/" "$BATS_TEST_DIRNAME/../awg_common_en.sh" \
+            | grep -v '^[[:space:]]*#' | grep -v 'log_warn "')
+        [ -n "$ru" ]
+        [ "$ru" = "$en" ]
+    done
 }

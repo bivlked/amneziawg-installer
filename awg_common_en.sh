@@ -207,19 +207,29 @@ get_main_nic() {
     # Accept a manual override only if it is an existing, safe ifname: the value
     # ends up in PostUp/PostDown (iptables -o ...), so reject names with shell
     # metacharacters and non-existent interfaces (fall through to auto-detect).
-    if [[ -n "${AWG_MAIN_NIC:-}" ]] \
-        && [[ "$AWG_MAIN_NIC" =~ ^[A-Za-z0-9._-]+$ ]] \
-        && ip link show dev "$AWG_MAIN_NIC" &>/dev/null; then
-        printf '%s\n' "$AWG_MAIN_NIC"
-        return 0
+    if [[ -n "${AWG_MAIN_NIC:-}" ]]; then
+        if [[ "$AWG_MAIN_NIC" =~ ^[A-Za-z0-9._-]+$ ]] \
+            && ip link show dev "$AWG_MAIN_NIC" &>/dev/null; then
+            printf '%s\n' "$AWG_MAIN_NIC"
+            return 0
+        fi
+        # Reject an invalid override LOUDLY (log_warn goes to stderr, so the $()
+        # output stays clean): a silent fall-through would confuse a user who
+        # already followed the export AWG_MAIN_NIC=... hint with a typo.
+        log_warn "AWG_MAIN_NIC='${AWG_MAIN_NIC}' ignored: interface not found or the name is invalid - continuing with auto-detection."
     fi
     local nic
     # 1) Real egress to a public address (FIB lookup, fast path for most hosts).
     nic=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
     # 2) Default IPv4 route (when the probe is unreachable/blocked).
     [[ -z "$nic" ]] && nic=$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
-    # 3) First non-loopback UP interface with a global IPv4 (no default route).
-    [[ -z "$nic" ]] && nic=$(ip -o -4 addr show up scope global 2>/dev/null | awk '$2!="lo"{sub(/@.*/,"",$2); print $2; exit}')
+    # 3) First UP interface with a global IPv4 (no default route). Exclude
+    #    tunnel/virtual interfaces (awg0 itself is UP with a 10.x scope-global
+    #    address on a --force reinstall, docker0/br-*/veth* on container hosts):
+    #    otherwise the NAT would hairpin through the tunnel itself, and the
+    #    IPv6-only warning would be silently suppressed (awg0 has a global IPv4).
+    [[ -z "$nic" ]] && nic=$(ip -o -4 addr show up scope global 2>/dev/null \
+        | awk '{sub(/@.*/,"",$2); if ($2!="lo" && $2 !~ /^(awg|wg|docker|br-|virbr|veth|lxc|tun|tap)/) { print $2; exit }}')
     # 4) Default IPv6 route (IPv6-only egress).
     [[ -z "$nic" ]] && nic=$(ip -6 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
     [[ -n "$nic" ]] || return 1
@@ -232,8 +242,11 @@ get_main_nic() {
 # must hold: on dual-stack/IPv4 hosts the function returns 1.
 host_lacks_ipv4_egress() {
     local nic="$1"
-    ! ip -4 route show default 2>/dev/null | grep -q . \
-        && ! ip -o -4 addr show dev "$nic" up scope global 2>/dev/null | grep -q .
+    # [[ -z $(...) ]] instead of "| grep -q .": grep -q exits on the first line,
+    # and under pipefail a multi-line ip output (several default routes) could
+    # yield SIGPIPE=141 -> a spurious "no route" on a healthy dual-stack host.
+    [[ -z "$(ip -4 route show default 2>/dev/null)" ]] \
+        && [[ -z "$(ip -o -4 addr show dev "$nic" up scope global 2>/dev/null)" ]]
 }
 
 # Detect server public IP (with caching).
@@ -1061,7 +1074,7 @@ render_server_config() {
     # IPv6-only egress: interface exists, but there is no IPv4 egress. The IPv4
     # tunnel (10.x) is NATed via MASQUERADE - on such a host IPv4 client traffic
     # will not leave (issue #166). Warn, do not block: peer-to-peer inside the
-    # tunnel and the IPv6 tunnel (--allow-ipv6) still work.
+    # tunnel and the IPv6 tunnel (--allow-ipv6-tunnel) still work.
     if host_lacks_ipv4_egress "$nic"; then
         log_warn "Host appears to be IPv6-only: $nic has no IPv4 egress."
         log_warn "The VPN tunnels IPv4, so IPv4 client traffic will not leave the host."
@@ -1415,7 +1428,7 @@ apply_config() {
 
 # Get the next free IP in the subnet (arbitrary /16-/30 mask). Server = network+1;
 # host range is [network+1 .. broadcast-1]. Returns the lowest free address
-# (early exit) — up to 65534 slots for /16, but no full scan in the common case.
+# (early exit) - up to 65534 slots for /16, but no full scan in the common case.
 get_next_client_ip() {
     local subnet="${AWG_TUNNEL_SUBNET:-10.9.9.1/24}"
     local net_int bcast_int
@@ -1475,7 +1488,7 @@ get_next_client_ipv6() {
         return 1
     }
     offset=$(( ip_int - net_int ))
-    (( offset >= 1 && offset <= bcast_int - net_int )) || { log_error "get_next_client_ipv6: IPv4 '$ipv4' outside subnet '$tunnel'"; return 1; }
+    (( offset >= 1 && offset < bcast_int - net_int )) || { log_error "get_next_client_ipv6: IPv4 '$ipv4' outside subnet '$tunnel'"; return 1; }
     if [[ "$tprefix" == "24" ]]; then
         suffix="$offset"
     else

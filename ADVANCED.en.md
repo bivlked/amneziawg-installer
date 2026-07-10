@@ -651,7 +651,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>Q: The desktop AmneziaVPN on macOS hangs on connect. What can I do?</strong></summary>
-  <b>A:</b> The desktop AmneziaVPN app on macOS does not yet support CPS (the <code>I1</code> parameter) - the newest AmneziaWG 2.0 obfuscation layer, so it hangs on connect. Mobile (iOS/Android) and CLI clients handle CPS and connect fine. Install with the <code>--no-cps</code> flag: the installer drops <code>I1</code> from the server config and all clients, and the desktop connects. Only the CPS layer is lost, the rest of the obfuscation (Jc/S1-S4/H1-H4) stays - which is exactly what worked in Russia before CPS existed. On an already-installed server it is the same via reinstall: <code>sudo bash install_amneziawg_en.sh --force --no-cps</code>, then reissue existing clients <code>sudo bash /root/awg/manage_amneziawg.sh regen</code> (without this a client that still has <code>I1</code> will not match a server without <code>I1</code>). To re-enable CPS later, reinstall with any set-regeneration flag, e.g. <code>--preset=default</code>. Issue <a href="https://github.com/bivlked/amneziawg-installer/issues/159">#159</a>.
+  <b>A:</b> The desktop AmneziaVPN app on macOS does not yet support CPS (the <code>I1</code> parameter) - the newest AmneziaWG 2.0 obfuscation layer, so it hangs on connect. Mobile (iOS/Android) and CLI clients handle CPS and connect fine. Install with the <code>--no-cps</code> flag: the installer drops <code>I1</code> from the server config and all clients, and the desktop connects. Only the CPS layer is lost, the rest of the obfuscation (Jc/S1-S4/H1-H4) stays - which is exactly what worked in Russia before CPS existed. On an already-installed server it is the same via reinstall: <code>sudo bash install_amneziawg_en.sh --force --no-cps</code>, then reissue existing clients <code>sudo bash /root/awg/manage_amneziawg.sh regen</code> (without this a client that still has <code>I1</code> will not match a server without <code>I1</code>). To re-enable CPS later, reinstall with any set-regeneration flag, e.g. <code>--preset=default</code> - note that this regenerates the WHOLE obfuscation set (H1-H4/S1-S4 too), so after re-enabling you need a <code>regen</code> of all clients again. The flag drops only <code>I1</code>: if you added <code>I2</code>-<code>I5</code> manually, they stay in the configs. Issue <a href="https://github.com/bivlked/amneziawg-installer/issues/159">#159</a>.
 </details>
 
 <details>
@@ -661,7 +661,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>Q: How do I change the internal VPN subnet?</strong></summary>
-  <b>A:</b> The easiest way is to uninstall (<code>sudo bash ./install_amneziawg_en.sh --uninstall</code>) and reinstall, specifying the new subnet during initial setup. A reinstall over a live server (<code>--force</code>) with a different subnet aborts while clients exist in the config — their addresses were issued in the old subnet.
+  <b>A:</b> The easiest way is to uninstall (<code>sudo bash ./install_amneziawg_en.sh --uninstall</code>) and reinstall, specifying the new subnet during initial setup. A reinstall over a live server (<code>--force</code>) with a different subnet aborts while clients exist in the config - their addresses were issued in the old subnet.
 </details>
 
 <details>
@@ -1004,10 +1004,9 @@ Step 6 detects the primary network interface (for NAT/MASQUERADE) via a chain: `
 Set the interface manually and re-run the install:
 
 1. List interface names: `ip -br link` (for example `eth0`, `ens3`)
-2. Export the one you want: `export AWG_MAIN_NIC=ens3`
-3. Re-run: `bash install_amneziawg.sh` - the value is picked up at step 6
+2. Re-run the install with the interface on the same command line: `sudo AWG_MAIN_NIC=ens3 bash install_amneziawg_en.sh` - the value is picked up at step 6. A separate `export AWG_MAIN_NIC=...` + `sudo bash ...` does not work: sudo resets the environment (if you are already root, a plain `export` works)
 
-The value is validated (an existing interface with no special characters), so a typo is simply ignored and auto-detection runs again.
+The value is validated (an existing interface with no special characters); on a typo the installer warns in the log and falls back to auto-detection.
 </details>
 
 ---

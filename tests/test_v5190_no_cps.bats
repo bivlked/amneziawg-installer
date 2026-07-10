@@ -72,6 +72,40 @@ CONF
     local inner
     inner=$(decode_vpn_uri "$(cat "$AWG_DIR/cpsoff.vpnuri")")
     [[ "$inner" != *'"I1"'* ]]
+    # Positive anchor: a degenerate empty inner config must not satisfy the test.
+    [[ "$inner" == *'"Jc"'* ]]
+}
+
+# Behavioral reinstall pin: the whole point of the render-side re-clear is
+# ORDERING - load_awg_params re-reads I1 from the live awg0.conf, and only
+# after that the NO_CPS=1 init state clears it. These tests run the real
+# render_server_config over a live CPS conf, so moving the clear before
+# load_awg_params (silently restoring I1 on reinstall) fails the first test.
+render_reinstall_fixture() {
+    create_init_config
+    create_server_config
+    echo "I1 = <r 155>" >> "$SERVER_CONF_FILE"   # old install's CPS
+    echo "I2 = <t>" >> "$SERVER_CONF_FILE"       # admin-set I2 must survive
+    echo "PRIVKEYPLACEHOLDER" > "$AWG_DIR/server_private.key"
+    get_main_nic() { echo eth0; }
+    host_lacks_ipv4_egress() { return 1; }
+}
+
+@test "v5.19.0 no-cps: reinstall render drops live I1 when init has NO_CPS=1 (keeps Jc, I2)" {
+    render_reinstall_fixture
+    echo "export NO_CPS=1" >> "$CONFIG_FILE"
+    run render_server_config
+    [ "$status" -eq 0 ]
+    ! grep -qE '^[[:space:]]*I1[[:space:]]*=' "$SERVER_CONF_FILE"
+    grep -q '^Jc = ' "$SERVER_CONF_FILE"
+    grep -q '^I2 = <t>' "$SERVER_CONF_FILE"
+}
+
+@test "v5.19.0 no-cps: reinstall render keeps live I1 when NO_CPS is not set" {
+    render_reinstall_fixture
+    run render_server_config
+    [ "$status" -eq 0 ]
+    grep -q '^I1 = <r 155>' "$SERVER_CONF_FILE"
 }
 
 @test "v5.19.0 no-cps: render_server_config honors NO_CPS (clears I1) in RU and EN" {

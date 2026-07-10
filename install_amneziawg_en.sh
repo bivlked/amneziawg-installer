@@ -33,7 +33,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="d350053b90b534d65211bf61f9c25c0f6fadccd46b2f55b3e3ea2299ec2b6209"
+COMMON_SCRIPT_SHA256="fa4730691a573e8bab29b2a80ce42808b7ad3806a68ede407976c61292a5aa04"
 MANAGE_SCRIPT_SHA256="94dd4bdbac1a1c840299e22fe5d2731f67e8b0fb54c20a9fc423848d627efdec"
 
 # CLI flags
@@ -684,7 +684,7 @@ validate_port() {
 
 validate_subnet() {
     local subnet="$1" o
-    # Self-contained (step 4, BEFORE awg_common.sh is downloaded): does not use
+    # Self-contained (step 0, BEFORE awg_common.sh is downloaded): does not use
     # _valid_ipv4/_cidr_bounds. Octets without leading zeros ('010...' would
     # otherwise be parsed as octal).
     if ! [[ "$subnet" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})/([0-9]{1,2})$ ]]; then
@@ -700,19 +700,19 @@ validate_subnet() {
     local mask=$(( (0xFFFFFFFF << (32 - 10#$prefix)) & 0xFFFFFFFF ))
     local network=$(( ip & mask ))
     local n1=$(( network + 1 ))
-    if (( ip != network && ip != network + 1 )); then
-        local srv="$(( (n1 >> 24) & 255 )).$(( (n1 >> 16) & 255 )).$(( (n1 >> 8) & 255 )).$(( n1 & 255 ))"
+    local srv="$(( (n1 >> 24) & 255 )).$(( (n1 >> 16) & 255 )).$(( (n1 >> 8) & 255 )).$(( n1 & 255 ))"
+    if (( ip != network && ip != n1 )); then
         die "Invalid subnet: '$subnet'. Server address must be ${srv} (network+1), or specify the network."
     fi
     # Normalize the global to <network+1>/<prefix> (server = network+1).
-    AWG_TUNNEL_SUBNET="$(( (n1 >> 24) & 255 )).$(( (n1 >> 16) & 255 )).$(( (n1 >> 8) & 255 )).$(( n1 & 255 ))/${prefix}"
+    AWG_TUNNEL_SUBNET="${srv}/${prefix}"
 }
 
 # Subnet-change guard: [Peer] blocks are carried over verbatim on reinstall
 # (render_server_config), and their addresses were issued in the OLD subnet.
 # Changing the subnet under live clients breaks them: old IPv4s can fall
 # outside the new range, and IPv6 suffixes can collide (the decimal /24
-# encoding vs hex for /16-/23 yields two peers with the same ::x). So the
+# encoding vs hex for non-/24 masks yields two peers with the same ::x). So the
 # install aborts when peers exist and the subnet differs (PR #167 review).
 # Self-contained (step 0, BEFORE awg_common.sh is downloaded). The old
 # subnet is the first Address value in the awg0.conf [Interface]: it is the
@@ -726,8 +726,10 @@ guard_subnet_change_with_peers() {
     old_subnet=$(sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null \
         | head -n1 | cut -d',' -f1 | tr -d '[:space:]')
     if [[ -z "$old_subnet" ]]; then
-        log_warn "Could not read Address from $SERVER_CONF_FILE - skipping the subnet-change check."
-        return 0
+        # Peers exist but the old subnet cannot be determined - fail closed: a
+        # silent continue would re-render the config in the new subnet and break
+        # the clients.
+        die "${SERVER_CONF_FILE} already contains peers, but the Address line in [Interface] is unreadable - the subnet-change check is impossible. Restore the Address line, or remove the clients (sudo bash $MANAGE_SCRIPT_PATH remove <name>), or run --uninstall and reinstall from scratch."
     fi
     if [[ "$old_subnet" != "$AWG_TUNNEL_SUBNET" ]]; then
         die "The tunnel subnet changed (${old_subnet} -> ${AWG_TUNNEL_SUBNET}), but ${SERVER_CONF_FILE} already contains peers: their addresses were issued in the old subnet, and changing it breaks the clients. Options: keep the previous subnet; remove all clients (sudo bash $MANAGE_SCRIPT_PATH remove <name>); or run --uninstall and reinstall from scratch."
@@ -2132,7 +2134,7 @@ initialize_setup() {
             log_warn "WARNING: --no-cps drops the I1 (CPS) parameter. Existing client configs that still carry I1 will stop connecting - reissue them: sudo bash $MANAGE_SCRIPT_PATH regen"
         fi
         AWG_I1=''
-        log "CPS (I1) disabled (--no-cps): the desktop AmneziaVPN on macOS does not support CPS."
+        log "CPS (I1) disabled (--no-cps / persisted NO_CPS=1): the desktop AmneziaVPN on macOS does not support CPS."
     fi
 
     # Save configuration

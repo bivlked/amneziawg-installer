@@ -33,7 +33,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="4c115da019d5e60f6b2089e64eea0937e5ad646f60979478b6a94c56de600440"
+COMMON_SCRIPT_SHA256="b3fa4f5fa2d703592069a3ed0fdd87a1e19158e5d55a8e63d4f97771c50e4ac4"
 MANAGE_SCRIPT_SHA256="4ba519911f706693c5ea1b88e1b9789502c8ea4b4195d53245b4929b0463b814"
 
 # Флаги CLI
@@ -678,7 +678,7 @@ validate_port() {
 
 validate_subnet() {
     local subnet="$1" o
-    # Самодостаточно (шаг 4, ДО загрузки awg_common.sh): не используем _valid_ipv4/
+    # Самодостаточно (шаг 0, ДО загрузки awg_common.sh): не используем _valid_ipv4/
     # _cidr_bounds. Октеты без ведущих нулей ('010...' иначе трактуется как octal).
     if ! [[ "$subnet" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})/([0-9]{1,2})$ ]]; then
         die "Некорректная подсеть: '$subnet'. Ожидается CIDR /16-/30, напр. 10.9.0.0/16."
@@ -693,19 +693,19 @@ validate_subnet() {
     local mask=$(( (0xFFFFFFFF << (32 - 10#$prefix)) & 0xFFFFFFFF ))
     local network=$(( ip & mask ))
     local n1=$(( network + 1 ))
-    if (( ip != network && ip != network + 1 )); then
-        local srv="$(( (n1 >> 24) & 255 )).$(( (n1 >> 16) & 255 )).$(( (n1 >> 8) & 255 )).$(( n1 & 255 ))"
+    local srv="$(( (n1 >> 24) & 255 )).$(( (n1 >> 16) & 255 )).$(( (n1 >> 8) & 255 )).$(( n1 & 255 ))"
+    if (( ip != network && ip != n1 )); then
         die "Некорректная подсеть: '$subnet'. Адрес сервера должен быть ${srv} (network+1) или укажите сеть."
     fi
     # Нормализация глобала к <network+1>/<prefix> (сервер = network+1).
-    AWG_TUNNEL_SUBNET="$(( (n1 >> 24) & 255 )).$(( (n1 >> 16) & 255 )).$(( (n1 >> 8) & 255 )).$(( n1 & 255 ))/${prefix}"
+    AWG_TUNNEL_SUBNET="${srv}/${prefix}"
 }
 
 # Guard смены подсети: [Peer]-блоки переносятся при переустановке как есть
 # (render_server_config), их адреса выданы в СТАРОЙ подсети. Смена подсети
 # под живыми клиентами ломает их: старые IPv4 могут выпасть из нового
 # диапазона, а IPv6-суффиксы - столкнуться (decimal-кодировка /24 против
-# hex у /16-/23 даёт два пира с одним ::x). Поэтому при наличии пиров
+# hex у не-/24 масок даёт два пира с одним ::x). Поэтому при наличии пиров
 # установка с другой подсетью прерывается (ревью PR #167). Самодостаточно
 # (шаг 0, ДО загрузки awg_common.sh). Старая подсеть - первое значение
 # Address в [Interface] awg0.conf: это нормализованный <network+1>/<prefix>,
@@ -718,8 +718,9 @@ guard_subnet_change_with_peers() {
     old_subnet=$(sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null \
         | head -n1 | cut -d',' -f1 | tr -d '[:space:]')
     if [[ -z "$old_subnet" ]]; then
-        log_warn "Не удалось прочитать Address из $SERVER_CONF_FILE - пропускаю проверку смены подсети."
-        return 0
+        # Пиры есть, а старую подсеть определить нельзя - fail-closed: молчаливое
+        # продолжение перерендерило бы конфиг в новой подсети и сломало клиентов.
+        die "В ${SERVER_CONF_FILE} уже есть пиры, но строка Address в [Interface] не читается - проверить смену подсети невозможно. Восстановите Address, либо удалите клиентов (sudo bash $MANAGE_SCRIPT_PATH remove <имя>), либо --uninstall и чистая установка."
     fi
     if [[ "$old_subnet" != "$AWG_TUNNEL_SUBNET" ]]; then
         die "Подсеть туннеля изменена (${old_subnet} -> ${AWG_TUNNEL_SUBNET}), но в ${SERVER_CONF_FILE} уже есть пиры: их адреса выданы в старой подсети, смена сломает клиентов. Варианты: оставьте прежнюю подсеть; удалите всех клиентов (sudo bash $MANAGE_SCRIPT_PATH remove <имя>); либо --uninstall и чистая установка."
@@ -2121,7 +2122,7 @@ initialize_setup() {
             log_warn "ВНИМАНИЕ: --no-cps убирает параметр I1 (CPS). Существующие клиентские конфиги с I1 перестанут подключаться - перевыпустите их: sudo bash $MANAGE_SCRIPT_PATH regen"
         fi
         AWG_I1=''
-        log "CPS (I1) отключён (--no-cps): десктопный AmneziaVPN на macOS не поддерживает CPS."
+        log "CPS (I1) отключён (--no-cps / сохранённый NO_CPS=1): десктопный AmneziaVPN на macOS не поддерживает CPS."
     fi
 
     # Сохранение конфигурации

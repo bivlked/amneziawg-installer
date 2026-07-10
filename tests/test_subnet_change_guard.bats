@@ -83,12 +83,16 @@ mk_conf() {
     [ "$status" -ne 0 ]
 }
 
-@test "guard: пиры, но нет строки Address -> warn + ok" {
+# Fail-closed (ревью v5.19.0): пиры есть, а старую подсеть определить нельзя -
+# молчаливое продолжение перерендерило бы конфиг в новой подсети и сломало
+# клиентов, поэтому guard прерывает установку, а не пропускает проверку.
+@test "guard: пиры, но нет строки Address -> die (fail-closed)" {
     mk_conf "" 1
     AWG_TUNNEL_SUBNET="10.9.0.1/16"
     run guard_subnet_change_with_peers
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"WARN:"* ]]
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"DIE:"* ]]
+    [[ "$output" == *"Address"* ]]
 }
 
 # --- edge cases: без пробелов вокруг "=" и CRLF-концы строк ---

@@ -167,7 +167,7 @@ _valid_host_or_ipv4() {
 # Чистые функции, только bash-арифметика ($(( ))), без внешних зависимостей.
 # set-e-safe: значения берём через $(( ))/local, guard'ы через "|| return".
 
-# _ipv4_to_int <a.b.c.d> : 32-битное целое из IPv4. Guard входа — _valid_ipv4
+# _ipv4_to_int <a.b.c.d> : 32-битное целое из IPv4. Guard входа - _valid_ipv4
 # (не переизобретаем проверку октетов). 10# защищает от трактовки ведущего нуля
 # как восьмеричного числа.
 _ipv4_to_int() {
@@ -207,19 +207,29 @@ get_main_nic() {
     # значение попадает в PostUp/PostDown (iptables -o ...), поэтому имена с
     # shell-метасимволами и несуществующие интерфейсы отвергаем (fall-through
     # к авто-детекту).
-    if [[ -n "${AWG_MAIN_NIC:-}" ]] \
-        && [[ "$AWG_MAIN_NIC" =~ ^[A-Za-z0-9._-]+$ ]] \
-        && ip link show dev "$AWG_MAIN_NIC" &>/dev/null; then
-        printf '%s\n' "$AWG_MAIN_NIC"
-        return 0
+    if [[ -n "${AWG_MAIN_NIC:-}" ]]; then
+        if [[ "$AWG_MAIN_NIC" =~ ^[A-Za-z0-9._-]+$ ]] \
+            && ip link show dev "$AWG_MAIN_NIC" &>/dev/null; then
+            printf '%s\n' "$AWG_MAIN_NIC"
+            return 0
+        fi
+        # Невалидный оверрайд отбрасываем ГРОМКО (log_warn идёт в stderr, вывод
+        # $() не загрязняет): молчаливый fall-through путал бы пользователя,
+        # который уже выполнил подсказку export AWG_MAIN_NIC=... с опечаткой.
+        log_warn "AWG_MAIN_NIC='${AWG_MAIN_NIC}' проигнорирован: интерфейс не найден или имя некорректно - продолжаю авто-детект."
     fi
     local nic
     # 1) Реальный egress к публичному адресу (FIB-lookup, быстрый путь для большинства хостов).
     nic=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
     # 2) Дефолтный IPv4-маршрут (когда зонд недостижим/заблокирован).
     [[ -z "$nic" ]] && nic=$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
-    # 3) Первый не-loopback UP-интерфейс с глобальным IPv4 (нет дефолт-маршрута).
-    [[ -z "$nic" ]] && nic=$(ip -o -4 addr show up scope global 2>/dev/null | awk '$2!="lo"{sub(/@.*/,"",$2); print $2; exit}')
+    # 3) Первый UP-интерфейс с глобальным IPv4 (нет дефолт-маршрута). Исключаем
+    #    туннельные/виртуальные (awg0 сам UP с 10.x scope global при --force
+    #    переустановке, docker0/br-*/veth* на хостах с контейнерами) - иначе
+    #    NAT ушёл бы в hairpin через сам туннель, а IPv6-only warning молча
+    #    подавился бы (у awg0 есть глобальный IPv4).
+    [[ -z "$nic" ]] && nic=$(ip -o -4 addr show up scope global 2>/dev/null \
+        | awk '{sub(/@.*/,"",$2); if ($2!="lo" && $2 !~ /^(awg|wg|docker|br-|virbr|veth|lxc|tun|tap)/) { print $2; exit }}')
     # 4) Дефолтный IPv6-маршрут (IPv6-only egress).
     [[ -z "$nic" ]] && nic=$(ip -6 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
     [[ -n "$nic" ]] || return 1
@@ -232,8 +242,11 @@ get_main_nic() {
 # Оба условия должны совпасть: на dual-stack/IPv4 хостах функция вернёт 1.
 host_lacks_ipv4_egress() {
     local nic="$1"
-    ! ip -4 route show default 2>/dev/null | grep -q . \
-        && ! ip -o -4 addr show dev "$nic" up scope global 2>/dev/null | grep -q .
+    # [[ -z $(...) ]] вместо "| grep -q .": grep -q выходит на первой строке, и
+    # под pipefail многострочный вывод ip (несколько default-маршрутов) мог бы
+    # дать SIGPIPE=141 -> ложное "маршрута нет" на здоровом dual-stack хосте.
+    [[ -z "$(ip -4 route show default 2>/dev/null)" ]] \
+        && [[ -z "$(ip -o -4 addr show dev "$nic" up scope global 2>/dev/null)" ]]
 }
 
 # Определение внешнего IP-адреса сервера (с кэшированием).
@@ -1055,7 +1068,7 @@ render_server_config() {
     # IPv6-only egress: интерфейс есть, но IPv4-выхода нет. Туннель на IPv4 (10.x)
     # NAT'ится через MASQUERADE - на таком хосте IPv4-трафик клиентов наружу не
     # пойдёт (issue #166). Предупреждаем, не блокируем: peer-to-peer внутри
-    # туннеля и IPv6-туннель (--allow-ipv6) работают.
+    # туннеля и IPv6-туннель (--allow-ipv6-tunnel) работают.
     if host_lacks_ipv4_egress "$nic"; then
         log_warn "Похоже, хост IPv6-only: у $nic нет IPv4-выхода."
         log_warn "VPN туннелирует IPv4, поэтому IPv4-трафик клиентов наружу не пойдёт."
@@ -1407,7 +1420,7 @@ apply_config() {
 
 # Получить следующий свободный IP в подсети (произвольная маска /16-/30).
 # Сервер = network+1; диапазон хостов [network+1 .. broadcast-1]. Возвращает
-# наименьший свободный (ранний выход) — для /16 это до 65534 позиций, но без
+# наименьший свободный (ранний выход) - для /16 это до 65534 позиций, но без
 # полного скана в типичном случае.
 get_next_client_ip() {
     local subnet="${AWG_TUNNEL_SUBNET:-10.9.9.1/24}"
@@ -1468,7 +1481,7 @@ get_next_client_ipv6() {
         return 1
     }
     offset=$(( ip_int - net_int ))
-    (( offset >= 1 && offset <= bcast_int - net_int )) || { log_error "get_next_client_ipv6: IPv4 '$ipv4' вне подсети '$tunnel'"; return 1; }
+    (( offset >= 1 && offset < bcast_int - net_int )) || { log_error "get_next_client_ipv6: IPv4 '$ipv4' вне подсети '$tunnel'"; return 1; }
     if [[ "$tprefix" == "24" ]]; then
         suffix="$offset"
     else
