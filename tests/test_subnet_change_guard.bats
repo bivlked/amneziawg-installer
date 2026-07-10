@@ -10,6 +10,7 @@ setup() {
     log()       { :; }
     log_warn()  { echo "WARN: $*"; }
     log_error() { :; }
+    # shellcheck disable=SC2034  # используется внутри eval-извлечённого guard (die-сообщение)
     MANAGE_SCRIPT_PATH="/root/awg/manage_amneziawg.sh"
     eval "$(awk '/^validate_port\(\) \{/{f=1} f{print} /^configure_routing_mode\(\) \{/{exit}' \
         "$ROOT/install_amneziawg.sh" | sed '/^configure_routing_mode/d')"
