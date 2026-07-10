@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.19.0] - 2026-07-11
+
+**v5.19.0** - full CIDR /16-/30 tunnel subnets (contributed by @ekuraev), a `--no-cps` switch for the macOS desktop client, and more robust network-interface detection.
+
 ### Added
 
 - **Full CIDR for the tunnel subnet.** `--subnet` and the interactive prompt now accept /16-/30 masks (previously /24 only). The server address is the first host (network+1); input is in network or network+1 form. The `10.9.9.1/24` default and existing installs are unaffected. The IPv6 tunnel maps clients by host offset (no collisions on masks wider than /24).
@@ -1517,6 +1521,7 @@ Major security and reliability update after several consecutive code audits. The
 - Full uninstall (`--uninstall`).
 
 [Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.3...HEAD
+[5.19.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.4...v5.19.0
 [5.18.4]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.3...v5.18.4
 [5.18.3]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.2...v5.18.3
 [5.18.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.1...v5.18.2

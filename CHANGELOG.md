@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [5.19.0] - 2026-07-11
+
+**v5.19.0** - произвольные подсети туннеля CIDR /16-/30 (вклад @ekuraev), флаг `--no-cps` для десктопного AmneziaVPN на macOS и более надёжное определение сетевого интерфейса.
+
 ### Добавлено
 
 - **Полноценный CIDR для подсети туннеля.** `--subnet` и интерактивный ввод теперь принимают маски /16-/30 (ранее только /24). Адрес сервера - первый хост подсети (network+1); ввод - в форме network или network+1. Дефолт `10.9.9.1/24` и существующие инсталляции не затронуты. IPv6-туннель мапит клиентов по смещению хоста (без коллизий на масках шире /24).
@@ -1517,6 +1521,7 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Полная деинсталляция (`--uninstall`).
 
 [Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.3...HEAD
+[5.19.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.4...v5.19.0
 [5.18.4]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.3...v5.18.4
 [5.18.3]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.2...v5.18.3
 [5.18.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.1...v5.18.2
