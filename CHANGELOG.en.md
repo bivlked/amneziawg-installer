@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Network-interface detection no longer aborts the install on hosts where the `1.1.1.1` probe returns no interface - the provider blocks or null-routes that address, policy-routing, or IPv6-only egress (seen on Ubuntu 26.04 / Timeweb). `get_main_nic` now tries a chain: `ip route get`, the default IPv4 route, the first global-IPv4 interface, the default IPv6 route; on total failure it prints the available interfaces and a hint. The interface can be set manually with `AWG_MAIN_NIC=<iface>`. Previously step 6 aborted with "Failed to detect network interface" (#166)
+
 ---
 
 ## [5.18.4] - 2026-07-06

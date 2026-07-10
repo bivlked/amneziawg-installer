@@ -163,9 +163,33 @@ _valid_host_or_ipv4() {
     return 0
 }
 
-# Определение основного сетевого интерфейса
+# Определение основного сетевого интерфейса (egress).
+# Цепочка fallback, чтобы не падать на хостах, где зонд к 1.1.1.1 не отдаёт
+# интерфейс: провайдер null-route'ит/блокирует адрес, policy-routing или
+# IPv6-only egress (наблюдалось на Ubuntu 26.04 / Timeweb, issue #166).
+# Ручное переопределение: export AWG_MAIN_NIC=<iface> перед запуском.
 get_main_nic() {
-    ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1); exit}'
+    # Ручной оверрайд принимаем только если это существующий безопасный ifname:
+    # значение попадает в PostUp/PostDown (iptables -o ...), поэтому имена с
+    # shell-метасимволами и несуществующие интерфейсы отвергаем (fall-through
+    # к авто-детекту).
+    if [[ -n "${AWG_MAIN_NIC:-}" ]] \
+        && [[ "$AWG_MAIN_NIC" =~ ^[A-Za-z0-9._-]+$ ]] \
+        && ip link show dev "$AWG_MAIN_NIC" &>/dev/null; then
+        printf '%s\n' "$AWG_MAIN_NIC"
+        return 0
+    fi
+    local nic
+    # 1) Реальный egress к публичному адресу (FIB-lookup, быстрый путь для большинства хостов).
+    nic=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+    # 2) Дефолтный IPv4-маршрут (когда зонд недостижим/заблокирован).
+    [[ -z "$nic" ]] && nic=$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+    # 3) Первый не-loopback UP-интерфейс с глобальным IPv4 (нет дефолт-маршрута).
+    [[ -z "$nic" ]] && nic=$(ip -o -4 addr show up scope global 2>/dev/null | awk '$2!="lo"{sub(/@.*/,"",$2); print $2; exit}')
+    # 4) Дефолтный IPv6-маршрут (IPv6-only egress).
+    [[ -z "$nic" ]] && nic=$(ip -6 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+    [[ -n "$nic" ]] || return 1
+    printf '%s\n' "$nic"
 }
 
 # Определение внешнего IP-адреса сервера (с кэшированием).
@@ -972,6 +996,8 @@ render_server_config() {
     nic=$(get_main_nic)
     if [[ -z "$nic" ]]; then
         log_error "Не удалось определить сетевой интерфейс."
+        log_error "Укажите его вручную и перезапустите шаг 6: export AWG_MAIN_NIC=<iface>"
+        log_error "Доступные интерфейсы: $(ip -br link 2>/dev/null | awk '$1!="lo"{printf "%s ", $1}')"
         return 1
     fi
 

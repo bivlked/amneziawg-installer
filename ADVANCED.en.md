@@ -985,6 +985,20 @@ The specific case (an AWG 2.0 server with `S3`/`S4` > 0 and an old AWG 1.0 clien
 3. For port change instructions, see the FAQ "How do I change the port"
 </details>
 
+<details>
+<summary><strong>Install aborts at step 6: "Failed to detect network interface"</strong></summary>
+
+Step 6 detects the primary network interface (for NAT/MASQUERADE) via a chain: `ip route get 1.1.1.1`, the default IPv4 route, the first global-IPv4 interface, the default IPv6 route. If every method comes back empty, the provider blocks or null-routes `1.1.1.1`, policy-routing is in use, or egress is IPv6-only (seen on Ubuntu 26.04 / Timeweb).
+
+Set the interface manually and re-run the install:
+
+1. List interface names: `ip -br link` (for example `eth0`, `ens3`)
+2. Export the one you want: `export AWG_MAIN_NIC=ens3`
+3. Re-run: `bash install_amneziawg.sh` - the value is picked up at step 6
+
+The value is validated (an existing interface with no special characters), so a typo is simply ignored and auto-detection runs again.
+</details>
+
 ---
 
 <a id="stats-adv"></a>

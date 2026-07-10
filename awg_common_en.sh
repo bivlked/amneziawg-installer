@@ -164,9 +164,32 @@ _valid_host_or_ipv4() {
     return 0
 }
 
-# Detect primary network interface
+# Detect primary (egress) network interface.
+# Fallback chain so we don't abort on hosts where the 1.1.1.1 probe returns no
+# interface: the provider null-routes/blocks the address, policy-routing, or
+# IPv6-only egress (seen on Ubuntu 26.04 / Timeweb, issue #166).
+# Manual override: export AWG_MAIN_NIC=<iface> before running.
 get_main_nic() {
-    ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1); exit}'
+    # Accept a manual override only if it is an existing, safe ifname: the value
+    # ends up in PostUp/PostDown (iptables -o ...), so reject names with shell
+    # metacharacters and non-existent interfaces (fall through to auto-detect).
+    if [[ -n "${AWG_MAIN_NIC:-}" ]] \
+        && [[ "$AWG_MAIN_NIC" =~ ^[A-Za-z0-9._-]+$ ]] \
+        && ip link show dev "$AWG_MAIN_NIC" &>/dev/null; then
+        printf '%s\n' "$AWG_MAIN_NIC"
+        return 0
+    fi
+    local nic
+    # 1) Real egress to a public address (FIB lookup, fast path for most hosts).
+    nic=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+    # 2) Default IPv4 route (when the probe is unreachable/blocked).
+    [[ -z "$nic" ]] && nic=$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+    # 3) First non-loopback UP interface with a global IPv4 (no default route).
+    [[ -z "$nic" ]] && nic=$(ip -o -4 addr show up scope global 2>/dev/null | awk '$2!="lo"{sub(/@.*/,"",$2); print $2; exit}')
+    # 4) Default IPv6 route (IPv6-only egress).
+    [[ -z "$nic" ]] && nic=$(ip -6 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+    [[ -n "$nic" ]] || return 1
+    printf '%s\n' "$nic"
 }
 
 # Detect server public IP (with caching).
@@ -979,6 +1002,8 @@ render_server_config() {
     nic=$(get_main_nic)
     if [[ -z "$nic" ]]; then
         log_error "Failed to detect network interface."
+        log_error "Set it manually and re-run step 6: export AWG_MAIN_NIC=<iface>"
+        log_error "Available interfaces: $(ip -br link 2>/dev/null | awk '$1!="lo"{printf "%s ", $1}')"
         return 1
     fi
 
