@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Early kernel-version check: on kernels older than 5.15 (for example Ubuntu 20.04 with kernel 5.4) the installer warns clearly and up front that the AmneziaWG 2.0 module usually will not build on such a kernel and suggests reinstalling the VPS on a supported OS, instead of an opaque package-install failure at the module build step ([#163](https://github.com/bivlked/amneziawg-installer/issues/163)).
+
 ### Fixed
 
 - Changing the routing mode after install works again: `--route-all` / `--route-amnezia` on reinstall (`--force`) changed only `ALLOWED_IPS_MODE` while the `ALLOWED_IPS` list kept the old value from `awgsetup_cfg.init` — the flag silently had no effect, and new clients still got the old routes. An explicit CLI mode now clears the list so it is recomputed for the new mode (#170)

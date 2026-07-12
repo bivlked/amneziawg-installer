@@ -431,6 +431,34 @@ check_os_version() {
     fi
 }
 
+check_kernel_version() {
+    # The AmneziaWG 2.0 module is built via DKMS against the host kernel. On
+    # kernels older than 5.15 (Ubuntu < 22.04, e.g. 5.4 on 20.04) the build
+    # usually fails at step 2 with an opaque package-failure. Warn EXPLICITLY and
+    # early, before updates and reboots (issue #163). Not a die: on some older
+    # kernels the module still builds (HWE and such), so WARN + confirm.
+    local kver kmaj kmin
+    kver=$(uname -r)
+    kmaj=${kver%%.*}
+    kmin=${kver#*.}; kmin=${kmin%%.*}
+    if ! [[ "$kmaj" =~ ^[0-9]+$ ]] || ! [[ "$kmin" =~ ^[0-9]+$ ]]; then
+        log_warn "Could not parse the kernel version ('$kver') - skipping the minimum-version check."
+        return 0
+    fi
+    if (( kmaj < 5 || (kmaj == 5 && kmin < 15) )); then
+        log_warn "Kernel $kver is older than 5.15 - usually too old for the AmneziaWG 2.0 module."
+        log_warn "The DKMS module build on such a kernel most often fails. Reinstall the VPS on Ubuntu 24.04 LTS or Debian 12 (or newer). Matrix: Ubuntu 24.04/25.10/26.04, Debian 12/13."
+        if [[ "$AUTO_YES" -eq 0 ]]; then
+            read -rp "Continue anyway? [y/N]: " confirm < /dev/tty
+            if ! [[ "$confirm" =~ ^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$ ]]; then die "Cancelled: kernel $kver is too old for the AmneziaWG 2.0 module."; fi
+        else
+            log "Continuing on kernel $kver (--yes)."
+        fi
+    else
+        log "Kernel $kver (OK for the AmneziaWG 2.0 module)."
+    fi
+}
+
 check_free_space() {
     log "Checking disk space..."
     local req=2048
@@ -1981,6 +2009,7 @@ initialize_setup() {
     log "Log file: $LOG_FILE"
 
     check_os_version
+    check_kernel_version
     check_free_space
 
     local default_port=39743

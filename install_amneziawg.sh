@@ -426,6 +426,34 @@ check_os_version() {
     fi
 }
 
+check_kernel_version() {
+    # Модуль AmneziaWG 2.0 собирается через DKMS против ядра хоста. На ядрах
+    # старше 5.15 (Ubuntu < 22.04, напр. 5.4 на 20.04) сборка обычно падает уже
+    # на шаге 2 - невнятным package-failure. Предупреждаем ЯВНО и рано, до
+    # обновлений и перезагрузок (issue #163). Не die: на части старых ядер модуль
+    # всё же собирается (HWE и подобное), поэтому WARN + подтверждение.
+    local kver kmaj kmin
+    kver=$(uname -r)
+    kmaj=${kver%%.*}
+    kmin=${kver#*.}; kmin=${kmin%%.*}
+    if ! [[ "$kmaj" =~ ^[0-9]+$ ]] || ! [[ "$kmin" =~ ^[0-9]+$ ]]; then
+        log_warn "Не удалось разобрать версию ядра ('$kver') - пропускаю проверку минимальной версии."
+        return 0
+    fi
+    if (( kmaj < 5 || (kmaj == 5 && kmin < 15) )); then
+        log_warn "Ядро $kver старее 5.15 - для модуля AmneziaWG 2.0 это обычно слишком старо."
+        log_warn "DKMS-сборка модуля на таком ядре чаще всего падает. Рекомендуется переустановить VPS на Ubuntu 24.04 LTS или Debian 12 (либо новее). Матрица: Ubuntu 24.04/25.10/26.04, Debian 12/13."
+        if [[ "$AUTO_YES" -eq 0 ]]; then
+            read -rp "Всё равно продолжить? [y/N]: " confirm < /dev/tty
+            if ! [[ "$confirm" =~ ^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$ ]]; then die "Отмена: ядро $kver слишком старое для модуля AmneziaWG 2.0."; fi
+        else
+            log "Продолжаем на ядре $kver (--yes)."
+        fi
+    else
+        log "Ядро $kver (OK для модуля AmneziaWG 2.0)."
+    fi
+}
+
 check_free_space() {
     log "Проверка места..."
     local req=2048
@@ -1971,6 +1999,7 @@ initialize_setup() {
     log "Лог файл: $LOG_FILE"
 
     check_os_version
+    check_kernel_version
     check_free_space
 
     local default_port=39743
