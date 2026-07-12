@@ -16,13 +16,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Early kernel-version check: on kernels older than 5.15 (for example Ubuntu 20.04 with kernel 5.4) the installer warns clearly and up front that the AmneziaWG 2.0 module usually will not build on such a kernel and suggests reinstalling the VPS on a supported OS, instead of an opaque package-install failure at the module build step ([#163](https://github.com/bivlked/amneziawg-installer/issues/163)).
 
+- **`manage regen --reset-routes` flag.** A regular `regen` deliberately preserves the client's individual `AllowedIPs` (`modify` customizations), so a new global routing mode never reached existing clients. With `--reset-routes` regenerated clients get the `AllowedIPs` of the current global mode from `awgsetup_cfg.init` (DNS and PersistentKeepalive are still preserved). After a mode change on reinstall the installer prints a hint with this command (#170)
+
 ### Fixed
 
 - Changing the routing mode after install works again: `--route-all` / `--route-amnezia` on reinstall (`--force`) changed only `ALLOWED_IPS_MODE` while the `ALLOWED_IPS` list kept the old value from `awgsetup_cfg.init` — the flag silently had no effect, and new clients still got the old routes. An explicit CLI mode now clears the list so it is recomputed for the new mode (#170)
-
-### Added
-
-- **`manage regen --reset-routes` flag.** A regular `regen` deliberately preserves the client's individual `AllowedIPs` (`modify` customizations), so a new global routing mode never reached existing clients. With `--reset-routes` regenerated clients get the `AllowedIPs` of the current global mode from `awgsetup_cfg.init` (DNS and PersistentKeepalive are still preserved). After a mode change on reinstall the installer prints a hint with this command (#170)
+- The live-peer subnet-change guard now picks the IPv4 element from a dual-stack `Address` line in any order. Previously it took the first comma field, so an `Address` with IPv6 first could trigger a false install block.
 
 ## [5.19.0] - 2026-07-11
 

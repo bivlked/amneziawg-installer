@@ -743,8 +743,12 @@ guard_subnet_change_with_peers() {
     [[ -f "$SERVER_CONF_FILE" ]] || return 0
     grep -q '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null || return 0
     local old_subnet
+    # Address может быть dual-stack ("IPv4/n, IPv6/n") в любом порядке - берём
+    # именно IPv4-элемент, а не просто первый через запятую (иначе IPv6-первый
+    # Address дал бы ложную смену подсети). Нет IPv4 -> пусто -> fail-closed ниже.
     old_subnet=$(sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null \
-        | head -n1 | cut -d',' -f1 | tr -d '[:space:]')
+        | head -n1 | tr ',' '\n' | sed 's/[[:space:]]//g' \
+        | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$')
     if [[ -z "$old_subnet" ]]; then
         # Пиры есть, а старую подсеть определить нельзя - fail-closed: молчаливое
         # продолжение перерендерило бы конфиг в новой подсети и сломало клиентов.

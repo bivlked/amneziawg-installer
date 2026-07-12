@@ -74,7 +74,7 @@ mk_conf() {
     [ "$status" -eq 0 ]
 }
 
-@test "guard: Address с IPv6-хвостом через запятую - берётся первое значение" {
+@test "guard: Address с IPv6-хвостом через запятую - берётся IPv4-элемент" {
     mk_conf "10.9.9.1/24, fddd:2c4:2c4:2c4::1/64" 1
     AWG_TUNNEL_SUBNET="10.9.9.1/24"
     run guard_subnet_change_with_peers
@@ -82,6 +82,19 @@ mk_conf() {
     AWG_TUNNEL_SUBNET="10.9.0.1/16"
     run guard_subnet_change_with_peers
     [ "$status" -ne 0 ]
+}
+
+# v5.19.1: dual-stack Address в ЛЮБОМ порядке - guard выбирает именно IPv4-CIDR,
+# а не первый comma-элемент (IPv6-первый Address раньше давал ложную "смену").
+@test "guard: Address с IPv6 ПЕРВЫМ - IPv4-элемент всё равно выбирается" {
+    mk_conf "fddd:2c4:2c4:2c4::1/64, 10.9.9.1/24" 1
+    AWG_TUNNEL_SUBNET="10.9.9.1/24"
+    run guard_subnet_change_with_peers
+    [ "$status" -eq 0 ]
+    AWG_TUNNEL_SUBNET="10.9.0.1/16"
+    run guard_subnet_change_with_peers
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"DIE:"* ]]
 }
 
 # Fail-closed (ревью v5.19.0): пиры есть, а старую подсеть определить нельзя -
