@@ -36,27 +36,27 @@ mk_conf() {
     } > "$SERVER_CONF_FILE"
 }
 
-@test "guard: нет awg0.conf -> ok" {
+@test "guard: no awg0.conf -> ok" {
     AWG_TUNNEL_SUBNET="10.9.0.1/16"
     run guard_subnet_change_with_peers
     [ "$status" -eq 0 ]
 }
 
-@test "guard: конфиг без пиров + смена подсети -> ok" {
+@test "guard: config without peers + subnet change -> ok" {
     mk_conf "10.9.9.1/24" 0
     AWG_TUNNEL_SUBNET="10.9.0.1/16"
     run guard_subnet_change_with_peers
     [ "$status" -eq 0 ]
 }
 
-@test "guard: пиры + та же подсеть -> ok" {
+@test "guard: peers + same subnet -> ok" {
     mk_conf "10.9.9.1/24" 1
     AWG_TUNNEL_SUBNET="10.9.9.1/24"
     run guard_subnet_change_with_peers
     [ "$status" -eq 0 ]
 }
 
-@test "guard: пиры + смена подсети -> die" {
+@test "guard: peers + subnet change -> die" {
     mk_conf "10.9.9.1/24" 1
     AWG_TUNNEL_SUBNET="10.9.0.1/16"
     run guard_subnet_change_with_peers
@@ -66,7 +66,7 @@ mk_conf() {
     [[ "$output" == *"10.9.0.1/16"* ]]
 }
 
-@test "guard: network-форма нормализуется validate_subnet до сравнения -> ok" {
+@test "guard: network form normalized by validate_subnet before compare -> ok" {
     mk_conf "10.9.9.1/24" 1
     AWG_TUNNEL_SUBNET="10.9.9.0/24"
     validate_subnet "$AWG_TUNNEL_SUBNET"
@@ -74,7 +74,7 @@ mk_conf() {
     [ "$status" -eq 0 ]
 }
 
-@test "guard: Address с IPv6-хвостом через запятую - берётся IPv4-элемент" {
+@test "guard: Address with IPv6 tail after comma - IPv4 element picked" {
     mk_conf "10.9.9.1/24, fddd:2c4:2c4:2c4::1/64" 1
     AWG_TUNNEL_SUBNET="10.9.9.1/24"
     run guard_subnet_change_with_peers
@@ -86,7 +86,7 @@ mk_conf() {
 
 # v5.19.1: dual-stack Address в ЛЮБОМ порядке - guard выбирает именно IPv4-CIDR,
 # а не первый comma-элемент (IPv6-первый Address раньше давал ложную "смену").
-@test "guard: Address с IPv6 ПЕРВЫМ - IPv4-элемент всё равно выбирается" {
+@test "guard: Address with IPv6 FIRST - IPv4 element still picked" {
     mk_conf "fddd:2c4:2c4:2c4::1/64, 10.9.9.1/24" 1
     AWG_TUNNEL_SUBNET="10.9.9.1/24"
     run guard_subnet_change_with_peers
@@ -100,7 +100,7 @@ mk_conf() {
 # Fail-closed (ревью v5.19.0): пиры есть, а старую подсеть определить нельзя -
 # молчаливое продолжение перерендерило бы конфиг в новой подсети и сломало
 # клиентов, поэтому guard прерывает установку, а не пропускает проверку.
-@test "guard: пиры, но нет строки Address -> die (fail-closed)" {
+@test "guard: peers but no Address line -> die (fail-closed)" {
     mk_conf "" 1
     AWG_TUNNEL_SUBNET="10.9.0.1/16"
     run guard_subnet_change_with_peers
@@ -114,7 +114,7 @@ mk_conf() {
 # последующего tr -d '[:space:]': оба должны корректно есть "Address=..."
 # без пробелов и \r в конце строки (CRLF-конфиг).
 
-@test "guard: Address без пробелов вокруг '=' + пиры + та же подсеть -> ok" {
+@test "guard: Address without spaces around '=' + peers + same subnet -> ok" {
     {
         echo "[Interface]"
         echo "Address=10.9.9.1/24"
@@ -131,7 +131,7 @@ mk_conf() {
     [ "$status" -eq 0 ]
 }
 
-@test "guard: CRLF-конфиг + пиры + та же подсеть -> ok" {
+@test "guard: CRLF config + peers + same subnet -> ok" {
     {
         echo "[Interface]"
         echo "Address = 10.9.9.1/24"
@@ -148,7 +148,7 @@ mk_conf() {
     [ "$status" -eq 0 ]
 }
 
-@test "guard: CRLF-конфиг + пиры + смена подсети -> die" {
+@test "guard: CRLF config + peers + subnet change -> die" {
     {
         echo "[Interface]"
         echo "Address = 10.9.9.1/24"
@@ -169,7 +169,7 @@ mk_conf() {
 # --- RU/EN parity (тело функции идентично без учёта комментариев и
 # локализованных сообщений log_warn/die) ---
 
-@test "guard: RU/EN тела guard_subnet_change_with_peers идентичны без учёта комментариев и сообщений" {
+@test "guard: RU/EN guard_subnet_change_with_peers bodies identical modulo comments and messages" {
     local ru en
     ru=$(awk '/^guard_subnet_change_with_peers\(\) \{$/,/^}$/' "$ROOT/install_amneziawg.sh" \
         | grep -v '^[[:space:]]*#' \

@@ -43,7 +43,7 @@ sudo ufw allow <your-ssh-port>/tcp
 Then:
 
 ```bash
-wget -O install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.19.0/install_amneziawg_en.sh
+wget -O install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.19.1/install_amneziawg_en.sh
 chmod +x install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh
 ```

@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.19.1] - 2026-07-13
+
+**v5.19.1** - changing the routing mode after install works again (contributed by @ekuraev), an early check for a too-old kernel, and subnet-guard hardening.
+
 ### Added
 
 - Early kernel-version check: on kernels older than 5.15 (for example Ubuntu 20.04 with kernel 5.4) the installer warns clearly and up front that the AmneziaWG 2.0 module usually will not build on such a kernel and suggests reinstalling the VPS on a supported OS, instead of an opaque package-install failure at the module build step ([#163](https://github.com/bivlked/amneziawg-installer/issues/163)).
@@ -20,7 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- Changing the routing mode after install works again: `--route-all` / `--route-amnezia` on reinstall (`--force`) changed only `ALLOWED_IPS_MODE` while the `ALLOWED_IPS` list kept the old value from `awgsetup_cfg.init` — the flag silently had no effect, and new clients still got the old routes. An explicit CLI mode now clears the list so it is recomputed for the new mode (#170)
+- Changing the routing mode after install works again: `--route-all` / `--route-amnezia` on reinstall (`--force`) changed only `ALLOWED_IPS_MODE` while the `ALLOWED_IPS` list kept the old value from `awgsetup_cfg.init` - the flag silently had no effect, and new clients still got the old routes. An explicit CLI mode now clears the list so it is recomputed for the new mode (#170)
 - The live-peer subnet-change guard now picks the IPv4 element from a dual-stack `Address` line in any order. Previously it took the first comma field, so an `Address` with IPv6 first could trigger a false install block.
 
 ## [5.19.0] - 2026-07-11
@@ -1532,6 +1536,7 @@ Major security and reliability update after several consecutive code audits. The
 - Full uninstall (`--uninstall`).
 
 [Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.3...HEAD
+[5.19.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.19.0...v5.19.1
 [5.19.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.4...v5.19.0
 [5.18.4]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.3...v5.18.4
 [5.18.3]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.2...v5.18.3

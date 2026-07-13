@@ -168,7 +168,7 @@ TABLE_ID=100                            # номер таблицы маршру
 FWMARK="0x1"                            # метка для трафика, уходящего через awg1
 RULE_PRIO=10000                        # приоритет правила ip rule (нестандартный, чтобы не конфликтовать)
 RU_ZONE_URL="https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone"
-RU_ZONE_FALLBACK_URL="https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.19.0/cascade/ru.zone"
+RU_ZONE_FALLBACK_URL="https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.19.1/cascade/ru.zone"
 AWG_DIR="/root/awg"
 # ==================================================
 
