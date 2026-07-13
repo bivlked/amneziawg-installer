@@ -58,10 +58,11 @@ load test_helper
     [ "$v25" != "$v24" ]
 }
 
-@test "v5.19.1 /25: distinct offsets yield distinct IPv6 suffixes" {
+@test "v5.19.1 /25: distinct offsets yield distinct hex IPv6 suffixes (incl. multi-digit)" {
     export AWG_TUNNEL_SUBNET="10.9.9.0/25"
-    run get_next_client_ipv6 "10.9.9.10"; local a="$output"
-    run get_next_client_ipv6 "10.9.9.26"; local b="$output"
-    [ -n "$a" ] && [ -n "$b" ]
+    run get_next_client_ipv6 "10.9.9.10"; local a="$output"   # offset 10 -> hex a
+    run get_next_client_ipv6 "10.9.9.26"; local b="$output"   # offset 26 -> hex 1a
+    [ "$a" = "fddd:2c4:2c4:2c4::a" ]
+    [ "$b" = "fddd:2c4:2c4:2c4::1a" ]
     [ "$a" != "$b" ]
 }

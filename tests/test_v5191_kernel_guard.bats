@@ -48,15 +48,41 @@ _set_uname() { eval "uname() { echo '$1'; }"; }
     [[ "$output" == *"DIE:"* ]]
 }
 
-@test "v5.19.1 #163: unparseable kernel is skipped (no false abort)" {
-    _set_uname "weirdkernel"; AUTO_YES=1
-    run check_kernel_version
-    [ "$status" -eq 0 ]
+# The interactive "yes continues" path reads from /dev/tty, which is not
+# available under bats; instead guard the confirmation regex directly (extracted
+# from the real code) so a regression cannot start rejecting a valid "y"/"yes"
+# and falsely abort an operator who opted in on an old-but-workable (HWE) kernel.
+@test "v5.19.1 #163: confirm regex accepts y/yes, rejects n and empty (HWE opt-in)" {
+    local line re
+    line=$(awk '/^check_kernel_version\(\) \{/{f=1} f&&/confirm" =~/{print; exit}' "$ROOT/install_amneziawg.sh")
+    re="${line#*=~ }"; re="${re%% ]]; then*}"
+    [ -n "$re" ]
+    [[ "y"   =~ $re ]]
+    [[ "yes" =~ $re ]]
+    [[ " Y " =~ $re ]]
+    [[ ! "n" =~ $re ]]
+    [[ ! ""  =~ $re ]]
 }
 
-@test "v5.19.1 #163: check_kernel_version defined and wired into step 0 (RU + EN)" {
+@test "v5.19.1 #163: kernel 5.14 (just below the boundary) warns" {
+    _set_uname "5.14.21-generic"; AUTO_YES=1
+    check_kernel_version
+    [[ "$LAST_WARN" == *"5.15"* ]]
+}
+
+@test "v5.19.1 #163: unparseable kernel is skipped WITH a warning (no false abort)" {
+    _set_uname "weirdkernel"; AUTO_YES=1
+    check_kernel_version
+    [[ "$LAST_WARN" == *"weirdkernel"* ]]
+}
+
+@test "v5.19.1 #163: check_kernel_version runs early - before check_free_space (RU + EN)" {
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         grep -q '^check_kernel_version() {' "$ROOT/$f" || { echo "no function in $f"; false; }
-        grep -qE '^[[:space:]]*check_kernel_version[[:space:]]*$' "$ROOT/$f" || { echo "not called in $f"; false; }
+        local body kline fline
+        body=$(awk '/^initialize_setup\(\) \{/{f=1} f{print} f&&/^}$/{exit}' "$ROOT/$f")
+        kline=$(echo "$body" | grep -n '^[[:space:]]*check_kernel_version[[:space:]]*$' | head -1 | cut -d: -f1)
+        fline=$(echo "$body" | grep -n '^[[:space:]]*check_free_space[[:space:]]*$' | head -1 | cut -d: -f1)
+        [ -n "$kline" ] && [ -n "$fline" ] && [ "$kline" -lt "$fline" ] || { echo "kernel check not before check_free_space in $f"; false; }
     done
 }
