@@ -93,6 +93,7 @@ while [[ $# -gt 0 ]]; do
             export AWG_APPLY_MODE="$_CLI_APPLY_MODE"
             shift ;;
         --psk)             CLI_ADD_PSK=1; shift ;;
+        --reset-routes)    CLI_RESET_ROUTES=1; shift ;;
         --yes)             CLI_YES=1; shift ;;
         --carrier=*)       CLI_CARRIER="${1#*=}"; shift ;;
         --*)               echo "Неизвестная опция: $1" >&2; COMMAND="help"; HELP_EXIT_RC=1; break ;;
@@ -1566,6 +1567,8 @@ usage() {
     echo "  --server-conf=ПУТЬ    Указать файл конфига сервера"
     echo "  --apply-mode=РЕЖИМ    syncconf (умолч.) или restart (обход kernel panic)"
     echo "  --psk                 (только для add) сгенерировать PresharedKey для клиента"
+    echo "  --reset-routes        (только для regen) сбросить AllowedIPs клиентов на текущий"
+    echo "                        глобальный режим маршрутизации (Issue #170)"
     echo "  --yes                 Не спрашивать подтверждение (эквивалент ENV AWG_YES=1)"
     echo "  --carrier=NAME        (только для diagnose) сравнить AWG-параметры с профилем оператора"
     echo "                        Доступные: beeline_msk yota_msk tele2_msk tele2_krasnoyarsk"
@@ -1577,7 +1580,7 @@ usage() {
     echo "  remove <имя> [имя2 ...]     Удалить клиента(ов)"
     echo "  list [-v] [--json]    Показать список клиентов (--json: машиночитаемый, с client_ipv6)"
     echo "  stats [--json]        Статистика трафика по клиентам"
-    echo "  regen [имя ...]       Перегенерировать файлы клиента(ов), можно несколько имён"
+    echo "  regen [имя ...] [--reset-routes]  Перегенерировать файлы клиента(ов), можно несколько имён"
     echo "  modify <имя> <пар> <зн> Изменить параметр клиента"
     echo "  backup                Создать бэкап"
     echo "  restore [файл]        Восстановить из бэкапа"
@@ -1773,6 +1776,13 @@ case $COMMAND in
 
     regen)
         log "Перегенерация файлов конфигурации и QR..."
+        # --reset-routes (Issue #170): передаём флаг в regenerate_client через
+        # ENV - обычный regen сохраняет индивидуальные AllowedIPs клиентов, с
+        # флагом ставит всем глобальный режим из awgsetup_cfg.init.
+        if [[ "${CLI_RESET_ROUTES:-0}" == "1" ]]; then
+            export AWG_REGEN_RESET_ROUTES=1
+            log "AllowedIPs всех перегенерируемых клиентов будут сброшены на глобальный режим (--reset-routes)."
+        fi
         if [[ ${#ARGS[@]} -eq 0 ]]; then
             # Без аргументов — все клиенты (сохраняет прежнее поведение).
             all_clients=$(grep '^#_Name = ' "$SERVER_CONF_FILE" | sed 's/^#_Name = //')

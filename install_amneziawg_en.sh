@@ -2018,6 +2018,12 @@ initialize_setup() {
     if [[ "$CLI_DISABLE_IPV6" != "default" ]]; then DISABLE_IPV6=$CLI_DISABLE_IPV6; fi
     if [[ "$CLI_ROUTING_MODE" != "default" ]]; then
         ALLOWED_IPS_MODE=$CLI_ROUTING_MODE
+        # An explicit CLI mode overrides the list too: previously --route-all/
+        # --route-amnezia on reinstall changed only the mode while ALLOWED_IPS
+        # kept the old value from awgsetup_cfg.init - the flag silently had no
+        # effect (Issue #170). An empty list forces configure_routing_mode to
+        # recompute it for the new mode.
+        ALLOWED_IPS=""
         if [[ "$CLI_ROUTING_MODE" -eq 3 ]]; then ALLOWED_IPS=$CLI_CUSTOM_ROUTES; fi
     fi
     if [[ -n "$CLI_ENDPOINT" ]]; then
@@ -2195,6 +2201,14 @@ EOF
     log "Subnet: ${AWG_TUNNEL_SUBNET}"
     log "IPv6 disable: $DISABLE_IPV6"
     log "AllowedIPs mode: $ALLOWED_IPS_MODE"
+    # Changing the routing mode is a client-config operation: new clients get
+    # the new list, but for existing ones regen deliberately preserves
+    # AllowedIPs (per-client modify customizations). Hint the explicit way to
+    # apply the new mode to everyone (Issue #170).
+    if [[ "$config_exists" -eq 1 && "$CLI_ROUTING_MODE" != "default" ]]; then
+        log_warn "Routing mode changed. Existing client configs keep their old AllowedIPs."
+        log_warn "Apply the new mode to all clients: sudo bash $MANAGE_SCRIPT_PATH regen --reset-routes"
+    fi
 
     # Loading state
     if [[ -f "$STATE_FILE" ]]; then

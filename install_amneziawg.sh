@@ -2008,6 +2008,11 @@ initialize_setup() {
     if [[ "$CLI_DISABLE_IPV6" != "default" ]]; then DISABLE_IPV6=$CLI_DISABLE_IPV6; fi
     if [[ "$CLI_ROUTING_MODE" != "default" ]]; then
         ALLOWED_IPS_MODE=$CLI_ROUTING_MODE
+        # Явный CLI-режим вытесняет и список: раньше --route-all/--route-amnezia
+        # при переустановке меняли только режим, а ALLOWED_IPS оставался старым
+        # из awgsetup_cfg.init - флаг молча не действовал (Issue #170). Пустой
+        # список заставит configure_routing_mode пересчитать его под новый режим.
+        ALLOWED_IPS=""
         if [[ "$CLI_ROUTING_MODE" -eq 3 ]]; then ALLOWED_IPS=$CLI_CUSTOM_ROUTES; fi
     fi
     if [[ -n "$CLI_ENDPOINT" ]]; then
@@ -2183,6 +2188,14 @@ EOF
     log "Подсеть: ${AWG_TUNNEL_SUBNET}"
     log "Откл. IPv6: $DISABLE_IPV6"
     log "Режим AllowedIPs: $ALLOWED_IPS_MODE"
+    # Смена режима маршрутизации - операция над клиентскими конфигами: новые
+    # клиенты получат новый список, но у существующих regen сознательно
+    # сохраняет AllowedIPs (индивидуальные настройки modify). Подсказываем
+    # явный способ применить новый режим ко всем (Issue #170).
+    if [[ "$config_exists" -eq 1 && "$CLI_ROUTING_MODE" != "default" ]]; then
+        log_warn "Режим маршрутизации изменён. Существующие клиентские конфиги сохраняют старые AllowedIPs."
+        log_warn "Применить новый режим ко всем клиентам: sudo bash $MANAGE_SCRIPT_PATH regen --reset-routes"
+    fi
 
     # Загрузка состояния
     if [[ -f "$STATE_FILE" ]]; then

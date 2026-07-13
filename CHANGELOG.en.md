@@ -12,6 +12,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Changing the routing mode after install works again: `--route-all` / `--route-amnezia` on reinstall (`--force`) changed only `ALLOWED_IPS_MODE` while the `ALLOWED_IPS` list kept the old value from `awgsetup_cfg.init` — the flag silently had no effect, and new clients still got the old routes. An explicit CLI mode now clears the list so it is recomputed for the new mode (#170)
+
+### Added
+
+- **`manage regen --reset-routes` flag.** A regular `regen` deliberately preserves the client's individual `AllowedIPs` (`modify` customizations), so a new global routing mode never reached existing clients. With `--reset-routes` regenerated clients get the `AllowedIPs` of the current global mode from `awgsetup_cfg.init` (DNS and PersistentKeepalive are still preserved). After a mode change on reinstall the installer prints a hint with this command (#170)
+
 ## [5.19.0] - 2026-07-11
 
 **v5.19.0** - full CIDR /16-/30 tunnel subnets (contributed by @ekuraev), a `--no-cps` switch for the macOS desktop client, and more robust network-interface detection.

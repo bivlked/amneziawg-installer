@@ -2365,7 +2365,13 @@ regenerate_client() {
     fi
     # Delimiter '/' (not '|'): the escaping class above covers & \ / - a '|'
     # character in the value would break a sed expression using the '|' delimiter.
-    if ! sed -i "s/^AllowedIPs = .*/AllowedIPs = ${_aip}/" "$_client_conf"; then
+    # regen --reset-routes (Issue #170): do NOT restore the client's old
+    # AllowedIPs - keep the value from render_client_config, computed from the
+    # global routing mode (awgsetup_cfg.init) with correct IPv6 mirroring.
+    # A regular regen still preserves per-client customizations.
+    if [[ "${AWG_REGEN_RESET_ROUTES:-0}" == "1" ]]; then
+        log "AllowedIPs of client '$name' reset to the global routing mode (--reset-routes)."
+    elif ! sed -i "s/^AllowedIPs = .*/AllowedIPs = ${_aip}/" "$_client_conf"; then
         log_error "sed error writing AllowedIPs to $_client_conf"
         exec {lock_fd}>&-
         unset CLIENT_PSK

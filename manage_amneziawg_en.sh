@@ -93,6 +93,7 @@ while [[ $# -gt 0 ]]; do
             export AWG_APPLY_MODE="$_CLI_APPLY_MODE"
             shift ;;
         --psk)             CLI_ADD_PSK=1; shift ;;
+        --reset-routes)    CLI_RESET_ROUTES=1; shift ;;
         --yes)             CLI_YES=1; shift ;;
         --carrier=*)       CLI_CARRIER="${1#*=}"; shift ;;
         --*)               echo "Unknown option: $1" >&2; COMMAND="help"; HELP_EXIT_RC=1; break ;;
@@ -1574,6 +1575,8 @@ usage() {
     echo "  --server-conf=PATH    Specify server config file"
     echo "  --apply-mode=MODE     syncconf (default) or restart (bypass kernel panic)"
     echo "  --psk                 (add only) generate a PresharedKey for the new client"
+    echo "  --reset-routes        (regen only) reset client AllowedIPs to the current"
+    echo "                        global routing mode (Issue #170)"
     echo "  --yes                 Skip confirm prompts (equivalent to ENV AWG_YES=1)"
     echo "  --carrier=NAME        (diagnose only) compare AWG params against carrier profile"
     echo "                        Available: beeline_msk yota_msk tele2_msk tele2_krasnoyarsk"
@@ -1585,7 +1588,7 @@ usage() {
     echo "  remove <name> [name2 ...]    Remove client(s)"
     echo "  list [-v] [--json]    List clients (--json: machine-readable, includes client_ipv6)"
     echo "  stats [--json]        Client traffic statistics"
-    echo "  regen [name ...]      Regenerate client file(s), multiple names allowed"
+    echo "  regen [name ...] [--reset-routes]  Regenerate client file(s), multiple names allowed"
     echo "  modify <name> <p> <v> Modify a client parameter"
     echo "  backup                Create a backup"
     echo "  restore [file]        Restore from backup"
@@ -1781,6 +1784,13 @@ case $COMMAND in
 
     regen)
         log "Regenerating config and QR files..."
+        # --reset-routes (Issue #170): pass the flag to regenerate_client via
+        # ENV - a regular regen preserves per-client AllowedIPs, with the flag
+        # every client gets the global routing mode from awgsetup_cfg.init.
+        if [[ "${CLI_RESET_ROUTES:-0}" == "1" ]]; then
+            export AWG_REGEN_RESET_ROUTES=1
+            log "AllowedIPs of all regenerated clients will be reset to the global routing mode (--reset-routes)."
+        fi
         if [[ ${#ARGS[@]} -eq 0 ]]; then
             # No arguments — regenerate all clients (preserves prior behaviour).
             all_clients=$(grep '^#_Name = ' "$SERVER_CONF_FILE" | sed 's/^#_Name = //')

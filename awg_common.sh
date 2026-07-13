@@ -2352,7 +2352,13 @@ regenerate_client() {
     fi
     # Делимитер '/' (а не '|'): класс экранирования выше покрывает & \ / -
     # символ '|' в значении сломал бы sed-выражение с '|'-делимитером.
-    if ! sed -i "s/^AllowedIPs = .*/AllowedIPs = ${_aip}/" "$_client_conf"; then
+    # regen --reset-routes (Issue #170): НЕ восстанавливаем старый AllowedIPs
+    # клиента - оставляем значение из render_client_config, вычисленное из
+    # глобального режима маршрутизации (awgsetup_cfg.init) с корректным
+    # IPv6-зеркалированием. Обычный regen сохраняет индивидуальные настройки.
+    if [[ "${AWG_REGEN_RESET_ROUTES:-0}" == "1" ]]; then
+        log "AllowedIPs клиента '$name' сброшен на глобальный режим маршрутизации (--reset-routes)."
+    elif ! sed -i "s/^AllowedIPs = .*/AllowedIPs = ${_aip}/" "$_client_conf"; then
         log_error "Ошибка sed при записи AllowedIPs в $_client_conf"
         exec {lock_fd}>&-
         unset CLIENT_PSK
