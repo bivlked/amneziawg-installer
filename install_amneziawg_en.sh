@@ -755,7 +755,7 @@ guard_subnet_change_with_peers() {
     # element, not just the first comma field (an IPv6-first Address would
     # otherwise look like a subnet change). No IPv4 -> empty -> fail closed below.
     old_subnet=$(sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null \
-        | head -n1 | tr ',' '\n' | sed 's/[[:space:]]//g' \
+        | tr ',' '\n' | sed 's/[[:space:]]//g' \
         | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$')
     if [[ -z "$old_subnet" ]]; then
         # Peers exist but the old subnet cannot be determined - fail closed: a

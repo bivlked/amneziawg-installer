@@ -747,7 +747,7 @@ guard_subnet_change_with_peers() {
     # именно IPv4-элемент, а не просто первый через запятую (иначе IPv6-первый
     # Address дал бы ложную смену подсети). Нет IPv4 -> пусто -> fail-closed ниже.
     old_subnet=$(sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null \
-        | head -n1 | tr ',' '\n' | sed 's/[[:space:]]//g' \
+        | tr ',' '\n' | sed 's/[[:space:]]//g' \
         | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$')
     if [[ -z "$old_subnet" ]]; then
         # Пиры есть, а старую подсеть определить нельзя - fail-closed: молчаливое
