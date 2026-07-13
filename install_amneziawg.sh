@@ -434,9 +434,9 @@ check_kernel_version() {
     # всё же собирается (HWE и подобное), поэтому WARN + подтверждение.
     local kver kmaj kmin
     kver=$(uname -r)
-    kmaj=${kver%%.*}
-    kmin=${kver#*.}; kmin=${kmin%%.*}
-    if ! [[ "$kmaj" =~ ^[0-9]+$ ]] || ! [[ "$kmin" =~ ^[0-9]+$ ]]; then
+    if [[ "$kver" =~ ^([0-9]+)\.([0-9]+) ]]; then
+        kmaj=${BASH_REMATCH[1]}; kmin=${BASH_REMATCH[2]}
+    else
         log_warn "Не удалось разобрать версию ядра ('$kver') - пропускаю проверку минимальной версии."
         return 0
     fi

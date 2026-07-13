@@ -76,6 +76,20 @@ _set_uname() { eval "uname() { echo '$1'; }"; }
     [[ "$LAST_WARN" == *"weirdkernel"* ]]
 }
 
+@test "v5.19.1 #163: dotless numeric kernel ('5'/'6') is unparseable, not read as major.minor" {
+    # Regression: a bare '5' would parse kmin='5' and fall into the too-old
+    # branch, so an interactive 'no' aborts a host whose kernel is merely
+    # unknown, not old; a bare '6' would pass silently. Require major.minor:
+    # anything without a dot is unparseable -> warn + continue, never die.
+    read() { confirm="n"; }
+    _set_uname "5"; AUTO_YES=0; LAST_WARN=""
+    check_kernel_version
+    [[ "$LAST_WARN" == *"'5'"* ]]
+    _set_uname "6"; AUTO_YES=1; LAST_WARN=""
+    check_kernel_version
+    [[ "$LAST_WARN" == *"'6'"* ]]
+}
+
 @test "v5.19.1 #163: check_kernel_version runs early - before check_free_space (RU + EN)" {
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         grep -q '^check_kernel_version() {' "$ROOT/$f" || { echo "no function in $f"; false; }

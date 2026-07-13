@@ -439,9 +439,9 @@ check_kernel_version() {
     # kernels the module still builds (HWE and such), so WARN + confirm.
     local kver kmaj kmin
     kver=$(uname -r)
-    kmaj=${kver%%.*}
-    kmin=${kver#*.}; kmin=${kmin%%.*}
-    if ! [[ "$kmaj" =~ ^[0-9]+$ ]] || ! [[ "$kmin" =~ ^[0-9]+$ ]]; then
+    if [[ "$kver" =~ ^([0-9]+)\.([0-9]+) ]]; then
+        kmaj=${BASH_REMATCH[1]}; kmin=${BASH_REMATCH[2]}
+    else
         log_warn "Could not parse the kernel version ('$kver') - skipping the minimum-version check."
         return 0
     fi
