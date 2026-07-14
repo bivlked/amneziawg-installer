@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.19.2] - 2026-07-15
+
+**v5.19.2** - command-surface audit (contributed by @ekuraev): an interrupted install rerun with CLI flags no longer skips regeneration, changing the port removes the stale UFW rule, and `manage repair-module` / `manage add` no longer report success where there is none.
+
 ### Fixed
 
 - Resuming an interrupted install (a stale `setup_state=7/99` after a step 7 failure) with configuration CLI flags (`--port`, `--subnet`, `--route-*`, `--endpoint`, `--ssh-port`, obfuscation flags) no longer skips steps 4-6: previously the new values were written to `awgsetup_cfg.init` while `awg0.conf`, client configs and UFW rules silently kept the old ones. The installer now rolls the state back to step 4 and regenerates the firewall and the server config. Existing client configs are deliberately left alone by step 6 - on a port change the installer warns that their `Endpoint` still holds the old port and points at `manage regen` (#175)
@@ -1543,7 +1547,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.3...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.19.2...HEAD
+[5.19.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.19.1...v5.19.2
 [5.19.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.19.0...v5.19.1
 [5.19.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.4...v5.19.0
 [5.18.4]: https://github.com/bivlked/amneziawg-installer/compare/v5.18.3...v5.18.4
