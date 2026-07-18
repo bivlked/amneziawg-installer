@@ -208,6 +208,31 @@ validate_client_name() {
 # Dependency check
 # ==============================================================================
 
+# Compatibility check between awg_common.sh and this script. The files are
+# updated as a pair; if only one is refreshed, the mismatch otherwise surfaces
+# as a "command not found" somewhere random (issue #183). We compare MAJOR.MINOR:
+# a patch difference is fine (no breaking library changes within a minor), but a
+# different minor or a library with no version (older than this check) = stop.
+_check_common_compat() {
+    local have="${AWG_COMMON_VERSION:-}"
+    local want="$SCRIPT_VERSION"
+    # Compare MAJOR and MINOR separately as NUMBERS, not via ${v%.*} (which would
+    # collapse "5.20" and "5.9" into "5"). An X.Y.* shape with numeric X.Y is
+    # required: an empty/two-component/non-numeric library version fails the
+    # match and leads to die. Anything after MINOR (patch, -rc1) is ignored.
+    local re='^([0-9]+)\.([0-9]+)\.'
+    if [[ "$have" =~ $re ]]; then
+        local have_mj="${BASH_REMATCH[1]}" have_mn="${BASH_REMATCH[2]}"
+        if [[ "$want" =~ $re ]]; then
+            [[ "$have_mj" == "${BASH_REMATCH[1]}" && "$have_mn" == "${BASH_REMATCH[2]}" ]] && return 0
+        fi
+    fi
+    die "awg_common.sh (${have:-no version}) is incompatible with manage_amneziawg.sh ($want). Update both halves to the same version:
+  wget -O $AWG_DIR/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v$want/manage_amneziawg_en.sh
+  wget -O $COMMON_SCRIPT_PATH https://raw.githubusercontent.com/bivlked/amneziawg-installer/v$want/awg_common_en.sh
+  chmod 700 $AWG_DIR/manage_amneziawg.sh $COMMON_SCRIPT_PATH"
+}
+
 check_dependencies() {
     log "Checking dependencies..."
     local ok=1
@@ -231,9 +256,14 @@ check_dependencies() {
     if ! command -v awg &>/dev/null; then die "'awg' not found."; fi
     if ! command -v qrencode &>/dev/null; then log_warn "qrencode not found (QR codes will not be created)."; fi
 
-    # Load common library
+    # Load common library.
+    # Reset before sourcing so the version comes ONLY from the library, not from
+    # an inherited environment (otherwise an old library with no variable could
+    # falsely pass the compatibility check).
+    unset AWG_COMMON_VERSION
     # shellcheck source=/dev/null
     source "$COMMON_SCRIPT_PATH" || die "Failed to load $COMMON_SCRIPT_PATH"
+    _check_common_compat
 
     log "Dependencies OK."
 }

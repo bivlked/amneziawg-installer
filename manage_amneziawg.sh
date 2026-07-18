@@ -208,6 +208,31 @@ validate_client_name() {
 # Проверка зависимостей
 # ==============================================================================
 
+# Сверка совместимости awg_common.sh с этим скриптом. Файлы обновляются парой;
+# если обновили только один, рассинхрон иначе всплывает как "command not found"
+# в случайном месте (issue #183). Сверяем MAJOR.MINOR: расхождение в patch
+# допускаем (в пределах minor ломающих изменений в библиотеку не вносим), а вот
+# другой minor или библиотека без версии (старее этой проверки) = стоп.
+_check_common_compat() {
+    local have="${AWG_COMMON_VERSION:-}"
+    local want="$SCRIPT_VERSION"
+    # Сравниваем MAJOR и MINOR по отдельности как ЧИСЛА, а не через ${v%.*}
+    # (тот схлопывал бы "5.20" и "5.9" в "5"). Формат X.Y.* с числовыми X.Y
+    # обязателен: пустая/двухкомпонентная/нечисловая версия библиотеки не
+    # проходит и приводит к die. Хвост после MINOR (patch, -rc1) игнорируется.
+    local re='^([0-9]+)\.([0-9]+)\.'
+    if [[ "$have" =~ $re ]]; then
+        local have_mj="${BASH_REMATCH[1]}" have_mn="${BASH_REMATCH[2]}"
+        if [[ "$want" =~ $re ]]; then
+            [[ "$have_mj" == "${BASH_REMATCH[1]}" && "$have_mn" == "${BASH_REMATCH[2]}" ]] && return 0
+        fi
+    fi
+    die "awg_common.sh (${have:-без версии}) несовместима с manage_amneziawg.sh ($want). Обнови обе половины под одну версию:
+  wget -O $AWG_DIR/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v$want/manage_amneziawg.sh
+  wget -O $COMMON_SCRIPT_PATH https://raw.githubusercontent.com/bivlked/amneziawg-installer/v$want/awg_common.sh
+  chmod 700 $AWG_DIR/manage_amneziawg.sh $COMMON_SCRIPT_PATH"
+}
+
 check_dependencies() {
     log "Проверка зависимостей..."
     local ok=1
@@ -231,9 +256,14 @@ check_dependencies() {
     if ! command -v awg &>/dev/null; then die "'awg' не найден."; fi
     if ! command -v qrencode &>/dev/null; then log_warn "qrencode не найден (QR-коды не будут созданы)."; fi
 
-    # Подключаем общую библиотеку
+    # Подключаем общую библиотеку.
+    # Сбрасываем перед source, чтобы версию задавала ТОЛЬКО библиотека, а не
+    # унаследованное окружение (иначе старая библиотека без переменной могла бы
+    # ложно пройти проверку совместимости).
+    unset AWG_COMMON_VERSION
     # shellcheck source=/dev/null
     source "$COMMON_SCRIPT_PATH" || die "Ошибка загрузки $COMMON_SCRIPT_PATH"
+    _check_common_compat
 
     log "Зависимости OK."
 }

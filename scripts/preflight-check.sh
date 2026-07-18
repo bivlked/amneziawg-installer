@@ -205,7 +205,17 @@ for f in "${SCRIPTS[@]}"; do
         ver_fail=1
     fi
 done
-if [[ "$ver_fail" -eq 0 ]]; then _ok "SCRIPT_VERSION + 6 headers consistent ($ref_ver)"; else _bad "SCRIPT_VERSION/header drift"; fi
+# AWG_COMMON_VERSION-переменная в обеих библиотеках == ref_ver (version guard,
+# issue #183). manage сверяет её по MAJOR.MINOR; при релизе бампается вместе с
+# остальными, поэтому здесь требуем точного равенства.
+for f in awg_common.sh awg_common_en.sh; do
+    cv=$(awk -F'"' '/^AWG_COMMON_VERSION=/{print $2; exit}' "$f")
+    if [[ "$cv" != "$ref_ver" ]]; then
+        echo "$f AWG_COMMON_VERSION='$cv' != '$ref_ver'" >&2
+        ver_fail=1
+    fi
+done
+if [[ "$ver_fail" -eq 0 ]]; then _ok "SCRIPT_VERSION + 6 headers + AWG_COMMON_VERSION consistent ($ref_ver)"; else _bad "SCRIPT_VERSION/header drift"; fi
 
 # --- 8. SHA pins ---
 if bash "$SCRIPT_DIR/update-sha-pins.sh" --verify; then

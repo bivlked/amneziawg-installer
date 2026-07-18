@@ -19,6 +19,13 @@ CONFIG_FILE="${CONFIG_FILE:-$AWG_DIR/awgsetup_cfg.init}"
 SERVER_CONF_FILE="${SERVER_CONF_FILE:-/etc/amnezia/amneziawg/awg0.conf}"
 KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 
+# Library version. The manage script compares it against its own by MAJOR.MINOR
+# after sourcing and dies with a clear message if awg_common.sh and manage have
+# drifted apart (one file updated, the other not) - otherwise the mismatch shows
+# up as a "command not found" somewhere random. Bumped with the other versions.
+# shellcheck disable=SC2034  # used by the manage script after sourcing
+AWG_COMMON_VERSION="5.20.0"
+
 # --- Auto-cleanup of temporary files ---
 # NOTE: trap is NOT set here to avoid overwriting the caller's trap handler.
 # The calling script must invoke _awg_cleanup() in its own EXIT handler.

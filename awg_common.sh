@@ -19,6 +19,13 @@ CONFIG_FILE="${CONFIG_FILE:-$AWG_DIR/awgsetup_cfg.init}"
 SERVER_CONF_FILE="${SERVER_CONF_FILE:-/etc/amnezia/amneziawg/awg0.conf}"
 KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 
+# Версия библиотеки. manage-скрипт сверяет её со своей по MAJOR.MINOR после
+# source и падает с понятной ошибкой, если awg_common.sh и manage разъехались
+# (обновили один файл, забыли второй) - иначе рассинхрон всплывает как
+# "command not found" в случайном месте. Бампается вместе с остальными версиями.
+# shellcheck disable=SC2034  # используется в manage-скрипте после source
+AWG_COMMON_VERSION="5.20.0"
+
 # --- Автоочистка временных файлов ---
 # ВАЖНО: trap НЕ устанавливается здесь, чтобы не перезаписать trap вызывающего скрипта.
 # Вызывающий скрипт должен вызвать _awg_cleanup() в своём обработчике EXIT.
