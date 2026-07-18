@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 peer management script
 # Author: @bivlked
-# Version: 5.20.0
-# Date: 2026-07-17
+# Version: 5.20.1
+# Date: 2026-07-18
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.20.0"
+SCRIPT_VERSION="5.20.1"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -488,6 +488,16 @@ _restore_do_rollback() {
     fi
 }
 
+# Returns 0 when the path contains '..' as a COMPLETE component (parent
+# traversal): exactly "..", a "../" prefix, "/../" in the middle or a trailing
+# "/..". A ".." substring inside a name (my..backup.conf, v1..2) is legitimate -
+# the old substring check falsely rejected such files when restoring
+# foreign/modified archives.
+_path_has_parent_component() {
+    local p="$1"
+    [[ "$p" == ".." || "$p" == "../"* || "$p" == *"/../"* || "$p" == *"/.." ]]
+}
+
 restore_backup() {
     local bf="$1"
     local bd="$AWG_DIR/backups"
@@ -647,8 +657,8 @@ restore_backup() {
             log_error "Archive contains absolute path: '$_bad_entry' — restore aborted."
             return 1
         fi
-        # Parent directory traversal
-        if [[ "$_bad_entry" == *..* ]]; then
+        # Parent directory traversal ('..' as a complete path component only)
+        if _path_has_parent_component "$_bad_entry"; then
             log_error "Archive contains path traversal (..): '$_bad_entry' — restore aborted."
             return 1
         fi

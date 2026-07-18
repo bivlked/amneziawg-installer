@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # Скрипт для управления пользователями (пирами) AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.20.0
-# Дата: 2026-07-17
+# Версия: 5.20.1
+# Дата: 2026-07-18
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.20.0"
+SCRIPT_VERSION="5.20.1"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -486,6 +486,15 @@ _restore_do_rollback() {
     fi
 }
 
+# Возвращает 0, если в пути есть '..' как ЦЕЛЫЙ компонент (parent traversal):
+# ровно "..", префикс "../", "/../" в середине или "/.." в конце. Подстрока
+# ".." внутри имени (my..backup.conf, v1..2) легитимна - прежний substring-чек
+# ложно отклонял такие файлы при restore чужих/модифицированных архивов.
+_path_has_parent_component() {
+    local p="$1"
+    [[ "$p" == ".." || "$p" == "../"* || "$p" == *"/../"* || "$p" == *"/.." ]]
+}
+
 restore_backup() {
     local bf="$1"
     local bd="$AWG_DIR/backups"
@@ -643,8 +652,8 @@ restore_backup() {
             log_error "Архив содержит абсолютный путь: '$_bad_entry' — восстановление отменено."
             return 1
         fi
-        # Parent directory traversal
-        if [[ "$_bad_entry" == *..* ]]; then
+        # Parent directory traversal ('..' только как компонент пути)
+        if _path_has_parent_component "$_bad_entry"; then
             log_error "Архив содержит path traversal (..): '$_bad_entry' — восстановление отменено."
             return 1
         fi
