@@ -119,6 +119,6 @@ check_path() {
     grep -q '_path_has_parent_component "\$_bad_entry"' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     grep -q '_path_has_parent_component "\$_bad_entry"' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
     # the old substring predicate must be gone
-    ! grep -q '"\$_bad_entry" == \*\.\.\*' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
-    ! grep -q '"\$_bad_entry" == \*\.\.\*' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
+    run ! grep -q '"\$_bad_entry" == \*\.\.\*' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+    run ! grep -q '"\$_bad_entry" == \*\.\.\*' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
 }
