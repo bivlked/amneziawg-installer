@@ -84,6 +84,16 @@ check_path() {
     [ "$result" = "TRAVERSAL" ]
 }
 
+@test "traversal: foo/../ is TRAVERSAL (directory entry, trailing slash)" {
+    result=$(check_path manage_amneziawg.sh "foo/../")
+    [ "$result" = "TRAVERSAL" ]
+}
+
+@test "traversal: foo//../bar is TRAVERSAL (doubled slash)" {
+    result=$(check_path manage_amneziawg.sh "foo//../bar")
+    [ "$result" = "TRAVERSAL" ]
+}
+
 # --- EN script parity ---
 
 @test "traversal EN: my..backup.conf is CLEAN" {
