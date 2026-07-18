@@ -12,6 +12,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.20.1] - 2026-07-18
+
+**v5.20.1** - a clear error when manage and awg_common versions drift apart, plus a precise path traversal check on restore.
+
+### Fixed
+
+- **A version mismatch between `manage_amneziawg.sh` and `awg_common.sh` is now caught immediately with a clear message.** When only one file of the pair got updated, the breakage surfaced as a cryptic `_valid_cidr: command not found` and a bogus "Invalid CIDR format" on a perfectly valid `0.0.0.0/0, ::/0` (the missing function's exit code 127 was inverted by an `if !` check). The library now declares its version (`AWG_COMMON_VERSION`) and manage compares it against its own by MAJOR.MINOR right after sourcing; on a mismatch - or a library too old to carry the variable - it stops with a direct explanation and ready-to-paste wget commands to update both halves. A patch-level difference is tolerated (#183)
+- **The path traversal check on restore no longer rejects legitimate names containing `..`.** The old check dropped any archive file with the `..` substring - including innocent names like `my..backup.conf` or `v1..2`. Now `..` counts as a threat only when it is a complete path component (`../x`, `a/../b`, `a/..`); dots inside a filename pass. The protection itself is not weakened: every real traversal path is rejected exactly as before
+
 ## [5.20.0] - 2026-07-17
 
 **v5.20.0** - explicit client isolation (contributed by @ekuraev), the --mobile flag, a configurable server name in the vpn:// link, and early container detection.
@@ -1558,7 +1567,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.20.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.20.1...HEAD
+[5.20.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.20.0...v5.20.1
 [5.20.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.19.2...v5.20.0
 [5.19.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.19.1...v5.19.2
 [5.19.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.19.0...v5.19.1
