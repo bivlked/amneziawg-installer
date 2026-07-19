@@ -457,7 +457,7 @@ Options:
   --diagnostic          Generate diagnostic report
   -v, --verbose         Verbose output (including DEBUG)
   --no-color            Disable colored output
-  --port=PORT           Set UDP port (1024-65535)
+  --port=PORT           Set UDP port (1-65535; on mobile networks with DPI, 443/udp often helps)
   --ssh-port=PORT       SSH port for the UFW rule (auto-detected; comma-separated list)
   --subnet=SUBNET       Tunnel subnet, CIDR /16-/30 (e.g. 10.9.0.0/16)
   --allow-ipv6          Keep IPv6 enabled
@@ -475,6 +475,7 @@ Options:
   --jc=N                Set Jc manually (1-128, overrides preset)
   --jmin=N              Set Jmin manually (0-1280, overrides preset)
   --jmax=N              Set Jmax manually (0-1280, overrides preset, must be >= Jmin)
+  --no-cps              Disable CPS (the I1 parameter) - for desktop clients that do not support it (e.g. macOS)
   -y, --yes             Non-interactive mode (all confirmations auto-yes)
   -f, --force           Reinstall over a working AWG (ENV: AWG_FORCE_REINSTALL=1)
   --no-tweaks           Skip optional hardening/optimization (UFW, Fail2Ban);
@@ -497,6 +498,7 @@ Options:
   --psk                 (add only) generate a PresharedKey for the new client (v5.11.1+)
   --yes                 Do not prompt for confirmation (ENV: AWG_YES=1)
   --carrier=NAME        (diagnose only) compare parameters against a carrier profile
+  --reset-routes        (regen only) reset client AllowedIPs to the global routing mode
 ```
 
 > **`--psk`** — optional extra layer on top of AWG 2.0 obfuscation. Generates a 32-byte symmetric key via `awg genpsk` and writes it to both the server `[Peer]` and the client `[Peer]` (`PresharedKey = ...`). Compatible with any WireGuard/AmneziaWG client. In batch mode (`add c1 c2 c3 --psk`) each client gets its own PSK. Without the flag clients are created without `PresharedKey` (default — AWG 2.0 obfuscation is sufficient for most scenarios). The flag only affects the new clients created by this `add` invocation — existing clients without PSK stay untouched and keep connecting as before.
@@ -522,7 +524,7 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 * **`add <name> [name2 ...] [--expires=DURATION] [--psk]`:** Add one or multiple clients. In batch mode, `awg syncconf` is called once for all. With `--expires` — expiry applies to all clients. With `--psk` — each client gets its own PresharedKey (v5.11.1+).
 * **`remove <name> [name2 ...]`:** Remove one or multiple clients. In batch mode, apply_config is called once for all.
 * **`list [-v] [--json]`:** List clients (with details when using `-v`; `--json` - machine-readable, includes the `client_ipv6` field).
-* **`regen [name] [--reset-routes]`:** Regenerate `.conf`/`.png` files for one or all clients. By default preserves the client's individual `AllowedIPs`/`DNS`/`PersistentKeepalive` (set via `modify`). With `--reset-routes` - resets `AllowedIPs` to the current global routing mode from `awgsetup_cfg.init`; use it after changing the mode via reinstall (`--force --route-all` / `--route-amnezia` / `--route-custom=`) so the new mode reaches existing clients (Issue #170).
+* **`regen [name ...] [--reset-routes]`:** Regenerate `.conf`/`.png` files for the listed clients or all at once. By default preserves the client's individual `AllowedIPs`/`DNS`/`PersistentKeepalive` (set via `modify`). With `--reset-routes` - resets `AllowedIPs` to the current global routing mode from `awgsetup_cfg.init`; use it after changing the mode via reinstall (`--force --route-all` / `--route-amnezia` / `--route-custom=`) so the new mode reaches existing clients (Issue #170).
 * **`modify <name> <param> <value>`:** Modify a client parameter in the `.conf` file. Allowed parameters: DNS, Endpoint, AllowedIPs, PersistentKeepalive. QR code and vpn:// URI are automatically regenerated after modification.
 * **`backup`:** Create a backup (configs + keys + client expiry data + cron).
 * **`restore [file]`:** Restore from a backup (including expiry data and cron job).
