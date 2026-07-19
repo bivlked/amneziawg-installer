@@ -29,6 +29,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
   - [install_amneziawg.sh](#install-cli-adv)
   - [manage_amneziawg.sh](#manage-cli-adv)
 - [🧑‍💻 Full List of Management Commands](#manage-commands-adv)
+- [🤖 JSON interface for automation (--json)](#json-api-adv)
 - [🛠️ Technical Details](#tech-details-adv)
   - [Script Architecture](#architecture-adv)
   - [DKMS](#dkms-adv)
@@ -490,7 +491,7 @@ Options:
   --no-color            Disable colored output
   --conf-dir=PATH       Specify AWG directory (default: /root/awg)
   --server-conf=PATH    Specify server config file
-  --json                JSON output (for list / stats; list includes client_ipv6)
+  --json                Machine-readable JSON output (v5.21.0: most commands, see the "JSON interface" section)
   --expires=DURATION    Expiry duration for add (1h, 12h, 1d, 7d, 30d, 4w)
   --apply-mode=MODE     syncconf (default) or restart (bypass kernel panic)
   --psk                 (add only) generate a PresharedKey for the new client (v5.11.1+)
@@ -507,6 +508,7 @@ Options:
 | `AWG_SKIP_APPLY=1` | Skip apply_config. For automation: accumulate N operations, apply once |
 | `AWG_APPLY_MODE=restart` | Full restart instead of syncconf (can be saved in `awgsetup_cfg.init`) |
 | `AWG_YES=1` | Do not prompt for confirmation (equivalent to the `--yes` flag) |
+| `AWG_STRICT_CONFIRM=1` | A non-interactive run of a destructive command without `--yes`/`AWG_YES=1` is refused (rc 1) instead of silently proceeding. For cron/CI/bots (v5.21.0) |
 
 ---
 
@@ -553,6 +555,55 @@ sudo bash /root/awg/manage_amneziawg.sh backup
 # Restore from the latest backup (interactive selection)
 sudo bash /root/awg/manage_amneziawg.sh restore
 ```
+
+---
+
+<a id="json-api-adv"></a>
+## 🤖 JSON interface for automation (--json)
+
+Since v5.21.0 the `--json` flag is supported not only by `list`/`stats` but also by the management commands: `add`, `remove`, `regen`, `modify`, `backup`, `restore`, `check` (alias `status`), `restart`, `repair-module` (alias `repair`). Contract rules:
+
+- **stdout = exactly one JSON document** on a single line, on every outcome including errors. Human messages go to stderr. Read stdout as a whole - there is no streaming, but for batch commands `results[]` grows linearly with the number of names.
+- **The exit code is the source of truth.** The `ok` field mirrors it for bots that only read stdout: `ok=false` on any failure, including a partial one (`add a b` where `b` already exists).
+- **Compatibility is additive:** new fields may appear; existing ones are never renamed and never change type. The `status` value sets may grow - treat an unknown value as a failure of that entry. `list`/`stats` are frozen as-is (bare arrays, no envelope).
+- **The `error` field is human-readable text** (may be localized); do not parse it - make machine decisions from `ok`, `rc` and `status`.
+- **Aliases are canonicalized:** the response always says `"command":"check"` and `"command":"repair-module"`, however you typed the command.
+- `--json` does **not** imply `--yes`: destructive commands still ask for confirmation.
+- `help`, `show`, `diagnose` do not support the flag - their output stays human.
+
+Success form (an `add` example):
+
+```json
+{"command":"add","ok":true,"added":1,"failed":0,"applied":true,"results":[{"name":"phone","status":"created","conf":"/root/awg/phone.conf","qr":"/root/awg/phone.png","vpnuri":"/root/awg/phone.vpnuri","expires_at":null}]}
+```
+
+The form of any emergency exit (die, bad option, confirmation refusal, signal):
+
+```json
+{"command":"remove","ok":false,"error":"confirmation denied","rc":1}
+```
+
+`results[]` entry statuses: `add` - `created|exists|invalid_name|error`; `remove` - `removed|not_found|invalid_name|error`; `regen` - `regenerated|not_found|invalid_name|error`.
+
+Field notes:
+
+- `applied` - whether the config was applied to the live interface. `regen` and `modify` have no such field: they do not change server state (keys and IPs are reused). Always `false` under `AWG_SKIP_APPLY=1`.
+- `qr`/`vpnuri` - a path if the file existed at response time. QR and URI are generated outside the config lock: a parallel operation can remove the file, no freshness guarantee.
+- `restore` returns an envelope on failure too (with `error` and `rolled_back` - the bot needs to know whether a rollback happened). `restored.clients` is the number of `[Peer]` blocks in the restored server config, not files in the working directory.
+- `repair-module.rc` - the internal module-check code (0 - module and service OK, 1 - module failed, 2 - module OK, service down), not the process exit code.
+- `check.module.loaded=false` is not an error by itself: userspace installs (amneziawg-go, LXC) never have the module.
+
+<a id="strict-confirm-adv"></a>
+### Strict confirmation for pipelines (AWG_STRICT_CONFIRM)
+
+By default a non-interactive run (cron, CI, a bot) of a destructive command silently proceeds as if you answered "yes" - that is the historical behavior and it is preserved. `AWG_STRICT_CONFIRM=1` enables strict mode: without an explicit `--yes` (or `AWG_YES=1`) the command refuses with rc 1, and with `--json` returns `{"ok":false,"error":"AWG_STRICT_CONFIRM=1: non-interactive run requires --yes","rc":1}`.
+
+```bash
+# Bot recipe: strict mode + explicit consent
+AWG_STRICT_CONFIRM=1 bash manage_amneziawg.sh remove phone --json --yes
+```
+
+Applies per run, never persisted to the config. Strictly the value `1` activates it.
 
 ---
 

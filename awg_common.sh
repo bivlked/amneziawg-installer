@@ -685,7 +685,7 @@ ensure_amneziawg_kernel_module() {
 
     # Step 4: обновить module dependency cache для конкретного ядра.
     if command -v depmod >/dev/null 2>&1; then
-        depmod -a "$kernel_ver" 2>/dev/null || \
+        depmod -a "$kernel_ver" >/dev/null 2>&1 || \
             log_warn "depmod -a $kernel_ver завершился с ошибкой; modprobe ниже даст финальный диагноз."
     fi
 

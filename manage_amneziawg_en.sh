@@ -211,6 +211,14 @@ CLIENT_NAME="${ARGS[0]}"
 PARAM="${ARGS[1]}"
 VALUE="${ARGS[2]}"
 
+# Alias canonicalization (contract 3.2): a bot must not have to parse how the
+# command was typed. The dispatcher below matches both spellings, so this is
+# safe for the human path too.
+case "$COMMAND" in
+    status) COMMAND="check" ;;
+    repair) COMMAND="repair-module" ;;
+esac
+
 # Validate --apply-mode after ALL options are parsed (--json is known now).
 # A typo (--apply-mode=restrat) would silently act as syncconf - a user
 # working around an issue with restart mode would never learn the mode
@@ -320,6 +328,7 @@ confirm_action() {
     if [[ "$confirm" =~ ^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$ ]]; then
         return 0
     else
+        _JSON_ERR="confirmation denied"
         log "Action cancelled."
         return 1
     fi
@@ -616,6 +625,9 @@ _restore_do_rollback() {
     [[ -d "$_rtd/expiry" ]] && { mkdir -p "${EXPIRY_DIR:-$AWG_DIR/expiry}"; cp -a "$_rtd/expiry"/* "${EXPIRY_DIR:-$AWG_DIR/expiry}/" 2>/dev/null; }
     [[ -f "$_rtd/awg-expiry" ]] && cp -a "$_rtd/awg-expiry" /etc/cron.d/awg-expiry 2>/dev/null
     rm -rf "$_rtd"
+    # Rollback files are in place - the JSON envelope reports rolled_back=true
+    # even if the service below fails to start (FS state is already pre-restore).
+    _RESTORE_ROLLED_BACK=1
 
     log "Rollback done — attempting to start service..."
     if systemctl start awg-quick@awg0; then
@@ -670,6 +682,7 @@ restore_backup() {
     fi
 
     if [[ ! -f "$bf" ]]; then die "Backup file '$bf' not found."; fi
+    _RESTORE_SOURCE="$bf"   # for the restore JSON envelope (v5.21.0)
     log "Restoring from $bf"
     if ! confirm_action "restore" "configuration from '$bf'"; then return 1; fi
 
@@ -1140,16 +1153,35 @@ modify_client() {
 check_server() {
     log "Checking AmneziaWG 2.0 server status..."
     local ok=1
+    # Snapshot for the JSON envelope (v5.21.0): collected along the human
+    # checks so the data and the verdict come from the same pass.
+    local _c_svc_active=false _c_present=false _c_mtu=null _c_addrs=""
+    local _c_listen=false _c_mod=false _c_ufw_active=false _c_allowed=false
 
     log "Service status:"
-    if ! systemctl status awg-quick@awg0 --no-pager; then ok=0; fi
+    # With --json the raw systemctl output goes to stderr: stdout is contract-only.
+    if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
+        if ! systemctl status awg-quick@awg0 --no-pager >&2; then ok=0; fi
+    else
+        if ! systemctl status awg-quick@awg0 --no-pager; then ok=0; fi
+    fi
+    systemctl is-active --quiet awg-quick@awg0 2>/dev/null && _c_svc_active=true
 
     log "Interface awg0:"
-    if ! ip addr show awg0 &>/dev/null; then
+    local _ip_out
+    if ! _ip_out=$(ip addr show awg0 2>/dev/null); then
         log_error " - Interface not found!"
         ok=0
     else
-        while IFS= read -r line; do log "  $line"; done < <(ip addr show awg0)
+        _c_present=true
+        while IFS= read -r line; do log "  $line"; done <<< "$_ip_out"
+        _c_mtu=$(sed -n 's/.*mtu \([0-9][0-9]*\).*/\1/p' <<< "$_ip_out" | head -n1)
+        [[ "$_c_mtu" =~ ^[0-9]+$ ]] || _c_mtu=null
+        local _a
+        while IFS= read -r _a; do
+            [[ -z "$_a" ]] && continue
+            _c_addrs+="${_c_addrs:+,}\"$(json_escape "$_a")\""
+        done < <(awk '/^[[:space:]]*inet6? /{print $2}' <<< "$_ip_out")
     fi
 
     log "Port listening:"
@@ -1162,6 +1194,7 @@ check_server() {
             log_error " - Port ${port}/udp is NOT listening!"
             ok=0
         else
+            _c_listen=true
             log " - Port ${port}/udp is listening."
         fi
     fi
@@ -1176,15 +1209,36 @@ check_server() {
         log " - IP Forwarding is enabled."
     fi
 
+    log "Kernel module:"
+    # Pattern from diagnose: exact module name in the first lsmod column.
+    if lsmod 2>/dev/null | awk '$1 == "amneziawg" {f=1} END {exit !f}'; then
+        _c_mod=true
+        log " - amneziawg module is loaded."
+    else
+        # WARN, not ok=0: userspace installs (amneziawg-go, LXC) never have
+        # the module, and a broken kernel path already fails service/interface.
+        log_warn " - amneziawg module is not loaded (normal for userspace mode)."
+    fi
+
     log "UFW rules:"
     if command -v ufw &>/dev/null; then
+        local _ufw_st
+        _ufw_st=$(ufw status 2>/dev/null | head -1)
+        [[ "$_ufw_st" == "Status: active" ]] && _c_ufw_active=true
         if [[ "$port" -eq 0 ]]; then
             # The port could not be determined above - grepping for "0/udp" would give a false warning.
             log_warn " - Port not determined, UFW rule check skipped."
-        elif ! ufw status | grep -qw "${port}/udp"; then
-            log_warn " - UFW rule for ${port}/udp not found!"
-        else
+        elif [[ "$_c_ufw_active" != true ]]; then
+            # Inactive UFW used to masquerade as "rule not found": grepping the
+            # inactive status output missed the port and blamed the wrong thing.
+            log_warn " - UFW is not active (${_ufw_st:-no status})."
+        elif ufw status 2>/dev/null | grep -qE "^${port}/udp[[:space:]]+ALLOW"; then
+            # Strict pattern from diagnose: specifically ALLOW, not any mention
+            # of the port (the old grep -qw did not tell ALLOW from DENY).
+            _c_allowed=true
             log " - UFW rule for ${port}/udp is present."
+        else
+            log_warn " - UFW rule for ${port}/udp not found!"
         fi
     else
         log_warn " - UFW is not installed."
@@ -1206,6 +1260,13 @@ check_server() {
         else
             log_warn " - AWG 2.0 obfuscation parameters not detected"
         fi
+    fi
+
+    if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
+        local _c_clients _jok=false
+        _c_clients=$(grep -c '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null) || _c_clients=0
+        [[ "$ok" -eq 1 ]] && _jok=true
+        json_out "{\"command\":\"check\",\"ok\":$_jok,\"service\":{\"unit\":\"awg-quick@awg0\",\"active\":$_c_svc_active},\"interface\":{\"name\":\"awg0\",\"present\":$_c_present,\"mtu\":$_c_mtu,\"addresses\":[$_c_addrs]},\"port\":{\"number\":$port,\"proto\":\"udp\",\"listening\":$_c_listen},\"module\":{\"loaded\":$_c_mod},\"clients\":{\"total\":$_c_clients},\"firewall\":{\"ufw_active\":$_c_ufw_active,\"port_allowed\":$_c_allowed}}"
     fi
 
     if [[ "$ok" -eq 1 ]]; then
@@ -1749,7 +1810,8 @@ usage() {
     echo "  -h, --help            Show this help"
     echo "  -v, --verbose         Verbose output (for list command)"
     echo "  --no-color            Disable colored output"
-    echo "  --json                Machine-readable JSON output (for list / stats)"
+    echo "  --json                Machine-readable JSON output (most commands; details in ADVANCED.en.md)"
+    echo "                        ENV AWG_STRICT_CONFIRM=1: non-TTY run without --yes is refused (rc 1)"
     echo "  --expires=DURATION    Expiry time for add (1h, 12h, 1d, 7d, 30d, 4w)"
     echo "  --conf-dir=PATH       Specify AWG directory (default: $AWG_DIR)"
     echo "  --server-conf=PATH    Specify server config file"
@@ -2097,16 +2159,46 @@ case $COMMAND in
 
     modify)
         [[ -z "$CLIENT_NAME" ]] && die "Client name not specified."
-        validate_client_name "$CLIENT_NAME" || exit 1
-        modify_client "$CLIENT_NAME" "$PARAM" "$VALUE" || _cmd_rc=1
+        validate_client_name "$CLIENT_NAME" || { _JSON_ERR="invalid client name"; exit 1; }
+        if modify_client "$CLIENT_NAME" "$PARAM" "$VALUE"; then
+            # modify edits ONLY the client config (DNS/MTU/AllowedIPs/...):
+            # server state does not change, no apply needed - the envelope has
+            # no applied field on purpose (symmetry with regen).
+            json_out "{\"command\":\"modify\",\"ok\":true,\"name\":\"$(json_escape "$CLIENT_NAME")\",\"param\":\"$(json_escape "$PARAM")\",\"value\":\"$(json_escape "$VALUE")\"}"
+        else
+            _cmd_rc=1
+        fi
         ;;
 
     backup)
-        backup_configs || _cmd_rc=1
+        if backup_configs; then
+            _jsize=null
+            if [[ -n "${LAST_BACKUP_PATH:-}" && -f "$LAST_BACKUP_PATH" ]]; then
+                _jsize=$(stat -c%s "$LAST_BACKUP_PATH" 2>/dev/null) || _jsize=null
+            fi
+            json_out "{\"command\":\"backup\",\"ok\":true,\"path\":\"$(json_escape "${LAST_BACKUP_PATH:-}")\",\"size_bytes\":$_jsize}"
+        else
+            _cmd_rc=1
+        fi
         ;;
 
     restore)
-        restore_backup "$CLIENT_NAME" || _cmd_rc=1 # CLIENT_NAME is used as [file]
+        if restore_backup "$CLIENT_NAME"; then # CLIENT_NAME is used as [file]
+            _jclients=$(grep -c '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null) || _jclients=0
+            _jkeys=false
+            [[ -n "$(find "$KEYS_DIR" -maxdepth 1 -name '*.private' -print -quit 2>/dev/null)" ]] && _jkeys=true
+            # clients = number of [Peer] blocks in the RESTORED server config
+            # (spec 3.3: not files in clients/ - those can diverge).
+            json_out "{\"command\":\"restore\",\"ok\":true,\"source\":\"$(json_escape "${_RESTORE_SOURCE:-}")\",\"applied\":true,\"rolled_back\":false,\"restored\":{\"server_conf\":true,\"clients\":$_jclients,\"keys\":$_jkeys}}"
+        else
+            _cmd_rc=1
+            # Envelope on failure too: the bot needs to know whether a rollback
+            # happened. error is human-readable text; decide by ok/rc.
+            if [[ "$JSON_OUTPUT" -eq 1 ]]; then
+                _jrb=false; [[ "${_RESTORE_ROLLED_BACK:-0}" == "1" ]] && _jrb=true
+                json_out "{\"command\":\"restore\",\"ok\":false,\"error\":\"$(json_escape "${_JSON_ERR:-restore failed (see stderr)}")\",\"source\":\"$(json_escape "${_RESTORE_SOURCE:-}")\",\"applied\":false,\"rolled_back\":$_jrb,\"rc\":1}"
+            fi
+        fi
         ;;
 
     check|status)
@@ -2127,12 +2219,16 @@ case $COMMAND in
         ensure_amneziawg_kernel_module module-only \
             || die "amneziawg kernel module unavailable. Run 'manage repair-module' and try again."
         if ! systemctl restart awg-quick@awg0; then
+            _JSON_ERR="service restart failed"
             log_error "Restart error."
             status_out=$(systemctl status awg-quick@awg0 --no-pager 2>&1) || true
             while IFS= read -r line; do log_error "  $line"; done <<< "$status_out"
             exit 1
         else
             log "Service restarted."
+            _jactive=false
+            systemctl is-active --quiet awg-quick@awg0 2>/dev/null && _jactive=true
+            json_out "{\"command\":\"restart\",\"ok\":true,\"unit\":\"awg-quick@awg0\",\"active\":$_jactive}"
         fi
         ;;
 
@@ -2142,8 +2238,10 @@ case $COMMAND in
         # (AWG_ALLOW_APT_IN_ENSURE=1) — the user explicitly requested repair.
         log "Repairing amneziawg kernel module (may take up to 5 minutes — DKMS rebuild)..."
         AWG_ALLOW_APT_IN_ENSURE=1 ensure_amneziawg_kernel_module full; _mod_rc=$?
+        _jmod=true; _jsvc=false
         case "$_mod_rc" in
             0)
+                _jsvc=true
                 log "amneziawg kernel module repaired, awg-quick@awg0 service is active."
                 ;;
             2)
@@ -2154,10 +2252,16 @@ case $COMMAND in
                 _cmd_rc=1
                 ;;
             *)
+                _jmod=false
                 log_error "Could not repair the kernel module. See log above; manual recovery may be required."
                 _cmd_rc=1
                 ;;
         esac
+        if [[ "$JSON_OUTPUT" -eq 1 ]]; then
+            _jok=false; [[ "$_cmd_rc" -eq 0 ]] && _jok=true
+            # rc here = ensure_amneziawg_kernel_module code (0/1/2), not the exit code.
+            json_out "{\"command\":\"repair-module\",\"ok\":$_jok,\"module_loaded\":$_jmod,\"service_active\":$_jsvc,\"rc\":$_mod_rc}"
+        fi
         ;;
 
     diagnose)

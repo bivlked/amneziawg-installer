@@ -689,7 +689,7 @@ ensure_amneziawg_kernel_module() {
 
     # Step 4: rebuild module dependency cache for the specific kernel.
     if command -v depmod >/dev/null 2>&1; then
-        depmod -a "$kernel_ver" 2>/dev/null || \
+        depmod -a "$kernel_ver" >/dev/null 2>&1 || \
             log_warn "depmod -a $kernel_ver reported an error; modprobe below will give the final diagnosis."
     fi
 

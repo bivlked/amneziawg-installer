@@ -297,7 +297,9 @@ _run_ensure_module() {
     for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
         # The 'already exists' skip must set _cmd_rc=1 before continue,
         # matching remove/regen exit-code semantics for no-op names.
-        block=$(grep -A6 'grep -qxF "#_Name = ${_cname}" "$SERVER_CONF_FILE"; then' "$BATS_TEST_DIRNAME/../$f" | head -8)
+        # Window widened v5.21.0: the JSON results line sits between
+        # _cmd_rc=1 and continue, pushing continue past the old -A6.
+        block=$(grep -A8 'grep -qxF "#_Name = ${_cname}" "$SERVER_CONF_FILE"; then' "$BATS_TEST_DIRNAME/../$f" | head -10)
         [[ "$block" == *'_cmd_rc=1'* ]]
         [[ "$block" == *'continue'* ]]
     done

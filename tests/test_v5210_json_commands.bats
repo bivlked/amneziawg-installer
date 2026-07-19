@@ -239,3 +239,171 @@ CONF
     en_rg=$(printf '%s' "$output" | jq -cS 'keys')
     [ "$ru_rg" = "$en_rg" ]
 }
+
+# --- phase 4-5: singles + check ---
+
+_make_client_conf() {
+    cat > "$TEST_DIR/awg/foo.conf" << 'CONF'
+[Interface]
+PrivateKey = PRIV_foo
+Address = 10.9.9.2/32
+DNS = 1.1.1.1
+MTU = 1280
+[Peer]
+PublicKey = SERVERPUB
+AllowedIPs = 0.0.0.0/0
+CONF
+}
+
+_stub_systemctl() {
+    printf '#!/bin/bash\nexit 0\n' > "$TEST_DIR/bin/systemctl"
+    chmod +x "$TEST_DIR/bin/systemctl"
+}
+
+_stub_lsmod() {
+    printf '#!/bin/bash\necho "amneziawg 40960 0"\n' > "$TEST_DIR/bin/lsmod"
+    chmod +x "$TEST_DIR/bin/lsmod"
+}
+
+@test "modify: success envelope with name/param/value, no applied field" {
+    require_jq
+    _make_client_conf
+    run --separate-stderr bash "$SCRIPT" modify foo DNS 8.8.8.8 --json "${MOCK_ARGS[@]}"
+    [ "$status" -eq 0 ]
+    _one_json_line
+    printf '%s' "$output" | jq -e '
+        .command == "modify" and .ok == true and .name == "foo"
+        and .param == "DNS" and .value == "8.8.8.8"
+        and (has("applied") | not)' >/dev/null
+}
+
+@test "modify: failure gives the emergency error object" {
+    require_jq
+    run --separate-stderr bash "$SCRIPT" modify ghost DNS 8.8.8.8 --json "${MOCK_ARGS[@]}"
+    [ "$status" -eq 1 ]
+    printf '%s' "$output" | jq -e '.ok == false and .rc == 1' >/dev/null
+}
+
+@test "backup: success envelope with existing path and numeric size" {
+    require_jq
+    run --separate-stderr bash "$SCRIPT" backup --json "${MOCK_ARGS[@]}"
+    [ "$status" -eq 0 ]
+    _one_json_line
+    printf '%s' "$output" | jq -e '
+        .command == "backup" and .ok == true
+        and (.size_bytes | type == "number") and .size_bytes > 0' >/dev/null
+    bpath=$(printf '%s' "$output" | jq -re '.path')
+    [ -f "$bpath" ]
+}
+
+@test "restore: success envelope with source, restored counters" {
+    require_jq
+    _stub_systemctl
+    run --separate-stderr bash "$SCRIPT" backup --json "${MOCK_ARGS[@]}"
+    bpath=$(printf '%s' "$output" | jq -re '.path')
+    run --separate-stderr bash "$SCRIPT" restore "$bpath" --json --yes "${MOCK_ARGS[@]}"
+    [ "$status" -eq 0 ]
+    _one_json_line
+    printf '%s' "$output" | jq -e --arg src "$bpath" '
+        .command == "restore" and .ok == true and .source == $src
+        and .applied == true and .rolled_back == false
+        and .restored.server_conf == true
+        and (.restored.clients | type == "number")
+        and (.restored.keys | type == "boolean")' >/dev/null
+}
+
+@test "restore: missing file gives error object via guard (die path)" {
+    require_jq
+    run --separate-stderr bash "$SCRIPT" restore /nonexistent.tar.gz --json --yes "${MOCK_ARGS[@]}"
+    [ "$status" -eq 1 ]
+    printf '%s' "$output" | jq -e '.command == "restore" and .ok == false' >/dev/null
+}
+
+@test "restart: success envelope with unit and active" {
+    require_jq
+    _stub_systemctl
+    _stub_lsmod
+    run --separate-stderr bash "$SCRIPT" restart --json --yes "${MOCK_ARGS[@]}"
+    [ "$status" -eq 0 ]
+    _one_json_line
+    printf '%s' "$output" | jq -e '
+        .command == "restart" and .ok == true
+        and .unit == "awg-quick@awg0" and .active == true' >/dev/null
+}
+
+@test "repair-module: envelope with module_loaded/service_active/rc" {
+    require_jq
+    _stub_systemctl
+    _stub_lsmod
+    run --separate-stderr bash "$SCRIPT" repair-module --json "${MOCK_ARGS[@]}"
+    [ "$status" -eq 0 ]
+    _one_json_line
+    printf '%s' "$output" | jq -e '
+        .command == "repair-module" and .ok == true
+        and .module_loaded == true and .service_active == true and .rc == 0' >/dev/null
+}
+
+@test "alias repair canonicalizes to repair-module in the envelope" {
+    require_jq
+    _stub_systemctl
+    _stub_lsmod
+    run --separate-stderr bash "$SCRIPT" repair --json "${MOCK_ARGS[@]}"
+    printf '%s' "$output" | jq -e '.command == "repair-module"' >/dev/null
+}
+
+@test "check: full section structure, alias status canonicalizes to check" {
+    require_jq
+    _stub_systemctl
+    _stub_lsmod
+    # Interface awg0 does not exist in the mock -> ok=false, rc 1, but the
+    # envelope must still carry every section with honest values.
+    run --separate-stderr bash "$SCRIPT" check --json "${MOCK_ARGS[@]}"
+    [ "$status" -eq 1 ]
+    _one_json_line
+    printf '%s' "$output" | jq -e '
+        .command == "check" and .ok == false
+        and .service.unit == "awg-quick@awg0" and .service.active == true
+        and .interface.present == false
+        and .port.proto == "udp"
+        and .module.loaded == true
+        and (.clients.total | type == "number") and .clients.total == 1
+        and (.firewall | has("ufw_active") and has("port_allowed"))' >/dev/null
+    run --separate-stderr bash "$SCRIPT" status --json "${MOCK_ARGS[@]}"
+    printf '%s' "$output" | jq -e '.command == "check"' >/dev/null
+}
+
+@test "check: human output (no --json) still prints the sections to stdout" {
+    _stub_systemctl
+    _stub_lsmod
+    run --separate-stderr bash "$SCRIPT" check "${MOCK_ARGS[@]}"
+    [[ "$output" == *"awg0"* ]]
+}
+
+# --- EN parity for phase 4-5 envelopes ---
+
+@test "EN: check/status envelope keys match RU" {
+    require_jq
+    _stub_systemctl
+    _stub_lsmod
+    run --separate-stderr bash "$SCRIPT" check --json "${MOCK_ARGS[@]}"
+    ru=$(printf '%s' "$output" | jq -cS '[paths | map(tostring)] | sort')
+    run --separate-stderr bash "$SCRIPT_EN" check --json "${MOCK_ARGS[@]}"
+    en=$(printf '%s' "$output" | jq -cS '[paths | map(tostring)] | sort')
+    [ "$ru" = "$en" ]
+}
+
+@test "EN: repair-module and restart envelopes match RU keys" {
+    require_jq
+    _stub_systemctl
+    _stub_lsmod
+    run --separate-stderr bash "$SCRIPT" repair --json "${MOCK_ARGS[@]}"
+    ru=$(printf '%s' "$output" | jq -cS 'keys')
+    run --separate-stderr bash "$SCRIPT_EN" repair --json "${MOCK_ARGS[@]}"
+    en=$(printf '%s' "$output" | jq -cS 'keys')
+    [ "$ru" = "$en" ]
+    run --separate-stderr bash "$SCRIPT" restart --json --yes "${MOCK_ARGS[@]}"
+    ru=$(printf '%s' "$output" | jq -cS 'keys')
+    run --separate-stderr bash "$SCRIPT_EN" restart --json --yes "${MOCK_ARGS[@]}"
+    en=$(printf '%s' "$output" | jq -cS 'keys')
+    [ "$ru" = "$en" ]
+}

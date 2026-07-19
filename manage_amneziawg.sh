@@ -208,6 +208,14 @@ CLIENT_NAME="${ARGS[0]}"
 PARAM="${ARGS[1]}"
 VALUE="${ARGS[2]}"
 
+# Канонизация алиасов (контракт 3.2): бот не должен разбирать, как его набрали.
+# Диспетчер ниже матчит оба написания, поэтому канонизация безопасна и для
+# человеческого пути.
+case "$COMMAND" in
+    status) COMMAND="check" ;;
+    repair) COMMAND="repair-module" ;;
+esac
+
 # Валидация --apply-mode после разбора ВСЕХ опций (--json уже известен).
 # Опечатка (--apply-mode=restrat) молча работала бы как syncconf - пользователь,
 # обходящий проблему режимом restart, не узнал бы, что режим не применился.
@@ -316,6 +324,7 @@ confirm_action() {
     if [[ "$confirm" =~ ^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$ ]]; then
         return 0
     else
+        _JSON_ERR="confirmation denied"
         log "Действие отменено."
         return 1
     fi
@@ -610,6 +619,9 @@ _restore_do_rollback() {
     [[ -d "$_rtd/expiry" ]] && { mkdir -p "${EXPIRY_DIR:-$AWG_DIR/expiry}"; cp -a "$_rtd/expiry"/* "${EXPIRY_DIR:-$AWG_DIR/expiry}/" 2>/dev/null; }
     [[ -f "$_rtd/awg-expiry" ]] && cp -a "$_rtd/awg-expiry" /etc/cron.d/awg-expiry 2>/dev/null
     rm -rf "$_rtd"
+    # Файлы отката скопированы - для JSON-конверта rolled_back=true даже если
+    # сервис ниже не стартует (состояние ФС уже возвращено к pre-restore).
+    _RESTORE_ROLLED_BACK=1
 
     log "Откат завершён — пытаюсь запустить сервис..."
     if systemctl start awg-quick@awg0; then
@@ -663,6 +675,7 @@ restore_backup() {
     fi
 
     if [[ ! -f "$bf" ]]; then die "Файл бэкапа '$bf' не найден."; fi
+    _RESTORE_SOURCE="$bf"   # для JSON-конверта restore (v5.21.0)
     log "Восстановление из $bf"
     if ! confirm_action "восстановить" "конфигурацию из '$bf'"; then return 1; fi
 
@@ -1126,16 +1139,35 @@ modify_client() {
 check_server() {
     log "Проверка состояния сервера AmneziaWG 2.0..."
     local ok=1
+    # Снимок для JSON-конверта (v5.21.0): собирается по ходу человеческих
+    # проверок, чтобы данные и вердикт шли из одного прогона.
+    local _c_svc_active=false _c_present=false _c_mtu=null _c_addrs=""
+    local _c_listen=false _c_mod=false _c_ufw_active=false _c_allowed=false
 
     log "Статус сервиса:"
-    if ! systemctl status awg-quick@awg0 --no-pager; then ok=0; fi
+    # В --json сырой вывод systemctl уходит в stderr: stdout занят контрактом.
+    if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
+        if ! systemctl status awg-quick@awg0 --no-pager >&2; then ok=0; fi
+    else
+        if ! systemctl status awg-quick@awg0 --no-pager; then ok=0; fi
+    fi
+    systemctl is-active --quiet awg-quick@awg0 2>/dev/null && _c_svc_active=true
 
     log "Интерфейс awg0:"
-    if ! ip addr show awg0 &>/dev/null; then
+    local _ip_out
+    if ! _ip_out=$(ip addr show awg0 2>/dev/null); then
         log_error " - Интерфейс не найден!"
         ok=0
     else
-        while IFS= read -r line; do log "  $line"; done < <(ip addr show awg0)
+        _c_present=true
+        while IFS= read -r line; do log "  $line"; done <<< "$_ip_out"
+        _c_mtu=$(sed -n 's/.*mtu \([0-9][0-9]*\).*/\1/p' <<< "$_ip_out" | head -n1)
+        [[ "$_c_mtu" =~ ^[0-9]+$ ]] || _c_mtu=null
+        local _a
+        while IFS= read -r _a; do
+            [[ -z "$_a" ]] && continue
+            _c_addrs+="${_c_addrs:+,}\"$(json_escape "$_a")\""
+        done < <(awk '/^[[:space:]]*inet6? /{print $2}' <<< "$_ip_out")
     fi
 
     log "Прослушивание порта:"
@@ -1148,6 +1180,7 @@ check_server() {
             log_error " - Порт ${port}/udp НЕ прослушивается!"
             ok=0
         else
+            _c_listen=true
             log " - Порт ${port}/udp прослушивается."
         fi
     fi
@@ -1162,15 +1195,36 @@ check_server() {
         log " - IP Forwarding включен."
     fi
 
+    log "Модуль ядра:"
+    # Паттерн из diagnose: точное имя модуля в первом столбце lsmod.
+    if lsmod 2>/dev/null | awk '$1 == "amneziawg" {f=1} END {exit !f}'; then
+        _c_mod=true
+        log " - Модуль amneziawg загружен."
+    else
+        # WARN, не ok=0: на userspace-инсталляциях (amneziawg-go, LXC) модуля
+        # нет и не будет, а сломанный kernel-путь и так валит сервис/интерфейс.
+        log_warn " - Модуль amneziawg не загружен (для userspace-режима это норма)."
+    fi
+
     log "Правила UFW:"
     if command -v ufw &>/dev/null; then
+        local _ufw_st
+        _ufw_st=$(ufw status 2>/dev/null | head -1)
+        [[ "$_ufw_st" == "Status: active" ]] && _c_ufw_active=true
         if [[ "$port" -eq 0 ]]; then
             # Порт не определился выше - grep по "0/udp" дал бы ложный warning.
             log_warn " - Порт не определён, проверка правила UFW пропущена."
-        elif ! ufw status | grep -qw "${port}/udp"; then
-            log_warn " - Правило UFW для ${port}/udp не найдено!"
-        else
+        elif [[ "$_c_ufw_active" != true ]]; then
+            # Раньше inactive UFW маскировался под "правило не найдено":
+            # grep по выводу inactive-статуса не находил порт и ругался не на то.
+            log_warn " - UFW не активен (${_ufw_st:-нет статуса})."
+        elif ufw status 2>/dev/null | grep -qE "^${port}/udp[[:space:]]+ALLOW"; then
+            # Строгий паттерн из diagnose: именно ALLOW, а не любое упоминание
+            # порта (прежний grep -qw не отличал ALLOW от DENY).
+            _c_allowed=true
             log " - Правило UFW для ${port}/udp есть."
+        else
+            log_warn " - Правило UFW для ${port}/udp не найдено!"
         fi
     else
         log_warn " - UFW не установлен."
@@ -1192,6 +1246,13 @@ check_server() {
         else
             log_warn " - AWG 2.0 параметры обфускации не обнаружены"
         fi
+    fi
+
+    if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
+        local _c_clients _jok=false
+        _c_clients=$(grep -c '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null) || _c_clients=0
+        [[ "$ok" -eq 1 ]] && _jok=true
+        json_out "{\"command\":\"check\",\"ok\":$_jok,\"service\":{\"unit\":\"awg-quick@awg0\",\"active\":$_c_svc_active},\"interface\":{\"name\":\"awg0\",\"present\":$_c_present,\"mtu\":$_c_mtu,\"addresses\":[$_c_addrs]},\"port\":{\"number\":$port,\"proto\":\"udp\",\"listening\":$_c_listen},\"module\":{\"loaded\":$_c_mod},\"clients\":{\"total\":$_c_clients},\"firewall\":{\"ufw_active\":$_c_ufw_active,\"port_allowed\":$_c_allowed}}"
     fi
 
     if [[ "$ok" -eq 1 ]]; then
@@ -1735,7 +1796,8 @@ usage() {
     echo "  -h, --help            Показать эту справку"
     echo "  -v, --verbose         Расширенный вывод (для команды list)"
     echo "  --no-color            Отключить цветной вывод"
-    echo "  --json                Машиночитаемый JSON-вывод (для команд list / stats)"
+    echo "  --json                Машиночитаемый JSON-вывод (большинство команд; детали в ADVANCED.md)"
+    echo "                        ENV AWG_STRICT_CONFIRM=1: не-TTY запуск без --yes отказывает (rc 1)"
     echo "  --expires=ВРЕМЯ       Срок действия при add (1h, 12h, 1d, 7d, 30d, 4w)"
     echo "  --conf-dir=ПУТЬ       Указать директорию AWG (умолч: $AWG_DIR)"
     echo "  --server-conf=ПУТЬ    Указать файл конфига сервера"
@@ -2083,16 +2145,46 @@ case $COMMAND in
 
     modify)
         [[ -z "$CLIENT_NAME" ]] && die "Не указано имя клиента."
-        validate_client_name "$CLIENT_NAME" || exit 1
-        modify_client "$CLIENT_NAME" "$PARAM" "$VALUE" || _cmd_rc=1
+        validate_client_name "$CLIENT_NAME" || { _JSON_ERR="невалидное имя клиента"; exit 1; }
+        if modify_client "$CLIENT_NAME" "$PARAM" "$VALUE"; then
+            # modify правит ТОЛЬКО клиентский конфиг (DNS/MTU/AllowedIPs/...):
+            # серверное состояние не меняется, apply не нужен - поля applied
+            # в конверте нет намеренно (симметрия с regen).
+            json_out "{\"command\":\"modify\",\"ok\":true,\"name\":\"$(json_escape "$CLIENT_NAME")\",\"param\":\"$(json_escape "$PARAM")\",\"value\":\"$(json_escape "$VALUE")\"}"
+        else
+            _cmd_rc=1
+        fi
         ;;
 
     backup)
-        backup_configs || _cmd_rc=1
+        if backup_configs; then
+            _jsize=null
+            if [[ -n "${LAST_BACKUP_PATH:-}" && -f "$LAST_BACKUP_PATH" ]]; then
+                _jsize=$(stat -c%s "$LAST_BACKUP_PATH" 2>/dev/null) || _jsize=null
+            fi
+            json_out "{\"command\":\"backup\",\"ok\":true,\"path\":\"$(json_escape "${LAST_BACKUP_PATH:-}")\",\"size_bytes\":$_jsize}"
+        else
+            _cmd_rc=1
+        fi
         ;;
 
     restore)
-        restore_backup "$CLIENT_NAME" || _cmd_rc=1 # CLIENT_NAME используется как [файл]
+        if restore_backup "$CLIENT_NAME"; then # CLIENT_NAME используется как [файл]
+            _jclients=$(grep -c '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null) || _jclients=0
+            _jkeys=false
+            [[ -n "$(find "$KEYS_DIR" -maxdepth 1 -name '*.private' -print -quit 2>/dev/null)" ]] && _jkeys=true
+            # clients = число [Peer] в ВОССТАНОВЛЕННОМ серверном конфиге
+            # (спека 3.3: не файлов в clients/ - они могут расходиться).
+            json_out "{\"command\":\"restore\",\"ok\":true,\"source\":\"$(json_escape "${_RESTORE_SOURCE:-}")\",\"applied\":true,\"rolled_back\":false,\"restored\":{\"server_conf\":true,\"clients\":$_jclients,\"keys\":$_jkeys}}"
+        else
+            _cmd_rc=1
+            # Конверт и на провале: боту важно знать, был ли откат. error -
+            # человекочитаемый текст, машинные решения по ok/rc.
+            if [[ "$JSON_OUTPUT" -eq 1 ]]; then
+                _jrb=false; [[ "${_RESTORE_ROLLED_BACK:-0}" == "1" ]] && _jrb=true
+                json_out "{\"command\":\"restore\",\"ok\":false,\"error\":\"$(json_escape "${_JSON_ERR:-restore failed (see stderr)}")\",\"source\":\"$(json_escape "${_RESTORE_SOURCE:-}")\",\"applied\":false,\"rolled_back\":$_jrb,\"rc\":1}"
+            fi
+        fi
         ;;
 
     check|status)
@@ -2112,12 +2204,16 @@ case $COMMAND in
         ensure_amneziawg_kernel_module module-only \
             || die "Модуль ядра amneziawg недоступен. Запустите 'manage repair-module' и повторите."
         if ! systemctl restart awg-quick@awg0; then
+            _JSON_ERR="service restart failed"
             log_error "Ошибка перезапуска."
             status_out=$(systemctl status awg-quick@awg0 --no-pager 2>&1) || true
             while IFS= read -r line; do log_error "  $line"; done <<< "$status_out"
             exit 1
         else
             log "Сервис перезапущен."
+            _jactive=false
+            systemctl is-active --quiet awg-quick@awg0 2>/dev/null && _jactive=true
+            json_out "{\"command\":\"restart\",\"ok\":true,\"unit\":\"awg-quick@awg0\",\"active\":$_jactive}"
         fi
         ;;
 
@@ -2127,8 +2223,10 @@ case $COMMAND in
         # (AWG_ALLOW_APT_IN_ENSURE=1) — пользователь явно запросил восстановление.
         log "Восстановление модуля ядра amneziawg (может занять до 5 минут — DKMS rebuild)..."
         AWG_ALLOW_APT_IN_ENSURE=1 ensure_amneziawg_kernel_module full; _mod_rc=$?
+        _jmod=true; _jsvc=false
         case "$_mod_rc" in
             0)
+                _jsvc=true
                 log "Модуль ядра amneziawg восстановлен, сервис awg-quick@awg0 активен."
                 ;;
             2)
@@ -2139,10 +2237,16 @@ case $COMMAND in
                 _cmd_rc=1
                 ;;
             *)
+                _jmod=false
                 log_error "Не удалось восстановить модуль ядра. См. лог выше; при необходимости выполните ручное восстановление."
                 _cmd_rc=1
                 ;;
         esac
+        if [[ "$JSON_OUTPUT" -eq 1 ]]; then
+            _jok=false; [[ "$_cmd_rc" -eq 0 ]] && _jok=true
+            # rc здесь = код ensure_amneziawg_kernel_module (0/1/2), не exit-код.
+            json_out "{\"command\":\"repair-module\",\"ok\":$_jok,\"module_loaded\":$_jmod,\"service_active\":$_jsvc,\"rc\":$_mod_rc}"
+        fi
         ;;
 
     diagnose)
