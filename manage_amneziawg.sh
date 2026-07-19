@@ -154,6 +154,10 @@ json_out() {
 _json_exit_guard() {
     local rc="$1"
     [[ "${JSON_OUTPUT:-0}" -eq 1 && "$_JSON_EMITTED" -eq 0 && "$rc" -ne 0 ]] || return 0
+    # show/diagnose вне JSON-контракта (--json задокументированно не поддержан):
+    # их человеческий вывод уже ушёл в stdout, аварийный объект сверху дал бы
+    # смешанный поток вместо "ровно одного документа".
+    case "${COMMAND:-}" in show|diagnose) return 0 ;; esac
     json_out "{\"command\":\"$(json_escape "${COMMAND:-}")\",\"ok\":false,\"error\":\"$(json_escape "${_JSON_ERR:-command failed}")\",\"rc\":$rc}"
 }
 
@@ -194,7 +198,7 @@ while [[ $# -gt 0 ]]; do
         --reset-routes)    CLI_RESET_ROUTES=1; shift ;;
         --yes)             CLI_YES=1; shift ;;
         --carrier=*)       CLI_CARRIER="${1#*=}"; shift ;;
-        --*)               echo "Неизвестная опция: $1" >&2; COMMAND="help"; HELP_EXIT_RC=1; break ;;
+        --*)               echo "Неизвестная опция: $1" >&2; for _rest in "$@"; do [[ "$_rest" == "--json" ]] && JSON_OUTPUT=1; done; COMMAND="help"; HELP_EXIT_RC=1; break ;;
         *)
             if [[ -z "$COMMAND" ]]; then
                 COMMAND=$1
@@ -1492,7 +1496,7 @@ list_clients() {
     clients=$(grep '^#_Name = ' "$SERVER_CONF_FILE" | sed 's/^#_Name = //' | sort) || clients=""
     if [[ -z "$clients" ]]; then
         if [[ "$JSON_OUTPUT" -eq 1 ]]; then
-            echo "[]"
+            json_out "[]"
         else
             log "Клиенты не найдены."
         fi
@@ -1646,7 +1650,8 @@ list_clients() {
     done <<< "$clients"
 
     if [[ "$JSON_OUTPUT" -eq 1 ]]; then
-        ( IFS=","; echo "[${json_entries[*]}]" )
+        _jarr=$(IFS=","; echo "[${json_entries[*]}]")
+        json_out "$_jarr"
     else
         echo ""
         log "Всего клиентов: $tot, Активных/Недавно: $act"
@@ -1681,7 +1686,7 @@ stats_clients() {
     clients=$(grep '^#_Name = ' "$SERVER_CONF_FILE" | sed 's/^#_Name = //' | sort) || clients=""
     if [[ -z "$clients" ]]; then
         if [[ "$JSON_OUTPUT" -eq 1 ]]; then
-            echo "[]"
+            json_out "[]"
         else
             log "Клиенты не найдены."
         fi
@@ -1755,7 +1760,8 @@ stats_clients() {
     done < <(echo "$awg_dump" | tail -n +2)
 
     if [[ "$JSON_OUTPUT" -eq 1 ]]; then
-        ( IFS=","; echo "[${json_entries[*]}]" )
+        _jarr=$(IFS=","; echo "[${json_entries[*]}]")
+        json_out "$_jarr"
     else
         log "Статистика трафика клиентов:"
         echo ""

@@ -43,6 +43,8 @@ _load_list_clients() {
     VERBOSE_LIST=0
     NO_COLOR=1
     json_escape() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '%s' "$s"; }
+    # v5.21.0: list_clients emits through json_out (single-emission point).
+    json_out() { printf '%s\n' "$1"; }
     format_remaining() { echo "soon"; }
     get_client_expiry() { echo ""; }
     awg() { return 1; }

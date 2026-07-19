@@ -166,3 +166,37 @@ _assert_error_json() {
     [ "$status" -eq 1 ]
     _assert_error_json
 }
+
+# --- Codex-review fixes (post phase-7) ---
+
+@test "unknown option BEFORE --json: guard still speaks (argv tail scan)" {
+    require_jq
+    run --separate-stderr bash "$SCRIPT" --frobnicate --json
+    [ "$status" -eq 1 ]
+    _assert_error_json
+}
+
+@test "show --json failure: no JSON pollution on the human stream" {
+    # show is documented as JSON-unsupported; on failure the guard must stay
+    # silent instead of appending an error object after human output.
+    printf '#!/bin/bash
+exit 1
+' > "$TEST_DIR/bin/awg"
+    chmod +x "$TEST_DIR/bin/awg"
+    run --separate-stderr bash "$SCRIPT" show --json "${MOCK_ARGS[@]}"
+    [ "$status" -eq 1 ]
+    [[ "$output" != *'"ok"'* ]]
+}
+
+@test "diagnose --json failure: no trailing JSON error object" {
+    run --separate-stderr bash "$SCRIPT" diagnose --json "${MOCK_ARGS[@]}"
+    [[ "$output" != *'"ok":false'* ]]
+}
+
+@test "list --json emission goes through json_out (SIGINT race closed)" {
+    # Structural check backing the freeze tests: the frozen array must be
+    # printed by json_out (sets _JSON_EMITTED) and not by a bare echo.
+    run ! grep -E '\( IFS=","; echo' "$SCRIPT"
+    grep -q 'json_out "\$_jarr"' "$SCRIPT"
+    grep -q 'json_out "\$_jarr"' "$SCRIPT_EN"
+}
