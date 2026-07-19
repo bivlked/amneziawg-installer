@@ -88,6 +88,9 @@ _load_list_clients_ru() {
     format_remaining() { echo "soon"; }
     get_client_expiry() { echo ""; }
     awg() { return 1; }
+    # v5.21.0: list_clients emits through json_out (single-emission point).
+    json_out() { printf '%s
+' "$1"; }
 
     # Source only the list_clients function body by eval-ing it
     eval "$(awk '/^list_clients\(\)/{p=1} p{print} p && /^\}$/{exit}' "$src")"
@@ -108,6 +111,9 @@ _load_list_clients_en() {
     format_remaining() { echo "soon"; }
     get_client_expiry() { echo ""; }
     awg() { return 1; }
+    # v5.21.0: list_clients emits through json_out (single-emission point).
+    json_out() { printf '%s
+' "$1"; }
 
     eval "$(awk '/^list_clients\(\)/{p=1} p{print} p && /^\}$/{exit}' "$src")"
 }
