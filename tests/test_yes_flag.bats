@@ -122,10 +122,12 @@ setup() {
 
 @test "RU/EN parity: CLI_YES/AWG_YES check has identical structure" {
     # Strip comment lines (start with #) — only compare code identity.
+    # log_* lines are excluded too: localized human text mentions AWG_YES
+    # since v5.21.0 (strict-confirm refusal message) - compare code only.
     ru_block=$(awk '/^confirm_action\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh" \
-        | grep -E 'CLI_YES|AWG_YES' | grep -vE '^\s*#')
+        | grep -E 'CLI_YES|AWG_YES' | grep -vE '^\s*#|log_')
     en_block=$(awk '/^confirm_action\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh" \
-        | grep -E 'CLI_YES|AWG_YES' | grep -vE '^\s*#')
+        | grep -E 'CLI_YES|AWG_YES' | grep -vE '^\s*#|log_')
     [ "$ru_block" = "$en_block" ]
 }
 

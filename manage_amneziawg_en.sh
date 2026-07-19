@@ -64,7 +64,112 @@ _manage_on_signal() {
     _manage_cleanup
     exit "$1"
 }
-trap _manage_cleanup EXIT
+
+# ==============================================================================
+# JSON helpers (v5.21.0)
+# ==============================================================================
+# Defined BEFORE the EXIT trap is installed: _manage_on_exit calls
+# _json_exit_guard, which calls json_escape. An early exit (option error)
+# without these definitions would print "command not found" instead of the
+# emergency JSON.
+
+# Byte-wise replacement of invalid UTF-8 with U+FFFD. A replacement, not
+# iconv -c: silently dropping bytes makes an error text meaningless exactly
+# when it matters most. iconv prints the valid prefix up to the first bad
+# byte: take the prefix, replace the byte, re-run the tail.
+# Called only after validation already failed - zero cost on valid input.
+_json_utf8_sanitize() {
+    local s="$1" out="" prefix
+    local LC_ALL=C   # ${#} and ${:offset} must count BYTES, not characters
+    while [[ -n "$s" ]]; do
+        if printf '%s' "$s" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then
+            out+="$s"
+            break
+        fi
+        # Sentinel X preserves the prefix's trailing newlines ($() strips them).
+        prefix=$(printf '%s' "$s" | iconv -f UTF-8 -t UTF-8 2>/dev/null; printf X)
+        prefix="${prefix%X}"
+        out+="${prefix}"$'\xEF\xBF\xBD'
+        s="${s:$(( ${#prefix} + 1 ))}"
+    done
+    printf '%s' "$out"
+}
+
+# Escape a string for safe JSON inclusion. Beyond the basic \ " \n \r \t
+# this escapes ALL C0 controls (0x01-0x1F) as \u00XX - jq rejects raw ESC/BEL
+# (same class as the ESC-in-vpn:// bug in v5.20.0), and the emergency path
+# feeds arbitrary error text and --conf-dir paths in here. Invalid UTF-8 ->
+# U+FFFD. NUL is not handled: a bash variable cannot carry it.
+json_escape() {
+    local s="$1"
+    # Fork-free fast-path via printf %q: clean strings (names, IPs, our
+    # status literals) come back from %q unchanged - no iconv spawn needed
+    # (matters for list/stats: hundreds of calls per run). Broken bytes and
+    # C0 are ALWAYS quoted by %q ($'...') -> they take the iconv path.
+    # A false positive (spaces/parens) costs one cheap validation.
+    # NOT usable as a detector on its own: comparing char length == byte
+    # length misses broken UTF-8 (each bad byte counts as a "character").
+    local _q
+    printf -v _q '%q' "$s"
+    if [[ "$_q" != "$s" ]] && command -v iconv >/dev/null 2>&1; then
+        if ! printf '%s' "$s" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then
+            s=$(_json_utf8_sanitize "$s"; printf X)
+            s="${s%X}"
+        fi
+    fi
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    # Rare path: remaining C0 (after the replacements above, \n\r\t are gone).
+    if [[ "$s" =~ [[:cntrl:]] ]]; then
+        local _i _ch _u
+        for _i in 1 2 3 4 5 6 7 8 11 12 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31; do
+            printf -v _ch "\\$(printf '%03o' "$_i")"
+            [[ "$s" == *"$_ch"* ]] || continue
+            printf -v _u '\\u%04x' "$_i"
+            s="${s//$_ch/$_u}"
+        done
+    fi
+    printf '%s' "$s"
+}
+
+# The single point that prints JSON to stdout. Contract rule: with --json,
+# stdout carries EXACTLY ONE JSON document, including any failure.
+_JSON_EMITTED=0
+_JSON_ERR=""
+json_out() {
+    [[ "${JSON_OUTPUT:-0}" -eq 1 ]] || return 0
+    [[ "$_JSON_EMITTED" -eq 1 ]] && return 0    # double-emission protection
+    _JSON_EMITTED=1
+    printf '%s\n' "$1"
+}
+
+# Emergency emission on EXIT: any exit path with rc!=0 that has not printed
+# its envelope (die, bare exit, strict-confirm refusal, signal, usage error)
+# leaves the bot {"command","ok":false,"error","rc"} instead of empty stdout.
+# rc arrives as an ARGUMENT: the guard is called from _manage_on_exit, and
+# reading $? here would be too late. The error field is human-readable text
+# (may be localized); bots must decide by ok/rc/status.
+_json_exit_guard() {
+    local rc="$1"
+    [[ "${JSON_OUTPUT:-0}" -eq 1 && "$_JSON_EMITTED" -eq 0 && "$rc" -ne 0 ]] || return 0
+    json_out "{\"command\":\"$(json_escape "${COMMAND:-}")\",\"ok\":false,\"error\":\"$(json_escape "${_JSON_ERR:-command failed}")\",\"rc\":$rc}"
+}
+
+# The ONLY EXIT handler. The guard lives here, NOT inside the idempotent
+# _manage_cleanup: the signal path calls cleanup directly (at that moment $?
+# is not yet 130/143 - the guard would report a wrong rc), and the repeated
+# cleanup call on EXIT hits _manage_cleaned=1 (a guard placed after that
+# check would never run). Here rc is honest on all paths, including the
+# exit 130/143 from the signal hooks.
+_manage_on_exit() {
+    local rc=$?
+    _json_exit_guard "$rc"
+    _manage_cleanup
+}
+trap _manage_on_exit EXIT
 trap '_manage_on_signal 130' INT
 trap '_manage_on_signal 143' TERM
 
@@ -82,15 +187,11 @@ while [[ $# -gt 0 ]]; do
         --conf-dir=*)      AWG_DIR="${1#*=}"; shift ;;
         --server-conf=*)   SERVER_CONF_FILE="${1#*=}"; shift ;;
         --apply-mode=*)
+            # Stash only; validation happens AFTER the loop (see below):
+            # inside the loop --json may not be parsed yet ('add x
+            # --apply-mode=bad --json') and the emergency JSON guard
+            # would stay silent on an error here.
             _CLI_APPLY_MODE="${1#*=}"
-            # Validate right at parse time: a typo (--apply-mode=restrat)
-            # would silently act as syncconf - a user working around an issue
-            # with restart mode would never learn the mode did not apply.
-            case "$_CLI_APPLY_MODE" in
-                syncconf|restart) ;;
-                *) echo "Invalid --apply-mode value: '$_CLI_APPLY_MODE' (expected: syncconf or restart)" >&2; exit 1 ;;
-            esac
-            export AWG_APPLY_MODE="$_CLI_APPLY_MODE"
             shift ;;
         --psk)             CLI_ADD_PSK=1; shift ;;
         --reset-routes)    CLI_RESET_ROUTES=1; shift ;;
@@ -109,6 +210,20 @@ done
 CLIENT_NAME="${ARGS[0]}"
 PARAM="${ARGS[1]}"
 VALUE="${ARGS[2]}"
+
+# Validate --apply-mode after ALL options are parsed (--json is known now).
+# A typo (--apply-mode=restrat) would silently act as syncconf - a user
+# working around an issue with restart mode would never learn the mode
+# did not apply.
+if [[ -n "${_CLI_APPLY_MODE:-}" ]]; then
+    case "$_CLI_APPLY_MODE" in
+        syncconf|restart) export AWG_APPLY_MODE="$_CLI_APPLY_MODE" ;;
+        *)
+            _JSON_ERR="Invalid --apply-mode value: '$_CLI_APPLY_MODE' (expected: syncconf or restart)"
+            echo "$_JSON_ERR" >&2
+            exit 1 ;;
+    esac
+fi
 
 # Update paths after possible --conf-dir override
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -160,7 +275,9 @@ log()       { log_msg "INFO" "$1"; }
 log_warn()  { log_msg "WARN" "$1"; }
 log_error() { log_msg "ERROR" "$1"; }
 log_debug() { if [[ "$VERBOSE_LIST" -eq 1 ]]; then log_msg "DEBUG" "$1"; fi; }
-die()       { log_error "$1"; exit 1; }
+# die mirrors the message into _JSON_ERR so the guard's emergency JSON
+# carries meaningful text instead of the default "command failed".
+die()       { _JSON_ERR="$1"; log_error "$1"; exit 1; }
 
 # ==============================================================================
 # Utilities
@@ -184,7 +301,19 @@ confirm_action() {
     if [[ "${CLI_YES:-0}" == "1" || "${AWG_YES:-0}" == "1" ]]; then
         return 0
     fi
-    if ! is_interactive; then return 0; fi
+    if ! is_interactive; then
+        # AWG_STRICT_CONFIRM=1 (opt-in, v5.21.0): a non-interactive run without
+        # an explicit --yes/AWG_YES=1 is refused instead of silently approved -
+        # protects destructive commands in pipelines where nobody watches the
+        # screen. Default 0 keeps prior behavior; strictly the string "1".
+        # The ENV applies per run and is NOT persisted to awgsetup_cfg.init.
+        if [[ "${AWG_STRICT_CONFIRM:-0}" == "1" ]]; then
+            _JSON_ERR="AWG_STRICT_CONFIRM=1: non-interactive run requires --yes"
+            log_error "AWG_STRICT_CONFIRM=1: non-interactive run requires --yes (or AWG_YES=1). Action cancelled."
+            return 1
+        fi
+        return 0
+    fi
     local action="$1" subject="$2"
     read -rp "Are you sure you want to $action $subject? [y/N]: " confirm < /dev/tty
     # Accept y/yes (case-insensitive) plus stray whitespace/CR around it.
@@ -202,6 +331,16 @@ validate_client_name() {
     if [[ ${#name} -gt 63 ]]; then log_error "Name exceeds 63 chars."; return 1; fi
     if ! [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then log_error "Name contains invalid characters."; return 1; fi
     return 0
+}
+
+# JSON entry for a successful regen (v5.21.0). qr/vpnuri are paths if the
+# file exists at response time (regenerate_client refreshes them best-effort;
+# the contract makes no freshness promise - see the races note in the docs).
+_regen_json_entry() {
+    local name="$1" _jqr="null" _juri="null"
+    [[ -f "$AWG_DIR/${name}.png" ]] && _jqr="\"$(json_escape "$AWG_DIR/${name}.png")\""
+    [[ -f "$AWG_DIR/${name}.vpnuri" ]] && _juri="\"$(json_escape "$AWG_DIR/${name}.vpnuri")\""
+    printf '%s' "{\"name\":\"$(json_escape "$name")\",\"status\":\"regenerated\",\"conf\":\"$(json_escape "$AWG_DIR/${name}.conf")\",\"qr\":$_jqr,\"vpnuri\":$_juri}"
 }
 
 # ==============================================================================
@@ -1470,16 +1609,9 @@ list_clients() {
 # Traffic statistics
 # ==============================================================================
 
-# Escape string for safe JSON inclusion
-json_escape() {
-    local s="$1"
-    s="${s//\\/\\\\}"
-    s="${s//\"/\\\"}"
-    s="${s//$'\n'/\\n}"
-    s="${s//$'\r'/\\r}"
-    s="${s//$'\t'/\\t}"
-    printf '%s' "$s"
-}
+# json_escape is defined in the JSON helpers block at the top of the file
+# (moved in v5.21.0: the EXIT guard calls it on any early exit, so the
+# definition must precede the trap installation).
 
 # Format bytes to human-readable
 format_bytes() {
@@ -1599,6 +1731,14 @@ usage() {
     # -> stderr + exit 1. Explicit-help callers pass 0, error callers omit the
     # argument (get 1).
     local _rc="${1:-1}"
+    if [[ "$_rc" -ne 0 && "${JSON_OUTPUT:-0}" -eq 1 ]]; then
+        # --json + usage error: the bot has no use for help text, and the
+        # exec >&2 below would hijack stdout away from the emergency JSON
+        # guard (exec moves the fd for the whole process, and the guard
+        # fires LATER, on EXIT). The cause is already on stderr.
+        _JSON_ERR="${_JSON_ERR:-invalid usage (unknown option or command)}"
+        exit "$_rc"
+    fi
     [[ "$_rc" -ne 0 ]] && exec >&2
     echo ""
     echo "AmneziaWG 2.0 management script (v${SCRIPT_VERSION})"
@@ -1654,7 +1794,7 @@ if [[ "$COMMAND" == "help" ]]; then
     usage "$HELP_EXIT_RC"
 fi
 
-check_dependencies || exit 1
+check_dependencies || { _JSON_ERR="missing dependencies (diagnostics in stderr)"; exit 1; }
 cd "$AWG_DIR" || die "Failed to change to $AWG_DIR"
 
 log "Running command '$COMMAND'..."
@@ -1698,8 +1838,9 @@ case $COMMAND in
         fi
 
         _added=0
+        _jr=()
         for _cname in "${ARGS[@]}"; do
-            validate_client_name "$_cname" || { _cmd_rc=1; continue; }
+            validate_client_name "$_cname" || { _cmd_rc=1; _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"invalid_name\"}"); continue; }
 
             if grep -qxF "#_Name = ${_cname}" "$SERVER_CONF_FILE"; then
                 # _cmd_rc=1 - parity with remove ("No clients to remove") and
@@ -1707,6 +1848,7 @@ case $COMMAND in
                 # distinguishable via the exit code for automation (Issue #175).
                 log_warn "Client '$_cname' already exists, skipping."
                 _cmd_rc=1
+                _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"exists\"}")
                 continue
             fi
 
@@ -1715,6 +1857,12 @@ case $COMMAND in
             if [[ "${CLI_ADD_PSK:-0}" == "1" ]]; then
                 export CLIENT_PSK="auto"
             fi
+
+            # Stale artifacts of a same-named client from the past (the QR
+            # may not regenerate if qrencode disappeared): without cleanup the
+            # [[ -f ]] checks below would report someone else's old file as
+            # fresh - both in the log and in JSON.
+            rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png"
 
             log "Adding '$_cname'..."
             if generate_client "$_cname"; then
@@ -1742,22 +1890,42 @@ case $COMMAND in
                     fi
                 fi
                 ((_added++))
+                # JSON success entry: qr/vpnuri are paths if the file really
+                # exists at response time (generate_client reports success
+                # even when QR/URI failed); expires_at is epoch or null.
+                _jqr="null"; _juri="null"; _jexp="null"
+                [[ -f "$AWG_DIR/${_cname}.png" ]] && _jqr="\"$(json_escape "$AWG_DIR/${_cname}.png")\""
+                [[ -f "$AWG_DIR/${_cname}.vpnuri" ]] && _juri="\"$(json_escape "$AWG_DIR/${_cname}.vpnuri")\""
+                if [[ -n "$EXPIRES_DURATION" ]]; then
+                    _jexp_val=$(get_client_expiry "$_cname" 2>/dev/null) || _jexp_val=""
+                    [[ "$_jexp_val" =~ ^[0-9]+$ ]] && _jexp="$_jexp_val"
+                fi
+                _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"created\",\"conf\":\"$(json_escape "$AWG_DIR/${_cname}.conf")\",\"qr\":$_jqr,\"vpnuri\":$_juri,\"expires_at\":$_jexp}")
             else
                 log_error "Error adding client '$_cname'."
                 _cmd_rc=1
+                _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"error\"}")
             fi
         done
 
+        _japplied=false
         if [[ $_added -gt 0 ]]; then
             if [[ "${AWG_SKIP_APPLY:-0}" == "1" ]]; then
                 apply_config
                 log "Clients added: $_added. Apply deferred (AWG_SKIP_APPLY=1)."
             elif apply_config; then
+                _japplied=true
                 log "Clients added: $_added. Configuration applied."
             else
                 log_error "Clients added: $_added, but apply_config failed. Config written but NOT applied to live interface. Check: systemctl status awg-quick@awg0"
                 _cmd_rc=1
             fi
+        fi
+        if [[ "$JSON_OUTPUT" -eq 1 ]]; then
+            _jrj=""
+            [[ ${#_jr[@]} -gt 0 ]] && _jrj=$(IFS=,; printf '%s' "${_jr[*]}")
+            _jok=false; [[ "$_cmd_rc" -eq 0 ]] && _jok=true
+            json_out "{\"command\":\"add\",\"ok\":$_jok,\"added\":$_added,\"failed\":$(( ${#ARGS[@]} - _added )),\"applied\":$_japplied,\"results\":[$_jrj]}"
         fi
         # Hygiene: do not let CLIENT_PSK leak into later operations
         unset CLIENT_PSK
@@ -1768,10 +1936,16 @@ case $COMMAND in
 
         # Validate all names before removing
         _valid_names=()
+        _jr=()
         for _rname in "${ARGS[@]}"; do
-            validate_client_name "$_rname" || { _cmd_rc=1; continue; }
+            validate_client_name "$_rname" || { _cmd_rc=1; _jr+=("{\"name\":\"$(json_escape "$_rname")\",\"status\":\"invalid_name\"}"); continue; }
             if ! grep -qxF "#_Name = ${_rname}" "$SERVER_CONF_FILE"; then
+                # _cmd_rc=1 (v5.21.0): a partial not-found used to give rc 0 -
+                # asymmetric with add (exists -> rc 1) and regen (not-found ->
+                # rc 1). Spec 3.4: 'remove a ghost' = partial success = rc 1.
                 log_warn "Client '$_rname' not found, skipping."
+                _cmd_rc=1
+                _jr+=("{\"name\":\"$(json_escape "$_rname")\",\"status\":\"not_found\"}")
                 continue
             fi
             _valid_names+=("$_rname")
@@ -1810,23 +1984,33 @@ case $COMMAND in
                     remove_client_expiry "$_rname"
                     log "Client '$_rname' removed."
                     ((_removed++))
+                    _jr+=("{\"name\":\"$(json_escape "$_rname")\",\"status\":\"removed\"}")
                 else
                     log_error "Error removing '$_rname'."
                     _cmd_rc=1
+                    _jr+=("{\"name\":\"$(json_escape "$_rname")\",\"status\":\"error\"}")
                 fi
             done
 
+            _japplied=false
             if [[ $_removed -gt 0 ]]; then
                 if [[ "${AWG_SKIP_APPLY:-0}" == "1" ]]; then
                     apply_config
                     log "Clients removed: $_removed. Apply deferred (AWG_SKIP_APPLY=1)."
                 elif apply_config; then
+                    _japplied=true
                     log "Clients removed: $_removed. Configuration applied."
                 else
                     log_error "Clients removed: $_removed, but apply_config failed. Peers removed from config but may still be present on live interface. Check: systemctl status awg-quick@awg0"
                     _cmd_rc=1
                 fi
             fi
+        fi
+        if [[ "$JSON_OUTPUT" -eq 1 ]]; then
+            _jrj=""
+            [[ ${#_jr[@]} -gt 0 ]] && _jrj=$(IFS=,; printf '%s' "${_jr[*]}")
+            _jok=false; [[ "$_cmd_rc" -eq 0 ]] && _jok=true
+            json_out "{\"command\":\"remove\",\"ok\":$_jok,\"removed\":${_removed:-0},\"failed\":$(( ${#ARGS[@]} - ${_removed:-0} )),\"applied\":${_japplied:-false},\"results\":[$_jrj]}"
         fi
         ;;
 
@@ -1847,17 +2031,29 @@ case $COMMAND in
             export AWG_REGEN_RESET_ROUTES=1
             log "AllowedIPs of all regenerated clients will be reset to the global routing mode (--reset-routes)."
         fi
+        _jr=()
+        _regen_count=0
+        _regen_total=0
         if [[ ${#ARGS[@]} -eq 0 ]]; then
             # No arguments — regenerate all clients (preserves prior behaviour).
             all_clients=$(grep '^#_Name = ' "$SERVER_CONF_FILE" | sed 's/^#_Name = //')
             if [[ -z "$all_clients" ]]; then
+                # Empty list is a regular no-op: rc 0, regenerated=0 in JSON.
                 log "No clients found."
             else
                 while IFS= read -r cname; do
                     cname="${cname## }"; cname="${cname%% }"
                     [[ -z "$cname" ]] && continue
+                    _regen_total=$((_regen_total + 1))
                     log "Regenerating '$cname'..."
-                    regenerate_client "$cname" || { log_warn "Regeneration error '$cname'"; _cmd_rc=1; }
+                    if regenerate_client "$cname"; then
+                        _regen_count=$((_regen_count + 1))
+                        _jr+=("$(_regen_json_entry "$cname")")
+                    else
+                        log_warn "Regeneration error '$cname'"
+                        _cmd_rc=1
+                        _jr+=("{\"name\":\"$(json_escape "$cname")\",\"status\":\"error\"}")
+                    fi
                 done <<< "$all_clients"
                 log "Regeneration completed."
             fi
@@ -1865,25 +2061,37 @@ case $COMMAND in
             # With arguments — process each name individually (parity with add/remove).
             # Until v5.11.5 only $CLIENT_NAME (=ARGS[0]) was read here, the rest were
             # silently dropped (Issue #70).
-            _regen_count=0
+            _regen_total=${#ARGS[@]}
             for _cname in "${ARGS[@]}"; do
-                validate_client_name "$_cname" || { _cmd_rc=1; continue; }
+                validate_client_name "$_cname" || { _cmd_rc=1; _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"invalid_name\"}"); continue; }
                 if ! grep -qxF "#_Name = ${_cname}" "$SERVER_CONF_FILE"; then
                     log_warn "Client '$_cname' not found, skipping."
                     _cmd_rc=1
+                    _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"not_found\"}")
                     continue
                 fi
                 log "Regenerating '$_cname'..."
                 if regenerate_client "$_cname"; then
                     _regen_count=$((_regen_count + 1))
+                    _jr+=("$(_regen_json_entry "$_cname")")
                 else
                     log_error "Regeneration error '$_cname'."
                     _cmd_rc=1
+                    _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"error\"}")
                 fi
             done
             if [[ $_regen_count -gt 0 ]]; then
                 log "Regeneration completed. Processed: $_regen_count of ${#ARGS[@]}."
             fi
+        fi
+        if [[ "$JSON_OUTPUT" -eq 1 ]]; then
+            _jrj=""
+            [[ ${#_jr[@]} -gt 0 ]] && _jrj=$(IFS=,; printf '%s' "${_jr[*]}")
+            _jok=false; [[ "$_cmd_rc" -eq 0 ]] && _jok=true
+            _jreset=false; [[ "${CLI_RESET_ROUTES:-0}" == "1" ]] && _jreset=true
+            # regen does not change server state (keys and IPs are reused,
+            # no apply needed) - the envelope has no applied field on purpose.
+            json_out "{\"command\":\"regen\",\"ok\":$_jok,\"regenerated\":$_regen_count,\"failed\":$(( _regen_total - _regen_count )),\"reset_routes\":$_jreset,\"results\":[$_jrj]}"
         fi
         ;;
 
