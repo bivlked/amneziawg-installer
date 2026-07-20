@@ -8,7 +8,7 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 2.0 на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 5.21.0
+# Версия: 5.21.1
 # Дата: 2026-07-20
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
@@ -16,7 +16,7 @@ fi
 # --- Безопасный режим и Константы ---
 set -o pipefail
 
-SCRIPT_VERSION="5.21.0"
+SCRIPT_VERSION="5.21.1"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="76f34182e1404080f763f9ccafbbb14eaf78cb1d38e651fed2ef29cc3fe918b1"
-MANAGE_SCRIPT_SHA256="c374f4c6347307017efc3f1e5e5d149ce2e9e93f37af7113d5e87db015ceac9d"
+COMMON_SCRIPT_SHA256="85164a785a5f0ab882ddd6c03c811314b7c221181e5664472eeaabd6a49ea4c0"
+MANAGE_SCRIPT_SHA256="04800e4d547c7bf709f81edb9c8206dc65296b8b841cb5a22a01d6e0cfeb49af"
 
 # Флаги CLI
 UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0

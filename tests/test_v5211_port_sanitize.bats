@@ -1,0 +1,106 @@
+#!/usr/bin/env bats
+# v5.21.1: AWG_PORT from awgsetup_cfg.init is normalized before use.
+#
+# The config file is hand-edited, so a bad edit can leave any string in
+# AWG_PORT. That value reached two places unchecked:
+#   1. the check --json envelope, interpolated without quotes, so a
+#      non-numeric value produced "number":abc - not parseable, which breaks
+#      the v5.21.0 promise of exactly one valid JSON document;
+#   2. [[ "$port" -eq 0 ]], an arithmetic context where bash performs command
+#      substitution, so a value like a[$(cmd)] executed cmd.
+#
+# These tests run the real _sanitize_port pulled out of the scripts, not a
+# local copy of the logic - a grep-for-the-regex test would pass even if the
+# function were never called.
+
+require_jq() { command -v jq &>/dev/null || skip "jq not available"; }
+
+_load_sanitizer() {
+    eval "$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$1")"
+}
+
+setup() {
+    _load_sanitizer "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+}
+
+# --- valid ports pass through unchanged ---
+
+@test "port sanitize: real ports survive" {
+    for p in 1 443 39743 51820 65535; do
+        run _sanitize_port "$p"
+        [ "$output" = "$p" ] || { echo "port $p became $output"; return 1; }
+    done
+}
+
+@test "port sanitize: leading zeros are not read as octal" {
+    # 0080 as octal would be 64; the config may legitimately carry padding.
+    run _sanitize_port "0080"
+    [ "$output" = "80" ]
+}
+
+# --- everything else collapses to 0, the value check already treats as
+#     "port unknown" ---
+
+@test "port sanitize: junk collapses to 0" {
+    for p in "abc" "1 2" "" "8.5" "-5" "80;rm -rf /" '$(id)' "0" "port"; do
+        run _sanitize_port "$p"
+        [ "$output" = "0" ] || { echo "[$p] became [$output], expected 0"; return 1; }
+    done
+}
+
+@test "port sanitize: out-of-range and overflow collapse to 0" {
+    # 65536 is one past the maximum; the long one would overflow 64-bit
+    # arithmetic and yield a meaningless number.
+    for p in 65536 70000 99999999999999999999; do
+        run _sanitize_port "$p"
+        [ "$output" = "0" ] || { echo "$p became $output"; return 1; }
+    done
+}
+
+# --- the two defects, tested through behaviour ---
+
+@test "check JSON stays parseable for any AWG_PORT" {
+    require_jq
+    for p in "abc" "1 2" "" "39743" "0080" "99999999999999999999"; do
+        local n
+        n=$(_sanitize_port "$p")
+        # Same shape as the check envelope: the value is interpolated bare.
+        run bash -c "printf '{\"port\":{\"number\":%s}}' '$n' | jq -re '.port.number'"
+        [ "$status" -eq 0 ] || { echo "[$p] produced unparseable JSON"; return 1; }
+        [[ "$output" =~ ^[0-9]+$ ]] || { echo "[$p] gave non-numeric $output"; return 1; }
+    done
+}
+
+@test "arithmetic test on the port does not execute commands" {
+    marker="$BATS_TEST_TMPDIR/executed"
+    rm -f "$marker"
+    # Raw value would run touch inside [[ -eq ]]; the sanitized one must not.
+    port=$(_sanitize_port "a[\$(touch $marker)]")
+    if [[ "$port" -eq 0 ]]; then :; fi
+    [ ! -f "$marker" ] || { echo "command substitution executed via arithmetic"; return 1; }
+    [ "$port" = "0" ]
+}
+
+# --- the fix must be wired in, not just present ---
+
+@test "check_server calls the sanitizer instead of reading AWG_PORT raw" {
+    for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
+        run grep -E 'port=\$\(_sanitize_port "\$\{AWG_PORT:-\}"\)' "$BATS_TEST_DIRNAME/../$f"
+        [ "$status" -eq 0 ] || { echo "$f does not call _sanitize_port"; return 1; }
+        run grep -F 'local port=${AWG_PORT:-0}' "$BATS_TEST_DIRNAME/../$f"
+        [ "$status" -ne 0 ] || { echo "$f still reads AWG_PORT raw"; return 1; }
+    done
+}
+
+@test "RU/EN parity: identical sanitizer body" {
+    ru=$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh" | grep -vE '^\s*#')
+    en=$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh" | grep -vE '^\s*#')
+    [ -n "$ru" ] && [ "$ru" = "$en" ]
+}
+
+@test "EN sanitizer behaves the same as RU" {
+    _load_sanitizer "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
+    run _sanitize_port "abc"; [ "$output" = "0" ]
+    run _sanitize_port "443"; [ "$output" = "443" ]
+    run _sanitize_port "65536"; [ "$output" = "0" ]
+}

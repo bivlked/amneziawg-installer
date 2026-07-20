@@ -592,6 +592,7 @@ sudo bash /root/awg/manage_amneziawg.sh restore
 - `restore` возвращает конверт и на провале (с полями `error` и `rolled_back` - боту важно знать, был ли откат). `restored.clients` - число `[Peer]`-блоков в восстановленном серверном конфиге, не файлов в рабочей папке.
 - `repair-module.rc` - код внутренней проверки модуля (0 - модуль и сервис OK, 1 - модуль не поднялся, 2 - модуль OK, сервис нет), не exit-код процесса.
 - `check.module.loaded=false` сам по себе не ошибка: на userspace-инсталляциях (amneziawg-go, LXC) модуля нет и не будет.
+- `check.port.number` - всегда целое. `0` читайте как «порт не определён»: либо его нет в `awgsetup_cfg.init`, либо там оказалось не число (файл правится руками). Судить о живом порте по одному этому полю нельзя - смотрите вместе с `port.listening`.
 
 <a id="strict-confirm-adv"></a>
 ### Строгое подтверждение для пайплайнов (AWG_STRICT_CONFIRM)
@@ -673,7 +674,7 @@ graph TD
 Инсталлятор скачивает `awg_common.sh` и `manage_amneziawg.sh` с URL, привязанных к конкретному тегу версии:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.21.0/awg_common.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.21.1/awg_common.sh
 ```
 
 Это даёт **supply chain pinning**: скачиваемые скрипты соответствуют версии инсталлятора, даже если `main` уже обновлён.
@@ -693,12 +694,12 @@ AWG_BRANCH=my-feature-branch sudo bash ./install_amneziawg.sh
 
 ```bash
 # Русская версия:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.21.0/manage_amneziawg.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.21.0/awg_common.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.21.1/manage_amneziawg.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.21.1/awg_common.sh
 
 # Английская версия:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.21.0/manage_amneziawg_en.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.21.0/awg_common_en.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.21.1/manage_amneziawg_en.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.21.1/awg_common_en.sh
 
 # Установить права
 chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh

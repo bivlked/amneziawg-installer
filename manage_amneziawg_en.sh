@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 peer management script
 # Author: @bivlked
-# Version: 5.21.0
+# Version: 5.21.1
 # Date: 2026-07-20
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.21.0"
+SCRIPT_VERSION="5.21.1"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -133,6 +133,27 @@ json_escape() {
         done
     fi
     printf '%s' "$s"
+}
+
+# The port number from awgsetup_cfg.init cannot be treated as a number: the
+# file gets hand-edited, and a bad edit leaves anything in there. Two places
+# broke on it. In JSON the value is interpolated without quotes, and
+# "number":abc no longer parses, while the contract promises exactly one valid
+# document. And in [[ "$port" -eq 0 ]] bash evaluates arithmetic, where a value
+# like a[$(...)] is EXECUTED. The file is root-owned with mode 600, so nobody
+# else plants anything there, but leaning on permissions where one check does
+# the job is pointless.
+# A function rather than two lines in place: this way the test runs the real
+# code instead of its own copy of the logic.
+_sanitize_port() {
+    local p="${1:-}"
+    # {1,5} rules out 64-bit arithmetic overflow, 10# rules out octal
+    # interpretation of values like 0080.
+    if [[ "$p" =~ ^[0-9]{1,5}$ ]] && (( 10#$p >= 1 && 10#$p <= 65535 )); then
+        printf '%s' "$((10#$p))"
+    else
+        printf '0'
+    fi
 }
 
 # The single point that prints JSON to stdout. Contract rule: with --json,
@@ -1190,7 +1211,8 @@ check_server() {
 
     log "Port listening:"
     safe_load_config "$CONFIG_FILE" 2>/dev/null
-    local port=${AWG_PORT:-0}
+    local port
+    port=$(_sanitize_port "${AWG_PORT:-}")
     if [[ "$port" -eq 0 ]]; then
         log_warn " - Failed to determine port."
     else
