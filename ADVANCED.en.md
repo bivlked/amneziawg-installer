@@ -594,7 +594,7 @@ Field notes:
 - `restore` returns an envelope on failure too (with `error` and `rolled_back` - the bot needs to know whether a rollback happened). `restored.clients` is the number of `[Peer]` blocks in the restored server config, not files in the working directory.
 - `repair-module.rc` - the internal module-check code (0 - module and service OK, 1 - module failed, 2 - module OK, service down), not the process exit code.
 - `check.module.loaded=false` is not an error by itself: userspace installs (amneziawg-go, LXC) never have the module.
-- `check.port.number` is always an integer. Read `0` as "port unknown". Three things cause it: the setting is missing from `awgsetup_cfg.init`, the file holds something that is not a number, or the number falls outside 1-65535 (the file gets hand-edited). The first case is a warning; the other two count as a corrupt config and produce `ok=false` with exit code 1. This field alone says nothing about the live port - read it together with `port.listening`.
+- `check.port.number` is always an integer, and `0` reads as "port unknown". A missing or empty setting is a warning and leaves `ok` alone. Any non-empty value that is not a port in 1-65535 counts as a corrupt config: `ok=false` and exit code 1. The value is normalised, so `0080` in the config comes back as `80`, and surrounding whitespace is ignored. This field alone says nothing about the live port - read it together with `port.listening`.
 
 <a id="strict-confirm-adv"></a>
 ### Strict confirmation for pipelines (AWG_STRICT_CONFIRM)

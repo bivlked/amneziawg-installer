@@ -18,7 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **`check --json` no longer breaks on a non-numeric `AWG_PORT`**: the value from `awgsetup_cfg.init` went into the `port.number` field unchecked, so after a bad hand-edit of the config the output stopped being valid JSON - against the v5.21.0 promise of one parseable document on every exit path. The port is now validated as it is read: 1-65535 passes through, anything else becomes `0`
+- **`check --json` no longer breaks on a non-numeric `AWG_PORT`**: the value from `awgsetup_cfg.init` went into the `port.number` field unchecked, so after a bad hand-edit of the config the output stopped being valid JSON - against the v5.21.0 promise of one parseable document on every exit path. The port is now validated as it is read and normalised to a number: 1-65535 stays a port, anything else becomes `0`
 - **A corrupt port in the config is now an error, not a silent warning**: `check` with `AWG_PORT=abc` used to finish with `ok=true`, so monitoring saw nothing wrong. A non-empty value that is not a port now yields `ok=false` and exit code 1. A missing setting stays a warning, as before
 - The same unchecked value also reached the `[[ -eq ]]` arithmetic comparison, where bash performs command substitution, and the UFW rule regex in `diagnose`, where `.*` matched anything. Both now get an already-validated number
 

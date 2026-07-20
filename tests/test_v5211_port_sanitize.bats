@@ -2,12 +2,13 @@
 # v5.21.1: AWG_PORT from awgsetup_cfg.init is normalized before use.
 #
 # The config file is hand-edited, so a bad edit can leave any string in
-# AWG_PORT. That value reached two places unchecked:
-#   1. the check --json envelope, interpolated without quotes, so a
-#      non-numeric value produced "number":abc - not parseable, which breaks
-#      the v5.21.0 promise of exactly one valid JSON document;
-#   2. [[ "$port" -eq 0 ]], an arithmetic context where bash performs command
-#      substitution, so a value like a[$(cmd)] executed cmd.
+# AWG_PORT. That value reached several places unchecked:
+#   - the check --json envelope, interpolated without quotes, so a non-numeric
+#     value produced "number":abc - not parseable, which breaks the v5.21.0
+#     promise of exactly one valid JSON document;
+#   - [[ "$port" -eq 0 ]], an arithmetic context where bash performs command
+#     substitution, so a value like a[$(cmd)] executed cmd;
+#   - the UFW rule regex, where a value like '.*' matched any rule.
 #
 # These tests run the real _sanitize_port pulled out of the scripts, not a
 # local copy of the logic - a grep-for-the-regex test would pass even if the
@@ -33,7 +34,8 @@ setup() {
 }
 
 @test "port sanitize: leading zeros are not read as octal" {
-    # 0080 as octal would be 64; the config may legitimately carry padding.
+    # Without 10# a padded value is read as octal: 0070 would become 56.
+    # 0080 is not even valid octal and would abort the arithmetic outright.
     run _sanitize_port "0080"
     [ "$output" = "80" ]
     run _sanitize_port "00001"
@@ -41,6 +43,34 @@ setup() {
     # All-zero padding is still zero, so it lands in the "unknown" bucket.
     run _sanitize_port "00000"
     [ "$output" = "0" ]
+}
+
+@test "port sanitize: whitespace around the value is trimmed" {
+    # 'AWG_PORT=39743 ' is an ordinary leftover of a hand edit and names the
+    # same port. Rejecting it would paint a healthy server red.
+    for p in "39743 " " 39743" "  39743  " "$(printf '39743\t')"; do
+        run _sanitize_port "$p"
+        [ "$output" = "39743" ] || { echo "[$p] became [$output], expected 39743"; return 1; }
+    done
+}
+
+@test "port sanitize: trimming does not rescue genuinely broken values" {
+    # Whitespace inside the value is still junk, not a port.
+    for p in "39743 x" "1 2" "39743 # comment" " abc "; do
+        run _sanitize_port "$p"
+        [ "$output" = "0" ] || { echo "[$p] became [$output], expected 0"; return 1; }
+    done
+}
+
+@test "diagnose reads the port without substituting a default first" {
+    # Sanitizing "${AWG_PORT:-39743}" would report on a port the config does
+    # not hold: the default slips past the validator and looks like a finding.
+    for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
+        run grep -F '_sanitize_port "${AWG_PORT:-39743}"' "$BATS_TEST_DIRNAME/../$f"
+        [ "$status" -ne 0 ] || { echo "$f still sanitizes the default port"; return 1; }
+        run grep -cF '_sanitize_port "${AWG_PORT:-}"' "$BATS_TEST_DIRNAME/../$f"
+        [ "$output" -eq 2 ] || { echo "$f: expected 2 sanitizer calls, found $output"; return 1; }
+    done
 }
 
 @test "port sanitize: no argument at all is safe under set -u" {
