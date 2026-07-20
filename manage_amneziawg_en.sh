@@ -135,10 +135,11 @@ json_escape() {
     printf '%s' "$s"
 }
 
-# The port from awgsetup_cfg.init is not a number: the file gets hand-edited
-# and ends up holding anything. Two places broke on it - JSON (the value goes
-# in unquoted, and "number":abc does not parse) and [[ -eq ]], where bash
-# evaluates arithmetic and runs command substitution from a value like a[$(...)].
+# The port from awgsetup_cfg.init cannot be trusted before it is checked: the
+# file gets hand-edited and ends up holding anything. Two places broke on it -
+# JSON (the value goes in unquoted, and "number":abc does not parse) and
+# [[ -eq ]], where bash evaluates arithmetic and runs command substitution
+# from a value like a[$(...)].
 # A function, not two lines in place: this way the test runs the real code.
 _sanitize_port() {
     local p="${1:-}"
@@ -1213,8 +1214,11 @@ check_server() {
             # The config holds something that is not a port: the file is
             # corrupt, not "the setting is unset". Staying quiet is wrong - for
             # monitoring this is as broken as a dead service. The value is
-            # truncated because it can be an arbitrarily long string.
-            log_error " - The port in the config is invalid: '${AWG_PORT:0:32}'."
+            # shown truncated and stripped of control characters: it is an
+            # arbitrary string and may drag in a newline or an ESC sequence.
+            local _bad_port="${AWG_PORT:0:32}"
+            _bad_port="${_bad_port//[^[:print:]]/?}"
+            log_error " - The port in the config is invalid: '${_bad_port}'."
             ok=0
         else
             log_warn " - Failed to determine port."

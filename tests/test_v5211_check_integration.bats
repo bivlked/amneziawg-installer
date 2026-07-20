@@ -7,6 +7,9 @@
 # a healthy-looking answer. This file runs the real check_server with the
 # system commands stubbed out, then reads the actual envelope it printed.
 #
+# Scope note: config parsing stays out of it. safe_load_config is replaced by
+# a stub that sets one variable, so the test controls exactly one input.
+#
 # What it pins:
 #   - stdout parses as JSON whatever sits in AWG_PORT;
 #   - port.number is always an integer;
@@ -53,16 +56,6 @@ EOF
 exit 0
 EOF
     chmod +x "$bin"/*
-}
-
-# Pulls the real functions out of the script under test.
-_load_check() {
-    local src="${1:-$BATS_TEST_DIRNAME/../manage_amneziawg.sh}"
-    eval "$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$src")"
-    eval "$(awk '/^json_escape\(\) \{/,/^\}/' "$src")"
-    eval "$(awk '/^_json_utf8_sanitize\(\) \{/,/^\}/' "$src")"
-    eval "$(awk '/^json_out\(\) \{/,/^\}/' "$src")"
-    eval "$(awk '/^check_server\(\) \{/,/^\}/' "$src")"
 }
 
 setup() {
@@ -113,13 +106,16 @@ _run_check() {
 
 @test "check --json: stdout parses for every broken port value" {
     require_jq
-    for p in "abc" "1 2" "70000" "65536" "99999999999999999999" '$(id)' 'a[$(touch /tmp/awg_test_marker)]' "-5" "8.5"; do
-        rm -f /tmp/awg_test_marker
+    # Marker lives in the per-test tmpdir: a shared /tmp path would race with
+    # a parallel run and survive an interrupted one.
+    local marker="$BATS_TEST_TMPDIR/executed"
+    for p in "abc" "1 2" "70000" "65536" "99999999999999999999" '$(id)' "a[\$(touch $marker)]" "-5" "8.5"; do
+        rm -f "$marker"
         run _run_check "$p"
         printf '%s' "$output" | jq -e . >/dev/null || { echo "[$p] produced unparseable output: $output"; return 1; }
         printf '%s' "$output" | jq -e '.port.number | type == "number"' >/dev/null \
             || { echo "[$p] port.number is not a number"; return 1; }
-        [ ! -f /tmp/awg_test_marker ] || { echo "[$p] executed a command"; rm -f /tmp/awg_test_marker; return 1; }
+        [ ! -f "$marker" ] || { echo "[$p] executed a command"; return 1; }
     done
 }
 
@@ -142,6 +138,28 @@ _run_check() {
     require_jq
     # Historical behaviour: a missing setting is not proof of a broken server.
     run _run_check ""
+    [ "$status" -eq 0 ]
+    printf '%s' "$output" | jq -e '.ok == true and .port.number == 0' >/dev/null
+}
+
+@test "check --json: a genuinely unset AWG_PORT behaves like an empty one" {
+    require_jq
+    # The case above passes an empty string; this one never sets the variable
+    # at all, which is what a config without the key actually produces.
+    run env PATH="$STUB_BIN:$PATH" AWG_DIR="$AWG_DIR" CONFIG_FILE="$CONFIG_FILE" \
+        SERVER_CONF_FILE="$SERVER_CONF_FILE" bash -c '
+            set -o pipefail
+            log() { :; }; log_warn() { :; }; log_error() { :; }; log_debug() { :; }
+            safe_load_config() { return 0; }
+            JSON_OUTPUT=1
+            _JSON_EMITTED=0
+            '"$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
+            '"$(awk '/^_json_utf8_sanitize\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
+            '"$(awk '/^json_escape\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
+            '"$(awk '/^json_out\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
+            '"$(awk '/^check_server\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
+            check_server
+        '
     [ "$status" -eq 0 ]
     printf '%s' "$output" | jq -e '.ok == true and .port.number == 0' >/dev/null
 }
