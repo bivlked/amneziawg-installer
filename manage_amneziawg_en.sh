@@ -135,16 +135,11 @@ json_escape() {
     printf '%s' "$s"
 }
 
-# The port number from awgsetup_cfg.init cannot be treated as a number: the
-# file gets hand-edited, and a bad edit leaves anything in there. Two places
-# broke on it. In JSON the value is interpolated without quotes, and
-# "number":abc no longer parses, while the contract promises exactly one valid
-# document. And in [[ "$port" -eq 0 ]] bash evaluates arithmetic, where a value
-# like a[$(...)] is EXECUTED. The file is root-owned with mode 600, so nobody
-# else plants anything there, but leaning on permissions where one check does
-# the job is pointless.
-# A function rather than two lines in place: this way the test runs the real
-# code instead of its own copy of the logic.
+# The port from awgsetup_cfg.init is not a number: the file gets hand-edited
+# and ends up holding anything. Two places broke on it - JSON (the value goes
+# in unquoted, and "number":abc does not parse) and [[ -eq ]], where bash
+# evaluates arithmetic and runs command substitution from a value like a[$(...)].
+# A function, not two lines in place: this way the test runs the real code.
 _sanitize_port() {
     local p="${1:-}"
     # {1,5} rules out 64-bit arithmetic overflow, 10# rules out octal
@@ -1214,7 +1209,16 @@ check_server() {
     local port
     port=$(_sanitize_port "${AWG_PORT:-}")
     if [[ "$port" -eq 0 ]]; then
-        log_warn " - Failed to determine port."
+        if [[ -n "${AWG_PORT:-}" ]]; then
+            # The config holds something that is not a port: the file is
+            # corrupt, not "the setting is unset". Staying quiet is wrong - for
+            # monitoring this is as broken as a dead service. The value is
+            # truncated because it can be an arbitrarily long string.
+            log_error " - The port in the config is invalid: '${AWG_PORT:0:32}'."
+            ok=0
+        else
+            log_warn " - Failed to determine port."
+        fi
     else
         if ! ss -lunp | grep -q ":${port} "; then
             log_error " - Port ${port}/udp is NOT listening!"
@@ -1408,11 +1412,17 @@ diagnose_server() {
 
     # 6. UFW state + AWG port
     safe_load_config "$CONFIG_FILE" 2>/dev/null
-    local awg_port="${AWG_PORT:-39743}"
+    # The same unchecked port used to go straight into a regex: a value like
+    # '.*' or '[' gave a false match or a broken pattern.
+    local awg_port
+    awg_port=$(_sanitize_port "${AWG_PORT:-39743}")
     if command -v ufw &>/dev/null; then
         local ufw_st
         ufw_st=$(ufw status 2>/dev/null | head -1)
-        if [[ "$ufw_st" == "Status: active" ]]; then
+        if [[ "$awg_port" -eq 0 ]]; then
+            _diag_line WARN "The port in the config is invalid, UFW rule check skipped"
+            warn=$((warn+1))
+        elif [[ "$ufw_st" == "Status: active" ]]; then
             if ufw status 2>/dev/null | grep -qE "^${awg_port}/udp[[:space:]]+ALLOW"; then
                 _diag_line OK "UFW active, ${awg_port}/udp ALLOW"; ok=$((ok+1))
             else

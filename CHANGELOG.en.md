@@ -14,11 +14,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [5.21.1] - 2026-07-20
 
-**v5.21.1** - solid port parsing in `check --json`: the output stays parseable whatever the config holds.
+**v5.21.1** - validated port handling in `check`: the output stays parseable whatever the config holds, and a corrupt config no longer looks healthy.
 
 ### Fixed
 
-- **`check --json` no longer breaks on a non-numeric `AWG_PORT`**: the value from `awgsetup_cfg.init` went into the `port.number` field unchecked, so after a bad hand-edit of the config the output stopped being valid JSON - breaking the v5.21.0 promise of exactly one parseable document on every exit path. The port is now normalized as it is read: a number in the 1-65535 range passes through, anything else becomes `0`, the value the command already uses for "port unknown". This also closes a side effect: the same unchecked value reached the `[[ -eq ]]` arithmetic comparison, where bash performs command substitution; the config file is root-only, so nobody else plants anything there, but leaning on permissions where one check does the job is pointless
+- **`check --json` no longer breaks on a non-numeric `AWG_PORT`**: the value from `awgsetup_cfg.init` went into the `port.number` field unchecked, so after a bad hand-edit of the config the output stopped being valid JSON - against the v5.21.0 promise of one parseable document on every exit path. The port is now validated as it is read: 1-65535 passes through, anything else becomes `0`
+- **A corrupt port in the config is now an error, not a silent warning**: `check` with `AWG_PORT=abc` used to finish with `ok=true`, so monitoring saw nothing wrong. A non-empty value that is not a port now yields `ok=false` and exit code 1. A missing setting stays a warning, as before
+- The same unchecked value also reached the `[[ -eq ]]` arithmetic comparison, where bash performs command substitution, and the UFW rule regex in `diagnose`. The config is root-only, so nobody else plants anything there, but leaning on permissions where one check does the job is pointless
 
 ## [5.21.0] - 2026-07-20
 

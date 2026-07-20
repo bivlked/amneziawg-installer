@@ -36,6 +36,17 @@ setup() {
     # 0080 as octal would be 64; the config may legitimately carry padding.
     run _sanitize_port "0080"
     [ "$output" = "80" ]
+    run _sanitize_port "00001"
+    [ "$output" = "1" ]
+    # All-zero padding is still zero, so it lands in the "unknown" bucket.
+    run _sanitize_port "00000"
+    [ "$output" = "0" ]
+}
+
+@test "port sanitize: no argument at all is safe under set -u" {
+    run bash -c "set -u; $(declare -f _sanitize_port); _sanitize_port"
+    [ "$status" -eq 0 ]
+    [ "$output" = "0" ]
 }
 
 # --- everything else collapses to 0, the value check already treats as
