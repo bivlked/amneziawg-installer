@@ -167,7 +167,7 @@ _assert_error_json() {
     _assert_error_json
 }
 
-# --- Codex-review fixes (post phase-7) ---
+# --- post-review fixes ---
 
 @test "unknown option BEFORE --json: guard still speaks (argv tail scan)" {
     require_jq
