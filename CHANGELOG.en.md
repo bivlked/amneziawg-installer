@@ -12,6 +12,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.21.0] - 2026-07-20
+
+**v5.21.0** - JSON output for management commands and a strict confirmation mode for automation.
+
+### Added
+
+- **`--json` for management commands**: `add`, `remove`, `regen`, `modify`, `backup`, `restore`, `check`/`status`, `restart`, `repair-module`. Each prints exactly one JSON document to stdout on any outcome - including errors, confirmation refusals, signals and early option-parsing failures (an emergency `{"command","ok":false,"error","rc"}` object via an EXIT trap). `list --json` and `stats --json` are unchanged (plain arrays) and are now pinned byte-for-byte by tests. Compatibility is additive: new fields may be added, existing ones are never renamed and never change type. Aliases are canonicalized in the response (`status` -> `check`, `repair` -> `repair-module`). Requested by bot and integration authors in D#130
+- **`AWG_STRICT_CONFIRM=1`** (opt-in, per-run ENV): a non-interactive run of a destructive command without an explicit `--yes`/`AWG_YES=1` is refused instead of silently proceeding - protection for cron, CI and bots. Default behavior is unchanged
+- **`check` got more informative**: it now checks the kernel module (a missing module on userspace installs is a warning, not an error), verifies the UFW rule strictly (specifically ALLOW, not any mention of the port; an inactive UFW no longer masquerades as "rule not found"), and reports the interface MTU and addresses plus a client counter - both in the human output and in JSON
+
+### Fixed
+
+- **`json_escape` hardened**: C0 control characters are escaped as `\u00XX`, invalid UTF-8 is replaced with U+FFFD - closes a latent way to break `list --json`/`stats --json` with garbage bytes (same class as the vpn:// ESC bug from v5.20.0)
+- **`remove` with partially missing names now exits with code 1** (previously 0) - symmetry with `add`/`regen` for automation (#175)
+- An `--apply-mode` error now honors a `--json` placed later in argv; usage errors with `--json` no longer pollute stdout with help text
+- Stale artifacts of a same-named client (`.png`/`.vpnuri`) are cleaned up before `add`, so the file report is always honest
+- `depmod` stdout is silenced during module repair (keeps `repair-module --json` clean)
+
+### Documentation
+
+- ADVANCED RU+EN: new "JSON interface for automation" section (contract, response shapes, a bot recipe); README RU+EN: a scripts-and-bots block, a FAQ entry on managing the server from your own scripts or a Telegram bot, a version-guard note in the update FAQ; INSTALL_VPS: an install-steps diagram, an automation example, `--mobile` as the primary mobile-network advice
+- The port range is corrected to the actual 1-65535 across all documents (low ports, including 443/udp for mobile DPI, have been open since v5.18.1 - the docs lagged behind); `--no-cps` and `--reset-routes` added to the CLI references; the autotest counter updated
+
+### Tests
+
+- Around 60 new bats tests: the strict-confirm matrix, `json_escape` hardening (ESC/BEL/broken UTF-8), the JSON contract on failure paths, behavioral envelope checks for every command, RU/EN schema parity, the `list`/`stats` format freeze. 1135 in the suite total
+
 ## [5.20.1] - 2026-07-18
 
 **v5.20.1** - version guard: manage and awg_common now check each other's versions and tell you how to update, plus a precise path traversal check on restore.
@@ -1567,7 +1594,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.20.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.21.0...HEAD
+[5.21.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.20.1...v5.21.0
 [5.20.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.20.0...v5.20.1
 [5.20.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.19.2...v5.20.0
 [5.19.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.19.1...v5.19.2
