@@ -225,7 +225,7 @@ Detailed comparison: [amneziawg-installer vs the official Amnezia app](https://b
 <a id="carriers"></a>
 ## 📡 Tested mobile carriers (Russia)
 
-The installer tunes AmneziaWG 2.0 obfuscation for mobile networks with DPI: the `--mobile` flag enables the mobile preset and port 443/udp in one go. If your VPN is unstable on mobile data, reinstall with `--mobile`. The configurations below come from user reports in issues and discussions (no guarantee: blocking and carrier parameters change over time):
+The installer tunes AmneziaWG 2.0 obfuscation for mobile networks with DPI: `--mobile` switches on the mobile preset and port 443/udp in a single flag. If your VPN is unstable on mobile data, reinstall with `--mobile`. The configurations below come from user reports in issues and discussions (no guarantee: blocking and carrier parameters change over time):
 
 - **Yota** - Moscow, `--preset=mobile`
 - **Tele2** - Moscow (`--preset=mobile`); Krasnoyarsk (`--preset=mobile`; the May 2026 wave needed `I1=<r 48>`)
@@ -447,7 +447,7 @@ Full list: `... help` or [ADVANCED.en.md#manage-commands-adv](ADVANCED.en.md#man
 
 > **💡 Note:** `add` and `remove` commands auto-apply changes via `awg syncconf` - no service restart needed.
 
-> **🤖 For scripts and bots:** since v5.21.0 the management commands (`add`, `remove`, `regen`, `modify`, `backup`, `restore`, `check`, `restart`, `repair-module`) accept `--json` and print exactly one JSON document on any outcome; `list --json` and `stats --json` still return plain arrays. The field contract and the strict confirmation mode `AWG_STRICT_CONFIRM=1` are described in [ADVANCED.en.md → JSON interface](ADVANCED.en.md#json-api-adv). A ready-made Telegram bot built on this interface is [awgram](#ecosystem).
+> **🤖 For scripts and bots:** since v5.21.0 nearly every management command (from `add` to `repair-module`) understands `--json` and replies with a single JSON object, even when something goes wrong - so your script or bot can parse the output without guesswork. `list --json` and `stats --json` still return plain arrays, as before. The format and the strict confirmation mode `AWG_STRICT_CONFIRM=1` are covered in [ADVANCED.en.md → JSON interface](ADVANCED.en.md#json-api-adv), and there is already a Telegram bot built on this interface - [awgram](#ecosystem).
 
 ### 📌 Quick Reference
 
@@ -554,7 +554,7 @@ For a two-server cascade with a split exit for Russian and foreign traffic (spli
   </pre>
   Server reinstallation is not required.
   <br><br>
-  Since v5.20.1 manage verifies that the awg_common version is compatible with its own: an incompatible pair (say, only one half updated to a new minor release) stops with a clear message and ready-to-paste commands for updating both, instead of failing in cryptic ways.
+  Since v5.20.1 the script pair is protected against drift: if you update manage but forget awg_common (or the other way around) and the versions diverge, the script stops and shows the exact commands to fetch the other half, instead of throwing strange errors halfway through.
 </details>
 
 <details>
@@ -604,7 +604,7 @@ For a two-server cascade with a split exit for Russian and foreign traffic (spli
 
 <details>
   <summary><strong>Q: Can I manage the server from my own scripts or a Telegram bot?</strong></summary>
-  <b>A:</b> Yes. The management commands accept the <code>--json</code> flag and print exactly one JSON document on any outcome - easy to parse from scripts, CI and bots (since v5.21.0; <code>list</code>/<code>stats</code> have returned JSON arrays for a long time). The format is stable: new fields may be added, existing ones are never renamed and never change type. For unattended runs there is <code>--yes</code> and the strict mode <code>AWG_STRICT_CONFIRM=1</code>: without an explicit <code>--yes</code> a destructive command refuses instead of silently proceeding. See <a href="ADVANCED.en.md#json-api-adv">ADVANCED.en.md → JSON interface</a> for details. A ready-made Telegram bot built on this interface is <a href="https://github.com/ekuraev/awgram">awgram</a>.
+  <b>A:</b> Yes. Since v5.21.0 the management commands take the <code>--json</code> flag and reply with a single JSON object even on failure, so the output is safe to parse from any script (<code>list</code>/<code>stats</code> have returned JSON arrays for a long time). I promise not to break the format: new fields may appear, existing ones keep their names and types. For unattended runs there is <code>--yes</code>, and the strict mode <code>AWG_STRICT_CONFIRM=1</code> makes commands like <code>remove</code> refuse when <code>--yes</code> is missing, instead of quietly going ahead. The format breakdown lives in <a href="ADVANCED.en.md#json-api-adv">ADVANCED.en.md → JSON interface</a>. For a real-world example, the <a href="https://github.com/ekuraev/awgram">awgram</a> Telegram bot runs on exactly this interface.
 </details>
 
 <details>

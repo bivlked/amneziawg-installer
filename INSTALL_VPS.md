@@ -85,14 +85,14 @@ scp root@SERVER_IP:/root/awg/my_iphone.conf .
 
 Verify the handshake from the server side with `sudo awg show awg0` after the client connects. The `latest handshake` line should refresh every minute. If you need PresharedKey for Shadowrocket on iOS or macOS, add the `--psk` flag during `manage add`.
 
-Scripting the server is supported: since v5.21.0 the management commands accept `--json` and print exactly one JSON document on any outcome, so a cron job, CI pipeline, or a Telegram bot can parse stdout safely (the process exit code stays the source of truth). Combine with `--yes` for unattended runs, and set `AWG_STRICT_CONFIRM=1` if a destructive command without an explicit `--yes` should refuse instead of silently proceeding:
+You can drive the server from scripts too: since v5.21.0 the management commands take `--json` and reply with a single JSON object even when they fail, so a cron job or a bot can parse stdout without guesswork (the process exit code stays the source of truth). Add `--yes` for unattended runs, and set `AWG_STRICT_CONFIRM=1` if you want commands like `remove` to refuse when `--yes` is missing rather than quietly go ahead:
 
 ```bash
 sudo bash /root/awg/manage_amneziawg.sh add phone --json --yes
 # {"command":"add","ok":true,"added":1,"failed":0,"applied":true,"results":[{"name":"phone","status":"created","conf":"/root/awg/phone.conf","qr":"/root/awg/phone.png","vpnuri":"/root/awg/phone.vpnuri","expires_at":null}]}
 ```
 
-Full contract (per-command envelopes, error objects, field stability promise): [ADVANCED.en.md JSON interface](ADVANCED.en.md#json-api-adv).
+Per-command output formats and the compatibility promise: [ADVANCED.en.md JSON interface](ADVANCED.en.md#json-api-adv).
 
 ## Update flow
 
@@ -103,7 +103,7 @@ wget -O install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amnezi
 sudo bash ./install_amneziawg_en.sh --force
 ```
 
-The `--force` flag (or `AWG_FORCE_REINSTALL=1`) is required when reinstalling over an already-running AmneziaWG service, so an accidental re-run on a healthy box does not destroy state. First-time installs do not need it. Server keys, peer list, and obfuscation parameters survive a reinstall. Since v5.20.1 the management script verifies that the shared library version is compatible with its own: an incompatible pair (say, only one half updated to a new minor release) stops with a clear message and ready-to-paste commands for updating both, instead of failing in cryptic ways.
+The `--force` flag (or `AWG_FORCE_REINSTALL=1`) is required when reinstalling over an already-running AmneziaWG service, so an accidental re-run on a healthy box does not destroy state. First-time installs do not need it. Server keys, peer list, and obfuscation parameters survive a reinstall. Since v5.20.1 the script pair is protected against drift: update one half and forget the other, and the scripts stop with the exact commands to fetch the missing piece, instead of throwing strange errors halfway through.
 
 A normal `apt-get upgrade` will pull a new kernel from time to time. For DKMS-based installs (typical for amd64 and most ARM64 deployments without a prebuilt for the new kernel), `amneziawg-ensure-module` rebuilds the module transparently at the next boot. Check its log with `journalctl -u amneziawg-ensure-module.service -b` or read the rolling apt-hook log at `/var/log/amneziawg-ensure-module.log`. Manual recovery if all three safety nets miss: `sudo bash /root/awg/manage_amneziawg.sh repair-module` reinstalls headers, rebuilds DKMS, and restarts the service. ARM users running an ARM prebuilt should rerun the installer after a kernel upgrade so it picks a fresh prebuilt or falls back to DKMS.
 

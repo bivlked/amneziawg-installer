@@ -1,0 +1,550 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - link "Skip to content" [ref=e4] [cursor=pointer]:
+        - /url: "#start-of-content"
+      - banner [ref=e6]:
+        - heading "Navigation Menu" [level=2] [ref=e7]
+        - generic [ref=e8]:
+          - link "Homepage" [ref=e10] [cursor=pointer]:
+            - /url: /
+          - generic [ref=e13]:
+            - navigation "Global" [ref=e16]:
+              - list [ref=e17]:
+                - listitem [ref=e18]:
+                  - button "Platform" [ref=e20] [cursor=pointer]
+                - listitem [ref=e23]:
+                  - button "Solutions" [ref=e25] [cursor=pointer]
+                - listitem [ref=e28]:
+                  - button "Resources" [ref=e30] [cursor=pointer]
+                - listitem [ref=e33]:
+                  - button "Open Source" [ref=e35] [cursor=pointer]
+                - listitem [ref=e38]:
+                  - button "Enterprise" [ref=e40] [cursor=pointer]
+                - listitem [ref=e43]:
+                  - link "Pricing" [ref=e44] [cursor=pointer]:
+                    - /url: https://github.com/pricing
+            - generic [ref=e46]:
+              - button "Search or jump to…" [ref=e49] [cursor=pointer]
+              - link "Sign in" [ref=e54] [cursor=pointer]:
+                - /url: /login?return_to=https%3A%2F%2Fgithub.com%2Fbivlked%2Famneziawg-installer%2Fblob%2Frelease%2Fv5.21.0%2FINSTALL_VPS.md
+              - link "Sign up" [ref=e55] [cursor=pointer]:
+                - /url: /signup?ref_cta=Sign+up&ref_loc=header+logged+out&ref_page=%2F%3Cuser-name%3E%2F%3Crepo-name%3E%2Fblob%2Fshow&source=header-repo&source_repo=bivlked%2Famneziawg-installer
+              - button "Appearance settings" [ref=e58] [cursor=pointer]
+    - main [ref=e62]:
+      - generic [ref=e63]:
+        - generic [ref=e64]:
+          - generic [ref=e66]:
+            - link "bivlked" [ref=e70] [cursor=pointer]:
+              - /url: /bivlked
+            - generic [ref=e71]: /
+            - strong [ref=e72]:
+              - link "amneziawg-installer" [ref=e73] [cursor=pointer]:
+                - /url: /bivlked/amneziawg-installer
+            - generic [ref=e74]: Public
+          - generic [ref=e75]:
+            - list:
+              - listitem [ref=e76]:
+                - button "Sponsor bivlked/amneziawg-installer" [ref=e78] [cursor=pointer]:
+                  - generic [ref=e79]: Sponsor
+              - listitem [ref=e83]:
+                - link "You must be signed in to change notification settings" [ref=e84] [cursor=pointer]:
+                  - /url: /login?return_to=%2Fbivlked%2Famneziawg-installer
+                  - text: Notifications
+              - listitem [ref=e87]:
+                - link "Fork 82" [ref=e88] [cursor=pointer]:
+                  - /url: /login?return_to=%2Fbivlked%2Famneziawg-installer
+                  - text: Fork
+                  - generic "82" [ref=e91]
+              - listitem [ref=e92]:
+                - link "You must be signed in to star a repository" [ref=e94] [cursor=pointer]:
+                  - /url: /login?return_to=%2Fbivlked%2Famneziawg-installer
+                  - text: Star
+                  - generic "983 users starred this repository" [ref=e97]: "983"
+        - navigation "Repository" [ref=e98]:
+          - list [ref=e99]:
+            - listitem [ref=e100]:
+              - link "Code" [ref=e101] [cursor=pointer]:
+                - /url: /bivlked/amneziawg-installer/tree/release/v5.21.0
+            - listitem [ref=e105]:
+              - link "Issues 4" [ref=e106] [cursor=pointer]:
+                - /url: /bivlked/amneziawg-installer/issues
+                - generic [ref=e110]: Issues
+                - generic "4" [ref=e111]
+            - listitem [ref=e112]:
+              - link "Pull requests 1" [ref=e113] [cursor=pointer]:
+                - /url: /bivlked/amneziawg-installer/pulls
+                - generic [ref=e116]: Pull requests
+                - generic "1" [ref=e117]
+            - listitem [ref=e118]:
+              - link "Discussions" [ref=e119] [cursor=pointer]:
+                - /url: /bivlked/amneziawg-installer/discussions
+            - listitem [ref=e123]:
+              - link "Actions" [ref=e124] [cursor=pointer]:
+                - /url: /bivlked/amneziawg-installer/actions
+            - listitem [ref=e128]:
+              - link "Security and quality" [ref=e129] [cursor=pointer]:
+                - /url: /bivlked/amneziawg-installer/security
+            - listitem [ref=e133]:
+              - link "Insights" [ref=e134] [cursor=pointer]:
+                - /url: /bivlked/amneziawg-installer/pulse
+      - generic [ref=e145]:
+        - generic [ref=e147]:
+          - generic [ref=e150]:
+            - generic [ref=e151]:
+              - generic [ref=e152]:
+                - heading "Collapse file tree" [level=2] [ref=e153]:
+                  - button "Collapse file tree" [expanded] [ref=e154] [cursor=pointer]
+                - heading "Files" [level=2] [ref=e158]
+              - generic [ref=e159]:
+                - generic [ref=e161]:
+                  - link "View file on default branch" [ref=e163] [cursor=pointer]:
+                    - /url: /bivlked/amneziawg-installer/blob/main/INSTALL_VPS.md
+                  - button "release/v5.21.0 branch" [ref=e167] [cursor=pointer]:
+                    - generic [ref=e168]: release/v5.21.0
+                - button "Search this repository (forward slash)" [ref=e177] [cursor=pointer]
+            - combobox "Go to file" [ref=e185]
+            - navigation "File Tree Navigation" [ref=e191]:
+              - tree "Files" [ref=e193]:
+                - treeitem ".devin" [level=1] [ref=e194]
+                - treeitem ".github" [level=1] [ref=e206]
+                - treeitem "cascade" [level=1] [ref=e218]
+                - treeitem "docs" [level=1] [ref=e230]
+                - treeitem "scripts" [level=1] [ref=e242]
+                - treeitem "tests" [level=1] [ref=e254]
+                - treeitem ".editorconfig" [level=1] [ref=e266]
+                - treeitem ".gitattributes" [level=1] [ref=e274]
+                - treeitem ".gitignore" [level=1] [ref=e282]
+                - treeitem "ADVANCED.en.md" [level=1] [ref=e290]
+                - treeitem "ADVANCED.md" [level=1] [ref=e298]
+                - treeitem "AmneziaWG20.jpg" [level=1] [ref=e306]
+                - treeitem "CASCADE.en.md" [level=1] [ref=e314]
+                - treeitem "CASCADE.md" [level=1] [ref=e322]
+                - treeitem "CHANGELOG.en.md" [level=1] [ref=e330]
+                - treeitem "CHANGELOG.md" [level=1] [ref=e338]
+                - treeitem "CODE_OF_CONDUCT.md" [level=1] [ref=e346]
+                - treeitem "CONTRIBUTING.md" [level=1] [ref=e354]
+                - treeitem "INSTALL_VPS.md" [level=1] [ref=e362]
+                - treeitem "LICENSE" [level=1] [ref=e370]
+                - treeitem "README.en.md" [level=1] [ref=e378]
+                - treeitem "README.md" [level=1] [ref=e386]
+                - treeitem "SECURITY.md" [level=1] [ref=e394]
+                - treeitem "awg_common.sh" [level=1] [ref=e402]
+                - treeitem "awg_common_en.sh" [level=1] [ref=e410]
+                - treeitem "install_amneziawg.sh" [level=1] [ref=e418]
+                - treeitem "install_amneziawg_en.sh" [level=1] [ref=e426]
+                - treeitem "logo.jpg" [level=1] [ref=e434]
+                - treeitem "manage_amneziawg.sh" [level=1] [ref=e442]
+                - treeitem "manage_amneziawg_en.sh" [level=1] [ref=e450]
+          - slider "Draggable pane splitter" [ref=e459]
+        - generic [ref=e462]:
+          - generic [ref=e466]:
+            - generic [ref=e468]:
+              - navigation [ref=e469]:
+                - heading "Breadcrumbs" [level=2] [ref=e470]
+                - list [ref=e471]:
+                  - listitem [ref=e472]:
+                    - link "amneziawg-installer" [ref=e473] [cursor=pointer]:
+                      - /url: /bivlked/amneziawg-installer/tree/release/v5.21.0
+              - generic [ref=e474]:
+                - text: /
+                - heading "INSTALL_VPS.md" [level=1] [ref=e475]
+              - button "Copy path" [ref=e476] [cursor=pointer]
+            - button "More file actions" [ref=e483] [cursor=pointer]
+          - generic [ref=e486]:
+            - generic [ref=e488]:
+              - heading "Latest commit" [level=2] [ref=e489]
+              - generic [ref=e490]:
+                - generic [ref=e492]:
+                  - link [ref=e493] [cursor=pointer]:
+                    - /url: /bivlked
+                    - img "bivlked" [ref=e494]
+                  - link "commits by bivlked" [ref=e495] [cursor=pointer]:
+                    - /url: /bivlked/amneziawg-installer/commits?author=bivlked
+                    - text: bivlked
+                - generic [ref=e496]:
+                  - 'link "docs: refresh for v5.21.0 - automation surface, stale facts, SEO pass" [ref=e499] [cursor=pointer]':
+                    - /url: /bivlked/amneziawg-installer/commit/b37fd0f7d6b6a0d7e7e0b13850dfe552297bd3ab
+                  - button "Open commit details" [ref=e500] [cursor=pointer]
+                  - button "pending" [ref=e503] [cursor=pointer]
+              - generic [ref=e506]:
+                - generic [ref=e508]:
+                  - link "Commit b37fd0f" [ref=e509] [cursor=pointer]:
+                    - /url: /bivlked/amneziawg-installer/commit/b37fd0f7d6b6a0d7e7e0b13850dfe552297bd3ab
+                    - text: b37fd0f
+                  - text: ·
+                  - generic "Jul 20, 2026, 01:19 GMT+3" [ref=e510]: Jul 20, 20267 hours ago
+                - generic [ref=e511]:
+                  - heading "History" [level=2] [ref=e512]
+                  - link "History" [ref=e513] [cursor=pointer]:
+                    - /url: /bivlked/amneziawg-installer/commits/release/v5.21.0/INSTALL_VPS.md
+            - generic [ref=e517]:
+              - generic [ref=e519]:
+                - heading "File metadata and controls" [level=2] [ref=e520]
+                - generic [ref=e521]:
+                  - list "File view" [ref=e522]:
+                    - listitem [ref=e523]:
+                      - button "Preview" [ref=e524] [cursor=pointer]
+                    - listitem [ref=e527]:
+                      - button "Code" [ref=e528] [cursor=pointer]
+                    - listitem [ref=e531]:
+                      - button "Blame" [ref=e532] [cursor=pointer]
+                  - generic [ref=e536]:
+                    - generic "12.1 KB" [ref=e537]: 140 lines (96 loc) · 12.1 KB
+                    - text: ·
+                    - tooltip "Owned by @bivlked (from CODEOWNERS line 2)" [ref=e538]:
+                      - link "Owned by @bivlked (from CODEOWNERS line 2)" [ref=e539] [cursor=pointer]:
+                        - /url: /bivlked/amneziawg-installer/blob/release/v5.21.0/.github/CODEOWNERS#L2
+                - generic [ref=e542]:
+                  - generic [ref=e543]:
+                    - generic [ref=e544]:
+                      - link "Raw" [ref=e546] [cursor=pointer]:
+                        - /url: https://github.com/bivlked/amneziawg-installer/raw/refs/heads/release/v5.21.0/INSTALL_VPS.md
+                      - button "Copy raw file" [ref=e550] [cursor=pointer]
+                      - button "Download raw file" [ref=e555] [cursor=pointer]
+                    - generic [ref=e559]:
+                      - button "You must be signed in to make or propose changes" [disabled] [ref=e561]
+                      - button "More edit options" [ref=e565] [cursor=pointer]
+                  - button "Outline" [ref=e568] [cursor=pointer]
+              - region "INSTALL_VPS.md" [ref=e572]:
+                - article [ref=e574]:
+                  - generic [ref=e575]:
+                    - heading "Install AmneziaWG VPN server on Ubuntu / Debian VPS" [level=1] [ref=e576]
+                    - 'link "Permalink: Install AmneziaWG VPN server on Ubuntu / Debian VPS" [ref=e577] [cursor=pointer]':
+                      - /url: "#install-amneziawg-vpn-server-on-ubuntu--debian-vps"
+                  - paragraph [ref=e580]: A step-by-step guide for deploying an AmneziaWG 2.0 VPN server on a clean Ubuntu or Debian VPS over SSH. Single bash command, no Docker, no web panel. Aimed at headless setups where you want a working DPI-resistant VPN with the lowest possible footprint on a cheap VPS.
+                  - blockquote [ref=e581]:
+                    - paragraph [ref=e582]:
+                      - text: The official
+                      - link "Amnezia VPN" [ref=e583] [cursor=pointer]:
+                        - /url: https://amnezia.org/
+                      - text: "app deploys the server side for you in Docker. This guide takes a different route on purpose: AmneziaWG as a kernel module, no Docker overhead, and the whole server tuned and hardened for a single-purpose VPN. See"
+                      - link "how it differs" [ref=e584] [cursor=pointer]:
+                        - /url: https://bivlked.github.io/amneziawg-installer/compare/
+                      - text: .
+                  - generic [ref=e585]:
+                    - heading "TL;DR" [level=2] [ref=e586]
+                    - 'link "Permalink: TL;DR" [ref=e587] [cursor=pointer]':
+                      - /url: "#tldr"
+                  - list [ref=e590]:
+                    - listitem [ref=e591]: One command, MIT-licensed, fully self-hosted, no third-party dependencies at runtime.
+                    - listitem [ref=e592]: Works on Ubuntu 24.04 LTS, Ubuntu 25.10/26.04, Debian 12 (bookworm), Debian 13 (trixie).
+                    - listitem [ref=e593]: "Built for cheap VPS budgets: $3 to $5 a month, 1 vCPU, 512 MB RAM minimum (1 GB recommended), 2 GB disk minimum (3+ GB recommended)."
+                    - listitem [ref=e594]: Both x86_64 (amd64) and ARM64 (aarch64), with prebuilt kernel modules covering Raspberry Pi 4/5, Ubuntu 24.04/25.10 ARM64, and Debian 12/13 ARM64 (Hetzner CAX, Oracle Ampere A1, AWS Graviton all run on these stock kernels). Ubuntu 26.04 ARM64 builds the module from source via DKMS.
+                    - listitem [ref=e595]: DPI bypass for Russia (ТСПУ), Iran, China, school and corporate firewalls.
+                    - listitem [ref=e596]: Survives kernel upgrades automatically via DKMS auto-repair (since v5.12.0).
+                    - listitem [ref=e597]: Ubuntu 25.10 and 26.04 PPA fallback to noble is automatic since v5.13.0.
+                  - generic [ref=e598]:
+                    - heading "Choosing a VPS" [level=2] [ref=e599]
+                    - 'link "Permalink: Choosing a VPS" [ref=e600] [cursor=pointer]':
+                      - /url: "#choosing-a-vps"
+                  - paragraph [ref=e603]: "A VPN server is mostly idle CPU and steady network. Three picks I keep coming back to:"
+                  - list [ref=e604]:
+                    - listitem [ref=e605]:
+                      - strong [ref=e606]: Hetzner CAX11 / CAX21
+                      - text: "(ARM Ampere, EU). About €4 / month for 2 vCPU and 4 GB RAM. Wide bandwidth, EU jurisdiction, prebuilt ARM kernel module is published for this exact platform. The catch: Hetzner subnets are widely blacklisted by Russian carriers (TSPU, Rostelecom, MTS), so do not use Hetzner if you are routing Russian mobile traffic into the tunnel. Pick a non-Russia-blacklisted host for that case."
+                    - listitem [ref=e607]:
+                      - strong [ref=e608]: Oracle Cloud Always Free (ARM Ampere A1)
+                      - text: . 4 vCPU and 24 GB RAM in the free tier, no expiry, multiple regions. Reliable but capacity-limited (Oracle releases A1 quotas in waves).
+                    - listitem [ref=e609]:
+                      - strong [ref=e610]: Generic budget VPS
+                      - text: (Vultr, RackNerd, your local provider). Pick anything with 1 GB RAM, root SSH access, and not on a known-bad subnet for your audience. ARM is fine where prebuilts apply, otherwise amd64 with DKMS-built kernel module works the same way.
+                  - paragraph [ref=e611]: Country matters mostly for latency and jurisdiction. ARM versus amd64 has no real performance difference for a personal-scale VPN.
+                  - generic [ref=e612]:
+                    - heading "OS choice" [level=2] [ref=e613]
+                    - 'link "Permalink: OS choice" [ref=e614] [cursor=pointer]':
+                      - /url: "#os-choice"
+                  - list [ref=e617]:
+                    - listitem [ref=e618]:
+                      - strong [ref=e619]: Ubuntu 24.04 LTS
+                      - text: is the best-tested platform. Default pick if you have no other preference.
+                    - listitem [ref=e620]:
+                      - strong [ref=e621]: Ubuntu 25.10
+                      - text: (questing) and
+                      - strong [ref=e622]: Ubuntu 26.04
+                      - text: work since v5.13.0. The PPA codename remaps to
+                      - code [ref=e623]: noble
+                      - text: automatically when the running codename PPA is unreachable (404 or network failure). Resilient against do-release-upgrade from 24.04.
+                    - listitem [ref=e624]:
+                      - strong [ref=e625]: Debian 12
+                      - text: (bookworm) and
+                      - strong [ref=e626]: Debian 13
+                      - text: (trixie) are fully supported with codename mapping (focal and noble respectively).
+                    - listitem [ref=e627]: Use a minimal install. The script assumes the box is single-purpose and will strip modemmanager, snapd, cloud-init leftovers and similar to free resources.
+                    - listitem [ref=e628]: Avoid custom kernels (XanMod, Liquorix, Zen) on first install. DKMS compiles against the running kernel headers, but custom kernels can shift internal structs and trip a runtime panic. If you must, file a repro upstream rather than guessing.
+                  - generic [ref=e629]:
+                    - heading "One-command install" [level=2] [ref=e630]
+                    - 'link "Permalink: One-command install" [ref=e631] [cursor=pointer]':
+                      - /url: "#one-command-install"
+                  - paragraph [ref=e634]:
+                    - text: Connect as root (or as a sudo-capable user and prepend
+                    - code [ref=e635]: sudo
+                    - text: ). The installer usually detects the SSH port automatically and allows it in UFW. If SSH runs on a non-standard port or autodetection is unavailable, pass
+                    - code [ref=e636]: "--ssh-port=YOUR_PORT"
+                    - text: to the installer (comma-separated for several ports). As an extra conservative safeguard you can allow the port in UFW
+                    - strong [ref=e637]: before
+                    - text: "running the installer:"
+                  - generic [ref=e638]:
+                    - generic [ref=e639]: sudo ufw allow <your-ssh-port>/tcp
+                    - button "Copy code to clipboard" [ref=e641] [cursor=pointer]
+                  - paragraph [ref=e645]: "Then:"
+                  - generic [ref=e646]:
+                    - generic [ref=e647]: wget -O install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.20.1/install_amneziawg_en.sh chmod +x install_amneziawg_en.sh sudo bash ./install_amneziawg_en.sh
+                    - button "Copy code to clipboard" [ref=e649] [cursor=pointer]
+                  - paragraph [ref=e653]:
+                    - text: The script walks through OS detection, base packages, PPA setup, kernel module install (DKMS or ARM prebuilt), UFW firewall, sysctl hardening, Fail2Ban, AmneziaWG service start, and default client config generation. Expect two reboots and 15 to 25 minutes of wall-clock time, mostly bound by
+                    - code [ref=e654]: apt
+                    - text: and the kernel module build.
+                  - paragraph [ref=e655]:
+                    - text: The script is
+                    - strong [ref=e656]: idempotent and resume-safe
+                    - text: ": after each reboot, run the same command again and it picks up from where it left off. State lives in"
+                    - code [ref=e657]: /root/awg/setup_state
+                    - text: ". Two reboots are part of the normal flow:"
+                  - region "mermaid rendered output container" [ref=e658]:
+                    - generic [ref=e659]:
+                      - generic [ref=e660]:
+                        - group [ref=e661]:
+                          - button "Open dialog" [ref=e662] [cursor=pointer]
+                        - button "Copy mermaid code" [ref=e665] [cursor=pointer]
+                      - iframe [ref=e670]:
+                        - generic [ref=f1e7]:
+                          - button "Zoom in" [ref=f1e8] [cursor=pointer]
+                          - button "Zoom out" [ref=f1e12] [cursor=pointer]
+                          - button "Reset view" [ref=f1e16] [cursor=pointer]
+                          - button "Pan up" [ref=f1e19] [cursor=pointer]
+                          - button "Pan down" [ref=f1e22] [cursor=pointer]
+                          - button "Pan left" [ref=f1e25] [cursor=pointer]
+                          - button "Pan right" [ref=f1e28] [cursor=pointer]
+                    - generic [ref=e671]: Loading
+                  - paragraph [ref=e676]:
+                    - text: For a non-interactive run pass
+                    - code [ref=e677]: "--yes"
+                    - text: and the routing flag of your choice, e.g.
+                    - code [ref=e678]: sudo bash ./install_amneziawg_en.sh --yes --route-amnezia
+                    - text: ". Common flags:"
+                    - code [ref=e679]: "--port=39743"
+                    - text: (any port 1-65535),
+                    - code [ref=e680]: "--subnet=10.9.9.1/24"
+                    - text: ","
+                    - code [ref=e681]: "--disallow-ipv6"
+                    - text: ","
+                    - code [ref=e682]: "--allow-ipv6-tunnel"
+                    - text: (dual-stack IPv6 inside the tunnel),
+                    - code [ref=e683]: "--mobile"
+                    - text: (mobile obfuscation preset plus port 443/udp in one flag; an explicit
+                    - code [ref=e684]: "--port"
+                    - text: wins),
+                    - code [ref=e685]: "--isolation=on|off"
+                    - text: (client-to-client isolation, on by default),
+                    - code [ref=e686]: "--endpoint=<public-IP>"
+                    - text: "(required when the server's public IP differs from its interface IP, typical on Oracle Cloud, GCP, or any NAT'd cloud setup). Full CLI:"
+                    - code [ref=e687]: "--help"
+                    - text: or
+                    - link "ADVANCED.en.md" [ref=e688] [cursor=pointer]:
+                      - /url: /bivlked/amneziawg-installer/blob/release/v5.21.0/ADVANCED.en.md#install-cli-adv
+                    - text: .
+                  - generic [ref=e689]:
+                    - heading "First-time client setup" [level=2] [ref=e690]
+                    - 'link "Permalink: First-time client setup" [ref=e691] [cursor=pointer]':
+                      - /url: "#first-time-client-setup"
+                  - paragraph [ref=e694]:
+                    - text: The default install creates two clients (
+                    - code [ref=e695]: my_phone
+                    - text: ","
+                    - code [ref=e696]: my_laptop
+                    - text: ") so you can connect immediately. To add more:"
+                  - generic [ref=e697]:
+                    - generic [ref=e698]: sudo bash /root/awg/manage_amneziawg.sh add my_iphone
+                    - button "Copy code to clipboard" [ref=e700] [cursor=pointer]
+                  - paragraph [ref=e704]:
+                    - text: The client import files land in
+                    - code [ref=e705]: /root/awg/
+                    - text: ":"
+                  - list [ref=e706]:
+                    - listitem [ref=e707]:
+                      - code [ref=e708]: <name>.conf
+                      - text: for desktop AmneziaWG clients, Linux
+                      - code [ref=e709]: wg-quick
+                      - text: ", and routers."
+                    - listitem [ref=e710]:
+                      - code [ref=e711]: <name>.png
+                      - text: QR code for the Amnezia VPN mobile app.
+                    - listitem [ref=e712]:
+                      - code [ref=e713]: <name>.vpnuri
+                      - text: and
+                      - code [ref=e714]: <name>.vpnuri.png
+                      - text: for one-tap import into the Amnezia VPN app via clipboard or scanned QR.
+                  - paragraph [ref=e715]:
+                    - text: Pull files down with
+                    - code [ref=e716]: scp
+                    - text: ":"
+                  - generic [ref=e717]:
+                    - generic [ref=e718]: scp root@SERVER_IP:/root/awg/my_iphone.conf .
+                    - button "Copy code to clipboard" [ref=e720] [cursor=pointer]
+                  - paragraph [ref=e724]:
+                    - text: Verify the handshake from the server side with
+                    - code [ref=e725]: sudo awg show awg0
+                    - text: after the client connects. The
+                    - code [ref=e726]: latest handshake
+                    - text: line should refresh every minute. If you need PresharedKey for Shadowrocket on iOS or macOS, add the
+                    - code [ref=e727]: "--psk"
+                    - text: flag during
+                    - code [ref=e728]: manage add
+                    - text: .
+                  - paragraph [ref=e729]:
+                    - text: "Scripting the server is supported: since v5.21.0 the management commands accept"
+                    - code [ref=e730]: "--json"
+                    - text: and print exactly one JSON document on any outcome, so a cron job, CI pipeline, or a Telegram bot can parse stdout safely (the process exit code stays the source of truth). Combine with
+                    - code [ref=e731]: "--yes"
+                    - text: for unattended runs, and set
+                    - code [ref=e732]: AWG_STRICT_CONFIRM=1
+                    - text: if a destructive command without an explicit
+                    - code [ref=e733]: "--yes"
+                    - text: "should refuse instead of silently proceeding:"
+                  - generic [ref=e734]:
+                    - generic [ref=e735]:
+                      - text: sudo bash /root/awg/manage_amneziawg.sh add phone --json --yes
+                      - generic [ref=e736]: "# {\"command\":\"add\",\"ok\":true,\"added\":1,\"failed\":0,\"applied\":true,\"results\":[{\"name\":\"phone\",\"status\":\"created\",\"conf\":\"/root/awg/phone.conf\",\"qr\":\"/root/awg/phone.png\",\"vpnuri\":\"/root/awg/phone.vpnuri\",\"expires_at\":null}]}"
+                    - button "Copy code to clipboard" [ref=e738] [cursor=pointer]
+                  - paragraph [ref=e742]:
+                    - text: "Full contract (per-command envelopes, error objects, field stability promise):"
+                    - link "ADVANCED.en.md JSON interface" [ref=e743] [cursor=pointer]:
+                      - /url: /bivlked/amneziawg-installer/blob/release/v5.21.0/ADVANCED.en.md#json-api-adv
+                    - text: .
+                  - generic [ref=e744]:
+                    - heading "Update flow" [level=2] [ref=e745]
+                    - 'link "Permalink: Update flow" [ref=e746] [cursor=pointer]':
+                      - /url: "#update-flow"
+                  - paragraph [ref=e749]: "Updating to a newer installer release on a server that already has a supported version running:"
+                  - generic [ref=e750]:
+                    - generic [ref=e751]: wget -O install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/vX.Y.Z/install_amneziawg_en.sh sudo bash ./install_amneziawg_en.sh --force
+                    - button "Copy code to clipboard" [ref=e753] [cursor=pointer]
+                  - paragraph [ref=e757]:
+                    - text: The
+                    - code [ref=e758]: "--force"
+                    - text: flag (or
+                    - code [ref=e759]: AWG_FORCE_REINSTALL=1
+                    - text: ") is required when reinstalling over an already-running AmneziaWG service, so an accidental re-run on a healthy box does not destroy state. First-time installs do not need it. Server keys, peer list, and obfuscation parameters survive a reinstall. Since v5.20.1 the management script verifies that the shared library version is compatible with its own: an incompatible pair (say, only one half updated to a new minor release) stops with a clear message and ready-to-paste commands for updating both, instead of failing in cryptic ways."
+                  - paragraph [ref=e760]:
+                    - text: A normal
+                    - code [ref=e761]: apt-get upgrade
+                    - text: will pull a new kernel from time to time. For DKMS-based installs (typical for amd64 and most ARM64 deployments without a prebuilt for the new kernel),
+                    - code [ref=e762]: amneziawg-ensure-module
+                    - text: rebuilds the module transparently at the next boot. Check its log with
+                    - code [ref=e763]: journalctl -u amneziawg-ensure-module.service -b
+                    - text: or read the rolling apt-hook log at
+                    - code [ref=e764]: /var/log/amneziawg-ensure-module.log
+                    - text: ". Manual recovery if all three safety nets miss:"
+                    - code [ref=e765]: sudo bash /root/awg/manage_amneziawg.sh repair-module
+                    - text: reinstalls headers, rebuilds DKMS, and restarts the service. ARM users running an ARM prebuilt should rerun the installer after a kernel upgrade so it picks a fresh prebuilt or falls back to DKMS.
+                  - generic [ref=e766]:
+                    - heading "Uninstall" [level=2] [ref=e767]
+                    - 'link "Permalink: Uninstall" [ref=e768] [cursor=pointer]':
+                      - /url: "#uninstall"
+                  - generic [ref=e771]:
+                    - generic [ref=e772]: sudo bash ./install_amneziawg_en.sh --uninstall
+                    - button "Copy code to clipboard" [ref=e774] [cursor=pointer]
+                  - paragraph [ref=e778]:
+                    - text: "The uninstall path is symmetric: it removes the AmneziaWG service, the kernel module via DKMS, the PPA, the AmneziaWG-specific UFW rules (reverting to the pre-install UFW state via a marker file), Fail2Ban jails, and"
+                    - code [ref=e779]: /root/awg/
+                    - text: ","
+                    - code [ref=e780]: /etc/amnezia/
+                    - text: . Manage script and shared library go too. Re-installing later starts from a clean slate.
+                  - generic [ref=e781]:
+                    - heading "Troubleshooting" [level=2] [ref=e782]
+                    - 'link "Permalink: Troubleshooting" [ref=e783] [cursor=pointer]':
+                      - /url: "#troubleshooting"
+                  - list [ref=e786]:
+                    - listitem [ref=e787]:
+                      - strong [ref=e788]: PPA 404 on Ubuntu 25.10 or 26.04.
+                      - text: Automatic fallback to noble since v5.13.0. If you are still on v5.12.x, upgrade the installer.
+                    - listitem [ref=e789]:
+                      - strong [ref=e790]: DKMS build fails on stale kernel headers
+                      - text: (typical after
+                      - code [ref=e791]: do-release-upgrade
+                      - text: 24.04 to 25.10). v5.13.0 detects stale headers (kernel version differs from the running kernel) and installs gcc-13 as a fallback compiler so DKMS autoinstall succeeds across the version mismatch. If DKMS still fails,
+                      - code [ref=e792]: sudo bash /root/awg/manage_amneziawg.sh repair-module
+                      - text: forces a rebuild.
+                    - listitem [ref=e793]:
+                      - strong [ref=e794]: Mobile carrier unstable or only connects on the third attempt.
+                      - text: Reinstall with
+                      - code [ref=e795]: "--mobile"
+                      - text: "- it enables the mobile obfuscation preset and moves the port to 443/udp in one flag (carriers often drop unfamiliar UDP ports; an explicit"
+                      - code [ref=e796]: "--port"
+                      - text: "wins if you pass both). Tested carriers (Russia): Yota (Moscow), Tele2 (Moscow), Tattelecom / Letai (Tatarstan), Beeline (default preset). Tele2 (Krasnoyarsk) and Megafon (regional networks) additionally need the I1 parameter removed. Full per-carrier table and the underlying Jc / Jmin / Jmax mechanics are in"
+                      - link "ADVANCED.en.md FAQ" [ref=e797] [cursor=pointer]:
+                        - /url: /bivlked/amneziawg-installer/blob/release/v5.21.0/ADVANCED.en.md#faq-advanced-adv
+                      - text: .
+                    - listitem [ref=e798]:
+                      - strong [ref=e799]: Handshake completes but no packets flow.
+                      - text: Almost always the AllowedIPs gotcha on a custom split-tunnel config. Cover the server subnet too, not just the destinations you want. See
+                      - link "ADVANCED.en.md AllowedIPs" [ref=e800] [cursor=pointer]:
+                        - /url: /bivlked/amneziawg-installer/blob/release/v5.21.0/ADVANCED.en.md#allowedips-adv
+                      - text: .
+                    - listitem [ref=e801]:
+                      - strong [ref=e802]: iPhone does not connect over cellular.
+                      - text: MTU issue. The installer sets
+                      - code [ref=e803]: MTU = 1280
+                      - text: by default since v5.7.4; older configs need the line added manually. See
+                      - link "MTU and Mobile Clients" [ref=e804] [cursor=pointer]:
+                        - /url: /bivlked/amneziawg-installer/blob/release/v5.21.0/ADVANCED.en.md#mtu-mobile-adv
+                      - text: .
+                    - listitem [ref=e805]:
+                      - strong [ref=e806]: ARM prebuilt unavailable for your kernel.
+                      - text: The installer falls back to DKMS automatically since v5.12.1. If both fail, file an issue with
+                      - code [ref=e807]: sudo bash ./install_amneziawg_en.sh --diagnostic
+                      - text: output.
+                  - generic [ref=e808]:
+                    - heading "Where to ask" [level=2] [ref=e809]
+                    - 'link "Permalink: Where to ask" [ref=e810] [cursor=pointer]':
+                      - /url: "#where-to-ask"
+                  - list [ref=e813]:
+                    - listitem [ref=e814]:
+                      - strong [ref=e815]: Bug reports
+                      - text: ":"
+                      - link "GitHub Issues" [ref=e816] [cursor=pointer]:
+                        - /url: https://github.com/bivlked/amneziawg-installer/issues
+                      - text: .
+                    - listitem [ref=e817]:
+                      - strong [ref=e818]: Usage questions, deployment quirks
+                      - text: ":"
+                      - link "GitHub Discussions" [ref=e819] [cursor=pointer]:
+                        - /url: https://github.com/bivlked/amneziawg-installer/discussions
+                      - text: .
+                    - listitem [ref=e820]:
+                      - strong [ref=e821]: Feature requests
+                      - text: ": vote on"
+                      - 'link "Roadmap #79" [ref=e822] [cursor=pointer]':
+                        - /url: https://github.com/bivlked/amneziawg-installer/issues/79
+                      - text: with a thumbs-up.
+                  - generic [ref=e823]:
+                    - heading "Related reading" [level=2] [ref=e824]
+                    - 'link "Permalink: Related reading" [ref=e825] [cursor=pointer]':
+                      - /url: "#related-reading"
+                  - list [ref=e828]:
+                    - listitem [ref=e829]:
+                      - 'link "Hetzner Community: Making a website accessible from restricted regions" [ref=e830] [cursor=pointer]':
+                        - /url: https://community.hetzner.com/tutorials/making-website-accessible-from-restricted-regions
+                      - text: "- Hetzner tutorial that references this installer."
+                    - listitem [ref=e831]:
+                      - 'link "Pinggy: Top 5 Best Self-Hosted VPNs in 2026" [ref=e832] [cursor=pointer]':
+                        - /url: https://pinggy.io/blog/top_5_best_self_hosted_vpns/
+                      - text: "- third-party listing."
+                    - listitem [ref=e833]:
+                      - 'link "VPN Status (RU): AmneziaWG catalog" [ref=e834] [cursor=pointer]':
+                        - /url: https://vpnstatus.site/protocols/amneziawg
+                      - text: "- Russian-language directory of AmneziaWG server-side options."
+                    - listitem [ref=e835]:
+                      - 'link "LowEndTalk Tutorial #217191" [ref=e836] [cursor=pointer]':
+                        - /url: https://lowendtalk.com/discussion/217191
+                      - text: "- the short version of this guide, with reader Q&A."
+                    - listitem [ref=e837]:
+                      - link "README.en.md" [ref=e838] [cursor=pointer]:
+                        - /url: /bivlked/amneziawg-installer/blob/release/v5.21.0/README.en.md
+                      - text: "- project overview, full feature list, FAQ, and the comparison with similar tools."
+                    - listitem [ref=e839]:
+                      - link "ADVANCED.en.md" [ref=e840] [cursor=pointer]:
+                        - /url: /bivlked/amneziawg-installer/blob/release/v5.21.0/ADVANCED.en.md
+                      - text: "- full FAQ, mobile carrier presets, AWG 2.0 parameter reference, troubleshooting deep-dive."
+  - alert [ref=e844]
