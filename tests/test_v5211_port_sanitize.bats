@@ -133,6 +133,20 @@ setup() {
     done
 }
 
+@test "RU/EN parity: the empty-vs-junk branches stay identical" {
+    # The function collapses both cases to 0; the callers tell them apart with
+    # [[ -n "${AWG_PORT:-}" ]], and that decision lives in four places
+    # (check_server and diagnose_server, times two languages). Pinning the
+    # sanitizer body alone would let the branches drift apart unnoticed.
+    for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
+        run grep -c 'if \[\[ -n "${AWG_PORT:-}" \]\]; then' "$BATS_TEST_DIRNAME/../$f"
+        [ "$output" -eq 2 ] || { echo "$f: expected 2 empty-vs-junk branches, found $output"; return 1; }
+        # Both branches must scrub the value before printing it.
+        run grep -c '_bad_port="${_bad_port//\[^\[:print:\]\]/?}"' "$BATS_TEST_DIRNAME/../$f"
+        [ "$output" -eq 2 ] || { echo "$f: value not scrubbed in both branches ($output)"; return 1; }
+    done
+}
+
 @test "RU/EN parity: identical sanitizer body" {
     ru=$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh" | grep -vE '^\s*#')
     en=$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh" | grep -vE '^\s*#')
