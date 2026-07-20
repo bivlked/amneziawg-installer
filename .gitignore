@@ -38,3 +38,4 @@ output/
 # directory itself is intentionally NOT ignored - Option B lands *.minisig there
 # in the tagged commit (see docs/SIGNING_DESIGN.md).
 *.key
+.playwright-cli/
