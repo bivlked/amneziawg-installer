@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 2.0
 # Author: @bivlked
-# Version: 5.21.1
-# Date: 2026-07-20
+# Version: 5.21.2
+# Date: 2026-07-22
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -24,7 +24,7 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # drifted apart (one file updated, the other not) - otherwise the mismatch shows
 # up as a "command not found" somewhere random. Bumped with the other versions.
 # shellcheck disable=SC2034  # used by the manage script after sourcing
-AWG_COMMON_VERSION="5.21.1"
+AWG_COMMON_VERSION="5.21.2"
 
 # --- Auto-cleanup of temporary files ---
 # NOTE: trap is NOT set here to avoid overwriting the caller's trap handler.
@@ -169,6 +169,30 @@ _valid_host_or_ipv4() {
     local last="${host##*.}"
     [[ "$last" =~ ^[0-9]+$ ]] && return 1
     return 0
+}
+
+# The port from awgsetup_cfg.init cannot be trusted before it is checked: the
+# file gets hand-edited and ends up holding anything. The value goes into the
+# 'Endpoint = IP:PORT' line of the client .conf, into JSON unquoted
+# ("number":abc does not parse), into arithmetic comparisons (where bash runs
+# command substitution from a value like a[$(...)]) and into the UFW rule
+# regex. A function, not two lines in place: this way the test runs the real
+# code.
+_sanitize_port() {
+    local p="${1:-}"
+    # Surrounding whitespace is trimmed: 'AWG_PORT=39743 ' is an ordinary
+    # leftover of a hand edit and means the same port. Such a config used to
+    # fail the check for nothing.
+    p="${p#"${p%%[![:space:]]*}"}"
+    p="${p%"${p##*[![:space:]]}"}"
+    # {1,5} rules out 64-bit arithmetic overflow: a long digit string would
+    # quietly land inside the valid range. 10# rules out octal reading of
+    # values with a leading zero (0070 would otherwise be 56).
+    if [[ "$p" =~ ^[0-9]{1,5}$ ]] && (( 10#$p >= 1 && 10#$p <= 65535 )); then
+        printf '%s' "$((10#$p))"
+    else
+        printf '0'
+    fi
 }
 
 # --- CIDR arithmetic (shared by the IPv4/IPv6 allocator) ---
@@ -354,7 +378,10 @@ rand_range() {
     local random_val
     random_val=$(od -An -tu4 -N4 /dev/urandom 2>/dev/null | tr -d ' ')
     if [[ -z "$random_val" || ! "$random_val" =~ ^[0-9]+$ ]]; then
-        # Fallback: three $RANDOM (15 bits) with XOR overlap = full 31 bits.
+        # Fallback: three $RANDOM (15 bits each) with XOR overlap cover bits
+        # 0-30, i.e. the full [0, 2^31-1]. The previous variant
+        # (RANDOM<<15|RANDOM) gave only 30 bits - the upper half of the H
+        # range could never come up.
         random_val=$(( (RANDOM << 16) ^ (RANDOM << 8) ^ RANDOM ))
     fi
     echo $(( (random_val % range) + min ))
@@ -2155,8 +2182,22 @@ generate_client() {
         return 1
     fi
 
+    # The port from awgsetup_cfg.init may be corrupted by a hand edit, and
+    # render puts it into the 'Endpoint = IP:PORT' line of the client .conf.
+    # A broken port would be carried onto the device and debugged blind - we
+    # refuse explicitly, just as generate_vpn_uri already does for the vpn://
+    # URI. _rollback below removes the artifacts.
+    local _cport
+    _cport=$(_sanitize_port "${AWG_PORT:-}")
+    if [[ "$_cport" == "0" ]]; then
+        log_error "AWG_PORT is invalid ('${AWG_PORT:-}') in $CONFIG_FILE - client config for '$name' was not created. Fix the port in the config."
+        _rollback_client_artifacts "$name"
+        exec {lock_fd}>&-
+        return 1
+    fi
+
     # Client config
-    render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "${AWG_PORT}" "$client_ipv6" || {
+    render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" || {
         log_error "Rollback: removing artifacts for '$name'"
         _rollback_client_artifacts "$name"
         exec {lock_fd}>&-
@@ -2376,8 +2417,19 @@ regenerate_client() {
         fi
     fi
 
+    # Same port guard as generate_client: a broken AWG_PORT must not reach the
+    # Endpoint of the regenerated .conf.
+    local _cport
+    _cport=$(_sanitize_port "${AWG_PORT:-}")
+    if [[ "$_cport" == "0" ]]; then
+        log_error "AWG_PORT is invalid ('${AWG_PORT:-}') in $CONFIG_FILE - config for '$name' was not regenerated. Fix the port in the config."
+        exec {lock_fd}>&-
+        unset CLIENT_PSK
+        return 1
+    fi
+
     # Config regeneration (pass client_ipv6 if dual-stack)
-    render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "${AWG_PORT}" "$client_ipv6" || {
+    render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" || {
         exec {lock_fd}>&-
         unset CLIENT_PSK
         return 1

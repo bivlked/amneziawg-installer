@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.21.1
-# Date: 2026-07-20
+# Version: 5.21.2
+# Date: 2026-07-22
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 set -o pipefail
-SCRIPT_VERSION="5.21.1"
+SCRIPT_VERSION="5.21.2"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="ca07da809a8077dbd7460cce990593df26d781e199a3e6d7a2165ac86705a9b9"
-MANAGE_SCRIPT_SHA256="496ed4b5d5aa2c196c34f27d6d1c0dc5f3229018a7ef3b31c5d08577c3c8c598"
+COMMON_SCRIPT_SHA256="14fe2dd85569fd5f61648209db07e88baadc30b7a26e6c79700199249c19698a"
+MANAGE_SCRIPT_SHA256="d3750125991e0ad763d7729e334bed00f9ade768e1771cae9717cc23e61a0f9e"
 
 # CLI flags
 UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0
@@ -1128,7 +1128,7 @@ rand_range() {
     local min=$1 max=$2
     local range=$((max - min + 1))
     local random_val
-    random_val=$(od -An -tu4 -N4 /dev/urandom | tr -d ' ')
+    random_val=$(od -An -tu4 -N4 /dev/urandom 2>/dev/null | tr -d ' ')
     if [[ -z "$random_val" || ! "$random_val" =~ ^[0-9]+$ ]]; then
         # Fallback: three $RANDOM (15 bits each) with XOR overlap cover bits
         # 0-30, i.e. the full [0, 2^31-1]. The previous variant

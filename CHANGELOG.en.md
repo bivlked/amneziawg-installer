@@ -12,6 +12,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.21.2] - 2026-07-22
+
+**v5.21.2** - validate values from the hand-edited config and from kernel output before they reach the client config, JSON, and arithmetic; plus a temp-directory leak fix on interrupted `backup`/`restore`.
+
+### Fixed
+
+- **`add` and `regen` no longer write a client `.conf` with a broken port**: the server port (from the live `awg0.conf`, else `awgsetup_cfg.init`) went into the `Endpoint = IP:PORT` line unchecked, so a bad edit produced a silently broken profile - carried onto a device and debugged blind, while the vpn:// URI right next door already refused the same value. Both commands now sanitize the port and refuse to write a config when it is unusable, with an explicit error. The sanitizer moved to the shared library so `check`, `diagnose`, `add` and `regen` use one copy
+- **`stats --json` no longer breaks on non-numeric counters**: `rx`/`tx`/`last_handshake` from `awg show dump` went into arithmetic and JSON unchecked (the same class as the port in v5.21.1). A theoretically broken field produced invalid JSON and opened the same command substitution in arithmetic. A non-numeric value is now collapsed to `0`
+- **Temp directories no longer leak on interrupted `backup`/`restore`**: the directory was registered in a subshell, so the signal (INT/TERM) cleanup never saw it, and an interrupted operation left `/tmp/tmp.XXXX` behind. Registration moved to the parent process
+
 ## [5.21.1] - 2026-07-20
 
 **v5.21.1** - validated port handling in `check`: the output stays parseable whatever the config holds, and a corrupt config no longer looks healthy.
@@ -1604,7 +1614,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.21.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.21.2...HEAD
+[5.21.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.21.1...v5.21.2
 [5.21.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.21.0...v5.21.1
 [5.21.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.20.1...v5.21.0
 [5.20.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.20.0...v5.20.1

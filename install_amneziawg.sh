@@ -8,15 +8,15 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 2.0 на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 5.21.1
-# Дата: 2026-07-20
+# Версия: 5.21.2
+# Дата: 2026-07-22
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 set -o pipefail
 
-SCRIPT_VERSION="5.21.1"
+SCRIPT_VERSION="5.21.2"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="85164a785a5f0ab882ddd6c03c811314b7c221181e5664472eeaabd6a49ea4c0"
-MANAGE_SCRIPT_SHA256="494a7681b651e1b6d8769bf432dd5d445d37a7cdb7d93b030d9194132cf2ecab"
+COMMON_SCRIPT_SHA256="68b69f89d61b5a90cf92d3a581314b91ef3cdfe839ac76d67d6e5fb54cb7c889"
+MANAGE_SCRIPT_SHA256="adf8f3e3cd364a58984c489598c001d194b289ea4a886096dbdcf5adc774f570"
 
 # Флаги CLI
 UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0
@@ -1116,7 +1116,7 @@ rand_range() {
     local min=$1 max=$2
     local range=$((max - min + 1))
     local random_val
-    random_val=$(od -An -tu4 -N4 /dev/urandom | tr -d ' ')
+    random_val=$(od -An -tu4 -N4 /dev/urandom 2>/dev/null | tr -d ' ')
     if [[ -z "$random_val" || ! "$random_val" =~ ^[0-9]+$ ]]; then
         # Fallback: три $RANDOM (15 бит каждый) с XOR-перекрытием покрывают
         # биты 0-30, т.е. весь [0, 2^31-1]. Прежний вариант (RANDOM<<15|RANDOM)

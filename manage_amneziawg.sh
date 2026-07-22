@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # Скрипт для управления пользователями (пирами) AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.21.1
-# Дата: 2026-07-20
+# Версия: 5.21.2
+# Дата: 2026-07-22
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.21.1"
+SCRIPT_VERSION="5.21.2"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -37,11 +37,15 @@ CLI_CARRIER=""
 # orphan /tmp/tmp.XXXX (audit).
 _manage_temp_dirs=()
 
-manage_mktempdir() {
-    local d
-    d=$(mktemp -d) || return 1
-    _manage_temp_dirs+=("$d")
-    echo "$d"
+# Путь пишем в переменную по имени (printf -v), БЕЗ command substitution: при
+# td=$(manage_mktempdir) append в _manage_temp_dirs уходил в сабшелл и терялся,
+# а cleanup на INT/TERM/EXIT эти папки не удалял (audit 5kag). Вызов:
+# manage_mktempdir_var td || die ...
+manage_mktempdir_var() {
+    local __rv="$1" __d
+    __d=$(mktemp -d) || return 1
+    _manage_temp_dirs+=("$__d")
+    printf -v "$__rv" '%s' "$__d"
 }
 
 _manage_cleaned=0
@@ -132,27 +136,6 @@ json_escape() {
         done
     fi
     printf '%s' "$s"
-}
-
-# Порту из awgsetup_cfg.init нельзя доверять до проверки: файл правят руками,
-# и там оказывается что угодно. Значение уходит в JSON без кавычек (и тогда
-# "number":abc не разбирается), в арифметические сравнения (где bash выполняет
-# подстановку команд из строки вида a[$(...)]) и в regex правил UFW.
-# Функция, а не пара строк по месту: так её исполняет тест, а не копия логики.
-_sanitize_port() {
-    local p="${1:-}"
-    # Пробелы по краям срезаю: 'AWG_PORT=39743 ' - обычный след ручной правки,
-    # и это тот же самый порт. Раньше такой конфиг ронял проверку впустую.
-    p="${p#"${p%%[![:space:]]*}"}"
-    p="${p%"${p##*[![:space:]]}"}"
-    # {1,5} отсекает переполнение 64-битной арифметики: длинная строка цифр
-    # молча приземлилась бы внутрь допустимого диапазона. 10# снимает
-    # восьмеричную трактовку значений с ведущим нулём (0070 иначе даст 56).
-    if [[ "$p" =~ ^[0-9]{1,5}$ ]] && (( 10#$p >= 1 && 10#$p <= 65535 )); then
-        printf '%s' "$((10#$p))"
-    else
-        printf '0'
-    fi
 }
 
 # Единственная точка печати JSON в stdout. Правило контракта: при --json
@@ -473,7 +456,7 @@ _backup_configs_nolock() {
     # backup'ах (например, regen → backup → modify → backup в одной секунде).
     ts=$(date +%F_%H-%M-%S.%3N)
     bf="$bd/awg_backup_${ts}.tar.gz"
-    td=$(manage_mktempdir) || die "Ошибка создания временной директории"
+    manage_mktempdir_var td || die "Ошибка создания временной директории"
 
     mkdir -p "$td/server" "$td/clients" "$td/keys"
 
@@ -625,7 +608,7 @@ _restore_do_rollback() {
     fi
     log_warn "Откат к состоянию до restore ($(basename "$_snap"))..."
     local _rtd
-    _rtd=$(manage_mktempdir) || {
+    manage_mktempdir_var _rtd || {
         log_error "Не удалось создать tmpdir для отката. Ручное: tar -xzf $_snap -C /"
         return 1
     }
@@ -783,7 +766,7 @@ restore_backup() {
     # Фиксируем rollback snapshot (устанавливается _backup_configs_nolock)
     _rollback_snap="${LAST_BACKUP_PATH:-}"
 
-    td=$(manage_mktempdir) || {
+    manage_mktempdir_var td || {
         log_error "Ошибка создания временной директории"
         return 1
     }
@@ -1780,6 +1763,15 @@ stats_clients() {
     while IFS=$'\t' read -r pk psk ep aips handshake rx tx keepalive; do
         local cname="${pk_to_name[$pk]:-unknown}"
         if [[ "$cname" == "unknown" ]]; then continue; fi
+
+        # awg show dump - вывод ядерной утилиты, но в JSON и арифметику значения
+        # должны идти каноничными десятичными числами. Регекс требует именно
+        # такой вид (0 либо без ведущего нуля): "08" прошло бы ^[0-9]+$, но дало
+        # бы невалидный JSON ("rx":08) и восьмеричную ошибку в $((...)). Всё
+        # прочее (нечисловое, битая строка dump вида a[$(...)]) тоже обнуляется.
+        [[ "$rx" =~ ^(0|[1-9][0-9]*)$ ]] || rx=0
+        [[ "$tx" =~ ^(0|[1-9][0-9]*)$ ]] || tx=0
+        [[ "$handshake" =~ ^(0|[1-9][0-9]*)$ ]] || handshake=0
 
         local ip="-"
         if [[ -f "$AWG_DIR/${cname}.conf" ]]; then

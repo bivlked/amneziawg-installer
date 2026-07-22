@@ -21,7 +21,9 @@ _load_sanitizer() {
 }
 
 setup() {
-    _load_sanitizer "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+    # v5.21.2: _sanitize_port moved to awg_common.sh (shared by check/diagnose
+    # in manage and by generate/regenerate_client in the library).
+    _load_sanitizer "$BATS_TEST_DIRNAME/../awg_common.sh"
 }
 
 # --- valid ports pass through unchanged ---
@@ -148,13 +150,13 @@ setup() {
 }
 
 @test "RU/EN parity: identical sanitizer body" {
-    ru=$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh" | grep -vE '^\s*#')
-    en=$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh" | grep -vE '^\s*#')
+    ru=$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../awg_common.sh" | grep -vE '^\s*#')
+    en=$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../awg_common_en.sh" | grep -vE '^\s*#')
     [ -n "$ru" ] && [ "$ru" = "$en" ]
 }
 
 @test "EN sanitizer behaves the same as RU" {
-    _load_sanitizer "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
+    _load_sanitizer "$BATS_TEST_DIRNAME/../awg_common_en.sh"
     run _sanitize_port "abc"; [ "$output" = "0" ]
     run _sanitize_port "443"; [ "$output" = "443" ]
     run _sanitize_port "65536"; [ "$output" = "0" ]

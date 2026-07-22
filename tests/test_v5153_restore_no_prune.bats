@@ -28,7 +28,7 @@ setup_backup_env() {
     log_warn()  { :; }
     log_debug() { :; }
     die()       { echo "die: $*" >&2; return 1; }
-    manage_mktempdir() { mktemp -d; }
+    manage_mktempdir_var() { local d; d=$(mktemp -d) || return 1; printf -v "$1" '%s' "$d"; }
     create_server_config   # gives the backup some real content
     create_init_config
     source_backup_fn

@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 peer management script
 # Author: @bivlked
-# Version: 5.21.1
-# Date: 2026-07-20
+# Version: 5.21.2
+# Date: 2026-07-22
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.21.1"
+SCRIPT_VERSION="5.21.2"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -37,11 +37,15 @@ EXPIRES_DURATION=""
 # does not leave orphan /tmp/tmp.XXXX (audit).
 _manage_temp_dirs=()
 
-manage_mktempdir() {
-    local d
-    d=$(mktemp -d) || return 1
-    _manage_temp_dirs+=("$d")
-    echo "$d"
+# The path is written to a named variable (printf -v), NOT via command
+# substitution: with td=$(manage_mktempdir) the append to _manage_temp_dirs
+# happened in the subshell and was lost, so cleanup on INT/TERM/EXIT never
+# removed those dirs (audit 5kag). Call: manage_mktempdir_var td || die ...
+manage_mktempdir_var() {
+    local __rv="$1" __d
+    __d=$(mktemp -d) || return 1
+    _manage_temp_dirs+=("$__d")
+    printf -v "$__rv" '%s' "$__d"
 }
 
 _manage_cleaned=0
@@ -133,29 +137,6 @@ json_escape() {
         done
     fi
     printf '%s' "$s"
-}
-
-# The port from awgsetup_cfg.init cannot be trusted before it is checked: the
-# file gets hand-edited and ends up holding anything. The value goes into JSON
-# unquoted (and then "number":abc does not parse), into arithmetic comparisons
-# (where bash runs command substitution from a value like a[$(...)]) and into
-# the UFW rule regex.
-# A function, not two lines in place: this way the test runs the real code.
-_sanitize_port() {
-    local p="${1:-}"
-    # Surrounding whitespace is trimmed: 'AWG_PORT=39743 ' is an ordinary
-    # leftover of a hand edit and means the same port. Such a config used to
-    # fail the check for nothing.
-    p="${p#"${p%%[![:space:]]*}"}"
-    p="${p%"${p##*[![:space:]]}"}"
-    # {1,5} rules out 64-bit arithmetic overflow: a long digit string would
-    # quietly land inside the valid range. 10# rules out octal reading of
-    # values with a leading zero (0070 would otherwise be 56).
-    if [[ "$p" =~ ^[0-9]{1,5}$ ]] && (( 10#$p >= 1 && 10#$p <= 65535 )); then
-        printf '%s' "$((10#$p))"
-    else
-        printf '0'
-    fi
 }
 
 # The single point that prints JSON to stdout. Contract rule: with --json,
@@ -479,7 +460,7 @@ _backup_configs_nolock() {
     # backups (e.g. regen → backup → modify → backup within the same second).
     ts=$(date +%F_%H-%M-%S.%3N)
     bf="$bd/awg_backup_${ts}.tar.gz"
-    td=$(manage_mktempdir) || die "Failed to create temp directory"
+    manage_mktempdir_var td || die "Failed to create temp directory"
 
     mkdir -p "$td/server" "$td/clients" "$td/keys"
 
@@ -633,7 +614,7 @@ _restore_do_rollback() {
     fi
     log_warn "Rolling back to pre-restore state ($(basename "$_snap"))..."
     local _rtd
-    _rtd=$(manage_mktempdir) || {
+    manage_mktempdir_var _rtd || {
         log_error "Failed to create rollback tmpdir. Manual: tar -xzf $_snap -C /"
         return 1
     }
@@ -794,7 +775,7 @@ restore_backup() {
     # Capture rollback snapshot (set by _backup_configs_nolock)
     _rollback_snap="${LAST_BACKUP_PATH:-}"
 
-    td=$(manage_mktempdir) || {
+    manage_mktempdir_var td || {
         log_error "Failed to create temp directory"
         return 1
     }
@@ -1795,6 +1776,15 @@ stats_clients() {
     while IFS=$'\t' read -r pk psk ep aips handshake rx tx keepalive; do
         local cname="${pk_to_name[$pk]:-unknown}"
         if [[ "$cname" == "unknown" ]]; then continue; fi
+
+        # awg show dump is kernel-utility output, but the values must reach JSON
+        # and arithmetic as canonical decimal numbers. The regex demands exactly
+        # that (0, or no leading zero): "08" would pass ^[0-9]+$ yet produce
+        # invalid JSON ("rx":08) and an octal error in $((...)). Anything else
+        # (non-numeric, a broken dump line like a[$(...)]) is zeroed too.
+        [[ "$rx" =~ ^(0|[1-9][0-9]*)$ ]] || rx=0
+        [[ "$tx" =~ ^(0|[1-9][0-9]*)$ ]] || tx=0
+        [[ "$handshake" =~ ^(0|[1-9][0-9]*)$ ]] || handshake=0
 
         local ip="-"
         if [[ -f "$AWG_DIR/${cname}.conf" ]]; then
