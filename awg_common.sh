@@ -170,12 +170,13 @@ _valid_host_or_ipv4() {
     return 0
 }
 
-# Порту из awgsetup_cfg.init нельзя доверять до проверки: файл правят руками,
-# и там оказывается что угодно. Значение уходит в 'Endpoint = IP:PORT'
-# клиентского .conf, в JSON без кавычек ("number":abc не разбирается), в
-# арифметические сравнения (где bash выполняет подстановку команд из строки
-# вида a[$(...)]) и в regex правил UFW. Функция, а не пара строк по месту: так
-# её исполняет тест, а не копия логики.
+# Порту из конфига нельзя доверять до проверки: и awgsetup_cfg.init, и ListenPort
+# в живом awg0.conf правят руками, и там оказывается что угодно. Значение уходит
+# в 'Endpoint = IP:PORT' клиентского .conf (add/regen), в JSON без кавычек
+# ("number":abc не разбирается) и в арифметические сравнения (где bash выполняет
+# подстановку команд из строки вида a[$(...)]) у check, и в regex правил UFW у
+# diagnose. Функция, а не пара строк по месту: так её исполняет тест, а не копия
+# логики.
 _sanitize_port() {
     local p="${1:-}"
     # Пробелы по краям срезаю: 'AWG_PORT=39743 ' - обычный след ручной правки,
@@ -2166,14 +2167,15 @@ generate_client() {
         return 1
     fi
 
-    # Порт из awgsetup_cfg.init может быть повреждён ручной правкой, а render
-    # ставит его в 'Endpoint = IP:PORT' клиентского .conf. Битый порт уносится
-    # на устройство и отлаживается вслепую - отказываем явно, как это уже делает
-    # generate_vpn_uri для vpn:// URI. Артефакты откатит _rollback ниже.
+    # Порт сервера приходит из живого awg0.conf (ListenPort), иначе из
+    # awgsetup_cfg.init - оба правятся руками. render ставит его в
+    # 'Endpoint = IP:PORT' клиентского .conf: битый порт уносится на устройство
+    # и отлаживается вслепую. Отказываем явно, как generate_vpn_uri для vpn://
+    # URI. Артефакты откатит _rollback ниже.
     local _cport
     _cport=$(_sanitize_port "${AWG_PORT:-}")
     if [[ "$_cport" == "0" ]]; then
-        log_error "AWG_PORT некорректен ('${AWG_PORT:-}') в $CONFIG_FILE - клиентский конфиг для '$name' не создан. Исправьте порт в конфиге."
+        log_error "AWG_PORT некорректен ('${AWG_PORT:-}') - клиентский конфиг для '$name' не создан. Проверьте ListenPort в $SERVER_CONF_FILE (или AWG_PORT в $CONFIG_FILE)."
         _rollback_client_artifacts "$name"
         exec {lock_fd}>&-
         return 1
@@ -2402,7 +2404,7 @@ regenerate_client() {
     local _cport
     _cport=$(_sanitize_port "${AWG_PORT:-}")
     if [[ "$_cport" == "0" ]]; then
-        log_error "AWG_PORT некорректен ('${AWG_PORT:-}') в $CONFIG_FILE - конфиг '$name' не перегенерирован. Исправьте порт в конфиге."
+        log_error "AWG_PORT некорректен ('${AWG_PORT:-}') - конфиг '$name' не перегенерирован. Проверьте ListenPort в $SERVER_CONF_FILE (или AWG_PORT в $CONFIG_FILE)."
         exec {lock_fd}>&-
         unset CLIENT_PSK
         return 1

@@ -171,13 +171,13 @@ _valid_host_or_ipv4() {
     return 0
 }
 
-# The port from awgsetup_cfg.init cannot be trusted before it is checked: the
-# file gets hand-edited and ends up holding anything. The value goes into the
-# 'Endpoint = IP:PORT' line of the client .conf, into JSON unquoted
-# ("number":abc does not parse), into arithmetic comparisons (where bash runs
-# command substitution from a value like a[$(...)]) and into the UFW rule
-# regex. A function, not two lines in place: this way the test runs the real
-# code.
+# The port from the config cannot be trusted before it is checked: both
+# awgsetup_cfg.init and the ListenPort in the live awg0.conf are hand-edited and
+# end up holding anything. The value goes into the 'Endpoint = IP:PORT' line of
+# the client .conf (add/regen), into JSON unquoted ("number":abc does not parse)
+# and into arithmetic comparisons (where bash runs command substitution from a
+# value like a[$(...)]) in check, and into the UFW rule regex in diagnose. A
+# function, not two lines in place: this way the test runs the real code.
 _sanitize_port() {
     local p="${1:-}"
     # Surrounding whitespace is trimmed: 'AWG_PORT=39743 ' is an ordinary
@@ -2182,15 +2182,16 @@ generate_client() {
         return 1
     fi
 
-    # The port from awgsetup_cfg.init may be corrupted by a hand edit, and
-    # render puts it into the 'Endpoint = IP:PORT' line of the client .conf.
-    # A broken port would be carried onto the device and debugged blind - we
-    # refuse explicitly, just as generate_vpn_uri already does for the vpn://
-    # URI. _rollback below removes the artifacts.
+    # The server port comes from the live awg0.conf (ListenPort), else from
+    # awgsetup_cfg.init - both are hand-edited. render puts it into the
+    # 'Endpoint = IP:PORT' line of the client .conf: a broken port is carried
+    # onto the device and debugged blind. We refuse explicitly, just as
+    # generate_vpn_uri does for the vpn:// URI. _rollback below removes the
+    # artifacts.
     local _cport
     _cport=$(_sanitize_port "${AWG_PORT:-}")
     if [[ "$_cport" == "0" ]]; then
-        log_error "AWG_PORT is invalid ('${AWG_PORT:-}') in $CONFIG_FILE - client config for '$name' was not created. Fix the port in the config."
+        log_error "AWG_PORT is invalid ('${AWG_PORT:-}') - client config for '$name' was not created. Check ListenPort in $SERVER_CONF_FILE (or AWG_PORT in $CONFIG_FILE)."
         _rollback_client_artifacts "$name"
         exec {lock_fd}>&-
         return 1
@@ -2422,7 +2423,7 @@ regenerate_client() {
     local _cport
     _cport=$(_sanitize_port "${AWG_PORT:-}")
     if [[ "$_cport" == "0" ]]; then
-        log_error "AWG_PORT is invalid ('${AWG_PORT:-}') in $CONFIG_FILE - config for '$name' was not regenerated. Fix the port in the config."
+        log_error "AWG_PORT is invalid ('${AWG_PORT:-}') - config for '$name' was not regenerated. Check ListenPort in $SERVER_CONF_FILE (or AWG_PORT in $CONFIG_FILE)."
         exec {lock_fd}>&-
         unset CLIENT_PSK
         return 1

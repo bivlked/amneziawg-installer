@@ -65,6 +65,31 @@ _assert_fails_clean() {
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 }
 
+# End-to-end: the INT/TERM/EXIT handler (_manage_cleanup) actually removes a
+# registered dir. This closes the loop on 5kag - the leak was that the handler
+# never saw the dir, so registration alone is only half the proof.
+_assert_cleanup_removes() {
+    local script="$1"
+    _manage_temp_dirs=()
+    _manage_cleaned=0
+    eval "$(_extract "$script")"
+    eval "$(awk '/^_manage_cleanup\(\) \{/,/^\}/' "$script")"
+    manage_mktempdir_var td
+    [ -d "$td" ] || { echo "dir not created: $td"; return 1; }
+    _manage_cleanup   # what the trap runs on INT/TERM/EXIT
+    [ ! -d "$td" ] || { echo "cleanup left the registered dir: $td"; rmdir "$td" 2>/dev/null; return 1; }
+}
+
+@test "v5.21.2 (5kag): _manage_cleanup removes a registered temp dir (RU)" {
+    run _assert_cleanup_removes "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}
+
+@test "v5.21.2 (5kag): _manage_cleanup removes a registered temp dir (EN)" {
+    run _assert_cleanup_removes "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}
+
 @test "v5.21.2 (5kag): the old subshell-registering manage_mktempdir is gone (RU+EN)" {
     for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
         run grep -nE '^manage_mktempdir\(\) \{' "$BATS_TEST_DIRNAME/../$f"
