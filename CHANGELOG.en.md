@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **New guide `WARP-RU.md` / `WARP-RU.en.md`**: selectively routing the Russian segment through Cloudflare WARP via the antifilter BGP feed, for people running a single server. Russian sites see a Cloudflare address instead of a data-center one, all other traffic keeps the existing direct exit, and the network list arrives over BGP with nothing to maintain by hand. The scheme was contributed by [@alexfiu4-cyber](https://github.com/alexfiu4-cyber) in [#103](https://github.com/bivlked/amneziawg-installer/issues/103); it was reproduced end to end on a test server, so the guide also covers what the original recipe did not: the point where the published `bird.conf` fails to parse, the fail-closed mode with a live interface and a dead WARP peer, how the setup behaves across a reboot and an abrupt BIRD crash, and why the extra MSS clamp is redundant on top of this installer. Cross-links added to README and the ADVANCED FAQ (RU+EN)
+
 ## [5.21.2] - 2026-07-22
 
 **v5.21.2** - validate values from the hand-edited config and from kernel output before they reach the client config, JSON, and arithmetic; plus a temp-directory leak fix on interrupted `backup`/`restore`.
