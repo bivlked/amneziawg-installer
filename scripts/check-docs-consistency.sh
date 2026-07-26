@@ -245,7 +245,7 @@ if [[ "$stale_fail" -eq 0 ]]; then _ok "SECURITY/CONTRIBUTING не протух�
 # ru.zone (raw .../vX.Y.Z/cascade/ru.zone). Пин на тег = иммутабельный снимок, а не
 # подвижный main; проверка не даёт ему протухнуть на новом релизе (бампать каждый релиз).
 url_fail=0
-URL_DOCS=(README.md README.en.md ADVANCED.md ADVANCED.en.md INSTALL_VPS.md CASCADE.md CASCADE.en.md)
+URL_DOCS=(README.md README.en.md ADVANCED.md ADVANCED.en.md INSTALL_VPS.md CASCADE.md CASCADE.en.md WARP-RU.md WARP-RU.en.md)
 for f in "${URL_DOCS[@]}"; do
     [[ -f "$f" ]] || continue
     while IFS= read -r tag; do

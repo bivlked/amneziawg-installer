@@ -494,6 +494,8 @@ For the roadmap and priorities, see **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
 For a two-server cascade with a split exit for Russian and foreign traffic (split-tunnel), see **[CASCADE.en.md](CASCADE.en.md)**.
 
+For selectively routing the Russian segment through Cloudflare WARP via a BGP feed on a single server, see **[WARP-RU.en.md](WARP-RU.en.md)**.
+
 ---
 
 <a id="faq"></a>

@@ -720,6 +720,11 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 </details>
 
 <details>
+  <summary><strong>Q: Russian sites refuse to open over the VPN because they block foreign data-center addresses. What can I do with a single server?</strong></summary>
+  <b>A:</b> Send only the Russian segment through a second exit via Cloudflare WARP and leave the rest direct. The server receives the list of Russian networks automatically over BGP, so there is nothing to maintain by hand. Russian sites will see a Cloudflare address instead of a data-center one. Step-by-step guide - <a href="WARP-RU.en.md">WARP-RU.en.md</a>. If you need a genuinely Russian IP rather than a Cloudflare one, that requires a second server in Russia and a cascade (<a href="CASCADE.en.md">CASCADE.en.md</a>).
+</details>
+
+<details>
   <summary><strong>Q: AmneziaVPN says "this server does not support split tunneling". How do I enable it?</strong></summary>
   <b>A:</b> This is a limitation of the client, not the server. The AmneziaVPN app's built-in split tunneling by sites and apps only turns on when the config sends all traffic through the tunnel. The client looks at <code>AllowedIPs</code>: a full tunnel unlocks the feature, while a partial subnet list is treated as already split at the routing level, so the client hides its toggle with that message. The full-tunnel form it reliably recognizes is the pair <code>0.0.0.0/0, ::/0</code>. The "Amnezia" routing mode (the default) produces a subnet list, which is why the feature is unavailable. Fix, no docker needed: switch the client to a full tunnel - replace the line in its <code>.conf</code> with <code>AllowedIPs = 0.0.0.0/0, ::/0</code> and re-import, or re-issue the client in "All traffic" mode (<code>--route-all</code>). The split tunneling page in the app then opens and you pick sites/apps there. If you only need part of the traffic in the tunnel (a network-level split), <code>AllowedIPs</code> already does that - the app feature is not required for it.
 </details>

@@ -495,6 +495,8 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 Каскад из двух серверов с раздельным выходом российского и зарубежного трафика (split-tunnel) - в **[CASCADE.md](CASCADE.md)**.
 
+Выборочная маршрутизация российского сегмента через Cloudflare WARP по BGP-фиду, если сервер один - в **[WARP-RU.md](WARP-RU.md)**.
+
 ---
 
 <a id="faq-main"></a>
