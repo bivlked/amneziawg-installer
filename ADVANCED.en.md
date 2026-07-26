@@ -105,7 +105,8 @@ All parameters are generated automatically during installation and saved to `/ro
 **Critical constraints:**
 * H1-H4 ranges **must not overlap** (guaranteed by the generation algorithm).
 * `S1 + 56 ≠ S2` — prevents init and response messages from having the same size.
-* All nodes (server + clients) **must** use identical parameters.
+* `S1`-`S4` and `H1`-`H4` **must** match on the server and the clients: the receiver strips that padding and checks those headers. In 2.0, `H1`-`H4` are ranges - the same ranges on both sides.
+* `Jc`/`Jmin`/`Jmax` and `I1`-`I5` **do not** have to match: they are separate decoy packets, the other side discards them, and a node without `I1` simply never sends them.
 
 > `I1`-`I5` (CPS) disguise the handshake as another protocol - the basis of resistance to active probing. Details: [Active Probing and Obfuscation Without a Proxy](#active-probing-adv).
 
@@ -405,7 +406,7 @@ Notes for manual setups:
 
 - **S3/S4** are AWG 2.0 parameters added to the protocol later than S1/S2. Configs from the earlier AWG 1.x release may not have them - add by hand, `S3` takes `0-64` and `S4` takes `0-32`, the key point is that the keys exist at all.
 - **H1–H4** can be single-value (`H1 = 1234567`) or a range (`H1 = 100000-200000`); ranges must not overlap. Keep the upper bound at `2147483647` (`INT32_MAX`) or below, otherwise `amneziawg-windows-client` may flag the value as invalid.
-- **I1-I5** (CPS / special-junk packets) are optional. Without `I1` the AWG client falls back to AWG 1.0 mode; for full AWG 2.0 obfuscation add `I1 = <r 128>` (random 128 bytes) or `I1 = <b 0xHEX>` (binary). Since v5.18.0 all five (`I1`-`I5`) are carried into client configs, not just `I1`: set `I2`-`I5` in the `[Interface]` section of `awg0.conf`, restart the service (`sudo systemctl restart awg-quick@awg0`), and distribute to clients with `sudo bash /root/awg/manage_amneziawg.sh regen <name>` - the values flow into the `.conf`, QR, and `vpn://`. Ready-made sets come from, e.g., the VoidWaifu list; tag formats: `<r N>`, `<b 0xHEX>`, `<c>`, `<t>`. The values must match on server and clients. Unset `I2`-`I5` are simply not emitted.
+- **I1-I5** (CPS / special-junk packets) are optional. Without `I1` the AWG client falls back to AWG 1.0 mode; for full AWG 2.0 obfuscation add `I1 = <r 128>` (random 128 bytes) or `I1 = <b 0xHEX>` (binary). Since v5.18.0 all five (`I1`-`I5`) are carried into client configs, not just `I1`: set `I2`-`I5` in the `[Interface]` section of `awg0.conf`, restart the service (`sudo systemctl restart awg-quick@awg0`), and distribute to clients with `sudo bash /root/awg/manage_amneziawg.sh regen <name>` - the values flow into the `.conf`, QR, and `vpn://`. Ready-made sets come from, e.g., the VoidWaifu list; tag formats: `<r N>`, `<b 0xHEX>`, `<c>`, `<t>`. These values do not have to match the server: the receiver never validates them, and a node without `I1` simply sends no concealment packets. Case does matter - uppercase only. Unset `I2`-`I5` are simply not emitted.
 - **MTU**, **PostUp/PostDown** are optional and depend on the setup (see the `amneziawg-go` LXC section on `iptables` MASQUERADE).
 
 After creating such an `awg0.conf`, `manage_amneziawg.sh` also needs `/root/awg/server_public.key` (compute it with `awg pubkey < /etc/amnezia/amneziawg/server_private.key > /root/awg/server_public.key`) and a minimal `/root/awg/awgsetup_cfg.init` containing at least `AWG_PORT`, `AWG_TUNNEL_SUBNET`, `AWG_ENDPOINT`.
@@ -763,7 +764,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
     <li>Regenerate every client config: <code>sudo bash /root/awg/manage_amneziawg.sh regen &lt;name&gt;</code>. As of v5.8.0, <code>regen</code> reads live values directly from <code>awg0.conf</code> (the source of truth) instead of the cached <code>awgsetup_cfg.init</code>.</li>
     <li>Distribute the new <code>.conf</code> / QR codes / vpn:// URIs to clients.</li>
   </ol>
-  <b>Important:</b> server and client parameters must match — otherwise the handshake fails. The easiest way to get a fresh set of randomized non-overlapping H1-H4 ranges is to reinstall the server (<code>--uninstall</code> followed by a fresh install) — every install generates a unique set.
+  <b>Important:</b> S1-S4 and H1-H4 must match on the server and every client, otherwise the handshake fails; Jc/Jmin/Jmax and I1-I5 do not have to match. The easiest way to get a fresh set of randomized non-overlapping H1-H4 ranges is to reinstall the server (<code>--uninstall</code> followed by a fresh install) - every install generates a unique set.
 </details>
 
 <details>
@@ -1062,7 +1063,7 @@ Since vanilla WireGuard works, the network, the port and the firewall are ruled 
 
 What to check:
 
-1. Compare the obfuscation parameters in the `[Interface]` section on the server and the client - they must be identical. `I1`-`I5` are case-sensitive (uppercase only); if `I1` is present on one side and absent on the other, that side falls back to AWG 1.0 while the other stays on 2.0, and the handshake never agrees.
+1. Compare the obfuscation parameters in the `[Interface]` section on the server and the client. `S1`-`S4` and `H1`-`H4` must match: the receiver strips that padding and checks those headers, so any mismatch here means the packet is dropped and the handshake never completes. In 2.0, `H1`-`H4` are ranges - the same ranges on both sides. `Jc`/`Jmin`/`Jmax` and `I1`-`I5` do not have to match: they are separate decoy packets, the other side discards them, and a node without `I1` simply never sends them, which does not stop the handshake. Case does matter for `I1`-`I5`: uppercase only.
 2. Compare versions on both ends: `awg --version`. A client built separately (for example `amneziawg-tools` from the AUR on Arch) is often older and does not speak AWG 2.0 - then the server expects a 2.0 envelope while the client sends the old format. See [AWG 2.0 Client Compatibility](#client-compat-adv) for the list of compatible clients.
 
 The specific case (an AWG 2.0 server with `S3`/`S4` > 0 and an old AWG 1.0 client) is a known upstream issue, covered in the [FAQ](#faq-advanced-adv).
@@ -1521,7 +1522,7 @@ cd ../..
 
 ### Config and launch
 
-Create `/etc/amnezia/amneziawg/awg0.conf` — replace the `YOUR_*` values with your own. Generate keys with `awg genkey | tee /etc/amnezia/amneziawg/server_private.key | awg pubkey`. Obfuscation params (`Jc/Jmin/Jmax/S1-S4/H1-H4/I1`) must match the client:
+Create `/etc/amnezia/amneziawg/awg0.conf` - replace the `YOUR_*` values with your own. Generate keys with `awg genkey | tee /etc/amnezia/amneziawg/server_private.key | awg pubkey`. Of the obfuscation params, `S1`-`S4` and `H1`-`H4` must match the client; `Jc`/`Jmin`/`Jmax` and `I1` do not have to:
 
 ```conf
 [Interface]
