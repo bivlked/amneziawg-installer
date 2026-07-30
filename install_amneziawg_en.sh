@@ -33,7 +33,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="340953b78b6e955c2d96af498023855fe6662c6686b83d8ed18a542d5621106d"
+COMMON_SCRIPT_SHA256="005153df20669a1f5c0cc108e072e2acef46dacb2ccf239a249899445167ca11"
 MANAGE_SCRIPT_SHA256="d3750125991e0ad763d7729e334bed00f9ade768e1771cae9717cc23e61a0f9e"
 
 # CLI flags
