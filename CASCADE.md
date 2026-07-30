@@ -357,6 +357,42 @@ iptables -t mangle -L PREROUTING -n -v
 echo '0 5 * * 1 root systemctl restart awg-routing' > /etc/cron.d/awg-routing-refresh
 ```
 
+### Вариант с systemd timer
+
+> Предложил [@MrSokol](https://github.com/MrSokol) в [обсуждении #120](https://github.com/bivlked/amneziawg-installer/discussions/120).
+
+Если не хотите держать на сервере cron, то же самое делает таймер systemd. Он не лучше и не хуже строки в cron, просто расписание лежит рядом с юнитом.
+
+🔴 **Одна обязательная правка, без которой обновление не будет происходить никогда.** В `awg-routing.service` поменяйте `RemainAfterExit=yes` на `RemainAfterExit=no`. Таймер запускает юнит командой `start`, а `start` уже активного юнита systemd считает выполненным и ничего не делает. С `RemainAfterExit=yes` юнит после первой же отработки остаётся `active (exited)` навсегда, поэтому таймер будет срабатывать вхолостую, причём совершенно незаметно: `systemctl list-timers` покажет свежий `LAST`, а в журнале от момента срабатывания не окажется ни строки (проверено на systemd 255).
+
+Создайте `/etc/systemd/system/awg-routing.timer`:
+
+```ini
+[Unit]
+Description=Периодическое обновление списка российских сетей
+
+[Timer]
+OnCalendar=*-*-* 01:00:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=awg-routing.service
+
+[Install]
+WantedBy=timers.target
+```
+
+Включите и проверьте:
+
+```bash
+systemctl daemon-reload
+systemctl enable --now awg-routing.timer
+systemctl list-timers awg-routing.timer
+```
+
+`Persistent=true` догоняет запуск, пропущенный из-за выключенного сервера. `RandomizedDelaySec` разбрасывает обращения во времени, чтобы все, кто настроился по этому гайду, не приходили за списком в одну и ту же секунду.
+
+И имейте в виду: с `RemainAfterExit=no` команда `systemctl status awg-routing` между запусками показывает `inactive (dead)`. Это нормально, отработавший oneshot-юнит активным не остаётся, а маршруты при этом на месте. Смотрите на строку последнего запуска в том же выводе или на `systemctl list-timers`.
+
 <a id="trouble"></a>
 ## Диагностика
 

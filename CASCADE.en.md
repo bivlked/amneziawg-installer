@@ -358,6 +358,42 @@ The list of Russian networks changes over time. The script re-reads it on every 
 echo '0 5 * * 1 root systemctl restart awg-routing' > /etc/cron.d/awg-routing-refresh
 ```
 
+### Alternative: a systemd timer
+
+> Suggested by [@MrSokol](https://github.com/MrSokol) in [discussion #120](https://github.com/bivlked/amneziawg-installer/discussions/120).
+
+If you would rather not keep cron on the server, a systemd timer does the same job. It is neither better nor worse than the cron line, the schedule just lives next to the unit.
+
+🔴 **One mandatory change, without which the refresh will never happen.** In `awg-routing.service`, change `RemainAfterExit=yes` to `RemainAfterExit=no`. A timer starts its unit with `start`, and systemd treats `start` on an already active unit as done and runs nothing. With `RemainAfterExit=yes` the unit stays `active (exited)` for good after its very first run, so the timer fires into the void, and does it invisibly: `systemctl list-timers` shows a fresh `LAST`, while the journal holds not a single line from the moment it fired (checked on systemd 255).
+
+Create `/etc/systemd/system/awg-routing.timer`:
+
+```ini
+[Unit]
+Description=Periodic refresh of the Russian network list
+
+[Timer]
+OnCalendar=*-*-* 01:00:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=awg-routing.service
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable it and check:
+
+```bash
+systemctl daemon-reload
+systemctl enable --now awg-routing.timer
+systemctl list-timers awg-routing.timer
+```
+
+`Persistent=true` catches up a run missed while the server was off. `RandomizedDelaySec` spreads the requests out in time, so that everyone who followed this guide does not hit the list source in the same second.
+
+One thing to expect: with `RemainAfterExit=no`, `systemctl status awg-routing` shows `inactive (dead)` between runs. That is normal, a oneshot unit that has finished does not stay active, and the routes are in place. Look at the last-run line in the same output, or at `systemctl list-timers`.
+
 <a id="trouble"></a>
 ## Troubleshooting
 
