@@ -382,13 +382,16 @@ Unit=awg-routing.service
 WantedBy=timers.target
 ```
 
-Enable it and check:
+Apply and enable:
 
 ```bash
 systemctl daemon-reload
+systemctl restart awg-routing
 systemctl enable --now awg-routing.timer
 systemctl list-timers awg-routing.timer
 ```
+
+The `systemctl restart awg-routing` in the middle is not decoration. If the cascade was already running, the unit is `active (exited)` right now, and `daemon-reload` does not change that: it re-reads the file but leaves the state of an already started unit alone. So without an explicit restart the timer keeps firing into the void until the next reboot, exactly as described above. The restart also refreshes the list straight away, so you see the thing work instead of waiting for the small hours.
 
 `Persistent=true` catches up a run missed while the server was off. `RandomizedDelaySec` spreads the requests out in time, so that everyone who followed this guide does not hit the list source in the same second.
 
