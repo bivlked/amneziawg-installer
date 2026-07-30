@@ -1404,8 +1404,7 @@ H4 = ${AWG_H4}
 EOF
 
     # I1-I5: copy the set CPS params into the client config (issue #71).
-    # They do not have to match the server side - the receiver never validates
-    # them; regen simply distributes whatever the server has.
+    # Values must match the server side - regen distributes them to clients.
     [[ -n "${AWG_I1:-}" ]] && echo "I1 = ${AWG_I1}" >> "$tmpfile"
     [[ -n "${AWG_I2:-}" ]] && echo "I2 = ${AWG_I2}" >> "$tmpfile"
     [[ -n "${AWG_I3:-}" ]] && echo "I3 = ${AWG_I3}" >> "$tmpfile"
