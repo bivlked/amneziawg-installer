@@ -2122,6 +2122,9 @@ case $COMMAND in
 
     regen)
         log "Перегенерация файлов конфигурации и QR..."
+        # Правка AWG_* в awgsetup_cfg.init после установки на клиентов не влияет
+        # (источник истины - awg0.conf). Раньше это проходило молча (#196).
+        warn_awg_init_drift
         # --reset-routes (Issue #170): передаём флаг в regenerate_client через
         # ENV - обычный regen сохраняет индивидуальные AllowedIPs клиентов, с
         # флагом ставит всем глобальный режим из awgsetup_cfg.init.
@@ -2238,6 +2241,7 @@ case $COMMAND in
         ;;
 
     check|status)
+        warn_awg_init_drift
         check_server || _cmd_rc=1
         ;;
 

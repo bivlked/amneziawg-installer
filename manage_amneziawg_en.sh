@@ -2136,6 +2136,9 @@ case $COMMAND in
 
     regen)
         log "Regenerating config and QR files..."
+        # Editing AWG_* in awgsetup_cfg.init after the install does not reach
+        # clients (awg0.conf is the source of truth). That used to be silent (#196).
+        warn_awg_init_drift
         # --reset-routes (Issue #170): pass the flag to regenerate_client via
         # ENV - a regular regen preserves per-client AllowedIPs, with the flag
         # every client gets the global routing mode from awgsetup_cfg.init.
@@ -2252,6 +2255,7 @@ case $COMMAND in
         ;;
 
     check|status)
+        warn_awg_init_drift
         check_server || _cmd_rc=1
         ;;
 

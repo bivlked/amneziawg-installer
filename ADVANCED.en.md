@@ -752,7 +752,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>Q: Where are the AWG 2.0 parameters stored?</strong></summary>
-  <b>A:</b> In <code>/root/awg/awgsetup_cfg.init</code> (variables AWG_Jc, AWG_S1..S4, AWG_H1..H4, AWG_I1..I5). These same parameters are written to the server and client configs.
+  <b>A:</b> After the install, in the <code>[Interface]</code> section of the server config <code>/etc/amnezia/amneziawg/awg0.conf</code>. That file is the source of truth: <code>regen</code> reads the values for client configs from there. A copy of the parameters (AWG_Jc, AWG_S1..S4, AWG_H1..H4, AWG_I1..I5) also lives in <code>/root/awg/awgsetup_cfg.init</code>, but that file is read for them only during a first install, so editing it afterwards never reaches clients - change <code>awg0.conf</code> instead (the next question has the steps). Since v5.22.0 <code>manage</code> prints a warning when it spots such a disagreement.
 </details>
 
 <details>

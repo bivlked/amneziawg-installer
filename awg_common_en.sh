@@ -930,6 +930,73 @@ load_awg_params() {
     return 0
 }
 
+# Warn when awgsetup_cfg.init disagrees with the live awg0.conf (issue #196).
+#
+# After the install, awg0.conf is the only source of the obfuscation parameters,
+# and the init file is read for them only during the bootstrap of a first
+# install (see load_awg_params above). Editing AWG_* in the init file afterwards
+# has no effect on clients, and until this check it was ignored SILENTLY: the
+# file is named like the installation config, so someone edits it and gets no
+# hint that the answer lives elsewhere.
+#
+# The modification-time gate removes false positives on the supported path.
+# The recommended way to tune (edit [Interface] in awg0.conf, then regen) also
+# makes the two files disagree, but nothing rewrites the init file after the
+# install, so there it stays OLDER than the live config. We warn only when the
+# init file was touched LATER than awg0.conf, which is the "edited init, nothing
+# happened" case.
+#
+# Deliberately not hooked into load_awg_params: the installer calls that on
+# step 6, where the init file is necessarily newer than an awg0.conf that has
+# not been rewritten yet, and the warning would surface mid-install.
+_AWG_DRIFT_KEYS=(AWG_Jc AWG_Jmin AWG_Jmax AWG_S1 AWG_S2 AWG_S3 AWG_S4 \
+                 AWG_H1 AWG_H2 AWG_H3 AWG_H4 AWG_I1 AWG_I2 AWG_I3 AWG_I4 AWG_I5)
+
+# _awg_drift_dump <init|live> <file>: one line per key in the order of the array
+# above, so the dumps of the two sources compare line by line. Read in a subshell
+# to leave the caller's environment alone - the function can be called at any
+# point without the risk of clobbering already loaded parameters.
+_awg_drift_dump() {
+    local mode="$1" src="$2"
+    (
+        # Clear inherited values: otherwise a key missing from the source would
+        # look equal to whatever is already in the environment.
+        unset "${_AWG_DRIFT_KEYS[@]}"
+        if [[ "$mode" == "init" ]]; then
+            safe_load_config "$src" >/dev/null 2>&1
+        else
+            load_awg_params_from_server_conf "$src" >/dev/null 2>&1
+        fi
+        local k
+        for k in "${_AWG_DRIFT_KEYS[@]}"; do
+            printf '%s\n' "${!k:-}"
+        done
+    )
+}
+
+warn_awg_init_drift() {
+    local init="${CONFIG_FILE:-}" live="${SERVER_CONF_FILE:-}"
+    [[ -n "$init" && -n "$live" ]] || return 0
+    [[ -f "$init" && -f "$live" ]] || return 0
+    # The init file is not newer than the live one, so any disagreement was
+    # created by editing awg0.conf itself, which is the supported path. Stay quiet.
+    [[ "$init" -nt "$live" ]] || return 0
+
+    local -a ivals lvals
+    mapfile -t ivals < <(_awg_drift_dump init "$init")
+    mapfile -t lvals < <(_awg_drift_dump live "$live")
+
+    local drift="" i
+    for i in "${!_AWG_DRIFT_KEYS[@]}"; do
+        [[ "${ivals[i]:-}" == "${lvals[i]:-}" ]] || drift+="${_AWG_DRIFT_KEYS[i]#AWG_} "
+    done
+    [[ -n "$drift" ]] || return 0
+
+    log_warn "$init was modified later than $live, and their obfuscation parameters disagree: ${drift% }"
+    log_warn "The values from $live are the ones in effect - after the install it is the only source of these parameters. To make an edit count, change the [Interface] section there, then restart awg-quick@awg0 and regen the clients you need."
+    return 0
+}
+
 # ==============================================================================
 # Key generation
 # ==============================================================================
