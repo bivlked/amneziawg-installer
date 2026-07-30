@@ -960,13 +960,19 @@ _awg_drift_dump() {
     local mode="$1" src="$2"
     (
         # Clear inherited values: otherwise a key missing from the source would
-        # look equal to whatever is already in the environment.
-        unset "${_AWG_DRIFT_KEYS[@]}"
+        # look equal to whatever is already in the environment. If clearing
+        # fails (the variable is readonly in the calling environment) there is
+        # nothing to compare, so leave without the marker.
+        unset "${_AWG_DRIFT_KEYS[@]}" 2>/dev/null || exit 1
         if [[ "$mode" == "init" ]]; then
-            safe_load_config "$src" >/dev/null 2>&1
+            safe_load_config "$src" >/dev/null 2>&1 || exit 1
         else
-            load_awg_params_from_server_conf "$src" >/dev/null 2>&1
+            load_awg_params_from_server_conf "$src" >/dev/null 2>&1 || exit 1
         fi
+        # Success marker on the first line: mapfile does not expose the exit
+        # status of the producing process, so without it a parser failure is
+        # indistinguishable from a set of empty values.
+        printf 'ok\n'
         local k
         for k in "${_AWG_DRIFT_KEYS[@]}"; do
             printf '%s\n' "${!k:-}"
@@ -985,15 +991,19 @@ warn_awg_init_drift() {
     local -a ivals lvals
     mapfile -t ivals < <(_awg_drift_dump init "$init")
     mapfile -t lvals < <(_awg_drift_dump live "$live")
+    # Without the marker the comparison is not trustworthy: one of the sources
+    # failed to parse. Stay quiet instead of declaring every key as differing -
+    # load_awg_params will name the real cause (an incomplete [Interface], say).
+    [[ "${ivals[0]:-}" == "ok" && "${lvals[0]:-}" == "ok" ]] || return 0
 
     local drift="" i
     for i in "${!_AWG_DRIFT_KEYS[@]}"; do
-        [[ "${ivals[i]:-}" == "${lvals[i]:-}" ]] || drift+="${_AWG_DRIFT_KEYS[i]#AWG_} "
+        [[ "${ivals[i+1]:-}" == "${lvals[i+1]:-}" ]] || drift+="${_AWG_DRIFT_KEYS[i]#AWG_} "
     done
     [[ -n "$drift" ]] || return 0
 
     log_warn "$init was modified later than $live, and their obfuscation parameters disagree: ${drift% }"
-    log_warn "The values from $live are the ones in effect - after the install it is the only source of these parameters. To make an edit count, change the [Interface] section there, then restart awg-quick@awg0 and regen the clients you need."
+    log_warn "The values from $live are the ones in effect - after the install it is the only source of these parameters. If you edited them in $init, the edit will not reach clients: change the [Interface] section in $live instead, then restart awg-quick@awg0 and regen the clients you need."
     return 0
 }
 

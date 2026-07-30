@@ -952,13 +952,19 @@ _awg_drift_dump() {
     local mode="$1" src="$2"
     (
         # Наследованные значения гасим: иначе ключ, которого в источнике нет,
-        # показался бы равным тому, что уже лежит в окружении.
-        unset "${_AWG_DRIFT_KEYS[@]}"
+        # показался бы равным тому, что уже лежит в окружении. Если погасить
+        # не удалось (переменная readonly в вызывающем окружении), сравнивать
+        # нечего - выходим без маркера.
+        unset "${_AWG_DRIFT_KEYS[@]}" 2>/dev/null || exit 1
         if [[ "$mode" == "init" ]]; then
-            safe_load_config "$src" >/dev/null 2>&1
+            safe_load_config "$src" >/dev/null 2>&1 || exit 1
         else
-            load_awg_params_from_server_conf "$src" >/dev/null 2>&1
+            load_awg_params_from_server_conf "$src" >/dev/null 2>&1 || exit 1
         fi
+        # Маркер успеха первой строкой: mapfile не отдаёт код возврата
+        # процесса-поставщика, поэтому без него отказ парсера не отличить от
+        # набора пустых значений.
+        printf 'ok\n'
         local k
         for k in "${_AWG_DRIFT_KEYS[@]}"; do
             printf '%s\n' "${!k:-}"
@@ -977,15 +983,19 @@ warn_awg_init_drift() {
     local -a ivals lvals
     mapfile -t ivals < <(_awg_drift_dump init "$init")
     mapfile -t lvals < <(_awg_drift_dump live "$live")
+    # Без маркера сравнение недостоверно: разбор одного из источников отказал.
+    # Молчим, а не объявляем разошедшимися все ключи разом - реальную причину
+    # (например неполный [Interface]) дальше назовёт load_awg_params.
+    [[ "${ivals[0]:-}" == "ok" && "${lvals[0]:-}" == "ok" ]] || return 0
 
     local drift="" i
     for i in "${!_AWG_DRIFT_KEYS[@]}"; do
-        [[ "${ivals[i]:-}" == "${lvals[i]:-}" ]] || drift+="${_AWG_DRIFT_KEYS[i]#AWG_} "
+        [[ "${ivals[i+1]:-}" == "${lvals[i+1]:-}" ]] || drift+="${_AWG_DRIFT_KEYS[i]#AWG_} "
     done
     [[ -n "$drift" ]] || return 0
 
     log_warn "Файл $init изменён позже $live, и параметры обфускации в них расходятся: ${drift% }"
-    log_warn "Действуют значения из $live - после установки он единственный источник этих параметров. Чтобы правка подействовала, меняйте секцию [Interface] в нём, затем перезапустите awg-quick@awg0 и выполните regen нужных клиентов."
+    log_warn "Действуют значения из $live - после установки он единственный источник этих параметров. Если вы правили их в $init, до клиентов правка не дойдёт: меняйте секцию [Interface] в $live, затем перезапустите awg-quick@awg0 и выполните regen нужных клиентов."
     return 0
 }
 

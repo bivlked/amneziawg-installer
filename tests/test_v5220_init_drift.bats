@@ -95,6 +95,38 @@ make_live_newer() {
     [ "$AWG_Jc" = "SENTINEL_JC" ]
 }
 
+@test "warn_awg_init_drift: stays quiet when the live config cannot be parsed" {
+    create_server_config
+    sed -i '/^H4 = /d' "$SERVER_CONF_FILE"   # a mandatory parameter is missing
+    create_init_config
+    make_init_newer
+    capture_warnings
+    run warn_awg_init_drift
+    # The live parser exports nothing at all in this case. Comparing against a
+    # set of empty values would name every key as differing, which is worse than
+    # useless - load_awg_params reports the real cause a moment later.
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "warn_awg_init_drift: stays quiet when an AWG_* is readonly in the caller" {
+    create_server_config
+    create_init_config
+    make_init_newer
+    capture_warnings
+    # A readonly variable cannot be unset, so the dump cannot clear inherited
+    # values and the comparison would silently run on the wrong data.
+    run bash -c "
+        source '$BATS_TEST_DIRNAME/../awg_common.sh'
+        CONFIG_FILE='$CONFIG_FILE' SERVER_CONF_FILE='$SERVER_CONF_FILE'
+        log_warn() { echo \"\$1\"; }
+        readonly AWG_I1=INHERITED
+        warn_awg_init_drift
+    "
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
 @test "RU/EN parity: both libraries define the drift check with the mtime gate" {
     for f in awg_common.sh awg_common_en.sh; do
         run grep -E '^warn_awg_init_drift\(\)' "$BATS_TEST_DIRNAME/../$f"
@@ -105,8 +137,11 @@ make_live_newer() {
         run grep -F '"$init" -nt "$live"' "$BATS_TEST_DIRNAME/../$f"
         [ "$status" -eq 0 ] || { echo "$f is missing the mtime gate"; false; }
         # Reading the sources must stay inside a subshell that clears inherited keys.
-        run grep -F 'unset "${_AWG_DRIFT_KEYS[@]}"' "$BATS_TEST_DIRNAME/../$f"
+        run grep -F 'unset "${_AWG_DRIFT_KEYS[@]}" 2>/dev/null || exit 1' "$BATS_TEST_DIRNAME/../$f"
         [ "$status" -eq 0 ] || { echo "$f does not clear inherited AWG_* before dumping"; false; }
+        # mapfile hides the producer's exit status, so the dump carries a marker.
+        run grep -F "printf 'ok" "$BATS_TEST_DIRNAME/../$f"
+        [ "$status" -eq 0 ] || { echo "$f is missing the dump success marker"; false; }
     done
 }
 
