@@ -2268,11 +2268,17 @@ step_uninstall() {
     # 'amneziawg/1.0.0, <kern>...'.
     if command -v dkms >/dev/null 2>&1; then
         local _dv
-        for _dv in $(dkms status 2>/dev/null | awk -F'[,/ ]+' '/^amneziawg[,/]/{print $2}' | sort -u); do
-            [[ -n "$_dv" ]] && dkms remove -m amneziawg -v "$_dv" --all >/dev/null 2>&1 || true
-        done
+        while IFS= read -r _dv; do
+            [[ -n "$_dv" ]] || continue
+            if ! dkms remove -m amneziawg -v "$_dv" --all >/dev/null 2>&1; then
+                log_warn "dkms remove amneziawg/$_dv failed - cleaning files manually."
+            fi
+        done < <(dkms status 2>/dev/null | awk -F'[,/ ]+' '/^amneziawg[,/]/{print $2}' | sort -u)
     fi
     rm -rf /var/lib/dkms/amneziawg* /usr/src/amneziawg-* || log_warn "DKMS removal error."
+    # Clean up any leftover built .ko (if dkms remove did not run) + depmod.
+    find /lib/modules -name 'amneziawg.ko*' -path '*/updates/dkms/*' -delete 2>/dev/null || true
+    command -v depmod >/dev/null 2>&1 && depmod -a >/dev/null 2>&1 || true
     log "Restoring sysctl..."
     # Only the exact lines legacy versions of our installer wrote (=1 for
     # all/default/lo). Previously ANY line containing disable_ipv6 was removed -
@@ -3155,6 +3161,41 @@ PPASRC
     # AmneziaWG + qrencode packages (NO Python!)
     log "Installing AmneziaWG packages..."
 
+    # H0 (AWG 3.0, 31 jul 2026): decide the pinned 2.0 module path BEFORE installing
+    # any package - the hold must be in place before even the ARM prebuilt path, where
+    # install_packages installs amneziawg-tools whose Recommends would otherwise pull
+    # the incompatible 3.0 module. On kernels < 6.7 the PPA module is AmneziaWG 3.0
+    # (does not build: nla_put_uint), so we do not install it and build the pinned 2.0
+    # from source instead; only tools come from the PPA (version-aware, 2.0-compatible).
+    local use_pinned_awg2=0
+    if ! _kernel_supports_awg3; then
+        use_pinned_awg2=1
+        log "Kernel $(uname -r) is older than 6.7 - the PPA module (AmneziaWG 3.0) will not build here."
+        log "Activated the pinned AmneziaWG 2.0 module path from source ($AWG2_PIN_TAG)."
+        # Re-entry: if a prior run / the stock installer already installed (or left
+        # half-configured) the 3.0 package - remove it and its source, otherwise its
+        # failing postinst and /usr/src/amneziawg-* ownership conflict with the build.
+        if dpkg -l amneziawg-dkms 2>/dev/null | grep -qE '^(ii|iU|iF|iH|rc)'; then
+            log "Found a previously installed amneziawg-dkms (AmneziaWG 3.0) - removing it before the pinned build."
+            DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg >/dev/null 2>&1 \
+                || dpkg --purge --force-all amneziawg-dkms amneziawg >/dev/null 2>&1 || true
+            command -v dkms >/dev/null 2>&1 && dkms remove -m amneziawg -v 1.0.0 --all >/dev/null 2>&1 || true
+            rm -rf /var/lib/dkms/amneziawg* /usr/src/amneziawg-* 2>/dev/null || true
+        fi
+        # ⚠️ Hold BEFORE any install: amneziawg-tools RECOMMENDS amneziawg-dkms, apt
+        # installs recommends by default -> without a hold, installing tools (incl. on
+        # the ARM path) would pull the 3.0 dkms and fail on its build. This is a safety
+        # mechanism, so its failure is fatal (we verify the hold actually took effect).
+        apt-mark hold amneziawg-dkms amneziawg >/dev/null 2>&1 || true
+        if ! apt-mark showhold 2>/dev/null | grep -qx "amneziawg-dkms"; then
+            die "Failed to hold amneziawg-dkms. Without it, installing amneziawg-tools would pull the incompatible AmneziaWG 3.0 module. Aborted (check for an apt/dpkg lock)."
+        fi
+    else
+        # Kernel >= 6.7: the normal path installs amneziawg-dkms from the PPA. Clear a
+        # possible hold left by an earlier pinned run (else apt install -y aborts on hold).
+        apt-mark unhold amneziawg-dkms amneziawg >/dev/null 2>&1 || true
+    fi
+
     # On ARM: try prebuilt .deb first (no build tools or headers required).
     # Falls back to DKMS if no matching prebuilt is available or download fails.
     local arch
@@ -3170,27 +3211,10 @@ PPASRC
         log "No matching prebuilt — falling back to DKMS build."
     fi
 
-    # H0 (AWG 3.0, 31 jul 2026): on kernels < 6.7 the PPA amneziawg-dkms package
-    # carries the AmneziaWG 3.0 source, which does not build on such a kernel
-    # (nla_put_uint). Route before mutating: on an old kernel do NOT install
-    # amneziawg-dkms from the PPA, build the pinned 2.0 module from source instead
-    # (_install_pinned_awg2_module), and take only tools from the PPA (3.0 tools are
-    # version-aware and compatible with a 2.0 module). git is needed for the
-    # verifiable clone of the pinned tag.
-    local use_pinned_awg2=0
-    if ! _kernel_supports_awg3; then
-        use_pinned_awg2=1
-        log "Kernel $(uname -r) is older than 6.7 - the PPA module (AmneziaWG 3.0) will not build here."
-        log "Activated the pinned AmneziaWG 2.0 module path from source ($AWG2_PIN_TAG)."
-        # ⚠️ BEFORE installing packages: amneziawg-tools RECOMMENDS amneziawg-dkms,
-        # and apt installs recommends by default -> without a hold, installing tools
-        # would pull the 3.0 dkms from the PPA and fail on its DKMS build
-        # (nla_put_uint). A held package is not pulled as a recommend. The hold also
-        # blocks its apt upgrade later.
-        apt-mark hold amneziawg-dkms amneziawg >/dev/null 2>&1 \
-            || log_warn "apt-mark hold failed - installing amneziawg-tools may pull the 3.0 dkms."
-    fi
-
+    # Packages: on the pinned path (kernel < 6.7) we do NOT install amneziawg-dkms
+    # (it would be the 3.0 module); git is added instead to build the pinned 2.0
+    # source. The gate, hold and cleanup of a previously installed 3.0 were done
+    # above (before the ARM block).
     local packages
     if [[ "$use_pinned_awg2" -eq 1 ]]; then
         packages=("amneziawg-tools" "wireguard-tools" "dkms"
