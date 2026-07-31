@@ -85,3 +85,58 @@ setup() {
     run _kernel_supports_awg3
     [ "$status" -eq 0 ] || [ "$status" -eq 1 ]
 }
+
+# --- RU/EN parity: the EN installer must gate identically (bilingual project) ---
+
+_load_en_predicate() {
+    local en="${BATS_TEST_DIRNAME}/../install_amneziawg_en.sh"
+    # shellcheck source=/dev/null
+    source <(sed -n '/^_kernel_supports_awg3() {$/,/^}$/p' "$en")
+}
+
+@test "EN installer: 6.1.0-51 not supported (Debian 12)" {
+    _load_en_predicate
+    run _kernel_supports_awg3 "6.1.0-51-amd64"
+    [ "$status" -eq 1 ]
+}
+
+@test "EN installer: 6.7.0 supported (exact boundary)" {
+    _load_en_predicate
+    _kernel_supports_awg3 "6.7.0"
+}
+
+@test "EN installer: 6.6.99 not supported (lower boundary)" {
+    _load_en_predicate
+    run _kernel_supports_awg3 "6.6.99"
+    [ "$status" -eq 1 ]
+}
+
+@test "RU and EN _kernel_supports_awg3 code is identical (comments may differ by language)" {
+    # Strip comment-only lines and blanks: the executable logic must match across
+    # both installers even though the inline comments are RU vs EN.
+    local ru en
+    ru="$(sed -n '/^_kernel_supports_awg3() {$/,/^}$/p' "${BATS_TEST_DIRNAME}/../install_amneziawg.sh" | grep -vE '^[[:space:]]*(#|$)')"
+    en="$(sed -n '/^_kernel_supports_awg3() {$/,/^}$/p' "${BATS_TEST_DIRNAME}/../install_amneziawg_en.sh" | grep -vE '^[[:space:]]*(#|$)')"
+    [ -n "$ru" ]
+    [ "$ru" = "$en" ]
+}
+
+@test "both installers define AWG2_PIN_TAG and AWG2_PIN_COMMIT with same values" {
+    local f
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        run grep -q 'AWG2_PIN_TAG="v1.0.20260725"' "${BATS_TEST_DIRNAME}/../$f"
+        [ "$status" -eq 0 ]
+        run grep -q 'AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"' "${BATS_TEST_DIRNAME}/../$f"
+        [ "$status" -eq 0 ]
+    done
+}
+
+@test "both installers route to the pinned path via use_pinned_awg2" {
+    local f
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        run grep -q 'if ! _kernel_supports_awg3; then' "${BATS_TEST_DIRNAME}/../$f"
+        [ "$status" -eq 0 ]
+        run grep -q '_install_pinned_awg2_module' "${BATS_TEST_DIRNAME}/../$f"
+        [ "$status" -eq 0 ]
+    done
+}
