@@ -2192,6 +2192,18 @@ step_uninstall() {
         log "Пропуск UFW/Fail2Ban (установка с --no-tweaks)."
     fi
     log "Удаление пакетов..."
+    # Снять hold с PPA-пакетов (ставился на пиновом пути H0) ДО удаления PPA:
+    # `apt-mark unhold` требует installed- или candidate-версию, а после удаления
+    # PPA (ниже) кандидат исчезает и apt-mark падает 'Can't select ... version',
+    # оставляя hold в dpkg-selection -> блокирует будущую переустановку. dpkg-
+    # fallback чистит selection напрямую, если PPA уже убран прошлым прогоном.
+    local _hp
+    for _hp in amneziawg amneziawg-dkms; do
+        apt-mark unhold "$_hp" >/dev/null 2>&1 || true
+        if dpkg --get-selections "$_hp" 2>/dev/null | grep -q '[[:space:]]hold$'; then
+            echo "$_hp deinstall" | dpkg --set-selections >/dev/null 2>&1 || true
+        fi
+    done
     if [[ "$saved_no_tweaks" -eq 0 ]]; then
         local _purge_pkgs=(amneziawg-dkms amneziawg-tools qrencode)
         # fail2ban purge-им только если сами его доустановили (маркер из
@@ -2235,16 +2247,15 @@ step_uninstall() {
         fi
     fi
     log "Удаление DKMS..."
-    # Корректно снять DKMS-регистрацию (для всех версий amneziawg/*), снять hold с
-    # PPA-пакетов (H0-пиновый путь его ставит) и убрать исходник в /usr/src, а не
-    # только состояние в /var/lib/dkms. `dkms status`: 'amneziawg/1.0.0, <kern>...'.
+    # Корректно снять DKMS-регистрацию (для всех версий amneziawg/*) и убрать
+    # исходник в /usr/src, а не только состояние в /var/lib/dkms. Hold с PPA-
+    # пакетов снят выше (до удаления PPA). `dkms status`: 'amneziawg/1.0.0, <kern>...'.
     if command -v dkms >/dev/null 2>&1; then
         local _dv
         for _dv in $(dkms status 2>/dev/null | awk -F'[,/ ]+' '/^amneziawg[,/]/{print $2}' | sort -u); do
             [[ -n "$_dv" ]] && dkms remove -m amneziawg -v "$_dv" --all >/dev/null 2>&1 || true
         done
     fi
-    apt-mark unhold amneziawg-dkms amneziawg >/dev/null 2>&1 || true
     rm -rf /var/lib/dkms/amneziawg* /usr/src/amneziawg-* || log_warn "Ошибка удаления DKMS."
     log "Восстановление sysctl..."
     # Только точные строки, которые писали legacy-версии нашего инсталлятора
