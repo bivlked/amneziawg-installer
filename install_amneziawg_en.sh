@@ -499,6 +499,7 @@ check_kernel_version() {
     fi
 }
 
+# shellcheck disable=SC2120  # called without args in the installer (uses uname -r); bats passes versions
 _kernel_supports_awg3() {
     # Returns 0 if the kernel version is >= 6.7 - i.e. the kernel can build the
     # AmneziaWG 3.0 module. Returns 1 if the kernel is older than 6.7 (a pinned
