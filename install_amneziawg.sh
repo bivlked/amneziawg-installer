@@ -2864,8 +2864,11 @@ _install_pinned_awg2_module() {
     log "Пин-коммит подтверждён: $got_commit"
 
     # Разложить DKMS-исходник upstream-механизмом (Makefile лежит в src/ подпапке).
-    if ! make -C "$work/src/src" dkms-install PREFIX=/usr >/dev/null 2>&1; then
-        log_error "make dkms-install не удался (нет make/coreutils?)."
+    # Вывод make сохраняем в лог: реальную причину сбоя (окружение/coreutils) иначе
+    # не увидеть - в отличие от dkms build, тут make.log не создаётся.
+    local _mklog="/var/log/amneziawg-pin-dkms-install.log"
+    if ! make -C "$work/src/src" dkms-install PREFIX=/usr >"$_mklog" 2>&1; then
+        log_error "make dkms-install не удался. Подробности: $_mklog"
         rm -rf "$work"; return 1
     fi
     rm -rf "$work"
@@ -3144,7 +3147,8 @@ PPASRC
         if dpkg -l amneziawg-dkms 2>/dev/null | grep -qE '^(ii|iU|iF|iH|rc)'; then
             log "Обнаружен ранее установленный amneziawg-dkms (AmneziaWG 3.0) - удаляю перед пиновой сборкой."
             DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg >/dev/null 2>&1 \
-                || dpkg --purge --force-all amneziawg-dkms amneziawg >/dev/null 2>&1 || true
+                || dpkg --purge --force-all amneziawg-dkms amneziawg >/dev/null 2>&1 \
+                || log_warn "Не удалось полностью удалить ранее установленный amneziawg-dkms - установка ниже может упасть."
             command -v dkms >/dev/null 2>&1 && dkms remove -m amneziawg -v 1.0.0 --all >/dev/null 2>&1 || true
             rm -rf /var/lib/dkms/amneziawg* /usr/src/amneziawg-* 2>/dev/null || true
         fi
@@ -3153,6 +3157,10 @@ PPASRC
         # пути) подтянула бы 3.0-dkms и упала на его сборке. Это защитный механизм,
         # поэтому провал фатален (проверяем, что hold реально встал).
         apt-mark hold amneziawg-dkms amneziawg >/dev/null 2>&1 || true
+        # Проверяем именно amneziawg-dkms - это несущий пакет: его РЕКОМЕНДУЕТ
+        # amneziawg-tools и он несёт 3.0-модуль. Метапакет amneziawg держать не
+        # обязательно (его Depends: amneziawg-dkms всё равно held), поэтому его
+        # отдельно не верифицируем.
         if ! apt-mark showhold 2>/dev/null | grep -qx "amneziawg-dkms"; then
             die "Не удалось зафиксировать amneziawg-dkms в hold. Без этого установка amneziawg-tools подтянет несовместимый AmneziaWG 3.0-модуль. Прервано (проверьте apt/dpkg lock)."
         fi
@@ -3164,6 +3172,14 @@ PPASRC
 
     # На ARM: сначала пробуем предсобранный .deb (не требует build-tools и headers).
     # Откат на DKMS если совпадения нет или скачивание не удалось.
+    # ⚠️ На ядре < 6.7 (use_pinned_awg2=1) предсобранный .deb использовать БЕЗОПАСНО:
+    # наши ARM-пребилты собираются из scripts/arm-module-version.txt, запиненного на
+    # тот же 2.0-тег (v1.0.20260725) и залоченного тестом, то есть это ЗАВЕДОМО 2.0-
+    # модуль, а не 3.0. Плюс 3.0 физически не компилируется под ядро < 6.7, поэтому
+    # 3.0-ассета для таких целей (напр. debian-bookworm-arm64) в релизе существовать
+    # не может - при отсутствии совпадения _try_install_prebuilt_arm вернёт 1 и мы
+    # уйдём в проверяемую сборку из исходника ниже. hold, выставленный выше, здесь
+    # тоже в силе (не даёт tools подтянуть 3.0-dkms через Recommends).
     local arch
     arch="$(uname -m)"
     if [[ "$arch" == "aarch64" || "$arch" == "armv7l" ]]; then

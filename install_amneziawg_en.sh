@@ -2896,8 +2896,11 @@ _install_pinned_awg2_module() {
     log "Pinned commit confirmed: $got_commit"
 
     # Lay out the DKMS source via the upstream mechanism (the Makefile is in src/).
-    if ! make -C "$work/src/src" dkms-install PREFIX=/usr >/dev/null 2>&1; then
-        log_error "make dkms-install failed (no make/coreutils?)."
+    # Save make output to a log: otherwise the real cause of a failure (environment /
+    # coreutils) is invisible - unlike the dkms build path, no make.log is created here.
+    local _mklog="/var/log/amneziawg-pin-dkms-install.log"
+    if ! make -C "$work/src/src" dkms-install PREFIX=/usr >"$_mklog" 2>&1; then
+        log_error "make dkms-install failed. Details: $_mklog"
         rm -rf "$work"; return 1
     fi
     rm -rf "$work"
@@ -3179,7 +3182,8 @@ PPASRC
         if dpkg -l amneziawg-dkms 2>/dev/null | grep -qE '^(ii|iU|iF|iH|rc)'; then
             log "Found a previously installed amneziawg-dkms (AmneziaWG 3.0) - removing it before the pinned build."
             DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg >/dev/null 2>&1 \
-                || dpkg --purge --force-all amneziawg-dkms amneziawg >/dev/null 2>&1 || true
+                || dpkg --purge --force-all amneziawg-dkms amneziawg >/dev/null 2>&1 \
+                || log_warn "Could not fully remove the previously installed amneziawg-dkms - the install below may fail."
             command -v dkms >/dev/null 2>&1 && dkms remove -m amneziawg -v 1.0.0 --all >/dev/null 2>&1 || true
             rm -rf /var/lib/dkms/amneziawg* /usr/src/amneziawg-* 2>/dev/null || true
         fi
@@ -3188,6 +3192,10 @@ PPASRC
         # the ARM path) would pull the 3.0 dkms and fail on its build. This is a safety
         # mechanism, so its failure is fatal (we verify the hold actually took effect).
         apt-mark hold amneziawg-dkms amneziawg >/dev/null 2>&1 || true
+        # We verify amneziawg-dkms specifically - it is the load-bearing package: it
+        # is what amneziawg-tools Recommends and what carries the 3.0 module. The
+        # metapackage amneziawg need not be held (its Depends: amneziawg-dkms is held
+        # anyway), so we do not verify it separately.
         if ! apt-mark showhold 2>/dev/null | grep -qx "amneziawg-dkms"; then
             die "Failed to hold amneziawg-dkms. Without it, installing amneziawg-tools would pull the incompatible AmneziaWG 3.0 module. Aborted (check for an apt/dpkg lock)."
         fi
@@ -3199,6 +3207,14 @@ PPASRC
 
     # On ARM: try prebuilt .deb first (no build tools or headers required).
     # Falls back to DKMS if no matching prebuilt is available or download fails.
+    # ⚠️ On a kernel < 6.7 (use_pinned_awg2=1) using the prebuilt .deb is SAFE: our ARM
+    # prebuilts are built from scripts/arm-module-version.txt, pinned to the same 2.0
+    # tag (v1.0.20260725) and locked by a test, so it is a KNOWN 2.0 module, not 3.0.
+    # And 3.0 physically cannot compile for a kernel < 6.7, so a 3.0 asset for such a
+    # target (e.g. debian-bookworm-arm64) cannot exist in the release - on no match
+    # _try_install_prebuilt_arm returns 1 and we fall through to the verified source
+    # build below. The hold set above also applies here (keeps tools from pulling the
+    # 3.0 dkms via Recommends).
     local arch
     arch="$(uname -m)"
     if [[ "$arch" == "aarch64" || "$arch" == "armv7l" ]]; then
