@@ -12,6 +12,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.23.0] - 2026-07-31
+
+**v5.23.0** - installs keep working on Debian 12 and other pre-6.7 kernels now that upstream shipped AmneziaWG 3.0 and switched the PPA to it.
+
+### Added
+
+- **On kernels older than 6.7 the installer builds a pinned AmneziaWG 2.0 module from source instead of taking it from the PPA.** On 30 July upstream merged AmneziaWG 3.0 into the `amneziawg-linux-kernel-module` default branch, and the `ppa:amnezia/ppa` PPA switched to it the same night. The 3.0 module uses the kernel function `nla_put_uint`, which only appeared in kernel 6.7, so on Debian 12 (kernel 6.1) the PPA module build fails with `implicit declaration of function 'nla_put_uint'` and a fresh install dies at step 2. The installer now checks the kernel version before installing packages: if it is older than 6.7, the PPA `amneziawg-dkms` package is not installed at all, and the last 2.0-line module (`v1.0.20260725`) is cloned from source, verified against its immutable commit hash, and built via DKMS. The `amneziawg-tools` userland still comes from the PPA: the 3.0 tools detect the module's protocol generation and work correctly with a 2.0 module. A module built this way is picked up by the existing auto-rebuild mechanism on kernel upgrades (`AUTOINSTALL=yes`), so it needs no separate maintenance. On kernels 6.7 and newer (Ubuntu 24.04/25.10/26.04, Debian 13) the behaviour is unchanged - the module is installed from the PPA. Verified on a clean Debian 12: the 3.0 build failure was reproduced and the full install/uninstall cycle on the pinned 2.0 module passed. The logic is mirrored in both installers (RU and EN)
+- **The `amneziawg-dkms` package is put on `hold` on the pinned path.** `amneziawg-tools` recommends `amneziawg-dkms`, and apt installs recommends by default, so without an explicit hold installing the tools would pull the 3.0 module back in and fail on the build again. The hold is set before installing packages and also protects against the 3.0 module being pulled in by a later `apt upgrade`. Uninstall (`--uninstall`) clears the hold, deregisters the DKMS module properly, and removes the source from `/usr/src`
+
+### Fixed
+
+- **ARM builds pinned to the last AmneziaWG 2.0-line tag.** `scripts/arm-module-version.txt` pointed at the upstream default-branch `HEAD`, so before 30 July the prebuilt ARM packages were built from the latest 2.0, and once the branch became 3.0 they would have been built from 3.0 - and `debian-bookworm-arm64` (kernel 6.1) already stopped compiling for the same reason as on x86. The pin now points at the tag `v1.0.20260725` so the ARM prebuilts keep implementing protocol 2.0; a test locks this value in, so changing it is now a deliberate edit
+
 ## [5.22.0] - 2026-07-31
 
 **v5.22.0** - `manage` now catches an `awgsetup_cfg.init` edit that never reached clients, plus a new Cloudflare WARP guide for the Russian segment.
@@ -1631,6 +1644,7 @@ Major security and reliability update after several consecutive code audits. The
 - Full uninstall (`--uninstall`).
 
 [Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.22.0...HEAD
+[5.23.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.22.0...v5.23.0
 [5.22.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.21.2...v5.22.0
 [5.21.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.21.1...v5.21.2
 [5.21.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.21.0...v5.21.1

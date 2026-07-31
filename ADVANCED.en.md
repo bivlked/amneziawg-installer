@@ -1353,6 +1353,14 @@ apt-get update && apt-get install -y curl
 
 During installation on Debian, you may see a `sudo removal refused` warning — this is normal, as Debian uses `sudo` as a system package and the script correctly skips its removal.
 
+### AmneziaWG 3.0 and kernels older than 6.7 (Debian 12) - v5.23.0
+
+In late July 2026 the Amnezia team released **AmneziaWG 3.0** and switched the `ppa:amnezia/ppa` PPA to it. The 3.0 kernel module uses the `nla_put_uint` function, which only appeared in Linux kernel 6.7, so on **Debian 12 (bookworm) with kernel 6.1** the 3.0 module fails to build from the PPA (`implicit declaration of function 'nla_put_uint'`).
+
+Starting with **v5.23.0** the installer handles this automatically: if the kernel is older than 6.7, it does not take the module from the PPA and instead builds the **pinned last AmneziaWG 2.0 module** (tag `v1.0.20260725`, verified by commit hash) from source via DKMS. The `amneziawg-tools` userland still comes from the PPA - the 3.0 tools detect the module's protocol generation and work correctly with 2.0. You do not need to install anything by hand; it all happens at step 2. On kernels 6.7 and newer (Ubuntu 24.04/25.10/26.04, Debian 13 trixie) the behaviour is unchanged - the module is installed from the PPA.
+
+If you specifically want AmneziaWG 3.0 on Debian 12, upgrade the kernel to 6.7+ from `bookworm-backports` and reinstall (`--force`), or deploy the server on Debian 13 / Ubuntu 24.04+. Support for the 3.0 features themselves (header protection, timing randomization) in the installer is planned separately and will land once the 3.0 stack and the client apps stabilize.
+
 ---
 
 <a id="arm-support-adv"></a>
