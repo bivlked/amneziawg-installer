@@ -2859,10 +2859,17 @@ _install_pinned_awg2_module() {
 
     # add идемпотентен: при повторном запуске уже добавлен -> не фатально.
     dkms add -m amneziawg -v "$dkms_ver" >/dev/null 2>&1 || true
-    log "Сборка пинового 2.0-модуля через DKMS (ядро $kver)..."
-    if ! dkms build -m amneziawg -v "$dkms_ver" -k "$kver" >/dev/null 2>&1; then
-        log_error "DKMS build пинового 2.0-модуля не удался. Смотрите /var/lib/dkms/amneziawg/${dkms_ver}/${kver}/*/log/make.log"
-        return 1
+    # Идемпотентность (установщик - возобновляемая машина состояний): dkms build на
+    # уже собранном ядре возвращает ошибку "already built" -> собираем ТОЛЬКО если
+    # для этого ядра сборки ещё нет. install --force ниже идемпотентен сам по себе.
+    if dkms status -m amneziawg -v "$dkms_ver" -k "$kver" 2>/dev/null | grep -qE ': (built|installed)'; then
+        log "Пиновый 2.0-модуль уже собран для ядра $kver - пропускаю dkms build."
+    else
+        log "Сборка пинового 2.0-модуля через DKMS (ядро $kver)..."
+        if ! dkms build -m amneziawg -v "$dkms_ver" -k "$kver" >/dev/null 2>&1; then
+            log_error "DKMS build пинового 2.0-модуля не удался. Смотрите /var/lib/dkms/amneziawg/${dkms_ver}/${kver}/*/log/make.log"
+            return 1
+        fi
     fi
     if ! dkms install -m amneziawg -v "$dkms_ver" -k "$kver" --force >/dev/null 2>&1; then
         log_error "DKMS install пинового 2.0-модуля не удался."
