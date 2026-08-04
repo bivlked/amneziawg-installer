@@ -182,12 +182,15 @@ modinfo amneziawg | grep ^version    # version: 3.0.20260731-04
 | Condition | What gets installed | Protocol |
 |---|---|---|
 | x86_64, kernel >= 6.7 | `amneziawg-dkms` from `ppa:amnezia/ppa` | **3.0** |
-| kernel older than 6.7 (Debian 12 on 6.1) | pinned module built from source | 2.0 |
-| ARM64 / armhf | our prebuilt package | 2.0 |
+| any arch, kernel older than 6.7 (Debian 12 on 6.1) | pinned module built from source | 2.0 |
+| ARM64 / armhf with a prebuilt for your kernel | our prebuilt package | 2.0 |
+| ARM64 / armhf with no prebuilt, kernel >= 6.7 | `amneziawg-dkms` from the PPA | **3.0** |
+
+That last row is not hypothetical: prebuilt ARM packages are built for Raspberry Pi 3/4/5, Ubuntu 24.04 and 25.10 ARM64, and Debian 12/13 ARM64. Ubuntu 26.04 ARM64 is not on that list yet, and on such a host the installer finds no match, falls through to the normal DKMS path and installs the PPA module, which is the third version.
 
 On older kernels we pick 2.0 **on purpose**, not because 3.0 fails to build there. For the first day after the release it genuinely did fail on kernel 6.1; upstream fixed that on 31 July and it builds now. But old kernels are exactly where the 3.0 line has had the least mileage, while the pinned 2.0 is verified against an immutable commit. The threshold will be lifted after a separate validation, not because the build passes again.
 
-On ARM the installer tries the prebuilt package first and finds one matching your kernel, so it never reaches the PPA at all. The prebuilt packages are pinned to 2.0.
+On ARM the installer tries the prebuilt package first, and if it finds one matching your kernel it never reaches the PPA at all. The prebuilt packages are pinned to 2.0. With no match, the same rule as on x86 takes over: a kernel older than 6.7 gets the pinned 2.0 from source, a newer one gets the PPA module.
 
 <a id="awg3-wire-adv"></a>
 ### What 3.0 changes on the wire, and what it does not

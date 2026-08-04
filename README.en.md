@@ -126,7 +126,7 @@ To see what you actually have:
 awg --version && modinfo amneziawg | grep ^version
 ```
 
-Debian 12 (kernel 6.1) and ARM still get the proven 2.0: that is where the 3.0 line has had the least mileage, and the threshold is deliberate.
+Kernels older than 6.7 (Debian 12 on 6.1) and ARM hosts with a prebuilt package for their kernel still get the proven 2.0: that is where the 3.0 line has had the least mileage, and the threshold is deliberate.
 
 The 3.0 features themselves - header encryption, extra padding, timing knobs - are not in generated configs yet. They need client apps, and those have not landed on every platform. The detailed write-up (what changes on the wire, which parameters were added, what has to match between server and client) lives in [ADVANCED.en.md](ADVANCED.en.md#awg3-adv).
 
