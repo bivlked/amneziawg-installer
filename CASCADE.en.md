@@ -375,7 +375,7 @@ Description=Periodic refresh of the Russian network list
 [Timer]
 OnCalendar=*-*-* 01:00:00
 RandomizedDelaySec=15m
-Persistent=true
+Persistent=false
 Unit=awg-routing.service
 
 [Install]
@@ -393,7 +393,11 @@ systemctl list-timers awg-routing.timer
 
 The `systemctl restart awg-routing` in the middle is not decoration. If the cascade was already running, the unit is `active (exited)` right now, and `daemon-reload` does not change that: it re-reads the file but leaves the state of an already started unit alone. So without an explicit restart the timer keeps firing into the void until the next reboot, exactly as described above. The restart also refreshes the list straight away, so you see the thing work instead of waiting for the small hours.
 
-`Persistent=true` catches up a run missed while the server was off. `RandomizedDelaySec` spreads the requests out in time, so that everyone who followed this guide does not hit the list source in the same second.
+`Persistent=false` is deliberate, there is no missed run to catch up. The `awg-routing` unit is enabled at boot (`WantedBy=multi-user.target`, you enabled it together with `awg-quick@awg1`), so the list refreshes on every boot before any timer gets involved. With `Persistent` on you would get an extra unscheduled run right after boot on top of that, meaning one more hit on the list source. Thanks to [@MrSokol](https://github.com/MrSokol) for the correction.
+
+If you enabled only the timer and never added the service to autostart, add it first: without the boot run a missed firing really is lost, and that is the case where `Persistent` would matter. Note as well that `Requires=` on both tunnels is hard: if `awg1` fails to come up at boot, there is no boot run either, and neither the timer nor `Persistent` helps there.
+
+`RandomizedDelaySec` spreads the requests out in time, so that everyone who followed this guide does not hit the list source in the same second.
 
 One thing to expect: with `RemainAfterExit=no`, `systemctl status awg-routing` shows `inactive (dead)` between runs. That is normal, a oneshot unit that has finished does not stay active, and the routes are in place. Look at the last-run line in the same output, or at `systemctl list-timers`.
 
