@@ -28,7 +28,7 @@ Country matters mostly for latency and jurisdiction. ARM versus amd64 has no rea
 
 - **Ubuntu 24.04 LTS** is the best-tested platform. Default pick if you have no other preference.
 - **Ubuntu 25.10** (questing) and **Ubuntu 26.04** work since v5.13.0. The PPA codename remaps to `noble` automatically when the running codename PPA is unreachable (404 or network failure). Resilient against do-release-upgrade from 24.04.
-- **Debian 12** (bookworm) and **Debian 13** (trixie) are fully supported with codename mapping (focal and noble respectively). Note: upstream shipped AmneziaWG 3.0 in late July 2026. On kernels older than 6.7, which includes Debian 12 (kernel 6.1), the installer deliberately stays on AmneziaWG 2.0: it builds a pinned 2.0 module from source instead of taking 3.0 from the PPA, so the install keeps working (since v5.23.0); see [ADVANCED](ADVANCED.en.md#debian-support-adv) for the details.
+- **Debian 12** (bookworm) and **Debian 13** (trixie) are fully supported with codename mapping (focal and noble respectively). Note: upstream shipped AmneziaWG 3.0 in late July 2026. On kernels older than 6.7, which includes Debian 12 (kernel 6.1), the installer deliberately stays on AmneziaWG 2.0: it builds a pinned 2.0 module from source instead of taking 3.0 from the PPA, so the install keeps working (since v5.24.0); see [ADVANCED](ADVANCED.en.md#debian-support-adv) for the details.
 - Use a minimal install. The script assumes the box is single-purpose and will strip modemmanager, snapd, cloud-init leftovers and similar to free resources.
 - Avoid custom kernels (XanMod, Liquorix, Zen) on first install. DKMS compiles against the running kernel headers, but custom kernels can shift internal structs and trip a runtime panic. If you must, file a repro upstream rather than guessing.
 
@@ -43,7 +43,7 @@ sudo ufw allow <your-ssh-port>/tcp
 Then:
 
 ```bash
-wget -O install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.23.0/install_amneziawg_en.sh
+wget -O install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.24.0/install_amneziawg_en.sh
 chmod +x install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh
 ```

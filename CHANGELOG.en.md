@@ -12,6 +12,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.24.0] - 2026-08-04
+
+**v5.24.0** - AmneziaWG 3.0 documented, plus module version in diagnostics.
+
+### Added
+
+- **An "AmneziaWG 3.0 for self-hosted servers" section in README and ADVANCED, both languages.** Until now the third version was mentioned three times in `ADVANCED.en.md` and not once in either README, even though on x86 with kernel 6.7 or newer the installer ships exactly that - people were getting 3.0 with no way to learn it from our own material. README now carries a short block: what you get, how to check it, and why the configs you handed out keep working. `ADVANCED.en.md` carries the reference write-up: which module line each host ends up with (PPA 3.0 on x86 >= 6.7, the pinned 2.0 on older kernels, the prebuilt 2.0 on ARM) and why the 6.7 threshold is deliberate; what 3.0 changes on the wire and what it does not; the seven new config keys with a column for whether the value has to match between server and client; why `S1`-`S4` have to match (the receiver reads the message type at exactly that offset) and why `Jc`/`I1`-`I5` do not. There is also an explicit list of what the installer does not enable yet: `HeaderProtectionKey` needs every client to understand it at once, and `ContentPaddingAddition` waits on an upstream fix
+- **A "Rotating the server key" section in `ADVANCED.md` and `ADVANCED.en.md`.** The key files were documented, the procedure for replacing them was not, even though it is the first thing needed when a server private key leaks. The whole order is spelled out: backup, new pair, substitution into `awg0.conf`, service restart and `regen`. Three easy mistakes are called out separately: skipping `/root/awg/server_private.key` (a `--force` reinstall then brings the old key back), skipping `regen` (existing clients keep `.png`, `.vpnuri` and `.vpnuri.png` carrying the old public key), and restoring an old archive from `/root/awg/backups/` later, which silently undoes the rotation. The section opens with the fact that previously recorded traffic cannot be decrypted, since the first reaction is usually worse than the facts
+- **`check` and `diagnose` report the kernel module version.** Now that modern kernels get AmneziaWG 3.0 while older ones and ARM stay on 2.0, the first question about any server is which module line it runs, and answering it used to need a separate `modinfo`. `diagnose` additionally names AmneziaWG 3.0 when the version starts with `3.`; otherwise the raw value is printed rather than a derived protocol number, because upstream tag names have never tracked the protocol version. `check --json` gains a `module.version` field (string or `null`) - adding a key keeps the existing envelope readable by current consumers
+
+### Fixed
+
+- **The second S-padding size collision is gone: `S3` can no longer equal `S2 + 28`.** The final packet size is the message size plus its own S padding, and two message types ending up the same size gives DPI a stable marker - exactly the one the paddings exist to remove. Message sizes of 148 (init), 92 (response) and 64 (cookie reply) allow three such collisions, and only `S2 = S1 + 56` was checked. `S3 = S1 + 84` is unreachable with our ranges, but `S3 = S2 + 28` is not: it came up in roughly 0.17% of installs, about one in six hundred. `S3` is the value regenerated, so the already-checked condition on `S2` still holds. Tests were added for all three collisions and for the `S1`-`S4` ranges
+- **Cascade guide: `Persistent=true` is dropped from the timer, it was doing nothing there.** The recipe suggested it so that a firing missed while the server was off would be caught up. There is nothing to catch up: the `awg-routing` unit is enabled at boot, so the list of Russian networks refreshes on every startup before any timer is involved, and `Persistent` only added an unscheduled run right after it. The guide now also covers the case where it would matter (timer enabled but the service not in autostart) and the hard `Requires=` on both tunnels, which neither the timer nor `Persistent` can work around. Thanks to [@MrSokol](https://github.com/MrSokol) ([Discussion #120](https://github.com/bivlked/amneziawg-installer/discussions/120))
+
 ### Documentation
 
 - **Answer to "how do I update without redoing everyone's connections"** ([#201](https://github.com/bivlked/amneziawg-installer/discussions/201)). The FAQ in both READMEs, the update section of `INSTALL_VPS.md` and the limitations list in `CASCADE.md`/`CASCADE.en.md` now say it outright: with `--force` the server keys, the `[Peer]` blocks and the obfuscation parameters are taken from the existing setup, so configs and QR codes handed out earlier stay valid and every client is preserved, defaults included. The single exception is `--preset`/`--jc`/`--jmin`/`--jmax`, which regenerate the whole `Jc`/`S`/`H`/`I1` set and do force a re-issue via `regen`. For the cascade it is now stated that its logic lives in `awg-routing.sh` and survives a reinstall, but the routing script has to be run once more afterwards
@@ -1655,7 +1670,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.22.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.24.0...HEAD
+[5.24.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.23.0...v5.24.0
 [5.23.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.22.0...v5.23.0
 [5.22.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.21.2...v5.22.0
 [5.21.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.21.1...v5.21.2
