@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/Ubuntu-24.04_|_25.10_|_26.04-orange" alt="Ubuntu 24.04 | 25.10 | 26.04">
   <img src="https://img.shields.io/badge/Debian-12_|_13-A81D33" alt="Debian 12 | 13">
   <img src="https://img.shields.io/badge/Architecture-x86__64_|_ARM64_|_ARMv7-green" alt="x86_64 | ARM64 | ARMv7">
-  <img src="https://img.shields.io/badge/AmneziaWG-2.0-blueviolet" alt="AWG 2.0">
+  <img src="https://img.shields.io/badge/AmneziaWG-2.0_&#124;_3.0-blueviolet" alt="AmneziaWG 2.0 and 3.0">
   <a href="https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-5.23.0-blue" alt="Version"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
@@ -84,6 +84,7 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 
 <p align="center">
   <a href="#zachem">Зачем это нужно</a> •
+  <a href="#awg3">AmneziaWG 3.0</a> •
   <a href="#sravnenie">AWG vs WG</a> •
   <a href="#cli-vs-panel">CLI vs панели</a> •
   <a href="#similar-tools">Похожие инструменты</a> •
@@ -112,6 +113,23 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 Сервер настраивается под одну задачу - VPN: лишние пакеты убираются, ядро, сеть и swap тюнингуются под железо, включаются firewall и базовая защита. AmneziaWG работает в ядре, поэтому накладных расходов почти нет - быстро и экономно. Поставил один раз для дома или семьи и забыл: добавить друга или новое устройство через месяц - минута, конфиг и QR готовятся одной командой.
 
 Работает на Ubuntu 24.04/25.10/26.04 и Debian 12/13. Хватит любого дешёвого VPS с 1 ГБ RAM.
+
+---
+
+<a id="awg3"></a>
+## 🆕 AmneziaWG 3.0 уже ставится
+
+В конце июля 2026 вышла **AmneziaWG 3.0**, и PPA переключили на неё. На x86 с ядром 6.7 или новее установщик **уже ставит модуль третьей версии** - включать отдельно ничего не нужно, а конфиги, которые у вас уже розданы, продолжают работать без единой правки.
+
+Посмотреть, что стоит именно у вас:
+
+```bash
+awg --version && modinfo amneziawg | grep ^version
+```
+
+На Debian 12 (ядро 6.1) и на ARM пока ставится проверенная 2.0: там третья версия обкатана меньше всего, и порог мы держим сознательно.
+
+Сами возможности 3.0 - шифрование заголовков, добавочный паддинг, настройка таймингов - в генерируемые конфиги ещё не попадают. Для них нужны клиентские приложения, а они вышли не на всех платформах. Подробный разбор (что меняется на проводе, какие параметры добавились, что обязано совпадать у сервера и клиента) - в [ADVANCED.md](ADVANCED.md#awg3-adv).
 
 ---
 

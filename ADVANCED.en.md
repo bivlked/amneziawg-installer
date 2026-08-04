@@ -12,6 +12,13 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 - [✨ Features (Detailed)](#features-detailed-adv)
 - [🔐 AWG 2.0 Parameters](#awg2-params-adv)
   - [Presets (v5.10.0+)](#presets-adv)
+- [🆕 AmneziaWG 3.0 for self-hosted servers](#awg3-adv)
+  - [Which module line you get](#awg3-lines-adv)
+  - [What 3.0 changes on the wire](#awg3-wire-adv)
+  - [The new 3.0 parameters](#awg3-params-adv)
+  - [What has to match and what does not](#awg3-must-match-adv)
+  - [Three things that can cost you an evening](#awg3-gotchas-adv)
+  - [What the installer does not enable yet](#awg3-not-yet-adv)
 - [⚙️ Client Configuration Details](#config-details-adv)
   - [AllowedIPs](#allowedips-adv)
   - [Client Isolation](#client-isolation-adv)
@@ -151,6 +158,102 @@ sudo bash install_amneziawg_en.sh --jc=2 --jmin=20 --jmax=60 --yes --route-amnez
 | `--jmax=N` | 0-1280 | Maximum junk size (bytes), must be ≥ Jmin |
 
 > **Tip:** If VPN works on home Wi-Fi but is unstable on mobile data — reinstall with `--preset=mobile`. More about mobile carrier issues in the <a href="#faq-advanced-adv">FAQ</a>.
+
+---
+
+<a id="awg3-adv"></a>
+## 🆕 AmneziaWG 3.0 for self-hosted servers
+
+In late July 2026 the Amnezia team released **AmneziaWG 3.0** and switched the PPA over to it. On x86 with kernel 6.7 or newer the installer **already gives you the 3.0 module** - there is nothing to opt into, and your existing configs keep working.
+
+To see what you actually have:
+
+```bash
+awg --version                        # amneziawg-tools v3.0.20260730
+modinfo amneziawg | grep ^version    # version: 3.0.20260731-04
+```
+
+⚠️ The apt package versions do not answer this. There `amneziawg-dkms` reads as `1.0.0-0~202608010147+c78a89e~ubuntu24.04.1` and `amneziawg-tools` as `1.0.20210914-0~...`: the leading part is packaging, the real content is the commit hash in the suffix. The two commands above answer directly.
+
+<a id="awg3-lines-adv"></a>
+### Which module line you get
+
+| Condition | What gets installed | Protocol |
+|---|---|---|
+| x86_64, kernel >= 6.7 | `amneziawg-dkms` from `ppa:amnezia/ppa` | **3.0** |
+| kernel older than 6.7 (Debian 12 on 6.1) | pinned module built from source | 2.0 |
+| ARM64 / armhf | our prebuilt package | 2.0 |
+
+On older kernels we pick 2.0 **on purpose**, not because 3.0 fails to build there. For the first day after the release it genuinely did fail on kernel 6.1; upstream fixed that on 31 July and it builds now. But old kernels are exactly where the 3.0 line has had the least mileage, while the pinned 2.0 is verified against an immutable commit. The threshold will be lifted after a separate validation, not because the build passes again.
+
+On ARM the installer tries the prebuilt package first and finds one matching your kernel, so it never reaches the PPA at all. The prebuilt packages are pinned to 2.0.
+
+<a id="awg3-wire-adv"></a>
+### What 3.0 changes on the wire, and what it does not
+
+Nothing you have already configured. Measured: four interfaces with configs from different generations come up and pass traffic at the same time on one 3.0 module - with no AWG parameters at all, in 1.x style, in 2.0 style, and with 3.0 parameters.
+
+The mechanism: `H1`-`H4` became ranges inside the module, but an interface that does not set them gets single-value ranges holding exactly the WireGuard message types. That is visible on the wire too:
+
+| Interface | What goes out |
+|---|---|
+| no AWG parameters | bytes `01 00 00 00` at offset 0, i.e. plain WireGuard |
+| `S1 = 100`, `H1 = 1234567` | the `H1` value at offset 100, junk packets from `Jc` ahead of it |
+
+A scalar `H1 = 12345` from a 2.0 config is parsed as a range of one number, and that exact number goes on the wire. So upgrading the module does not by itself break anything for your clients.
+
+<a id="awg3-params-adv"></a>
+### The new 3.0 parameters
+
+Compared with the previous `amneziawg-tools` release, seven config keys were added and **none were removed**: everything from 2.0 (`Jc`/`Jmin`/`Jmax`, `S1`-`S4`, `H1`-`H4`, `I1`-`I5`) is still accepted.
+
+| Parameter | What it does | Must match on both ends? |
+|---|---|---|
+| `HeaderProtectionKey` | ChaCha20 header encryption | **yes, otherwise there is no handshake at all** |
+| `ContentPaddingAddition` | extra padding inside the encrypted part | no |
+| `RekeyAfterTime` | when to start rekeying | no |
+| `RekeyTimeout` | pause between handshake attempts | no |
+| `RejectAfterTime` | when a session counts as expired | no |
+| `KeepaliveTimeout` | pause before a keepalive packet | no |
+| `MaxHandshakeAttempts` | how many handshake attempts to make | no |
+
+All seven work through `awg-quick` as well: it hands every key it does not consume itself to `awg setconf`, so hand-written configs need nothing special.
+
+<a id="awg3-must-match-adv"></a>
+### What has to match and what does not
+
+This is the part most often misread, because the kernel module's own README still describes only 1.x/2.0, and the `amneziawg-go` README splits parameters into server-side and client-side without the details.
+
+- **`S1`-`S4` have to match.** These are not just padding: the receiver reads the message type **at the offset** given by its own `S`. Different values mean the packet is not recognised.
+- **`H1`-`H4` have to be compatible.** The sender picks a value from its range and the receiver checks that the value falls inside its own. Keeping them identical is simpler.
+- **`HeaderProtectionKey` has to be identical.** Tested: the key on the server only, on the client only, or two different keys all give no handshake and 100% loss. It is not a gradual degradation but a switch: the moment the server has it, every peer without it drops.
+- **`Jc`/`Jmin`/`Jmax` and `I1`-`I5` do not have to match.** Junk and concealment packets are sent by whoever initiates the handshake, and the other side simply ignores them.
+
+<a id="awg3-gotchas-adv"></a>
+### Three things that can cost you an evening
+
+**`HeaderProtectionKey` requires `S1`-`S4` to be at least 12.** The nonce for header encryption is never transmitted; it is taken from the first 12 bytes of the S padding, so a smaller value makes the config invalid. Exactly 12 is fine, even though the kernel message says "must be more then 12".
+
+**That message is invisible by default.** `awg` prints only `Unable to modify interface: Invalid argument`, while the explanation goes to the kernel debug log. To see it:
+
+```bash
+echo "module amneziawg +p" > /sys/kernel/debug/dynamic_debug/control
+# repeat the failing command, then look at: dmesg | tail
+echo "module amneziawg -p" > /sys/kernel/debug/dynamic_debug/control
+```
+
+**A parameter cannot be removed with `awg setconf` or `awg syncconf`.** Drop the line from the config, apply it again, and the value stays: for AWG parameters these commands only add. Getting an interface back to a clean state means recreating it, that is `systemctl restart awg-quick@awg0` (or `awg-quick down` then `up`).
+
+<a id="awg3-not-yet-adv"></a>
+### What the installer does not enable yet, and why
+
+None of the 3.0 features appear in generated configs, and that is deliberate:
+
+- **`HeaderProtectionKey`** needs every one of your clients to understand it at the same time. As of this release `amneziawg-android` 3.0.1 is still a prerelease and the newest `amneziawg-windows-client` release is 2.0.2. Turning it on now would cut off some devices without warning.
+- **`ContentPaddingAddition`** waits on an upstream fix: right now the padding breaks keepalive detection and those packets are dropped with `Packet is neither ipv4 nor ipv6` ([issue #186](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/186)).
+- **The timer parameters** are one-sided and safe, but on their own they buy little, so they travel with the next step.
+
+The situation on kernels older than 6.7 is covered separately in <a href="#debian-support-adv">Debian support</a>.
 
 ---
 
