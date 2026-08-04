@@ -407,3 +407,31 @@ _stub_lsmod() {
     en=$(printf '%s' "$output" | jq -cS 'keys')
     [ "$ru" = "$en" ]
 }
+
+# --- v5.24.0: kernel module version in check --json ---
+#
+# The field exists so that automation can tell the 3.0 line from the 2.0 one
+# without a separate modinfo call. The mocks have no modinfo, so null is the
+# correct result here: what matters is that the key is present and typed.
+
+@test "check --json: module.version present with a valid type" {
+    require_jq
+    _stub_systemctl
+    _stub_lsmod
+    run --separate-stderr bash "$SCRIPT" check --json "${MOCK_ARGS[@]}"
+    _one_json_line
+    printf '%s' "$output" | jq -e '
+        (.module | has("version"))
+        and ((.module.version | type) as $t | $t == "string" or $t == "null")' >/dev/null
+}
+
+@test "EN check --json: module.version matches the RU shape" {
+    require_jq
+    _stub_systemctl
+    _stub_lsmod
+    run --separate-stderr bash "$SCRIPT_EN" check --json "${MOCK_ARGS[@]}"
+    _one_json_line
+    printf '%s' "$output" | jq -e '
+        (.module | has("version"))
+        and ((.module.version | type) as $t | $t == "string" or $t == "null")' >/dev/null
+}

@@ -1165,6 +1165,7 @@ check_server() {
     # checks so the data and the verdict come from the same pass.
     local _c_svc_active=false _c_present=false _c_mtu=null _c_addrs=""
     local _c_listen=false _c_mod=false _c_ufw_active=false _c_allowed=false
+    local _c_mod_ver=""
 
     log "Service status:"
     # With --json the raw systemctl output goes to stderr: stdout is contract-only.
@@ -1234,7 +1235,15 @@ check_server() {
     # Pattern from diagnose: exact module name in the first lsmod column.
     if lsmod 2>/dev/null | awk '$1 == "amneziawg" {f=1} END {exit !f}'; then
         _c_mod=true
-        log " - amneziawg module is loaded."
+        # Module version: the 3.0 line starts with 3., the 2.0 one with 1.
+        # (upstream tag names have never tracked the protocol version, so we
+        #  print the raw value instead of guessing the protocol from it).
+        _c_mod_ver=$(modinfo amneziawg 2>/dev/null | awk '/^version:/{print $2; exit}')
+        if [[ -n "$_c_mod_ver" ]]; then
+            log " - amneziawg module is loaded (version $_c_mod_ver)."
+        else
+            log " - amneziawg module is loaded."
+        fi
     else
         # WARN, not ok=0: userspace installs (amneziawg-go, LXC) never have
         # the module, and a broken kernel path already fails service/interface.
@@ -1287,7 +1296,7 @@ check_server() {
         local _c_clients _jok=false
         _c_clients=$(grep -c '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null) || _c_clients=0
         [[ "$ok" -eq 1 ]] && _jok=true
-        json_out "{\"command\":\"check\",\"ok\":$_jok,\"service\":{\"unit\":\"awg-quick@awg0\",\"active\":$_c_svc_active},\"interface\":{\"name\":\"awg0\",\"present\":$_c_present,\"mtu\":$_c_mtu,\"addresses\":[$_c_addrs]},\"port\":{\"number\":$port,\"proto\":\"udp\",\"listening\":$_c_listen},\"module\":{\"loaded\":$_c_mod},\"clients\":{\"total\":$_c_clients},\"firewall\":{\"ufw_active\":$_c_ufw_active,\"port_allowed\":$_c_allowed}}"
+        json_out "{\"command\":\"check\",\"ok\":$_jok,\"service\":{\"unit\":\"awg-quick@awg0\",\"active\":$_c_svc_active},\"interface\":{\"name\":\"awg0\",\"present\":$_c_present,\"mtu\":$_c_mtu,\"addresses\":[$_c_addrs]},\"port\":{\"number\":$port,\"proto\":\"udp\",\"listening\":$_c_listen},\"module\":{\"loaded\":$_c_mod,\"version\":$([[ -n "$_c_mod_ver" ]] && printf '"%s"' "$(json_escape "$_c_mod_ver")" || printf 'null')},\"clients\":{\"total\":$_c_clients},\"firewall\":{\"ufw_active\":$_c_ufw_active,\"port_allowed\":$_c_allowed}}"
     fi
 
     if [[ "$ok" -eq 1 ]]; then
@@ -1354,7 +1363,16 @@ diagnose_server() {
 
     # 1. Kernel module
     if lsmod 2>/dev/null | awk '$1 == "amneziawg" {f=1} END {exit !f}'; then
-        _diag_line OK "Kernel module amneziawg loaded"; ok=$((ok+1))
+        local _d_mod_ver
+        _d_mod_ver=$(modinfo amneziawg 2>/dev/null | awk '/^version:/{print $2; exit}')
+        if [[ "$_d_mod_ver" == 3.* ]]; then
+            _diag_line OK "Kernel module amneziawg loaded (AmneziaWG 3.0, $_d_mod_ver)"
+        elif [[ -n "$_d_mod_ver" ]]; then
+            _diag_line OK "Kernel module amneziawg loaded ($_d_mod_ver)"
+        else
+            _diag_line OK "Kernel module amneziawg loaded"
+        fi
+        ok=$((ok+1))
     else
         _diag_line FAIL "Kernel module amneziawg NOT loaded"
         echo "        Fix: sudo bash $0 repair-module"
