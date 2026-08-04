@@ -1327,6 +1327,21 @@ generate_awg_params() {
     # installs will simply fail to bring the interface up. Keep this in step with
     # the _kernel_supports_awg3 gate.
     AWG_S3=$(rand_range 8 55)
+
+    # Second size collision: response+S2 != cookie+S3, that is S3 != S2+28.
+    # Message sizes (src/messages.h of the kernel module): init 148, response 92,
+    # cookie reply 64. The first two were measured on the wire, the cookie one is
+    # 4 (header) + 4 (receiver_index) + 24 (nonce) + 32 (cookie 16 + authtag 16).
+    # That gives three ways for the final packet sizes to match:
+    #   init/response   -> S2 = S1 + 56  (handled by the loop above)
+    #   response/cookie -> S3 = S2 + 28  (handled here)
+    #   init/cookie     -> S3 = S1 + 84  (unreachable: the minimum S1+84 is 99
+    #                                     while S3 tops out at 55, no loop needed)
+    # We regenerate S3 rather than S2, since S2 already passed the S1+56 check.
+    while [[ $((AWG_S2 + 28)) -eq $AWG_S3 ]]; do
+        AWG_S3=$(rand_range 8 55)
+    done
+
     AWG_S4=$(rand_range 4 27)
 
     # H1-H4: 4 random non-overlapping uint32 ranges.

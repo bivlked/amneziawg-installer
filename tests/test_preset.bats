@@ -163,3 +163,50 @@ teardown() {
     run generate_awg_params
     [ "$status" -ne 0 ]
 }
+
+# --- S-padding size collisions (v5.24.0) ---
+#
+# Итоговый размер пакета = размер сообщения + свой S-паддинг. Совпадение
+# размеров у двух типов сообщений даёт DPI стабильный признак, ради устранения
+# которого паддинги и нужны. Размеры: init 148, response 92, cookie reply 64.
+
+@test "S-collisions: S2 != S1 + 56 (init vs response), 200 прогонов" {
+    unset CLI_PRESET CLI_JC CLI_JMIN CLI_JMAX
+    local i
+    for ((i = 0; i < 200; i++)); do
+        generate_awg_params
+        if [[ $((AWG_S1 + 56)) -eq "$AWG_S2" ]]; then
+            echo "коллизия init/response на прогоне $i: S1=$AWG_S1 S2=$AWG_S2"
+            return 1
+        fi
+    done
+}
+
+@test "S-collisions: S3 != S2 + 28 (response vs cookie), 200 прогонов" {
+    unset CLI_PRESET CLI_JC CLI_JMIN CLI_JMAX
+    local i
+    for ((i = 0; i < 200; i++)); do
+        generate_awg_params
+        if [[ $((AWG_S2 + 28)) -eq "$AWG_S3" ]]; then
+            echo "коллизия response/cookie на прогоне $i: S2=$AWG_S2 S3=$AWG_S3"
+            return 1
+        fi
+    done
+}
+
+@test "S-collisions: S3 != S1 + 84 (init vs cookie) недостижима по диапазонам" {
+    unset CLI_PRESET CLI_JC CLI_JMIN CLI_JMAX
+    generate_awg_params
+    # S1 минимум 15 -> S1+84 минимум 99; S3 максимум 55. Цикл не нужен, но
+    # если кто-то расширит диапазоны, этот тест первым покажет, что нужен.
+    [[ $((AWG_S1 + 84)) -gt 55 ]]
+}
+
+@test "S-collisions: диапазоны S1-S4 не съехали" {
+    unset CLI_PRESET CLI_JC CLI_JMIN CLI_JMAX
+    generate_awg_params
+    [[ "$AWG_S1" -ge 15 ]] && [[ "$AWG_S1" -le 150 ]]
+    [[ "$AWG_S2" -ge 15 ]] && [[ "$AWG_S2" -le 150 ]]
+    [[ "$AWG_S3" -ge 8 ]]  && [[ "$AWG_S3" -le 55 ]]
+    [[ "$AWG_S4" -ge 4 ]]  && [[ "$AWG_S4" -le 27 ]]
+}
