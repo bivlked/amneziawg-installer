@@ -30,6 +30,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
   - [UFW Firewall](#ufw-adv)
   - [Kernel Parameters (Sysctl)](#sysctl-adv)
   - [Fail2Ban (Automatic Setup)](#fail2ban-adv)
+  - [Rotating the server key](#server-key-rotation-adv)
 - [🧹 Server Optimization](#optimization-adv)
 - [📋 Configuration Examples](#config-examples-adv)
 - [⚙️ CLI Parameters](#cli-params-adv)
@@ -404,6 +405,58 @@ File: `/etc/sysctl.d/99-amneziawg-security.conf`. Includes:
 Starting with v5.7.2, the `awgsetup_cfg.init` parameters file is loaded via `safe_load_config()` — a whitelist parser that only accepts predefined keys (`AWG_*`, `OS_*`, `DISABLE_IPV6`, `ALLOWED_IPS_*`, `NO_TWEAKS`, etc.). The previous `source` method has been completely replaced. The parser correctly handles values in both single and double quotes (`'value'` or `"value"`).
 
 This protects against potential code injection: even if the configuration file is modified, arbitrary commands will not execute.
+
+<a id="server-key-rotation-adv"></a>
+### Rotating the server key
+
+You need this if the server private key leaked somewhere: into a screenshot, a forum post, or someone else's hands along with access. There is no dedicated command for it, but reinstalling the server is not required either.
+
+First, what not to worry about. **Previously recorded traffic cannot be decrypted** - the handshake's forward secrecy covers that, and session keys are not derivable from the server's static key. The real risk is different: whoever holds the key can **impersonate your server** to a client that trusts it. So rotating closes the problem not when the server changes, but when **every client has the new config**.
+
+The key lives in three places and all three have to change together:
+
+| File | What it holds |
+|---|---|
+| `/etc/amnezia/amneziawg/awg0.conf` | the `PrivateKey` line in the `[Interface]` section |
+| `/root/awg/server_private.key` | the same private key as a separate file |
+| `/root/awg/server_public.key` | the public key, used to build client configs |
+
+The order is:
+
+```bash
+# 1. Backup, in case you need to roll back
+bash /root/awg/manage_amneziawg.sh backup
+
+# 2. A new key pair
+umask 077
+awg genkey > /root/awg/server_private.key
+awg pubkey < /root/awg/server_private.key > /root/awg/server_public.key
+chmod 600 /root/awg/server_private.key /root/awg/server_public.key
+
+# 3. Put the private key into the server config.
+#    The [Peer] section has no PrivateKey line, so the first one in the file
+#    is the right one. awk with -v is safe for keys: base64 contains / and +,
+#    which would need escaping with sed but not here.
+cd /etc/amnezia/amneziawg
+awk -v k="$(cat /root/awg/server_private.key)" \
+    '!d && /^[ \t]*PrivateKey[ \t]*=/ { print "PrivateKey = " k; d=1; next } { print }' \
+    awg0.conf > awg0.conf.new
+grep -q '^PrivateKey = ' awg0.conf.new && mv awg0.conf.new awg0.conf && chmod 600 awg0.conf
+
+# 4. Restart the service and reissue every client config
+systemctl restart awg-quick@awg0
+bash /root/awg/manage_amneziawg.sh regen
+```
+
+`regen` rewrites every client config with the new public key, regenerates the QR codes and `vpn://` links, and leaves client private keys, addresses and `AllowedIPs` alone. After that, **hand out the new configs**: until you do, the old ones do not work, and they are the ones still exposed.
+
+⚠️ **Three easy mistakes:**
+
+- **Skipping `server_private.key`.** Change the key only in `awg0.conf` and a `--force` reinstall brings the old one back: server keys are generated only when that file is missing, and the config is built from it.
+- **Skipping `regen`.** Existing clients keep `.conf`, `.png`, `.vpnuri` and `.vpnuri.png` files carrying the old public key. Anyone importing by QR or by link ends up with a config that cannot connect.
+- **Restoring an old backup later.** Archives in `/root/awg/backups/` contain both `awg0.conf` and the two key files, so restoring one silently undoes the rotation. Old archives are worth removing after a key change.
+
+To roll back: restore the three files from the backup, restart the service and **run `regen` again** - by then the client configs have already been rewritten with the new key.
 
 ---
 
