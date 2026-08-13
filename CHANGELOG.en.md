@@ -1713,7 +1713,7 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.24.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.26.0...HEAD
 [5.26.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.25.0...v5.26.0
 [5.25.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.24.0...v5.25.0
 [5.24.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.23.0...v5.24.0
