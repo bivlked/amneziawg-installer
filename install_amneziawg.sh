@@ -8,15 +8,15 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 2.0 на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 5.26.0
-# Дата: 2026-08-13
+# Версия: 5.27.0
+# Дата: 2026-08-14
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 set -o pipefail
 
-SCRIPT_VERSION="5.26.0"
+SCRIPT_VERSION="5.27.0"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="31de07c36ac687556376b9daceb12823b360230d1a879bc931203d768868e829"
-MANAGE_SCRIPT_SHA256="7f8a0959af2815bc40f571a47ead88c1b5e02148be24a96da49d3919ad72e3eb"
+COMMON_SCRIPT_SHA256="b82228207d2d504ba83b72f2ae3f706594e858461178677edefc99773043811a"
+MANAGE_SCRIPT_SHA256="a6d6eefa482b5758c3c35b9d1e3b818c92d448f121bb64028e98f8dc00cf5170"
 
 # AmneziaWG 2.0 пин (H0, 31 jul 2026). Upstream влил AmneziaWG 3.0 в default-ветку
 # amneziawg-linux-kernel-module, и PPA переключился на 3.0. Тогда на ядрах старее
@@ -48,11 +48,11 @@ AWG2_PIN_TAG="v1.0.20260725"
 AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
 
 # Флаги CLI
-UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; KEEP_PACKAGES=0
 FORCE_REINSTALL=0
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""
-CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0
+CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_KEEP_PACKAGES=0
 CLI_ALLOW_IPV6_TUNNEL=0
 CLI_ISOLATION="default"
 CLI_SERVER_NAME=""
@@ -106,6 +106,7 @@ while [[ $# -gt 0 ]]; do
         --yes|-y)        AUTO_YES=1 ;;
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
         --no-cps)        NO_CPS=1; CLI_NO_CPS=1 ;;
+        --keep-packages) KEEP_PACKAGES=1; CLI_KEEP_PACKAGES=1 ;;
         --force|-f)      FORCE_REINSTALL=1 ;;
         --preset=*)      CLI_PRESET="${1#*=}" ;;
         --jc=*)          CLI_JC="${1#*=}" ;;
@@ -316,8 +317,11 @@ show_help() {
   -f, --force           Принудительная переустановка поверх уже работающего AmneziaWG
                         (по умолчанию запуск на сконфигурированном сервере прерывается;
                         ENV: AWG_FORCE_REINSTALL=1 эквивалентен флагу)
-  --no-tweaks           Пропустить необязательный hardening/оптимизацию (UFW,
+  --no-tweaks           Пропустить очистку системы, оптимизацию и hardening (UFW,
                         Fail2Ban); минимальный forwarding-sysctl применяется всегда
+  --keep-packages       Не удалять системные пакеты (snapd и др.), но оставить
+                        фаервол, Fail2Ban и оптимизацию. Снос snapd уносит
+                        установленные снапы и их данные в /var/snap
   --preset=ТИП          Набор параметров обфускации: default, mobile
                         mobile: Jc=3, узкий Jmax — для мобильных операторов (Tele2, Yota, Megafon)
   --jc=N               Задать Jc вручную (1-128, поверх preset)
@@ -717,7 +721,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_SERVER_NAME)
                     export "$key=$value"
                     ;;
@@ -1375,6 +1379,101 @@ detect_hardware() {
     log "Железо: RAM=${TOTAL_RAM_MB}MB, CPU=${CPU_CORES} ядер, NIC=${MAIN_NIC}"
 }
 
+# _cleanup_package_list : имена пакетов, которые cleanup_system удалит на этой ОС.
+# Один источник для очистки и для вопроса на шаге 0 - иначе они разъедутся.
+_cleanup_package_list() {
+    local list="modemmanager networkd-dispatcher unattended-upgrades packagekit udisks2"
+    [[ "${OS_ID:-ubuntu}" == "ubuntu" ]] && list="snapd $list lxd-agent-loader"
+    printf '%s' "$list"
+}
+
+# _cloud_init_removable : 0, если установленный cloud-init действительно будет удалён.
+# cloud-init стоит отдельно от списка выше: его удаляют только когда он НЕ управляет
+# сетью. Ответ на этот вопрос нужен в двух местах - в самой очистке и в вопросе на
+# шаге 0, поэтому он живёт здесь. Иначе согласие спрашивалось бы про один набор, а
+# удалялся другой, то есть ровно та претензия, из-за которой заведён issue #213.
+_cloud_init_removable() {
+    dpkg-query -W -f='${Status}' cloud-init 2>/dev/null | grep -q "ok installed" || return 1
+    if ls /etc/netplan/*cloud-init* &>/dev/null 2>&1; then
+        return 1
+    elif grep -rq "cloud-init" /etc/netplan/ 2>/dev/null; then
+        return 1
+    elif [[ -f /etc/network/interfaces ]] && grep -q "cloud-init" /etc/network/interfaces 2>/dev/null; then
+        return 1
+    fi
+    return 0
+}
+
+# _user_snaps : имена снапов, поставленных ПОЛЬЗОВАТЕЛЕМ, по одному в строке.
+# Базовые (snapd, core*, bare, lxd) отсеиваются: они приезжают с образом, и сами по себе
+# не значат, что человеку есть что терять. ⚠️ Читаем файлы, а не вывод 'snap list': бинарь
+# snap к этому моменту мог быть уже снесён прошлым прогоном, и список молча оказался бы пуст.
+_user_snaps() {
+    local f name
+    for f in /var/lib/snapd/snaps/*.snap; do
+        [ -e "$f" ] || continue
+        name="${f##*/}"; name="${name%_*.snap}"
+        case "$name" in
+            snapd|bare|lxd|core|core[0-9][0-9]) continue ;;
+        esac
+        printf '%s\n' "$name"
+    done
+}
+
+# Согласие на удаление системных пакетов (issue #213). Спрашиваем на ШАГЕ 0, вместе с
+# остальными вопросами: шаг 1 должен остаться неинтерактивным, он идёт после перезагрузки.
+# Ответ сохраняется в awgsetup_cfg.init, иначе после перезагрузки он потерялся бы.
+configure_package_cleanup() {
+    # Явный флаг и --no-tweaks уже решили за пользователя - не переспрашиваем.
+    [[ "$CLI_KEEP_PACKAGES" -eq 1 || "$NO_TWEAKS" -eq 1 ]] && return 0
+
+    local installed=() pkg
+    for pkg in $(_cleanup_package_list); do
+        if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed"; then
+            installed+=("$pkg")
+        fi
+    done
+    # cloud-init удаляется отдельной веткой очистки и только когда не управляет сетью,
+    # поэтому в список берём его по тому же условию: спросить надо ровно про то, что
+    # реально удалят.
+    if _cloud_init_removable; then
+        installed+=("cloud-init")
+    fi
+    [ ${#installed[@]} -eq 0 ] && return 0
+
+    local snaps
+    snaps="$(_user_snaps | tr '\n' ' ')"; snaps="${snaps% }"
+
+    log_warn "Сервер настраивается как однозадачный, поэтому будут удалены пакеты:"
+    log_warn "  ${installed[*]}"
+    if [[ " ${installed[*]} " == *" snapd "* ]]; then
+        log_warn "  Вместе со snapd уедут установленные снапы и их данные в /var/snap."
+        [[ -n "$snaps" ]] && log_warn "  Ваши снапы, которые будут потеряны: $snaps"
+    fi
+    if [[ " ${installed[*]} " == *" cloud-init "* ]]; then
+        log_warn "  Вместе с cloud-init удаляются каталоги /etc/cloud и /var/lib/cloud."
+    fi
+
+    if [[ "$AUTO_YES" -eq 1 ]]; then
+        log "Удаление подтверждено автоматически (--yes). Сохранить пакеты: --keep-packages."
+        return 0
+    fi
+
+    # Дефолт зависит от того, есть ли что терять: со своими снапами - сохранить.
+    local answer="" hint="[Y/n]"
+    [[ -n "$snaps" ]] && hint="[y/N]"
+    read -rp "Удалить эти пакеты? $hint: " answer < /dev/tty
+    if [[ -z "$answer" ]]; then
+        [[ -n "$snaps" ]] && KEEP_PACKAGES=1
+    elif [[ "$answer" =~ ^[[:space:]]*[Nn] ]]; then
+        KEEP_PACKAGES=1
+    fi
+    if [[ "$KEEP_PACKAGES" -eq 1 ]]; then
+        log "Пакеты сохраняются. Фаервол, Fail2Ban и оптимизация при этом остаются."
+    fi
+    return 0
+}
+
 # Удаление ненужных пакетов и сервисов
 cleanup_system() {
     log "Очистка системы от ненужных компонентов..."
@@ -1414,10 +1513,8 @@ cleanup_system() {
     # snapd и lxd-agent-loader — только на Ubuntu, на Debian их нет
     local packages_to_remove=()
     local pkg
-    local cleanup_list="modemmanager networkd-dispatcher unattended-upgrades packagekit udisks2"
-    if [[ "${OS_ID:-ubuntu}" == "ubuntu" ]]; then
-        cleanup_list="snapd $cleanup_list lxd-agent-loader"
-    fi
+    local cleanup_list
+    cleanup_list="$(_cleanup_package_list)"
     for pkg in $cleanup_list; do
         if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed"; then
             packages_to_remove+=("$pkg")
@@ -1438,16 +1535,7 @@ cleanup_system() {
     # cloud-init: удалять только если НЕ управляет сетью
     # Консервативный подход: сначала проверяем маркеры cloud-init, затем renderer
     if dpkg-query -W -f='${Status}' cloud-init 2>/dev/null | grep -q "ok installed"; then
-        local cloud_manages_network=0
-        # Проверяем маркеры cloud-init (приоритет — безопасность)
-        if ls /etc/netplan/*cloud-init* &>/dev/null 2>&1; then
-            cloud_manages_network=1
-        elif grep -rq "cloud-init" /etc/netplan/ 2>/dev/null; then
-            cloud_manages_network=1
-        elif [[ -f /etc/network/interfaces ]] && grep -q "cloud-init" /etc/network/interfaces 2>/dev/null; then
-            cloud_manages_network=1
-        fi
-        if [[ $cloud_manages_network -eq 0 ]]; then
+        if _cloud_init_removable; then
             log "Удаление cloud-init (сеть не зависит от него)..."
             DEBIAN_FRONTEND=noninteractive apt-get purge -y cloud-init 2>/dev/null || log_warn "Ошибка удаления cloud-init"
             rm -rf /etc/cloud /var/lib/cloud 2>/dev/null
@@ -2511,6 +2599,7 @@ initialize_setup() {
         AWG_ENDPOINT=$CLI_ENDPOINT
     fi
     if [[ "$CLI_NO_TWEAKS" -eq 1 ]]; then NO_TWEAKS=1; fi
+    if [[ "$CLI_KEEP_PACKAGES" -eq 1 ]]; then KEEP_PACKAGES=1; fi
 
     # Валидация после CLI override
     validate_port "$AWG_PORT"
@@ -2550,6 +2639,7 @@ initialize_setup() {
         validate_subnet "$AWG_TUNNEL_SUBNET"
         if [[ "$DISABLE_IPV6" == "default" ]]; then configure_ipv6; fi
         if [[ "$ALLOWED_IPS_MODE" == "default" ]]; then configure_routing_mode; fi
+        configure_package_cleanup
     else
         log "Используются настройки из $CONFIG_FILE."
         if [[ "$ALLOWED_IPS_MODE" == "3" ]] && [[ -n "$ALLOWED_IPS" ]]; then
@@ -2672,6 +2762,7 @@ export AWG_I4='${AWG_I4:-}'
 export AWG_I5='${AWG_I5:-}'
 export AWG_PRESET='${AWG_PRESET:-default}'
 export NO_TWEAKS=${NO_TWEAKS}
+export KEEP_PACKAGES=${KEEP_PACKAGES}
 export NO_CPS=${NO_CPS}
 export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
 export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
@@ -2782,10 +2873,12 @@ step1_update_and_optimize() {
         || log_warn "Не удалось записать apt lock-timeout (митигация issue #150)."
 
     # Очистка ненужных компонентов (ДО обновления для экономии трафика/времени)
-    if [[ "$NO_TWEAKS" -eq 0 ]]; then
-        cleanup_system
-    else
+    if [[ "$NO_TWEAKS" -eq 1 ]]; then
         log "Пропуск очистки системы (--no-tweaks)."
+    elif [[ "$KEEP_PACKAGES" -eq 1 ]]; then
+        log "Пропуск очистки системы: пакеты сохраняются по вашему выбору (--keep-packages)."
+    else
+        cleanup_system
     fi
 
     log "Обновление списка пакетов..."

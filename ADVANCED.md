@@ -514,6 +514,19 @@ bash /root/awg/manage_amneziawg.sh regen
 
 **Удаляемые пакеты:** `snapd`, `modemmanager`, `networkd-dispatcher`, `unattended-upgrades`, `packagekit`, `lxd-agent-loader`, `udisks2`. Cloud-init удаляется **только** если не управляет сетевой конфигурацией.
 
+🔴 **Снос `snapd` забирает с собой установленные снапы и их данные в `/var/snap`.** Пакет удаляется через `purge`, а следом установщик убирает каталоги `/snap`, `/var/snap` и `/var/lib/snapd`, поэтому снапы уезжают при любом раскладе. Отменить это нельзя: `rm -rf` не откатывается, и сам `snapd` вернётся через `apt install snapd`, а снапы придётся ставить заново, данные из `/var/snap` - только из бэкапа. Домашние каталоги очистка не трогает, так что данные из `~/snap` остаются на месте.
+
+Начиная с v5.27.0 установщик спрашивает согласие: на шаге 0 он показывает точный список пакетов, которые реально стоят в системе, и отдельной строкой предупреждает про снапы. Если находит снапы, поставленные вами (базовые `snapd`, `core*`, `bare` и `lxd` не считаются), по умолчанию предлагает их сохранить. Когда под удаление попадает и cloud-init, отдельной строкой говорится про каталоги `/etc/cloud` и `/var/lib/cloud`. Ответ запоминается в `awgsetup_cfg.init` и переживает перезагрузку между шагами.
+
+Способов отказаться два, и они не равнозначны:
+
+| Флаг | Что пропускает | Когда нужен |
+|---|---|---|
+| `--keep-packages` | только очистку системы | оставить фаервол, Fail2Ban и оптимизацию, но не трогать пакеты |
+| `--no-tweaks` | очистку, оптимизацию, sysctl-hardening, UFW и Fail2Ban | сервер уже настроен своими средствами |
+
+С `--yes` вопрос не задаётся и поведение остаётся прежним, то есть пакеты удаляются: список при этом всё равно печатается в журнал. Для неинтерактивной установки, где пакеты нужно сохранить, добавьте `--keep-packages`.
+
 **Hardware-aware настройки:**
 * **Swap:** 1 ГБ при RAM ≤ 2 ГБ, 512 МБ при RAM > 2 ГБ. `vm.swappiness = 10`.
 * **NIC:** Отключение GRO/GSO/TSO (могут конфликтовать с VPN-трафиком).
@@ -682,8 +695,11 @@ PersistentKeepalive = 33
   --no-cps              Отключить CPS (параметр I1) - для десктопных клиентов, которые его не поддерживают (например, macOS)
   -y, --yes             Неинтерактивный режим (все подтверждения auto-yes)
   -f, --force           Переустановка поверх работающего AWG (ENV: AWG_FORCE_REINSTALL=1)
-  --no-tweaks           Пропустить необязательный hardening/оптимизацию (UFW,
+  --no-tweaks           Пропустить очистку системы, оптимизацию и hardening (UFW,
                         Fail2Ban); минимальный forwarding-sysctl применяется всегда
+  --keep-packages       Не удалять системные пакеты (snapd и др.), но оставить
+                        фаервол, Fail2Ban и оптимизацию. Снос snapd уносит
+                        установленные снапы и их данные в /var/snap
 ```
 
 <a id="manage-cli-adv"></a>
@@ -880,7 +896,7 @@ graph TD
 Инсталлятор скачивает `awg_common.sh` и `manage_amneziawg.sh` с URL, привязанных к конкретному тегу версии:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.26.0/awg_common.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.27.0/awg_common.sh
 ```
 
 Это даёт **supply chain pinning**: скачиваемые скрипты соответствуют версии инсталлятора, даже если `main` уже обновлён.
@@ -900,12 +916,12 @@ AWG_BRANCH=my-feature-branch sudo bash ./install_amneziawg.sh
 
 ```bash
 # Русская версия:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.26.0/manage_amneziawg.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.26.0/awg_common.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.27.0/manage_amneziawg.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.27.0/awg_common.sh
 
 # Английская версия:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.26.0/manage_amneziawg_en.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.26.0/awg_common_en.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.27.0/manage_amneziawg_en.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.27.0/awg_common_en.sh
 
 # Установить права
 chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh

@@ -12,6 +12,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.27.0] - 2026-08-14
+
+**v5.27.0** - the installer no longer wipes system packages silently: it prints the list, warns about the snaps and asks for consent, and there is now a dedicated flag to opt out.
+
+### Added
+
+- **Consent before removing system packages.** The server is set up as single-purpose, so the installer clears out what a VPN does not need: `snapd`, `modemmanager`, `networkd-dispatcher`, `unattended-upgrades`, `packagekit`, `udisks2`, `lxd-agent-loader`, plus `cloud-init` when it does not manage the network. The removal was a `purge` followed by wiping the `/snap`, `/var/snap` and `/var/lib/snapd` directories, all without a single question: that `snapd` had taken the installed snaps and their data with it was something you found out afterwards, and `rm -rf` does not roll back. Now, at step 0 and together with the other questions, the installer prints the packages that are actually present, warns about the snaps on a separate line, and names the snaps you installed yourself. A separate line mentions `/etc/cloud` and `/var/lib/cloud` when `cloud-init` is due for removal. The question belongs to step 0 because step 1 runs after the reboot and has to stay non-interactive; the answer is stored in `awgsetup_cfg.init` and survives that reboot. Thanks to `@kemko` for raising it ([#213](https://github.com/bivlked/amneziawg-installer/issues/213))
+- **The default answer depends on whether there is anything to lose.** When snaps you installed yourself are found, keeping the packages is offered and an empty answer means exactly that. With no snaps of your own the default is unchanged, that is remove. The base `snapd`, `core*`, `bare` and `lxd` do not count as yours: they ship with the image and by themselves do not mean anything is at stake. The snap list is read from the files in `/var/lib/snapd/snaps` rather than from `snap list`, because the `snap` binary may already be gone from an earlier run and the list would silently come back empty
+- **New `--keep-packages` flag: leave the packages alone, keep everything else.** Until now the only way to opt out was `--no-tweaks`, which also turns off UFW, Fail2Ban, the sysctl hardening and the optimization, so the price of opting out was out of proportion. The new flag skips the system cleanup only. It is also what an unattended install needs: with `--yes` no question is asked and the packages are removed as before, so keeping them without a human present takes an explicit `--keep-packages`
+
+### Fixed
+
+- **The `--help` text hid the fact that `--no-tweaks` also cancels the package removal.** It read "skip optional hardening/optimization (UFW, Fail2Ban)", which implied the cleanup happens either way. It did not: the flag suppressed that too, so the only available way to save the packages was described in a way that made it impossible to find. The help text is corrected in both installers, and so is its copy in `ADVANCED.md` and `ADVANCED.en.md`
+
 ## [5.26.0] - 2026-08-13
 
 **v5.26.0** - cascade: two simultaneous runs of the routing script no longer break each other, your own addresses can be routed through the Russian leg, and the diagnostic report finally shows whether the split is applied.
@@ -1713,7 +1727,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.26.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.27.0...HEAD
+[5.27.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.26.0...v5.27.0
 [5.26.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.25.0...v5.26.0
 [5.25.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.24.0...v5.25.0
 [5.24.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.23.0...v5.24.0
