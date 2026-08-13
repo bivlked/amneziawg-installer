@@ -207,11 +207,24 @@ fi
 # 1) Refresh the RU list. Sources in order: ipdeny (current) -> the snapshot bundled in the repository
 #    (if ipdeny is unreachable) -> whatever local list is already there. Replace the working file only on
 #    a successful, non-empty download, so a failed fetch never wipes the previous list.
-fetch_ru_zone() {                                # $1 = URL; downloads into a temp file, 0 on success and non-empty
+fetch_ru_zone() {                                # $1 = URL; downloads and VALIDATES the body, 0 on success
     # Timeouts are mandatory: the script runs from a unit at boot, and the unit has a time budget.
     # Without them a stalled download would eat all of it and systemd would kill the unit before
-    # the rules are applied.
-    curl -fsS --retry 2 --connect-timeout 10 --max-time 30 -o "$RU_ZONE.tmp" "$1" && [ -s "$RU_ZONE.tmp" ]
+    # the rules are applied. --retry-max-time bounds the SUM of the attempts: otherwise three
+    # retries of 30 s each add up to 93 s per URL.
+    curl -fsS --retry 2 --retry-max-time 45 --connect-timeout 10 --max-time 30 \
+        -o "$RU_ZONE.tmp" "$1" || return 1
+    # 🔴 The CONTENT has to be checked, not just that the file is non-empty. curl -f only rejects
+    # codes >= 400, so a provider stub page, a DPI interception page or a captcha served with 200
+    # would pass as a valid list, overwrite the working file and break the split until someone
+    # intervenes by hand.
+    local valid total
+    valid=$(grep -cE '^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$' "$RU_ZONE.tmp" || true)
+    total=$(wc -l < "$RU_ZONE.tmp")
+    if [ "$valid" -lt 1000 ] || [ "$valid" -ne "$total" ]; then
+        echo "WARN: $1 did not return a list of RU networks ($valid valid lines out of $total) - not taking it" >&2
+        return 1
+    fi
 }
 if fetch_ru_zone "$RU_ZONE_URL"; then
     mv -f "$RU_ZONE.tmp" "$RU_ZONE"
@@ -236,10 +249,14 @@ done < "$RU_ZONE"
 # set -f disables globbing: without it an asterisk in the variable would expand to file names.
 # A malformed entry does NOT abort the script: from the boot unit that would leave the server with
 # no split at all, whereas this way only the exception itself is lost, and the warning says so.
+extra_total=0; extra_bad=0
 set -f
 for net in $EXTRA_RU_NETS; do
-    ipset add ru_tmp "$net" -exist \
-        || echo "WARN: EXTRA_RU_NETS: did not add '$net' - expected an address or a CIDR network" >&2
+    extra_total=$((extra_total + 1))
+    ipset add ru_tmp "$net" -exist || {
+        echo "WARN: EXTRA_RU_NETS: did not add '$net' - expected an address or a CIDR network" >&2
+        extra_bad=$((extra_bad + 1))
+    }
 done
 set +f
 ipset swap ru_tmp ru
@@ -276,7 +293,13 @@ iptables -t mangle -C PREROUTING -i awg0 -s "$CLIENT_SUBNET" -j MARK --set-mark 
 iptables -t nat -C POSTROUTING -s "$CLIENT_SUBNET" -o "$AWG1_IF" -j MASQUERADE 2>/dev/null \
     || iptables -t nat -A POSTROUTING -s "$CLIENT_SUBNET" -o "$AWG1_IF" -j MASQUERADE
 
-echo "OK: cascade routing applied (WAN=$WAN_IF, gw=${WAN_GW:-on-link}, exit=$AWG1_IF, table=$TABLE_ID)"
+# The final line must not lie: if some of your own addresses did not make it, they will leave
+# through the far leg, and a silent "OK" would send the investigation the wrong way.
+if [ "$extra_bad" -gt 0 ]; then
+    echo "OK WITH A CAVEAT: cascade applied, but $extra_bad of $extra_total EXTRA_RU_NETS entries were not added - those addresses will go through the foreign leg" >&2
+else
+    echo "OK: cascade routing applied (WAN=$WAN_IF, gw=${WAN_GW:-on-link}, exit=$AWG1_IF, table=$TABLE_ID)"
+fi
 ```
 
 Set your `CLIENT_SUBNET` and `AWG1_ENDPOINT` at the top, make the file executable, and run it. `CLIENT_SUBNET` is the network (ending in zero), not the server address: if `awg0.conf` has `Address = 172.16.17.1/24`, then `CLIENT_SUBNET="172.16.17.0/24"`. `AWG1_ENDPOINT` is the AWG1 public IP (from `Endpoint` in `awg1.conf`, without the port):
@@ -354,6 +377,9 @@ ipset list ru | grep "Number of entries"
 # the Russian address really is in the set
 ipset test ru 77.88.55.242
 # Warning: 77.88.55.242 is in set ru.
+
+# your own EXTRA_RU_NETS addresses are checked the same way, one by one
+ipset test ru 203.0.113.7
 ```
 
 If instead of the entry count you see `ipset v7.17: The set with the given name does not exist`, the `ru` set is not in the kernel, and without it the split does not work. The command only tells you the set is missing right now, not why: it may have failed to appear because a run of the script was cut short, or it may never have been created because the `awg-routing` unit did not start after a reboot. A cut-short run costs more than it looks: the `ipset` block runs before the routing part, so in that run neither the table nor the marking nor the NAT were applied. `ip rule` and `ip route show table 100` can still look correct, because they persist in the kernel from an earlier successful run and say nothing about the current state. Check the unit (`systemctl status awg-routing`), run the script again, and read its output down to the `OK: cascade routing applied` line.

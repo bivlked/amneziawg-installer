@@ -2101,17 +2101,41 @@ create_diagnostic_report() {
         if [ -f "$AWG_DIR/awg-routing.sh" ] || ip link show awg1 &>/dev/null; then
             # is-active печатает "inactive" И возвращает ненулевой код, поэтому подстановка
             # вида $(... || echo N/A) выдала бы ОБЕ строки сразу. Берём вывод, N/A - только на пустом.
+            local _casc_active _casc_enabled _casc_out
             _casc_active=$(systemctl is-active awg-routing 2>/dev/null || true)
             _casc_enabled=$(systemctl is-enabled awg-routing 2>/dev/null || true)
             echo "unit awg-routing: active=${_casc_active:-N/A}, enabled=${_casc_enabled:-N/A}"
-            ip rule show 2>/dev/null | grep -w fwmark || echo "ip rule: правил по метке нет"
-            echo "table 100: $(ip route show table 100 2>/dev/null | tr '\n' '; ' || true)"
+            # Ниже намеренно разделены "не нашёл" и "не смог посмотреть": если гасить stderr и
+            # печатать одно и то же, отчёт превратит отказ команды в утверждение "правил нет",
+            # и разбор уйдёт не туда. grep -m10 вместо | head -10: он не рвёт пайп, поэтому
+            # pipefail не отдаёт 141 и ветка || не срабатывает после уже напечатанных строк.
+            if _casc_out=$(ip rule show 2>&1); then
+                grep -w fwmark <<< "$_casc_out" || echo "ip rule: правил по метке нет"
+            else
+                echo "ip rule: ПРОВЕРИТЬ НЕ УДАЛОСЬ: $(head -1 <<< "$_casc_out")"
+            fi
+            echo "table 100: $(ip route show table 100 2>/dev/null | tr '\n' '; ')"
             echo "ipset sets: $(ipset list -n 2>/dev/null | tr '\n' ' ' || echo 'N/A')"
-            ipset list ru 2>/dev/null | grep "Number of entries" || echo "ipset ru: набора нет"
-            # head ограничивает вывод: отчёт вставляют в issue, а цепочка PREROUTING на нестандартном
-            # хосте бывает длинной. Правил каскада всего два, десяти строк хватает с запасом.
-            iptables -t mangle -S PREROUTING 2>/dev/null | grep -E "match-set|MARK" | head -10 \
-                || echo "mangle PREROUTING: правил каскада нет"
+            if _casc_out=$(ipset list ru 2>&1); then
+                grep "Number of entries" <<< "$_casc_out" || echo "ipset ru: счётчик не найден"
+            else
+                echo "ipset ru: набора нет ($(head -1 <<< "$_casc_out"))"
+            fi
+            echo "ru.zone: $(stat -c '%y, %s байт' "$AWG_DIR/ru.zone" 2>/dev/null || echo 'файла нет')"
+            if _casc_out=$(iptables -t mangle -S PREROUTING 2>&1); then
+                grep -m10 -E "match-set|MARK" <<< "$_casc_out" || echo "mangle PREROUTING: правил каскада нет"
+            else
+                echo "mangle PREROUTING: ПРОВЕРИТЬ НЕ УДАЛОСЬ: $(head -1 <<< "$_casc_out")"
+            fi
+            # NAT проверяем обязательно: MASQUERADE на awg1 скрипт ставит ПОСЛЕДНИМ, поэтому
+            # оборванный запуск оставляет всё остальное на месте, а его - нет. Симптом при этом
+            # обманчивый: российские сайты работают, остальное молчит, а отчёт без этой строки
+            # показывал бы полностью исправный каскад.
+            if _casc_out=$(iptables -t nat -S POSTROUTING 2>&1); then
+                grep -m10 -E "awg1|MASQUERADE" <<< "$_casc_out" || echo "nat POSTROUTING: правил каскада нет"
+            else
+                echo "nat POSTROUTING: ПРОВЕРИТЬ НЕ УДАЛОСЬ: $(head -1 <<< "$_casc_out")"
+            fi
         else
             echo "не настроен"
         fi

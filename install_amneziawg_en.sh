@@ -2118,17 +2118,41 @@ create_diagnostic_report() {
         if [ -f "$AWG_DIR/awg-routing.sh" ] || ip link show awg1 &>/dev/null; then
             # is-active prints "inactive" AND returns non-zero, so $(... || echo N/A) would emit
             # BOTH strings at once. Take the output as is; N/A only when it comes back empty.
+            local _casc_active _casc_enabled _casc_out
             _casc_active=$(systemctl is-active awg-routing 2>/dev/null || true)
             _casc_enabled=$(systemctl is-enabled awg-routing 2>/dev/null || true)
             echo "unit awg-routing: active=${_casc_active:-N/A}, enabled=${_casc_enabled:-N/A}"
-            ip rule show 2>/dev/null | grep -w fwmark || echo "ip rule: no rules by mark"
-            echo "table 100: $(ip route show table 100 2>/dev/null | tr '\n' '; ' || true)"
+            # "not found" and "could not check" are kept apart on purpose: silencing stderr and
+            # printing the same line would turn a failed command into a claim that the rules are
+            # absent, sending triage the wrong way. grep -m10 instead of | head -10: it does not
+            # break the pipe, so pipefail cannot return 141 and fire the || branch after output.
+            if _casc_out=$(ip rule show 2>&1); then
+                grep -w fwmark <<< "$_casc_out" || echo "ip rule: no rules by mark"
+            else
+                echo "ip rule: CHECK FAILED: $(head -1 <<< "$_casc_out")"
+            fi
+            echo "table 100: $(ip route show table 100 2>/dev/null | tr '\n' '; ')"
             echo "ipset sets: $(ipset list -n 2>/dev/null | tr '\n' ' ' || echo 'N/A')"
-            ipset list ru 2>/dev/null | grep "Number of entries" || echo "ipset ru: set not present"
-            # head bounds the output: the report gets pasted into issues, and the PREROUTING chain
-            # can be long on an unusual host. The cascade adds two rules, so ten lines is plenty.
-            iptables -t mangle -S PREROUTING 2>/dev/null | grep -E "match-set|MARK" | head -10 \
-                || echo "mangle PREROUTING: no cascade rules"
+            if _casc_out=$(ipset list ru 2>&1); then
+                grep "Number of entries" <<< "$_casc_out" || echo "ipset ru: entry counter not found"
+            else
+                echo "ipset ru: set not present ($(head -1 <<< "$_casc_out"))"
+            fi
+            echo "ru.zone: $(stat -c '%y, %s bytes' "$AWG_DIR/ru.zone" 2>/dev/null || echo 'no file')"
+            if _casc_out=$(iptables -t mangle -S PREROUTING 2>&1); then
+                grep -m10 -E "match-set|MARK" <<< "$_casc_out" || echo "mangle PREROUTING: no cascade rules"
+            else
+                echo "mangle PREROUTING: CHECK FAILED: $(head -1 <<< "$_casc_out")"
+            fi
+            # NAT must be checked: the script applies MASQUERADE on awg1 LAST, so a run cut short
+            # leaves everything else in place but not that rule. The symptom is deceptive: Russian
+            # sites work and nothing else does, while a report without this line would show a
+            # perfectly healthy cascade.
+            if _casc_out=$(iptables -t nat -S POSTROUTING 2>&1); then
+                grep -m10 -E "awg1|MASQUERADE" <<< "$_casc_out" || echo "nat POSTROUTING: no cascade rules"
+            else
+                echo "nat POSTROUTING: CHECK FAILED: $(head -1 <<< "$_casc_out")"
+            fi
         else
             echo "not configured"
         fi
