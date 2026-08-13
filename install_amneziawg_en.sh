@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.25.0
-# Date: 2026-08-08
+# Version: 5.26.0
+# Date: 2026-08-13
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 set -o pipefail
-SCRIPT_VERSION="5.25.0"
+SCRIPT_VERSION="5.26.0"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="725ddf3553e7147ac9fe91b6cac666e977e46b365df57b5c8b64d637ca74623b"
-MANAGE_SCRIPT_SHA256="2a1f5b1c12a76a57357bd1467e23dd16d86ca75e3bf45446c4fab1a928f23a39"
+COMMON_SCRIPT_SHA256="d60f963da91638c99287e61b3b6413648f9be2f4bf9ae65441f6e62c8da2a33d"
+MANAGE_SCRIPT_SHA256="259eab8bbe8562d71c6ec2780078276953e3ca6a59f4d2c427d47c8be1a13042"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back
@@ -2111,6 +2111,27 @@ create_diagnostic_report() {
         echo ""
         echo "--- Routing Table ---"
         ip route 2>/dev/null
+        echo ""
+        echo "--- Cascade / Split Routing ---"
+        # The cascade (CASCADE.en.md) lives outside awg0.conf: its own table, mark, ipset and mangle
+        # rules. Without this block the report cannot tell whether the split is applied (issue #212).
+        if [ -f "$AWG_DIR/awg-routing.sh" ] || ip link show awg1 &>/dev/null; then
+            # is-active prints "inactive" AND returns non-zero, so $(... || echo N/A) would emit
+            # BOTH strings at once. Take the output as is; N/A only when it comes back empty.
+            _casc_active=$(systemctl is-active awg-routing 2>/dev/null || true)
+            _casc_enabled=$(systemctl is-enabled awg-routing 2>/dev/null || true)
+            echo "unit awg-routing: active=${_casc_active:-N/A}, enabled=${_casc_enabled:-N/A}"
+            ip rule show 2>/dev/null | grep -w fwmark || echo "ip rule: no rules by mark"
+            echo "table 100: $(ip route show table 100 2>/dev/null | tr '\n' '; ' || true)"
+            echo "ipset sets: $(ipset list -n 2>/dev/null | tr '\n' ' ' || echo 'N/A')"
+            ipset list ru 2>/dev/null | grep "Number of entries" || echo "ipset ru: set not present"
+            # head bounds the output: the report gets pasted into issues, and the PREROUTING chain
+            # can be long on an unusual host. The cascade adds two rules, so ten lines is plenty.
+            iptables -t mangle -S PREROUTING 2>/dev/null | grep -E "match-set|MARK" | head -10 \
+                || echo "mangle PREROUTING: no cascade rules"
+        else
+            echo "not configured"
+        fi
         echo ""
         echo "--- Kernel Params ---"
         sysctl net.ipv4.ip_forward net.ipv6.conf.all.disable_ipv6 2>/dev/null

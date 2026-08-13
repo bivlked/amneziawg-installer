@@ -12,6 +12,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.26.0] - 2026-08-13
+
+**v5.26.0** - cascade: two simultaneous runs of the routing script no longer break each other, your own addresses can be routed through the Russian leg, and the diagnostic report finally shows whether the split is applied.
+
+### Fixed
+
+- **Two simultaneous runs of `awg-routing.sh` broke each other, and one of them died halfway through.** The script from `CASCADE.en.md` built the set of Russian networks through a temporary `ru_tmp` with a fixed name and no locking at all. With two instances running, the one finishing first destroyed `ru_tmp` from under the second, and the second failed with `ipset v7.17: The set with the given name does not exist`. Where the second run comes from: the `awg-routing` unit starts at boot, a reinstall reboots the machine, loading ~8600 networks goes one `ipset` call per network and takes seconds on a single core, so a manual run right after logging in over SSH overlaps the one still going from boot. The script now takes a lock on `/root/awg/awg-routing.lock`, and the second instance WAITS up to 5 minutes instead of breaking. Verified on a Debian 12 box with `ipset 7.17`, the same combination the user hit it on: without the lock one of the two instances failed in 3 runs out of 3, with the lock both reach the end in 3 out of 3, and the wall time roughly doubles, which is the visible sign that the runs queued up. 🔴 **There turned out to be two races, and the second one only surfaced on the test box.** Both instances wrote the list into a shared `ru.zone.tmp` and moved it into place with `mv`, while the `trap` of the first deleted the file of the second: in one run out of three the failure looked like `mv: cannot stat '/root/awg/ru.zone.tmp': No such file or directory`, a different message on a different step. The lock closes both, because it covers downloading the list, working with `ipset` and applying the rules. Thanks to `@aya2work` for the report ([#212](https://github.com/bivlked/amneziawg-installer/issues/212))
+
+### Added
+
+- **The diagnostic report gained a cascade section, so the report now shows whether the traffic split is applied.** The cascade lives outside `awg0.conf` - it has its own routing table, mark, `ipset` set and `mangle` rules - while the report only showed the main routing table. Because of that a submitted report could not tell a working split from a broken one, and triage turned into a conversation. The report now includes the state of the `awg-routing` unit, the `ip rule` by mark, the contents of table 100, the list of `ipset` set names with the entry count for `ru`, and the cascade rules from `mangle`. When there is no sign of a cascade, the section is a single line and the report does not grow for nothing. The `ru` set is deliberately not printed in full: that is 8600+ lines which would make the report unreadable, and the diagnostic value is in the count alone, where zero entries mean a silently broken split
+- **Your own addresses can be routed through the Russian leg: the script gained an `EXTRA_RU_NETS` variable.** It exists for the case an address list cannot fix: a site in the `.ru` zone behind a foreign CDN looks foreign by destination address and leaves through the far leg. Addresses from `EXTRA_RU_NETS` are added to the same temporary set as the downloaded list and land in the working set together with it. There is also an explicit note on why appending an address to the live `ru` set is pointless: the next run of the script rebuilds the set and wipes the additions
+
+### Documentation
+
+- **The Verification section now says what the message `The set with the given name does not exist` means.** The `ipset list ru` command was already there, but what it prints when the set is missing, and what follows from that, was not. It now says it plainly: the set is gone, so the split does not work, but the command itself only reports the set missing right now and not the reason (a run cut short, or a unit that never started after a reboot). The cost of a cut-short run is spelled out separately: the `ipset` block runs before the routing part, so in that run neither the table nor the marking nor the NAT were applied. The same place removes a trap that has already caught people: `ip rule` and `ip route show table 100` can look correct at that moment, because they persist in the kernel from an earlier successful run and say nothing about the current one
+
 ## [5.25.0] - 2026-08-08
 
 **v5.25.0** - reversibility before AmneziaWG 3.0: a lost-access warning, a removed parameter no longer disappears silently, and the module version comes from the loaded one.
@@ -1695,6 +1712,7 @@ Major security and reliability update after several consecutive code audits. The
 - Full uninstall (`--uninstall`).
 
 [Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.24.0...HEAD
+[5.26.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.25.0...v5.26.0
 [5.25.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.24.0...v5.25.0
 [5.24.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.23.0...v5.24.0
 [5.23.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.22.0...v5.23.0
