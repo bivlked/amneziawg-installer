@@ -2144,12 +2144,16 @@ create_diagnostic_report() {
             else
                 echo "mangle PREROUTING: CHECK FAILED: $(head -1 <<< "$_casc_out")"
             fi
-            # NAT must be checked: the script applies MASQUERADE on awg1 LAST, so a run cut short
+            # Grep for "-o awg1" rather than MASQUERADE: a plain MASQUERADE on the external
+            # interface is added by the installer itself in PostUp, it exists on EVERY install, and
+            # matching it would make the "no rules" branch unreachable while the report showed NAT
+            # as present with the cascade rule missing. NAT must be checked: the script applies it
+            # LAST, so a run cut short
             # leaves everything else in place but not that rule. The symptom is deceptive: Russian
             # sites work and nothing else does, while a report without this line would show a
             # perfectly healthy cascade.
             if _casc_out=$(iptables -t nat -S POSTROUTING 2>&1); then
-                grep -m10 -E "awg1|MASQUERADE" <<< "$_casc_out" || echo "nat POSTROUTING: no cascade rules"
+                grep -m10 -- "-o awg1" <<< "$_casc_out" || echo "nat POSTROUTING: no cascade rule (-o awg1)"
             else
                 echo "nat POSTROUTING: CHECK FAILED: $(head -1 <<< "$_casc_out")"
             fi

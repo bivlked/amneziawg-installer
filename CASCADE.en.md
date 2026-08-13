@@ -220,7 +220,9 @@ fetch_ru_zone() {                                # $1 = URL; downloads and VALID
     # intervenes by hand.
     local valid total
     valid=$(grep -cE '^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$' "$RU_ZONE.tmp" || true)
-    total=$(wc -l < "$RU_ZONE.tmp")
+    # Count NON-EMPTY lines rather than all of them: otherwise a missing trailing newline or a
+    # blank line at the end would reject a perfectly good list, which the loader below tolerates.
+    total=$(grep -c '[^[:space:]]' "$RU_ZONE.tmp" || true)
     if [ "$valid" -lt 1000 ] || [ "$valid" -ne "$total" ]; then
         echo "WARN: $1 did not return a list of RU networks ($valid valid lines out of $total) - not taking it" >&2
         return 1
@@ -339,12 +341,11 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/root/awg/awg-routing.sh
-# The script waits up to 5 minutes for the lock, while systemd gives a oneshot unit only 90 seconds
-# by default and then kills it. Without this line the unit would silently skip applying the split
-# in the rare case where it has to wait. 600 is the 300 seconds of lock wait plus headroom for the
-# work itself (downloading the list and ~8600 ipset calls on a weak box). 360 would be too tight:
-# it would leave only a minute for the work.
-TimeoutStartSec=600
+# TimeoutStartSec is deliberately NOT set here. For Type=oneshot the start timeout is disabled
+# by default (verified: systemctl show -p TimeoutStartUSec on such a unit returns infinity, while
+# a Type=simple unit shows the manager default of 90 seconds). So a lock wait of up to 5 minutes
+# and a slow list load on a weak box do not kill the unit, whereas any finite value would
+# introduce a kill mid-run and leave the split half applied.
 
 [Install]
 WantedBy=multi-user.target
@@ -382,7 +383,7 @@ ipset test ru 77.88.55.242
 ipset test ru 203.0.113.7
 ```
 
-If instead of the entry count you see `ipset v7.17: The set with the given name does not exist`, the `ru` set is not in the kernel, and without it the split does not work. The command only tells you the set is missing right now, not why: it may have failed to appear because a run of the script was cut short, or it may never have been created because the `awg-routing` unit did not start after a reboot. A cut-short run costs more than it looks: the `ipset` block runs before the routing part, so in that run neither the table nor the marking nor the NAT were applied. `ip rule` and `ip route show table 100` can still look correct, because they persist in the kernel from an earlier successful run and say nothing about the current state. Check the unit (`systemctl status awg-routing`), run the script again, and read its output down to the `OK: cascade routing applied` line.
+If instead of the entry count you see `ipset v7.17: The set with the given name does not exist`, the `ru` set is not in the kernel, and without it the split does not work. The command only tells you the set is missing right now, not why: it may have failed to appear because a run of the script was cut short, or it may never have been created because the `awg-routing` unit did not start after a reboot. A cut-short run costs more than it looks: the `ipset` block runs before the routing part, so in that run neither the table nor the marking nor the NAT were applied. `ip rule` and `ip route show table 100` can still look correct, because they persist in the kernel from an earlier successful run and say nothing about the current state. Check the unit (`systemctl status awg-routing`), run the script again, and read its output to the end. A successful run ends with `OK: cascade routing applied`. If some of your `EXTRA_RU_NETS` addresses were not accepted, the last line is `OK WITH A CAVEAT` and the count of rejected entries: the cascade is applied, but those particular addresses will go through the foreign leg.
 
 Check that traffic splits correctly:
 
