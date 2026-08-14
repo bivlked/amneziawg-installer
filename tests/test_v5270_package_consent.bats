@@ -20,7 +20,10 @@ bats_require_minimum_version 1.5.0
 # cases the redirect is stripped and the answer arrives on stdin instead.
 _load_consent() {
     local script="$1" strip_tty="${2:-0}" fn body
-    OS_ID=ubuntu; NO_TWEAKS=0; AUTO_YES=0; KEEP_PACKAGES=""
+    # Exported rather than plain locals: the installer functions eval'd below read
+    # them, which shellcheck cannot see, and export states that intent.
+    export OS_ID=ubuntu NO_TWEAKS=0 AUTO_YES=0
+    KEEP_PACKAGES=""
     log() { :; }
     log_warn() { :; }
     for fn in _cleanup_package_list _dpkg_usable _cloud_init_removable \
