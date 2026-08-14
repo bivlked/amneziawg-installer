@@ -49,7 +49,7 @@ AWG2_PIN_TAG="v1.0.20260725"
 AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
 
 # CLI flags
-UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; KEEP_PACKAGES=0
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""
@@ -1398,52 +1398,102 @@ detect_hardware() {
 
 # _cleanup_package_list : the packages cleanup_system removes on this OS.
 # One source for both the cleanup and the step 0 question, otherwise they drift apart.
+# ⚠️ OS_ID deliberately has NO default: an unknown OS must not get the destructive
+# superset (snapd, lxd-agent-loader and wiping the snap directories). Empty = not Ubuntu.
 _cleanup_package_list() {
     local list="modemmanager networkd-dispatcher unattended-upgrades packagekit udisks2"
-    [[ "${OS_ID:-ubuntu}" == "ubuntu" ]] && list="snapd $list lxd-agent-loader"
+    [[ "${OS_ID:-}" == "ubuntu" ]] && list="snapd $list lxd-agent-loader"
     printf '%s' "$list"
 }
 
+# _dpkg_usable : 0 if dpkg answers can be trusted.
+# Telling "package not installed" from "dpkg database is broken" by return code is NOT
+# possible: measured on Ubuntu 24.04, both give rc=1. So ask about a package that is
+# certainly installed: if even that one is missing, the mechanism is broken, not the
+# packages. Without this an empty list would silently skip the question, and step 1
+# would later run with a working dpkg and remove what was never asked about.
+_dpkg_usable() {
+    command -v dpkg-query >/dev/null 2>&1 || return 1
+    dpkg-query -W -f='${Status}' dpkg 2>/dev/null | grep -q "ok installed"
+}
+
 # _cloud_init_removable : 0 if an installed cloud-init will actually be removed.
-# cloud-init sits outside the list above: it is removed only when it does NOT manage
-# the network. That answer is needed in two places, the cleanup itself and the step 0
+# cloud-init sits outside the list above: it is removed only when it does NOT manage the
+# network. That answer is needed in two places, the cleanup itself and the step 0
 # question, so it lives here. Otherwise consent would be asked about one set while a
 # different one gets removed, which is exactly the complaint behind issue #213.
+# 🔴 Any FAILED check means "manages the network, leave it alone". The costs are not
+# symmetric: a cloud-init left in place costs tens of megabytes, one removed by mistake
+# costs the network after the next reboot on a remote server. That is why ls by glob is
+# gone from here: it returns rc=2 both when the directory is missing and when nothing matched.
 _cloud_init_removable() {
     dpkg-query -W -f='${Status}' cloud-init 2>/dev/null | grep -q "ok installed" || return 1
-    if ls /etc/netplan/*cloud-init* &>/dev/null 2>&1; then
+    local f
+    if [ -d /etc/netplan ]; then
+        [ -r /etc/netplan ] || return 1
+        for f in /etc/netplan/*cloud-init*; do
+            [ -e "$f" ] && return 1
+        done
+        grep -rq "cloud-init" /etc/netplan/ 2>/dev/null
+        case $? in
+            0) return 1 ;;
+            1) : ;;
+            *) return 1 ;;
+        esac
+    fi
+    if [ -f /etc/network/interfaces ] && grep -q "cloud-init" /etc/network/interfaces 2>/dev/null; then
         return 1
-    elif grep -rq "cloud-init" /etc/netplan/ 2>/dev/null; then
-        return 1
-    elif [[ -f /etc/network/interfaces ]] && grep -q "cloud-init" /etc/network/interfaces 2>/dev/null; then
+    fi
+    # On Debian cloud-init writes here rather than into the main file.
+    if [ -d /etc/network/interfaces.d ] \
+       && grep -rq "cloud-init" /etc/network/interfaces.d/ 2>/dev/null; then
         return 1
     fi
     return 0
 }
 
-# _user_snaps : names of snaps installed by the USER, one per line.
-# Base ones (snapd, core*, bare, lxd) are filtered out: they ship with the image and by
-# themselves do not mean the user has anything to lose. Read the files rather than the
-# output of 'snap list': the snap binary may already be gone from an earlier run, and the
-# list would silently come back empty.
+# _snaps_dir_readable : 0 if the snap directory exists and is readable.
+# An empty answer from _user_snaps with an unreadable directory means "could not look",
+# not "no snaps". Confusing the two is not allowed: the default of a destructive question
+# depends on it.
+_snaps_dir_readable() {
+    [ -d /var/lib/snapd/snaps ] && [ -r /var/lib/snapd/snaps ]
+}
+
+# _user_snaps : names of snaps installed by the USER, one per line, WITHOUT duplicates.
+# The directory holds one file per RETAINED REVISION, so without the dedup a snap that
+# has ever been refreshed would appear in the warning several times in a row.
+# Only snaps that carry no user data count as base ones: snapd, bare and core*.
+# 🔴 lxd is NOT filtered: LXD from a snap keeps its containers and their data in
+# /var/snap/lxd, and calling such a host "nothing to lose" means wiping them silently.
+# ⚠️ Read the files rather than the output of 'snap list': the snap binary may already be
+# gone from an earlier run, and the list would silently come back empty.
 _user_snaps() {
     local f name
     for f in /var/lib/snapd/snaps/*.snap; do
         [ -e "$f" ] || continue
         name="${f##*/}"; name="${name%_*.snap}"
         case "$name" in
-            snapd|bare|lxd|core|core[0-9][0-9]) continue ;;
+            snapd|bare|core|core[0-9]*) continue ;;
         esac
         printf '%s\n' "$name"
-    done
+    done | sort -u
 }
 
-# Consent for removing system packages (issue #213). Asked at STEP 0, together with the other
-# questions: step 1 must stay non-interactive because it runs after a reboot. The answer is
-# saved into awgsetup_cfg.init, otherwise it would be lost across the reboot.
+# Consent for removing system packages (issue #213). Asked at STEP 0, where the other
+# questions already live: everything after that should run without a human present.
+# The answer is stored in awgsetup_cfg.init so a repeated or resumed run does not ask
+# again and, more importantly, does not read silence as consent.
 configure_package_cleanup() {
-    # An explicit flag and --no-tweaks already decided for the user - do not ask again.
-    [[ "$CLI_KEEP_PACKAGES" -eq 1 || "$NO_TWEAKS" -eq 1 ]] && return 0
+    [[ "$NO_TWEAKS" -eq 1 ]] && return 0
+    # The decision already exists: a command line flag or a record from an earlier run.
+    [[ -n "$KEEP_PACKAGES" ]] && return 0
+
+    if ! _dpkg_usable; then
+        KEEP_PACKAGES=1
+        log_warn "Could not query dpkg, so I will leave the system packages alone."
+        return 0
+    fi
 
     local installed=() pkg
     for pkg in $(_cleanup_package_list); do
@@ -1457,37 +1507,79 @@ configure_package_cleanup() {
     if _cloud_init_removable; then
         installed+=("cloud-init")
     fi
-    [ ${#installed[@]} -eq 0 ] && return 0
 
-    local snaps
-    snaps="$(_user_snaps | tr '\n' ' ')"; snaps="${snaps% }"
+    # The snap directories are wiped by a separate rm -rf that does NOT depend on snapd
+    # making the list above: the package may sit in 'deinstall ok config-files' state.
+    local snap_dirs=0
+    if [[ "${OS_ID:-}" == "ubuntu" ]] && { [ -d /snap ] || [ -d /var/snap ]; }; then
+        snap_dirs=1
+    fi
+
+    if [ ${#installed[@]} -eq 0 ] && [ "$snap_dirs" -eq 0 ]; then
+        KEEP_PACKAGES=0
+        return 0
+    fi
+
+    # Look for the user snaps only when something threatens them: on Debian snapd is not in the list.
+    local snaps="" snaps_unknown=0
+    if [ "$snap_dirs" -eq 1 ] || [[ " ${installed[*]} " == *" snapd "* ]]; then
+        if _snaps_dir_readable; then
+            snaps="$(_user_snaps | tr '\n' ' ')"; snaps="${snaps% }"
+        else
+            snaps_unknown=1
+        fi
+    fi
 
     log_warn "The server is being set up as single-purpose, so these packages will be removed:"
-    log_warn "  ${installed[*]}"
-    if [[ " ${installed[*]} " == *" snapd "* ]]; then
-        log_warn "  Removing snapd takes the installed snaps and their data in /var/snap with it."
-        [[ -n "$snaps" ]] && log_warn "  Your snaps that would be lost: $snaps"
+    [ ${#installed[@]} -gt 0 ] && log_warn "  ${installed[*]}"
+    if [ "$snap_dirs" -eq 1 ]; then
+        log_warn "  Plus the /snap, /var/snap and /var/lib/snapd directories with every snap and its data."
+        if [ "$snaps_unknown" -eq 1 ]; then
+            log_warn "  Could not check what you have installed: the snap directory is not accessible."
+        elif [[ -n "$snaps" ]]; then
+            log_warn "  Your snaps that would be lost: $snaps"
+        fi
     fi
     if [[ " ${installed[*]} " == *" cloud-init "* ]]; then
         log_warn "  Removing cloud-init also wipes the /etc/cloud and /var/lib/cloud directories."
     fi
 
     if [[ "$AUTO_YES" -eq 1 ]]; then
+        KEEP_PACKAGES=0
         log "Removal auto-confirmed (--yes). To keep the packages: --keep-packages."
         return 0
     fi
 
-    # The default depends on whether there is anything to lose: with your own snaps, keep.
+    # Something to lose means removing ONLY on an explicit yes (an allowlist, like every
+    # other destructive question in the script). The earlier version tested the answer for
+    # the letter n, so "no thanks", a stray key or any answer in another language meant REMOVE.
+    local risky=0
+    if [[ -n "$snaps" ]] || [ "$snaps_unknown" -eq 1 ]; then risky=1; fi
+
     local answer="" hint="[Y/n]"
-    [[ -n "$snaps" ]] && hint="[y/N]"
-    read -rp "Remove these packages? $hint: " answer < /dev/tty
-    if [[ -z "$answer" ]]; then
-        [[ -n "$snaps" ]] && KEEP_PACKAGES=1
-    elif [[ "$answer" =~ ^[[:space:]]*[Nn] ]]; then
+    [ "$risky" -eq 1 ] && hint="[y/N]"
+    if ! read -rp "Remove these packages? $hint: " answer < /dev/tty; then
         KEEP_PACKAGES=1
+        log_warn "No terminal available, could not ask - keeping the packages."
+        return 0
     fi
+    # Trim spaces and CR: an answer from putty arrives with a trailing \r.
+    answer="$(printf '%s' "$answer" | tr -d '[:space:]')"
+
+    if [ "$risky" -eq 1 ]; then
+        case "$answer" in
+            [Yy]|[Yy][Ee][Ss]|да|Да|ДА|д|Д) KEEP_PACKAGES=0 ;;
+            *)                              KEEP_PACKAGES=1 ;;
+        esac
+    else
+        case "$answer" in
+            [Nn]|[Nn][Oo]|нет|Нет|НЕТ|не|Не|н|Н) KEEP_PACKAGES=1 ;;
+            *)                                    KEEP_PACKAGES=0 ;;
+        esac
+    fi
+
     if [[ "$KEEP_PACKAGES" -eq 1 ]]; then
-        log "Packages are kept. The firewall, Fail2Ban and the optimization still apply."
+        log "Keeping the packages. The firewall, Fail2Ban and the optimization stay in place."
     fi
     return 0
 }
@@ -1545,7 +1637,7 @@ cleanup_system() {
     fi
 
     # Cleaning snap artifacts (Ubuntu only)
-    if [[ "${OS_ID:-ubuntu}" == "ubuntu" && -d /snap ]]; then
+    if [[ "${OS_ID:-}" == "ubuntu" && -d /snap ]]; then
         log "Cleaning snap artifacts..."
         rm -rf /snap /var/snap /var/lib/snapd 2>/dev/null || log_warn "snap cleanup error"
     fi
@@ -2666,7 +2758,6 @@ initialize_setup() {
         validate_subnet "$AWG_TUNNEL_SUBNET"
         if [[ "$DISABLE_IPV6" == "default" ]]; then configure_ipv6; fi
         if [[ "$ALLOWED_IPS_MODE" == "default" ]]; then configure_routing_mode; fi
-        configure_package_cleanup
     else
         log "Using settings from $CONFIG_FILE."
         if [[ "$ALLOWED_IPS_MODE" == "3" ]] && [[ -n "$ALLOWED_IPS" ]]; then
@@ -2675,6 +2766,19 @@ initialize_setup() {
             fi
         fi
     fi
+
+    # Consent for removing system packages is asked OUTSIDE the branching above.
+    # The call used to sit in the "no config" branch only, so a --force reinstall on an
+    # already configured server walked straight past the question: step99 deletes the
+    # state file, so a repeated run starts at step 1 and reaches the cleanup again. Configs
+    # written before 5.27.0 have no KEEP_PACKAGES entry at all, and its absence read as
+    # consent, which reproduced issue #213 on the very version that fixes it.
+    # The function itself returns immediately when the decision is already made.
+    if [[ -n "$KEEP_PACKAGES" && "$KEEP_PACKAGES" != "0" && "$KEEP_PACKAGES" != "1" ]]; then
+        log_warn "KEEP_PACKAGES in $CONFIG_FILE has an invalid value '$KEEP_PACKAGES' - assuming the packages must be kept."
+        KEEP_PACKAGES=1
+    fi
+    configure_package_cleanup
 
     # Changing the subnet with live peers is forbidden - check before the
     # init file is saved and before any on-disk changes (AWG_TUNNEL_SUBNET
@@ -2790,7 +2894,7 @@ export AWG_I4='${AWG_I4:-}'
 export AWG_I5='${AWG_I5:-}'
 export AWG_PRESET='${AWG_PRESET:-default}'
 export NO_TWEAKS=${NO_TWEAKS}
-export KEEP_PACKAGES=${KEEP_PACKAGES}
+export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
 export NO_CPS=${NO_CPS}
 export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
 export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
@@ -2903,8 +3007,12 @@ step1_update_and_optimize() {
     # Clean unnecessary components (BEFORE update to save bandwidth/time)
     if [[ "$NO_TWEAKS" -eq 1 ]]; then
         log "Skipping system cleanup (--no-tweaks)."
-    elif [[ "$KEEP_PACKAGES" -eq 1 ]]; then
-        log "Skipping system cleanup: packages are kept by your choice (--keep-packages)."
+    elif [[ "$KEEP_PACKAGES" != "0" ]]; then
+        # Not a strict zero means either an explicit refusal or an unknown decision (empty
+        # or mangled value from a hand-edited config). Irreversible removal happens only on
+        # recorded consent; everything else is treated as "leave it alone".
+        log "Skipping the system cleanup: the packages are kept."
+        [[ -z "$KEEP_PACKAGES" ]]             && log_warn "No consent for removing system packages is recorded - removing nothing."
     else
         cleanup_system
     fi

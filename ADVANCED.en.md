@@ -518,7 +518,9 @@ The installer automatically optimizes the server:
 
 🔴 **Removing `snapd` takes the installed snaps and their data in `/var/snap` with it.** The package is purged, and right after that the installer removes the `/snap`, `/var/snap` and `/var/lib/snapd` directories, so the snaps go either way. There is no undo: `rm -rf` does not roll back, `snapd` itself comes back with `apt install snapd`, but the snaps have to be installed again and the data under `/var/snap` only comes back from a backup. Home directories are not touched by the cleanup, so anything under `~/snap` stays where it is.
 
-Since v5.27.0 the installer asks for consent: at step 0 it prints the exact list of packages actually present on the system and warns about the snaps on a separate line. If it finds snaps you installed yourself (the base `snapd`, `core*`, `bare` and `lxd` do not count), it defaults to keeping them. When cloud-init is also due for removal, a separate line mentions the `/etc/cloud` and `/var/lib/cloud` directories. The answer is stored in `awgsetup_cfg.init` and survives the reboot between steps.
+Since v5.27.0 the installer asks for consent. At step 0, where the other questions live, it prints the packages actually present on the system, warns about the snap directories on a separate line and names the snaps you installed yourself. Only `snapd`, `bare` and `core*` count as base ones carrying no data of yours; `lxd` does NOT, because LXD from a snap keeps its containers in `/var/snap/lxd`. When cloud-init is also due for removal, a separate line mentions `/etc/cloud` and `/var/lib/cloud`.
+
+When there is something to lose, removal happens **only on explicit consent**: `y`, `yes` or `да` count as an answer, anything else means keep. Any failed check is read in favour of keeping as well - no terminal available, `dpkg` not answering, an unreadable snap directory. The answer is written to `awgsetup_cfg.init` so a repeated or resumed run does not ask again and does not read silence as consent: the cleanup runs only on recorded consent.
 
 There are two ways to opt out, and they are not equivalent:
 
@@ -1815,7 +1817,7 @@ The minimal working recipe for Debian 13 in a privileged LXC on Proxmox was shar
 
 * **LXC containers are not supported by my installer.** AmneziaWG requires a kernel module (DKMS). LXC shares the host kernel — loading a custom module from inside a container is not possible. Options: a full VM (KVM/QEMU) or a bare-metal server for a kernel-native setup, or the `amneziawg-go` userspace implementation inside LXC (see [LXC / Docker via amneziawg-go](#lxc-userspace-adv)).
 
-* **Assumes a dedicated server.** The script configures UFW, Fail2Ban, sysctl and optimizes the system for VPN. On servers running other services, use `--no-tweaks` to skip hardening.
+* **Assumes a dedicated server.** The script configures UFW, Fail2Ban, sysctl and optimizes the system for VPN. On servers running other services, use `--no-tweaks` to skip hardening, or `--keep-packages` if the only problem is the package removal and you still want the firewall and the optimization.
 
 * **Single AWG protocol version per server.** All clients share the same obfuscation parameters. You cannot have some clients on AWG 1.x and others on 2.0 simultaneously.
 

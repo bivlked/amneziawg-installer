@@ -48,7 +48,7 @@ AWG2_PIN_TAG="v1.0.20260725"
 AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
 
 # Флаги CLI
-UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; KEEP_PACKAGES=0
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""
@@ -1381,51 +1381,101 @@ detect_hardware() {
 
 # _cleanup_package_list : имена пакетов, которые cleanup_system удалит на этой ОС.
 # Один источник для очистки и для вопроса на шаге 0 - иначе они разъедутся.
+# ⚠️ У OS_ID НЕТ дефолта намеренно: неизвестная ОС не должна получать разрушительный
+# суперсет (snapd, lxd-agent-loader и снос каталогов снапов). Пусто = считаем не Ubuntu.
 _cleanup_package_list() {
     local list="modemmanager networkd-dispatcher unattended-upgrades packagekit udisks2"
-    [[ "${OS_ID:-ubuntu}" == "ubuntu" ]] && list="snapd $list lxd-agent-loader"
+    [[ "${OS_ID:-}" == "ubuntu" ]] && list="snapd $list lxd-agent-loader"
     printf '%s' "$list"
+}
+
+# _dpkg_usable : 0, если ответам dpkg можно верить.
+# Отличить "пакет не установлен" от "база dpkg сломана" по коду возврата НЕЛЬЗЯ:
+# замер на Ubuntu 24.04 дал rc=1 в обоих случаях. Поэтому спрашиваем про заведомо
+# установленный пакет: не нашёлся и он - значит сломан сам механизм, а не пакеты.
+# Без этой проверки пустой список молча пропустил бы вопрос, а шаг 1 позже отработал
+# бы уже с исправным dpkg и снёс то, о чём не спрашивали.
+_dpkg_usable() {
+    command -v dpkg-query >/dev/null 2>&1 || return 1
+    dpkg-query -W -f='${Status}' dpkg 2>/dev/null | grep -q "ok installed"
 }
 
 # _cloud_init_removable : 0, если установленный cloud-init действительно будет удалён.
 # cloud-init стоит отдельно от списка выше: его удаляют только когда он НЕ управляет
-# сетью. Ответ на этот вопрос нужен в двух местах - в самой очистке и в вопросе на
-# шаге 0, поэтому он живёт здесь. Иначе согласие спрашивалось бы про один набор, а
-# удалялся другой, то есть ровно та претензия, из-за которой заведён issue #213.
+# сетью. Ответ нужен в двух местах - в самой очистке и в вопросе на шаге 0, поэтому он
+# живёт здесь. Иначе согласие спрашивалось бы про один набор, а удалялся другой, то есть
+# ровно та претензия, из-за которой заведён issue #213.
+# 🔴 Любая НЕудача проверки означает "управляет сетью, не трогаем". Цена ошибок
+# несимметрична: лишний оставленный cloud-init стоит десятков мегабайт, а удалённый по
+# ошибке - потери сети после перезагрузки на удалённом сервере. Поэтому от ls по маске
+# здесь отказались: он отдаёт rc=2 и когда каталога нет, и когда маска не совпала.
 _cloud_init_removable() {
     dpkg-query -W -f='${Status}' cloud-init 2>/dev/null | grep -q "ok installed" || return 1
-    if ls /etc/netplan/*cloud-init* &>/dev/null 2>&1; then
+    local f
+    if [ -d /etc/netplan ]; then
+        [ -r /etc/netplan ] || return 1
+        for f in /etc/netplan/*cloud-init*; do
+            [ -e "$f" ] && return 1
+        done
+        grep -rq "cloud-init" /etc/netplan/ 2>/dev/null
+        case $? in
+            0) return 1 ;;
+            1) : ;;
+            *) return 1 ;;
+        esac
+    fi
+    if [ -f /etc/network/interfaces ] && grep -q "cloud-init" /etc/network/interfaces 2>/dev/null; then
         return 1
-    elif grep -rq "cloud-init" /etc/netplan/ 2>/dev/null; then
-        return 1
-    elif [[ -f /etc/network/interfaces ]] && grep -q "cloud-init" /etc/network/interfaces 2>/dev/null; then
+    fi
+    # На Debian cloud-init пишет именно сюда, а не в основной файл.
+    if [ -d /etc/network/interfaces.d ] \
+       && grep -rq "cloud-init" /etc/network/interfaces.d/ 2>/dev/null; then
         return 1
     fi
     return 0
 }
 
-# _user_snaps : имена снапов, поставленных ПОЛЬЗОВАТЕЛЕМ, по одному в строке.
-# Базовые (snapd, core*, bare, lxd) отсеиваются: они приезжают с образом, и сами по себе
-# не значат, что человеку есть что терять. ⚠️ Читаем файлы, а не вывод 'snap list': бинарь
-# snap к этому моменту мог быть уже снесён прошлым прогоном, и список молча оказался бы пуст.
+# _snaps_dir_readable : 0, если каталог снапов есть и читается.
+# Пустой ответ _user_snaps при нечитаемом каталоге означает "не смог посмотреть", а не
+# "снапов нет". Путать эти случаи нельзя: от них зависит дефолт разрушительного вопроса.
+_snaps_dir_readable() {
+    [ -d /var/lib/snapd/snaps ] && [ -r /var/lib/snapd/snaps ]
+}
+
+# _user_snaps : имена снапов, поставленных ПОЛЬЗОВАТЕЛЕМ, по одному в строке, БЕЗ ПОВТОРОВ.
+# В каталоге лежит по файлу на КАЖДУЮ удержанную ревизию, поэтому без dedup обновлённый
+# однажды снап попал бы в предупреждение несколько раз подряд.
+# Базовыми считаем только те, что не несут пользовательских данных: snapd, bare и core*.
+# 🔴 lxd НЕ фильтруем: LXD из снапа держит контейнеры и их данные в /var/snap/lxd, и
+# назвать такой хост "терять нечего" значит молча снести их.
+# ⚠️ Читаем файлы, а не вывод 'snap list': бинарь snap к этому моменту мог быть уже снесён
+# прошлым прогоном, и список молча оказался бы пуст.
 _user_snaps() {
     local f name
     for f in /var/lib/snapd/snaps/*.snap; do
         [ -e "$f" ] || continue
         name="${f##*/}"; name="${name%_*.snap}"
         case "$name" in
-            snapd|bare|lxd|core|core[0-9][0-9]) continue ;;
+            snapd|bare|core|core[0-9]*) continue ;;
         esac
         printf '%s\n' "$name"
-    done
+    done | sort -u
 }
 
-# Согласие на удаление системных пакетов (issue #213). Спрашиваем на ШАГЕ 0, вместе с
-# остальными вопросами: шаг 1 должен остаться неинтерактивным, он идёт после перезагрузки.
-# Ответ сохраняется в awgsetup_cfg.init, иначе после перезагрузки он потерялся бы.
+# Согласие на удаление системных пакетов (issue #213). Спрашиваем на ШАГЕ 0, где и так
+# задаются остальные вопросы: дальше установка должна идти без участия человека.
+# Ответ сохраняется в awgsetup_cfg.init, чтобы повторный или возобновлённый запуск не
+# спрашивал заново и, главное, не считал молчание согласием.
 configure_package_cleanup() {
-    # Явный флаг и --no-tweaks уже решили за пользователя - не переспрашиваем.
-    [[ "$CLI_KEEP_PACKAGES" -eq 1 || "$NO_TWEAKS" -eq 1 ]] && return 0
+    [[ "$NO_TWEAKS" -eq 1 ]] && return 0
+    # Решение уже есть: флаг командной строки или запись из прошлого запуска.
+    [[ -n "$KEEP_PACKAGES" ]] && return 0
+
+    if ! _dpkg_usable; then
+        KEEP_PACKAGES=1
+        log_warn "Опросить dpkg не удалось, поэтому системные пакеты трогать не буду."
+        return 0
+    fi
 
     local installed=() pkg
     for pkg in $(_cleanup_package_list); do
@@ -1439,35 +1489,77 @@ configure_package_cleanup() {
     if _cloud_init_removable; then
         installed+=("cloud-init")
     fi
-    [ ${#installed[@]} -eq 0 ] && return 0
 
-    local snaps
-    snaps="$(_user_snaps | tr '\n' ' ')"; snaps="${snaps% }"
+    # Каталоги снапов сносит отдельный rm -rf, и он НЕ зависит от того, попал ли snapd
+    # в список выше: пакет мог остаться в состоянии 'deinstall ok config-files'.
+    local snap_dirs=0
+    if [[ "${OS_ID:-}" == "ubuntu" ]] && { [ -d /snap ] || [ -d /var/snap ]; }; then
+        snap_dirs=1
+    fi
+
+    if [ ${#installed[@]} -eq 0 ] && [ "$snap_dirs" -eq 0 ]; then
+        KEEP_PACKAGES=0
+        return 0
+    fi
+
+    # Свои снапы ищем только когда им что-то грозит: на Debian snapd в список не входит.
+    local snaps="" snaps_unknown=0
+    if [ "$snap_dirs" -eq 1 ] || [[ " ${installed[*]} " == *" snapd "* ]]; then
+        if _snaps_dir_readable; then
+            snaps="$(_user_snaps | tr '\n' ' ')"; snaps="${snaps% }"
+        else
+            snaps_unknown=1
+        fi
+    fi
 
     log_warn "Сервер настраивается как однозадачный, поэтому будут удалены пакеты:"
-    log_warn "  ${installed[*]}"
-    if [[ " ${installed[*]} " == *" snapd "* ]]; then
-        log_warn "  Вместе со snapd уедут установленные снапы и их данные в /var/snap."
-        [[ -n "$snaps" ]] && log_warn "  Ваши снапы, которые будут потеряны: $snaps"
+    [ ${#installed[@]} -gt 0 ] && log_warn "  ${installed[*]}"
+    if [ "$snap_dirs" -eq 1 ]; then
+        log_warn "  Плюс каталоги /snap, /var/snap и /var/lib/snapd со всеми снапами и их данными."
+        if [ "$snaps_unknown" -eq 1 ]; then
+            log_warn "  Что именно у вас установлено, проверить не удалось: каталог снапов недоступен."
+        elif [[ -n "$snaps" ]]; then
+            log_warn "  Ваши снапы, которые будут потеряны: $snaps"
+        fi
     fi
     if [[ " ${installed[*]} " == *" cloud-init "* ]]; then
         log_warn "  Вместе с cloud-init удаляются каталоги /etc/cloud и /var/lib/cloud."
     fi
 
     if [[ "$AUTO_YES" -eq 1 ]]; then
+        KEEP_PACKAGES=0
         log "Удаление подтверждено автоматически (--yes). Сохранить пакеты: --keep-packages."
         return 0
     fi
 
-    # Дефолт зависит от того, есть ли что терять: со своими снапами - сохранить.
+    # Есть что терять - удаляем ТОЛЬКО по явному "да" (allowlist, как у остальных
+    # разрушительных вопросов скрипта). Прежний вариант проверял ответ на букву n, и
+    # тогда "нет", "не", "ok" и любая случайная клавиша означали УДАЛИТЬ.
+    local risky=0
+    if [[ -n "$snaps" ]] || [ "$snaps_unknown" -eq 1 ]; then risky=1; fi
+
     local answer="" hint="[Y/n]"
-    [[ -n "$snaps" ]] && hint="[y/N]"
-    read -rp "Удалить эти пакеты? $hint: " answer < /dev/tty
-    if [[ -z "$answer" ]]; then
-        [[ -n "$snaps" ]] && KEEP_PACKAGES=1
-    elif [[ "$answer" =~ ^[[:space:]]*[Nn] ]]; then
+    [ "$risky" -eq 1 ] && hint="[y/N]"
+    if ! read -rp "Удалить эти пакеты? $hint: " answer < /dev/tty; then
         KEEP_PACKAGES=1
+        log_warn "Терминал недоступен, вопрос задать не смог - пакеты сохраняю."
+        return 0
     fi
+    # Обрезаем пробелы и CR: ответ из putty приходит с \r.
+    answer="$(printf '%s' "$answer" | tr -d '[:space:]')"
+
+    if [ "$risky" -eq 1 ]; then
+        case "$answer" in
+            [Yy]|[Yy][Ee][Ss]|да|Да|ДА|д|Д) KEEP_PACKAGES=0 ;;
+            *)                              KEEP_PACKAGES=1 ;;
+        esac
+    else
+        case "$answer" in
+            [Nn]|[Nn][Oo]|нет|Нет|НЕТ|не|Не|н|Н) KEEP_PACKAGES=1 ;;
+            *)                                    KEEP_PACKAGES=0 ;;
+        esac
+    fi
+
     if [[ "$KEEP_PACKAGES" -eq 1 ]]; then
         log "Пакеты сохраняются. Фаервол, Fail2Ban и оптимизация при этом остаются."
     fi
@@ -1527,7 +1619,7 @@ cleanup_system() {
     fi
 
     # Очистка snap артефактов (только Ubuntu)
-    if [[ "${OS_ID:-ubuntu}" == "ubuntu" && -d /snap ]]; then
+    if [[ "${OS_ID:-}" == "ubuntu" && -d /snap ]]; then
         log "Очистка snap артефактов..."
         rm -rf /snap /var/snap /var/lib/snapd 2>/dev/null || log_warn "Ошибка очистки snap"
     fi
@@ -2639,7 +2731,6 @@ initialize_setup() {
         validate_subnet "$AWG_TUNNEL_SUBNET"
         if [[ "$DISABLE_IPV6" == "default" ]]; then configure_ipv6; fi
         if [[ "$ALLOWED_IPS_MODE" == "default" ]]; then configure_routing_mode; fi
-        configure_package_cleanup
     else
         log "Используются настройки из $CONFIG_FILE."
         if [[ "$ALLOWED_IPS_MODE" == "3" ]] && [[ -n "$ALLOWED_IPS" ]]; then
@@ -2648,6 +2739,19 @@ initialize_setup() {
             fi
         fi
     fi
+
+    # Согласие на удаление системных пакетов спрашиваем ВНЕ ветвления выше.
+    # Раньше вызов стоял только в ветке "конфига нет", и переустановка с --force на
+    # уже настроенном сервере проходила мимо вопроса: step99 удаляет файл состояния,
+    # поэтому повторный запуск начинается с шага 1 и снова доходит до очистки. У
+    # конфигов версий до 5.27.0 записи KEEP_PACKAGES нет вовсе, и она читалась как
+    # согласие - то есть issue #213 воспроизводился на версии, которая его чинит.
+    # Сама функция выходит сразу, если решение уже принято.
+    if [[ -n "$KEEP_PACKAGES" && "$KEEP_PACKAGES" != "0" && "$KEEP_PACKAGES" != "1" ]]; then
+        log_warn "В $CONFIG_FILE у KEEP_PACKAGES недопустимое значение '$KEEP_PACKAGES' - считаю, что пакеты надо сохранить."
+        KEEP_PACKAGES=1
+    fi
+    configure_package_cleanup
 
     # Смена подсети при живых пирах запрещена - проверка до сохранения
     # init-файла и любых изменений на диске (AWG_TUNNEL_SUBNET финален).
@@ -2762,7 +2866,7 @@ export AWG_I4='${AWG_I4:-}'
 export AWG_I5='${AWG_I5:-}'
 export AWG_PRESET='${AWG_PRESET:-default}'
 export NO_TWEAKS=${NO_TWEAKS}
-export KEEP_PACKAGES=${KEEP_PACKAGES}
+export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
 export NO_CPS=${NO_CPS}
 export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
 export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
@@ -2875,8 +2979,13 @@ step1_update_and_optimize() {
     # Очистка ненужных компонентов (ДО обновления для экономии трафика/времени)
     if [[ "$NO_TWEAKS" -eq 1 ]]; then
         log "Пропуск очистки системы (--no-tweaks)."
-    elif [[ "$KEEP_PACKAGES" -eq 1 ]]; then
-        log "Пропуск очистки системы: пакеты сохраняются по вашему выбору (--keep-packages)."
+    elif [[ "$KEEP_PACKAGES" != "0" ]]; then
+        # Не строгий ноль - значит либо явный отказ, либо решение неизвестно (пустое или
+        # испорченное значение из отредактированного руками конфига). Необратимое удаление
+        # делаем только по записанному согласию, всё остальное трактуем как "не трогать".
+        log "Пропуск очистки системы: пакеты сохраняются."
+        [[ -z "$KEEP_PACKAGES" ]] \
+            && log_warn "Согласие на удаление системных пакетов не записано - ничего не удаляю."
     else
         cleanup_system
     fi
