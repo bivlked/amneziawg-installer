@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" font-family="Arial, Helvetica, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0e1116"/>
+      <stop offset="1" stop-color="#11202a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.82" cy="0.28" r="0.5">
+      <stop offset="0" stop-color="#3ddc97" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#3ddc97" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <rect x="0" y="0" width="10" height="630" fill="#3ddc97"/>
+  <g transform="translate(840 110) scale(13)" opacity="0.10">
+    <path d="M16 6l8 4v6c0 5-3.4 8.2-8 10-4.6-1.8-8-5-8-10v-6l8-4z" fill="#3ddc97"/>
+  </g>
+  <g transform="translate(80 92)">
+    <rect width="46" height="46" rx="10" fill="#3ddc97"/>
+    <g transform="translate(7 7) scale(1)">
+      <path d="M16 6l8 4v6c0 5-3.4 8.2-8 10-4.6-1.8-8-5-8-10v-6l8-4z" fill="#07120c"/>
+    </g>
+    <text x="62" y="31" font-size="26" font-weight="700" fill="#e6edf3">amneziawg-installer</text>
+  </g>
+  <text x="80" y="258" font-size="58" font-weight="800" fill="#e6edf3" letter-spacing="-1">Какая версия AmneziaWG</text>
+  <text x="80" y="334" font-size="58" font-weight="800" fill="#3ddc97" letter-spacing="-1">стоит на вашем сервере</text>
+  <text x="80" y="404" font-size="29" fill="#9aa7b4">Установщик сам выбирает линию протокола под ядро</text>
+  <text x="80" y="444" font-size="29" fill="#9aa7b4">и архитектуру, а конфиги клиентов работают в обоих случаях.</text>
+  <g transform="translate(80 498)" font-size="24">
+    <rect width="360" height="56" rx="12" fill="#10261c" stroke="#2bbd80"/>
+    <text x="180" y="36" text-anchor="middle" fill="#3ddc97" font-weight="700">Проверка одной командой</text>
+    <rect x="382" width="290" height="56" rx="12" fill="#1b222c" stroke="#2a323d"/>
+    <text x="527" y="36" text-anchor="middle" fill="#e6edf3">Ничего не включать</text>
+    <rect x="694" width="340" height="56" rx="12" fill="#1b222c" stroke="#2a323d"/>
+    <text x="864" y="36" text-anchor="middle" fill="#e6edf3">Обновляться не обязательно</text>
+  </g>
+  <text x="80" y="592" font-size="22" fill="#9aa7b4">MIT licensed  &#183;  github.com/bivlked/amneziawg-installer</text>
+</svg>
