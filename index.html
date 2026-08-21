@@ -75,6 +75,7 @@
   "@context": "https://schema.org",
   "@type": "FAQPage",
   "mainEntity": [
+    { "@type": "Question", "name": "What is AmneziaWG?", "acceptedAnswer": { "@type": "Answer", "text": "A WireGuard fork from the Amnezia team. Plain WireGuard is recognisable from its very first packet, because that packet carries a fixed signature. AmneziaWG removes it: it sends separate junk packets, pads the protocol messages, replaces the fixed identifiers with values drawn from configurable ranges, and can hide the handshake behind an I1 concealment packet. That makes the connection harder to fingerprint, but it is no guarantee against every operator. The installer sets such a server up as a kernel module, so the throughput cost stays minimal." } },
     { "@type": "Question", "name": "Is it free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. The installer is open source under the MIT license. You only pay for the VPS, which starts around 3 to 5 dollars a month." } },
     { "@type": "Question", "name": "Do I need Linux experience?", "acceptedAnswer": { "@type": "Answer", "text": "No. You copy one command into an SSH session on a clean VPS. The script handles the kernel module, firewall, forwarding, and the first client, then prints a QR code and a vpn link." } },
     { "@type": "Question", "name": "Which VPS should I pick?", "acceptedAnswer": { "@type": "Answer", "text": "A clean Ubuntu or Debian VPS with 1 vCPU and at least 512 MB of RAM. It is meant for a dedicated VPS, not a home router or shared hosting." } },
@@ -257,6 +258,7 @@
   <div class="wrap">
     <h2>FAQ</h2>
     <div class="faq">
+      <details><summary>What is AmneziaWG?</summary><div class="answer">A WireGuard fork from the Amnezia team. Plain WireGuard is recognisable from its very first packet, because that packet carries a fixed signature. AmneziaWG removes it: it sends separate junk packets, pads the protocol messages, replaces the fixed identifiers with values drawn from configurable ranges, and can hide the handshake behind an I1 concealment packet. That makes the connection harder to fingerprint, but it is no guarantee against every operator. The installer sets such a server up as a kernel module, so the throughput cost stays minimal.</div></details>
       <details><summary>Is it free?</summary><div class="answer">Yes. The installer is open source under the MIT license. You only pay for the VPS, which starts around 3 to 5 dollars a month.</div></details>
       <details><summary>Do I need Linux experience?</summary><div class="answer">No. You copy one command into an SSH session on a clean VPS. The script handles the kernel module, firewall, forwarding, and the first client, then prints a QR code and a vpn link.</div></details>
       <details><summary>Which VPS should I pick?</summary><div class="answer">A clean Ubuntu or Debian VPS with 1 vCPU and at least 512 MB of RAM. It is meant for a dedicated VPS, not a home router or shared hosting.</div></details>
