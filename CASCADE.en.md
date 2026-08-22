@@ -168,7 +168,7 @@ TABLE_ID=100                            # routing table number for "to the exit"
 FWMARK="0x1"                            # mark for traffic leaving via awg1
 RULE_PRIO=10000                        # ip rule priority (uncommon, to avoid collisions)
 RU_ZONE_URL="https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone"
-RU_ZONE_FALLBACK_URL="https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.27.0/cascade/ru.zone"
+RU_ZONE_FALLBACK_URL="https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.27.1/cascade/ru.zone"
 AWG_DIR="/root/awg"
 EXTRA_RU_NETS=""                        # your own addresses/networks to route through Russia (space
                                         # separated), e.g. "203.0.113.7 198.51.100.0/24". Useful for

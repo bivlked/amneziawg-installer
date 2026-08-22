@@ -12,6 +12,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.27.1] - 2026-08-22
+
+**v5.27.1** - the `AllowedIPs` and `DNS` lists no longer lose the spaces after commas, and configs damaged by earlier versions are repaired by running `regen` again.
+
+### Fixed
+
+- **`regen` and the `vpn://` link silently collapsed the lists.** The installer writes `AllowedIPs` and `DNS` with a space after each comma, but reading those values stripped the spaces together with the carriage return: through `tr -d '[:space:]'` in `regenerate_client` and through `tr -d ' \r'` in the `vpn://` builder. The value read back was written straight into the config, so the very first `regen` turned `1.0.0.0/8, 2.0.0.0/7` into `1.0.0.0/8,2.0.0.0/7` and that form then survived every later reissue. The difference is invisible to the eye, and in the default "Amnezia list + DNS" mode it covers 34 entries. Both paths now normalise the list to the canonical `a, b, c` form instead of stripping spaces, so **a repeated `regen` not only preserves the format but also restores it in configs damaged by earlier versions**. The carriage return is still removed: on configs with CRLF line endings it otherwise stuck to the last element of the list and broke the JSON inside the link. Thanks to `@humowns` for the find and for checking the routes on his side ([discussion #38](https://github.com/bivlked/amneziawg-installer/discussions/38))
+- **`manage modify` stored the list exactly as it was typed.** The value was validated element by element but written verbatim, so `modify NAME AllowedIPs "a,b"` left a second, collapsed variant of the same list in the config. After the fix above it would have been preserved there for good, so `AllowedIPs` and `DNS` are now normalised here as well: all three paths (`add`, `regen`, `modify`) produce the same format
+- **Parsing `DNS` while building the link left a leading space.** The second address was taken by cutting at the first comma, which with the canonical `, ` separator would have put a value with a leading space straight into the JSON field. The parsing was rewritten element by element, trimming each one
+
+### Added
+
+- `tests/test_allowedips_dns_spacing.bats` (16 checks): the canonical separator, repair of an already collapsed list, ragged spacing, stray commas, CRLF, protection against glob expansion, idempotence, single values left untouched, three functional `regenerate_client` runs and an RU/EN lockstep check. The expectation in `tests/test_issue170_route_mode_change.bats` was corrected too: it had pinned the collapsed list down as the norm
+
 ## [5.27.0] - 2026-08-14
 
 **v5.27.0** - the installer no longer wipes system packages silently: it prints the list, warns about the snaps and asks for consent, and there is now a dedicated flag to opt out.
@@ -1728,7 +1742,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.27.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.27.1...HEAD
+[5.27.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.27.0...v5.27.1
 [5.27.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.26.0...v5.27.0
 [5.26.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.25.0...v5.26.0
 [5.25.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.24.0...v5.25.0

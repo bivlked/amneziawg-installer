@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 2.0
 # Author: @bivlked
-# Version: 5.27.0
-# Date: 2026-08-14
+# Version: 5.27.1
+# Date: 2026-08-22
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -24,7 +24,7 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # drifted apart (one file updated, the other not) - otherwise the mismatch shows
 # up as a "command not found" somewhere random. Bumped with the other versions.
 # shellcheck disable=SC2034  # used by the manage script after sourcing
-AWG_COMMON_VERSION="5.27.0"
+AWG_COMMON_VERSION="5.27.1"
 
 # --- Auto-cleanup of temporary files ---
 # NOTE: trap is NOT set here to avoid overwriting the caller's trap handler.
@@ -1391,6 +1391,41 @@ EOF
     return 0
 }
 
+# Trim whitespace from both ends of a string.
+_awg_trim() {
+    local s="$1"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    printf '%s' "$s"
+}
+
+# Normalise a comma-separated list to the canonical "a, b, c" form.
+#
+# Why: the installer writes AllowedIPs and DNS with a space after each comma,
+# while reading them went through `tr -d '[:space:]'` and `tr -d ' \r'` - the
+# spaces were stripped along with CR, so regen wrote the collapsed list back
+# into .conf (D#38 @humowns). Here whitespace is trimmed per element only and
+# the separator is rebuilt canonically, so a repeated regen REPAIRS configs
+# that were already damaged instead of preserving the damage.
+#
+# CR is removed entirely: on CRLF configs it otherwise sticks to the last
+# element and breaks the JSON inside the vpn:// URI - exactly what the old
+# `tr` was there for.
+#
+# Split via `read -a` rather than `for x in $raw` so the value is not subject
+# to glob expansion.
+awg_normalize_csv() {
+    local raw="${1//$'\r'/}" out="" item
+    local -a parts
+    IFS=',' read -r -a parts <<< "$raw"
+    for item in "${parts[@]}"; do
+        item=$(_awg_trim "$item")
+        [[ -z "$item" ]] && continue
+        out+="${out:+, }$item"
+    done
+    printf '%s' "$out"
+}
+
 # Acceptable MTU range for AWG / WireGuard.
 # Lower bound 576 (classic IPv4 minimum), upper bound 9100 (just under jumbo).
 # Values outside the range are treated as invalid and dropped (fallback to 1280).
@@ -2302,9 +2337,13 @@ generate_vpn_uri() {
         # IPv4/hostname: addr:port
         endpoint="${raw_endpoint%:*}"
     fi
-    # tr -d ' \r' - strips spaces AND CR (on CRLF configs '.+' greedily
-    # captures \r into the value, which breaks JSON.allowed_ips).
-    allowed_ips=$(grep -oP 'AllowedIPs\s*=\s*\K.+' "$conf_file" | tr -d ' \r') || allowed_ips="0.0.0.0/0"
+    # Spaces after commas are KEPT: the old `tr -d ' \r'` handed the client a
+    # collapsed list inside the embedded config of the URI (D#38). CR is still
+    # removed, otherwise on CRLF configs '.+' greedily captures it into the
+    # value and breaks JSON.allowed_ips; awg_normalize_csv does that now.
+    allowed_ips=$(grep -oP 'AllowedIPs\s*=\s*\K.+' "$conf_file" | head -n1)
+    allowed_ips=$(awg_normalize_csv "$allowed_ips")
+    [[ -n "$allowed_ips" ]] || allowed_ips="0.0.0.0/0"
 
     # MTU/PersistentKeepalive/DNS from .conf - these can be changed via manage modify.
     # On vpn:// import the Amnezia client uses the structured inner-JSON fields
@@ -2314,9 +2353,13 @@ generate_vpn_uri() {
     local mtu keepalive dns_line dns1 dns2
     mtu=$(grep -oP '^MTU\s*=\s*\K[0-9]+' "$conf_file" | head -n1); mtu="${mtu:-1280}"
     keepalive=$(grep -oP '^PersistentKeepalive\s*=\s*\K[0-9]+' "$conf_file" | head -n1); keepalive="${keepalive:-33}"
-    dns_line=$(grep -oP '^DNS\s*=\s*\K.+' "$conf_file" | head -n1 | tr -d ' \r')
-    dns1="${dns_line%%,*}"; dns1="${dns1:-1.1.1.1}"
-    if [[ "$dns_line" == *,* ]]; then dns2="${dns_line#*,}"; dns2="${dns2%%,*}"; else dns2="$dns1"; fi
+    dns_line=$(grep -oP '^DNS\s*=\s*\K.+' "$conf_file" | head -n1)
+    # Split per element: the separator is now ", ", and the old "${dns_line#*,}"
+    # would have left a leading space right inside the dns2 JSON field.
+    local -a _dns_parts
+    IFS=',' read -r -a _dns_parts <<< "${dns_line//$'\r'/}"
+    dns1=$(_awg_trim "${_dns_parts[0]:-}"); dns1="${dns1:-1.1.1.1}"
+    dns2=$(_awg_trim "${_dns_parts[1]:-}"); dns2="${dns2:-$dns1}"
 
     local vpn_uri perl_err
     perl_err=$(awg_mktemp "$AWG_DIR") || { log_warn "mktemp failed - vpn:// URI not created for '$name'."; return 1; }
@@ -2801,11 +2844,13 @@ regenerate_client() {
     local current_dns="1.1.1.1, 1.0.0.1" current_keepalive="33" current_allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
     if [[ -f "$AWG_DIR/${name}.conf" ]]; then
         local _v
-        _v=$(sed -n 's/^DNS[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | tr -d '[:space:]')
+        # tr -d '[:space:]' stripped the spaces after commas here, so regen
+        # wrote the collapsed list into .conf (D#38). Normalise, do not strip.
+        _v=$(awg_normalize_csv "$(sed -n 's/^DNS[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | head -n1)")
         [[ -n "$_v" ]] && current_dns="$_v"
         _v=$(sed -n 's/^PersistentKeepalive[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | tr -d '[:space:]')
         [[ -n "$_v" ]] && current_keepalive="$_v"
-        _v=$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | tr -d '[:space:]')
+        _v=$(awg_normalize_csv "$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | head -n1)")
         [[ -n "$_v" ]] && current_allowed_ips="$_v"
         # v5.11.1: preserve PresharedKey through regen. Without this,
         # clients added with `manage add --psk` would lose their PSK on

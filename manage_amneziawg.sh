@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # Скрипт для управления пользователями (пирами) AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.27.0
-# Дата: 2026-08-14
+# Версия: 5.27.1
+# Дата: 2026-08-22
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.27.0"
+SCRIPT_VERSION="5.27.1"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -1110,6 +1110,14 @@ modify_client() {
         return 1
     fi
     log "Бэкап: $bak"
+
+    # Списочные параметры приводим к каноническому "a, b, c" (D#38): установщик
+    # пишет их с пробелом после запятой, и modify не должен оставлять в конфиге
+    # второй, слипшийся вариант того же значения. Валидация выше уже прошла
+    # поэлементно, так что нормализация ничего не портит.
+    case "$param" in
+        AllowedIPs|DNS) value=$(awg_normalize_csv "$value") ;;
+    esac
 
     local escaped_value
     escaped_value=$(escape_sed "$value")

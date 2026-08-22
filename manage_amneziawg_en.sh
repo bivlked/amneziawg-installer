@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 peer management script
 # Author: @bivlked
-# Version: 5.27.0
-# Date: 2026-08-14
+# Version: 5.27.1
+# Date: 2026-08-22
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.27.0"
+SCRIPT_VERSION="5.27.1"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -1124,6 +1124,15 @@ modify_client() {
         return 1
     fi
     log "Backup: $bak"
+
+    # List-valued parameters are normalised to the canonical "a, b, c" form
+    # (D#38): the installer writes them with a space after each comma, and
+    # modify must not leave a second, collapsed variant of the same value in
+    # the config. Validation above already ran per element, so normalising
+    # cannot corrupt anything.
+    case "$param" in
+        AllowedIPs|DNS) value=$(awg_normalize_csv "$value") ;;
+    esac
 
     local escaped_value
     escaped_value=$(escape_sed "$value")

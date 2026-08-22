@@ -3,8 +3,8 @@
 # ==============================================================================
 # Общая библиотека функций для AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.27.0
-# Дата: 2026-08-14
+# Версия: 5.27.1
+# Дата: 2026-08-22
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -24,7 +24,7 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # (обновили один файл, забыли второй) - иначе рассинхрон всплывает как
 # "command not found" в случайном месте. Бампается вместе с остальными версиями.
 # shellcheck disable=SC2034  # используется в manage-скрипте после source
-AWG_COMMON_VERSION="5.27.0"
+AWG_COMMON_VERSION="5.27.1"
 
 # --- Автоочистка временных файлов ---
 # ВАЖНО: trap НЕ устанавливается здесь, чтобы не перезаписать trap вызывающего скрипта.
@@ -1373,6 +1373,41 @@ EOF
     return 0
 }
 
+# Обрезка пробельных краёв строки.
+_awg_trim() {
+    local s="$1"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    printf '%s' "$s"
+}
+
+# Нормализация списка через запятую к каноническому виду "a, b, c".
+#
+# Зачем: установщик пишет AllowedIPs и DNS через запятую С ПРОБЕЛОМ, а чтение
+# этих значений шло через `tr -d '[:space:]'` и `tr -d ' \r'` - пробелы уходили
+# заодно с CR, и regen записывал в .conf уже слипшийся список (D#38 @humowns).
+# Здесь пробелы срезаются только по краям элементов, а разделитель ставится
+# канонически, поэтому повторный regen ЛЕЧИТ уже испорченные конфиги, а не
+# консервирует их.
+#
+# CR удаляется целиком: на CRLF-конфигах он иначе прилипает к последнему
+# элементу и ломает JSON в vpn:// URI - ровно то, ради чего в прежнем коде и
+# стоял `tr`.
+#
+# Разбор через `read -a`, а не `for x in $raw`, чтобы значение не попало под
+# glob-раскрутку.
+awg_normalize_csv() {
+    local raw="${1//$'\r'/}" out="" item
+    local -a parts
+    IFS=',' read -r -a parts <<< "$raw"
+    for item in "${parts[@]}"; do
+        item=$(_awg_trim "$item")
+        [[ -z "$item" ]] && continue
+        out+="${out:+, }$item"
+    done
+    printf '%s' "$out"
+}
+
 # Допустимый диапазон MTU для AWG / WireGuard.
 # Минимум 576 (классический минимум IPv4), максимум 9100 (verge на jumbo frame).
 # Значения вне диапазона трактуются как ошибочные и игнорируются (fallback к 1280).
@@ -2288,9 +2323,13 @@ generate_vpn_uri() {
         # IPv4/hostname: addr:port
         endpoint="${raw_endpoint%:*}"
     fi
-    # tr -d ' \r' - стирает пробелы И CR (на CRLF-конфигах '.+' жадно
-    # затягивает \r в значение, что ломает JSON.allowed_ips).
-    allowed_ips=$(grep -oP 'AllowedIPs\s*=\s*\K.+' "$conf_file" | tr -d ' \r') || allowed_ips="0.0.0.0/0"
+    # Пробелы после запятых СОХРАНЯЕМ: прежний `tr -d ' \r'` отдавал клиенту
+    # слипшийся список внутри embedded-конфига URI (D#38). CR по-прежнему
+    # убирается, иначе на CRLF-конфигах '.+' жадно затягивает его в значение и
+    # ломает JSON.allowed_ips; этим теперь занимается awg_normalize_csv.
+    allowed_ips=$(grep -oP 'AllowedIPs\s*=\s*\K.+' "$conf_file" | head -n1)
+    allowed_ips=$(awg_normalize_csv "$allowed_ips")
+    [[ -n "$allowed_ips" ]] || allowed_ips="0.0.0.0/0"
 
     # MTU/PersistentKeepalive/DNS из .conf - могли быть изменены через manage modify.
     # Клиент Amnezia при импорте vpn:// использует структурные поля inner JSON
@@ -2300,9 +2339,13 @@ generate_vpn_uri() {
     local mtu keepalive dns_line dns1 dns2
     mtu=$(grep -oP '^MTU\s*=\s*\K[0-9]+' "$conf_file" | head -n1); mtu="${mtu:-1280}"
     keepalive=$(grep -oP '^PersistentKeepalive\s*=\s*\K[0-9]+' "$conf_file" | head -n1); keepalive="${keepalive:-33}"
-    dns_line=$(grep -oP '^DNS\s*=\s*\K.+' "$conf_file" | head -n1 | tr -d ' \r')
-    dns1="${dns_line%%,*}"; dns1="${dns1:-1.1.1.1}"
-    if [[ "$dns_line" == *,* ]]; then dns2="${dns_line#*,}"; dns2="${dns2%%,*}"; else dns2="$dns1"; fi
+    dns_line=$(grep -oP '^DNS\s*=\s*\K.+' "$conf_file" | head -n1)
+    # Разбираем поэлементно: разделитель теперь ", ", и прежнее "${dns_line#*,}"
+    # оставило бы ведущий пробел прямо в JSON-поле dns2.
+    local -a _dns_parts
+    IFS=',' read -r -a _dns_parts <<< "${dns_line//$'\r'/}"
+    dns1=$(_awg_trim "${_dns_parts[0]:-}"); dns1="${dns1:-1.1.1.1}"
+    dns2=$(_awg_trim "${_dns_parts[1]:-}"); dns2="${dns2:-$dns1}"
 
     local vpn_uri perl_err
     perl_err=$(awg_mktemp "$AWG_DIR") || { log_warn "Ошибка mktemp - vpn:// URI не создан для '$name'."; return 1; }
@@ -2784,11 +2827,13 @@ regenerate_client() {
     local current_dns="1.1.1.1, 1.0.0.1" current_keepalive="33" current_allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
     if [[ -f "$AWG_DIR/${name}.conf" ]]; then
         local _v
-        _v=$(sed -n 's/^DNS[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | tr -d '[:space:]')
+        # tr -d '[:space:]' стирал здесь пробелы после запятых, и regen писал
+        # в .conf слипшийся список (D#38). Нормализуем, а не выкусываем.
+        _v=$(awg_normalize_csv "$(sed -n 's/^DNS[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | head -n1)")
         [[ -n "$_v" ]] && current_dns="$_v"
         _v=$(sed -n 's/^PersistentKeepalive[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | tr -d '[:space:]')
         [[ -n "$_v" ]] && current_keepalive="$_v"
-        _v=$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | tr -d '[:space:]')
+        _v=$(awg_normalize_csv "$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | head -n1)")
         [[ -n "$_v" ]] && current_allowed_ips="$_v"
         # v5.11.1: preserve PresharedKey через regen — если у клиента
         # был PSK (создан с manage add --psk), regen без этого сохранения
