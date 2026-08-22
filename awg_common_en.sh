@@ -2337,13 +2337,14 @@ generate_vpn_uri() {
         # IPv4/hostname: addr:port
         endpoint="${raw_endpoint%:*}"
     fi
-    # Spaces after commas are KEPT: the old `tr -d ' \r'` handed the client a
-    # collapsed list inside the embedded config of the URI (D#38). CR is still
-    # removed, otherwise on CRLF configs '.+' greedily captures it into the
-    # value and breaks JSON.allowed_ips; awg_normalize_csv does that now.
-    allowed_ips=$(grep -oP 'AllowedIPs\s*=\s*\K.+' "$conf_file" | head -n1)
-    allowed_ips=$(awg_normalize_csv "$allowed_ips")
-    [[ -n "$allowed_ips" ]] || allowed_ips="0.0.0.0/0"
+    # tr -d ' \r' - strips spaces AND CR (on CRLF configs '.+' greedily
+    # captures \r into the value, which breaks JSON.allowed_ips).
+    #
+    # 5.27.1: do NOT touch. The value goes into the allowed_ips JSON array via
+    # split(/,/), so spaces here are harmful - they would end up inside the
+    # array elements. This path does not damage the spaces in the client
+    # .conf: the embedded config is inlined from the file as it is.
+    allowed_ips=$(grep -oP 'AllowedIPs\s*=\s*\K.+' "$conf_file" | tr -d ' \r') || allowed_ips="0.0.0.0/0"
 
     # MTU/PersistentKeepalive/DNS from .conf - these can be changed via manage modify.
     # On vpn:// import the Amnezia client uses the structured inner-JSON fields
@@ -2353,13 +2354,9 @@ generate_vpn_uri() {
     local mtu keepalive dns_line dns1 dns2
     mtu=$(grep -oP '^MTU\s*=\s*\K[0-9]+' "$conf_file" | head -n1); mtu="${mtu:-1280}"
     keepalive=$(grep -oP '^PersistentKeepalive\s*=\s*\K[0-9]+' "$conf_file" | head -n1); keepalive="${keepalive:-33}"
-    dns_line=$(grep -oP '^DNS\s*=\s*\K.+' "$conf_file" | head -n1)
-    # Split per element: the separator is now ", ", and the old "${dns_line#*,}"
-    # would have left a leading space right inside the dns2 JSON field.
-    local -a _dns_parts
-    IFS=',' read -r -a _dns_parts <<< "${dns_line//$'\r'/}"
-    dns1=$(_awg_trim "${_dns_parts[0]:-}"); dns1="${dns1:-1.1.1.1}"
-    dns2=$(_awg_trim "${_dns_parts[1]:-}"); dns2="${dns2:-$dns1}"
+    dns_line=$(grep -oP '^DNS\s*=\s*\K.+' "$conf_file" | head -n1 | tr -d ' \r')
+    dns1="${dns_line%%,*}"; dns1="${dns1:-1.1.1.1}"
+    if [[ "$dns_line" == *,* ]]; then dns2="${dns_line#*,}"; dns2="${dns2%%,*}"; else dns2="$dns1"; fi
 
     local vpn_uri perl_err
     perl_err=$(awg_mktemp "$AWG_DIR") || { log_warn "mktemp failed - vpn:// URI not created for '$name'."; return 1; }

@@ -164,12 +164,27 @@ EOF
     done
 }
 
-@test "D#38: neither variant strips spaces out of AllowedIPs or DNS any more" {
+@test "D#38: regen no longer strips whitespace out of the two list values" {
     for f in awg_common.sh awg_common_en.sh; do
-        run grep -n "AllowedIPs.*tr -d ' \\\\r'" "$BATS_TEST_DIRNAME/../$f"
-        [ "$status" -ne 0 ]
-        run grep -n "DNS\\\\s\\*=.*tr -d ' \\\\r'" "$BATS_TEST_DIRNAME/../$f"
-        [ "$status" -ne 0 ]
+        run grep -c "sed -n .s/\^DNS.*tr -d" "$BATS_TEST_DIRNAME/../$f"
+        [ "$output" = "0" ]
+        run grep -c "AllowedIPs\[ ..t\]\*=.*tr -d" "$BATS_TEST_DIRNAME/../$f"
+        [ "$output" = "0" ]
+    done
+}
+
+# The vpn:// builder DELIBERATELY keeps stripping spaces. Its value feeds the
+# structured allowed_ips JSON array through split(/,/), and the client builds
+# its routes from that array, so a space would land inside the elements.
+# Measured on a live server: normalising here put a leading space into 33 of
+# the 34 array entries. The spacing of the client .conf is not affected by
+# this path, the embedded config is inlined from the file as it is.
+@test "D#38: the vpn:// builder keeps stripping spaces before the JSON array" {
+    for f in awg_common.sh awg_common_en.sh; do
+        run grep -c "allowed_ips=.*tr -d" "$BATS_TEST_DIRNAME/../$f"
+        [ "$output" = "1" ]
+        run grep -c "my @ips = split" "$BATS_TEST_DIRNAME/../$f"
+        [ "$output" = "1" ]
     done
 }
 
