@@ -1373,35 +1373,47 @@ EOF
     return 0
 }
 
-# Обрезка пробельных краёв строки.
-_awg_trim() {
-    local s="$1"
-    s="${s#"${s%%[![:space:]]*}"}"
-    s="${s%"${s##*[![:space:]]}"}"
-    printf '%s' "$s"
+# Предупредить, что списочное значение задано несколькими строками и они были
+# объединены. Молчать тут нельзя: объединение меняет то, что человек написал
+# руками, и если он ошибся, узнать об этом он должен от нас, а не от клиента.
+_awg_warn_multiline() {
+    local raw="$1" key="$2" name="$3" n
+    n=$(printf '%s\n' "$raw" | grep -c '[^[:space:]]') || n=0
+    (( n > 1 )) && log_warn "'${key}' у клиента '${name}' задан ${n} строками - значения объединены в одну."
+    return 0
 }
 
 # Нормализация списка через запятую к каноническому виду "a, b, c".
 #
-# Зачем: установщик пишет AllowedIPs и DNS через запятую С ПРОБЕЛОМ, а чтение
-# этих значений шло через `tr -d '[:space:]'` и `tr -d ' \r'` - пробелы уходили
-# заодно с CR, и regen записывал в .conf уже слипшийся список (D#38 @humowns).
-# Здесь пробелы срезаются только по краям элементов, а разделитель ставится
-# канонически, поэтому повторный regen ЛЕЧИТ уже испорченные конфиги, а не
-# консервирует их.
+# Зачем: установщик пишет AllowedIPs и DNS через запятую С ПРОБЕЛОМ, а
+# regenerate_client читал эти значения через `tr -d '[:space:]'` и записывал
+# прочитанное обратно, поэтому первый же regen оставлял в .conf слипшийся
+# список (D#38 @humowns). Здесь список разбирается поэлементно, а разделитель
+# ставится канонически, и повторный regen ЛЕЧИТ уже испорченные конфиги.
 #
-# CR удаляется целиком: на CRLF-конфигах он иначе прилипает к последнему
-# элементу и ломает JSON в vpn:// URI - ровно то, ради чего в прежнем коде и
-# стоял `tr`.
+# 🔴 НЕ применять к значению, которое уходит в JSON-массив allowed_ips сборщика
+# vpn:// (см. комментарий у generate_vpn_uri): там нужна КОМПАКТНАЯ форма.
+# Одна редакция этой правки нормализацию туда уже завела, и на стенде это дало
+# ведущий пробел внутри 33 элементов массива из 34.
+#
+# Пробелы срезаются ВНУТРИ элемента, а не только по краям: элементы этих двух
+# списков (CIDR и адреса резолверов) пробелов не содержат никогда, а валидатор
+# `manage modify` чистит их так же, через `${tok//[[:space:]]/}`. Заодно это
+# лечит значения вида "1.1.1. 1", которые прежний `tr` вычищал случайно.
 #
 # Разбор через `read -a`, а не `for x in $raw`, чтобы значение не попало под
-# glob-раскрутку.
+# glob-раскрутку. Trim инлайном, без вызова функции: подстановка на КАЖДЫЙ
+# элемент порождает subshell, и на списке в 2000 записей это 18 секунд против
+# 0.1 - а regen без имени идёт по всем клиентам сразу.
+#
+# ⚠️ Контракт: вход ОДНОСТРОЧНЫЙ. `read` без `-d` возьмёт только первую строку,
+# поэтому многострочное значение вызывающий обязан склеить сам (`paste -sd, -`).
 awg_normalize_csv() {
-    local raw="${1//$'\r'/}" out="" item
+    local out="" item
     local -a parts
-    IFS=',' read -r -a parts <<< "$raw"
+    IFS=',' read -r -a parts <<< "$1"
     for item in "${parts[@]}"; do
-        item=$(_awg_trim "$item")
+        item="${item//[[:space:]]/}"
         [[ -z "$item" ]] && continue
         out+="${out:+, }$item"
     done
@@ -2326,11 +2338,15 @@ generate_vpn_uri() {
     # tr -d ' \r' - стирает пробелы И CR (на CRLF-конфигах '.+' жадно
     # затягивает \r в значение, что ломает JSON.allowed_ips).
     #
-    # 5.27.1: НЕ трогать. Значение уходит в JSON-массив allowed_ips через
+    # v5.27.1: НЕ трогать. Значение уходит в JSON-массив allowed_ips через
     # split(/,/), поэтому пробелы тут вредны - они уехали бы внутрь элементов
     # массива. Пробелы в клиентском .conf этот путь не портит: встроенный
     # конфиг вкладывается из файла как есть.
-    allowed_ips=$(grep -oP 'AllowedIPs\s*=\s*\K.+' "$conf_file" | tr -d ' \r') || allowed_ips="0.0.0.0/0"
+    allowed_ips=$(grep -oP 'AllowedIPs\s*=\s*\K.+' "$conf_file" | paste -sd, - | tr -d ' \r')
+    # Проверяем ПУСТОТУ, а не код возврата: `||` тут не срабатывал даже на
+    # строке "AllowedIPs = " без значения, потому что grep находил пробел и
+    # выходил с нулём, а конвейер с paste делает статус тем более бесполезным.
+    [[ -n "$allowed_ips" ]] || { log_warn "AllowedIPs не прочитан из '$conf_file' - в ссылку уйдёт полный туннель."; allowed_ips="0.0.0.0/0"; }
 
     # MTU/PersistentKeepalive/DNS из .conf - могли быть изменены через manage modify.
     # Клиент Amnezia при импорте vpn:// использует структурные поля inner JSON
@@ -2340,7 +2356,7 @@ generate_vpn_uri() {
     local mtu keepalive dns_line dns1 dns2
     mtu=$(grep -oP '^MTU\s*=\s*\K[0-9]+' "$conf_file" | head -n1); mtu="${mtu:-1280}"
     keepalive=$(grep -oP '^PersistentKeepalive\s*=\s*\K[0-9]+' "$conf_file" | head -n1); keepalive="${keepalive:-33}"
-    dns_line=$(grep -oP '^DNS\s*=\s*\K.+' "$conf_file" | head -n1 | tr -d ' \r')
+    dns_line=$(grep -oP '^DNS\s*=\s*\K.+' "$conf_file" | paste -sd, - | tr -d ' \r')
     dns1="${dns_line%%,*}"; dns1="${dns1:-1.1.1.1}"
     if [[ "$dns_line" == *,* ]]; then dns2="${dns_line#*,}"; dns2="${dns2%%,*}"; else dns2="$dns1"; fi
 
@@ -2823,14 +2839,24 @@ regenerate_client() {
     # Сохраняем пользовательские настройки из текущего .conf (modify)
     local current_dns="1.1.1.1, 1.0.0.1" current_keepalive="33" current_allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
     if [[ -f "$AWG_DIR/${name}.conf" ]]; then
-        local _v
+        local _v _raw
         # tr -d '[:space:]' стирал здесь пробелы после запятых, и regen писал
         # в .conf слипшийся список (D#38). Нормализуем, а не выкусываем.
-        _v=$(awg_normalize_csv "$(sed -n 's/^DNS[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | head -n1)")
+        #
+        # Строки СКЛЕИВАЮТСЯ, а не берётся первая: wg допускает повтор DNS и
+        # AllowedIPs, значения при этом складываются. Прежний `tr` слеплял их в
+        # заведомо невалидный CIDR, и awg-quick отказывался поднимать интерфейс
+        # ГРОМКО; взять первую строку означало бы отдать пользователю валидный
+        # конфиг, из которого часть сетей исчезла молча.
+        _raw=$(sed -n 's/^DNS[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf")
+        _awg_warn_multiline "$_raw" "DNS" "$name"
+        _v=$(awg_normalize_csv "$(printf '%s' "$_raw" | paste -sd, -)")
         [[ -n "$_v" ]] && current_dns="$_v"
         _v=$(sed -n 's/^PersistentKeepalive[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | tr -d '[:space:]')
         [[ -n "$_v" ]] && current_keepalive="$_v"
-        _v=$(awg_normalize_csv "$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | head -n1)")
+        _raw=$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf")
+        _awg_warn_multiline "$_raw" "AllowedIPs" "$name"
+        _v=$(awg_normalize_csv "$(printf '%s' "$_raw" | paste -sd, -)")
         [[ -n "$_v" ]] && current_allowed_ips="$_v"
         # v5.11.1: preserve PresharedKey через regen — если у клиента
         # был PSK (создан с manage add --psk), regen без этого сохранения

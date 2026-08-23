@@ -1391,35 +1391,49 @@ EOF
     return 0
 }
 
-# Trim whitespace from both ends of a string.
-_awg_trim() {
-    local s="$1"
-    s="${s#"${s%%[![:space:]]*}"}"
-    s="${s%"${s##*[![:space:]]}"}"
-    printf '%s' "$s"
+# Warn that a list value was given on several lines and they were joined.
+# Staying silent here is not an option: joining changes what the user typed by
+# hand, and if they made a mistake they should hear it from us, not from the
+# client.
+_awg_warn_multiline() {
+    local raw="$1" key="$2" name="$3" n
+    n=$(printf '%s\n' "$raw" | grep -c '[^[:space:]]') || n=0
+    (( n > 1 )) && log_warn "'${key}' of client '${name}' is given on ${n} lines - the values were joined into one."
+    return 0
 }
 
 # Normalise a comma-separated list to the canonical "a, b, c" form.
 #
 # Why: the installer writes AllowedIPs and DNS with a space after each comma,
-# while reading them went through `tr -d '[:space:]'` and `tr -d ' \r'` - the
-# spaces were stripped along with CR, so regen wrote the collapsed list back
-# into .conf (D#38 @humowns). Here whitespace is trimmed per element only and
-# the separator is rebuilt canonically, so a repeated regen REPAIRS configs
-# that were already damaged instead of preserving the damage.
+# while regenerate_client read those values through `tr -d '[:space:]'` and
+# wrote what it had read straight back, so the very first regen left a
+# collapsed list in .conf (D#38 @humowns). Here the list is split per element
+# and the separator is rebuilt canonically, so a repeated regen REPAIRS configs
+# that were already damaged.
 #
-# CR is removed entirely: on CRLF configs it otherwise sticks to the last
-# element and breaks the JSON inside the vpn:// URI - exactly what the old
-# `tr` was there for.
+# 🔴 Do NOT apply this to the value that feeds the allowed_ips JSON array in the
+# vpn:// builder (see the comment at generate_vpn_uri): that one needs the
+# COMPACT form. One revision of this very fix did normalise it there, and on a
+# test server that put a leading space inside 33 of the 34 array elements.
 #
-# Split via `read -a` rather than `for x in $raw` so the value is not subject
-# to glob expansion.
+# Whitespace is stripped INSIDE each element, not only at its edges: elements of
+# these two lists (CIDRs and resolver addresses) never contain spaces, and the
+# `manage modify` validator cleans them the same way, via `${tok//[[:space:]]/}`.
+# That also repairs values like "1.1.1. 1", which the old `tr` cleaned by luck.
+#
+# Split via `read -a` rather than `for x in $raw` so the value is not subject to
+# glob expansion. The trim is inline rather than a function call: a substitution
+# per element forks a subshell, and on a 2000-entry list that is 18 seconds
+# against 0.1 - while regen without a name walks every client at once.
+#
+# ⚠️ Contract: the input is SINGLE-LINE. `read` without `-d` would take only the
+# first line, so a multi-line value must be joined by the caller (`paste -sd, -`).
 awg_normalize_csv() {
-    local raw="${1//$'\r'/}" out="" item
+    local out="" item
     local -a parts
-    IFS=',' read -r -a parts <<< "$raw"
+    IFS=',' read -r -a parts <<< "$1"
     for item in "${parts[@]}"; do
-        item=$(_awg_trim "$item")
+        item="${item//[[:space:]]/}"
         [[ -z "$item" ]] && continue
         out+="${out:+, }$item"
     done
@@ -2340,11 +2354,15 @@ generate_vpn_uri() {
     # tr -d ' \r' - strips spaces AND CR (on CRLF configs '.+' greedily
     # captures \r into the value, which breaks JSON.allowed_ips).
     #
-    # 5.27.1: do NOT touch. The value goes into the allowed_ips JSON array via
+    # v5.27.1: do NOT touch. The value goes into the allowed_ips JSON array via
     # split(/,/), so spaces here are harmful - they would end up inside the
     # array elements. This path does not damage the spaces in the client
     # .conf: the embedded config is inlined from the file as it is.
-    allowed_ips=$(grep -oP 'AllowedIPs\s*=\s*\K.+' "$conf_file" | tr -d ' \r') || allowed_ips="0.0.0.0/0"
+    allowed_ips=$(grep -oP 'AllowedIPs\s*=\s*\K.+' "$conf_file" | paste -sd, - | tr -d ' \r')
+    # Test for EMPTINESS, not for the exit status: the `||` did not fire even
+    # on a valueless "AllowedIPs = " line, because grep matched the space and
+    # exited zero, and a pipeline with paste makes the status useless anyway.
+    [[ -n "$allowed_ips" ]] || { log_warn "AllowedIPs could not be read from '$conf_file' - the link will carry a full tunnel."; allowed_ips="0.0.0.0/0"; }
 
     # MTU/PersistentKeepalive/DNS from .conf - these can be changed via manage modify.
     # On vpn:// import the Amnezia client uses the structured inner-JSON fields
@@ -2354,7 +2372,7 @@ generate_vpn_uri() {
     local mtu keepalive dns_line dns1 dns2
     mtu=$(grep -oP '^MTU\s*=\s*\K[0-9]+' "$conf_file" | head -n1); mtu="${mtu:-1280}"
     keepalive=$(grep -oP '^PersistentKeepalive\s*=\s*\K[0-9]+' "$conf_file" | head -n1); keepalive="${keepalive:-33}"
-    dns_line=$(grep -oP '^DNS\s*=\s*\K.+' "$conf_file" | head -n1 | tr -d ' \r')
+    dns_line=$(grep -oP '^DNS\s*=\s*\K.+' "$conf_file" | paste -sd, - | tr -d ' \r')
     dns1="${dns_line%%,*}"; dns1="${dns1:-1.1.1.1}"
     if [[ "$dns_line" == *,* ]]; then dns2="${dns_line#*,}"; dns2="${dns2%%,*}"; else dns2="$dns1"; fi
 
@@ -2840,14 +2858,24 @@ regenerate_client() {
     # Preserve user settings from current .conf (modified via modify command)
     local current_dns="1.1.1.1, 1.0.0.1" current_keepalive="33" current_allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
     if [[ -f "$AWG_DIR/${name}.conf" ]]; then
-        local _v
+        local _v _raw
         # tr -d '[:space:]' stripped the spaces after commas here, so regen
         # wrote the collapsed list into .conf (D#38). Normalise, do not strip.
-        _v=$(awg_normalize_csv "$(sed -n 's/^DNS[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | head -n1)")
+        #
+        # The lines are JOINED rather than taking the first one: wg allows DNS
+        # and AllowedIPs to repeat, and the values add up. The old `tr` glued
+        # them into a plainly invalid CIDR and awg-quick refused to bring the
+        # interface up LOUDLY; taking the first line would instead hand the user
+        # a valid config with part of the networks silently gone.
+        _raw=$(sed -n 's/^DNS[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf")
+        _awg_warn_multiline "$_raw" "DNS" "$name"
+        _v=$(awg_normalize_csv "$(printf '%s' "$_raw" | paste -sd, -)")
         [[ -n "$_v" ]] && current_dns="$_v"
         _v=$(sed -n 's/^PersistentKeepalive[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | tr -d '[:space:]')
         [[ -n "$_v" ]] && current_keepalive="$_v"
-        _v=$(awg_normalize_csv "$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | head -n1)")
+        _raw=$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf")
+        _awg_warn_multiline "$_raw" "AllowedIPs" "$name"
+        _v=$(awg_normalize_csv "$(printf '%s' "$_raw" | paste -sd, -)")
         [[ -n "$_v" ]] && current_allowed_ips="$_v"
         # v5.11.1: preserve PresharedKey through regen. Without this,
         # clients added with `manage add --psk` would lose their PSK on

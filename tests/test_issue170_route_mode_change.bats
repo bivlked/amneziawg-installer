@@ -90,9 +90,7 @@ _client_allowed_ips() {
 
     run regenerate_client "alice"
     [ "$status" -eq 0 ]
-    # The list keeps its canonical ", " separator. Until the D#38 fix this
-    # assertion expected the collapsed form, because regenerate_client read the
-    # old value through tr -d '[:space:]' and wrote it back without spaces.
+    # The list keeps its canonical ", " separator (D#38).
     [ "$(_client_allowed_ips alice)" = "10.11.0.0/16, 192.168.100.0/24" ]
 }
 
