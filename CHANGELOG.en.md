@@ -12,6 +12,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.28.1] - 2026-08-27
+
+**v5.28.1** - the step 1 system upgrade can no longer remove an installed package, and the repair restores related packages in a single transaction.
+
+### Fixed
+
+- **The step 1 system upgrade is no longer allowed to remove installed packages.** The v5.28.0 guard caught the loss after the fact and tried to put the packages back. On two servers in issue #223 that did not work: `apt full-upgrade` succeeded and still dropped six of the eight protected packages, because the manual mark does not forbid removal, it only clears the "no longer required" status. The command itself was the problem: `full-upgrade` is by definition free to choose removal when that makes dependency resolution easier. Step 1 now runs `apt-get upgrade --with-new-pkgs`, which has no such right at all: a package that cannot be upgraded without removing a neighbour simply stays at its current version. The `--with-new-pkgs` flag keeps the only reason `full-upgrade` was needed here: a new kernel arrives as a package with a new name (`linux-image-6.8.0-NNN-generic`), and a plain `upgrade` refuses to install new names. The trade is deliberate: a VPN server does not need the freshest environment, it needs a guarantee that it boots. The pre-reboot verification remains as the second line of defence. Both installer versions affected
+- **Package repair now runs as a single transaction, with the per-package pass kept as a fallback.** Packages bound by a hard version condition on one another cannot be restored separately in principle: each individual command has to leave the other names as they are and therefore cannot pull in a neighbour at the required version. That is where the repair stopped in issue #223, producing five refusals in a row of the form `udev : Breaks: systemd (< 255.4-1ubuntu8.17) but 255.4-1ubuntu8.12 is to be installed`, while together the same names resolve. One transaction with every lost name now runs first, and only then, for whatever is still missing, the per-package pass. It is kept on purpose: a single name with no installation candidate aborts the whole transaction, and then nothing is restored, including packages that install perfectly well
+- **The fatal message about a failed upgrade no longer names a cause it did not observe.** The previous wording blamed a busy dpkg lock unconditionally, including when the `fuser` check two lines above had found nothing. In issue #223 the real cause was a resolver refusal (`netplan.io : Depends: udev but it is not going to be installed`), it was on screen, and the message sent the investigation elsewhere. The lock explanation is now printed only when a holder is actually present, and the measurement is taken again immediately before the message: `dpkg --configure -a` and a second attempt run between the first check and this point, and the process found earlier may be long gone. With no lock, apt's real answer is shown, obtained from a dry run under `timeout`. When that dry run succeeds, its output is not passed off as the reason for the failure: the message states plainly that dependencies resolve and are not the cause
+- **The manual recovery advice is corrected both in the log and in `ADVANCED`.** Both told the user to install the lost packages one at a time, which is exactly the approach that does not work in this scenario. The recommendation is now a single command naming all of them, without `-y`, so that the list of proposed removals can be read before confirming
+
 ## [5.28.0] - 2026-08-26
 
 **v5.28.0** - the step 1 system upgrade can no longer take `udev` with it and leave the server unable to boot.
@@ -1778,7 +1789,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.28.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.28.1...HEAD
+[5.28.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.28.0...v5.28.1
 [5.28.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.27.1...v5.28.0
 [5.27.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.27.0...v5.27.1
 [5.27.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.26.0...v5.27.0

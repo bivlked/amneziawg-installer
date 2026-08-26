@@ -917,7 +917,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common.sh` and `manage_amneziawg.sh` from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.0/awg_common.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.1/awg_common.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -937,12 +937,12 @@ To update the management and shared library scripts **without reinstalling the s
 
 ```bash
 # Russian version:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.0/manage_amneziawg.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.0/awg_common.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.1/manage_amneziawg.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.1/awg_common.sh
 
 # English version:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.0/manage_amneziawg_en.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.0/awg_common_en.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.1/manage_amneziawg_en.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.1/awg_common_en.sh
 
 # Set permissions
 chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
@@ -1288,12 +1288,14 @@ How to read them:
 - `blkid` shows the label while `/dev/disk/by-label/` is empty or absent - the symlinks were not created by udev. Check that it is there at all: `command -v udevadm || echo "the udev package is missing"`;
 - `findmnt --verify` reports anything other than `0 parse errors` - fstab itself is damaged, look at the `cat -A` output: it draws a `$` at the end of every line, so a glued line is visible at once.
 
-**The `udev` package is missing.** Restore it and rebuild the initramfs:
+**The `udev` package is missing.** Restore it and rebuild the initramfs, naming the packages in one command:
 
 ```bash
-apt-get install -y udev initramfs-tools
+apt-get install udev systemd systemd-resolved initramfs-tools
 reboot
 ```
+
+`systemd` is on that list for a reason: `udev` is built from the same source and does not get along with a `systemd` older than itself, so apt will not install them separately and answers `udev : Breaks: systemd (< ...)`. Leaving out `-y` is deliberate too: if apt intends to remove anything, read the list before you confirm.
 
 **udev is there but the symlinks are not.** Try creating them by hand and letting the boot finish:
 
@@ -1315,7 +1317,7 @@ Check the `cat` output: `nofail` must appear on the `/boot` and `/boot/efi` line
 
 ⚠️ While `nofail` is in place, `/boot` is not mounted and kernel updates write exactly there. Do not install new kernels and postpone `apt upgrade` until udev is fixed.
 
-From **v5.28.0** on, the installer checks this itself and stops BEFORE the reboot if the system upgrade took away packages the server cannot boot without. That stop is explained in the next block.
+From **v5.28.0** on, the installer checks this itself and stops BEFORE the reboot if the system upgrade took away packages the server cannot boot without. From **v5.28.1** the step 1 upgrade cannot remove an installed package at all: `apt full-upgrade` was replaced with `apt-get upgrade --with-new-pkgs`, which has no such right. That stop is explained in the next block.
 </details>
 
 <details>
@@ -1327,13 +1329,13 @@ If something is missing and could not be restored, the installer stops **while t
 
 What to do, in order of how often it applies:
 
-1. **The package really is gone.** Install it back by name, one at a time, then run the installer again:
+1. **The package really is gone.** Install everything in one command, naming all of them, then run the installer again:
 
    ```bash
-   apt-get install -y <name>
+   apt-get install <name> <name> ...
    ```
 
-   One at a time rather than as a list: if a single name has no installation candidate, apt aborts the whole transaction and nothing is restored.
+   Together rather than one at a time: related packages such as `udev` and `systemd` will not go in separately, because each individual command has to leave the rest untouched. If apt does not know one of the names at all, it aborts the whole transaction - drop that name and repeat. No `-y`: if apt intends to remove anything, read the list before you confirm.
 
 2. **apt refuses because of held packages.** `apt-mark showhold` lists the holds. Release the one you need: `apt-mark unhold <name>`.
 

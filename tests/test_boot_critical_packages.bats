@@ -5,9 +5,12 @@
 # meta-package goes along as a reverse dependency of what is removed. On images
 # where it was the only manual root, udev, initramfs-tools, netplan.io and
 # everything else hanging under it become "no longer required". The
-# `apt full-upgrade` that runs shortly afterwards is then free to drop such a
-# package while resolving the upgrade, and on a system with months of pending
-# updates that is what happened: 34 packages removed, udev among them. Without
+# `apt full-upgrade` that used to run shortly afterwards was then free to
+# drop such a package while resolving the upgrade, and on a system with months
+# of pending updates that is what happened: 34 packages removed, udev among
+# them. Since v5.28.1 step 1 upgrades with `apt-get upgrade --with-new-pkgs`,
+# which has no right to remove an installed package at all, and the guards
+# below are the second line of defence rather than the only one. Without
 # udev there is no /dev/disk/by-label, systemd never sees the partitions fstab
 # refers to by label, and the server drops into emergency mode on the reboot
 # that step 1 itself triggers. The user is left with an unreachable server.
@@ -160,7 +163,7 @@ line_of() {
     for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
         local mark upgrade
         mark=$(line_of "$f" 'apt-mark manual \$critical_before')
-        upgrade=$(line_of "$f" 'apt full-upgrade -y')
+        upgrade=$(line_of "$f" 'apt-get upgrade -y --with-new-pkgs')
         [ -n "$mark" ] && [ -n "$upgrade" ]
         [ "$mark" -lt "$upgrade" ]
     done
@@ -258,15 +261,88 @@ line_of() {
     done
 }
 
-@test "boot-critical: the restore runs per package, not as one transaction" {
-    # apt aborts the whole transaction when a single name has no candidate, so a
-    # one-shot install would restore nothing at all - the lesson cleanup_system
-    # already paid for on netplan-generator.
+@test "boot-critical: the restore tries one transaction first, then per package" {
+    # Both stages are load-bearing and the ORDER is the point.
+    # One transaction first: packages from one source must move as one version
+    # (udev and systemd), and separate commands cannot converge on them - that
+    # is how the restore failed in Issue #223 even though the guard fired.
+    # Per package after: a single name with no candidate aborts a whole
+    # transaction and would restore nothing - the lesson cleanup_system already
+    # paid for on netplan-generator.
     for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
-        local block
+        local block bulk loop
         block=$(extract_func "$f" _verify_boot_critical)
-        echo "$block" | grep -q 'for pkg in \$critical_lost'
+        bulk=$(echo "$block" | grep -n -m1 'apt-get install -y --no-remove \$critical_lost' | cut -d: -f1)
+        loop=$(echo "$block" | grep -n -m1 'for pkg in \$critical_lost' | cut -d: -f1)
+        [ -n "$bulk" ] && [ -n "$loop" ]
+        [ "$bulk" -lt "$loop" ]
         echo "$block" | grep -q 'apt-get install -y --no-remove "\$pkg"'
+        # The per-package pass must skip what the bulk call already restored,
+        # otherwise every name is reinstalled twice and the log lies about it.
+        echo "$block" | grep -q '_pkg_installed_ok "\$pkg" && continue'
+    done
+}
+
+@test "boot-critical: step 1 upgrades only in the form that cannot remove" {
+    # The regression guard for Issue #223. The first version of this test named
+    # the FORBIDDEN command and a review defeated it in one line: dist-upgrade
+    # is full-upgrade under another spelling and contains none of its letters.
+    # A blocklist cannot win that race, so assert the ALLOWED shape instead -
+    # every live apt upgrade invocation in this function must be the same safe
+    # one, and anything else, however spelled, shows up as an extra entry.
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        local body live forms n
+        body=$(extract_func "$f" step1_update_and_optimize)
+        [ -n "$body" ]
+        live=$(echo "$body" | grep -vE '^[[:space:]]*#')
+        forms=$(echo "$live" | grep -oE 'apt(-get)? [a-z-]*upgrade[a-z-]*' | sort -u)
+        [ "$forms" = "apt-get upgrade" ]
+        # And every one of them must carry --with-new-pkgs: without it a new
+        # kernel ABI package is never installed, which is the single thing
+        # full-upgrade was here for.
+        n=0
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            n=$((n + 1))
+            if ! echo "$line" | grep -q -- '--with-new-pkgs'; then
+                echo "upgrade call without --with-new-pkgs: $line" >&2
+                return 1
+            fi
+        done < <(echo "$live" | grep -E 'apt-get upgrade')
+        [ "$n" -ge 2 ]
+    done
+}
+
+@test "boot-critical: a failed upgrade does not blame the dpkg lock on a guess" {
+    # The first version said "another process is holding the dpkg lock"
+    # unconditionally, including when fuser three lines above had found nothing.
+    # In Issue #223 the real answer was a resolver refusal and it was on screen.
+    # A wrong cause in a fatal message is worse than a vague one: it sends the
+    # investigation somewhere else entirely.
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        local body n ln prev
+        body=$(extract_func "$f" step1_update_and_optimize)
+        [ -n "$body" ]
+        # Positional AND exact. Counting guards was the first attempt and a
+        # mutant walked straight through it: turning the guard into "if true"
+        # keeps the number of lines the same. Matching a substring on the
+        # previous line was the second attempt, and a review defeated that one
+        # too with `if [[ -n "$_lock_holder" ]] || true; then`. So the guard
+        # line must match the whole expected form, start to finish.
+        n=0
+        while IFS= read -r ln; do
+            [ -z "$ln" ] && continue
+            n=$((n + 1))
+            prev=$(echo "$body" | sed -n "$((ln - 1))p")
+            if ! echo "$prev" | grep -qE '^[[:space:]]*if \[\[ -n "\$_lock_holder" \]\]; then$'; then
+                echo "die about the lock at line $ln is not guarded by _lock_holder: $prev" >&2
+                return 1
+            fi
+        done < <(echo "$body" | grep -niE 'die "[^"]*dpkg.lock' | cut -d: -f1)
+        # Guard against the test passing because it found nothing to check.
+        [ "$n" -ge 1 ]
+        # And the resolver answer has to reach the user at all.
+        echo "$body" | grep -q '_apt_why'
     done
 }
 
@@ -488,18 +564,83 @@ setup_stubs() {
     [ "$(echo "$output" | grep -c "DIE")" -eq 0 ]
 }
 
-@test "boot-critical: the restore asks apt for one package with --no-remove" {
+@test "boot-critical: the restore asks apt for the whole set, then per package" {
     load_verifier "$(RU_INSTALL)"
     setup_stubs
     dpkg-query() { return 1; }
     run _verify_boot_critical "udev initramfs-tools"
     [ "$status" -eq 42 ]
-    # Two separate invocations, each naming exactly one package.
-    [ "$(grep -c . "$BATS_TEST_TMPDIR/apt-args")" -eq 2 ]
+    # Three invocations: one naming both packages, then one per package because
+    # the stubbed dpkg-query keeps reporting them missing.
+    [ "$(grep -c . "$BATS_TEST_TMPDIR/apt-args")" -eq 3 ]
+    # The bulk call comes FIRST. Order is the whole point of the two stages:
+    # co-dependent packages only converge when every name is a resolver goal.
+    head -1 "$BATS_TEST_TMPDIR/apt-args" | grep -qx "noninteractive install -y --no-remove udev initramfs-tools"
     # The environment prefix is recorded too: a conffile prompt in an unattended
     # run would block the installer at the worst possible moment.
     grep -qx "noninteractive install -y --no-remove udev" "$BATS_TEST_TMPDIR/apt-args"
     grep -qx "noninteractive install -y --no-remove initramfs-tools" "$BATS_TEST_TMPDIR/apt-args"
+}
+
+@test "boot-critical: the per-package pass skips what the bulk call restored" {
+    load_verifier "$(RU_INSTALL)"
+    setup_stubs
+    # udev comes back after the bulk call, initramfs-tools does not. Without the
+    # skip, udev would be reinstalled a second time for nothing.
+    dpkg-query() {
+        local want="${!#}"
+        if [[ "$want" == "udev" && -f "$BATS_TEST_TMPDIR/bulk-done" ]]; then
+            echo "install ok installed"
+            return 0
+        fi
+        return 1
+    }
+    apt-get() {
+        echo "${DEBIAN_FRONTEND:-UNSET} $*" >> "$BATS_TEST_TMPDIR/apt-args"
+        touch "$BATS_TEST_TMPDIR/bulk-done"
+        return 0
+    }
+    run _verify_boot_critical "udev initramfs-tools"
+    [ "$status" -eq 42 ]
+    # Bulk call plus one per-package call for initramfs-tools only.
+    [ "$(grep -c . "$BATS_TEST_TMPDIR/apt-args")" -eq 2 ]
+    [ "$(grep -c "no-remove udev$" "$BATS_TEST_TMPDIR/apt-args")" -eq 0 ]
+    grep -qx "noninteractive install -y --no-remove initramfs-tools" "$BATS_TEST_TMPDIR/apt-args"
+}
+
+@test "boot-critical (EN): the restore asks apt for the whole set, then per package" {
+    # The two behavioural tests above load the Russian installer. The English
+    # one is a separate file, not a translation layer, so a repair that regressed
+    # only there would stay green on every RU-only assertion.
+    load_verifier "$(EN_INSTALL)"
+    setup_stubs
+    dpkg-query() { return 1; }
+    run _verify_boot_critical "udev initramfs-tools"
+    [ "$status" -eq 42 ]
+    [ "$(grep -c . "$BATS_TEST_TMPDIR/apt-args")" -eq 3 ]
+    head -1 "$BATS_TEST_TMPDIR/apt-args" | grep -qx "noninteractive install -y --no-remove udev initramfs-tools"
+}
+
+@test "boot-critical (EN): the per-package pass skips what the bulk call restored" {
+    load_verifier "$(EN_INSTALL)"
+    setup_stubs
+    dpkg-query() {
+        local want="${!#}"
+        if [[ "$want" == "udev" && -f "$BATS_TEST_TMPDIR/bulk-done" ]]; then
+            echo "install ok installed"
+            return 0
+        fi
+        return 1
+    }
+    apt-get() {
+        echo "${DEBIAN_FRONTEND:-UNSET} $*" >> "$BATS_TEST_TMPDIR/apt-args"
+        touch "$BATS_TEST_TMPDIR/bulk-done"
+        return 0
+    }
+    run _verify_boot_critical "udev initramfs-tools"
+    [ "$status" -eq 42 ]
+    [ "$(grep -c . "$BATS_TEST_TMPDIR/apt-args")" -eq 2 ]
+    [ "$(grep -c "no-remove udev$" "$BATS_TEST_TMPDIR/apt-args")" -eq 0 ]
 }
 
 @test "boot-critical: verification reports every lost package, not just the first" {

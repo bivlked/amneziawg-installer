@@ -915,7 +915,7 @@ graph TD
 Инсталлятор скачивает `awg_common.sh` и `manage_amneziawg.sh` с URL, привязанных к конкретному тегу версии:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.0/awg_common.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.1/awg_common.sh
 ```
 
 Это даёт **supply chain pinning**: скачиваемые скрипты соответствуют версии инсталлятора, даже если `main` уже обновлён.
@@ -935,12 +935,12 @@ AWG_BRANCH=my-feature-branch sudo bash ./install_amneziawg.sh
 
 ```bash
 # Русская версия:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.0/manage_amneziawg.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.0/awg_common.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.1/manage_amneziawg.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.1/awg_common.sh
 
 # Английская версия:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.0/manage_amneziawg_en.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.0/awg_common_en.sh
+wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.1/manage_amneziawg_en.sh
+wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.1/awg_common_en.sh
 
 # Установить права
 chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
@@ -1286,12 +1286,14 @@ blkid; ls -l /dev/disk/by-label/
 - `blkid` метку показывает, а `/dev/disk/by-label/` пуст или отсутствует - символические ссылки не создал udev. Проверьте, на месте ли он: `command -v udevadm || echo "пакета udev нет"`;
 - `findmnt --verify` даёт не `0 parse errors` - повреждён сам fstab, смотрите вывод `cat -A`: он дорисовывает `$` в конце каждой строки, поэтому склеенные строки видно сразу.
 
-**Пакета `udev` нет.** Восстановите его и пересоберите initramfs:
+**Пакета `udev` нет.** Восстановите его и пересоберите initramfs, перечислив имена одной командой:
 
 ```bash
-apt-get install -y udev initramfs-tools
+apt-get install udev systemd systemd-resolved initramfs-tools
 reboot
 ```
+
+`systemd` в списке не случайно: `udev` собран из того же исходника и не уживается с `systemd` старее себя, поэтому поодиночке apt их не поставит и ответит `udev : Breaks: systemd (< ...)`. Отсутствие `-y` тоже намеренное: если apt соберётся что-то удалять, прочитайте список перед подтверждением.
 
 **udev на месте, а ссылок нет.** Попробуйте создать их вручную и продолжить загрузку:
 
@@ -1313,7 +1315,7 @@ reboot
 
 ⚠️ Пока стоит `nofail`, раздел `/boot` не смонтирован, а обновления ядра пишут именно туда. До восстановления udev не ставьте новые ядра и отложите `apt upgrade`.
 
-Начиная с **v5.28.0** установщик проверяет это сам и останавливается ДО перезагрузки, если обновление системы унесло пакеты, без которых сервер не поднимется. Разбор такой остановки - в следующем блоке.
+Начиная с **v5.28.0** установщик проверяет это сам и останавливается ДО перезагрузки, если обновление системы унесло пакеты, без которых сервер не поднимется. С **v5.28.1** обновление на первом шаге и вовсе не может удалить установленный пакет: вместо `apt full-upgrade` там `apt-get upgrade --with-new-pkgs`, у которой такого права нет. Разбор остановки - в следующем блоке.
 </details>
 
 <details>
@@ -1325,13 +1327,13 @@ reboot
 
 Что делать, в порядке частоты:
 
-1. **Пакет действительно удалён.** Поставьте его обратно поимённо, по одному, и запустите установщик снова:
+1. **Пакет действительно удалён.** Поставьте всё одной командой, перечислив имена сразу, и запустите установщик снова:
 
    ```bash
-   apt-get install -y <имя>
+   apt-get install <имя> <имя> ...
    ```
 
-   По одному, а не списком: если у какого-то имени нет кандидата на установку, apt отменяет транзакцию целиком, и не восстановится ничего.
+   Именно вместе, а не по очереди: связанные пакеты вроде `udev` и `systemd` поодиночке не встанут, потому что каждая отдельная команда обязана оставить остальное нетронутым. Если какого-то имени apt не знает вовсе, он отменит транзакцию целиком - тогда уберите это имя и повторите. Без `-y`: если apt соберётся что-то удалять, прочитайте список перед подтверждением.
 
 2. **apt отказывается ставить из-за удержанных пакетов.** `apt-mark showhold` покажет удержания. Снимите нужное: `apt-mark unhold <имя>`.
 

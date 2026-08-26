@@ -43,7 +43,7 @@ sudo ufw allow <your-ssh-port>/tcp
 Then:
 
 ```bash
-wget -O install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.0/install_amneziawg_en.sh
+wget -O install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.1/install_amneziawg_en.sh
 chmod +x install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh
 ```
@@ -99,7 +99,7 @@ Per-command output formats and the compatibility promise: [ADVANCED.en.md JSON i
 Updating to a newer installer release on a server that already has a supported version running:
 
 ```bash
-wget -O install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.0/install_amneziawg_en.sh
+wget -O install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.1/install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh --force
 ```
 
