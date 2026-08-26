@@ -1260,6 +1260,89 @@ The report (`--diagnostic`) includes the following sections:
 ## 🔧 Troubleshooting (Detailed)
 
 <details>
+<summary><strong>The server does not answer after the reboot in step 1</strong></summary>
+
+The installer finished step 1, rebooted, and the machine no longer answers: no SSH, no ping. The hosting panel still shows it powered on.
+
+There is no way in over the network any more, so the first thing you need is the **hosting provider's console** (VNC, KVM or serial). It shows whether the system got as far as booting at all, which the control panel does not tell you.
+
+What you will see there:
+
+- **a `login:` prompt** - the system booted, the network is broken. Look at `ip -br a`, `ip route`, `ss -lntp`;
+- **`You are in emergency mode`** - the boot stopped on its own, see below;
+- **a kernel panic or the bootloader menu** - it never got to the system, photograph the whole screen.
+
+**Emergency mode** means systemd could not mount something from `/etc/fstab` and deliberately stopped. This does not clear up by itself: while the cause is there, every boot ends in the same place.
+
+Capture three blocks from the console:
+
+```bash
+journalctl -b --no-pager | grep -iE "Dependency failed|Timed out|emergency" | tail -20
+cat -A /etc/fstab; findmnt --verify
+blkid; ls -l /dev/disk/by-label/
+```
+
+How to read them:
+
+- a line `Timed out waiting for device dev-disk-by\x2dlabel-...` means systemd never saw a partition that fstab refers to by label. It waits 90 seconds per partition by default, then drops into emergency mode;
+- `blkid` shows the label while `/dev/disk/by-label/` is empty or absent - the symlinks were not created by udev. Check that it is there at all: `command -v udevadm || echo "the udev package is missing"`;
+- `findmnt --verify` reports anything other than `0 parse errors` - fstab itself is damaged, look at the `cat -A` output: it draws a `$` at the end of every line, so a glued line is visible at once.
+
+**The `udev` package is missing.** Restore it and rebuild the initramfs:
+
+```bash
+apt-get install -y udev initramfs-tools
+reboot
+```
+
+**udev is there but the symlinks are not.** Try creating them by hand and letting the boot finish:
+
+```bash
+udevadm trigger --action=add --subsystem-match=block; udevadm settle; ls /dev/disk/by-label/
+systemctl default
+```
+
+**The symlinks still do not appear.** Take the boot's dependency on those partitions away: the `nofail` option tells systemd not to treat their absence as a reason to stop.
+
+```bash
+cp /etc/fstab /etc/fstab.bak
+sed -i 's/defaults/defaults,nofail/; s/umask=0077/umask=0077,nofail/' /etc/fstab
+cat /etc/fstab
+reboot
+```
+
+Check the `cat` output: `nofail` must appear on the `/boot` and `/boot/efi` lines while the root line stays untouched.
+
+⚠️ While `nofail` is in place, `/boot` is not mounted and kernel updates write exactly there. Do not install new kernels and postpone `apt upgrade` until udev is fixed.
+
+From **v5.28.0** on, the installer checks this itself and stops BEFORE the reboot if the system upgrade took away packages the server cannot boot without. That stop is explained in the next block.
+</details>
+
+<details>
+<summary><strong>The installer stopped with "Boot-critical packages missing" (v5.28.0+)</strong></summary>
+
+Step 1 records which boot-critical packages are installed - `udev`, `initramfs-tools`, `openssh-server` and the network stack - and compares that list before it takes the machine into a reboot. The list lives in `/root/awg/boot-critical.pkgs` and survives installer restarts, so a package lost during an aborted run is not forgotten.
+
+If something is missing and could not be restored, the installer stops **while the server is still reachable**. This is not the installer failing but the installer refusing to reboot into a system that will not come back: after the reboot the repair would need the hosting provider's console.
+
+What to do, in order of how often it applies:
+
+1. **The package really is gone.** Install it back by name, one at a time, then run the installer again:
+
+   ```bash
+   apt-get install -y <name>
+   ```
+
+   One at a time rather than as a list: if a single name has no installation candidate, apt aborts the whole transaction and nothing is restored.
+
+2. **apt refuses because of held packages.** `apt-mark showhold` lists the holds. Release the one you need: `apt-mark unhold <name>`.
+
+3. **The package is gone from the repositories.** Its name may have changed with a distribution release upgrade. Drop the stale line from `/root/awg/boot-critical.pkgs`.
+
+The file is removed when the installation completes, so nothing is left over from previous installs and it has no time to go stale.
+</details>
+
+<details>
 <summary><strong>No internet after connecting to VPN</strong></summary>
 
 1. Check IP forwarding: `sysctl net.ipv4.ip_forward` (should be 1)

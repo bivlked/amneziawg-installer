@@ -1593,7 +1593,7 @@ _verify_boot_critical() {
         log_error "Do NOT reboot the server: in its current state it will not come back."
         log_error "Boot-critical packages missing: $still_lost"
         log_error "Install them one by one: sudo apt-get install -y <name>"
-        log_error "If a package is held (dpkg -l shows hi), release it: sudo apt-mark unhold <name>"
+        log_error "If apt refuses because of held packages, release the hold: sudo apt-mark unhold <name>"
         log_error "If a package is gone from the repositories (renamed by a release upgrade), drop its name from $BOOT_CRITICAL_SNAPSHOT_FILE"
         die "Stopping while the server is still reachable. Deal with the above, then run the installer again."
     fi
