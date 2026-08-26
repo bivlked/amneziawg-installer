@@ -34,7 +34,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="d98a1cbb25b805e7789ac9c6a2ec67542ebd13af9cc1bc5c606c1deeab2dd541"
+COMMON_SCRIPT_SHA256="0a6047ea929524fc159addbd7658142548a1f636599998d33048fa5412c674e7"
 MANAGE_SCRIPT_SHA256="6fe56da424f3e5f2f5c4ad2d43b49f1e4ce40c2ba6e341d0b697f04cc610bb55"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
@@ -1556,20 +1556,22 @@ _verify_boot_critical() {
     local restore_out restore_rc
 
     # Stage 1: ONE transaction with every lost name at once.
-    # Packages from one source can be bound by a hard version condition on one
-    # another: udev declares Breaks on a systemd older than itself, and that is
-    # exactly the pair this got stuck on. Installing such packages one at a time
-    # cannot converge in principle: each separate command must leave the other
-    # names as they are, so it cannot pull in a neighbour at the version it
-    # needs. That is where the repair failed in Issue #223: five refusals in a
-    # row of the form "udev : Breaks: systemd (< X) but Y is to be installed",
-    # while together the same names resolve. In one transaction every name is
-    # a resolver goal and it picks a consistent version set for the group.
+    # What matters is WHAT becomes a resolver goal. One at a time, `apt-get
+    # install udev` knows nothing about the other lost names: they are not
+    # goals, and apt is free to leave them absent. In one command they all
+    # become goals and apt looks for a version set that suits the group. In
+    # Issue #223 the per-package pass produced five refusals and a single
+    # transaction was never tried, which is the reason to start with it.
+    # ⚠️ Not a guarantee. If the old version is pinned by a package that is NOT
+    # in the lost list (in Issue #223 that was systemd-resolved, pinning systemd
+    # to 8.12 through a Depends on an exact version), it does not become a goal
+    # here either. Hence stage 2 below, and the final verdict from the full-set
+    # re-check.
     # --no-remove: restoring one package must not cost another.
     restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove $critical_lost 2>&1)"
     restore_rc=$?
     if [[ "$restore_rc" -eq 0 ]]; then
-        log "Single-transaction restore finished."
+        log "The single transaction completed without errors."
     elif [[ -n "$restore_out" ]]; then
         log_warn "Single transaction did not work (code $restore_rc), trying one by one. apt said: $(printf '%s' "$restore_out" | tr '\n' ' ' | tail -c 300)"
     else
@@ -1615,14 +1617,71 @@ _verify_boot_critical() {
         still_lost="${still_lost% }"
         log_error "Do NOT reboot the server: in its current state it will not come back."
         log_error "Boot-critical packages missing: $still_lost"
-        log_error "Install them in ONE command, every name at once: sudo apt-get install -y $still_lost"
-        log_error "It has to be one command: udev and systemd are bound by a version condition on each other and will not converge one at a time."
-        log_error "If apt then wants to REMOVE something, read the list: losing one more of the packages above only makes things worse."
+        log_error "Try installing them in ONE command, every name at once: sudo apt-get install $still_lost"
+        log_error "One command rather than one at a time: that way apt picks versions for the whole group at once."
+        log_error "No -y on purpose: if apt then wants to REMOVE something, read the list before you confirm. Losing one more of the packages above only makes things worse."
         log_error "If apt refuses because of held packages, release the hold: sudo apt-mark unhold <name>"
         log_error "If a package is gone from the repositories (renamed by a release upgrade), drop its name from $BOOT_CRITICAL_SNAPSHOT_FILE"
         die "Stopping while the server is still reachable. Deal with the above, then run the installer again."
     fi
     log "Boot-critical packages restored."
+}
+
+
+# _die_upgrade_failed : name the cause of a failed upgrade and stop.
+#
+# Pulled out into its own function for a reason, not for tidiness. While this
+# reasoning lived inline inside step1_update_and_optimize, tests could only
+# check it by grepping the source, and an outside review showed that almost any
+# mutation inside survived the whole suite green: deleting the second lock
+# measurement, inverting the condition, dropping -s, dropping timeout. A test
+# can load a function whole and assert WHICH verdict is printed for WHICH state.
+#
+# The rule of this block: name the cause by evidence, not by guess. The previous
+# version blamed the dpkg lock unconditionally, including when fuser had found
+# nothing, and sent the investigation the wrong way: in Issue #223 the real
+# answer was a resolver refusal.
+_die_upgrade_failed() {
+    local lock_holder apt_why apt_why_rc
+    # Measure AGAIN rather than reusing the sample taken before the retry:
+    # dpkg --configure -a and a whole second apt run happened in between, and
+    # the process found earlier may have exited while a new one appeared.
+    lock_holder="$(fuser /var/lib/dpkg/lock-frontend 2>/dev/null | tr -s ' ' || true)"
+    if [[ -n "$lock_holder" ]]; then
+        die "System update failed and the dpkg lock is held by:${lock_holder}. Wait for those processes to finish or run: systemctl stop unattended-upgrades; dpkg --configure -a - then run the script again."
+    fi
+    # The dry run (-s) answers exactly one question: do the dependencies
+    # resolve. The timeout is mandatory: there is no ground for claiming the
+    # resolver always answers instantly. timeout itself is always there,
+    # coreutils is Essential.
+    apt_why="$(timeout 120 env DEBIAN_FRONTEND=noninteractive apt-get upgrade -s --with-new-pkgs 2>&1)"
+    apt_why_rc=$?
+    if [[ "$apt_why_rc" -eq 0 ]]; then
+        die "System update failed, but the dependencies resolve on a re-check, so they are not the cause. Look at the apt output on screen, it is not written to the log file: usually network or mirror, disk space on / or /boot, or the package's own script."
+    fi
+    if [[ -n "$apt_why" ]]; then
+        die "System update failed. The dependency re-check answered: $(printf '%s' "$apt_why" | tr '\n' ' ' | tail -c 400)"
+    fi
+    # Third outcome: the check failed and said nothing. Claiming anything about
+    # dependencies here is exactly how an unknown turns into a confident wrong
+    # diagnosis.
+    die "System update failed, and the dependency re-check did not answer either (code $apt_why_rc, no output; code 124 means it did not finish within 120 seconds). Look at the apt output on screen, it is not written to the log file."
+}
+
+# _warn_kept_back : say out loud that not everything was upgraded.
+# apt-get upgrade leaves a package at its current version when upgrading it
+# would require removing a neighbour, and returns ZERO while doing so. That is
+# the deliberate trade (see the upgrade block in step 1), but staying silent
+# about it is not acceptable: full-upgrade could not hold a package back at all,
+# so without this line diagnosability would be worse than before the fix. A
+# warning, not a failure: a held-back package is safe for booting the server,
+# and it matters when a future complaint has to be investigated.
+_warn_kept_back() {
+    local kept
+    kept="$(apt list --upgradable 2>/dev/null | awk -F/ '/\//{printf "%s ", $1}')"
+    [[ -n "${kept// /}" ]] || return 0
+    log_warn "Not every package was upgraded, these stayed at their current versions: ${kept% }"
+    log_warn "There are two possible reasons: either upgrading such a package would have to remove another one, which we deliberately do not do (Issue #223), or the release is still being phased in. This line does NOT tell them apart. Both are safe for booting the server."
 }
 
 # _boot_critical_guard : take the snapshot and verify it. The wrapper exists for
@@ -3391,7 +3450,7 @@ step1_update_and_optimize() {
         # Unquoted on purpose: the list arrives as newline-separated names and
         # splitting it into arguments is exactly what is wanted here.
         apt-mark manual $critical_before >/dev/null 2>&1 \
-            || log_warn "Failed to restore the manual mark on: $(printf '%s' "$critical_before" | tr '\n' ' ') - the upgrade below may remove them, the check after it will catch that."
+            || log_warn "Failed to restore the manual mark on: $(printf '%s' "$critical_before" | tr '\n' ' ') - they stay flagged \"no longer required\", the check before the reboot will catch that."
     else
         log_warn "Not a single boot-critical package was found installed. That is unusual for Ubuntu and Debian; check: dpkg-query -W udev"
     fi
@@ -3417,36 +3476,9 @@ step1_update_and_optimize() {
         fi
         log_warn "Update failed, fixing dpkg and retrying..."
         DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
-        if ! DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs; then
-            # Name the cause by evidence, not by guess. The previous version
-            # blamed the dpkg lock unconditionally, including when fuser above
-            # had found nothing, and sent the investigation the wrong way: in
-            # Issue #223 the real answer was a resolver refusal, on screen.
-            #
-            # Sample it AGAIN. A dpkg --configure -a and a whole second attempt
-            # happened between the first fuser and this point: the process it
-            # found may be long gone, and a new one may have appeared. Quoting
-            # the old value here would name as the cause something that was not
-            # there at the moment of failure.
-            _lock_holder="$(fuser /var/lib/dpkg/lock-frontend 2>/dev/null | tr -s ' ' || true)"
-            if [[ -n "$_lock_holder" ]]; then
-                die "System update failed and the dpkg lock is held by:${_lock_holder}. Wait for those processes to finish or run: systemctl stop unattended-upgrades; dpkg --configure -a - then run the script again."
-            fi
-            # A dry run answers exactly one question: do the dependencies
-            # resolve. If it SUCCEEDS, they are not the cause, and printing its
-            # happy output as "the reason for the failure" would mislead just
-            # like the invented dpkg lock did. The timeout is mandatory: there
-            # is no ground for claiming the resolver always answers instantly.
-            # timeout itself is always present: coreutils is Essential.
-            local _apt_why _apt_why_rc
-            _apt_why="$(timeout 120 env DEBIAN_FRONTEND=noninteractive apt-get upgrade -s --with-new-pkgs 2>&1)"
-            _apt_why_rc=$?
-            if [[ "$_apt_why_rc" -ne 0 && -n "$_apt_why" ]]; then
-                die "System update failed. apt said: $(printf '%s' "$_apt_why" | tr '\n' ' ' | tail -c 400)"
-            fi
-            die "System update failed, but the dependencies resolve on a re-check, so they are not the cause. Look at the apt output above: usually network or mirror, disk space, or the package's own script."
-        fi
+        DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs || _die_upgrade_failed
     fi
+    _warn_kept_back
     log "System updated."
 
 
