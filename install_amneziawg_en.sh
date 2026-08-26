@@ -20,6 +20,7 @@ SCRIPT_VERSION="5.28.0"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
+BOOT_CRITICAL_SNAPSHOT_FILE="$AWG_DIR/boot-critical.pkgs"
 LOG_FILE="$AWG_DIR/install_amneziawg.log"
 KEYS_DIR="$AWG_DIR/keys"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -1465,6 +1466,46 @@ _installed_boot_critical() {
     done
 }
 
+# _pkg_installed_ok : 0 only if the package is fully installed AND configured.
+# The difference from _pkg_present is deliberate and the risk is asymmetric. For
+# the SNAPSHOT, "unpacked but not configured" counts as present: the package is
+# there and has to be protected. For the VERDICT before the reboot it does not:
+# initramfs-tools left unpacked means postinst never ran and no initramfs was
+# built for the new kernel. The server will not boot, though the package
+# formally "exists".
+_pkg_installed_ok() {
+    dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -qx "install ok installed"
+}
+
+# The snapshot SURVIVES installer restarts and can only grow.
+#
+# The installer itself asks the user to run it again after a failure, and by
+# then a package may already be gone: apt can remove udev and then fail, in
+# which case the check at the end of the step never runs at all. A snapshot
+# taken afresh on the next run will not see the removed package, and the check
+# will compare the system against an impoverished baseline - staying silent
+# about exactly the state it was written for. So we merge with what was
+# recorded earlier.
+#
+# ONLY known names are taken from the file: a corrupted or substituted file must
+# not turn into a list of arbitrary packages to install.
+_boot_critical_snapshot() {
+    local now stored known union
+    now="$(_installed_boot_critical)"
+    stored=""
+    if [[ -r "$BOOT_CRITICAL_SNAPSHOT_FILE" ]]; then
+        known="$(_boot_critical_package_list | tr ' ' '\n')"
+        stored="$(grep -Fxf <(printf '%s\n' "$known") "$BOOT_CRITICAL_SNAPSHOT_FILE" 2>/dev/null || true)"
+    fi
+    union="$(printf '%s\n%s\n' "$now" "$stored" | grep -v '^$' | sort -u)"
+    if [[ -n "$union" ]]; then
+        mkdir -p "$AWG_DIR" 2>/dev/null || true
+        printf '%s\n' "$union" > "$BOOT_CRITICAL_SNAPSHOT_FILE" 2>/dev/null \
+            || log_warn "Could not save the protected package list to $BOOT_CRITICAL_SNAPSHOT_FILE. The check survives this run but not the next one."
+    fi
+    printf '%s' "$union"
+}
+
 # _verify_boot_critical : the last line of defence before the reboot. Takes the
 # snapshot made BEFORE the upgrade and compares it against the state right now.
 #
@@ -1484,7 +1525,7 @@ _verify_boot_critical() {
     local critical_lost=""
     local pkg
     for pkg in $critical_before; do
-        _pkg_present "$pkg" || critical_lost+="$pkg "
+        _pkg_installed_ok "$pkg" || critical_lost+="$pkg "
     done
     [[ -n "$critical_lost" ]] || return 0
     critical_lost="${critical_lost% }"
@@ -1498,17 +1539,24 @@ _verify_boot_critical() {
     log_warn "Restoring them..."
     # One at a time rather than in a single transaction: if even one name has no
     # installation candidate, apt aborts the whole transaction and nothing is
-    # restored, including the packages that install perfectly well. The same
-    # lesson was already paid for above, in cleanup_system, on
-    # netplan-generator. --no-remove: restoring one package must not cost us
+    # restored, including the packages that install perfectly well. The project
+    # has paid for this lesson already: cleanup_system (defined FURTHER DOWN the
+    # file) installs netplan.io and netplan-generator separately, because Debian
+    # 12 has no second package and it takes the whole transaction down. --no-remove: restoring one package must not cost us
     # another.
-    local restore_out
+    local restore_out restore_rc
     for pkg in $critical_lost; do
-        if restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove "$pkg" 2>&1)"; then
-            log_debug "Restored: $pkg"
+        restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove "$pkg" 2>&1)"
+        restore_rc=$?
+        if [[ "$restore_rc" -eq 0 ]]; then
+            log "Restored: $pkg"
+        elif [[ -n "$restore_out" ]]; then
+            # On one line: log_msg timestamps only the first line, and a
+            # multi-line answer breaks the log format exactly where someone will
+            # later be reading it.
+            log_warn "Could not install $pkg (exit $restore_rc). What apt said: $(printf '%s' "$restore_out" | tr '\n' ' ' | tail -c 300)"
         else
-            log_warn "Could not install $pkg. What apt said:"
-            log_warn "$(printf '%s' "$restore_out" | tail -3)"
+            log_warn "Could not install $pkg (exit $restore_rc), and apt printed nothing at all: it looks like the command never ran."
         fi
     done
 
@@ -1517,7 +1565,7 @@ _verify_boot_critical() {
     # the day that stops holding.
     local still_lost=""
     for pkg in $critical_before; do
-        _pkg_present "$pkg" || still_lost+="$pkg "
+        _pkg_installed_ok "$pkg" || still_lost+="$pkg "
     done
     if [[ -n "$still_lost" ]]; then
         still_lost="${still_lost% }"
@@ -3239,22 +3287,39 @@ step1_update_and_optimize() {
         DEBIAN_FRONTEND=noninteractive dpkg --configure -a || log_warn "dpkg --configure -a."
     fi
 
-    # The cleanup above may have orphaned the meta-packages that udev,
-    # initramfs-tools and the network stack hang from. Mark such packages manual
-    # again, otherwise apt full-upgrade below is free to drop them instead of
+    # The meta-packages that udev, initramfs-tools and the network stack hang
+    # from may have been orphaned: the cleanup above does that, but they can
+    # equally arrive orphaned with the image itself. So this block runs
+    # UNCONDITIONALLY, --no-tweaks and --keep-packages included, when no cleanup
+    # happened at all. Mark such packages manual again, otherwise apt full-upgrade below is free to drop them instead of
     # upgrading them (Issue #223). Manual rather than hold on purpose: a hold
     # would block the upgrade, and upgrading them is exactly what we want;
     # manual only clears the "no longer required" status.
+    # ⚠️ This lowers the odds, it does not forbid removal: apt may drop a manual
+    # package too while resolving dependencies. The guarantee is not this
+    # marking but the _verify_boot_critical check before the reboot.
     #
     # This block sits AFTER the dpkg repair above, and that is not cosmetic: the
-    # snapshot is built by asking dpkg, and a broken dpkg would answer "nothing
-    # is installed". The protection would then switch itself off silently, along
-    # with the post-upgrade check, on exactly the machines where the defect bites.
+    # snapshot is built by asking dpkg. A locked database still answers fine, but
+    # an unreachable or damaged one answers empty for everything at once, and the
+    # protection would then switch itself off silently along with the
+    # post-upgrade check, on exactly the machines where the defect bites. The
+    # self-test below catches that case too.
     _dpkg_usable || die "dpkg does not answer, and without it there is no way to tell whether udev and initramfs-tools survive the upgrade (Issue #223). Run: dpkg --configure -a; apt-get check - then start the installer again."
+    # Self-test of the predicate. _dpkg_usable only answers for dpkg, while the
+    # predicate also leans on awk: a broken awk would return an empty status,
+    # that is "absent" for everything at once, and the guard would switch itself
+    # off in silence.
+    _pkg_present dpkg || die "Could not determine package state (dpkg-query or awk do not behave as expected). Without it there is no way to make sure the upgrade will not take udev away (Issue #223)."
     local critical_before
-    critical_before="$(_installed_boot_critical)"
+    critical_before="$(_boot_critical_snapshot)"
     if [[ -n "$critical_before" ]]; then
-        log_debug "Boot-critical packages: $(printf '%s' "$critical_before" | tr '\n' ' ')"
+        log "Protected from removal: $(printf '%s' "$critical_before" | tr '\n' ' ')"
+        # udev is present on virtually every Ubuntu and Debian server. Its
+        # absence means not "nothing to protect" but that the machine may
+        # already be damaged, by an interrupted earlier run for instance.
+        _pkg_installed_ok udev \
+            || log_warn "udev is not installed or not configured. That is abnormal for Ubuntu and Debian: check dpkg-query -W udev, the server may fail to boot."
         # Unquoted on purpose: the list arrives as newline-separated names and
         # splitting it into arguments is exactly what is wanted here.
         apt-mark manual $critical_before >/dev/null 2>&1 \
@@ -3794,6 +3859,7 @@ PPASRC
                 log_warn "  then sudo apt-mark hold amneziawg-dkms, reinstall the module and reboot."
             fi
             log "Step 2 completed (prebuilt ARM)."
+            _verify_boot_critical "$(_boot_critical_snapshot)"
             # request_reboot always terminates the process (exit), we never return here.
             request_reboot 3
         fi
@@ -4191,6 +4257,10 @@ AWG_SYSTEMD_UNIT_EOF
     else
         log "DKMS status OK."
     fi
+
+    # Step 2 installs packages and reboots the machine as well, so it needs
+    # the same line of defence.
+    _verify_boot_critical "$(_boot_critical_snapshot)"
 
     log "Step 2 completed."
     request_reboot 3

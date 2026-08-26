@@ -12,14 +12,18 @@
 # refers to by label, and the server drops into emergency mode on the reboot
 # that step 1 itself triggers. The user is left with an unreachable server.
 #
-# Three guards answer this, and all three are order-sensitive, which is why the
-# tests below assert positions and not merely presence:
+# Four guards answer this, and each is order-sensitive, which is why the tests
+# below assert positions and not merely presence:
 #   1. the snapshot is taken only after the dpkg repair and only when dpkg can
 #      be trusted, because a broken dpkg reports everything as absent and would
 #      switch both remaining guards off in silence;
 #   2. `apt-mark manual` on that snapshot, BEFORE the upgrade;
 #   3. `_verify_boot_critical` as the LAST action of the step, after everything
-#      that could still remove a package and immediately before the reboot.
+#      that could still remove a package and immediately before the reboot;
+#   4. the same check before step 2's reboot, and a snapshot that persists in
+#      /root/awg so a package lost in an aborted run is still remembered.
+#      Without that, the installer's own "run it again" advice walks the user
+#      straight past the guard.
 #
 # The functional tests lift the real functions out of the shipped installer
 # rather than reimplementing them. A copy of the logic inside the test would
@@ -36,6 +40,13 @@ extract_func() {
         p { print }
         p && /^\}$/ { exit }
     ' "$1"
+}
+
+# The package names the list helper actually ships, one per line.
+package_names_of() {
+    extract_func "$1" _boot_critical_package_list \
+        | grep -oE '\b[a-z0-9][a-z0-9.+-]*\b' \
+        | grep -vxE 'printf|s|local|list' | sort -u
 }
 
 # Line number of the first match, empty when absent.
@@ -66,10 +77,13 @@ line_of() {
 }
 
 @test "boot-critical: RU and EN ship the identical package list" {
+    # Compares the package NAMES, not the last quoted string in the function.
+    # Rewriting the helper as `local list="..."; printf '%s' "$list"` would make
+    # both sides equal the literal "$list" and this assertion meaningless.
     local ru en
-    ru=$(extract_func "$(RU_INSTALL)" _boot_critical_package_list | grep -o '"[^"]*"' | tail -1)
-    en=$(extract_func "$(EN_INSTALL)" _boot_critical_package_list | grep -o '"[^"]*"' | tail -1)
-    [ -n "$ru" ]
+    ru=$(package_names_of "$(RU_INSTALL)")
+    en=$(package_names_of "$(EN_INSTALL)")
+    [ "$(echo "$ru" | grep -c .)" -ge 10 ]
     [ "$ru" = "$en" ]
 }
 
@@ -104,7 +118,7 @@ line_of() {
         body=$(extract_func "$f" step1_update_and_optimize)
         [ -n "$body" ]
         guard=$(echo "$body" | grep -n -m1 '_dpkg_usable || die' | cut -d: -f1)
-        snap=$(echo "$body" | grep -n -m1 'critical_before="\$(_installed_boot_critical)"' | cut -d: -f1)
+        snap=$(echo "$body" | grep -n -m1 'critical_before="\$(_boot_critical_snapshot)"' | cut -d: -f1)
         [ -n "$guard" ] && [ -n "$snap" ]
         [ "$guard" -lt "$snap" ]
     done
@@ -119,7 +133,7 @@ line_of() {
     for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
         local repair snap
         repair=$(line_of "$f" 'if ! apt-get check')
-        snap=$(line_of "$f" 'critical_before="\$(_installed_boot_critical)"')
+        snap=$(line_of "$f" 'critical_before="\$(_boot_critical_snapshot)"')
         [ -n "$repair" ] && [ -n "$snap" ]
         [ "$snap" -gt "$repair" ]
     done
@@ -131,7 +145,7 @@ line_of() {
     # still green.
     for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
         local snap mark
-        snap=$(line_of "$f" 'critical_before="\$(_installed_boot_critical)"')
+        snap=$(line_of "$f" 'critical_before="\$(_boot_critical_snapshot)"')
         mark=$(line_of "$f" 'apt-mark manual \$critical_before')
         [ -n "$snap" ] && [ -n "$mark" ]
         [ "$snap" -lt "$mark" ]
@@ -150,22 +164,30 @@ line_of() {
 
 @test "boot-critical: the marking is unconditional, --no-tweaks included" {
     # The marking repairs damage the image may have carried before we touched
-    # anything, so no flag may switch it off. This invariant is documented in
-    # the code and would otherwise have no test at all.
+    # anything, so no flag may switch it off. The code says so at the block
+    # itself; without this test the statement would be documentation only.
     for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
         local block
         block=$(sed -n '/^    local critical_before$/,/^    fi$/p' "$f")
         [ -n "$block" ]
-        [ "$(echo "$block" | grep -c 'NO_TWEAKS')" -eq 0 ]
+        # Structural rather than a blocklist of flag names: exactly one branch,
+        # and it tests the snapshot. Any added condition, whatever it is called,
+        # fails this.
+        [ "$(echo "$block" | grep -cE '^[[:space:]]*(el)?if ')" -eq 1 ]
+        echo "$block" | grep -qE '^    if \[\[ -n "\$critical_before" \]\]; then'
     done
 }
 
 @test "boot-critical: an empty snapshot is reported, not passed over" {
+    # Scoped to the else branch on purpose. Grepping the whole block also
+    # matches the apt-mark failure fallback, so deleting the branch this test is
+    # named after left it green.
     for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
-        local block
-        block=$(sed -n '/^    local critical_before$/,/^    fi$/p' "$f")
-        [ -n "$block" ]
-        echo "$block" | grep -q 'log_warn'
+        local elsebranch
+        elsebranch=$(sed -n '/^    local critical_before$/,/^    fi$/p' "$f" \
+            | sed -n '/^    else$/,/^    fi$/p')
+        [ -n "$elsebranch" ]
+        echo "$elsebranch" | grep -q 'log_warn'
     done
 }
 
@@ -254,6 +276,90 @@ line_of() {
     done
 }
 
+@test "boot-critical: the snapshot survives a restart and only grows" {
+    # The installer asks the user to re-run it after a failure, and by then a
+    # package may already be gone. A snapshot recomputed from scratch would not
+    # contain it, and the pre-reboot check would compare the system against an
+    # impoverished baseline.
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        [ -n "$(extract_func "$f" _boot_critical_snapshot)" ]
+        grep -q 'critical_before="\$(_boot_critical_snapshot)"' "$f"
+        grep -q 'BOOT_CRITICAL_SNAPSHOT_FILE="\$AWG_DIR/' "$f"
+    done
+}
+
+@test "boot-critical: the verdict uses the strict predicate, the snapshot the lenient one" {
+    # One predicate cannot answer both questions. "Unpacked" means present for
+    # the snapshot and broken for the verdict: initramfs-tools in that state has
+    # generated no initramfs for the new kernel.
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        local verifier lister
+        verifier=$(extract_func "$f" _verify_boot_critical)
+        lister=$(extract_func "$f" _installed_boot_critical)
+        [ -n "$verifier" ] && [ -n "$lister" ]
+        [ "$(echo "$verifier" | grep -c '_pkg_installed_ok')" -ge 2 ]
+        [ "$(echo "$verifier" | grep -c '_pkg_present ')" -eq 0 ]
+        echo "$lister" | grep -q '_pkg_present '
+    done
+}
+
+@test "boot-critical: the predicate self-tests before the snapshot is trusted" {
+    # _dpkg_usable answers for dpkg only, while the predicate also leans on awk.
+    # A broken awk yields an empty status, i.e. "absent" for everything at once.
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        local body selftest snap
+        body=$(extract_func "$f" step1_update_and_optimize)
+        selftest=$(echo "$body" | grep -n -m1 '_pkg_present dpkg || die' | cut -d: -f1)
+        snap=$(echo "$body" | grep -n -m1 'critical_before="\$(_boot_critical_snapshot)"' | cut -d: -f1)
+        [ -n "$selftest" ] && [ -n "$snap" ]
+        [ "$selftest" -lt "$snap" ]
+    done
+}
+
+@test "boot-critical: a missing udev raises an alarm on its own" {
+    # udev is present on virtually every target server, so its absence means the
+    # machine may already be damaged rather than that there is nothing to guard.
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        local body
+        body=$(extract_func "$f" step1_update_and_optimize)
+        echo "$body" | grep -q '_pkg_installed_ok udev'
+    done
+}
+
+@test "boot-critical: the restore keeps apt exit code and never logs a blank line" {
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        local block
+        block=$(extract_func "$f" _verify_boot_critical)
+        echo "$block" | grep -q 'restore_rc=\$?'
+        # An empty apt answer gets its own branch instead of an empty warning.
+        echo "$block" | grep -q 'elif \[\[ -n "\$restore_out" \]\]'
+    done
+}
+
+@test "boot-critical: step 2 reboots are guarded as well" {
+    # Step 2 installs packages and reboots too, so it needs the same line of
+    # defence; the guard is only meaningful next to a reboot it precedes.
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        local body verify_count reboot_count
+        body=$(extract_func "$f" step2_install_amnezia)
+        [ -n "$body" ]
+        verify_count=$(echo "$body" | grep -c '_verify_boot_critical ')
+        reboot_count=$(echo "$body" | grep -c 'request_reboot 3')
+        [ "$reboot_count" -ge 1 ]
+        [ "$verify_count" -eq "$reboot_count" ]
+    done
+}
+
+@test "boot-critical: no package name is a dpkg glob pattern" {
+    # dpkg-query -W treats *, ? and [ as patterns. A multi-match would produce a
+    # multi-line status that falls through to "present", blinding the guard for
+    # that name with no error at all.
+    local names
+    names=$(extract_func "$(RU_INSTALL)" _boot_critical_package_list | grep -o '"[^"]*"' | tail -1 | tr -d '"')
+    [ -n "$names" ]
+    [ "$(echo "$names" | grep -c '[][*?]')" -eq 0 ]
+}
+
 # ===========================================================================
 # functional: the shipped functions, executed against stubbed dpkg
 # ===========================================================================
@@ -306,9 +412,11 @@ load_lister() {
 
 @test "boot-critical: a removed-but-configured package counts as absent" {
     # "deinstall ok config-files" is what apt leaves behind after removing a
-    # package that had configuration, which is literally the Issue #223 case. It
-    # also contains the substring "install ok", so a looser match would read a
-    # removed package as present.
+    # package that had configuration, which is literally the Issue #223 case.
+    # It contains the substring "install ok", so any match loosened in that
+    # direction would read a removed package as present. The real gain of
+    # parsing the third field is the opposite case, covered by the test above:
+    # half-configured and unpacked, which "ok installed" reads as absent.
     load_lister "$(RU_INSTALL)"
     dpkg-query() { echo "deinstall ok config-files"; }
     run _pkg_present udev
@@ -316,8 +424,15 @@ load_lister() {
 }
 
 load_verifier() {
-    eval "$(extract_func "$1" _pkg_present)"
+    eval "$(extract_func "$1" _pkg_installed_ok)"
     eval "$(extract_func "$1" _verify_boot_critical)"
+}
+
+load_snapshot() {
+    eval "$(extract_func "$1" _boot_critical_package_list)"
+    eval "$(extract_func "$1" _pkg_present)"
+    eval "$(extract_func "$1" _installed_boot_critical)"
+    eval "$(extract_func "$1" _boot_critical_snapshot)"
 }
 
 setup_stubs() {
@@ -330,7 +445,7 @@ setup_stubs() {
     # so the test would pass while the guard did nothing.
     die() { echo "DIE $*"; exit 42; }
     # Records its arguments so a test can prove what was actually asked for.
-    apt-get() { echo "$*" >> "$BATS_TEST_TMPDIR/apt-args"; return 0; }
+    apt-get() { echo "${DEBIAN_FRONTEND:-UNSET} $*" >> "$BATS_TEST_TMPDIR/apt-args"; return 0; }
     _dpkg_usable() { return 0; }
 }
 
@@ -377,8 +492,10 @@ setup_stubs() {
     [ "$status" -eq 42 ]
     # Two separate invocations, each naming exactly one package.
     [ "$(grep -c . "$BATS_TEST_TMPDIR/apt-args")" -eq 2 ]
-    grep -qx "install -y --no-remove udev" "$BATS_TEST_TMPDIR/apt-args"
-    grep -qx "install -y --no-remove initramfs-tools" "$BATS_TEST_TMPDIR/apt-args"
+    # The environment prefix is recorded too: a conffile prompt in an unattended
+    # run would block the installer at the worst possible moment.
+    grep -qx "noninteractive install -y --no-remove udev" "$BATS_TEST_TMPDIR/apt-args"
+    grep -qx "noninteractive install -y --no-remove initramfs-tools" "$BATS_TEST_TMPDIR/apt-args"
 }
 
 @test "boot-critical: verification reports every lost package, not just the first" {
@@ -392,6 +509,45 @@ setup_stubs() {
     done
 }
 
+@test "boot-critical: a half-configured dpkg is not trusted" {
+    # _dpkg_usable is the single probe that can switch every guard off at once:
+    # if it wrongly says "usable" while the database is mid-interruption, the
+    # snapshot comes back empty, apt-mark marks nothing and the verification
+    # iterates over nothing. Until this test existed the shipped body had zero
+    # execution coverage - it was stubbed in every functional test and only
+    # grepped for in the static ones.
+    #
+    # The tempting edit is routing it through _pkg_present, which this release
+    # introduces and which is deliberately permissive. Opposite question, wrong
+    # answer: presence is not trustworthiness.
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        eval "$(extract_func "$f" _pkg_present)"
+        eval "$(extract_func "$f" _dpkg_usable)"
+        dpkg-query() { echo "install ok installed"; }
+        run _dpkg_usable
+        [ "$status" -eq 0 ]
+        for bad in "install ok half-configured" "install ok unpacked" \
+                   "install ok half-installed" "deinstall ok config-files"; do
+            eval "dpkg-query() { echo '$bad'; }"
+            run _dpkg_usable
+            [ "$status" -ne 0 ]
+        done
+    done
+}
+
+@test "boot-critical: apt's own words reach the user when a restore fails" {
+    # The fatal message tells the user to install the packages by hand. If the
+    # reason apt refused is discarded, they rediscover it themselves over a live
+    # SSH session on a server that must not be rebooted.
+    load_verifier "$(RU_INSTALL)"
+    setup_stubs
+    dpkg-query() { return 1; }
+    apt-get() { echo "E: Package 'udev' has no installation candidate" >&2; return 100; }
+    run _verify_boot_critical "udev"
+    [ "$status" -eq 42 ]
+    echo "$output" | grep -q "no installation candidate"
+}
+
 @test "boot-critical: verification blames dpkg, not the upgrade, when dpkg is broken" {
     load_verifier "$(RU_INSTALL)"
     setup_stubs
@@ -401,4 +557,69 @@ setup_stubs() {
     [ "$status" -eq 42 ]
     echo "$output" | grep -q "dpkg"
     [ "$(echo "$output" | grep -c "Исчезли пакеты")" -eq 0 ]
+}
+
+@test "boot-critical: strict predicate rejects an unpacked package" {
+    load_verifier "$(RU_INSTALL)"
+    dpkg-query() { echo "install ok unpacked"; }
+    run _pkg_installed_ok initramfs-tools
+    [ "$status" -eq 1 ]
+}
+
+@test "boot-critical: strict predicate accepts a fully configured package" {
+    load_verifier "$(RU_INSTALL)"
+    dpkg-query() { echo "install ok installed"; }
+    run _pkg_installed_ok udev
+    [ "$status" -eq 0 ]
+}
+
+@test "boot-critical: snapshot remembers a package lost between runs" {
+    # The exact scenario the guard exists for: apt removes udev and then fails,
+    # so the end-of-step check never runs; the user re-runs as instructed.
+    load_snapshot "$(RU_INSTALL)"
+    # shellcheck disable=SC2034  # consumed by the shipped function loaded via eval
+    AWG_DIR="$BATS_TEST_TMPDIR"
+    BOOT_CRITICAL_SNAPSHOT_FILE="$BATS_TEST_TMPDIR/boot-critical.pkgs"
+    log_warn() { echo "WARN $*"; }
+
+    dpkg-query() {
+        case "$3" in udev|initramfs-tools) echo "install ok installed" ;; *) return 1 ;; esac
+    }
+    run _boot_critical_snapshot
+    echo "$output" | grep -qx "udev"
+
+    # udev is gone now, and left behind as config-files.
+    dpkg-query() {
+        case "$3" in
+            initramfs-tools) echo "install ok installed" ;;
+            udev) echo "deinstall ok config-files" ;;
+            *) return 1 ;;
+        esac
+    }
+    run _boot_critical_snapshot
+    echo "$output" | grep -qx "udev"
+    echo "$output" | grep -qx "initramfs-tools"
+}
+
+@test "boot-critical: snapshot ignores names it does not know" {
+    # A corrupted or substituted file must not become a list of arbitrary
+    # packages for the restore loop to install.
+    #
+    # Both installers on purpose: scoping this to one language left the other
+    # untested, and a mutation that stripped the filter from the RU installer
+    # alone kept this file green.
+    # shellcheck disable=SC2034  # consumed by the shipped function loaded via eval
+    AWG_DIR="$BATS_TEST_TMPDIR"
+    BOOT_CRITICAL_SNAPSHOT_FILE="$BATS_TEST_TMPDIR/boot-critical.pkgs"
+    log_warn() { echo "WARN $*"; }
+    dpkg-query() { return 1; }
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        load_snapshot "$f"
+        printf 'udev
+evil-package
+' > "$BOOT_CRITICAL_SNAPSHOT_FILE"
+        run _boot_critical_snapshot
+        echo "$output" | grep -qx "udev"
+        [ "$(echo "$output" | grep -c 'evil-package')" -eq 0 ]
+    done
 }
