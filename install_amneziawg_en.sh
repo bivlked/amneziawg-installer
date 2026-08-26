@@ -1407,39 +1407,125 @@ _cleanup_package_list() {
 }
 
 # _boot_critical_package_list : packages whose loss leaves the server unable to
-# boot or unable to reach the network. The list comes from Issue #223, not from
-# general caution: there `apt full-upgrade` in step 1 removed udev,
-# initramfs-tools, netplan.io and some thirty more packages, and the server
-# stopped booting. Without udev there is no /dev/disk/by-label, systemd never
-# sees the partitions that fstab refers to by label, and after 90 seconds it
-# drops into emergency mode.
+# boot or unable to reach the network. The core of the list comes from Issue
+# #223: there `apt full-upgrade` in step 1 removed 34 packages, udev,
+# initramfs-tools and netplan.io among them, and the server stopped booting.
+# Without udev there is no /dev/disk/by-label, systemd never sees the partitions
+# that fstab refers to by label, and it drops into emergency mode (after 90
+# seconds of waiting by default, see DefaultDeviceTimeoutSec; both partitions
+# were waited for in parallel, not one after the other). Some names were added
+# on reasoning rather than from that incident: losing openssh-server,
+# systemd-resolved or ifupdown cuts off access just as reliably.
 #
-# How it gets there. cleanup_system purges its own list, and apt takes the
-# ubuntu-server meta-package along as a reverse dependency. On images where that
-# was the only manual root, everything hanging under it (ubuntu-standard,
-# ubuntu-minimal and their dependencies) becomes "no longer required". From then
-# on apt full-upgrade is free to drop such a package instead of upgrading it,
-# and on systems with many pending updates that is exactly what it does. Hence
-# the spread between servers: on a freshly updated image there is nothing to
-# upgrade, the defect never shows, and that is why it went unnoticed for months.
+# How it gets there. cleanup_system purges its own list, and the ubuntu-server
+# meta-package turns out to be a reverse dependency of what is being removed, so
+# it goes along. On images where it was the only manual root, everything hanging
+# under it (ubuntu-standard, ubuntu-minimal and their dependencies) becomes "no
+# longer required". That alone is not a removal: apt lists such packages and
+# suggests `apt autoremove`. But while resolving dependencies for the upgrade
+# the resolver may pick removal over upgrading, and for a package nobody needs
+# any more that is the cheap choice. In Issue #223 it made exactly that choice.
+# We never reproduced the resolver's decision: the outcome is known, the motive
+# is not.
+#
+# ⚠️ The names ubuntu-server/ubuntu-minimal/ubuntu-standard exist only on
+# Ubuntu. Debian has no such chain, and there the list acts as ordinary
+# insurance: _installed_boot_critical simply will not find the absent ones.
 #
 # ⚠️ This list is NOT the hold list from cleanup_system: that one guards during
 # the purge, this one during the upgrade. They overlap; their purpose differs.
 _boot_critical_package_list() {
-    printf '%s' "udev initramfs-tools netplan.io netplan-generator systemd-resolved ifupdown cloud-init ubuntu-minimal ubuntu-standard"
+    printf '%s' "udev initramfs-tools openssh-server netplan.io netplan-generator systemd-resolved ifupdown cloud-init ubuntu-minimal ubuntu-standard"
+}
+
+# _pkg_present : 0 if the package is present in any working shape. We look at
+# the third Status field rather than at the "ok installed" substring: right
+# after a purge or an interrupted upgrade a package can sit as half-configured
+# or unpacked. For our purposes it is present and has to be protected.
+_pkg_present() {
+    local state
+    state="$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null | awk '{print $3}')"
+    case "$state" in
+        ""|not-installed|config-files) return 1 ;;
+        *) return 0 ;;
+    esac
 }
 
 # _installed_boot_critical : the ones actually installed on this system.
-# Prints one name per line; empty output is a normal outcome.
+# Prints one name per line; empty output is a reason to worry rather than a
+# normal outcome, since udev is present on virtually every server.
 _installed_boot_critical() {
     local critical_list
     critical_list="$(_boot_critical_package_list)"
     local pkg
     for pkg in $critical_list; do
-        if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed"; then
+        if _pkg_present "$pkg"; then
             printf '%s\n' "$pkg"
         fi
     done
+}
+
+# _verify_boot_critical : the last line of defence before the reboot. Takes the
+# snapshot made BEFORE the upgrade and compares it against the state right now.
+#
+# The call sits right next to request_reboot and must not drift away from it.
+# The whole point is that nothing capable of removing a package runs after it:
+# step 1 still has install_packages between the upgrade and the reboot, and that
+# calls apt install without --no-remove. A check placed before it would leave a
+# window of exactly the class it is meant to close.
+#
+# Why this is needed at all: apt is allowed to remove packages in order to
+# resolve dependencies, and in Issue #223 udev went that way - the server
+# stopped booting, and the reboot is one we trigger ourselves. So the catch
+# belongs here, while the server is still reachable: after the reboot the repair
+# would need the hosting provider's console.
+_verify_boot_critical() {
+    local critical_before="$1"
+    local critical_lost=""
+    local pkg
+    for pkg in $critical_before; do
+        _pkg_present "$pkg" || critical_lost+="$pkg "
+    done
+    [[ -n "$critical_lost" ]] || return 0
+    critical_lost="${critical_lost% }"
+
+    # Before blaming the upgrade: a broken dpkg produces exactly the same
+    # picture, and a message saying "packages were removed" would send the
+    # diagnosis the wrong way.
+    _dpkg_usable || die "dpkg stopped answering, so there is no way to check the package state. Do NOT reboot the server. Run: dpkg --configure -a; apt-get check - then start the installer again."
+
+    log_warn "Packages the server cannot boot without have disappeared: $critical_lost"
+    log_warn "Restoring them..."
+    # One at a time rather than in a single transaction: if even one name has no
+    # installation candidate, apt aborts the whole transaction and nothing is
+    # restored, including the packages that install perfectly well. The same
+    # lesson was already paid for above, in cleanup_system, on
+    # netplan-generator. --no-remove: restoring one package must not cost us
+    # another.
+    local restore_out
+    for pkg in $critical_lost; do
+        if restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove "$pkg" 2>&1)"; then
+            log_debug "Restored: $pkg"
+        else
+            log_warn "Could not install $pkg. What apt said:"
+            log_warn "$(printf '%s' "$restore_out" | tail -3)"
+        fi
+    done
+
+    # Re-check the WHOLE set, not just what went missing. The direct route to
+    # losing a neighbour is closed by --no-remove above; this is the fallback for
+    # the day that stops holding.
+    local still_lost=""
+    for pkg in $critical_before; do
+        _pkg_present "$pkg" || still_lost+="$pkg "
+    done
+    if [[ -n "$still_lost" ]]; then
+        still_lost="${still_lost% }"
+        log_error "Do NOT reboot the server: in its current state it will not come back."
+        log_error "Boot-critical packages missing: $still_lost"
+        die "Stopping while the server is still reachable. Install these packages one by one (sudo apt-get install -y <name>), confirm each one is in place, then run the installer again."
+    fi
+    log "Boot-critical packages restored."
 }
 
 # _dpkg_usable : 0 if dpkg answers can be trusted.
@@ -3140,21 +3226,6 @@ step1_update_and_optimize() {
         cleanup_system
     fi
 
-    # The cleanup above may have orphaned the meta-packages that udev,
-    # initramfs-tools and the network stack hang from. Mark such packages manual
-    # again, otherwise apt full-upgrade below is free to drop them instead of
-    # upgrading them (Issue #223). Manual rather than hold on purpose: a hold
-    # would block the upgrade, and upgrading them is exactly what we want;
-    # manual only clears the "no longer required" status. The snapshot is useful
-    # on its own too - it is what the check below compares against. Done
-    # unconditionally, --no-tweaks included: the marking could have been
-    # orphaned before we touched anything, by the image itself.
-    local critical_before
-    critical_before="$(_installed_boot_critical)"
-    if [[ -n "$critical_before" ]]; then
-        apt-mark manual $critical_before >/dev/null 2>&1 \
-            || log_warn "Failed to restore the manual mark on boot-critical packages."
-    fi
 
     log "Updating package lists..."
     apt_update_tolerant || die "apt update error."
@@ -3168,6 +3239,29 @@ step1_update_and_optimize() {
         DEBIAN_FRONTEND=noninteractive dpkg --configure -a || log_warn "dpkg --configure -a."
     fi
 
+    # The cleanup above may have orphaned the meta-packages that udev,
+    # initramfs-tools and the network stack hang from. Mark such packages manual
+    # again, otherwise apt full-upgrade below is free to drop them instead of
+    # upgrading them (Issue #223). Manual rather than hold on purpose: a hold
+    # would block the upgrade, and upgrading them is exactly what we want;
+    # manual only clears the "no longer required" status.
+    #
+    # This block sits AFTER the dpkg repair above, and that is not cosmetic: the
+    # snapshot is built by asking dpkg, and a broken dpkg would answer "nothing
+    # is installed". The protection would then switch itself off silently, along
+    # with the post-upgrade check, on exactly the machines where the defect bites.
+    _dpkg_usable || die "dpkg does not answer, and without it there is no way to tell whether udev and initramfs-tools survive the upgrade (Issue #223). Run: dpkg --configure -a; apt-get check - then start the installer again."
+    local critical_before
+    critical_before="$(_installed_boot_critical)"
+    if [[ -n "$critical_before" ]]; then
+        log_debug "Boot-critical packages: $(printf '%s' "$critical_before" | tr '\n' ' ')"
+        # Unquoted on purpose: the list arrives as newline-separated names and
+        # splitting it into arguments is exactly what is wanted here.
+        apt-mark manual $critical_before >/dev/null 2>&1 \
+            || log_warn "Failed to restore the manual mark on: $(printf '%s' "$critical_before" | tr '\n' ' ') - the upgrade below may remove them, the check after it will catch that."
+    else
+        log_warn "Not a single boot-critical package was found installed. That is unusual for Ubuntu and Debian; check: dpkg-query -W udev"
+    fi
     log "Updating system..."
     if ! DEBIAN_FRONTEND=noninteractive apt full-upgrade -y; then
         _lock_holder="$(fuser /var/lib/dpkg/lock-frontend 2>/dev/null | tr -s ' ' || true)"
@@ -3181,35 +3275,6 @@ step1_update_and_optimize() {
     fi
     log "System updated."
 
-    # Pre-reboot gate. apt full-upgrade is allowed to remove packages in order to
-    # resolve dependencies, and in Issue #223 it removed udev - the server
-    # stopped booting, and the reboot at the end of this step is one we trigger
-    # ourselves. So the check belongs here, while the server is still reachable:
-    # after the reboot the repair would need the hosting provider's console.
-    local critical_lost=""
-    local pkg
-    for pkg in $critical_before; do
-        dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed" \
-            || critical_lost+="$pkg "
-    done
-    if [[ -n "$critical_lost" ]]; then
-        critical_lost="${critical_lost% }"
-        log_warn "The upgrade removed boot-critical packages: $critical_lost"
-        log_warn "Restoring them..."
-        DEBIAN_FRONTEND=noninteractive apt-get install -y $critical_lost >/dev/null 2>&1 || true
-        local still_lost=""
-        for pkg in $critical_lost; do
-            dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed" \
-                || still_lost+="$pkg "
-        done
-        if [[ -n "$still_lost" ]]; then
-            still_lost="${still_lost% }"
-            log_error "Could not restore: $still_lost"
-            log_error "Without these packages the server will not boot, and the reboot is performed by this very step."
-            die "Stopping here while the server is still reachable. Restore manually: sudo apt-get install -y $still_lost - then run the installer again."
-        fi
-        log "Boot-critical packages restored."
-    fi
 
     install_packages curl wget gpg sudo ethtool
 
@@ -3222,6 +3287,10 @@ step1_update_and_optimize() {
         log "Skipping optimization and hardening (--no-tweaks)."
         setup_minimal_sysctl
     fi
+
+    # Checked as the very last action of the step: nothing capable of
+    # removing a package runs after this line.
+    _verify_boot_critical "$critical_before"
 
     log "Step 1 completed successfully."
     request_reboot 2

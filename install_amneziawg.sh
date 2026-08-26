@@ -1390,38 +1390,120 @@ _cleanup_package_list() {
 }
 
 # _boot_critical_package_list : пакеты, потеря которых оставляет сервер без
-# загрузки или без сети. Список собран не из общей осторожности, а по разбору
-# Issue #223: там `apt full-upgrade` на шаге 1 удалил udev, initramfs-tools,
-# netplan.io и ещё три десятка пакетов, после чего сервер перестал грузиться.
-# Без udev не создаётся /dev/disk/by-label, systemd не дожидается разделов,
-# записанных в fstab метками, и через 90 секунд уходит в аварийный режим.
+# загрузки или без сети. Ядро списка пришло из разбора Issue #223: там
+# `apt full-upgrade` на шаге 1 удалил 34 пакета, включая udev, initramfs-tools
+# и netplan.io, после чего сервер перестал грузиться. Без udev не создаётся
+# /dev/disk/by-label, systemd не дожидается разделов, записанных в fstab
+# метками, и уходит в аварийный режим (по умолчанию через 90 секунд ожидания,
+# см. DefaultDeviceTimeoutSec; оба раздела ждались параллельно, а не по
+# очереди). Часть имён добавлена по смыслу, а не по тому инциденту: потеря
+# openssh-server, systemd-resolved или ifupdown отрезает доступ так же надёжно.
 #
-# Как до этого доходит. cleanup_system удаляет свой список, а apt заодно уносит
-# метапакет ubuntu-server как обратную зависимость. На образах, где тот был
-# единственным manual-корнем, всё висевшее под ним (ubuntu-standard,
-# ubuntu-minimal и их зависимости) получает статус "больше не требуется".
-# Дальше apt full-upgrade вправе не обновлять ненужный пакет, а выбросить его -
-# на системах с большим числом отложенных обновлений он так и поступает.
-# Отсюда и разброс между серверами: на свежем образе обновлять нечего, дефект
-# не проявляется, и именно поэтому он полгода не попадался на стендах.
+# Как до этого доходит. cleanup_system удаляет свой список, а метапакет
+# ubuntu-server оказывается обратной зависимостью удаляемого и уходит вместе с
+# ним. На образах, где он был единственным manual-корнем, всё висевшее под ним
+# (ubuntu-standard, ubuntu-minimal и их зависимости) получает статус "больше не
+# требуется". Само по себе это ещё не удаление: apt такие пакеты перечисляет и
+# предлагает `apt autoremove`. Но при разрешении зависимостей во время
+# обновления резолвер вправе выбрать удаление вместо обновления, и для пакета,
+# который больше никому не нужен, это дешёвый выбор. В Issue #223 он его и
+# сделал. Решение резолвера мы не воспроизводили: известен исход, а не мотив.
+#
+# ⚠️ Имена ubuntu-server/ubuntu-minimal/ubuntu-standard существуют только в
+# Ubuntu. На Debian той же цепочки нет, и там список работает как обычная
+# страховка: _installed_boot_critical просто не найдёт отсутствующих.
 #
 # ⚠️ Список НЕ равен hold-списку из cleanup_system: тот защищает во время
 # purge, этот - во время обновления. Пересечение есть, назначение разное.
 _boot_critical_package_list() {
-    printf '%s' "udev initramfs-tools netplan.io netplan-generator systemd-resolved ifupdown cloud-init ubuntu-minimal ubuntu-standard"
+    printf '%s' "udev initramfs-tools openssh-server netplan.io netplan-generator systemd-resolved ifupdown cloud-init ubuntu-minimal ubuntu-standard"
+}
+
+# _pkg_present : 0, если пакет присутствует в системе в любом рабочем виде.
+# Смотрим на третье поле Status, а не на подстроку "ok installed": сразу после
+# purge или прерванного обновления пакет может стоять как half-configured или
+# unpacked. Для наших целей он присутствует, и защищать его надо.
+_pkg_present() {
+    local state
+    state="$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null | awk '{print $3}')"
+    case "$state" in
+        ""|not-installed|config-files) return 1 ;;
+        *) return 0 ;;
+    esac
 }
 
 # _installed_boot_critical : те из них, что реально стоят в этой системе.
-# Печатает по одному имени в строке; пустой вывод - нормальная ситуация.
+# Печатает по одному имени в строке; пустой вывод - повод насторожиться,
+# а не нормальная ситуация: udev есть практически на любом сервере.
 _installed_boot_critical() {
     local critical_list
     critical_list="$(_boot_critical_package_list)"
     local pkg
     for pkg in $critical_list; do
-        if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed"; then
+        if _pkg_present "$pkg"; then
             printf '%s\n' "$pkg"
         fi
     done
+}
+
+# _verify_boot_critical : последний рубеж перед перезагрузкой. Принимает снимок,
+# снятый ДО обновления, и сверяет его с состоянием прямо сейчас.
+#
+# Вызов стоит вплотную к request_reboot и не должен от него отрываться. Смысл
+# проверки в том, что после неё не выполняется больше ничего, способного
+# удалить пакет: в шаге 1 между обновлением и перезагрузкой живёт ещё
+# install_packages, а он зовёт apt install без --no-remove. Проверка, стоящая
+# раньше него, оставила бы окно ровно того же класса, который она закрывает.
+#
+# Почему это вообще нужно: apt вправе удалять пакеты ради разрешения
+# зависимостей, и в Issue #223 так ушёл udev - сервер перестал грузиться, а
+# перезагрузку инициируем мы сами. Значит ловить надо здесь, пока доступ к
+# серверу есть: после reboot чинить придётся через консоль хостера.
+_verify_boot_critical() {
+    local critical_before="$1"
+    local critical_lost=""
+    local pkg
+    for pkg in $critical_before; do
+        _pkg_present "$pkg" || critical_lost+="$pkg "
+    done
+    [[ -n "$critical_lost" ]] || return 0
+    critical_lost="${critical_lost% }"
+
+    # Прежде чем винить обновление: неисправный dpkg даёт ровно ту же картину,
+    # и сообщение "пакеты удалены" увело бы разбор не туда.
+    _dpkg_usable || die "dpkg перестал отвечать, состояние пакетов проверить нечем. НЕ ПЕРЕЗАГРУЖАЙТЕ сервер. Выполните: dpkg --configure -a; apt-get check - и запустите установщик снова."
+
+    log_warn "Исчезли пакеты, без которых сервер не загрузится: $critical_lost"
+    log_warn "Восстанавливаю их..."
+    # По одному, а не одной транзакцией: если хотя бы у одного имени нет
+    # кандидата на установку, apt отменяет транзакцию целиком, и не
+    # восстановится ничего, включая пакеты, которые ставятся прекрасно. Тот же
+    # урок уже оплачен выше, в cleanup_system, на netplan-generator.
+    # --no-remove: восстановление одного пакета не должно стоить другого.
+    local restore_out
+    for pkg in $critical_lost; do
+        if restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove "$pkg" 2>&1)"; then
+            log_debug "Восстановлен: $pkg"
+        else
+            log_warn "Не удалось установить $pkg. Ответ apt:"
+            log_warn "$(printf '%s' "$restore_out" | tail -3)"
+        fi
+    done
+
+    # Сверяем ВЕСЬ набор, а не только пропавшее. Прямой путь к потере соседа
+    # закрыт флагом --no-remove выше; это страховка на случай, если он
+    # перестанет действовать.
+    local still_lost=""
+    for pkg in $critical_before; do
+        _pkg_present "$pkg" || still_lost+="$pkg "
+    done
+    if [[ -n "$still_lost" ]]; then
+        still_lost="${still_lost% }"
+        log_error "НЕ ПЕРЕЗАГРУЖАЙТЕ сервер: в текущем состоянии он не загрузится."
+        log_error "Отсутствуют критичные пакеты: $still_lost"
+        die "Останавливаюсь, пока доступ к серверу есть. Установите эти пакеты по одному (sudo apt-get install -y <имя>), проверьте, что каждый встал, и запустите установщик снова."
+    fi
+    log "Критичные пакеты восстановлены."
 }
 
 # _dpkg_usable : 0, если ответам dpkg можно верить.
@@ -3105,20 +3187,6 @@ step1_update_and_optimize() {
         cleanup_system
     fi
 
-    # Очистка выше могла осиротить метапакеты, под которыми висят udev,
-    # initramfs-tools и сетевой стек. Возвращаем таким пакетам признак manual,
-    # иначе apt full-upgrade ниже вправе выбросить их вместо обновления
-    # (Issue #223). Именно manual, а не hold: hold запретил бы обновление, а
-    # обновлять их как раз надо; manual лишь снимает статус "больше не нужен".
-    # Снимок нужен и сам по себе - по нему ниже сверяем, что обновление ничего
-    # из этого не унесло. Делается безусловно, в том числе при --no-tweaks:
-    # разметка могла быть осиротевшей и до нас, самим образом.
-    local critical_before
-    critical_before="$(_installed_boot_critical)"
-    if [[ -n "$critical_before" ]]; then
-        apt-mark manual $critical_before >/dev/null 2>&1 \
-            || log_warn "Не удалось вернуть признак manual критичным пакетам."
-    fi
 
     log "Обновление списка пакетов..."
     apt_update_tolerant || die "Ошибка apt update."
@@ -3132,6 +3200,28 @@ step1_update_and_optimize() {
         DEBIAN_FRONTEND=noninteractive dpkg --configure -a || log_warn "dpkg --configure -a."
     fi
 
+    # Очистка выше могла осиротить метапакеты, под которыми висят udev,
+    # initramfs-tools и сетевой стек. Возвращаем таким пакетам признак manual,
+    # иначе apt full-upgrade ниже вправе выбросить их вместо обновления
+    # (Issue #223). Именно manual, а не hold: hold запретил бы обновление, а
+    # обновлять их как раз надо; manual лишь снимает статус "больше не нужен".
+    #
+    # Блок стоит ПОСЛЕ ремонта dpkg выше, и это не косметика: снимок строится
+    # опросом dpkg, и неисправный dpkg ответил бы "ничего не установлено".
+    # Тогда защита выключилась бы молча, вместе с проверкой после обновления,
+    # то есть ровно на тех машинах, где дефект и срабатывает.
+    _dpkg_usable || die "dpkg не отвечает, а без него не проверить, переживут ли обновление udev и initramfs-tools (Issue #223). Выполните: dpkg --configure -a; apt-get check - и запустите установщик снова."
+    local critical_before
+    critical_before="$(_installed_boot_critical)"
+    if [[ -n "$critical_before" ]]; then
+        log_debug "Критичные для загрузки пакеты: $(printf '%s' "$critical_before" | tr '\n' ' ')"
+        # Без кавычек намеренно: список приходит именами через перевод строки,
+        # и разбиение на аргументы здесь и нужно.
+        apt-mark manual $critical_before >/dev/null 2>&1 \
+            || log_warn "Не удалось вернуть признак manual пакетам: $(printf '%s' "$critical_before" | tr '\n' ' ') - обновление ниже может их удалить, проверка после него это поймает."
+    else
+        log_warn "Ни один пакет из критичного набора не найден установленным. Для Ubuntu и Debian это необычно; проверьте: dpkg-query -W udev"
+    fi
     log "Обновление системы..."
     if ! DEBIAN_FRONTEND=noninteractive apt full-upgrade -y; then
         _lock_holder="$(fuser /var/lib/dpkg/lock-frontend 2>/dev/null | tr -s ' ' || true)"
@@ -3145,35 +3235,6 @@ step1_update_and_optimize() {
     fi
     log "Система обновлена."
 
-    # Гейт перед перезагрузкой. apt full-upgrade вправе удалять пакеты ради
-    # разрешения зависимостей, и в Issue #223 он удалил udev - сервер перестал
-    # грузиться, а перезагрузку в конце этого шага инициируем мы сами. Значит
-    # проверять надо здесь, пока доступ к серверу ещё есть: после reboot чинить
-    # придётся уже через консоль хостера.
-    local critical_lost=""
-    local pkg
-    for pkg in $critical_before; do
-        dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed" \
-            || critical_lost+="$pkg "
-    done
-    if [[ -n "$critical_lost" ]]; then
-        critical_lost="${critical_lost% }"
-        log_warn "Обновление удалило критичные для загрузки пакеты: $critical_lost"
-        log_warn "Восстанавливаю их..."
-        DEBIAN_FRONTEND=noninteractive apt-get install -y $critical_lost >/dev/null 2>&1 || true
-        local still_lost=""
-        for pkg in $critical_lost; do
-            dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed" \
-                || still_lost+="$pkg "
-        done
-        if [[ -n "$still_lost" ]]; then
-            still_lost="${still_lost% }"
-            log_error "Не удалось восстановить: $still_lost"
-            log_error "Без этих пакетов сервер не загрузится, а перезагрузку выполняет этот же шаг."
-            die "Останавливаюсь здесь, пока доступ к серверу есть. Восстановите вручную: sudo apt-get install -y $still_lost - и запустите установщик снова."
-        fi
-        log "Критичные пакеты восстановлены."
-    fi
 
     install_packages curl wget gpg sudo ethtool
 
@@ -3186,6 +3247,10 @@ step1_update_and_optimize() {
         log "Пропуск оптимизации и hardening (--no-tweaks)."
         setup_minimal_sysctl
     fi
+
+    # Проверяем ПОСЛЕДНИМ действием шага: после этой строки не выполняется
+    # ничего, что могло бы удалить пакет.
+    _verify_boot_critical "$critical_before"
 
     log "Шаг 1 успешно завершен."
     request_reboot 2
