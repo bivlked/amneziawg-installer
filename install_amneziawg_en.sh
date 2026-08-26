@@ -1436,7 +1436,7 @@ _cleanup_package_list() {
 # ⚠️ This list is NOT the hold list from cleanup_system: that one guards during
 # the purge, this one during the upgrade. They overlap; their purpose differs.
 _boot_critical_package_list() {
-    printf '%s' "udev initramfs-tools openssh-server netplan.io netplan-generator systemd-resolved ifupdown cloud-init ubuntu-minimal ubuntu-standard"
+    printf '%s' "udev initramfs-tools openssh-server netplan.io netplan-generator systemd-resolved ifupdown ubuntu-minimal ubuntu-standard"
 }
 
 # _pkg_present : 0 if the package is present in any working shape. We look at
@@ -1474,7 +1474,14 @@ _installed_boot_critical() {
 # built for the new kernel. The server will not boot, though the package
 # formally "exists".
 _pkg_installed_ok() {
-    dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -qx "install ok installed"
+    # We look at the THIRD field only. A full Status line is "<want> <error>
+    # <status>", and anchoring the whole "install ok installed" pins the want
+    # flag as well: `apt-mark hold` sets "hold ok installed", so a perfectly
+    # healthy package would read as lost. That is not theoretical here -
+    # cleanup_system goes out of its way to preserve operator holds. The
+    # installed state still rejects what this predicate exists for: unpacked,
+    # half-configured, half-installed, config-files.
+    [[ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null | awk '{print $3}')" == "installed" ]]
 }
 
 # The snapshot SURVIVES installer restarts and can only grow.
@@ -1493,7 +1500,12 @@ _boot_critical_snapshot() {
     local now stored known union
     now="$(_installed_boot_critical)"
     stored=""
-    if [[ -r "$BOOT_CRITICAL_SNAPSHOT_FILE" ]]; then
+    if [[ -e "$BOOT_CRITICAL_SNAPSHOT_FILE" && ! -r "$BOOT_CRITICAL_SNAPSHOT_FILE" ]]; then
+        # Otherwise an unreadable file is indistinguishable from a missing one:
+        # the list would quietly shrink and the function would immediately
+        # overwrite the history with it, while its contract is to only grow.
+        log_warn "$BOOT_CRITICAL_SNAPSHOT_FILE exists but cannot be read. The list from previous runs will not be taken into account."
+    elif [[ -r "$BOOT_CRITICAL_SNAPSHOT_FILE" ]]; then
         known="$(_boot_critical_package_list | tr ' ' '\n')"
         stored="$(grep -Fxf <(printf '%s\n' "$known") "$BOOT_CRITICAL_SNAPSHOT_FILE" 2>/dev/null || true)"
     fi
@@ -1522,6 +1534,10 @@ _boot_critical_snapshot() {
 # would need the hosting provider's console.
 _verify_boot_critical() {
     local critical_before="$1"
+    if [[ -z "$critical_before" ]]; then
+        log_warn "The protected package list is empty, there is nothing to compare against. That is abnormal for Ubuntu and Debian: check dpkg-query -W udev, the server may fail to boot after the reboot."
+        return 0
+    fi
     local critical_lost=""
     local pkg
     for pkg in $critical_before; do
@@ -1548,8 +1564,13 @@ _verify_boot_critical() {
     for pkg in $critical_lost; do
         restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove "$pkg" 2>&1)"
         restore_rc=$?
-        if [[ "$restore_rc" -eq 0 ]]; then
+        if [[ "$restore_rc" -eq 0 ]] && _pkg_installed_ok "$pkg"; then
             log "Restored: $pkg"
+        elif [[ "$restore_rc" -eq 0 ]]; then
+            # apt also exits zero when it decides there is nothing to do.
+            # Without this branch the log would contradict itself: "Restored"
+            # three lines above "Boot-critical packages missing".
+            log_warn "apt reported success, but $pkg is still not installed."
         elif [[ -n "$restore_out" ]]; then
             # On one line: log_msg timestamps only the first line, and a
             # multi-line answer breaks the log format exactly where someone will
@@ -1571,9 +1592,27 @@ _verify_boot_critical() {
         still_lost="${still_lost% }"
         log_error "Do NOT reboot the server: in its current state it will not come back."
         log_error "Boot-critical packages missing: $still_lost"
-        die "Stopping while the server is still reachable. Install these packages one by one (sudo apt-get install -y <name>), confirm each one is in place, then run the installer again."
+        log_error "Install them one by one: sudo apt-get install -y <name>"
+        log_error "If a package is held (dpkg -l shows hi), release it: sudo apt-mark unhold <name>"
+        log_error "If a package is gone from the repositories (renamed by a release upgrade), drop its name from $BOOT_CRITICAL_SNAPSHOT_FILE"
+        die "Stopping while the server is still reachable. Deal with the above, then run the installer again."
     fi
     log "Boot-critical packages restored."
+}
+
+# _boot_critical_guard : take the snapshot and verify it. The wrapper exists for
+# the places that have not taken a snapshot yet, which is step 2.
+#
+# ⚠️ The self-tests sit HERE, before the assignment, and not inside
+# _boot_critical_snapshot, and that matters: a die inside a command
+# substitution would only end the subshell, the script would carry on with an
+# empty snapshot, and the fatal check would silently become optional.
+_boot_critical_guard() {
+    _dpkg_usable || die "dpkg does not answer, and without it there is no way to tell whether udev and initramfs-tools survive the reboot (Issue #223). Run: dpkg --configure -a; apt-get check - then start the installer again."
+    _pkg_present dpkg || die "Could not determine package state (dpkg-query or awk do not behave as expected). Without it there is no way to be sure the server will boot (Issue #223)."
+    local snapshot
+    snapshot="$(_boot_critical_snapshot)"
+    _verify_boot_critical "$snapshot"
 }
 
 # _dpkg_usable : 0 if dpkg answers can be trusted.
@@ -3859,7 +3898,7 @@ PPASRC
                 log_warn "  then sudo apt-mark hold amneziawg-dkms, reinstall the module and reboot."
             fi
             log "Step 2 completed (prebuilt ARM)."
-            _verify_boot_critical "$(_boot_critical_snapshot)"
+            _boot_critical_guard
             # request_reboot always terminates the process (exit), we never return here.
             request_reboot 3
         fi
@@ -4260,7 +4299,7 @@ AWG_SYSTEMD_UNIT_EOF
 
     # Step 2 installs packages and reboots the machine as well, so it needs
     # the same line of defence.
-    _verify_boot_critical "$(_boot_critical_snapshot)"
+    _boot_critical_guard
 
     log "Step 2 completed."
     request_reboot 3
@@ -4584,7 +4623,12 @@ step99_finish() {
 
     # Remove state file
     log "Removing installation state file..."
-    rm -f "$STATE_FILE" "${STATE_FILE}.lock" "$AWG_DIR/.boot_id_before_step2" || log_warn "Failed to remove $STATE_FILE"
+    # The protected package snapshot goes too: it is needed between the steps,
+    # but surviving the install it would only grow stale. A stale name (a
+    # package renamed by a release upgrade) would stop the next install for no
+    # reason the user can see.
+    rm -f "$STATE_FILE" "${STATE_FILE}.lock" "$AWG_DIR/.boot_id_before_step2" \
+          "$BOOT_CRITICAL_SNAPSHOT_FILE" || log_warn "Failed to remove $STATE_FILE"
     log "Installation fully completed. Log: $LOG_FILE"
     log "=============================================================================="
 }

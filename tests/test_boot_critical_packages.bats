@@ -71,9 +71,13 @@ line_of() {
     local ru
     ru=$(extract_func "$(RU_INSTALL)" _boot_critical_package_list)
     for want in udev initramfs-tools openssh-server netplan.io netplan-generator \
-                systemd-resolved ifupdown cloud-init ubuntu-minimal ubuntu-standard; do
+                systemd-resolved ifupdown ubuntu-minimal ubuntu-standard; do
         echo "$ru" | grep -q -- "$want"
     done
+    # cloud-init must NOT be here: cleanup_system deliberately purges it under a
+    # guard, so protecting it would have the verification reinstall the package
+    # the same run just removed, and report that as a repair.
+    [ "$(echo "$ru" | grep -c 'cloud-init')" -eq 0 ]
 }
 
 @test "boot-critical: RU and EN ship the identical package list" {
@@ -83,7 +87,7 @@ line_of() {
     local ru en
     ru=$(package_names_of "$(RU_INSTALL)")
     en=$(package_names_of "$(EN_INSTALL)")
-    [ "$(echo "$ru" | grep -c .)" -ge 10 ]
+    [ "$(echo "$ru" | grep -c .)" -ge 9 ]
     [ "$ru" = "$en" ]
 }
 
@@ -343,7 +347,7 @@ line_of() {
         local body verify_count reboot_count
         body=$(extract_func "$f" step2_install_amnezia)
         [ -n "$body" ]
-        verify_count=$(echo "$body" | grep -c '_verify_boot_critical ')
+        verify_count=$(echo "$body" | grep -c '_boot_critical_guard')
         reboot_count=$(echo "$body" | grep -c 'request_reboot 3')
         [ "$reboot_count" -ge 1 ]
         [ "$verify_count" -eq "$reboot_count" ]
@@ -506,6 +510,92 @@ setup_stubs() {
     [ "$status" -eq 42 ]
     for pkg in udev initramfs-tools netplan.io; do
         echo "$output" | grep -q -- "$pkg"
+    done
+}
+
+@test "boot-critical: a held package is not mistaken for a lost one" {
+    # Status is "<want> <error> <status>". Anchoring the whole "install ok
+    # installed" pins the want flag too, so apt-mark hold would turn a healthy
+    # package into a permanent stop the user cannot escape: apt-get install
+    # exits 0 on a held, already-newest package and changes nothing. This is
+    # reachable, not theoretical: cleanup_system preserves operator holds.
+    load_verifier "$(RU_INSTALL)"
+    for good in "install ok installed" "hold ok installed" "install reinstreq installed"; do
+        eval "dpkg-query() { echo '$good'; }"
+        run _pkg_installed_ok udev
+        [ "$status" -eq 0 ]
+    done
+    for bad in "install ok unpacked" "install ok half-configured" "deinstall ok config-files"; do
+        eval "dpkg-query() { echo '$bad'; }"
+        run _pkg_installed_ok udev
+        [ "$status" -ne 0 ]
+    done
+}
+
+@test "boot-critical: an empty snapshot is not silent success" {
+    # Step 2 takes its snapshot fresh. With the file missing and dpkg broken the
+    # union is empty, and the verification used to return 0 without printing
+    # anything while the reboot went ahead.
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        load_verifier "$f"
+        setup_stubs
+        run _verify_boot_critical ""
+        [ "$status" -eq 0 ]
+        echo "$output" | grep -q "WARN"
+    done
+}
+
+@test "boot-critical: the step 2 wrapper carries its own self-tests" {
+    # die inside a command substitution ends only the subshell, so the checks
+    # cannot live inside _boot_critical_snapshot. They belong in the wrapper,
+    # before the assignment.
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        local body
+        body=$(extract_func "$f" _boot_critical_guard)
+        [ -n "$body" ]
+        echo "$body" | grep -q '_dpkg_usable || die'
+        echo "$body" | grep -q '_pkg_present dpkg || die'
+        echo "$body" | grep -q 'snapshot="$(_boot_critical_snapshot)"'
+    done
+}
+
+@test "boot-critical: a successful apt exit is not taken as proof" {
+    # apt exits 0 whenever it decides there is nothing to do, which is exactly
+    # the held-package and stale-name cases. Without the re-check the log
+    # contradicts itself: "Restored X" three lines above "X is missing".
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        extract_func "$f" _verify_boot_critical | grep -q '&& _pkg_installed_ok "$pkg"; then'
+    done
+}
+
+@test "boot-critical: the fatal message names the ways out" {
+    # Without them the stop is inescapable: nothing else in the installer, the
+    # log or the docs mentions apt-mark unhold or the snapshot file.
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        local body
+        body=$(extract_func "$f" _verify_boot_critical)
+        echo "$body" | grep -q 'apt-mark unhold'
+        echo "$body" | grep -q 'BOOT_CRITICAL_SNAPSHOT_FILE'
+    done
+}
+
+@test "boot-critical: an unreadable snapshot file is reported, not silently dropped" {
+    # Otherwise it is indistinguishable from a missing file: the list shrinks
+    # and the function immediately overwrites the history with it, while its
+    # whole contract is that it can only grow.
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        extract_func "$f" _boot_critical_snapshot | grep -q '! -r "$BOOT_CRITICAL_SNAPSHOT_FILE"'
+    done
+}
+
+@test "boot-critical: the snapshot file does not outlive the installation" {
+    # A stale name (a package renamed by a release upgrade) would stop the next
+    # installation for a reason the user cannot see.
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        local body
+        body=$(extract_func "$f" step99_finish)
+        [ -n "$body" ]
+        echo "$body" | grep -q 'BOOT_CRITICAL_SNAPSHOT_FILE'
     done
 }
 

@@ -1417,7 +1417,7 @@ _cleanup_package_list() {
 # ⚠️ Список НЕ равен hold-списку из cleanup_system: тот защищает во время
 # purge, этот - во время обновления. Пересечение есть, назначение разное.
 _boot_critical_package_list() {
-    printf '%s' "udev initramfs-tools openssh-server netplan.io netplan-generator systemd-resolved ifupdown cloud-init ubuntu-minimal ubuntu-standard"
+    printf '%s' "udev initramfs-tools openssh-server netplan.io netplan-generator systemd-resolved ifupdown ubuntu-minimal ubuntu-standard"
 }
 
 # _pkg_present : 0, если пакет присутствует в системе в любом рабочем виде.
@@ -1454,7 +1454,14 @@ _installed_boot_critical() {
 # состоянии unpacked означает, что postinst не отработал и initramfs под новое
 # ядро не собран. Сервер не загрузится, хотя пакет формально "есть".
 _pkg_installed_ok() {
-    dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -qx "install ok installed"
+    # Смотрим ТОЛЬКО третье поле. Полная строка Status это "<желание> <ошибка>
+    # <состояние>", и привязка к "install ok installed" целиком пинит заодно
+    # флаг желания: `apt-mark hold` ставит "hold ok installed", то есть
+    # полностью исправный пакет читался бы как потерянный. Для нас это не
+    # теория - cleanup_system специально бережёт пользовательские hold'ы.
+    # Состояние installed отсекает то, ради чего предикат и заведён:
+    # unpacked, half-configured, half-installed, config-files.
+    [[ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null | awk '{print $3}')" == "installed" ]]
 }
 
 # Снимок ПЕРЕЖИВАЕТ перезапуски установщика и умеет только расти.
@@ -1472,7 +1479,12 @@ _boot_critical_snapshot() {
     local now stored known union
     now="$(_installed_boot_critical)"
     stored=""
-    if [[ -r "$BOOT_CRITICAL_SNAPSHOT_FILE" ]]; then
+    if [[ -e "$BOOT_CRITICAL_SNAPSHOT_FILE" && ! -r "$BOOT_CRITICAL_SNAPSHOT_FILE" ]]; then
+        # Иначе нечитаемый файл был бы неотличим от отсутствующего: список
+        # молча ужался бы, и функция тут же перезаписала бы им историю, хотя
+        # её договор - только расти.
+        log_warn "Файл $BOOT_CRITICAL_SNAPSHOT_FILE существует, но не читается. Список за прошлые запуски не будет учтён."
+    elif [[ -r "$BOOT_CRITICAL_SNAPSHOT_FILE" ]]; then
         known="$(_boot_critical_package_list | tr ' ' '\n')"
         stored="$(grep -Fxf <(printf '%s\n' "$known") "$BOOT_CRITICAL_SNAPSHOT_FILE" 2>/dev/null || true)"
     fi
@@ -1500,6 +1512,10 @@ _boot_critical_snapshot() {
 # серверу есть: после reboot чинить придётся через консоль хостера.
 _verify_boot_critical() {
     local critical_before="$1"
+    if [[ -z "$critical_before" ]]; then
+        log_warn "Список защищаемых пакетов пуст, сверять нечего. Это ненормально для Ubuntu и Debian: проверьте dpkg-query -W udev, сервер может не загрузиться после перезагрузки."
+        return 0
+    fi
     local critical_lost=""
     local pkg
     for pkg in $critical_before; do
@@ -1525,8 +1541,13 @@ _verify_boot_critical() {
     for pkg in $critical_lost; do
         restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove "$pkg" 2>&1)"
         restore_rc=$?
-        if [[ "$restore_rc" -eq 0 ]]; then
+        if [[ "$restore_rc" -eq 0 ]] && _pkg_installed_ok "$pkg"; then
             log "Восстановлен: $pkg"
+        elif [[ "$restore_rc" -eq 0 ]]; then
+            # apt возвращает ноль и когда решил, что делать нечего. Без этой
+            # ветки журнал противоречил бы сам себе: "Восстановлен", а тремя
+            # строками ниже "Отсутствуют критичные пакеты".
+            log_warn "apt отчитался об успехе, но $pkg по-прежнему не установлен."
         elif [[ -n "$restore_out" ]]; then
             # В одну строку: log_msg ставит отметку времени только на первую,
             # а многострочный ответ ломает формат журнала ровно там, где его
@@ -1548,9 +1569,27 @@ _verify_boot_critical() {
         still_lost="${still_lost% }"
         log_error "НЕ ПЕРЕЗАГРУЖАЙТЕ сервер: в текущем состоянии он не загрузится."
         log_error "Отсутствуют критичные пакеты: $still_lost"
-        die "Останавливаюсь, пока доступ к серверу есть. Установите эти пакеты по одному (sudo apt-get install -y <имя>), проверьте, что каждый встал, и запустите установщик снова."
+        log_error "Установите их по одному: sudo apt-get install -y <имя>"
+        log_error "Если пакет удержан (dpkg -l покажет hi), снимите удержание: sudo apt-mark unhold <имя>"
+        log_error "Если пакета больше нет в репозиториях (переименован после смены выпуска), уберите его имя из $BOOT_CRITICAL_SNAPSHOT_FILE"
+        die "Останавливаюсь, пока доступ к серверу есть. Разберитесь с перечисленным и запустите установщик снова."
     fi
     log "Критичные пакеты восстановлены."
+}
+
+# _boot_critical_guard : снять снимок и проверить его. Обёртка нужна для тех
+# точек, где до неё снимок ещё не брали, то есть для шага 2.
+#
+# ⚠️ Самопроверки стоят ЗДЕСЬ, до присваивания, а не внутри
+# _boot_critical_snapshot, и это принципиально: die внутри подстановки команд
+# завершил бы только подоболочку, скрипт продолжил бы работу с пустым снимком,
+# и фатальная проверка молча превратилась бы в необязательную.
+_boot_critical_guard() {
+    _dpkg_usable || die "dpkg не отвечает, а без него не проверить, переживут ли перезагрузку udev и initramfs-tools (Issue #223). Выполните: dpkg --configure -a; apt-get check - и запустите установщик снова."
+    _pkg_present dpkg || die "Проверить состояние пакетов не удалось (dpkg-query или awk работают не так, как ожидается). Без этого нельзя убедиться, что сервер загрузится (Issue #223)."
+    local snapshot
+    snapshot="$(_boot_critical_snapshot)"
+    _verify_boot_critical "$snapshot"
 }
 
 # _dpkg_usable : 0, если ответам dpkg можно верить.
@@ -3801,7 +3840,7 @@ PPASRC
                 log_warn "  затем sudo apt-mark hold amneziawg-dkms, переустановка модуля и перезагрузка."
             fi
             log "Шаг 2 завершен (prebuilt ARM)."
-            _verify_boot_critical "$(_boot_critical_snapshot)"
+            _boot_critical_guard
             # request_reboot всегда завершает процесс (exit), сюда не вернёмся.
             request_reboot 3
         fi
@@ -4198,7 +4237,7 @@ AWG_SYSTEMD_UNIT_EOF
 
     # Шаг 2 тоже ставит пакеты и тоже перезагружает машину, значит тот же
     # рубеж нужен и здесь.
-    _verify_boot_critical "$(_boot_critical_snapshot)"
+    _boot_critical_guard
 
     log "Шаг 2 завершен."
     request_reboot 3
@@ -4522,7 +4561,11 @@ step99_finish() {
 
     # Удаление файла состояния
     log "Удаление файла состояния установки..."
-    rm -f "$STATE_FILE" "${STATE_FILE}.lock" "$AWG_DIR/.boot_id_before_step2" || log_warn "Не удалось удалить $STATE_FILE"
+    # Снимок защищаемых пакетов тоже уходит: он нужен между шагами, а пережив
+    # установку, стал бы стареть. Устаревшее имя (пакет переименован сменой
+    # выпуска) останавливало бы следующую установку без внятной причины.
+    rm -f "$STATE_FILE" "${STATE_FILE}.lock" "$AWG_DIR/.boot_id_before_step2" \
+          "$BOOT_CRITICAL_SNAPSHOT_FILE" || log_warn "Не удалось удалить $STATE_FILE"
     log "Установка полностью завершена. Лог: $LOG_FILE"
     log "=============================================================================="
 }
