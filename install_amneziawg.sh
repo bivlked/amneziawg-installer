@@ -1389,6 +1389,41 @@ _cleanup_package_list() {
     printf '%s' "$list"
 }
 
+# _boot_critical_package_list : пакеты, потеря которых оставляет сервер без
+# загрузки или без сети. Список собран не из общей осторожности, а по разбору
+# Issue #223: там `apt full-upgrade` на шаге 1 удалил udev, initramfs-tools,
+# netplan.io и ещё три десятка пакетов, после чего сервер перестал грузиться.
+# Без udev не создаётся /dev/disk/by-label, systemd не дожидается разделов,
+# записанных в fstab метками, и через 90 секунд уходит в аварийный режим.
+#
+# Как до этого доходит. cleanup_system удаляет свой список, а apt заодно уносит
+# метапакет ubuntu-server как обратную зависимость. На образах, где тот был
+# единственным manual-корнем, всё висевшее под ним (ubuntu-standard,
+# ubuntu-minimal и их зависимости) получает статус "больше не требуется".
+# Дальше apt full-upgrade вправе не обновлять ненужный пакет, а выбросить его -
+# на системах с большим числом отложенных обновлений он так и поступает.
+# Отсюда и разброс между серверами: на свежем образе обновлять нечего, дефект
+# не проявляется, и именно поэтому он полгода не попадался на стендах.
+#
+# ⚠️ Список НЕ равен hold-списку из cleanup_system: тот защищает во время
+# purge, этот - во время обновления. Пересечение есть, назначение разное.
+_boot_critical_package_list() {
+    printf '%s' "udev initramfs-tools netplan.io netplan-generator systemd-resolved ifupdown cloud-init ubuntu-minimal ubuntu-standard"
+}
+
+# _installed_boot_critical : те из них, что реально стоят в этой системе.
+# Печатает по одному имени в строке; пустой вывод - нормальная ситуация.
+_installed_boot_critical() {
+    local critical_list
+    critical_list="$(_boot_critical_package_list)"
+    local pkg
+    for pkg in $critical_list; do
+        if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed"; then
+            printf '%s\n' "$pkg"
+        fi
+    done
+}
+
 # _dpkg_usable : 0, если ответам dpkg можно верить.
 # Отличить "пакет не установлен" от "база dpkg сломана" по коду возврата НЕЛЬЗЯ:
 # замер на Ubuntu 24.04 дал rc=1 в обоих случаях. Поэтому спрашиваем про заведомо
@@ -3070,6 +3105,21 @@ step1_update_and_optimize() {
         cleanup_system
     fi
 
+    # Очистка выше могла осиротить метапакеты, под которыми висят udev,
+    # initramfs-tools и сетевой стек. Возвращаем таким пакетам признак manual,
+    # иначе apt full-upgrade ниже вправе выбросить их вместо обновления
+    # (Issue #223). Именно manual, а не hold: hold запретил бы обновление, а
+    # обновлять их как раз надо; manual лишь снимает статус "больше не нужен".
+    # Снимок нужен и сам по себе - по нему ниже сверяем, что обновление ничего
+    # из этого не унесло. Делается безусловно, в том числе при --no-tweaks:
+    # разметка могла быть осиротевшей и до нас, самим образом.
+    local critical_before
+    critical_before="$(_installed_boot_critical)"
+    if [[ -n "$critical_before" ]]; then
+        apt-mark manual $critical_before >/dev/null 2>&1 \
+            || log_warn "Не удалось вернуть признак manual критичным пакетам."
+    fi
+
     log "Обновление списка пакетов..."
     apt_update_tolerant || die "Ошибка apt update."
     # Кэш свежий: install_packages ниже не должен гонять apt update повторно
@@ -3094,6 +3144,36 @@ step1_update_and_optimize() {
             || die "Ошибка apt full-upgrade. Похоже, другой процесс apt/unattended-upgrades держит dpkg-lock. Дождитесь его завершения (проверить: fuser /var/lib/dpkg/lock-frontend) либо выполните: systemctl stop unattended-upgrades; dpkg --configure -a - и запустите скрипт снова."
     fi
     log "Система обновлена."
+
+    # Гейт перед перезагрузкой. apt full-upgrade вправе удалять пакеты ради
+    # разрешения зависимостей, и в Issue #223 он удалил udev - сервер перестал
+    # грузиться, а перезагрузку в конце этого шага инициируем мы сами. Значит
+    # проверять надо здесь, пока доступ к серверу ещё есть: после reboot чинить
+    # придётся уже через консоль хостера.
+    local critical_lost=""
+    local pkg
+    for pkg in $critical_before; do
+        dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed" \
+            || critical_lost+="$pkg "
+    done
+    if [[ -n "$critical_lost" ]]; then
+        critical_lost="${critical_lost% }"
+        log_warn "Обновление удалило критичные для загрузки пакеты: $critical_lost"
+        log_warn "Восстанавливаю их..."
+        DEBIAN_FRONTEND=noninteractive apt-get install -y $critical_lost >/dev/null 2>&1 || true
+        local still_lost=""
+        for pkg in $critical_lost; do
+            dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed" \
+                || still_lost+="$pkg "
+        done
+        if [[ -n "$still_lost" ]]; then
+            still_lost="${still_lost% }"
+            log_error "Не удалось восстановить: $still_lost"
+            log_error "Без этих пакетов сервер не загрузится, а перезагрузку выполняет этот же шаг."
+            die "Останавливаюсь здесь, пока доступ к серверу есть. Восстановите вручную: sudo apt-get install -y $still_lost - и запустите установщик снова."
+        fi
+        log "Критичные пакеты восстановлены."
+    fi
 
     install_packages curl wget gpg sudo ethtool
 
