@@ -8,15 +8,15 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 2.0 на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 5.27.1
-# Дата: 2026-08-22
+# Версия: 5.28.0
+# Дата: 2026-08-26
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 set -o pipefail
 
-SCRIPT_VERSION="5.27.1"
+SCRIPT_VERSION="5.28.0"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -33,8 +33,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="b5a8355c17e0836550c3a3a4aab73b052e3c439ac440d409741ba0134df98449"
-MANAGE_SCRIPT_SHA256="a06d856bf496b8b7ea1cba6c2f503400fdff895b830ea9e357d8752d121933c5"
+COMMON_SCRIPT_SHA256="6f03413d27825e0c0abdcaa30512000e8f411ef0645e78b014ecdcb6855f9aa8"
+MANAGE_SCRIPT_SHA256="836ce13c4dd93c116378df0de57534b711eed1aa7e389f6577de063ea7bf394c"
 
 # AmneziaWG 2.0 пин (H0, 31 jul 2026). Upstream влил AmneziaWG 3.0 в default-ветку
 # amneziawg-linux-kernel-module, и PPA переключился на 3.0. Тогда на ядрах старее
