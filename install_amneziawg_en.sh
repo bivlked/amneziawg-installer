@@ -1409,7 +1409,7 @@ _cleanup_package_list() {
 
 # _boot_critical_package_list : packages whose loss leaves the server unable to
 # boot or unable to reach the network. The core of the list comes from Issue
-# #223: there `apt full-upgrade` in step 1 removed 34 packages, udev,
+# #223: there `apt full-upgrade` in step 1 removed packages including udev,
 # initramfs-tools and netplan.io among them, and the server stopped booting.
 # Without udev there is no /dev/disk/by-label, systemd never sees the partitions
 # that fstab refers to by label, and it drops into emergency mode (after 90
@@ -1562,14 +1562,22 @@ _verify_boot_critical() {
     # become goals and apt looks for a version set that suits the group. In
     # Issue #223 the per-package pass produced five refusals and a single
     # transaction was never tried, which is the reason to start with it.
-    # ⚠️ Not a guarantee. If the old version is pinned by a package that is NOT
-    # in the lost list (in Issue #223 that was systemd-resolved, pinning systemd
-    # to 8.12 through a Depends on an exact version), it does not become a goal
-    # here either. Hence stage 2 below, and the final verdict from the full-set
-    # re-check.
-    # --no-remove: restoring one package must not cost another.
+    # ⚠️ Not a guarantee, for two reasons.
+    # First: if the old version is pinned by a package that is NOT in the lost
+    # list (in Issue #223 that was systemd-resolved, with a Depends on exactly
+    # 8.12 of both systemd and libsystemd-shared), it does not become a goal
+    # here either. apt MAY touch it anyway and sometimes does, but that is its
+    # choice, not an obligation: it prefers to leave non-goal packages alone.
+    # Second: --no-remove aborts the transaction on ANY removal in the plan, not
+    # only on removing something protected. A solution of the form "drop the
+    # package in the way and install the group" is rejected outright.
+    # Hence stage 2 below, and the final verdict from the full-set re-check. The
+    # flag is still needed: restoring one package must not cost another.
     restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove $critical_lost 2>&1)"
     restore_rc=$?
+    # The wording is cautious on purpose: a zero from apt means "there was
+    # nothing to do" just as much as "done". Whether the packages are back is
+    # decided by stage 2 below and the full-set re-check, not by this line.
     if [[ "$restore_rc" -eq 0 ]]; then
         log "The single transaction completed without errors."
     elif [[ -n "$restore_out" ]]; then
@@ -1650,9 +1658,13 @@ _die_upgrade_failed() {
     if [[ -n "$lock_holder" ]]; then
         die "System update failed and the dpkg lock is held by:${lock_holder}. Wait for those processes to finish or run: systemctl stop unattended-upgrades; dpkg --configure -a - then run the script again."
     fi
-    # The dry run (-s) answers exactly one question: do the dependencies
-    # resolve. The timeout is mandatory: there is no ground for claiming the
-    # resolver always answers instantly. timeout itself is always there,
+    # The dry run (-s) asks apt whether a plan resolves. Its refusal usually
+    # means dependencies, but not always: an unparsable sources.list, missing
+    # package lists or a damaged dpkg state fail exactly the same way. So its
+    # answer is QUOTED, not interpreted.
+    # The timeout belongs here, on the fatal path: the real attempts above go
+    # without one deliberately, while hanging here is not acceptable - that SSH
+    # session may be all the user has left. timeout itself is always there,
     # coreutils is Essential.
     apt_why="$(timeout 120 env DEBIAN_FRONTEND=noninteractive apt-get upgrade -s --with-new-pkgs 2>&1)"
     apt_why_rc=$?
@@ -1672,16 +1684,17 @@ _die_upgrade_failed() {
 # apt-get upgrade leaves a package at its current version when upgrading it
 # would require removing a neighbour, and returns ZERO while doing so. That is
 # the deliberate trade (see the upgrade block in step 1), but staying silent
-# about it is not acceptable: full-upgrade could not hold a package back at all,
-# so without this line diagnosability would be worse than before the fix. A
-# warning, not a failure: a held-back package is safe for booting the server,
-# and it matters when a future complaint has to be investigated.
+# about it is not acceptable: with full-upgrade this outcome was rare (it held
+# back little beyond packages under hold and whatever Ubuntu itself phases),
+# whereas with upgrade it is routine, and without a dedicated line it would pass
+# entirely unnoticed. A warning, not a failure: the server boots either way, but
+# this list is what decides a future investigation.
 _warn_kept_back() {
     local kept
     kept="$(apt list --upgradable 2>/dev/null | awk -F/ '/\//{printf "%s ", $1}')"
     [[ -n "${kept// /}" ]] || return 0
     log_warn "Not every package was upgraded, these stayed at their current versions: ${kept% }"
-    log_warn "There are two possible reasons: either upgrading such a package would have to remove another one, which we deliberately do not do (Issue #223), or the release is still being phased in. This line does NOT tell them apart. Both are safe for booting the server."
+    log_warn "Most often this means upgrading such a package would have to remove another one, which we deliberately do not do (Issue #223), or that the release is still being phased in. The list is not exhaustive though: packages under hold and packages stuck on unresolvable dependencies show up here too. If the list is not empty and it worries you, look at the reason: apt-get -s upgrade"
 }
 
 # _boot_critical_guard : take the snapshot and verify it. The wrapper exists for
@@ -3415,7 +3428,7 @@ step1_update_and_optimize() {
     # equally arrive orphaned with the image itself. So this block runs
     # UNCONDITIONALLY, --no-tweaks and --keep-packages included, when no cleanup
     # happened at all. Mark such packages manual again. The upgrade below can no
-    # longer drop them (Issue #223 was closed by changing the command: apt-get
+    # longer drop them (the command was changed over Issue #223: apt-get
     # upgrade has no such right), but the "no longer required" status stays a
     # trap for later: any subsequent apt operation is free to act on it. Ours
     # included - install_packages below calls apt install without --no-remove -

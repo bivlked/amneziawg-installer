@@ -7,8 +7,8 @@
 # everything else hanging under it become "no longer required". The
 # `apt full-upgrade` that used to run shortly afterwards was then free to
 # drop such a package while resolving the upgrade, and on a system with months
-# of pending updates that is what happened: 34 packages removed, udev among
-# them. Since v5.28.1 step 1 upgrades with `apt-get upgrade --with-new-pkgs`,
+# of pending updates that is what happened: a batch of packages removed, udev
+# among them. Since v5.28.1 step 1 upgrades with `apt-get upgrade --with-new-pkgs`,
 # which has no right to remove an installed package at all, and the guards
 # below are the second line of defence rather than the only one. Without
 # udev there is no /dev/disk/by-label, systemd never sees the partitions fstab
@@ -329,8 +329,8 @@ line_of() {
 }
 
 @test "boot-critical: the upgrade-failure verdict lives in its own function" {
-    # Structural, and it is the enabling condition for the six behavioural
-    # tests below. While this reasoning was inline inside step 1, the suite
+    # Structural, and it is the enabling condition for the seven behavioural
+    # tests below (six on the RU installer plus the EN twin). While this reasoning was inline inside step 1, the suite
     # could only grep it, and a review demonstrated that deleting the second
     # lock measurement, inverting the condition, dropping -s or dropping the
     # timeout all survived 52/52 green.
@@ -346,11 +346,16 @@ line_of() {
     load_upgrade_failure "$(RU_INSTALL)"
     setup_stubs
     fuser() { echo " 1234 5678"; return 0; }
+    timeout() { echo "$*" > "$BATS_TEST_TMPDIR/dryrun-args"; return 0; }
     run _die_upgrade_failed
     [ "$status" -eq 42 ]
     echo "$output" | grep -q "1234"
     echo "$output" | grep -q "dpkg-lock"
     # The dry run must not even be reached: the cause is already known.
+    # The stub above is what makes this assertion mean anything. Without it
+    # nobody writes dryrun-args, so the file is absent whether the dry run ran
+    # or not, and the check passes for the wrong reason - which is exactly how
+    # it behaved before a review pointed it out.
     [ ! -f "$BATS_TEST_TMPDIR/dryrun-args" ]
 }
 
@@ -744,10 +749,10 @@ setup_stubs() {
 }
 
 @test "boot-critical: a failed bulk transaction is reported, then retried per package" {
-    # Nothing in the suite ever made the restore's apt fail, so four of the six
-    # log branches in _verify_boot_critical were executed by no test at all -
-    # including the truncation and the single-line collapse that the comments
-    # there call format-critical.
+    # The per-package branch on a failing apt was already covered elsewhere in
+    # this file; the BULK stage was not. Its failure branch carries the same
+    # truncation and single-line collapse the comments there call
+    # format-critical, and until this test nothing exercised it.
     load_verifier "$(RU_INSTALL)"
     setup_stubs
     dpkg-query() { return 1; }
@@ -762,8 +767,11 @@ setup_stubs() {
     }
     run _verify_boot_critical "udev initramfs-tools"
     [ "$status" -eq 42 ]
-    # The failure is announced, with apt's own words, on ONE line.
+    # The failure is announced with apt's own words, and on ONE line: log_msg
+    # timestamps only the first line, so a multi-line answer breaks the log
+    # format exactly where it will later be parsed.
     echo "$output" | grep -q "Unable to correct problems"
+    [ "$(echo "$output" | grep -c "Одной транзакцией не вышло")" -eq 1 ]
     # And the per-package pass still ran for both names.
     [ "$(grep -c . "$BATS_TEST_TMPDIR/apt-args")" -eq 3 ]
 }
