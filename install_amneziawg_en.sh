@@ -1565,8 +1565,10 @@ _verify_boot_critical() {
     # ⚠️ Not a guarantee, for two reasons.
     # First: if the old version is pinned by a package that is NOT in the lost
     # list (in Issue #223 that was systemd-resolved, with a Depends on exactly
-    # 8.12 of both systemd and libsystemd-shared), it does not become a goal
-    # here either. apt MAY touch it anyway and sometimes does, but that is its
+    # 8.12 of both systemd and libsystemd-shared; the second link there is udev
+    # declaring Breaks on a systemd older than 8.17, and together the two
+    # conditions locked the group), it does not become a goal here either. apt
+    # MAY touch it anyway and sometimes does, but that is its
     # choice, not an obligation: it prefers to leave non-goal packages alone.
     # Second: --no-remove aborts the transaction on ANY removal in the plan, not
     # only on removing something protected. A solution of the form "drop the
@@ -1628,6 +1630,7 @@ _verify_boot_critical() {
         log_error "Try installing them in ONE command, every name at once: sudo apt-get install $still_lost"
         log_error "One command rather than one at a time: that way apt picks versions for the whole group at once."
         log_error "No -y on purpose: if apt then wants to REMOVE something, read the list before you confirm. Losing one more of the packages above only makes things worse."
+        log_error "If apt answers that a package not in your command is in the way (of the form 'X : Breaks: Y' or 'X : Depends: Y'), add Y to the same command: in Issue #223 that turned out to be systemd, which is not in the list above."
         log_error "If apt refuses because of held packages, release the hold: sudo apt-mark unhold <name>"
         log_error "If a package is gone from the repositories (renamed by a release upgrade), drop its name from $BOOT_CRITICAL_SNAPSHOT_FILE"
         die "Stopping while the server is still reachable. Deal with the above, then run the installer again."
@@ -1689,11 +1692,36 @@ _die_upgrade_failed() {
 # whereas with upgrade it is routine, and without a dedicated line it would pass
 # entirely unnoticed. A warning, not a failure: the server boots either way, but
 # this list is what decides a future investigation.
+#
+# ⚠️ apt gives no machine-readable list of what it held back, so this uses
+# upgradable, which is a SUPERSET: packages under hold and packages stuck on an
+# unresolvable chain land there too. Passing it off as something narrower is not
+# acceptable, and the message below does not.
 _warn_kept_back() {
-    local kept
-    kept="$(apt list --upgradable 2>/dev/null | awk -F/ '/\//{printf "%s ", $1}')"
+    local raw rc kept list
+    raw="$(apt list --upgradable 2>/dev/null)"
+    rc=$?
+    # Take the exit code from apt ITSELF, not from the pipeline: in a pipeline
+    # it comes from awk unless pipefail is set, and then a failing apt reads as
+    # "nothing to upgrade". The branch below decides between silence and a
+    # warning, so it must not rest on a global shell option.
+    if [[ "$rc" -ne 0 ]]; then
+        # A failure of the check itself must not turn into contented silence:
+        # this function exists for diagnosability, so its own failure has to be
+        # audible.
+        log_warn "Could not obtain the list of packages left behind (apt list returned $rc). Check by hand: apt list --upgradable"
+        return 0
+    fi
+    kept="$(printf '%s\n' "$raw" | awk -F/ '/\//{printf "%s ", $1}')"
     [[ -n "${kept// /}" ]] || return 0
-    log_warn "Not every package was upgraded, these stayed at their current versions: ${kept% }"
+    list="${kept% }"
+    # Truncation is EXPLICIT and marked: on a server with months of pending
+    # updates this list runs into thousands of characters, and silent truncation
+    # nearby has already been called out as a defect.
+    if [[ "${#list}" -gt 400 ]]; then
+        list="${list:0:400}... (truncated, full list: apt list --upgradable)"
+    fi
+    log_warn "Not every package was upgraded, these stayed at their current versions: $list"
     log_warn "Most often this means upgrading such a package would have to remove another one, which we deliberately do not do (Issue #223), or that the release is still being phased in. The list is not exhaustive though: packages under hold and packages stuck on unresolvable dependencies show up here too. If the list is not empty and it worries you, look at the reason: apt-get -s upgrade"
 }
 

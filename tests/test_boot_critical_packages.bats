@@ -429,6 +429,102 @@ line_of() {
     grep -qE "^12[0-9] " "$BATS_TEST_TMPDIR/dryrun-args"
 }
 
+@test "boot-critical: the report of packages left behind is wired into step 1" {
+    # Structural, and it exists because a review pointed out that this function
+    # could be deleted whole, or its call dropped, with the entire suite staying
+    # green. That is the same hole the six behavioural tests above were written
+    # to close for the other new function.
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        local body live upgrade kept install
+        body=$(extract_func "$f" step1_update_and_optimize)
+        [ -n "$(extract_func "$f" _warn_kept_back)" ]
+        # Comments only, please: the first version of this test matched a
+        # comment that merely mentions install_packages and concluded the order
+        # was wrong. Strip comments before looking for calls.
+        live=$(echo "$body" | grep -vE '^[[:space:]]*#')
+        upgrade=$(echo "$live" | grep -n -m1 '|| _die_upgrade_failed' | cut -d: -f1)
+        kept=$(echo "$live" | grep -n -m1 '^    _warn_kept_back$' | cut -d: -f1)
+        install=$(echo "$live" | grep -n -m1 '^    install_packages ' | cut -d: -f1)
+        [ -n "$upgrade" ] && [ -n "$kept" ] && [ -n "$install" ]
+        # After the upgrade, and BEFORE install_packages: the list has to
+        # describe the state right after the upgrade, not after later additions.
+        [ "$upgrade" -lt "$kept" ]
+        [ "$kept" -lt "$install" ]
+    done
+}
+
+@test "boot-critical: packages left behind are named" {
+    load_kept_back "$(RU_INSTALL)"
+    setup_stubs
+    apt() {
+        echo "Listing..."
+        echo "byobu/noble-updates 6.11-0ubuntu1.1 all [upgradable from: 6.11-0ubuntu1]"
+        echo "systemd/noble-updates 255.4-1ubuntu8.17 amd64 [upgradable from: 255.4-1ubuntu8.12]"
+        return 0
+    }
+    run _warn_kept_back
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "byobu"
+    echo "$output" | grep -q "systemd"
+    # The header line carries no slash and must not be mistaken for a package.
+    [ "$(echo "$output" | grep -c "Listing")" -eq 0 ]
+}
+
+@test "boot-critical: nothing left behind means nothing printed" {
+    load_kept_back "$(RU_INSTALL)"
+    setup_stubs
+    apt() { echo "Listing..."; return 0; }
+    run _warn_kept_back
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "boot-critical: a failing apt is not reported as nothing left behind" {
+    # The function exists for diagnosability, so its own failure has to be
+    # audible. Swallowing it would be the loud-failure-turned-silent class, one
+    # level below the defect this release is about.
+    load_kept_back "$(RU_INSTALL)"
+    setup_stubs
+    apt() { return 100; }
+    run _warn_kept_back
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "100"
+    # And it must not claim that everything was upgraded.
+    [ "$(echo "$output" | grep -c "остались")" -eq 0 ]
+}
+
+@test "boot-critical: a very long list is truncated, and says so" {
+    load_kept_back "$(RU_INSTALL)"
+    setup_stubs
+    apt() {
+        echo "Listing..."
+        local i
+        for i in $(seq 1 200); do
+            echo "package-with-a-longish-name-$i/noble 1.0 amd64 [upgradable from: 0.9]"
+        done
+        return 0
+    }
+    run _warn_kept_back
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "обрезано"
+    # Truncation is marked rather than silent: the reader must be able to tell
+    # a short list from a cut one.
+    echo "$output" | grep -q "apt list --upgradable"
+}
+
+@test "boot-critical (EN): packages left behind are named" {
+    load_kept_back "$(EN_INSTALL)"
+    setup_stubs
+    apt() {
+        echo "Listing..."
+        echo "byobu/noble-updates 6.11-0ubuntu1.1 all [upgradable from: 6.11-0ubuntu1]"
+        return 0
+    }
+    run _warn_kept_back
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "byobu"
+}
+
 @test "boot-critical (EN): the upgrade-failure verdict behaves the same" {
     load_upgrade_failure "$(EN_INSTALL)"
     setup_stubs
@@ -604,6 +700,10 @@ load_verifier() {
 
 load_upgrade_failure() {
     eval "$(extract_func "$1" _die_upgrade_failed)"
+}
+
+load_kept_back() {
+    eval "$(extract_func "$1" _warn_kept_back)"
 }
 
 load_snapshot() {
