@@ -234,6 +234,33 @@ else
 fi
 rm -f /tmp/preflight-docs.$$
 
+# --- 10. Release signatures ---
+# Signatures are produced offline and committed under signing/ before the tag.
+# release.yml refuses to publish without them, so the point of checking here is
+# to fail on the maintainer's machine, where the commit can still be amended,
+# rather than after the tag is already pushed.
+#
+# Absent signatures are a WARNING, not a failure: preflight also runs on
+# ordinary branches where no release is being prepared. Present-but-wrong is a
+# hard failure, because that is a real defect rather than a state.
+sig_count=$(find signing -name '*.minisig' 2>/dev/null | grep -c . || true)
+sig_expected=$(bash "$SCRIPT_DIR/signed-file-list.sh" | grep -c . || true)
+if [[ "$sig_count" -eq 0 ]]; then
+    _warn "no release signatures staged (fine outside a release; required before a tag)"
+elif ! command -v minisign >/dev/null 2>&1; then
+    _warn "minisign not installed - $sig_count signature(s) present but unverified locally (CI will verify)"
+else
+    # The tag these signatures must name is derived from the version being
+    # released, not guessed: that is exactly the tag the maintainer will push.
+    if bash "$SCRIPT_DIR/verify-signatures.sh" "v${ref_ver}" >/tmp/preflight-sig.$$ 2>&1; then
+        _ok "release signatures verified for v${ref_ver} ($sig_expected files)"
+    else
+        cat /tmp/preflight-sig.$$ >&2
+        _bad "release signatures (run: bash scripts/verify-signatures.sh v${ref_ver})"
+    fi
+    rm -f /tmp/preflight-sig.$$
+fi
+
 # --- Summary ---
 echo ""
 echo "=== preflight summary: $PASS passed, $FAIL failed, $WARN warnings ==="

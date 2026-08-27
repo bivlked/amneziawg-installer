@@ -1,6 +1,12 @@
-# Release signing design (v5.14+ proposal)
+# Release signing design
 
-Status: **DRAFT** - awaiting user-action (offline keypair generation) before activation.
+Status: **ACTIVE** since 27 aug 2026. The keypair exists, `KEYS.txt` is
+committed, and `release.yml` refuses to publish a release whose signatures do
+not verify.
+
+Key fingerprint: `3E598A1C01907E17`. Publishing it through a channel that is
+not this repository is what makes it worth anything to a first-time visitor;
+that is tracked separately and is not done by this document.
 
 ## Why
 
@@ -94,11 +100,24 @@ Pros: zero CI changes, signatures generated on the trusted maintainer machine. C
 
 ### Option B: CI uploads signatures generated locally (asymmetric)
 
-Maintainer generates `*.minisig` files locally, commits them transiently to a `signing/` directory (tracked, so they land in the tagged commit - `signing/` is intentionally NOT gitignored; remove them in a follow-up commit once the dispatch workflow has uploaded them), tags. A separate, manually dispatched workflow reads them and uploads as assets. Same trust model as Option A - just automates the upload step.
+Maintainer generates `*.minisig` files locally, commits them to `signing/` (tracked, so they land in the tagged commit - `signing/` is intentionally NOT gitignored), tags. CI reads them and uploads them as assets. Same trust model as Option A, just without the manual upload step.
 
 The signing of the files NEVER happens in GitHub Actions. The private key is never exposed to Actions. This is intentional and the whole point.
 
-A draft of Option B is committed at `docs/release-sign.yml.draft` for review. It is a standalone `workflow_dispatch` workflow (not a job added to `release.yml`), and is NOT placed in `.github/workflows/` until the public key is published. When activated it uploads, for each of the six scripts, the script itself plus its `.minisig`, and also attaches `KEYS.txt` - so everything needed to verify is available from a single release. `release.yml` itself does not publish the `.sh` files as assets; that is intentionally left to the signing workflow to avoid two code paths uploading the same files. Until signing is activated, the canonical way to obtain a script is still the documented `wget` from `raw.githubusercontent.com`.
+**Chosen: Option B, folded into `release.yml` rather than a separate dispatch.**
+
+### Why the separate dispatch workflow was dropped (27 aug 2026)
+
+The original draft put the upload in a standalone `workflow_dispatch` workflow, reasoning that two code paths uploading the same files would be worse than one manual step. Measurement showed the cost of that ordering was higher than the duplication it avoided.
+
+`release.yml` published with `draft: false` immediately, so a release became **Latest with zero assets** and stayed that way until somebody remembered to run the dispatch. For that entire window `releases/latest/download/<file>` answered 404 - and that is precisely the address documentation and third-party write-ups hand to users. The window was unbounded because nothing forced the second step.
+
+So the ordering is now: create the release as a **draft**, verify the signatures, attach the scripts, the signatures and `KEYS.txt`, count the assets, and only then flip it out of draft. A release is never visible in a half-assembled state, and the failure mode of a forgotten signature is a failed workflow rather than a silently empty release.
+
+Two consequences worth stating plainly, because they change the maintainer's routine:
+
+- **Signing is now mandatory for every release.** Without `signing/*.minisig` in the tagged commit, `release.yml` fails and nothing is published. `preflight-check.sh` performs the same verification locally, so the normal place to discover a missing signature is before the tag, not after.
+- **A failed run is resumable.** The workflow distinguishes absent / draft / published: a leftover draft means "resume", so re-running after a network hiccup finishes the job instead of skipping it as already done.
 
 ## User-side verification
 
@@ -135,11 +154,26 @@ Activation steps, in order:
 3. Add `docs/SIGNING_DESIGN.md` (this file). DONE in this commit.
 4. Add README section "Verifying releases" with placeholder link to this design doc. TODO - add when the public key is published as `KEYS.txt` so the section is actionable, not vapor.
 5. Add the draft workflow `docs/release-sign.yml.draft` for review. DONE.
-6. After keypair exists and is published as `KEYS.txt`:
-   a. Refresh all action pins in the draft to match the active workflows (e.g. `actions/checkout`), then move `docs/release-sign.yml.draft` to `.github/workflows/release-sign.yml`.
-   b. Test on a pre-release tag (e.g., `vX.Y.Z-rc1`).
-   c. Flip the README section from "planned" to "active".
+6. After keypair exists and is published as `KEYS.txt`: DONE 27 aug 2026.
+   a. Signature verification and asset upload folded into `release.yml`; the draft dispatch workflow was removed rather than activated (see above). The publish path uses `gh` directly, which removes one third-party action from the step that decides what the world downloads.
+   b. Test on a pre-release tag (`vX.Y.Z-rc1`). A tag with a semver pre-release suffix is published as a pre-release automatically, so a test never displaces the real Latest.
+   c. README "Verifying a release" section is live in both languages.
 7. Optional follow-up: SBOM generation via `syft` or GitHub's native dependency graph (a separate, smaller task).
+
+## Per-release routine
+
+```bash
+TAG=vX.Y.Z
+KEY=~/.minisign/amneziawg-installer.key
+mkdir -p signing
+for f in $(bash scripts/signed-file-list.sh); do
+  minisign -Sm "$f" -s "$KEY" -x "signing/$f.minisig" -t "amneziawg-installer $TAG $f"
+done
+bash scripts/verify-signatures.sh "$TAG"
+git add signing && git commit -m "chore: signatures for $TAG"
+```
+
+Sign **after** the last change to the six scripts and **before** the tag. Signing earlier and then amending a script produces signatures that verify against nothing; `verify-signatures.sh` and `preflight-check.sh` both catch that, but only if they are run.
 
 ## Out of scope (intentionally deferred)
 

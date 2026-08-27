@@ -1,0 +1,91 @@
+name: Commit hygiene
+
+# Runs on pull requests only. preflight-check.sh already scans for these
+# markers, but it runs at TAG time inside release.yml, and by then a bad commit
+# is long since merged: preflight diffs main..HEAD, so anything already in main
+# is invisible to it. That gap let a commit mentioning a code-review bot reach
+# main on 27 aug 2026 through a "docs-only, surely fine" pull request where the
+# author ran only the docs checker. This workflow closes it at the point where
+# the commit can still be amended.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  markers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Need both sides of the comparison, and the commits in between.
+          fetch-depth: 0
+
+      - name: No AI-tool markers or co-author trailers in the commits
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Only OUR commits are in scope. dependabot signs its own commits with
+          # a Co-authored-by trailer naming itself; rejecting that would mean
+          # rejecting every dependency bump, which is not what the rule is for.
+          range="${BASE}..${HEAD}"
+          bad=0
+
+          while read -r sha; do
+            [ -n "$sha" ] || continue
+            author="$(git log -1 --format='%ae' "$sha")"
+            case "$author" in
+              *dependabot*|*github-actions*) continue ;;
+            esac
+            msg="$(git log -1 --format='%B' "$sha")"
+            hit="$(printf '%s' "$msg" \
+              | grep -inE 'co-authored-by|generated with|claude|anthropic|codex|copilot|chatgpt|gpt-[0-9]' || true)"
+            if [ -n "$hit" ]; then
+              echo "::error::commit ${sha:0:7} carries a forbidden marker:"
+              printf '%s\n' "$hit"
+              bad=1
+            fi
+          done < <(git rev-list "$range")
+
+          if [ "$bad" -ne 0 ]; then
+            echo "::error::Rewrite the offending commit messages and force-push the branch."
+            exit 1
+          fi
+          echo "Commit messages are clean over $range."
+
+      - name: No newly added em/en-dash in the diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # Python rather than grep -P on purpose: in a C locale grep matches the
+          # class byte by byte and reports Cyrillic text and arrows as dashes.
+          # A check that cries wolf is worse than no check, because people learn
+          # to ignore it.
+          git diff "${BASE}" "${HEAD}" --unified=0 -- . \
+            | grep '^+' | grep -v '^+++' > /tmp/added.txt || true
+          python3 - <<'PY'
+          import io, sys
+          bad = []
+          for line in io.open('/tmp/added.txt', encoding='utf-8', errors='replace'):
+              if any(c in line for c in '–—'):
+                  bad.append(line.rstrip('\n'))
+          if bad:
+              print('::error::added lines contain an em/en-dash (project uses hyphen-minus only):')
+              for l in bad[:20]:
+                  print(l[:200])
+              sys.exit(1)
+          print('No newly added em/en-dash.')
+          PY

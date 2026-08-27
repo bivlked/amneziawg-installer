@@ -380,6 +380,28 @@ Installing AmneziaWG on Ubuntu or Debian comes down to three commands: download 
 ---
 
 <a id="after-installation"></a>
+## 🔏 Verifying a release (optional)
+
+Every release is signed with a key that lives offline on the maintainer's machine and never reaches GitHub Actions. The scripts, the signatures and the public key are all attached to the release, so verification needs nothing from a second place.
+
+```bash
+sudo apt install minisign          # Ubuntu/Debian
+
+TAG=v5.28.1
+BASE="https://github.com/bivlked/amneziawg-installer/releases/download/$TAG"
+curl -LO "$BASE/install_amneziawg_en.sh"
+curl -LO "$BASE/install_amneziawg_en.sh.minisig"
+curl -LO "$BASE/KEYS.txt"
+
+minisign -V -p KEYS.txt -m install_amneziawg_en.sh -x install_amneziawg_en.sh.minisig
+```
+
+Expected: `Signature and comment signature verified`, and on the next line `Trusted comment: amneziawg-installer v5.28.1 install_amneziawg_en.sh`.
+
+**Read that second line, not just the first.** It names the tag and the filename, so a signature from another release or another file does not pass here. Without that binding a signature would only prove that somebody signed some bytes at some point.
+
+⚠️ What this does NOT give you. If you fetch the script and the key from this repository in the same session, it protects against tampering on the way to you, but not against a compromise of the account itself: whoever can replace the script can replace the key. It starts to mean something once the key is one you saved earlier or took from an independent source. Key fingerprint: `3E598A1C01907E17`.
+
 ## 📦 After installation
 
 **Where to find client files:**
