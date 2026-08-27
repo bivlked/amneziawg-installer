@@ -1291,11 +1291,15 @@ How to read them:
 **The `udev` package is missing.** Restore it and rebuild the initramfs, naming the packages in one command:
 
 ```bash
-apt-get install udev systemd systemd-resolved initramfs-tools
+apt-get install udev systemd initramfs-tools
 reboot
 ```
 
 `systemd` is on that list for a reason: `udev` is built from the same source and does not get along with a `systemd` older than itself, so apt will not install them separately and answers `udev : Breaks: systemd (< ...)`. Leaving out `-y` is deliberate too: if apt intends to remove anything, read the list before you confirm.
+
+If apt complains about one more package that is not in the command (of the form `X : Breaks: Y` or `X : Depends: Y`), add Y to it and try again. In issue #223 that package turned out to be `systemd-resolved`: it pinned `systemd` to the old version through a dependency on an exact version.
+
+⚠️ Only add what apt named itself. `systemd-resolved` in particular must not be installed on a hunch: on Debian with a static resolver or with `resolvconf` it may never have been there, and it declares `Conflicts: resolvconf` and `Replaces: resolvconf`, so installing it removes `resolvconf` and can leave an already damaged server without DNS as well.
 
 **udev is there but the symlinks are not.** Try creating them by hand and letting the boot finish:
 
