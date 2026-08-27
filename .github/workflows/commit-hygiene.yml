@@ -78,9 +78,14 @@ jobs:
             | grep '^+' | grep -v '^+++' > /tmp/added.txt || true
           python3 - <<'PY'
           import io, sys
+          # The forbidden characters are built from code points on purpose. A
+          # literal class here would put an em-dash into this very file, and the
+          # first thing the check would find is itself. That is how a checker
+          # ends up switched off instead of fixed.
+          FORBIDDEN = (chr(0x2013), chr(0x2014))
           bad = []
           for line in io.open('/tmp/added.txt', encoding='utf-8', errors='replace'):
-              if any(c in line for c in '–—'):
+              if any(c in line for c in FORBIDDEN):
                   bad.append(line.rstrip('\n'))
           if bad:
               print('::error::added lines contain an em/en-dash (project uses hyphen-minus only):')
