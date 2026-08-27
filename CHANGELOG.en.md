@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [5.28.1] - 2026-08-27
 
-**v5.28.1** - the step 1 system upgrade can no longer remove an installed package, and the repair restores related packages in a single transaction.
+**v5.28.1** - the step 1 system upgrade can no longer remove an installed package.
 
 ### Fixed
 

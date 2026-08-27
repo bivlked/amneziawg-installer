@@ -1721,8 +1721,8 @@ _warn_kept_back() {
     if [[ "${#list}" -gt 400 ]]; then
         list="${list:0:400}... (truncated, full list: apt list --upgradable)"
     fi
-    log_warn "Not every package was upgraded, these stayed at their current versions: $list"
-    log_warn "Most often this means upgrading such a package would have to remove another one, which we deliberately do not do (Issue #223), or that the release is still being phased in. The list is not exhaustive though: packages under hold and packages stuck on unresolvable dependencies show up here too. If the list is not empty and it worries you, look at the reason: apt-get -s upgrade"
+    log "Not every package was upgraded, these stayed at their current versions: $list"
+    log "Most often this means upgrading such a package would have to remove another one, which we deliberately do not do (Issue #223), or that the release is still being phased in. The list is not exhaustive though: packages under hold and packages stuck on unresolvable dependencies show up here too. If the list is not empty and it worries you, look at the reason: apt-get -s upgrade"
 }
 
 # _boot_critical_guard : take the snapshot and verify it. The wrapper exists for
