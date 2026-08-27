@@ -40,7 +40,7 @@ _manage_temp_dirs=()
 # The path is written to a named variable (printf -v), NOT via command
 # substitution: with td=$(manage_mktempdir) the append to _manage_temp_dirs
 # happened in the subshell and was lost, so cleanup on INT/TERM/EXIT never
-# removed those dirs (audit 5kag). Call: manage_mktempdir_var td || die ...
+# removed those dirs. Call: manage_mktempdir_var td || die ...
 manage_mktempdir_var() {
     local __rv="$1" __d
     __d=$(mktemp -d) || return 1
@@ -278,7 +278,7 @@ log_msg() {
     if [[ "$type" == "ERROR" || "$type" == "WARN" ]]; then
         printf "${color_start}%s${color_end}\n" "$entry" >&2
     elif [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
-        # weaq P2: in --json mode stdout must contain ONLY JSON (jq/automation).
+        # In --json mode stdout must contain ONLY JSON (jq/automation).
         # Route INFO/DEBUG to stderr, otherwise list/show/stats --json print INFO
         # lines before the JSON and break parsing (confirmed on biHetzner).
         printf "${color_start}%s${color_end}\n" "$entry" >&2

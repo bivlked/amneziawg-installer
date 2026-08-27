@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Phase 1 (v5.21.0, MyAI-2s58): AWG_STRICT_CONFIRM opt-in for confirm_action.
+# Phase 1 (v5.21.0): AWG_STRICT_CONFIRM opt-in for confirm_action.
 #
 # Matrix 2x2x2 (strict x TTY x yes). Extracts confirm_action + is_interactive
 # from the manage scripts (same awk pattern as test_yes_flag.bats) so the

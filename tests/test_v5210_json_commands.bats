@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Phase 3 (v5.21.0, MyAI-n30w): --json envelopes for add/remove/regen.
+# Phase 3 (v5.21.0): --json envelopes for add/remove/regen.
 #
 # Behavioral: runs the real manage scripts end-to-end in a mock environment
 # (stubbed awg, AWG_SKIP_APPLY=1 to keep module/apply out of the way) and

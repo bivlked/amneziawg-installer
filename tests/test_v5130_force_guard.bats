@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# v5.13.0 idempotency / --force safety guard (MyAI-cq9g, Issue #78).
+# v5.13.0 idempotency / --force safety guard (Issue #78).
 #
 # Background: re-running the installer on a configured server silently
 # repeats Step 1 (sysctl/swap/BBR, possible kernel upgrade + reboot loop)
@@ -108,40 +108,40 @@ run_guard() {
     return 0
 }
 
-@test "v5.13.0 cq9g: clean install (no conf, no service) => proceed" {
+@test "v5.13.0 force-guard: clean install (no conf, no service) => proceed" {
     result=$(run_guard "/tmp/does-not-exist" 0 0 0)
     [ "$result" = "proceed" ]
 }
 
-@test "v5.13.0 cq9g: configured + active + no force => skip" {
+@test "v5.13.0 force-guard: configured + active + no force => skip" {
     tmp=$(mktemp)
     result=$(run_guard "$tmp" 1 0 0) || true
     [ "$result" = "skip" ]
     rm -f "$tmp"
 }
 
-@test "v5.13.0 cq9g: configured + inactive (broken) + no force => proceed (repair flow)" {
+@test "v5.13.0 force-guard: configured + inactive (broken) + no force => proceed (repair flow)" {
     tmp=$(mktemp)
     result=$(run_guard "$tmp" 0 0 0)
     [ "$result" = "proceed" ]
     rm -f "$tmp"
 }
 
-@test "v5.13.0 cq9g: configured + active + --force => proceed" {
+@test "v5.13.0 force-guard: configured + active + --force => proceed" {
     tmp=$(mktemp)
     result=$(run_guard "$tmp" 1 1 0)
     [ "$result" = "proceed" ]
     rm -f "$tmp"
 }
 
-@test "v5.13.0 cq9g: configured + active + AWG_FORCE_REINSTALL=1 env => proceed" {
+@test "v5.13.0 force-guard: configured + active + AWG_FORCE_REINSTALL=1 env => proceed" {
     tmp=$(mktemp)
     result=$(run_guard "$tmp" 1 0 1)
     [ "$result" = "proceed" ]
     rm -f "$tmp"
 }
 
-@test "v5.13.0 cq9g: AWG_FORCE_REINSTALL=yes (non-1) is NOT honoured (only =1)" {
+@test "v5.13.0 force-guard: AWG_FORCE_REINSTALL=yes (non-1) is NOT honoured (only =1)" {
     tmp=$(mktemp)
     result=$(run_guard "$tmp" 1 0 yes) || true
     # Strict =1 check — "yes" should not bypass

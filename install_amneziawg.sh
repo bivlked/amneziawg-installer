@@ -34,8 +34,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="0ae0980174edb7784d222990157743f31edf9ff65e0de6661a14109e3080c22c"
-MANAGE_SCRIPT_SHA256="2329766b99f4c8ae2987dddcc644f19073438c9098fbaac274f6c41997d3bca0"
+COMMON_SCRIPT_SHA256="806883efe589f2714332347b227992fd8ae483919cb368d0bc393250f50f90b6"
+MANAGE_SCRIPT_SHA256="3f56d59c7b4dcfdbd471c27718b38d98202cb9d3f3ee28cde7090063791b5f76"
 
 # AmneziaWG 2.0 пин (H0, 31 jul 2026). Upstream влил AmneziaWG 3.0 в default-ветку
 # amneziawg-linux-kernel-module, и PPA переключился на 3.0. Тогда на ядрах старее
@@ -675,7 +675,7 @@ configure_ipv6_tunnel() {
     # активно включаю IPv6 в рантайме ДО detection/render: при upgrade с дефолтной
     # прошлой установки (IPv6 был выключен в рантайме) ядро скрывает все IPv6-адреса,
     # поэтому detect_native_ipv6 дал бы false-negative, а клиент отрендерился бы с
-    # IPv6 Address при выключенном в ядре IPv6 (awg-quick restart может упасть). weaq P1.
+    # IPv6 Address при выключенном в ядре IPv6 (awg-quick restart может упасть).
     if [[ "$ALLOW_IPV6_TUNNEL" -eq 1 ]]; then
         if [[ "$DISABLE_IPV6" -eq 1 ]]; then
             log_warn "--allow-ipv6-tunnel requires host IPv6 forwarding; overriding --disallow-ipv6 (DISABLE_IPV6=0)"
@@ -3062,7 +3062,7 @@ initialize_setup() {
     _cfg_server_name=""
     if [[ "$config_exists" -eq 1 ]]; then _cfg_server_name="${AWG_SERVER_NAME:-AWG Server}"; fi
 
-    # --mobile разворачивается в CLI_PRESET/CLI_PORT до их потребителей (g0vd).
+    # --mobile разворачивается в CLI_PRESET/CLI_PORT до их потребителей.
     resolve_mobile_flag
 
     # Переопределение из CLI

@@ -1,15 +1,15 @@
 #!/usr/bin/env bats
 # v5.18.1 bug-fix release. Three independent fixes:
 #
-#   jue6 - install --force --port=N was silently ignored: render_server_config
+#   force-port - install --force --port=N was silently ignored: render_server_config
 #          calls load_awg_params, which re-reads ListenPort from the live
 #          awg0.conf and overwrote the CLI/init port. The new server config now
 #          takes the port from the init file (the user's intent, survives the
 #          reboot-resume of --force). render_server_config is install-only, so
 #          client regen (regenerate_client) is unaffected.
-#   rl9c - client DNS default is now a Cloudflare pair "1.1.1.1, 1.0.0.1"
+#   dual-dns - client DNS default is now a Cloudflare pair "1.1.1.1, 1.0.0.1"
 #          instead of a single resolver.
-#   r11y - full-tunnel clients (AllowedIPs = 0.0.0.0/0) now get "0.0.0.0/0, ::/0"
+#   full-tunnel - full-tunnel clients (AllowedIPs = 0.0.0.0/0) now get "0.0.0.0/0, ::/0"
 #          so iOS AmneziaVPN accepts the "all traffic" mode. Split-tunnel
 #          (custom list != 0.0.0.0/0) is untouched.
 # shellcheck disable=SC2154  # Variables set by sourced scripts at runtime
@@ -21,9 +21,9 @@ stub_nic() {
     export -f get_main_nic
 }
 
-# --- jue6: port from init wins over live awg0.conf in server render ---
+# --- force-port: port from init wins over live awg0.conf in server render ---
 
-@test "v5.18.1 jue6: render_server_config takes ListenPort from init, not old awg0.conf" {
+@test "v5.18.1 force-port: render_server_config takes ListenPort from init, not old awg0.conf" {
     stub_nic
     create_init_config
     # Simulate --force --port=443: Step 0 saved the new port into init, while the
@@ -40,7 +40,7 @@ stub_nic() {
     [ "$status" -ne 0 ]
 }
 
-@test "v5.18.1 jue6: port unchanged when init matches old config (no --port)" {
+@test "v5.18.1 force-port: port unchanged when init matches old config (no --port)" {
     stub_nic
     create_init_config
     create_server_config
@@ -51,24 +51,24 @@ stub_nic() {
     grep -qxF "ListenPort = 39743" "$SERVER_CONF_FILE"
 }
 
-# --- rl9c: dual DNS default ---
+# --- dual-dns: dual DNS default ---
 
-@test "v5.18.1 rl9c: client config DNS defaults to 1.1.1.1, 1.0.0.1" {
+@test "v5.18.1 dual-dns: client config DNS defaults to 1.1.1.1, 1.0.0.1" {
     create_init_config
     render_client_config "c1" "10.9.9.2" "CLIENTPRIV" "SERVERPUB" "1.2.3.4" "443"
     grep -qxF "DNS = 1.1.1.1, 1.0.0.1" "$AWG_DIR/c1.conf"
 }
 
-# --- r11y: full-tunnel ::/0 for iOS; split-tunnel untouched ---
+# --- full-tunnel: full-tunnel ::/0 for iOS; split-tunnel untouched ---
 
-@test "v5.18.1 r11y: full-tunnel client gets 0.0.0.0/0, ::/0" {
+@test "v5.18.1 full-tunnel: full-tunnel client gets 0.0.0.0/0, ::/0" {
     create_init_config
     sed -i "s|^export ALLOWED_IPS=.*|export ALLOWED_IPS='0.0.0.0/0'|" "$CONFIG_FILE"
     render_client_config "c2" "10.9.9.3" "CLIENTPRIV" "SERVERPUB" "1.2.3.4" "443"
     grep -qxF "AllowedIPs = 0.0.0.0/0, ::/0" "$AWG_DIR/c2.conf"
 }
 
-@test "v5.18.1 r11y: split-tunnel (custom list) does NOT get ::/0" {
+@test "v5.18.1 full-tunnel: split-tunnel (custom list) does NOT get ::/0" {
     create_init_config
     sed -i "s|^export ALLOWED_IPS=.*|export ALLOWED_IPS='1.0.0.0/8, 2.0.0.0/7'|" "$CONFIG_FILE"
     render_client_config "c3" "10.9.9.4" "CLIENTPRIV" "SERVERPUB" "1.2.3.4" "443"
@@ -77,7 +77,7 @@ stub_nic() {
     [ "$status" -ne 0 ]
 }
 
-# --- r11y/rl9c via regen: upgrade non-customized clients, preserve custom ones ---
+# --- full-tunnel/dual-dns via regen: upgrade non-customized clients, preserve custom ones ---
 
 # Build a full regen scenario: server peer block, an existing client .conf with
 # the OLD AllowedIPs/DNS, keys, and stubbed externals. regenerate_client runs the
@@ -133,14 +133,14 @@ EOF
 
 # --- RU/EN parity of the three fixes ---
 
-@test "v5.18.1 parity: jue6 init-port override present in RU+EN" {
+@test "v5.18.1 parity: force-port init-port override present in RU+EN" {
     local p
     for p in awg_common.sh awg_common_en.sh; do
         grep -qF '_init_port=$(grep -oP' "${BATS_TEST_DIRNAME}/../$p"
     done
 }
 
-@test "v5.18.1 parity: rl9c dual DNS + r11y ::/0 present in RU+EN" {
+@test "v5.18.1 parity: dual-dns dual DNS + full-tunnel ::/0 present in RU+EN" {
     local p
     for p in awg_common.sh awg_common_en.sh; do
         grep -qF 'DNS = 1.1.1.1, 1.0.0.1' "${BATS_TEST_DIRNAME}/../$p"

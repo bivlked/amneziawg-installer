@@ -118,7 +118,7 @@ _prepare_regen() {
 
 # Key/psk stubs so generate_client can mint a client without a kernel; real
 # load_awg_params reads the (possibly broken) port straight from the config,
-# which is exactly the z2i7 scenario.
+# which is exactly the broken-port scenario.
 _gen_stubs() {
     awg() {
         case "$1" in

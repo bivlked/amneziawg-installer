@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# v5.16.1 (MyAI-1ju6, Issue #42): iOS fix for the default routing mode (mode 2).
+# v5.16.1 (Issue #42): iOS fix for the default routing mode (mode 2).
 #
 # Background: mode 2 (ALLOWED_IPS_MODE=2, our default) builds a fragmented
 # AllowedIPs list. Its first element used to be 0.0.0.0/5, which covers the

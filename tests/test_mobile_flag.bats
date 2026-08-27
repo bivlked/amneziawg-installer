@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# g0vd / D#38 - the --mobile shorthand flag.
+# mobile-flag / D#38 - the --mobile shorthand flag.
 #
 # --preset=mobile only tuned the obfuscation while the real mobile killer is
 # the port (39743/udp dead on MTS, 443/udp works). --mobile = preset mobile +
@@ -11,7 +11,7 @@ extract_resolve_mobile() {
     awk '/^resolve_mobile_flag\(\)/,/^}/' "$BATS_TEST_DIRNAME/../$1"
 }
 
-@test "g0vd: RU/EN installer parses --mobile into CLI_MOBILE" {
+@test "mobile-flag: RU/EN installer parses --mobile into CLI_MOBILE" {
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         run grep -F -- '--mobile)' "$BATS_TEST_DIRNAME/../$f"
         [ "$status" -eq 0 ]
@@ -19,7 +19,7 @@ extract_resolve_mobile() {
     done
 }
 
-@test "g0vd: RU/EN help mentions --mobile" {
+@test "mobile-flag: RU/EN help mentions --mobile" {
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         run grep -c -- '--mobile' "$BATS_TEST_DIRNAME/../$f"
         [ "$status" -eq 0 ]
@@ -27,7 +27,7 @@ extract_resolve_mobile() {
     done
 }
 
-@test "g0vd functional: --mobile sets preset mobile + port 443 when port not given" {
+@test "mobile-flag functional: --mobile sets preset mobile + port 443 when port not given" {
     fn=$(extract_resolve_mobile install_amneziawg.sh)
     [ -n "$fn" ]
     run bash -c '
@@ -41,7 +41,7 @@ extract_resolve_mobile() {
     [[ "$output" == *'preset:mobile port:443'* ]]
 }
 
-@test "g0vd functional: explicit --port wins over the mobile default 443" {
+@test "mobile-flag functional: explicit --port wins over the mobile default 443" {
     fn=$(extract_resolve_mobile install_amneziawg.sh)
     run bash -c '
         log() { :; }; die() { echo "DIE:$*"; exit 1; }
@@ -54,7 +54,7 @@ extract_resolve_mobile() {
     [[ "$output" == *'preset:mobile port:39743'* ]]
 }
 
-@test "g0vd functional: --mobile dies on a contradicting --preset, tolerates --preset=mobile" {
+@test "mobile-flag functional: --mobile dies on a contradicting --preset, tolerates --preset=mobile" {
     fn=$(extract_resolve_mobile install_amneziawg.sh)
     run bash -c '
         log() { :; }; die() { echo "DIE:$*"; exit 1; }
@@ -70,7 +70,7 @@ extract_resolve_mobile() {
     [[ "$output" != *'unreachable'* ]]
 }
 
-@test "g0vd functional regression: bare --preset=mobile does NOT touch the port" {
+@test "mobile-flag functional regression: bare --preset=mobile does NOT touch the port" {
     fn=$(extract_resolve_mobile install_amneziawg.sh)
     run bash -c '
         log() { :; }; die() { echo "DIE:$*"; exit 1; }
@@ -83,14 +83,14 @@ extract_resolve_mobile() {
     [[ "$output" == *'preset:mobile port:[]'* ]]
 }
 
-@test "g0vd: RU/EN resolve_mobile_flag bodies are structurally identical (code lines)" {
+@test "mobile-flag: RU/EN resolve_mobile_flag bodies are structurally identical (code lines)" {
     ru=$(awk '/^resolve_mobile_flag\(\)/,/^}/' "$BATS_TEST_DIRNAME/../install_amneziawg.sh" | grep -vE '^\s*(#|log |die )')
     en=$(awk '/^resolve_mobile_flag\(\)/,/^}/' "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh" | grep -vE '^\s*(#|log |die )')
     [ -n "$ru" ]
     [ "$ru" = "$en" ]
 }
 
-@test "g0vd: resolve_mobile_flag is called before the CLI port override (RU/EN)" {
+@test "mobile-flag: resolve_mobile_flag is called before the CLI port override (RU/EN)" {
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         # the call must appear before AWG_PORT=${CLI_PORT:-...} inside initialize_setup
         call_line=$(grep -n '^    resolve_mobile_flag$' "$BATS_TEST_DIRNAME/../$f" | head -1 | cut -d: -f1)

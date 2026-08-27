@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# v5.17.0 (MyAI-sonp): render_server_config emits a TCP MSS clamp in the firewall
+# v5.17.0: render_server_config emits a TCP MSS clamp in the firewall
 # PostUp/PostDown so oversized segments do not blackhole against the 1280 tunnel
 # when ICMP "frag needed" is filtered (mobile / double-NAT / cascade paths).
 # The MSS is fixed and derived from AWG_MTU (IPv4: MTU-40, IPv6: MTU-60), applied

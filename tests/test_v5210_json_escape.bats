@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Phase 2 (v5.21.0, MyAI-n30w): hardened json_escape.
+# Phase 2 (v5.21.0): hardened json_escape.
 #
 # New guarantees over the v5.20.x version:
 #   - C0 controls (0x01-0x1F) escape as \u00XX (raw ESC/BEL used to break jq);

@@ -1,22 +1,22 @@
 #!/usr/bin/env bats
 # v5.13.0 bundled robustness fixes (rolled in alongside PPA noble fallback):
 #
-# 1. MyAI-rcgr — manage_amneziawg.sh log_msg now routes WARN to stderr
+# 1. manage_amneziawg.sh log_msg now routes WARN to stderr
 #    (matching install_amneziawg.sh:110+). Until v5.12.1, manage sent only
 #    ERROR to stderr and dropped WARN into stdout, which broke CI/automation
 #    that captured stdout for data only.
 #
-# 2. MyAI-i31a — install_amneziawg.sh optimize_swap now uses a field-aware
+# 2. install_amneziawg.sh optimize_swap now uses a field-aware
 #    awk check on /etc/fstab instead of a substring grep. The old
 #    `grep -q '/swapfile' /etc/fstab` matched commented lines and partial
 #    names (e.g. `/swapfile.bak`), which on a re-run could skip adding a
 #    valid entry — swap then wouldn't mount on reboot.
 
 # ===========================================================================
-# rcgr: manage log_msg routes WARN to stderr (RU + EN)
+# warn-stderr: manage log_msg routes WARN to stderr (RU + EN)
 # ===========================================================================
 
-@test "v5.13.0 rcgr: RU manage log_msg routes WARN to stderr" {
+@test "v5.13.0 warn-stderr: RU manage log_msg routes WARN to stderr" {
     block=$(awk '/^log_msg\(\) \{/,/^\}/' \
         "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")
     [[ "$block" == *'"$type" == "ERROR" || "$type" == "WARN"'* ]]
@@ -24,14 +24,14 @@
     [[ "$block" == *'>&2'* ]]
 }
 
-@test "v5.13.0 rcgr: EN manage log_msg routes WARN to stderr" {
+@test "v5.13.0 warn-stderr: EN manage log_msg routes WARN to stderr" {
     block=$(awk '/^log_msg\(\) \{/,/^\}/' \
         "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh")
     [[ "$block" == *'"$type" == "ERROR" || "$type" == "WARN"'* ]]
     [[ "$block" == *'>&2'* ]]
 }
 
-@test "v5.13.0 rcgr: RU and EN manage log_msg are in sync" {
+@test "v5.13.0 warn-stderr: RU and EN manage log_msg are in sync" {
     ru=$(awk '/^log_msg\(\) \{/,/^\}/' \
         "$BATS_TEST_DIRNAME/../manage_amneziawg.sh" \
         | grep -c '"$type" == "ERROR" || "$type" == "WARN"')
@@ -42,7 +42,7 @@
     [ "$en" -eq 1 ]
 }
 
-@test "v5.13.0 rcgr: manage log_msg now matches install log_msg behaviour" {
+@test "v5.13.0 warn-stderr: manage log_msg now matches install log_msg behaviour" {
     # install_amneziawg.sh already routed WARN to stderr (line ~110).
     # manage must now do the same for consistency.
     install_block=$(awk '/^log_msg\(\) \{/,/^\}/' \
@@ -66,21 +66,21 @@ run_warn_routed() {
     fi
 }
 
-@test "v5.13.0 rcgr functional: WARN goes to stderr, not stdout" {
+@test "v5.13.0 warn-stderr functional: WARN goes to stderr, not stdout" {
     out=$(run_warn_routed WARN "test warning" 2>/dev/null)
     err=$(run_warn_routed WARN "test warning" 2>&1 1>/dev/null)
     [ -z "$out" ]
     [[ "$err" == *"WARN: test warning"* ]]
 }
 
-@test "v5.13.0 rcgr functional: ERROR still goes to stderr" {
+@test "v5.13.0 warn-stderr functional: ERROR still goes to stderr" {
     out=$(run_warn_routed ERROR "test error" 2>/dev/null)
     err=$(run_warn_routed ERROR "test error" 2>&1 1>/dev/null)
     [ -z "$out" ]
     [[ "$err" == *"ERROR: test error"* ]]
 }
 
-@test "v5.13.0 rcgr functional: INFO still goes to stdout" {
+@test "v5.13.0 warn-stderr functional: INFO still goes to stdout" {
     out=$(run_warn_routed INFO "test info" 2>/dev/null)
     err=$(run_warn_routed INFO "test info" 2>&1 1>/dev/null)
     [[ "$out" == *"INFO: test info"* ]]
@@ -88,10 +88,10 @@ run_warn_routed() {
 }
 
 # ===========================================================================
-# i31a: install fstab swap check uses awk field-match (RU + EN)
+# fstab-swap: install fstab swap check uses awk field-match (RU + EN)
 # ===========================================================================
 
-@test "v5.13.0 i31a: RU install uses awk field check for /swapfile in fstab" {
+@test "v5.13.0 fstab-swap: RU install uses awk field check for /swapfile in fstab" {
     grep -q "awk '!/\^\[\[:space:\]\]\*#/ && \\\$1 == \"/swapfile\" && \\\$3 == \"swap\"" \
         "$BATS_TEST_DIRNAME/../install_amneziawg.sh"
     # Old substring grep must be gone.
@@ -99,7 +99,7 @@ run_warn_routed() {
         "$BATS_TEST_DIRNAME/../install_amneziawg.sh"
 }
 
-@test "v5.13.0 i31a: EN install uses awk field check for /swapfile in fstab" {
+@test "v5.13.0 fstab-swap: EN install uses awk field check for /swapfile in fstab" {
     grep -q "awk '!/\^\[\[:space:\]\]\*#/ && \\\$1 == \"/swapfile\" && \\\$3 == \"swap\"" \
         "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"
     ! grep -q "grep -q '/swapfile' /etc/fstab" \
@@ -112,7 +112,7 @@ check_fstab_has_swap() {
     awk '!/^[[:space:]]*#/ && $1 == "/swapfile" && $3 == "swap" {found=1} END {exit !(found+0)}' "$1"
 }
 
-@test "v5.13.0 i31a: valid /swapfile entry detected (returns 0)" {
+@test "v5.13.0 fstab-swap: valid /swapfile entry detected (returns 0)" {
     tmp=$(mktemp)
     cat > "$tmp" <<EOF
 UUID=abc-123 / ext4 defaults 0 1
@@ -122,7 +122,7 @@ EOF
     rm -f "$tmp"
 }
 
-@test "v5.13.0 i31a: commented /swapfile NOT detected (returns 1)" {
+@test "v5.13.0 fstab-swap: commented /swapfile NOT detected (returns 1)" {
     tmp=$(mktemp)
     cat > "$tmp" <<EOF
 UUID=abc-123 / ext4 defaults 0 1
@@ -133,7 +133,7 @@ EOF
     rm -f "$tmp"
 }
 
-@test "v5.13.0 i31a: partial name /swapfile.bak NOT detected (returns 1)" {
+@test "v5.13.0 fstab-swap: partial name /swapfile.bak NOT detected (returns 1)" {
     tmp=$(mktemp)
     cat > "$tmp" <<EOF
 UUID=abc-123 / ext4 defaults 0 1
@@ -144,7 +144,7 @@ EOF
     rm -f "$tmp"
 }
 
-@test "v5.13.0 i31a: indented /swapfile entry still detected" {
+@test "v5.13.0 fstab-swap: indented /swapfile entry still detected" {
     tmp=$(mktemp)
     cat > "$tmp" <<EOF
 UUID=abc-123 / ext4 defaults 0 1
@@ -154,7 +154,7 @@ EOF
     rm -f "$tmp"
 }
 
-@test "v5.13.0 i31a: indented comment NOT confusing the parser" {
+@test "v5.13.0 fstab-swap: indented comment NOT confusing the parser" {
     tmp=$(mktemp)
     cat > "$tmp" <<EOF
 UUID=abc-123 / ext4 defaults 0 1
@@ -165,7 +165,7 @@ EOF
     rm -f "$tmp"
 }
 
-@test "v5.13.0 i31a: empty fstab returns 1 (no entry)" {
+@test "v5.13.0 fstab-swap: empty fstab returns 1 (no entry)" {
     tmp=$(mktemp)
     : > "$tmp"
     run check_fstab_has_swap "$tmp"
@@ -173,7 +173,7 @@ EOF
     rm -f "$tmp"
 }
 
-@test "v5.13.0 i31a: /swapfile with wrong type (not swap) NOT detected" {
+@test "v5.13.0 fstab-swap: /swapfile with wrong type (not swap) NOT detected" {
     # Edge: someone has a file at /swapfile mounted as ext4 binding. Our
     # check requires $3 == "swap" so this should not match.
     tmp=$(mktemp)

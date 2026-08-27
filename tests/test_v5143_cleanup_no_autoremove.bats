@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for v5.14.3 cleanup_system fix (Issue #84, MyAI-i21t).
+# Tests for v5.14.3 cleanup_system fix (Issue #84).
 #
 # Bug background: on clean Ubuntu 26.04 server installed via subiquity
 # (VirtualBox VM, no cloud-init network management), cleanup_system used

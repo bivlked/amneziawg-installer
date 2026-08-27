@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for _resolve_kernel_version in scripts/build-arm-deb.sh (v5.14.2, MyAI-4vlu).
+# Tests for _resolve_kernel_version in scripts/build-arm-deb.sh (v5.14.2).
 #
 # Background: external code review on 8 may 2026 flagged that the original
 # loop silently picked the FIRST /lib/modules/*/build candidate, which on

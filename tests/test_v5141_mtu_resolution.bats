@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for MTU resolution priority in render_client_config (v5.14.1, MyAI-sdge).
+# Tests for MTU resolution priority in render_client_config (v5.14.1).
 #
 # Bug background: v5.14.0 and earlier hardcoded MTU = 1280 in render_server_config
 # and render_client_config. Manual edits to MTU in server awg0.conf were lost

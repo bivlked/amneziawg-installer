@@ -39,7 +39,7 @@ _manage_temp_dirs=()
 
 # Путь пишем в переменную по имени (printf -v), БЕЗ command substitution: при
 # td=$(manage_mktempdir) append в _manage_temp_dirs уходил в сабшелл и терялся,
-# а cleanup на INT/TERM/EXIT эти папки не удалял (audit 5kag). Вызов:
+# а cleanup на INT/TERM/EXIT эти папки не удалял. Вызов:
 # manage_mktempdir_var td || die ...
 manage_mktempdir_var() {
     local __rv="$1" __d
@@ -274,7 +274,7 @@ log_msg() {
     if [[ "$type" == "ERROR" || "$type" == "WARN" ]]; then
         printf "${color_start}%s${color_end}\n" "$entry" >&2
     elif [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
-        # weaq P2: в режиме --json stdout обязан содержать ТОЛЬКО JSON (jq/automation).
+        # В режиме --json stdout обязан содержать ТОЛЬКО JSON (jq/automation).
         # INFO/DEBUG уводим в stderr, иначе list/show/stats --json печатают INFO-строки
         # перед JSON и ломают парсинг (подтверждено на biHetzner).
         printf "${color_start}%s${color_end}\n" "$entry" >&2

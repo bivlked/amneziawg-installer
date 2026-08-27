@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# cxmj - early container detection (LXC/OpenVZ/Docker/WSL).
+# container-detect - early container detection (LXC/OpenVZ/Docker/WSL).
 #
 # Installing inside a container used to reach step 3 and die with a raw
 # 'modprobe: FATAL: Module amneziawg not found' with no explanation. Now
@@ -26,7 +26,7 @@ SHIM
     export PATH="$bin:$PATH"
 }
 
-@test "cxmj functional: check_container dies with a clear message inside lxc" {
+@test "container-detect functional: check_container dies with a clear message inside lxc" {
     fn=$(extract_check_container install_amneziawg.sh)
     [ -n "$fn" ]
     mock_detect_virt "lxc" 0
@@ -43,7 +43,7 @@ SHIM
     [[ "$output" != *'unreachable'* ]]
 }
 
-@test "cxmj functional: check_container passes on bare metal / KVM (none)" {
+@test "container-detect functional: check_container passes on bare metal / KVM (none)" {
     fn=$(extract_check_container install_amneziawg.sh)
     mock_detect_virt "none" 1
     run bash -c '
@@ -56,7 +56,7 @@ SHIM
     [[ "$output" != *'DIE:'* ]]
 }
 
-@test "cxmj functional: check_container is skipped when systemd-detect-virt is missing" {
+@test "container-detect functional: check_container is skipped when systemd-detect-virt is missing" {
     fn=$(extract_check_container install_amneziawg.sh)
     # A PATH with only core utils and no systemd-detect-virt.
     run bash -c '
@@ -82,7 +82,7 @@ SHIM
     [[ "$output" == *'soft-skip'* ]]
 }
 
-@test "cxmj: check_container wired into step 0 right after check_os_version (RU/EN)" {
+@test "container-detect: check_container wired into step 0 right after check_os_version (RU/EN)" {
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         run grep -A1 '^    check_os_version$' "$BATS_TEST_DIRNAME/../$f"
         [ "$status" -eq 0 ]
@@ -90,7 +90,7 @@ SHIM
     done
 }
 
-@test "cxmj: RU/EN check_container bodies are structurally identical (code lines)" {
+@test "container-detect: RU/EN check_container bodies are structurally identical (code lines)" {
     ru=$(extract_check_container install_amneziawg.sh | grep -vE '^\s*(#|log_error |die )')
     en=$(extract_check_container install_amneziawg_en.sh | grep -vE '^\s*(#|log_error |die )')
     [ -n "$ru" ]

@@ -1,11 +1,11 @@
 #!/usr/bin/env bats
 # v5.15.1 audit fixes - regression locks for:
-#   C8 / weaq P1: detect_native_ipv6 must require a globally-routable (non-ULA)
+#   C8 / ipv6-detect: detect_native_ipv6 must require a globally-routable (non-ULA)
 #                 address AND a default IPv6 route (no false-positive -> no ::/0
 #                 black-hole).
 #   E / C13:      install --help OS line lists 26.04; --subnet help states /24.
 #   C12:          log_msg must not double percent signs.
-#   weaq P2:      log_msg must route INFO/DEBUG to stderr when JSON_OUTPUT=1.
+#   json-stdout:      log_msg must route INFO/DEBUG to stderr when JSON_OUTPUT=1.
 #
 # shellcheck disable=SC2034  # mock env vars (NO_COLOR/VERBOSE_LIST/LOG_FILE/JSON_OUTPUT) are consumed by the sourced functions
 # shellcheck disable=SC2154  # $stderr is set by bats `run --separate-stderr`
@@ -79,7 +79,7 @@ setup_detect() {
 }
 
 # ---------------------------------------------------------------------------
-# log_msg (extracted from manage_amneziawg.sh) - C12 + weaq P2
+# log_msg (extracted from manage_amneziawg.sh) - C12 + json-stdout
 # ---------------------------------------------------------------------------
 
 setup_logmsg() {
@@ -99,7 +99,7 @@ setup_logmsg() {
     [[ "$output" != *"95%%"* ]]
 }
 
-@test "v5.15.1 weaq P2: log_msg INFO goes to stderr (empty stdout) when JSON_OUTPUT=1" {
+@test "v5.15.1 json-stdout: log_msg INFO goes to stderr (empty stdout) when JSON_OUTPUT=1" {
     setup_logmsg
     JSON_OUTPUT=1
     run --separate-stderr log_msg INFO "informational line"
@@ -107,7 +107,7 @@ setup_logmsg() {
     [[ "$stderr" == *"informational line"* ]]
 }
 
-@test "v5.15.1 weaq P2: log_msg INFO goes to stdout when JSON_OUTPUT=0" {
+@test "v5.15.1 json-stdout: log_msg INFO goes to stdout when JSON_OUTPUT=0" {
     setup_logmsg
     JSON_OUTPUT=0
     run log_msg INFO "informational line"

@@ -1532,7 +1532,7 @@ render_client_config() {
     # MTU resolution order: server awg0.conf > AWG_MTU from awgsetup_cfg.init >
     # 1280 fallback. Server config is the source of truth for a running server -
     # the user could have hand-edited MTU in /etc/amnezia/amneziawg/awg0.conf
-    # and regen has to pick that up (MyAI-sdge, Discussion #38). Out-of-range
+    # and regen has to pick that up (Discussion #38). Out-of-range
     # values (outside 576..9100) at any stage roll back to 1280.
     local mtu
     mtu=$(_extract_mtu_from_server_conf) || mtu=""

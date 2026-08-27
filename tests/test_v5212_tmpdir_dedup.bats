@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # v5.21.2:
-#   - 5kag: manage_mktempdir_var registers the temp dir in the PARENT array, so
+#   - tmpdir: manage_mktempdir_var registers the temp dir in the PARENT array, so
 #     the INT/TERM/EXIT cleanup actually sees it. The old manage_mktempdir did
 #     the append inside a command substitution ($()), i.e. a subshell, so the
 #     parent array stayed empty and the dirs leaked on an interrupted
@@ -11,7 +11,7 @@
 
 _extract() { awk '/^manage_mktempdir_var\(\) \{/,/^\}/' "$1"; }
 
-# --- 5kag: registration survives in the parent shell ---
+# --- tmpdir: registration survives in the parent shell ---
 
 # Mirror real usage: the call sites live inside functions that declare their
 # own `local td`. printf -v must write into that caller local (dynamic scope),
@@ -32,12 +32,12 @@ _assert_registers() {
     _caller
 }
 
-@test "v5.21.2 (5kag): manage_mktempdir_var writes the caller local and registers in the parent (RU)" {
+@test "v5.21.2 (tmpdir): manage_mktempdir_var writes the caller local and registers in the parent (RU)" {
     run _assert_registers "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 }
 
-@test "v5.21.2 (5kag): manage_mktempdir_var writes the caller local and registers in the parent (EN)" {
+@test "v5.21.2 (tmpdir): manage_mktempdir_var writes the caller local and registers in the parent (EN)" {
     run _assert_registers "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 }
@@ -55,18 +55,18 @@ _assert_fails_clean() {
     [ "${#_manage_temp_dirs[@]}" -eq 0 ] || { echo "registered despite mktemp failure"; return 1; }
 }
 
-@test "v5.21.2 (5kag): manage_mktempdir_var fails cleanly when mktemp fails (RU)" {
+@test "v5.21.2 (tmpdir): manage_mktempdir_var fails cleanly when mktemp fails (RU)" {
     run _assert_fails_clean "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 }
 
-@test "v5.21.2 (5kag): manage_mktempdir_var fails cleanly when mktemp fails (EN)" {
+@test "v5.21.2 (tmpdir): manage_mktempdir_var fails cleanly when mktemp fails (EN)" {
     run _assert_fails_clean "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 }
 
 # End-to-end: the INT/TERM/EXIT handler (_manage_cleanup) actually removes a
-# registered dir. This closes the loop on 5kag - the leak was that the handler
+# registered dir. This closes the loop on tmpdir - the leak was that the handler
 # never saw the dir, so registration alone is only half the proof.
 _assert_cleanup_removes() {
     local script="$1"
@@ -80,17 +80,17 @@ _assert_cleanup_removes() {
     [ ! -d "$td" ] || { echo "cleanup left the registered dir: $td"; rmdir "$td" 2>/dev/null; return 1; }
 }
 
-@test "v5.21.2 (5kag): _manage_cleanup removes a registered temp dir (RU)" {
+@test "v5.21.2 (tmpdir): _manage_cleanup removes a registered temp dir (RU)" {
     run _assert_cleanup_removes "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 }
 
-@test "v5.21.2 (5kag): _manage_cleanup removes a registered temp dir (EN)" {
+@test "v5.21.2 (tmpdir): _manage_cleanup removes a registered temp dir (EN)" {
     run _assert_cleanup_removes "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 }
 
-@test "v5.21.2 (5kag): the old subshell-registering manage_mktempdir is gone (RU+EN)" {
+@test "v5.21.2 (tmpdir): the old subshell-registering manage_mktempdir is gone (RU+EN)" {
     for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
         run grep -nE '^manage_mktempdir\(\) \{' "$BATS_TEST_DIRNAME/../$f"
         [ "$status" -ne 0 ] || { echo "$f still defines the buggy manage_mktempdir"; return 1; }

@@ -34,8 +34,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="0a6047ea929524fc159addbd7658142548a1f636599998d33048fa5412c674e7"
-MANAGE_SCRIPT_SHA256="6fe56da424f3e5f2f5c4ad2d43b49f1e4ce40c2ba6e341d0b697f04cc610bb55"
+COMMON_SCRIPT_SHA256="b70ae7e5b8b03b657a88ccfc1ee06cb4df8856c6b9197c9e36f3ab5ead112804"
+MANAGE_SCRIPT_SHA256="928f50f5a4124a8abc5ba14706ae4b62953269b5d2253f3e434ca7e0b20fa398"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back
@@ -685,7 +685,7 @@ configure_ipv6_tunnel() {
     # from a default past install (IPv6 was runtime-disabled), the kernel hides
     # all IPv6 addresses, so detect_native_ipv6 would false-negative and a client
     # would be rendered with an IPv6 Address while the kernel has IPv6 off
-    # (awg-quick restart can fail). weaq P1.
+    # (awg-quick restart can fail).
     if [[ "$ALLOW_IPV6_TUNNEL" -eq 1 ]]; then
         if [[ "$DISABLE_IPV6" -eq 1 ]]; then
             log_warn "--allow-ipv6-tunnel requires host IPv6 forwarding; overriding --disallow-ipv6 (DISABLE_IPV6=0)"
@@ -3103,7 +3103,7 @@ initialize_setup() {
     _cfg_server_name=""
     if [[ "$config_exists" -eq 1 ]]; then _cfg_server_name="${AWG_SERVER_NAME:-AWG Server}"; fi
 
-    # --mobile expands into CLI_PRESET/CLI_PORT before their consumers (g0vd).
+    # --mobile expands into CLI_PRESET/CLI_PORT before their consumers.
     resolve_mobile_flag
 
     # CLI override

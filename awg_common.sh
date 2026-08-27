@@ -1512,7 +1512,7 @@ render_client_config() {
     # MTU: приоритет server awg0.conf > AWG_MTU из awgsetup_cfg.init > 1280 fallback.
     # Server config - источник правды для уже работающего сервера: пользователь
     # мог поправить MTU в /etc/amnezia/amneziawg/awg0.conf руками, и regen должен
-    # это подхватить (MyAI-sdge, Discussion #38). Невалидные значения (вне 576-9100)
+    # это подхватить (Discussion #38). Невалидные значения (вне 576-9100)
     # на любом этапе откатываются к 1280.
     local mtu
     mtu=$(_extract_mtu_from_server_conf) || mtu=""
