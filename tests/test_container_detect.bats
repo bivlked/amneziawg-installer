@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# container-detect - early container detection (LXC/OpenVZ/Docker/WSL).
+# v5.20.0 container-detect - early container detection (LXC/OpenVZ/Docker/WSL).
 #
 # Installing inside a container used to reach step 3 and die with a raw
 # 'modprobe: FATAL: Module amneziawg not found' with no explanation. Now

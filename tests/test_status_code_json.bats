@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Machine-stable status_code enum in list --json and stats --json.
+# v5.15.6 - machine-stable status_code enum in list --json and stats --json.
 #
 # The localized `status` field (Активен/Active, Недавно/Recent, ...) is kept for
 # display, and a language-independent `status_code` enum is added alongside:

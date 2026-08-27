@@ -1,17 +1,20 @@
 #!/usr/bin/env bats
 # v5.18.1 bug-fix release. Three independent fixes:
 #
-#   force-port - install --force --port=N was silently ignored: render_server_config
-#          calls load_awg_params, which re-reads ListenPort from the live
-#          awg0.conf and overwrote the CLI/init port. The new server config now
-#          takes the port from the init file (the user's intent, survives the
-#          reboot-resume of --force). render_server_config is install-only, so
-#          client regen (regenerate_client) is unaffected.
-#   dual-dns - client DNS default is now a Cloudflare pair "1.1.1.1, 1.0.0.1"
-#          instead of a single resolver.
-#   full-tunnel - full-tunnel clients (AllowedIPs = 0.0.0.0/0) now get "0.0.0.0/0, ::/0"
-#          so iOS AmneziaVPN accepts the "all traffic" mode. Split-tunnel
-#          (custom list != 0.0.0.0/0) is untouched.
+#   force-port:
+#       install --force --port=N was silently ignored: render_server_config
+#       calls load_awg_params, which re-reads ListenPort from the live
+#       awg0.conf and overwrote the CLI/init port. The new server config now
+#       takes the port from the init file (the user's intent, survives the
+#       reboot-resume of --force). render_server_config is install-only, so
+#       client regen (regenerate_client) is unaffected.
+#   dual-dns:
+#       client DNS default is now a Cloudflare pair "1.1.1.1, 1.0.0.1"
+#       instead of a single resolver.
+#   ipv6-allowedips:
+#       full-tunnel clients (AllowedIPs = 0.0.0.0/0) now get "0.0.0.0/0, ::/0"
+#       so iOS AmneziaVPN accepts the "all traffic" mode. Split-tunnel
+#       (custom list != 0.0.0.0/0) is untouched.
 # shellcheck disable=SC2154  # Variables set by sourced scripts at runtime
 
 load test_helper
@@ -59,16 +62,16 @@ stub_nic() {
     grep -qxF "DNS = 1.1.1.1, 1.0.0.1" "$AWG_DIR/c1.conf"
 }
 
-# --- full-tunnel: full-tunnel ::/0 for iOS; split-tunnel untouched ---
+# --- ipv6-allowedips: ::/0 for iOS full tunnel; split-tunnel untouched ---
 
-@test "v5.18.1 full-tunnel: full-tunnel client gets 0.0.0.0/0, ::/0" {
+@test "v5.18.1 ipv6-allowedips: full-tunnel client gets 0.0.0.0/0, ::/0" {
     create_init_config
     sed -i "s|^export ALLOWED_IPS=.*|export ALLOWED_IPS='0.0.0.0/0'|" "$CONFIG_FILE"
     render_client_config "c2" "10.9.9.3" "CLIENTPRIV" "SERVERPUB" "1.2.3.4" "443"
     grep -qxF "AllowedIPs = 0.0.0.0/0, ::/0" "$AWG_DIR/c2.conf"
 }
 
-@test "v5.18.1 full-tunnel: split-tunnel (custom list) does NOT get ::/0" {
+@test "v5.18.1 ipv6-allowedips: split-tunnel (custom list) does NOT get ::/0" {
     create_init_config
     sed -i "s|^export ALLOWED_IPS=.*|export ALLOWED_IPS='1.0.0.0/8, 2.0.0.0/7'|" "$CONFIG_FILE"
     render_client_config "c3" "10.9.9.4" "CLIENTPRIV" "SERVERPUB" "1.2.3.4" "443"
@@ -77,7 +80,7 @@ stub_nic() {
     [ "$status" -ne 0 ]
 }
 
-# --- full-tunnel/dual-dns via regen: upgrade non-customized clients, preserve custom ones ---
+# --- ipv6-allowedips/dual-dns via regen: upgrade non-customized clients, preserve custom ones ---
 
 # Build a full regen scenario: server peer block, an existing client .conf with
 # the OLD AllowedIPs/DNS, keys, and stubbed externals. regenerate_client runs the
@@ -140,7 +143,7 @@ EOF
     done
 }
 
-@test "v5.18.1 parity: dual-dns dual DNS + full-tunnel ::/0 present in RU+EN" {
+@test "v5.18.1 parity: dual DNS + ::/0 present in RU+EN" {
     local p
     for p in awg_common.sh awg_common_en.sh; do
         grep -qF 'DNS = 1.1.1.1, 1.0.0.1' "${BATS_TEST_DIRNAME}/../$p"

@@ -1,12 +1,12 @@
 #!/usr/bin/env bats
 # v5.13.0 bundled robustness fixes (rolled in alongside PPA noble fallback):
 #
-# 1. manage_amneziawg.sh log_msg now routes WARN to stderr
+# 1. warn-stderr - manage_amneziawg.sh log_msg now routes WARN to stderr
 #    (matching install_amneziawg.sh:110+). Until v5.12.1, manage sent only
 #    ERROR to stderr and dropped WARN into stdout, which broke CI/automation
 #    that captured stdout for data only.
 #
-# 2. install_amneziawg.sh optimize_swap now uses a field-aware
+# 2. fstab-swap - install_amneziawg.sh optimize_swap now uses a field-aware
 #    awk check on /etc/fstab instead of a substring grep. The old
 #    `grep -q '/swapfile' /etc/fstab` matched commented lines and partial
 #    names (e.g. `/swapfile.bak`), which on a re-run could skip adding a

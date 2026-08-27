@@ -842,7 +842,7 @@ sudo bash ./install_amneziawg.sh
 
 - `test_v5130_ppa_noble_fallback.bats` (+33) — RU/EN структурные greps на pre-check блок и suite-mismatch detection, parity-counts, функциональные тесты с мокнутым `curl` (404 → noble, timeout → noble, success → questing), LTS-whitelist (noble/jammy/focal skip pre-check), suite-mismatch удаляет файл при несовпадении и сохраняет при совпадении, повреждённый `.sources` (без `Suites:`) тоже пересоздаётся, legacy `.sources` mismatch удаляется, gcc-13 pre-install активируется при stale headers.
 - `test_v5130_force_guard.bats` (+19) — RU/EN структурные greps на CLI-флаг `--force|-f`, env-bridge `AWG_FORCE_REINSTALL=1`, идемпотентный guard `[[ -f $SERVER_CONF_FILE ]] && systemctl is-active --quiet awg-quick@awg0`, help-секция упоминает `-f, --force`, RU/EN parity по числу `FORCE_REINSTALL` вхождений; функциональная матрица 6 кейсов (clean install / configured+active+no-force / configured+inactive+no-force → repair flow / configured+active+--force / env-bridge / strict `=1` env vs `yes`).
-- `test_v5130_bundled_fixes.bats` (+16) — rcgr: RU/EN log_msg routes WARN to stderr (structural + functional, INFO остаётся в stdout); i31a: awk-check для `/swapfile` корректно детектит valid entry / отбрасывает закомментированные / отбрасывает partial-name матчи (`/swapfile.bak`), индентированные строки, пустой fstab.
+- `test_v5130_bundled_fixes.bats` (+16) - warn-stderr: RU/EN log_msg routes WARN to stderr (structural + functional, INFO остаётся в stdout); fstab-swap: awk-check для `/swapfile` корректно детектит valid entry / отбрасывает закомментированные / отбрасывает partial-name матчи (`/swapfile.bak`), индентированные строки, пустой fstab.
 
 ### Совместимость
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env bats
 # v5.15.1 audit fixes - regression locks for:
-#   C8 / ipv6-detect: detect_native_ipv6 must require a globally-routable (non-ULA)
+#   C8:           detect_native_ipv6 must require a globally-routable (non-ULA)
 #                 address AND a default IPv6 route (no false-positive -> no ::/0
 #                 black-hole).
 #   E / C13:      install --help OS line lists 26.04; --subnet help states /24.
 #   C12:          log_msg must not double percent signs.
-#   json-stdout:      log_msg must route INFO/DEBUG to stderr when JSON_OUTPUT=1.
+#   json-stdout:  log_msg must route INFO/DEBUG to stderr when JSON_OUTPUT=1.
 #
 # shellcheck disable=SC2034  # mock env vars (NO_COLOR/VERBOSE_LIST/LOG_FILE/JSON_OUTPUT) are consumed by the sourced functions
 # shellcheck disable=SC2154  # $stderr is set by bats `run --separate-stderr`
