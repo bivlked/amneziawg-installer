@@ -42,6 +42,15 @@ jobs:
           range="${BASE}..${HEAD}"
           bad=0
 
+          # Collected before the loop rather than piped into it. Read through
+          # `done < <(git rev-list ...)` a failure is invisible to set -e: the
+          # loop body never runs and the step reports the commits clean having
+          # looked at none of them.
+          if ! shas="$(git rev-list "$range")"; then
+            echo "::error::cannot list commits over $range"
+            exit 1
+          fi
+
           while read -r sha; do
             [ -n "$sha" ] || continue
             author="$(git log -1 --format='%ae' "$sha")"
@@ -49,14 +58,20 @@ jobs:
               *dependabot*|*github-actions*) continue ;;
             esac
             msg="$(git log -1 --format='%B' "$sha")"
+            # Keep this list in step with FORBIDDEN_MARKERS in
+            # scripts/preflight-check.sh. They ran different lists once, and a
+            # word missing here but present there passes the pull request and
+            # then fails at tag time - which is the exact gap this workflow was
+            # written to close. The word boundaries are deliberate: codex and llm
+            # appear inside ordinary domain words.
             hit="$(printf '%s' "$msg" \
-              | grep -inE 'co-authored-by|generated with|claude|anthropic|codex|copilot|chatgpt|gpt-[0-9]' || true)"
+              | grep -inE 'co-authored-by|generated with|claude|anthropic|\bcodex\b|chatgpt|openai|gpt-[0-9]|copilot|\bllm\b' || true)"
             if [ -n "$hit" ]; then
               echo "::error::commit ${sha:0:7} carries a forbidden marker:"
               printf '%s\n' "$hit"
               bad=1
             fi
-          done < <(git rev-list "$range")
+          done <<< "$shas"
 
           if [ "$bad" -ne 0 ]; then
             echo "::error::Rewrite the offending commit messages and force-push the branch."
@@ -74,8 +89,19 @@ jobs:
           # class byte by byte and reports Cyrillic text and arrows as dashes.
           # A check that cries wolf is worse than no check, because people learn
           # to ignore it.
-          git diff "${BASE}" "${HEAD}" --unified=0 -- . \
-            | grep '^+' | grep -v '^+++' > /tmp/added.txt || true
+          # Three dots, not two: with two, anything main changed after this
+          # branch left it looks like an addition made here, and a legacy dash
+          # removed upstream fails a pull request that never touched it. There
+          # are hundreds of legacy dashes in the docs, so this is not
+          # hypothetical. preflight-check.sh already diffs three dots.
+          #
+          # The two commands are separate on purpose. With `|| true` on the
+          # whole pipeline a failing git diff is indistinguishable from a clean
+          # one: the redirect leaves an empty file and the check passes having
+          # scanned nothing. Only grep is allowed to "fail", and only because
+          # finding no added lines is a legitimate result.
+          git diff "${BASE}...${HEAD}" --unified=0 -- . > /tmp/raw.txt
+          grep '^+' /tmp/raw.txt | grep -v '^+++' > /tmp/added.txt || true
           python3 - <<'PY'
           import io, sys
           # The forbidden characters are built from code points on purpose. A

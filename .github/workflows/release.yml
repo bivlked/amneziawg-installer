@@ -32,8 +32,11 @@ jobs:
         # cannot run.
         run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
 
-      - name: Install shellcheck and bats
-        run: sudo apt-get update && sudo apt-get install -y shellcheck bats
+      - name: Install shellcheck, bats and minisign
+        # minisign matters here: without it preflight step 10 can only warn,
+        # so the signature check would first run in the release job, after
+        # the tag is already pushed and can no longer be amended cheaply.
+        run: sudo apt-get update && sudo apt-get install -y shellcheck bats minisign
 
       - name: Run preflight checks
         env:
@@ -117,6 +120,13 @@ jobs:
         if: steps.check.outputs.state == 'absent'
         env:
           GH_TOKEN: ${{ github.token }}
+          # Through env, never interpolated into the script body. The title
+          # comes from CHANGELOG.en.md, where this project routinely writes
+          # flags and commands in backticks, and a backtick inside a double
+          # quoted shell word is command substitution: the words vanish from
+          # the title and the run still reports success. With $(...) it would
+          # execute. Neither is visible to set -e.
+          TITLE: ${{ steps.changelog.outputs.title }}
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
@@ -131,7 +141,7 @@ jobs:
 
           gh release create "$TAG" \
             --repo "${{ github.repository }}" \
-            --title "${{ steps.changelog.outputs.title }}" \
+            --title "$TITLE" \
             --notes-file /tmp/release-notes.md \
             --draft \
             $PRE
@@ -143,11 +153,22 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
+
+          # Read into a variable first. Consumed through `done < <(...)` a
+          # failure to produce the list is invisible to set -e: the loop body
+          # never runs, the array ends up holding KEYS.txt alone, and the
+          # upload succeeds. The count check in Publish would then fail a step
+          # that has nothing to do with the cause.
+          if ! scripts_to_ship="$(bash scripts/signed-file-list.sh)"; then
+            echo "::error::cannot read scripts/signed-file-list.sh"
+            exit 1
+          fi
+
           files=()
           while read -r script; do
             [ -n "$script" ] || continue
             files+=("$script" "signing/${script}.minisig")
-          done < <(bash scripts/signed-file-list.sh)
+          done <<< "$scripts_to_ship"
           files+=(KEYS.txt)
 
           gh release upload "$TAG" "${files[@]}" \
@@ -161,6 +182,13 @@ jobs:
         if: steps.check.outputs.state != 'published'
         env:
           GH_TOKEN: ${{ github.token }}
+          # Through env, never interpolated into the script body. The title
+          # comes from CHANGELOG.en.md, where this project routinely writes
+          # flags and commands in backticks, and a backtick inside a double
+          # quoted shell word is command substitution: the words vanish from
+          # the title and the run still reports success. With $(...) it would
+          # execute. Neither is visible to set -e.
+          TITLE: ${{ steps.changelog.outputs.title }}
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
@@ -173,5 +201,13 @@ jobs:
             exit 1
           fi
 
-          gh release edit "$TAG" --repo "${{ github.repository }}" --draft=false
+          # Title and notes are re-applied, not just the draft flag. On a resume
+          # the previous steps rebuild both from the changelogs, and without this
+          # the release would publish with whatever the first, failed run wrote:
+          # fixing a bad changelog and re-pushing the tag would appear to do
+          # nothing at all.
+          gh release edit "$TAG" --repo "${{ github.repository }}" \
+            --title "$TITLE" \
+            --notes-file /tmp/release-notes.md \
+            --draft=false
           echo "Published $TAG with $actual assets."

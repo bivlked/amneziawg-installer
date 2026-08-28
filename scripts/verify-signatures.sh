@@ -37,6 +37,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Read the list ONCE, into a variable, so that a failure to produce it is
+# visible. Consumed through `done < <(...)` its exit status is invisible to
+# both set -e and pipefail: the loop body simply never runs, every counter
+# stays at zero, and the script reports success having checked nothing.
+if ! files_to_check="$(bash "$SCRIPT_DIR/signed-file-list.sh")"; then
+    echo "ERROR: cannot read scripts/signed-file-list.sh" >&2
+    exit 3
+fi
+
+# What the list SHOULD hold, derived from something that is not the list.
+# Comparing the list against itself cannot notice that it lost an entry:
+# drop a name and the checked and the expected count fall to the same
+# smaller number, and a release goes out missing a script with every check
+# still green. Every signed deliverable lives at the repository root, so
+# that is the independent source.
+root_scripts="$(printf '%s\n' *.sh | sort)"
+if [[ "$(printf '%s\n' "$files_to_check" | sort)" != "$root_scripts" ]]; then
+    echo "ERROR: signed-file-list.sh disagrees with the scripts at the repository root" >&2
+    echo "       listed:  $(printf '%s' "$files_to_check" | tr '\n' ' ')" >&2
+    echo "       at root: $(printf '%s' "$root_scripts" | tr '\n' ' ')" >&2
+    echo "       either add the script to the list or move it out of the root" >&2
+    exit 3
+fi
+
 if ! command -v minisign >/dev/null 2>&1; then
     echo "ERROR: minisign is not installed" >&2
     echo "       Ubuntu/Debian: sudo apt-get install -y minisign" >&2
@@ -89,12 +113,12 @@ while read -r file; do
 
     echo "ok  $file"
     checked=$((checked + 1))
-done < <(bash "$SCRIPT_DIR/signed-file-list.sh")
+done <<< "$files_to_check"
 
-# A run that verified nothing must not report success. Without this the script
-# would pass on an empty list, which is the one outcome indistinguishable from
-# a broken check.
-expected="$(bash "$SCRIPT_DIR/signed-file-list.sh" | grep -c . || true)"
+# A run that verified nothing must not report success. The expected number
+# comes from the root listing above, not from the list being checked, so an
+# empty or truncated list fails here instead of passing quietly.
+expected="$(printf '%s\n' "$root_scripts" | grep -c .)"
 if [[ "$checked" -ne "$expected" ]]; then
     echo "ERROR: verified $checked of $expected files" >&2
     fail=1

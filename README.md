@@ -44,7 +44,7 @@ sudo bash ./install_amneziawg.sh
 
 > 📘 Полный гайд по развёртыванию: [Установка сервера AmneziaWG на VPS](INSTALL_VPS.ru.md) - выбор VPS, ARM, troubleshooting, удаление. [English version](INSTALL_VPS.md).
 
-> 🔐 Целостность: скрипт качается по HTTPS с `raw.githubusercontent.com` (тег закреплён), вспомогательные скрипты (`awg_common`, `manage`) проверяются по закреплённым SHA256-хешам. Отдельные detached-подписи релизов пока не активны (запланированы) - статус и модель угроз в [SECURITY.md](SECURITY.md).
+> 🔐 Целостность: скрипт качается по HTTPS с `raw.githubusercontent.com` (тег закреплён), вспомогательные скрипты (`awg_common`, `manage`) проверяются по закреплённым SHA256-хешам. Релизы дополнительно подписываются detached-подписью minisign - как проверить, ниже в разделе [Проверка подписи](#proverka-podpisi); модель угроз в [SECURITY.md](SECURITY.md).
 
 <details>
 <summary><strong>Что установщик меняет на сервере (прозрачность)</strong></summary>
@@ -94,6 +94,7 @@ sudo bash ./install_amneziawg.sh --yes --route-all
   <a href="#trebovaniya">Требования</a> •
   <a href="#recomend-hosting">Хостинг</a> •
   <a href="#ustanovka">Установка</a> •
+  <a href="#proverka-podpisi">Проверка подписи</a> •
   <a href="#posle-ustanovki">После установки</a> •
   <a href="#upravlenie">Управление</a> •
   <a href="#dopolnitelno">Дополнительно</a> •
@@ -380,15 +381,17 @@ cat /sys/module/amneziawg/version    # версия загруженного м�
 
 ---
 
-<a id="posle-ustanovki"></a>
+<a id="proverka-podpisi"></a>
 ## 🔏 Проверка подписи (необязательно)
 
-Каждый релиз подписан ключом, который лежит офлайн на машине автора и никогда не попадает в GitHub Actions. К релизу приложены и сами скрипты, и подписи, и публичный ключ, поэтому для проверки не нужно ходить в другое место.
+Релизы подписываются ключом, который лежит офлайн на машине автора и никогда не попадает в GitHub Actions. К подписанному релизу приложены и сами скрипты, и подписи, и публичный ключ, поэтому для проверки не нужно ходить в другое место.
+
+Подписи появились не с самого начала проекта: у релизов, выпущенных до включения этой схемы, файлов `.minisig` в ассетах нет, и проверять там нечего.
 
 ```bash
 sudo apt install minisign          # Ubuntu/Debian
 
-TAG=v5.28.1
+TAG=vX.Y.Z                         # тег релиза, который вы скачали
 BASE="https://github.com/bivlked/amneziawg-installer/releases/download/$TAG"
 curl -LO "$BASE/install_amneziawg.sh"
 curl -LO "$BASE/install_amneziawg.sh.minisig"
@@ -397,12 +400,13 @@ curl -LO "$BASE/KEYS.txt"
 minisign -V -p KEYS.txt -m install_amneziawg.sh -x install_amneziawg.sh.minisig
 ```
 
-Ожидаемый ответ: `Signature and comment signature verified`, а строкой ниже `Trusted comment: amneziawg-installer v5.28.1 install_amneziawg.sh`.
+Ожидаемый ответ: `Signature and comment signature verified`, а строкой ниже `Trusted comment: amneziawg-installer <ваш тег> install_amneziawg.sh`.
 
 **Прочитайте эту строку, а не только первую.** Она называет тег и имя файла, поэтому подпись от другого релиза или от другого файла здесь не пройдёт. Без такой привязки подпись доказывала бы только то, что байты кто-то когда-то подписал.
 
 ⚠️ Что эта проверка НЕ даёт. Если вы берёте и скрипт, и ключ из этого же репозитория за один заход, она защищает от подмены на пути до вас, но не от компрометации самого аккаунта: тот, кто способен подменить скрипт, подменит и ключ. Смысл появляется, когда ключ уже сохранён у вас с прошлого раза или взят из независимого источника. Отпечаток ключа: `3E598A1C01907E17`.
 
+<a id="posle-ustanovki"></a>
 ## 📦 После установки
 
 **Где найти файлы клиентов:**
