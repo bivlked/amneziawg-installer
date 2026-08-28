@@ -1,0 +1,118 @@
+{
+  "$comment": "Machine-readable support matrix: the single source of truth for which platforms this installer targets and where each one stands in its vendor lifecycle. Values only, no prose, so the file cannot drift between the Russian and English documentation. It stores the BASIS (vendor dates) rather than only the CONCLUSION (lifecycle), so a stale conclusion can be recomputed and caught instead of silently believed.",
+  "schema_version": 1,
+  "verification": {
+    "last_verified": "2026-08-28",
+    "scope": [
+      "vendor_regular_eol and vendor_lts_eol against the lifecycle source",
+      "ppa_suite against the codename mapping in install_amneziawg.sh",
+      "arm_prebuilt_targets against the job ids in .github/workflows/arm-build.yml",
+      "project_policy against what the documentation actually recommends"
+    ],
+    "rule": "advancing last_verified requires rechecking every item in scope, not only the one that prompted the edit",
+    "lifecycle_source": "https://endoflife.date/api/{os}.json"
+  },
+  "lifecycle": {
+    "$comment": "Derived, never authored. Recompute before trusting the stored value.",
+    "derivation": [
+      "released > today            -> unreleased",
+      "vendor_regular_eol >= today -> supported",
+      "vendor_lts_eol >= today     -> extended-support",
+      "otherwise                   -> eol"
+    ],
+    "boundary": "a date equal to today still counts as supported",
+    "values": {
+      "unreleased": "not published by the vendor yet",
+      "supported": "vendor regular support has not ended",
+      "extended-support": "regular support ended, a longer security phase continues. It may cover fewer packages or architectures than regular support, and on Ubuntu it requires enrolling in Ubuntu Pro",
+      "eol": "no vendor security support of any kind remains"
+    }
+  },
+  "project_policy": {
+    "$comment": "What this project recommends. Deliberately independent of lifecycle: a platform can be fully supported upstream and still not be our default pick.",
+    "values": {
+      "default": "the pick we suggest when the user has no preference",
+      "allowed": "supported and tested, choose it if you have a reason",
+      "discouraged": "still detected and installable, kept for migration rather than for new servers"
+    }
+  },
+  "invariants": [
+    "id is unique",
+    "the pair (os, version) is unique",
+    "os is one of: ubuntu, debian",
+    "all dates are ISO 8601 (YYYY-MM-DD)",
+    "released is earlier than vendor_regular_eol",
+    "vendor_lts_eol is null or later than vendor_regular_eol",
+    "lifecycle equals the value produced by the derivation above",
+    "exactly one platform per os carries project_policy = default",
+    "project_policy of default or allowed implies lifecycle = supported",
+    "arm_prebuilt_targets matches the arm-build.yml job ids exactly, in both directions"
+  ],
+  "platforms": [
+    {
+      "id": "ubuntu-24.04",
+      "os": "ubuntu",
+      "version": "24.04",
+      "codename": "noble",
+      "released": "2024-04-25",
+      "vendor_regular_eol": "2029-05-31",
+      "vendor_lts_eol": "2036-05-31",
+      "lifecycle": "supported",
+      "project_policy": "default",
+      "ppa_suite": "noble",
+      "arm_prebuilt_targets": ["ubuntu-2404-arm64"]
+    },
+    {
+      "id": "ubuntu-26.04",
+      "os": "ubuntu",
+      "version": "26.04",
+      "codename": "resolute",
+      "released": "2026-04-23",
+      "vendor_regular_eol": "2031-04-30",
+      "vendor_lts_eol": "2036-04-30",
+      "lifecycle": "supported",
+      "project_policy": "allowed",
+      "ppa_suite": "noble",
+      "arm_prebuilt_targets": []
+    },
+    {
+      "id": "ubuntu-25.10",
+      "os": "ubuntu",
+      "version": "25.10",
+      "codename": "questing",
+      "released": "2025-10-09",
+      "vendor_regular_eol": "2026-07-01",
+      "vendor_lts_eol": null,
+      "lifecycle": "eol",
+      "project_policy": "discouraged",
+      "ppa_suite": "noble",
+      "arm_prebuilt_targets": ["ubuntu-2510-arm64"]
+    },
+    {
+      "id": "debian-13",
+      "os": "debian",
+      "version": "13",
+      "codename": "trixie",
+      "released": "2025-08-09",
+      "vendor_regular_eol": "2028-08-09",
+      "vendor_lts_eol": "2030-06-30",
+      "lifecycle": "supported",
+      "project_policy": "default",
+      "ppa_suite": "noble",
+      "arm_prebuilt_targets": ["debian-trixie-arm64"]
+    },
+    {
+      "id": "debian-12",
+      "os": "debian",
+      "version": "12",
+      "codename": "bookworm",
+      "released": "2023-06-10",
+      "vendor_regular_eol": "2026-07-11",
+      "vendor_lts_eol": "2028-06-30",
+      "lifecycle": "extended-support",
+      "project_policy": "discouraged",
+      "ppa_suite": "focal",
+      "arm_prebuilt_targets": ["debian-bookworm-arm64", "rpi-bookworm-arm64", "rpi5-bookworm-arm64", "rpi-bookworm-armhf"]
+    }
+  ]
+}
