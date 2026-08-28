@@ -43,7 +43,7 @@ sudo bash ./install_amneziawg_en.sh
 
 > 📘 Full deployment guide: [Install AmneziaWG VPN server on Ubuntu/Debian VPS](INSTALL_VPS.md) - covers VPS choice, ARM, troubleshooting, and uninstall.
 
-> 🔐 Integrity: the script is fetched over HTTPS from `raw.githubusercontent.com` (pinned tag), and the helper scripts (`awg_common`, `manage`) are verified against pinned SHA256 hashes. Detached release signatures are not active yet (planned) - status and threat model in [SECURITY.md](SECURITY.md).
+> 🔐 Integrity: the script is fetched over HTTPS from `raw.githubusercontent.com` (pinned tag), and the helper scripts (`awg_common`, `manage`) are verified against pinned SHA256 hashes. Releases additionally carry a detached minisign signature - how to check it is in [Verifying a release](#verifying-a-release) below; threat model in [SECURITY.md](SECURITY.md).
 
 <details>
 <summary><strong>What the installer changes on your server (transparency)</strong></summary>
@@ -93,6 +93,7 @@ All parameters are accepted automatically. Details: [ADVANCED.en.md#cli-params-a
   <a href="#requirements">Requirements</a> •
   <a href="#hosting-recommendation">Hosting</a> •
   <a href="#installation">Installation</a> •
+  <a href="#verifying-a-release">Verifying a release</a> •
   <a href="#after-installation">After installation</a> •
   <a href="#client-management">Management</a> •
   <a href="#additional-information">More</a> •
@@ -141,13 +142,15 @@ The 3.0 features themselves - header encryption, extra padding, timing knobs - a
 | | WireGuard | AmneziaWG 2.0 |
 |---|---|---|
 | **DPI detection** | Fingerprinted by fixed packet sizes and magic bytes | Hard to fingerprint - randomized headers, padding, protocol mimicry |
-| **Blocked in** | China, Russia, Iran, UAE, Turkmenistan | No known blocks (as of April 2026) |
+| **Blocked in** | China, Russia, Iran, UAE, Turkmenistan | Nothing to block by fixed signature - there is none. Address and UDP port blocking remain: another port or `--mobile` can help |
 | **Server setup** | Manual: keys, iptables, sysctl, systemd | One command, 20 min, fully automatic |
 | **Hardening** | DIY: UFW, Fail2Ban, sysctl | Automatic: firewall + brute-force protection + kernel tuning |
 | **Client management** | Edit configs by hand, restart | `add`/`remove`/`list`/`stats` with hot-reload |
 | **Temporary access** | Not built-in | `--expires=7d` with auto-cleanup |
 | **Server requirements** | - | Same - any $3-5/mo VPS, 1 GB RAM |
-| **Speed overhead** | Baseline | Negligible (<2% in typical tests) |
+| **Speed overhead** | Baseline | Kernel module: encryption and obfuscation run in kernel space, no userspace round-trip |
+
+> On speed: on a server with a single shared vCPU the CPU becomes the bottleneck, because encryption and obfuscation run on that same core. Diagnostics: [FAQ in ADVANCED](ADVANCED.en.md#faq-advanced-adv).
 
 > If WireGuard works for you and isn't blocked - keep using it. If it's blocked or throttled - AmneziaWG 2.0 is the drop-in replacement.
 
@@ -378,6 +381,31 @@ Installing AmneziaWG on Ubuntu or Debian comes down to three commands: download 
     `AmneziaWG 2.0 installation and configuration completed SUCCESSFULLY!`
 
 ---
+
+<a id="verifying-a-release"></a>
+## 🔏 Verifying a release (optional)
+
+Releases are signed with a key that lives offline on the maintainer's machine and never reaches GitHub Actions. On a signed release the scripts, the signatures and the public key are all attached, so verification needs nothing from a second place.
+
+Signing did not exist from the start: releases published before it was switched on carry no `.minisig` assets, and there is nothing to verify there.
+
+```bash
+sudo apt install minisign          # Ubuntu/Debian
+
+TAG=vX.Y.Z                         # the release you downloaded
+BASE="https://github.com/bivlked/amneziawg-installer/releases/download/$TAG"
+curl -LO "$BASE/install_amneziawg_en.sh"
+curl -LO "$BASE/install_amneziawg_en.sh.minisig"
+curl -LO "$BASE/KEYS.txt"
+
+minisign -V -p KEYS.txt -m install_amneziawg_en.sh -x install_amneziawg_en.sh.minisig
+```
+
+Expected: `Signature and comment signature verified`, and on the next line `Trusted comment: amneziawg-installer <your tag> install_amneziawg_en.sh`.
+
+**Read that second line, not just the first.** It names the tag and the filename, so a signature from another release or another file does not pass here. Without that binding a signature would only prove that somebody signed some bytes at some point.
+
+⚠️ What this does NOT give you. If you fetch the script and the key from this repository in the same session, it protects against tampering on the way to you, but not against a compromise of the account itself: whoever can replace the script can replace the key. It starts to mean something once the key is one you saved earlier or took from an independent source. Key fingerprint: `3E598A1C01907E17`.
 
 <a id="after-installation"></a>
 ## 📦 After installation

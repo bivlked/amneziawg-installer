@@ -71,6 +71,11 @@ BASE_REF=origin/main bash scripts/preflight-check.sh
 9. Documentation consistency (`scripts/check-docs-consistency.sh`): internal
    anchors resolve, changelog headings have reference links and the RU/EN
    version sets match, the version triple agrees, the OS matrix is current.
+10. Release signatures (`scripts/verify-signatures.sh`). Absent signatures
+    are a warning, because preflight also runs on ordinary branches where no
+    release is being prepared. Present but wrong is a hard failure. A warning
+    here is a failure in disguise when you are about to tag: see "Release
+    signing" below.
 
 `BASE_REF` selects the ref the diff checks compare against. If you do not set
 it, the script tries `main`, then `origin/main`. On a detached checkout with no
@@ -114,12 +119,17 @@ below.
 
 A tag push (`git push origin vX.Y.Z`) triggers two independent workflows:
 
-- `release.yml` (about 30 seconds): runs the preflight gate, then creates the
-  GitHub Release with the bilingual body and title assembled by
-  `scripts/build-release-notes.sh` from both changelogs (see "Release notes"
-  below). The publish step depends on the gate, so a tag that fails preflight
-  does not produce a release.
-- `arm-build.yml` (about 20-30 minutes): builds the ARM prebuilt `.deb`
+- `release.yml` (three to four minutes): runs the preflight gate, verifies the
+  offline signatures under `signing/`, then creates the release as a draft,
+  attaches the signed scripts, their `.minisig` files and `KEYS.txt`, checks
+  that every expected asset is really there, and only then publishes. Both
+  gates run before the release exists, so a tag that fails one produces no
+  release at all rather than a half-published one. The body and title are
+  assembled by `scripts/build-release-notes.sh` from both changelogs (see
+  "Release notes" below). Measured over the eight tag pushes before signing
+  was added: 177 to 226 seconds. Re-measure rather than trusting this line:
+  `gh run list --workflow=release.yml --json startedAt,updatedAt`.
+- `arm-build.yml` (about 11 minutes, measured over the same runs): builds the ARM prebuilt `.deb`
   packages under QEMU and publishes them to the separate `arm-packages`
   release. This is a separate, slower track and does not block the main
   release. For a reproducible build, pin the upstream kernel-module ref (a tag)
@@ -143,9 +153,14 @@ Note: `release.yml` only depends on the preflight gate, so the GitHub Release ca
 appear before `arm-build.yml` finishes. For a release that advertises ARM
 prebuilt packages, wait for the ARM run to go green before announcing.
 
-If the preflight gate fails on a pushed tag, the release is not published.
-Delete the tag (`git push origin :refs/tags/vX.Y.Z` and `git tag -d vX.Y.Z`),
-fix the branch, and re-tag.
+If the preflight gate or the signature check fails on a pushed tag, no release
+is published. Fix the branch, then delete the tag
+(`git push origin :refs/tags/vX.Y.Z` and `git tag -d vX.Y.Z`) and re-tag.
+
+If the run got further and died while attaching assets, a **draft** release is
+left behind. Deleting the tag does not remove it, and the next push of the same
+tag resumes that draft. Either let it resume, which is what the draft is for, or
+remove it first with `gh release delete vX.Y.Z --yes` for a clean start.
 
 ## Release notes
 
@@ -176,7 +191,28 @@ gh release edit vX.Y.Z --notes-file body.md --title "vX.Y.Z: <short summary>"
 
 ## Release signing
 
-Release signing (minisign detached signatures) is designed but not active. See
-`docs/SIGNING_DESIGN.md`. The draft workflow `docs/release-sign.yml.draft` is
-not installed under `.github/workflows/` until a maintainer public key is
-published as `KEYS.txt`.
+Signing is active and `release.yml` refuses to publish without it. The private
+key never reaches Actions: you sign on your own machine and commit the results
+under `signing/` as part of the release commit, before pushing the tag.
+
+```bash
+TAG=vX.Y.Z
+KEY=~/.minisign/amneziawg-installer.key
+mkdir -p signing
+for f in $(bash scripts/signed-file-list.sh); do
+  minisign -Sm "$f" -s "$KEY" -x "signing/$f.minisig" \
+           -t "amneziawg-installer $TAG $f"
+done
+bash scripts/verify-signatures.sh "$TAG"
+```
+
+Sign **after** the version headers and the SHA pins are final: signing earlier
+signs bytes that then change, and the tag fails verification. The trusted
+comment names the tag, so signatures cannot be carried over from the previous
+release; re-sign every time.
+
+Because the workflow has never run for a tag that was not there before, the
+first time is worth doing on a throwaway tag: a semver pre-release suffix
+(`vX.Y.Z-rc1`) publishes as a pre-release and does not displace Latest. Delete
+the pre-release and its tag afterwards. Design and threat model:
+`docs/SIGNING_DESIGN.md`.

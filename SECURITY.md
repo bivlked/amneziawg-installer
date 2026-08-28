@@ -46,8 +46,10 @@ Vulnerabilities in upstream AmneziaWG components (kernel module, userspace tools
 
 Coordinated disclosure. 30 days for a fix before public disclosure. If a vulnerability is actively exploited, indicate this in your report for priority handling.
 
-## Release integrity (planned)
+## Release integrity
 
-Detached `minisign` signatures for installer and management scripts are planned for a future release and are not active yet. Once the maintainer public key is published as `KEYS.txt` in the repository root, users will be able to verify a downloaded script against the maintainer's offline-held private key, independent of GitHub's TLS chain. Design and threat model: [docs/SIGNING_DESIGN.md](docs/SIGNING_DESIGN.md).
+Installer and management scripts carry detached `minisign` signatures. The private key is held offline on the maintainer's machine and never reaches GitHub Actions; the workflow only verifies. The public key is `KEYS.txt` in the repository root, fingerprint `3E598A1C01907E17`. Design and threat model: [docs/SIGNING_DESIGN.md](docs/SIGNING_DESIGN.md); the commands are in the README section on verifying a release.
 
-Until activation, fetch the installer over HTTPS from `raw.githubusercontent.com` (default in README) - GitHub's TLS still protects the path on the wire, the missing piece is independent maintainer-level signing.
+Signatures start with the first release published after this was switched on. Earlier releases have no `.minisig` assets, and for those the protection is what it always was: HTTPS from `raw.githubusercontent.com` at a pinned tag.
+
+One limit worth stating plainly. Fetching the script, its signature and `KEYS.txt` from the same release in one go proves the three agree with each other, not who produced them: whoever could replace the script could replace the key beside it. The check starts to mean something once the key is one you saved earlier or obtained from an independent source.

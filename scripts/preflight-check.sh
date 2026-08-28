@@ -28,6 +28,8 @@
 #   7. SCRIPT_VERSION консистентен в 4 версионированных скриптах
 #   8. SHA-пины синхронны (update-sha-pins.sh --verify)
 #   9. Согласованность документации (check-docs-consistency.sh)
+#  10. Подписи релиза (verify-signatures.sh): нет подписей = WARN,
+#      есть но неверные = FAIL
 
 set -o pipefail
 
@@ -158,9 +160,11 @@ fi
 # --- 5. AI/tool-mention in diff + commit log ---
 marker_fail=0
 if git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
-    # Исключаем сам этот скрипт: строка FORBIDDEN_MARKERS легитимно содержит
-    # имена маркеров (claude|codex|...) как определение паттерна, не как нарушение.
-    diff_markers=$(git diff "${BASE_REF}...HEAD" -- . ':(exclude)scripts/preflight-check.sh' | grep -nP '^\+' | grep -iP "$FORBIDDEN_MARKERS" || true)
+    # Исключаем файлы, которые ОПРЕДЕЛЯЮТ список маркеров: у них имена
+    # маркеров стоят как паттерн поиска, а не как нарушение. Без этого
+    # проверка находит сама себя и обязательный предмержевый прогон
+    # падает на ветке, которая ничего не нарушила.
+    diff_markers=$(git diff "${BASE_REF}...HEAD" -- . ':(exclude)scripts/preflight-check.sh' ':(exclude).github/workflows/commit-hygiene.yml' | grep -nP '^\+' | grep -iP "$FORBIDDEN_MARKERS" || true)
     if [[ -n "$diff_markers" ]]; then
         echo "diff markers:" >&2; echo "$diff_markers" >&2
         marker_fail=1
@@ -233,6 +237,46 @@ else
     _bad "docs consistency (run: bash scripts/check-docs-consistency.sh)"
 fi
 rm -f /tmp/preflight-docs.$$
+
+# --- 10. Release signatures ---
+# Signatures are produced offline and committed under signing/ before the tag.
+# release.yml refuses to publish without them, so the point of checking here is
+# to fail on the maintainer's machine, where the commit can still be amended,
+# rather than after the tag is already pushed.
+#
+# Absent signatures are a WARNING, not a failure: preflight also runs on
+# ordinary branches where no release is being prepared. Present-but-wrong is a
+# hard failure, because that is a real defect rather than a state.
+sig_count=$(find signing -name '*.minisig' 2>/dev/null | grep -c . || true)
+sig_expected=$(bash "$SCRIPT_DIR/signed-file-list.sh" | grep -c . || true)
+if [[ "$sig_count" -eq 0 ]]; then
+    _warn "no release signatures staged (fine outside a release; required before a tag)"
+elif [[ "$sig_count" -ne "$sig_expected" ]]; then
+    _bad "release signatures: $sig_count file(s) under signing/, expected $sig_expected"
+elif ! command -v minisign >/dev/null 2>&1; then
+    _warn "minisign not installed - $sig_count signature(s) present but unverified locally (CI will verify)"
+else
+    # The tag these signatures must name is derived from the version being
+    # released, not guessed: that is exactly the tag the maintainer will push.
+    #
+    # Signatures stay in the tree between releases, so on any branch that edits
+    # a signed script they stop matching. That is ordinary development, not a
+    # defect. The two are told apart by the tag the signatures name: one naming
+    # an earlier release is stale by design and only warns, one naming THIS
+    # version and still failing is real. A gate that is red on every branch
+    # stops being read, and then it protects nothing.
+    sig_tag=$(sed -n 's/^trusted comment: amneziawg-installer \([^ ]*\) .*/\1/p' \
+                  signing/*.minisig 2>/dev/null | head -n1)
+    if bash "$SCRIPT_DIR/verify-signatures.sh" "v${ref_ver}" >/tmp/preflight-sig.$$ 2>&1; then
+        _ok "release signatures verified for v${ref_ver} ($sig_expected files)"
+    elif [[ -n "$sig_tag" && "$sig_tag" != "v${ref_ver}" ]]; then
+        _warn "signatures on disk are for $sig_tag, not v${ref_ver} - re-sign before tagging"
+    else
+        cat /tmp/preflight-sig.$$ >&2
+        _bad "release signatures (run: bash scripts/verify-signatures.sh v${ref_ver})"
+    fi
+    rm -f /tmp/preflight-sig.$$
+fi
 
 # --- Summary ---
 echo ""

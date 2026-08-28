@@ -32,8 +32,11 @@ jobs:
         # cannot run.
         run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
 
-      - name: Install shellcheck and bats
-        run: sudo apt-get update && sudo apt-get install -y shellcheck bats
+      - name: Install shellcheck, bats and minisign
+        # minisign matters here: without it preflight step 10 can only warn,
+        # so the signature check would first run in the release job, after
+        # the tag is already pushed and can no longer be amended cheaply.
+        run: sudo apt-get update && sudo apt-get install -y shellcheck bats minisign
 
       - name: Run preflight checks
         env:
@@ -47,21 +50,46 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Check if release already exists
+      # Three states, not two. The obvious "does it exist" test would treat a
+      # leftover DRAFT as done and skip everything, so a run that died while
+      # attaching assets could never be repaired by re-running it: the draft is
+      # invisible to users and would sit there forever. A draft therefore means
+      # "resume", and only a published release means "skip".
+      - name: Determine release state
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
-          if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
-            echo "Release $TAG already exists - skipping"
-            echo "exists=true" >> "$GITHUB_OUTPUT"
+          if ! draft=$(gh release view "$TAG" --repo "${{ github.repository }}" \
+                         --json isDraft --jq '.isDraft' 2>/dev/null); then
+            echo "Release $TAG does not exist yet - creating"
+            echo "state=absent" >> "$GITHUB_OUTPUT"
+          elif [ "$draft" = "true" ]; then
+            echo "Release $TAG exists as a draft - resuming"
+            echo "state=draft" >> "$GITHUB_OUTPUT"
           else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG is already published - nothing to do"
+            echo "state=published" >> "$GITHUB_OUTPUT"
           fi
 
+      # Signatures are produced offline on the maintainer's machine and
+      # committed under signing/ before the tag; the private key never reaches
+      # Actions. This step only VERIFIES them, and it runs before the release
+      # exists so a missing or wrong signature stops the publication rather than
+      # leaving a half-published release behind. preflight-check.sh runs the
+      # same check locally, so this should never be the first place it fails.
+      - name: Verify release signatures
+        if: steps.check.outputs.state != 'published'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y minisign
+          bash scripts/verify-signatures.sh "${GITHUB_REF#refs/tags/}"
+
       - name: Build bilingual release notes and title
-        if: steps.check.outputs.exists != 'true'
+        if: steps.check.outputs.state != 'published'
         id: changelog
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
@@ -83,11 +111,103 @@ jobs:
           echo "--- Release notes preview ---"
           cat /tmp/release-notes.md
 
-      - name: Create Release
-        if: steps.check.outputs.exists != 'true'
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          name: ${{ steps.changelog.outputs.title }}
-          body_path: /tmp/release-notes.md
-          draft: false
-          prerelease: false
+      # Created as a DRAFT on purpose, published only after every asset is
+      # attached. Publishing first and attaching afterwards left
+      # releases/latest/download/<file> answering 404 for as long as it took
+      # somebody to run the upload by hand - which is precisely the address
+      # people are told to use.
+      - name: Create draft release
+        if: steps.check.outputs.state == 'absent'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Through env, never interpolated into the script body. The title
+          # comes from CHANGELOG.en.md, where this project routinely writes
+          # flags and commands in backticks, and a backtick inside a double
+          # quoted shell word is command substitution: the words vanish from
+          # the title and the run still reports success. With $(...) it would
+          # execute. Neither is visible to set -e.
+          TITLE: ${{ steps.changelog.outputs.title }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+
+          # A tag carrying a semver pre-release suffix (v1.2.3-rc1) is published
+          # as a pre-release, so testing the pipeline never displaces the real
+          # Latest.
+          PRE=""
+          case "$TAG" in
+            *-*) PRE="--prerelease" ;;
+          esac
+
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "$TITLE" \
+            --notes-file /tmp/release-notes.md \
+            --draft \
+            $PRE
+
+      - name: Attach scripts, signatures and the public key
+        if: steps.check.outputs.state != 'published'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+
+          # Read into a variable first. Consumed through `done < <(...)` a
+          # failure to produce the list is invisible to set -e: the loop body
+          # never runs, the array ends up holding KEYS.txt alone, and the
+          # upload succeeds. The count check in Publish would then fail a step
+          # that has nothing to do with the cause.
+          if ! scripts_to_ship="$(bash scripts/signed-file-list.sh)"; then
+            echo "::error::cannot read scripts/signed-file-list.sh"
+            exit 1
+          fi
+
+          files=()
+          while read -r script; do
+            [ -n "$script" ] || continue
+            files+=("$script" "signing/${script}.minisig")
+          done <<< "$scripts_to_ship"
+          files+=(KEYS.txt)
+
+          gh release upload "$TAG" "${files[@]}" \
+            --repo "${{ github.repository }}" --clobber
+
+      # Only now does the release become visible as a release at all, and only
+      # now can it become Latest. Verify the assets are really there first: an
+      # upload that silently attached nothing would otherwise publish an empty
+      # release, which is the failure this whole ordering exists to prevent.
+      - name: Publish
+        if: steps.check.outputs.state != 'published'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Through env, never interpolated into the script body. The title
+          # comes from CHANGELOG.en.md, where this project routinely writes
+          # flags and commands in backticks, and a backtick inside a double
+          # quoted shell word is command substitution: the words vanish from
+          # the title and the run still reports success. With $(...) it would
+          # execute. Neither is visible to set -e.
+          TITLE: ${{ steps.changelog.outputs.title }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+
+          expected=$(( $(bash scripts/signed-file-list.sh | grep -c .) * 2 + 1 ))
+          actual=$(gh release view "$TAG" --repo "${{ github.repository }}" \
+                     --json assets --jq '.assets | length')
+          if [ "$actual" -ne "$expected" ]; then
+            echo "::error::expected $expected assets on $TAG, found $actual - not publishing"
+            exit 1
+          fi
+
+          # Title and notes are re-applied, not just the draft flag. On a resume
+          # the previous steps rebuild both from the changelogs, and without this
+          # the release would publish with whatever the first, failed run wrote:
+          # fixing a bad changelog and re-pushing the tag would appear to do
+          # nothing at all.
+          gh release edit "$TAG" --repo "${{ github.repository }}" \
+            --title "$TITLE" \
+            --notes-file /tmp/release-notes.md \
+            --draft=false
+          echo "Published $TAG with $actual assets."
