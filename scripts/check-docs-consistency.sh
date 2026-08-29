@@ -187,25 +187,137 @@ if [[ "$top_en" != "$script_ver" ]]; then echo "  CHANGELOG.en.md top heading '$
 if [[ "$ver_fail" -eq 0 ]]; then _ok "version triple согласован ($script_ver)"; else _bad "version triple рассинхрон"; fi
 
 # --- 4. Матрица ОС + архитектур: полный набор во всех заявленных местах ---
-# Единый источник ожидаемого набора. Прежняя узкая проверка ловила только
-# "26.04" и пропускала общий drift: при будущем добавлении/удалении одной ОС
-# часть документов осталась бы со старой матрицей при зелёном docs-check.
+# Ожидаемый набор выводится из docs/support-matrix.json. Раньше он стоял здесь
+# литеральным массивом, то есть был ШЕСТОЙ копией матрицы: проверка сравнивала
+# копии друг с другом и потому означала "копии совпадают", а не "написана
+# правда". Ubuntu 25.10 вышла из поддержки 2026-07-01, Debian 12 - 2026-07-11,
+# и ни одна сверка документов между собой этого поймать не могла, потому что
+# факт изменился СНАРУЖИ. Теперь платформы берутся из матрицы, а её собственные
+# lifecycle-значения пересчитываются из дат (проверка 4b ниже).
+#
 # Токены подобраны так, чтобы матчиться во всех форматах (badge, таблица
 # совместимости, install --help, issue dropdown): голые версии Ubuntu +
 # "Debian N" с контекстом семейства.
-EXPECTED_OS=("24.04" "25.10" "26.04" "Debian 12" "Debian 13")
-OS_MATRIX_FILES=(README.md README.en.md install_amneziawg.sh install_amneziawg_en.sh .github/ISSUE_TEMPLATE/bug_report.yml)
-os_fail=0
-for f in "${OS_MATRIX_FILES[@]}"; do
-    [[ -f "$f" ]] || { echo "  нет $f (проверка матрицы ОС)" >&2; os_fail=1; continue; }
-    for os in "${EXPECTED_OS[@]}"; do
-        if ! grep -qF "$os" "$f"; then
-            echo "  $f: нет '$os' в матрице ОС" >&2
-            os_fail=1
-        fi
-    done
+MATRIX_FILE="docs/support-matrix.json"
+
+# python выбирается ЗАПУСКОМ, а не наличием в PATH: на Windows `python3` часто
+# оказывается заглушкой Microsoft Store, которая command -v проходит, а код не
+# выполняет.
+PY=""
+for _c in python3 python; do
+    if printf 'print(1)' | "$_c" - >/dev/null 2>&1; then PY="$_c"; break; fi
 done
-if [[ "$os_fail" -eq 0 ]]; then _ok "матрица ОС полна во всех заявленных местах (${EXPECTED_OS[*]})"; else _bad "матрица ОС неполна где-то"; fi
+
+if [[ -z "$PY" ]]; then
+    _bad "не найден рабочий python (нужен для чтения $MATRIX_FILE)"
+elif [[ ! -f "$MATRIX_FILE" ]]; then
+    _bad "нет $MATRIX_FILE - единого источника матрицы ОС"
+else
+    mapfile -t EXPECTED_OS < <("$PY" - "$MATRIX_FILE" <<'PYEOF'
+import io, json, sys
+
+# На Windows текстовый stdout дописывает к каждой строке возврат каретки, и
+# токен приезжает в bash вместе с ним: grep -qF ищет "24.04CR" и не находит
+# ничего ни в одном файле. В CI на Linux этого нет, поэтому дефект был бы
+# виден только тому, кто гоняет проверку локально.
+sys.stdout.reconfigure(newline='\n')
+
+d = json.load(io.open(sys.argv[1], encoding='utf-8'))
+for p in d['platforms']:
+    print(p['version'] if p['os'] == 'ubuntu' else 'Debian %s' % p['version'])
+PYEOF
+)
+    if [[ "${#EXPECTED_OS[@]}" -eq 0 ]]; then
+        _bad "из $MATRIX_FILE не прочиталась ни одна платформа"
+    else
+        OS_MATRIX_FILES=(README.md README.en.md install_amneziawg.sh install_amneziawg_en.sh .github/ISSUE_TEMPLATE/bug_report.yml)
+        os_fail=0
+        for f in "${OS_MATRIX_FILES[@]}"; do
+            [[ -f "$f" ]] || { echo "  нет $f (проверка матрицы ОС)" >&2; os_fail=1; continue; }
+            for os in "${EXPECTED_OS[@]}"; do
+                if ! grep -qF "$os" "$f"; then
+                    echo "  $f: нет '$os' в матрице ОС" >&2
+                    os_fail=1
+                fi
+            done
+        done
+        if [[ "$os_fail" -eq 0 ]]; then _ok "матрица ОС полна во всех заявленных местах (${EXPECTED_OS[*]})"; else _bad "матрица ОС неполна где-то"; fi
+    fi
+
+    # --- 4b. lifecycle в матрице пересчитывается из дат ---
+    # Ловит класс, который сверка документов между собой не ловит В ПРИНЦИПЕ:
+    # внешний факт изменился, а запись осталась прежней. Именно так пропустили
+    # окончание поддержки Debian 12 - аудит смотрел на согласованность
+    # документов, а не на календарь.
+    if lifecycle_out="$("$PY" - "$MATRIX_FILE" <<'PYEOF'
+import datetime, io, json, sys
+
+sys.stdout.reconfigure(newline='\n')  # см. про возврат каретки выше
+
+d = json.load(io.open(sys.argv[1], encoding='utf-8'))
+today = datetime.date.today()
+
+
+def classify(released, regular, lts):
+    """Правило записано в самой матрице, ключ lifecycle.derivation."""
+    if datetime.date.fromisoformat(released) > today:
+        return 'unreleased'
+    if regular and datetime.date.fromisoformat(regular) >= today:
+        return 'supported'
+    if lts and datetime.date.fromisoformat(lts) >= today:
+        return 'extended-support'
+    return 'eol'
+
+
+# Контроль классификатора. По существу этой проверке предстоит срабатывать раз
+# в годы, а проверка, которая никогда не срабатывала, может быть сломана, и об
+# этом никто не узнает. Контроль отличает "проверка отработала и ничего не
+# нашла" от "проверка не выполнилась".
+past = (today - datetime.timedelta(days=400)).isoformat()
+future = (today + datetime.timedelta(days=400)).isoformat()
+control = [
+    classify('2000-01-01', past, None) == 'eol',
+    classify('2000-01-01', future, None) == 'supported',
+    classify('2000-01-01', past, future) == 'extended-support',
+    classify(future, None, None) == 'unreleased',
+]
+if not all(control):
+    print('контроль классификатора ПРОВАЛЕН: %r' % control)
+    sys.exit(2)
+
+bad = 0
+for p in d['platforms']:
+    want = classify(p['released'], p.get('vendor_regular_eol'), p.get('vendor_lts_eol'))
+    if want != p['lifecycle']:
+        print('  %s: записано "%s", по датам "%s"' % (p['id'], p['lifecycle'], want))
+        bad += 1
+if bad:
+    sys.exit(1)
+
+print('контроль 4/4, %d платформ сходятся с датами' % len(d['platforms']))
+
+# Возраст снимка внешних фактов - предупреждение, не отказ: краснеть просто от
+# течения времени значит приучить к красному.
+lv = d.get('verification', {}).get('last_verified')
+if lv:
+    age = (today - datetime.date.fromisoformat(lv)).days
+    if age > 180:
+        print('STALE %d' % age)
+PYEOF
+)"; then
+        _ok "lifecycle в матрице сходится с датами ($(printf '%s' "$lifecycle_out" | head -n1))"
+        stale="$(printf '%s' "$lifecycle_out" | grep -oP '^STALE \K[0-9]+' || true)"
+        [[ -n "$stale" ]] && _warn "внешние факты в $MATRIX_FILE сверялись $stale дней назад (verification.last_verified)"
+    else
+        rc=$?
+        printf '%s\n' "$lifecycle_out" >&2
+        if [[ "$rc" -eq 2 ]]; then
+            _bad "проверка lifecycle НЕ ВЫПОЛНИЛАСЬ: контроль классификатора провален"
+        else
+            _bad "lifecycle в $MATRIX_FILE разошёлся с датами (пересчитать и обновить)"
+        fi
+    fi
+fi
 
 # Архитектуры: x86_64 / ARM64 / ARMv7 согласованы между README RU/EN и issue-шаблоном.
 EXPECTED_ARCH=("x86_64" "ARM64" "ARMv7")
