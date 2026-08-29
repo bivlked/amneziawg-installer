@@ -2,7 +2,7 @@
   "$comment": "Machine-readable support matrix: the single source of truth for which platforms this installer targets and where each one stands in its vendor lifecycle. Values only, no prose, so the file cannot drift between the Russian and English documentation. It stores the BASIS (vendor dates) rather than only the CONCLUSION (lifecycle), so a stale conclusion can be recomputed and caught instead of silently believed.",
   "schema_version": 1,
   "verification": {
-    "last_verified": "2026-08-28",
+    "last_verified": "2026-08-29",
     "scope": [
       "vendor_regular_eol and vendor_lts_eol against the lifecycle source",
       "ppa_suite against the codename mapping in install_amneziawg.sh",
@@ -56,7 +56,7 @@
       "codename": "noble",
       "released": "2024-04-25",
       "vendor_regular_eol": "2029-05-31",
-      "vendor_lts_eol": "2036-05-31",
+      "vendor_lts_eol": "2034-04-25",
       "lifecycle": "supported",
       "project_policy": "default",
       "ppa_suite": "noble",
@@ -68,8 +68,8 @@
       "version": "26.04",
       "codename": "resolute",
       "released": "2026-04-23",
-      "vendor_regular_eol": "2031-04-30",
-      "vendor_lts_eol": "2036-04-30",
+      "vendor_regular_eol": "2031-05-29",
+      "vendor_lts_eol": "2036-04-23",
       "lifecycle": "supported",
       "project_policy": "allowed",
       "ppa_suite": "noble",

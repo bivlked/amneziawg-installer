@@ -21,6 +21,8 @@ TMPL_STALE_RE='placeholder:[[:space:]]*"e\.g\.,[[:space:]]*[0-9]+\.[0-9]+\.[0-9]
     # (#6b), the installer wget -O guard (#10) and the OS x arch x
     # prebuilt-target matrix check (#9).
     [[ "$output" == *"13 passed, 0 failed"* ]]
+    # Мощность набора проверок сама по себе не доказывает его состав.
+    [[ "$output" == *"lifecycle в матрице сходится с датами"* ]]
 }
 
 @test "T6: script defines checks #7 and #8" {

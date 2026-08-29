@@ -11,10 +11,10 @@ body:
       label: OS version
       options:
         - Ubuntu 24.04 LTS
-        - Ubuntu 25.10
         - Ubuntu 26.04
-        - Debian 12 (bookworm)
         - Debian 13 (trixie)
+        - Ubuntu 25.10 (past end of support)
+        - Debian 12 (bookworm, LTS only)
         - Other
     validations:
       required: false

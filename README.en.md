@@ -279,7 +279,7 @@ Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work - o
 |----|----------|----------------|-------|
 | Ubuntu 24.04 LTS | ✅ default pick | until 2029-05-31 | The best-tested platform |
 | Debian 13 (trixie) | ✅ default pick | until 2028-08-09 | Tested. PPA via codename mapping to noble, DEB822 |
-| Ubuntu 26.04 | ✅ fine to use | until 2031-04-30 | PPA `noble` fallback applied automatically since v5.13.0 |
+| Ubuntu 26.04 | ✅ fine to use | until 2031-05-29 | PPA `noble` fallback applied automatically since v5.13.0 |
 | Debian 12 (bookworm) | ⚠️ for migration | regular ended 2026-07-11, Debian LTS until 2028-06-30 | Works and is tested, security updates continue through Debian LTS. PPA via codename mapping to focal. For a new server prefer Debian 13 |
 | Ubuntu 25.10 (questing) | ⚠️ for migration | ended 2026-07-01, no extension | Works, PPA `noble` fallback since v5.13.0. Receives no security updates of any kind, so do not pick it for a new server |
 
@@ -311,7 +311,7 @@ For a stable, high-throughput VPN server, you need reliable hosting with a good 
 **What to look for in a VPS for VPN:**
 - IPs not flagged as datacenter ranges - lower risk of range-based blocks.
 - Generous or unlimited traffic and a 1 Gbps+ port.
-- Your target OS (Ubuntu 24.04+ / Debian 12+) and root access.
+- Your target OS (Ubuntu 24.04 LTS, 26.04 or Debian 13; 25.10 and Debian 12 work too) and root access.
 
 I've tested and recommend [**FreakHosting**](https://freakhosting.com/clientarea/aff.php?aff=392). Their **BUDGET VPS** lineup offers excellent value for money.
 
@@ -615,7 +615,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: Which hosting providers work well?</strong></summary>
-  <b>A:</b> Any VPS with Ubuntu 24.04 LTS / Ubuntu 25.10 / Ubuntu 26.04 / Debian 12 / Debian 13, root access, and at least 512 MB RAM (1 GB recommended). Pick providers with clean (non-blacklisted) IPs and unlimited traffic. See the <a href="#hosting-recommendation">recommendation</a> below.
+  <b>A:</b> Any VPS with Ubuntu 24.04 LTS / Ubuntu 26.04 / Debian 13 (25.10 and Debian 12 are supported too, but both are past regular support - see the compatibility table), root access, and at least 512 MB RAM (1 GB recommended). Pick providers with clean (non-blacklisted) IPs and unlimited traffic. See the <a href="#hosting-recommendation">recommendation</a> below.
 </details>
 
 <details>

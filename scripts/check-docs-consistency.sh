@@ -55,6 +55,10 @@ declare -a RESULTS
 
 _ok()  { echo "PASS: $1"; RESULTS+=("PASS: $1"); PASS=$((PASS+1)); }
 _bad() { echo "FAIL: $1" >&2; RESULTS+=("FAIL: $1"); FAIL=$((FAIL+1)); }
+# Предупреждение НЕ входит в счёт: строку итога "N passed, M failed"
+# проверяют bats-тесты, и третий счётчик их сломает. Сигнал при этом не
+# теряется: он идёт в stderr и в список результатов.
+_warn() { echo "WARN: $1" >&2; RESULTS+=("WARN: $1"); }
 
 # Файлы документации с внутренними якорями. Обнаруживаются динамически: ВСЕ
 # tracked *.md, чтобы новый markdown (например CODE_OF_CONDUCT.md) автоматически
@@ -198,7 +202,7 @@ if [[ "$ver_fail" -eq 0 ]]; then _ok "version triple согласован ($scri
 # Токены подобраны так, чтобы матчиться во всех форматах (badge, таблица
 # совместимости, install --help, issue dropdown): голые версии Ubuntu +
 # "Debian N" с контекстом семейства.
-MATRIX_FILE="docs/support-matrix.json"
+MATRIX_FILE="${AWG_MATRIX_FILE:-docs/support-matrix.json}"
 
 # python выбирается ЗАПУСКОМ, а не наличием в PATH: на Windows `python3` часто
 # оказывается заглушкой Microsoft Store, которая command -v проходит, а код не
@@ -275,26 +279,46 @@ def classify(released, regular, lts):
 # нашла" от "проверка не выполнилась".
 past = (today - datetime.timedelta(days=400)).isoformat()
 future = (today + datetime.timedelta(days=400)).isoformat()
+today_s = today.isoformat()
 control = [
     classify('2000-01-01', past, None) == 'eol',
     classify('2000-01-01', future, None) == 'supported',
     classify('2000-01-01', past, future) == 'extended-support',
     classify(future, None, None) == 'unreleased',
+    # Граница, объявленная в самой матрице: дата, равная сегодняшней, всё
+    # ещё считается поддержкой. Без этого случая замена >= на > проходит
+    # контроль, а вердикт врёт ровно в день окончания поддержки - в
+    # единственный день, когда проверка кому-то нужна.
+    classify('2000-01-01', today_s, None) == 'supported',
+    classify('2000-01-01', past, today_s) == 'extended-support',
+    # Обычной поддержки нет вовсе, но продлённая жива.
+    classify('2000-01-01', None, future) == 'extended-support',
+    # Выпущено сегодня - уже выпущено.
+    classify(today_s, future, None) == 'supported',
 ]
 if not all(control):
     print('контроль классификатора ПРОВАЛЕН: %r' % control)
     sys.exit(2)
 
 bad = 0
+checked = 0
 for p in d['platforms']:
     want = classify(p['released'], p.get('vendor_regular_eol'), p.get('vendor_lts_eol'))
+    checked += 1
     if want != p['lifecycle']:
         print('  %s: записано "%s", по датам "%s"' % (p['id'], p['lifecycle'], want))
         bad += 1
 if bad:
     sys.exit(1)
 
-print('контроль 4/4, %d платформ сходятся с датами' % len(d['platforms']))
+# Сверено ноль платформ - это не успех, а невыполненная проверка. Раньше
+# печаталось len(platforms), поэтому пустой список давал бодрое
+# 'сходятся с датами' при нулевой работе.
+if checked == 0:
+    print('ни одна платформа не сверена: список platforms пуст')
+    sys.exit(3)
+
+print('контроль %d/%d, сверено платформ: %d' % (len(control), len(control), checked))
 
 # Возраст снимка внешних фактов - предупреждение, не отказ: краснеть просто от
 # течения времени значит приучить к красному.
@@ -311,7 +335,9 @@ PYEOF
     else
         rc=$?
         printf '%s\n' "$lifecycle_out" >&2
-        if [[ "$rc" -eq 2 ]]; then
+        if [[ "$rc" -eq 3 ]]; then
+            _bad "проверка lifecycle НЕ ВЫПОЛНИЛАСЬ: сверять было нечего"
+        elif [[ "$rc" -eq 2 ]]; then
             _bad "проверка lifecycle НЕ ВЫПОЛНИЛАСЬ: контроль классификатора провален"
         else
             _bad "lifecycle в $MATRIX_FILE разошёлся с датами (пересчитать и обновить)"

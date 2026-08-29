@@ -59,7 +59,7 @@ Clients are added on AWG0 as usual (`manage add name`) - no special setup on the
 <a id="prereq"></a>
 ## What you need
 
-- **Two VPS** on clean Debian 12/13 or Ubuntu 24.04/25.10, with root access.
+- **Two VPS** on clean Debian 13 or Ubuntu 24.04 LTS / 26.04, with root access. Debian 12 and Ubuntu 25.10 are supported too, but both are past regular support and are not a good pick for new servers.
   - AWG0 (entry) - ideally in or near Russia, so Russian sites open from a nearby address without a detour.
   - AWG1 (exit) - abroad, a normal VPS.
 - `amneziawg-installer` installed on both (see below).
