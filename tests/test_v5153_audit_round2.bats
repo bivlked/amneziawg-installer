@@ -38,20 +38,30 @@ ROOT="$BATS_TEST_DIRNAME/.."
 
 # ---------- D4: full OS + arch matrix in docs-check ----------
 
-@test "D4: check-docs defines EXPECTED_OS and EXPECTED_ARCH sets" {
-    run grep -E '^EXPECTED_OS=\(' "$ROOT/scripts/check-docs-consistency.sh"
+@test "D4: check-docs takes the OS set from the support matrix, not from a copy" {
+    # Раньше здесь проверялось наличие литерального EXPECTED_OS=(...) в самом
+    # скрипте. Это была шестая копия матрицы, и тест закреплял её существование.
+    run grep -F 'MATRIX_FILE="docs/support-matrix.json"' "$ROOT/scripts/check-docs-consistency.sh"
     [ "$status" -eq 0 ]
+    run grep -E 'mapfile -t EXPECTED_OS' "$ROOT/scripts/check-docs-consistency.sh"
+    [ "$status" -eq 0 ]
+    # Литерального массива остаться не должно: иначе снова две правды.
+    run grep -E '^EXPECTED_OS=\(' "$ROOT/scripts/check-docs-consistency.sh"
+    [ "$status" -ne 0 ]
+    # Архитектуры в матрицу не переезжали, их литерал на месте.
     run grep -E '^EXPECTED_ARCH=\(' "$ROOT/scripts/check-docs-consistency.sh"
     [ "$status" -eq 0 ]
 }
 
-@test "D4: EXPECTED_OS lists all five supported releases" {
-    line=$(grep -E '^EXPECTED_OS=\(' "$ROOT/scripts/check-docs-consistency.sh")
-    [[ "$line" == *"24.04"* ]]
-    [[ "$line" == *"25.10"* ]]
-    [[ "$line" == *"26.04"* ]]
-    [[ "$line" == *"Debian 12"* ]]
-    [[ "$line" == *"Debian 13"* ]]
+@test "D4: the support matrix lists all five releases" {
+    # Утверждение переехало туда же, куда и данные: проверяем матрицу, а не
+    # строку шелл-скрипта, которая её пересказывала.
+    local m="$ROOT/docs/support-matrix.json"
+    [ -f "$m" ]
+    for id in ubuntu-24.04 ubuntu-25.10 ubuntu-26.04 debian-12 debian-13; do
+        run grep -F "\"$id\"" "$m"
+        [ "$status" -eq 0 ]
+    done
 }
 
 @test "D4 functional: every OS-matrix doc carries the whole release set" {

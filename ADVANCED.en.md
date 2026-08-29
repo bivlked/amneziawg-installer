@@ -1659,7 +1659,7 @@ Not all clients support AWG 2.0. Check compatibility before choosing a client:
 <a id="debian-support-adv"></a>
 ## 🐧 Debian Support
 
-Starting with v5.6.0, the installer fully supports Debian 12 (bookworm) and Debian 13 (trixie).
+Starting with v5.6.0, the installer fully supports Debian 12 (bookworm) and Debian 13 (trixie). That is support from the INSTALLER side: Debian 12 itself left regular support on 2026-07-11 and now gets updates only through Debian LTS, until 2028-06-30, so prefer Debian 13 for a new server.
 
 **Ubuntu vs Debian differences:**
 

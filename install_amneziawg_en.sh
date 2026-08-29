@@ -494,7 +494,7 @@ check_kernel_version() {
     fi
     if (( kmaj < 5 || (kmaj == 5 && kmin < 15) )); then
         log_warn "Kernel $kver is older than 5.15 - usually too old for the AmneziaWG 2.0 module."
-        log_warn "The DKMS module build on such a kernel most often fails. Reinstall the VPS on Ubuntu 24.04 LTS or Debian 12 (or newer). Matrix: Ubuntu 24.04/25.10/26.04, Debian 12/13."
+        log_warn "The DKMS module build on such a kernel most often fails. Reinstall the VPS on Ubuntu 24.04 LTS or Debian 13. The script also runs on Ubuntu 25.10/26.04 and Debian 12, but 25.10 and Debian 12 are past regular support, so do not pick either for a new server."
         if [[ "$AUTO_YES" -eq 0 ]]; then
             read -rp "Continue anyway? [y/N]: " confirm < /dev/tty
             if ! [[ "$confirm" =~ ^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$ ]]; then die "Cancelled: kernel $kver is too old for the AmneziaWG 2.0 module."; fi
@@ -4131,7 +4131,7 @@ PPASRC
             log_error "through. The exact reason is in the lines above; usually it is missing kernel"
             log_error "headers, no free space, a dropped network, or a module that built but will"
             log_error "not load (Secure Boot). Fallback option: deploy the server on Ubuntu"
-            log_error "24.04/25.10 or Debian 13, where the module comes as a package from the PPA."
+            log_error "24.04 LTS, Ubuntu 26.04 or Debian 13, where the module comes from the PPA."
             log_error "See README/INSTALL_VPS for details."
             die "The pinned AmneziaWG 2.0 module was not installed."
         fi

@@ -488,7 +488,7 @@ check_kernel_version() {
     fi
     if (( kmaj < 5 || (kmaj == 5 && kmin < 15) )); then
         log_warn "Ядро $kver старее 5.15 - для модуля AmneziaWG 2.0 это обычно слишком старо."
-        log_warn "DKMS-сборка модуля на таком ядре чаще всего падает. Рекомендуется переустановить VPS на Ubuntu 24.04 LTS или Debian 12 (либо новее). Матрица: Ubuntu 24.04/25.10/26.04, Debian 12/13."
+        log_warn "DKMS-сборка модуля на таком ядре чаще всего падает. Рекомендуется переустановить VPS на Ubuntu 24.04 LTS или Debian 13. Скрипт работает и на Ubuntu 25.10/26.04 и на Debian 12, но у 25.10 и Debian 12 обычная поддержка уже закончилась - для нового сервера их брать не стоит."
         if [[ "$AUTO_YES" -eq 0 ]]; then
             read -rp "Всё равно продолжить? [y/N]: " confirm < /dev/tty
             if ! [[ "$confirm" =~ ^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$ ]]; then die "Отмена: ядро $kver слишком старое для модуля AmneziaWG 2.0."; fi
@@ -4067,8 +4067,9 @@ PPASRC
             log_error "PPA, а собирает из исходника, и этот шаг не прошёл. Конкретная причина -"
             log_error "в строках выше; чаще всего это отсутствующие kernel headers, нехватка"
             log_error "места, оборванная сеть или собранный, но не загружаемый модуль (Secure"
-            log_error "Boot). Запасной вариант: развернуть сервер на Ubuntu 24.04/25.10 или"
-            log_error "Debian 13, где модуль приходит пакетом из PPA. См. README/INSTALL_VPS."
+            log_error "Boot). Запасной вариант: развернуть сервер на Ubuntu 24.04 LTS,"
+            log_error "Ubuntu 26.04 или Debian 13, где модуль приходит пакетом из PPA."
+            log_error "См. README/INSTALL_VPS."
             die "Пиновый AmneziaWG 2.0-модуль не установлен."
         fi
         log "Пиновый AmneziaWG 2.0-модуль установлен; PPA-dkms в hold (защита от 3.0)."

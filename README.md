@@ -10,12 +10,12 @@
 <h1 align="center">Install AmneziaWG 2.0 / 3.0 VPN on Ubuntu and Debian VPS</h1>
 
 <p align="center"><em>VPN за одну команду - работает там, где WireGuard блокируют. Любой VPS за $3, без знания Linux.</em></p>
-<p align="center"><em>One-command, self-hosted AmneziaWG 2.0 / 3.0 VPN for Ubuntu 24.04 / 25.10 / 26.04 and Debian 12 / 13. Kernel-native DKMS, no Docker, no web panel, runs on any cheap VPS.</em></p>
+<p align="center"><em>One-command, self-hosted AmneziaWG 2.0 / 3.0 VPN for Ubuntu 24.04 / 26.04 and Debian 13. Kernel-native DKMS, no Docker, no web panel, runs on any cheap VPS.</em></p>
 
 <p align="center">
   <a href="https://bivlked.github.io/amneziawg-installer/ru/"><img src="https://img.shields.io/badge/Website-bivlked.github.io-3ddc97" alt="Project website"></a>
-  <img src="https://img.shields.io/badge/Ubuntu-24.04_|_25.10_|_26.04-orange" alt="Ubuntu 24.04 | 25.10 | 26.04">
-  <img src="https://img.shields.io/badge/Debian-12_|_13-A81D33" alt="Debian 12 | 13">
+  <img src="https://img.shields.io/badge/Ubuntu-24.04_|_26.04-orange" alt="Ubuntu 24.04 | 26.04">
+  <img src="https://img.shields.io/badge/Debian-13-A81D33" alt="Debian 13">
   <img src="https://img.shields.io/badge/Architecture-x86__64_|_ARM64_|_ARMv7-green" alt="x86_64 | ARM64 | ARMv7">
   <img src="https://img.shields.io/badge/AmneziaWG-2.0_&#124;_3.x-blueviolet" alt="AmneziaWG 2.0 and 3.x">
   <a href="https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
@@ -113,7 +113,7 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 
 Сервер настраивается под одну задачу - VPN: лишние пакеты убираются, ядро, сеть и swap тюнингуются под железо, включаются firewall и базовая защита. AmneziaWG работает в ядре, поэтому накладных расходов почти нет - быстро и экономно. Поставил один раз для дома или семьи и забыл: добавить друга или новое устройство через месяц - минута, конфиг и QR готовятся одной командой.
 
-Работает на Ubuntu 24.04/25.10/26.04 и Debian 12/13. Хватит любого дешёвого VPS с 1 ГБ RAM.
+Рекомендуемые системы: Ubuntu 24.04 LTS, Ubuntu 26.04, Debian 13. Ubuntu 25.10 и Debian 12 тоже ставятся и работают, но обычная поддержка у обеих уже закончилась - даты в таблице совместимости ниже. Хватит любого дешёвого VPS с 1 ГБ RAM.
 
 ---
 
@@ -225,7 +225,7 @@ cat /sys/module/amneziawg/version    # версия загруженного м�
 * **Одна команда - готовый VPN** - от чистого VPS до работающего сервера с клиентскими конфигами и QR-кодами
 * **Безопасность из коробки** - UFW, Fail2Ban, sysctl hardening, строгие права доступа (600/700)
 * **Удобное управление** - добавление/удаление клиентов, временные клиенты с авто-удалением, статистика, бэкапы
-* **Широкая поддержка ОС** - Ubuntu 24.04/25.10/26.04 и Debian 12/13
+* **Широкая поддержка ОС** - Ubuntu 24.04, 26.04 и Debian 13; Ubuntu 25.10 и Debian 12 для переноса уже работающего сервера
 * **x86_64 и ARM** - облачные VPS, Raspberry Pi 3/4/5, ARM64-серверы (AWS Graviton, Oracle Ampere, Hetzner)
 * **Оптимизация для мобильных сетей** - `--preset=mobile` для Tele2, Yota, Мегафон и других операторов с DPI-блокировками. Тонкая настройка через `--jc`, `--jmin`, `--jmax` ([подробнее](ADVANCED.md#presets-adv))
 * **Опциональный dual-stack IPv6** - флаг `--allow-ipv6-tunnel` добавляет IPv6 внутри туннеля рядом с IPv4 (по умолчанию выключено, [подробнее](ADVANCED.md#ipv6-tunnel-adv))
@@ -268,7 +268,7 @@ cat /sys/module/amneziawg/version    # версия загруженного м�
 <a id="trebovaniya"></a>
 ## 🖥️ Требования
 
-* **ОС:** **Чистая** установка **Ubuntu Server 24.04 LTS** / **Ubuntu 25.10** / **Ubuntu 26.04** / **Debian 12** / **Debian 13** Minimal
+* **ОС:** **Чистая** установка **Ubuntu Server 24.04 LTS** / **Ubuntu 26.04** / **Debian 13** Minimal. Ubuntu 25.10 и Debian 12 установщик тоже поддерживает, но для НОВОГО сервера их брать не стоит - см. таблицу совместимости
 * **Доступ:** Права `root` (через `sudo`)
 * **Интернет:** Стабильное подключение
 * **Ресурсы:** 512 МБ ОЗУ минимум, рекомендуется 1 ГБ (комфортно 2+ ГБ); минимум ~2 ГБ диска (рекомендуется 3+ ГБ)
@@ -276,13 +276,13 @@ cat /sys/module/amneziawg/version    # версия загруженного м�
 
 **Совместимость ОС:**
 
-| ОС | Статус | Примечание |
-|----|--------|------------|
-| Ubuntu 24.04 LTS | ✅ Полная поддержка | Рекомендуется |
-| Ubuntu 25.10 | ✅ Поддерживается | PPA `noble` fallback применяется автоматически с v5.13.0 |
-| Ubuntu 26.04 | ✅ Поддерживается | PPA `noble` fallback применяется автоматически с v5.13.0 |
-| Debian 12 (bookworm) | ✅ Поддержка | Протестировано. PPA через маппинг codename на focal |
-| Debian 13 (trixie) | ✅ Поддержка | Протестировано. PPA через маппинг codename на noble, DEB822 |
+| ОС | Наш выбор | Поддержка от вендора | Примечание |
+|----|-----------|----------------------|------------|
+| Ubuntu 24.04 LTS | ✅ выбор по умолчанию | до 2029-05-31 | Обкатана лучше всех |
+| Debian 13 (trixie) | ✅ выбор по умолчанию | до 2028-08-09 | Протестировано. PPA через маппинг codename на noble, DEB822 |
+| Ubuntu 26.04 | ✅ можно брать | до 2031-04-30 | PPA `noble` fallback применяется автоматически с v5.13.0 |
+| Debian 12 (bookworm) | ⚠️ для миграции | обычная закончилась 2026-07-11, Debian LTS до 2028-06-30 | Работает и протестировано, обновления безопасности идут через Debian LTS. PPA через маппинг codename на focal. Для нового сервера лучше Debian 13 |
+| Ubuntu 25.10 (questing) | ⚠️ для миграции | закончилась 2026-07-01, продления нет | Работает, PPA `noble` fallback с v5.13.0. Обновлений безопасности не выходит вообще никаких - для нового сервера не берите |
 
 **Поддержка архитектур (v5.10.0+):**
 
@@ -332,7 +332,7 @@ cat /sys/module/amneziawg/version    # версия загруженного м�
 
 Установка AmneziaWG на Ubuntu или Debian сводится к трём командам: скачать скрипт, запустить с `sudo` и ответить на несколько вопросов. Этот метод гарантирует корректную работу интерактивных запросов и цветного вывода в вашем терминале.
 
-1.  **Подключитесь** к **чистому** серверу (Ubuntu 24.04 / Ubuntu 25.10 / Ubuntu 26.04 / Debian 12 / Debian 13) по SSH.
+1.  **Подключитесь** к **чистому** серверу (Ubuntu 24.04 / Ubuntu 26.04 / Debian 13) по SSH.
     > **Совет:** После создания сервера подождите 5-10 минут, чтобы завершились все фоновые процессы инициализации системы, прежде чем запускать установку.
 
 2.  **Скачайте скрипт:**
