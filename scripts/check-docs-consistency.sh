@@ -221,6 +221,7 @@ else
     # substitution: там статусом команды становится статус mapfile, а не Python.
     # Питон, упавший на середине списка, оставил бы массив непустым, и проверка
     # прошла бы по урезанному набору, ничего не сказав.
+    EXPECTED_OS=()
     if ! expected_os_out="$("$PY" - "$MATRIX_FILE" <<'PYEOF'
 import io, json, sys
 
@@ -236,12 +237,17 @@ for p in d['platforms']:
     # проверялось бы как Debian.
     if p['os'] not in ('ubuntu', 'debian'):
         sys.exit('неизвестный os %r у платформы %r' % (p['os'], p.get('id')))
+    if not isinstance(p.get('version'), str) or not p['version'].strip():
+        sys.exit('version у %r не непустая строка: %r' % (p.get('id'), p.get('version')))
     print(p['version'] if p['os'] == 'ubuntu' else 'Debian %s' % p['version'])
 PYEOF
 )"; then
         _bad "не удалось вывести набор ОС из $MATRIX_FILE (см. ошибку выше)"
     else
-        mapfile -t EXPECTED_OS <<<"$expected_os_out"
+        # printf без перевода строки, а не here-string: `<<<""` даёт массив
+        # из ОДНОГО пустого элемента, и проверка на пустоту становится
+        # недостижимой, а пустой токен матчится грепом в любом файле.
+        mapfile -t EXPECTED_OS < <(printf '%s' "$expected_os_out")
     fi
     if [[ "${#EXPECTED_OS[@]}" -eq 0 ]]; then
         _bad "из $MATRIX_FILE не прочиталась ни одна платформа"
@@ -251,7 +257,14 @@ PYEOF
         for f in "${OS_MATRIX_FILES[@]}"; do
             [[ -f "$f" ]] || { echo "  нет $f (проверка матрицы ОС)" >&2; os_fail=1; continue; }
             for os in "${EXPECTED_OS[@]}"; do
-                if ! grep -qF "$os" "$f"; then
+                # Пустой токен превратил бы grep -qF в поиск пустой строки,
+                # то есть в совпадение с любым файлом.
+                if [[ -z "$os" ]]; then
+                    echo "  пустой токен ОС из $MATRIX_FILE" >&2
+                    os_fail=1
+                    continue
+                fi
+                if ! grep -qF -- "$os" "$f"; then
                     echo "  $f: нет '$os' в матрице ОС" >&2
                     os_fail=1
                 fi
@@ -284,7 +297,7 @@ def die_schema(msg):
 try:
     d = json.load(io.open(sys.argv[1], encoding='utf-8'))
     platforms = d['platforms']
-except (OSError, ValueError, KeyError, TypeError) as exc:
+except Exception as exc:
     die_schema('%s: %s' % (type(exc).__name__, exc))
 
 if not isinstance(platforms, list):
@@ -319,9 +332,18 @@ for p in platforms:
             die_schema('%s: нет поля %s' % (pid, req))
     if p['os'] not in ('ubuntu', 'debian'):
         die_schema('%s: неизвестный os %r' % (pid, p['os']))
+    if p['project_policy'] not in ('default', 'allowed', 'discouraged'):
+        die_schema('%s: неизвестный project_policy %r' % (pid, p['project_policy']))
+    for f in ('id', 'version'):
+        # Пустая version деградирует токен до пустой строки, а она грепается
+        # в любом файле: проверка полноты матрицы стала бы тавтологией.
+        if not isinstance(p[f], str) or not p[f].strip():
+            die_schema('%s: %s должно быть непустой строкой, а не %r' % (pid, f, p[f]))
     ids.append(p['id'])
     pairs_ov.append((p['os'], p['version']))
     rel = as_date(p['released'], 'released', pid)
+    if rel is None:
+        die_schema('%s: released обязателен' % pid)
     reg = as_date(p.get('vendor_regular_eol'), 'vendor_regular_eol', pid)
     lts = as_date(p.get('vendor_lts_eol'), 'vendor_lts_eol', pid)
     if reg is not None and not rel < reg:
@@ -338,7 +360,11 @@ if len(ids) != len(set(ids)):
     die_schema('идентификаторы платформ не уникальны')
 if len(pairs_ov) != len(set(pairs_ov)):
     die_schema('пара (os, version) не уникальна')
-for os_name, n in defaults.items():
+# Обход по НАЙДЕННЫМ ключам не может обнаружить отсутствующее семейство:
+# если ни одна Ubuntu не помечена default, словарь просто не содержит ключа,
+# и цикл по нему молчит. Идём по известному списку семейств.
+for os_name in ('ubuntu', 'debian'):
+    n = defaults.get(os_name, 0)
     if n != 1:
         die_schema('у %s ровно один default быть должен, а их %d' % (os_name, n))
 
@@ -407,9 +433,12 @@ print('контроль %d/%d, сверено платформ: %d' % (len(contr
 
 # Возраст снимка внешних фактов - предупреждение, не отказ: краснеть просто от
 # течения времени значит приучить к красному.
-lv = d.get('verification', {}).get('last_verified')
+ver = d.get('verification')
+if not isinstance(ver, dict):
+    die_schema('verification не объект')
+lv = as_date(ver.get('last_verified'), 'last_verified', 'verification')
 if lv:
-    age = (today - datetime.date.fromisoformat(lv)).days
+    age = (today - lv).days
     if age > 180:
         print('STALE %d' % age)
 PYEOF
@@ -554,7 +583,11 @@ if [[ "$tmpl_fail" -eq 0 ]]; then _ok "issue-template: placeholder версии 
 # arm-build.yml, поэтому проверка не протухнет при добавлении/удалении таргета.
 arm_yml=".github/workflows/arm-build.yml"
 arm_matrix_fail=0
-if [[ -f "$arm_yml" ]]; then
+if [[ "${#EXPECTED_OS[@]}" -eq 0 ]]; then
+    # Пустой набор дал бы ноль итераций и бодрый PASS о работе, которой не
+    # было. Проверка зависит от секции 4 и обязана падать вместе с ней.
+    _bad "ARM prebuilt-покрытие НЕ ПРОВЕРЕНО: набор ОС пуст"
+elif [[ -f "$arm_yml" ]]; then
     mapfile -t arm_ubuntu < <(grep -oP 'image:[[:space:]]*ubuntu:\K[0-9]+\.[0-9]+' "$arm_yml" | sort -u)
     for os in "${EXPECTED_OS[@]}"; do
         [[ "$os" =~ ^[0-9]+\.[0-9]+$ ]] || continue   # только Ubuntu version-токены
@@ -570,7 +603,9 @@ if [[ -f "$arm_yml" ]]; then
 else
     echo "  нет $arm_yml (проверка ARM prebuilt-матрицы)" >&2; arm_matrix_fail=1
 fi
-if [[ "$arm_matrix_fail" -eq 0 ]]; then _ok "ARM prebuilt-покрытие согласовано (OS×arch×target)"; else _bad "ARM prebuilt-покрытие рассинхронизировано"; fi
+if [[ "${#EXPECTED_OS[@]}" -eq 0 ]]; then
+    :   # уже сообщено выше
+elif [[ "$arm_matrix_fail" -eq 0 ]]; then _ok "ARM prebuilt-покрытие согласовано (OS×arch×target)"; else _bad "ARM prebuilt-покрытие рассинхронизировано"; fi
 
 # --- 10. Установочные wget-сниппеты используют -O (re-run .1-ловушка) ---
 # Голый `wget <url>/install_amneziawg*.sh` без -O при повторном запуске пишет

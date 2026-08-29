@@ -48,7 +48,10 @@ ROOT="$BATS_TEST_DIRNAME/.."
     run grep -E 'mapfile -t EXPECTED_OS' "$ROOT/scripts/check-docs-consistency.sh"
     [ "$status" -eq 0 ]
     # Литерального массива остаться не должно: иначе снова две правды.
-    run grep -E '^[[:space:]]*EXPECTED_OS=\(' "$ROOT/scripts/check-docs-consistency.sh"
+    # Ловим литерал С СОДЕРЖИМЫМ, а не пустое объявление EXPECTED_OS=(),
+    # которое нужно, чтобы зависящая проверка ARM не итерировала по
+    # неустановленному массиву и не печатала незаработанный PASS.
+    run grep -E '^[[:space:]]*EXPECTED_OS=\([^)]' "$ROOT/scripts/check-docs-consistency.sh"
     [ "$status" -ne 0 ]
     # Архитектуры в матрицу не переезжали, их литерал на месте.
     run grep -E '^EXPECTED_ARCH=\(' "$ROOT/scripts/check-docs-consistency.sh"
