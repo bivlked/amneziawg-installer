@@ -199,10 +199,13 @@
     <p class="sub">Tested on clean, minimal server installs. Kernel upgrades are handled automatically through DKMS, and on ARM hosts running a prebuilt module the repair-module command brings it back.</p>
     <div class="os-list">
       <span class="pill"><b>Ubuntu</b> 24.04 LTS</span>
-      <span class="pill"><b>Ubuntu</b> 25.10 and 26.04</span>
-      <span class="pill"><b>Debian</b> 12 bookworm</span>
       <span class="pill"><b>Debian</b> 13 trixie</span>
+      <span class="pill"><b>Ubuntu</b> 26.04</span>
+      <span class="pill"><b>Ubuntu</b> 25.10</span>
+      <span class="pill"><b>Debian</b> 12 bookworm</span>
     </div>
+    <p class="inline-note">For a new server: Ubuntu 24.04 LTS or Debian 13 are the default choice, and Ubuntu 26.04 works too.</p>
+    <p class="inline-note">Ubuntu 25.10 and Debian 12 install and work, but they are not a good pick for a new server. Ubuntu 25.10 reached end of life on 1 July 2026 and gets no security updates at all: it is an interim release and will not be extended. Debian 12 left regular support on 11 July 2026; its security updates now come through Debian LTS until 30 June 2028.</p>
     <p class="inline-note mt">Built for cheap budgets: 1 vCPU, 512 MB of RAM minimum, 5 GB of disk. Both amd64 and arm64.</p>
   </div>
 </section>
