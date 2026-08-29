@@ -217,7 +217,11 @@ if [[ -z "$PY" ]]; then
 elif [[ ! -f "$MATRIX_FILE" ]]; then
     _bad "нет $MATRIX_FILE - единого источника матрицы ОС"
 else
-    mapfile -t EXPECTED_OS < <("$PY" - "$MATRIX_FILE" <<'PYEOF'
+    # Вывод захватывается С ПРОВЕРКОЙ СТАТУСА, а не читается через process
+    # substitution: там статусом команды становится статус mapfile, а не Python.
+    # Питон, упавший на середине списка, оставил бы массив непустым, и проверка
+    # прошла бы по урезанному набору, ничего не сказав.
+    if ! expected_os_out="$("$PY" - "$MATRIX_FILE" <<'PYEOF'
 import io, json, sys
 
 # На Windows текстовый stdout дописывает к каждой строке возврат каретки, и
@@ -228,9 +232,17 @@ sys.stdout.reconfigure(newline='\n')
 
 d = json.load(io.open(sys.argv[1], encoding='utf-8'))
 for p in d['platforms']:
+    # Неизвестное семейство иначе стало бы токеном вида "Debian 41" и молча
+    # проверялось бы как Debian.
+    if p['os'] not in ('ubuntu', 'debian'):
+        sys.exit('неизвестный os %r у платформы %r' % (p['os'], p.get('id')))
     print(p['version'] if p['os'] == 'ubuntu' else 'Debian %s' % p['version'])
 PYEOF
-)
+)"; then
+        _bad "не удалось вывести набор ОС из $MATRIX_FILE (см. ошибку выше)"
+    else
+        mapfile -t EXPECTED_OS <<<"$expected_os_out"
+    fi
     if [[ "${#EXPECTED_OS[@]}" -eq 0 ]]; then
         _bad "из $MATRIX_FILE не прочиталась ни одна платформа"
     else
@@ -258,8 +270,77 @@ import datetime, io, json, sys
 
 sys.stdout.reconfigure(newline='\n')  # см. про возврат каретки выше
 
-d = json.load(io.open(sys.argv[1], encoding='utf-8'))
+import re
+
+
+def die_schema(msg):
+    """Ошибка схемы или чтения - это НЕ расхождение с датами. Отдельный код,
+    иначе испорченный файл отчитается как «lifecycle разошёлся», и чинить пойдут
+    не то."""
+    print('матрица не прошла проверку формата: %s' % msg)
+    sys.exit(4)
+
+
+try:
+    d = json.load(io.open(sys.argv[1], encoding='utf-8'))
+    platforms = d['platforms']
+except (OSError, ValueError, KeyError, TypeError) as exc:
+    die_schema('%s: %s' % (type(exc).__name__, exc))
+
+if not isinstance(platforms, list):
+    die_schema('platforms не список')
+
 today = datetime.date.today()
+DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+
+
+def as_date(value, field, pid):
+    """fromisoformat принимает и компактную форму 20290531, поэтому лексика
+    проверяется отдельно: матрица объявляет именно YYYY-MM-DD."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not DATE_RE.match(value):
+        die_schema('%s.%s не дата вида YYYY-MM-DD: %r' % (pid, field, value))
+    try:
+        return datetime.date.fromisoformat(value)
+    except ValueError as exc:
+        die_schema('%s.%s: %s' % (pid, field, exc))
+
+
+# Инварианты, объявленные в самой матрице. Раньше не проверялся ни один, а
+# нарушение половины из них прямо меняет то, что мы рекомендуем пользователю.
+ids, pairs_ov, defaults = [], [], {}
+for p in platforms:
+    if not isinstance(p, dict):
+        die_schema('элемент platforms не объект')
+    pid = p.get('id', '<без id>')
+    for req in ('id', 'os', 'version', 'released', 'lifecycle', 'project_policy'):
+        if req not in p:
+            die_schema('%s: нет поля %s' % (pid, req))
+    if p['os'] not in ('ubuntu', 'debian'):
+        die_schema('%s: неизвестный os %r' % (pid, p['os']))
+    ids.append(p['id'])
+    pairs_ov.append((p['os'], p['version']))
+    rel = as_date(p['released'], 'released', pid)
+    reg = as_date(p.get('vendor_regular_eol'), 'vendor_regular_eol', pid)
+    lts = as_date(p.get('vendor_lts_eol'), 'vendor_lts_eol', pid)
+    if reg is not None and not rel < reg:
+        die_schema('%s: released не раньше vendor_regular_eol' % pid)
+    if lts is not None and reg is not None and not lts > reg:
+        die_schema('%s: vendor_lts_eol не позже vendor_regular_eol' % pid)
+    if p['project_policy'] == 'default':
+        defaults[p['os']] = defaults.get(p['os'], 0) + 1
+    if p['project_policy'] in ('default', 'allowed') and p['lifecycle'] != 'supported':
+        die_schema('%s: policy %s при lifecycle %s - рекомендуем систему без '
+                   'поддержки вендора' % (pid, p['project_policy'], p['lifecycle']))
+
+if len(ids) != len(set(ids)):
+    die_schema('идентификаторы платформ не уникальны')
+if len(pairs_ov) != len(set(pairs_ov)):
+    die_schema('пара (os, version) не уникальна')
+for os_name, n in defaults.items():
+    if n != 1:
+        die_schema('у %s ровно один default быть должен, а их %d' % (os_name, n))
 
 
 def classify(released, regular, lts):
@@ -295,6 +376,10 @@ control = [
     classify('2000-01-01', None, future) == 'extended-support',
     # Выпущено сегодня - уже выпущено.
     classify(today_s, future, None) == 'supported',
+    # Действуют ОБЕ даты: обычная поддержка должна побеждать продлённую. Без
+    # этого случая перестановка двух веток проходит контроль целиком и при
+    # этом объявляет три живые платформы продлённой поддержкой.
+    classify('2000-01-01', future, future) == 'supported',
 ]
 if not all(control):
     print('контроль классификатора ПРОВАЛЕН: %r' % control)
@@ -302,7 +387,7 @@ if not all(control):
 
 bad = 0
 checked = 0
-for p in d['platforms']:
+for p in platforms:
     want = classify(p['released'], p.get('vendor_regular_eol'), p.get('vendor_lts_eol'))
     checked += 1
     if want != p['lifecycle']:
@@ -335,13 +420,16 @@ PYEOF
     else
         rc=$?
         printf '%s\n' "$lifecycle_out" >&2
-        if [[ "$rc" -eq 3 ]]; then
-            _bad "проверка lifecycle НЕ ВЫПОЛНИЛАСЬ: сверять было нечего"
-        elif [[ "$rc" -eq 2 ]]; then
-            _bad "проверка lifecycle НЕ ВЫПОЛНИЛАСЬ: контроль классификатора провален"
-        else
-            _bad "lifecycle в $MATRIX_FILE разошёлся с датами (пересчитать и обновить)"
-        fi
+        case "$rc" in
+            1) _bad "lifecycle в $MATRIX_FILE разошёлся с датами (пересчитать и обновить)" ;;
+            2) _bad "проверка lifecycle НЕ ВЫПОЛНИЛАСЬ: контроль классификатора провален" ;;
+            3) _bad "проверка lifecycle НЕ ВЫПОЛНИЛАСЬ: сверять было нечего" ;;
+            4) _bad "проверка lifecycle НЕ ВЫПОЛНИЛАСЬ: матрица не прошла формат" ;;
+            # Любой другой код - это упавший python, а не вердикт о датах.
+            # Раньше он приходил под тем же кодом 1 и отчитывался как
+            # расхождение, то есть называл неверную причину.
+            *) _bad "проверка lifecycle НЕ ВЫПОЛНИЛАСЬ: неожиданный код $rc" ;;
+        esac
     fi
 fi
 
