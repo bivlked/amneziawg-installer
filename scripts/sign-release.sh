@@ -38,12 +38,53 @@ if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
     exit 2
 fi
 
-KEY="${MINISIGN_KEY:-$HOME/.minisign/amneziawg-installer.key}"
-if [[ ! -f "$KEY" ]]; then
-    echo "ОШИБКА: приватный ключ не найден: $KEY" >&2
-    echo "        путь можно задать переменной MINISIGN_KEY" >&2
+# Ключ ищется по нескольким путям, а не по одному $HOME. На Windows значение
+# HOME зависит от того, откуда запущен bash: из Git Bash это обычно профиль
+# пользователя, а из PowerShell или cmd - выдуманный /home/<имя>, которого на
+# диске нет. Один путь давал бы отказ "ключ не найден" там, где ключ на месте.
+# Путь вида C:\Users\biv переводится в /c/Users/biv СВОИМИ силами, без cygpath.
+# Запущенный из PowerShell или cmd bash наследует PATH Windows, а cygpath из
+# состава Git лежит в его собственном usr/bin и туда обычно не входит. Зависеть
+# от него значит потерять запасной путь ровно в той среде, ради которой он и
+# добавлен.
+_win_to_posix() {
+    # Замена через tr, а не через ${x//\\//}: замерено на bash 5 в Git Bash,
+    # что подстановка возвращает строку НЕТРОНУТОЙ. Ошибка при этом молчаливая
+    # и почти безвредная на вид, потому что MSYS соглашается открыть смешанный
+    # путь C:\Users\biv/.minisign/..., то есть проверка -f проходит и дефект
+    # прячется до первой среды, которая такой путь не примет. \134 - восьмеричный
+    # код обратного слеша: так tr не спорит о том, что считать экранированием.
+    local u drive rest
+    u="$(printf '%s' "$1" | tr '\134' '/')"
+    case "$u" in
+        [A-Za-z]:/*)
+            drive="${u%%:*}"
+            rest="${u#*:}"
+            printf '/%s%s' "$(printf '%s' "$drive" | tr 'A-Z' 'a-z')" "$rest"
+            ;;
+        *) printf '%s' "$u" ;;
+    esac
+}
+
+KEY="${MINISIGN_KEY:-}"
+_candidates=()
+if [[ -z "$KEY" ]]; then
+    _candidates+=("$HOME/.minisign/amneziawg-installer.key")
+    for _base in "${USERPROFILE:-}" "${HOMEDRIVE:-}${HOMEPATH:-}"; do
+        [[ -n "$_base" ]] || continue
+        _candidates+=("$(_win_to_posix "$_base")/.minisign/amneziawg-installer.key")
+    done
+    for _c in "${_candidates[@]}"; do
+        if [[ -f "$_c" ]]; then KEY="$_c"; break; fi
+    done
+fi
+if [[ -z "$KEY" || ! -f "$KEY" ]]; then
+    echo "ОШИБКА: приватный ключ не найден." >&2
+    for _c in "${_candidates[@]:-$KEY}"; do echo "        искал: $_c" >&2; done
+    echo "        Путь можно задать переменной MINISIGN_KEY." >&2
     exit 2
 fi
+echo "ключ: $KEY"
 if ! command -v minisign >/dev/null 2>&1; then
     echo "ОШИБКА: minisign не найден в PATH" >&2
     exit 2
