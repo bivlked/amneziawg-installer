@@ -55,7 +55,9 @@ setup() {
 @test ".4 integration: docs-check still passes 13/13 with ROADMAP included" {
     run bash "$SCRIPT"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"13 passed, 0 failed"* ]]
+    # Число проверок не фиксируем: добавление новой проверки не должно
+    # ронять этот тест. Утверждение - что провалов нет.
+    [[ "$output" == *", 0 failed"* ]]
     # Мощность набора проверок сама по себе не доказывает его состав.
     [[ "$output" == *"lifecycle в матрице сходится с датами"* ]]
 }

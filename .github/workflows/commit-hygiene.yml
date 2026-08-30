@@ -65,7 +65,7 @@ jobs:
             # written to close. The word boundaries are deliberate: codex and llm
             # appear inside ordinary domain words.
             hit="$(printf '%s' "$msg" \
-              | grep -inE 'co-authored-by|generated with|claude|anthropic|\bcodex\b|chatgpt|openai|gpt-[0-9]|copilot|\bllm\b' || true)"
+              | grep -inE 'co-authored-by|generated with|claude|anthropic|\bcodex\b|chatgpt|openai|gpt-[0-9]|copilot|\bllm\b|myai-[a-z0-9]{4}' || true)"
             if [ -n "$hit" ]; then
               echo "::error::commit ${sha:0:7} carries a forbidden marker:"
               printf '%s\n' "$hit"

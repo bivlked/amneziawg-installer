@@ -9,13 +9,31 @@
 # error appeared, and the next command in the line ran as if all was well.
 #
 # Test titles are ASCII on purpose: bats on Git Bash silently refuses to
-# execute a test whose title contains Cyrillic (MyAI-ln09).
+# execute a test whose title contains Cyrillic: it prints "unknown test
+# name" and the case does not run, with no "not ok" line to notice.
 
 setup() {
     ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
     SCRIPT="$ROOT/scripts/sign-release.sh"
     FAKE_KEY="$BATS_TEST_TMPDIR/key"
     printf 'untrusted comment: fake\n' > "$FAKE_KEY"
+
+    # The script checks that minisign exists before it checks anything else,
+    # and CI installs only bats. Without a stub these tests would report on the
+    # runner's package list rather than on the script: they passed locally,
+    # where minisign is installed, and failed in CI for a reason that has
+    # nothing to do with the code under test.
+    #
+    # The stub exits non-zero on purpose. No case here should reach the signing
+    # loop, and if one ever does, a stub that succeeded would let it claim six
+    # signatures without producing a single file.
+    STUB_BIN="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$STUB_BIN"
+    printf '#!/bin/sh\necho "stub minisign must not be called" >&2\nexit 1\n' \
+        > "$STUB_BIN/minisign"
+    chmod +x "$STUB_BIN/minisign"
+    PATH="$STUB_BIN:$PATH"
+    export PATH
 }
 
 @test "sign-release: no tag at all is a usage error" {

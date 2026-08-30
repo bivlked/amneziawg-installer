@@ -20,7 +20,9 @@ TMPL_STALE_RE='placeholder:[[:space:]]*"e\.g\.,[[:space:]]*[0-9]+\.[0-9]+\.[0-9]
     # 13 checks: the lifecycle recomputation (#4b) joined the pin-form guard
     # (#6b), the installer wget -O guard (#10) and the OS x arch x
     # prebuilt-target matrix check (#9).
-    [[ "$output" == *"13 passed, 0 failed"* ]]
+    # Число проверок не фиксируем: добавление новой проверки не должно
+    # ронять этот тест. Утверждение - что провалов нет.
+    [[ "$output" == *", 0 failed"* ]]
     # Мощность набора проверок сама по себе не доказывает его состав.
     [[ "$output" == *"lifecycle в матрице сходится с датами"* ]]
 }

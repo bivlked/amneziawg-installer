@@ -66,7 +66,11 @@ SCRIPTS=(
 
 # Запрещённые маркеры в публичном тексте и коммитах (case-insensitive).
 # Слитный список во избежание ложных срабатываний на доменных терминах.
-FORBIDDEN_MARKERS='claude|anthropic|\bcodex\b|chatgpt|openai|gpt-[0-9]|copilot|\bllm\b'
+# Идентификаторы приватного трекера (MyAI-xxxx) читателю со стороны не говорят
+# ничего, а утекают в публичное дерево незаметно: 30 aug 2026 их вычистили
+# целым PR, и следующий же PR внёс новую ссылку в комментарий теста. Ловится
+# тем же гейтом, что и упоминания посторонних инструментов.
+FORBIDDEN_MARKERS='claude|anthropic|\bcodex\b|chatgpt|openai|gpt-[0-9]|copilot|\bllm\b|myai-[a-z0-9]{4}'
 
 PASS=0
 FAIL=0

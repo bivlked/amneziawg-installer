@@ -14,7 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [5.29.0] - 2026-08-30
 
-**v5.29.0** - releases are signed and published atomically, the list of supported systems became machine readable, and the SHA pin gate now checks what the installer actually downloads.
+**v5.29.0** - signed releases and one source for supported systems.
+
+Releases are now signed and published atomically, the list of supported systems became machine readable, and the SHA pin gate checks what the installer actually downloads.
 
 ### Added
 

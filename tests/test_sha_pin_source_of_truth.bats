@@ -12,7 +12,8 @@
 #
 # Test titles are ASCII on purpose: bats on Git Bash cannot execute a test
 # whose title contains Cyrillic - it prints "unknown test name" and the case
-# silently does not run, with no "not ok" line anywhere (see MyAI-ln09).
+# silently does not run, with no "not ok" line anywhere. The only signal is
+# the trailing "Executed N instead of expected M" warning.
 
 setup() {
     ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
