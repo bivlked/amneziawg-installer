@@ -255,7 +255,14 @@ TEXT = {
             ('Не для новых серверов', '%s - вне обычной поддержки вендора'),
         ],
         'arch': ('Архитектуры', arch_line),
-        'module': ('Модуль ядра', 'DKMS из PPA Amnezia; для части ARM - готовые сборки'),
+        # 🔴 Про модуль нельзя писать просто "из PPA": на ядрах старее 6.7 (это
+        # штатный Debian 12, названный в этом же блоке) установщик СОЗНАТЕЛЬНО
+        # не берёт модуль из PPA, потому что там уже 3.0, а собирает пиновый 2.0
+        # из исходников (_install_pinned_awg2_module). Первая редакция строки
+        # утверждала неправду ровно того класса, ради которого блок и заведён.
+        'module': ('Модуль ядра',
+                   'DKMS из PPA Amnezia; на ядрах старее 6.7 (штатный Debian 12) - '
+                   'проверенный модуль 2.0 из исходников; для части ARM - готовые сборки'),
         'profile': ('Профиль конфигурации',
                     'AmneziaWG 2.0 (модуль может быть 3.x - генерируемые конфиги остаются 2.0)'),
     },
@@ -270,7 +277,9 @@ TEXT = {
             ('Not for new servers', '%s - no longer under standard vendor support'),
         ],
         'arch': ('Architectures', arch_line),
-        'module': ('Kernel module', 'DKMS from the Amnezia PPA; prebuilt packages for some ARM targets'),
+        'module': ('Kernel module',
+                   'DKMS from the Amnezia PPA; on kernels older than 6.7 (a stock Debian 12) '
+                   'a pinned 2.0 module built from source; prebuilt packages for some ARM targets'),
         'profile': ('Config profile',
                     'AmneziaWG 2.0 (the kernel module may be 3.x - generated configs stay 2.0)'),
     },
@@ -295,8 +304,15 @@ def render(path):
     return '\n'.join(out)
 
 
-# --- запись или сверка --------------------------------------------------
+# --- сверка --------------------------------------------------------------
+# 🔴 ОБА ФАЙЛА РАЗБИРАЮТСЯ И ПРОВЕРЯЮТСЯ ДО ТОГО, КАК ЗАПИСАН ХОТЬ ОДИН.
+# Прежняя форма шла одним циклом "проверил-записал": русский файл уже переписан,
+# а на английском обнаружились битые маркеры -> die, и репозиторий остаётся в
+# половинчатом состоянии, ровно том, которое комментарий ниже обещал не
+# допускать. Атомарность os.replace тут не спасает: она пофайловая, а операция
+# парная. Нашло ревью бота на PR #241.
 failed = 0
+plans = []
 for path in ('README.md', 'README.en.md'):
     body = read(path)
     i = body.find(BEGIN)
@@ -322,34 +338,45 @@ for path in ('README.md', 'README.en.md'):
                                          tofile='%s (должно быть)' % path, lineterm=''):
             sys.stderr.write('    %s\n' % line)
         failed = 1
-    else:
-        head, tail = body[:i], body[j + len(END):]
-        new_body = head + wanted + tail
+        continue
 
-        # 🔴 Самопроверка ДО записи: всё вне маркеров обязано уцелеть побайтово.
-        # Описка в срезах схлопнула бы README с восьми сотен строк до одного
-        # блока, и ни --check, ни тесты этого бы не заметили - оба смотрят
-        # ТОЛЬКО на текст между маркерами. Нашло ревью 30 aug.
-        if not (new_body.startswith(head) and new_body.endswith(tail)):
-            die('внутренняя ошибка: запись %s потеряла бы текст вне маркеров' % path)
+    head, tail = body[:i], body[j + len(END):]
+    new_body = head + wanted + tail
 
-        # Запись атомарная (temp + replace), как предписывает конвенция проекта:
-        # прежняя форма усекала файл ДО записи, и отказ на середине оставлял
-        # README пустым, а отказ на втором файле - репозиторий в половинчатом
-        # состоянии.
-        #
-        # newline='\n' обязателен: .gitattributes держит .md в LF, а текстовый
-        # режим на Windows иначе перепишет ВЕСЬ файл в CRLF и даст диff на все
-        # восемь сотен строк вместо десяти.
-        tmp = path + '.facts-tmp'
-        try:
-            io.open(tmp, 'w', encoding='utf-8', newline='\n').write(new_body)
-            os.replace(tmp, path)
-        except Exception as e:
-            if os.path.exists(tmp):
-                os.remove(tmp)
-            die('не удалось записать %s: %s: %s' % (path, type(e).__name__, e))
-        sys.stdout.write('обновлён блок фактов: %s\n' % path)
+    # 🔴 Самопроверка ДО записи: всё вне маркеров обязано уцелеть побайтово.
+    # Описка в срезах схлопнула бы README с восьми сотен строк до одного блока,
+    # и ни --check, ни тесты этого бы не заметили - оба смотрят ТОЛЬКО на текст
+    # между маркерами. Нашло ревью 30 aug.
+    if not (new_body.startswith(head) and new_body.endswith(tail)):
+        die('внутренняя ошибка: запись %s потеряла бы текст вне маркеров' % path)
+
+    plans.append((path, new_body))
+
+# --- запись --------------------------------------------------------------
+# Сюда попадаем, только если РАЗОБРАНЫ И ПРОВЕРЕНЫ оба файла.
+#
+# Запись каждого файла атомарная (temp + replace), как предписывает конвенция
+# проекта: прежняя форма усекала файл ДО записи, и отказ на середине оставлял
+# README пустым.
+#
+# ⚠️ Остаточное окно названо честно: если отказ придёт на ВТОРОМ os.replace
+# (диск кончился, права отобрали), первый файл уже заменён. Полной парной
+# атомарности без переименования каталога не получить, поэтому окно сведено к
+# одному системному вызову вместо всего разбора второго файла.
+#
+# newline='\n' обязателен: .gitattributes держит .md в LF, а текстовый режим на
+# Windows иначе перепишет ВЕСЬ файл в CRLF и даст диff на все восемь сотен строк
+# вместо десяти.
+for path, new_body in plans:
+    tmp = path + '.facts-tmp'
+    try:
+        io.open(tmp, 'w', encoding='utf-8', newline='\n').write(new_body)
+        os.replace(tmp, path)
+    except Exception as e:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        die('не удалось записать %s: %s: %s' % (path, type(e).__name__, e))
+    sys.stdout.write('обновлён блок фактов: %s\n' % path)
 
 if failed:
     sys.stderr.write('  почини командой: bash scripts/update-facts-block.sh --write\n')

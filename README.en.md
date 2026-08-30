@@ -41,7 +41,7 @@
 | **Also supported** | Ubuntu 26.04 |
 | **Not for new servers** | Ubuntu 25.10, Debian 12 - no longer under standard vendor support |
 | **Architectures** | x86_64, ARM64, ARMv7 |
-| **Kernel module** | DKMS from the Amnezia PPA; prebuilt packages for some ARM targets |
+| **Kernel module** | DKMS from the Amnezia PPA; on kernels older than 6.7 (a stock Debian 12) a pinned 2.0 module built from source; prebuilt packages for some ARM targets |
 | **Config profile** | AmneziaWG 2.0 (the kernel module may be 3.x - generated configs stay 2.0) |
 <!-- facts:end -->
 
