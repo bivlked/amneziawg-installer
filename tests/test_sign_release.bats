@@ -65,3 +65,23 @@ setup() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"список подписываемых файлов пуст"* ]]
 }
+
+@test "sign-release: the missing key message names the override variable" {
+    MINISIGN_KEY="$BATS_TEST_TMPDIR/nope" run bash "$SCRIPT" v5.29.0
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"MINISIGN_KEY"* ]]
+}
+
+@test "sign-release: no WSL hint outside WSL" {
+    # The hint is for the case where `bash` in PowerShell turns out to be the
+    # WSL launcher, which inherits none of the Windows environment - not even
+    # MINISIGN_KEY set on the same command line. Verified against a real WSL
+    # run; here we guard the other side, that a normal shell is not told it is
+    # something it is not.
+    if [[ -r /proc/version ]] && grep -qiE 'microsoft|wsl' /proc/version; then
+        skip "running under WSL, the negative case cannot be observed here"
+    fi
+    MINISIGN_KEY="$BATS_TEST_TMPDIR/nope" run bash "$SCRIPT" v5.29.0
+    [ "$status" -eq 2 ]
+    [[ "$output" != *"WSL"* ]]
+}

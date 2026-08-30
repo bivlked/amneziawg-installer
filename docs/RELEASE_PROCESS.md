@@ -226,6 +226,18 @@ never stands on `minisign` merely not crashing.
 The private key path can be overridden with `MINISIGN_KEY`; the default is
 `~/.minisign/amneziawg-installer.key`. The key never leaves the machine.
 
+On Windows, invoke Git Bash explicitly rather than typing `bash`. In PowerShell
+and cmd, `bash` usually resolves to `C:\Windows\System32ash.exe`, which is
+the WSL launcher, and WSL inherits none of the Windows environment: `HOME`
+points at a Linux home that holds no key, `USERPROFILE` is empty, and even a
+`MINISIGN_KEY` exported on the same command line does not arrive. The symptom
+reads as a broken script rather than as the wrong shell, so the script names
+that cause when it detects WSL. The reliable invocation is:
+
+```powershell
+& "C:\Program Files\Gitinash.exe" scripts/sign-release.sh vX.Y.Z
+```
+
 Sign **after** the version headers and the SHA pins are final: signing earlier
 signs bytes that then change, and the tag fails verification. The trusted
 comment names the tag, so signatures cannot be carried over from the previous

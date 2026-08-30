@@ -82,6 +82,20 @@ if [[ -z "$KEY" || ! -f "$KEY" ]]; then
     echo "ОШИБКА: приватный ключ не найден." >&2
     for _c in "${_candidates[@]:-$KEY}"; do echo "        искал: $_c" >&2; done
     echo "        Путь можно задать переменной MINISIGN_KEY." >&2
+    # 🔴 На Windows команда `bash` из PowerShell или cmd - это чаще всего НЕ Git
+    # Bash, а пусковой файл WSL (C:\Windows\System32\bash.exe). Он не наследует
+    # окружение Windows вообще: пусты и USERPROFILE, и HOMEDRIVE, и даже
+    # MINISIGN_KEY, заданная строкой выше в той же командной строке. Симптом при
+    # этом выглядит как дефект скрипта, а не как выбор не той оболочки, поэтому
+    # называем причину прямо.
+    if [[ -r /proc/version ]] && grep -qiE 'microsoft|wsl' /proc/version 2>/dev/null; then
+        echo "" >&2
+        echo "        Похоже, это WSL, а не Git Bash: команда 'bash' в PowerShell" >&2
+        echo "        обычно запускает C:\\Windows\\System32\\bash.exe. Окружение" >&2
+        echo "        Windows туда не передаётся, поэтому и MINISIGN_KEY не видна." >&2
+        echo "        Запустите через Git Bash:" >&2
+        echo "          & \"C:\\Program Files\\Git\\bin\\bash.exe\" scripts/sign-release.sh $TAG" >&2
+    fi
     exit 2
 fi
 echo "ключ: $KEY"
