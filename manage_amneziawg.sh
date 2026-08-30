@@ -1386,12 +1386,23 @@ diagnose_server() {
 
     # 1. Kernel module
     if lsmod 2>/dev/null | awk '$1 == "amneziawg" {f=1} END {exit !f}'; then
-        local _d_mod_ver
+        local _d_mod_ver _d_mod_build
+        # 🔴 Поколение протокола по строке версии НЕ выводим. Здесь стояла
+        # догадка `== 3.*` -> литерал "AmneziaWG 3.0", и она врала: замер на
+        # стенде 30 aug 2026 дал `3.1.20260812` и для сборки PPA от 14 aug, и
+        # для сборки от 28 aug, то есть 3.1-модуль объявлялся третьей нулевой.
+        # Тот же запрет уже стоял в check выше ("не выводим протокол по
+        # догадке"), но этот путь его не соблюдал.
+        # Сборку различают srcversion и версия пакета - их и печатаем: без них
+        # отчёт не отвечает на вопрос, какая сборка у пользователя.
         _d_mod_ver=$(awg_module_version)
-        if [[ "$_d_mod_ver" == 3.* ]]; then
-            _diag_line OK "Модуль ядра amneziawg загружен (AmneziaWG 3.0, $_d_mod_ver)"
+        _d_mod_build=$(awg_module_build_id)
+        if [[ -n "$_d_mod_ver" && -n "$_d_mod_build" ]]; then
+            _diag_line OK "Модуль ядра amneziawg загружен (версия $_d_mod_ver; $_d_mod_build)"
         elif [[ -n "$_d_mod_ver" ]]; then
-            _diag_line OK "Модуль ядра amneziawg загружен ($_d_mod_ver)"
+            _diag_line OK "Модуль ядра amneziawg загружен (версия $_d_mod_ver)"
+        elif [[ -n "$_d_mod_build" ]]; then
+            _diag_line OK "Модуль ядра amneziawg загружен ($_d_mod_build)"
         else
             _diag_line OK "Модуль ядра amneziawg загружен"
         fi

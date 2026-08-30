@@ -1401,12 +1401,23 @@ diagnose_server() {
 
     # 1. Kernel module
     if lsmod 2>/dev/null | awk '$1 == "amneziawg" {f=1} END {exit !f}'; then
-        local _d_mod_ver
+        local _d_mod_ver _d_mod_build
+        # 🔴 Do NOT derive the protocol generation from the version string. A
+        # guess `== 3.*` -> the literal "AmneziaWG 3.0" used to live here, and it
+        # lied: a bench measurement on 30 aug 2026 read `3.1.20260812` from both
+        # the PPA build of 14 aug and the one of 28 aug, so a 3.1 module was
+        # announced as 3.0. The same ban was already written down in check above
+        # ("do not print the protocol from a guess"); this path ignored it.
+        # srcversion and the package version are what tell builds apart, so we
+        # print those: without them the report cannot say which build is loaded.
         _d_mod_ver=$(awg_module_version)
-        if [[ "$_d_mod_ver" == 3.* ]]; then
-            _diag_line OK "Kernel module amneziawg loaded (AmneziaWG 3.0, $_d_mod_ver)"
+        _d_mod_build=$(awg_module_build_id)
+        if [[ -n "$_d_mod_ver" && -n "$_d_mod_build" ]]; then
+            _diag_line OK "Kernel module amneziawg loaded (version $_d_mod_ver; $_d_mod_build)"
         elif [[ -n "$_d_mod_ver" ]]; then
-            _diag_line OK "Kernel module amneziawg loaded ($_d_mod_ver)"
+            _diag_line OK "Kernel module amneziawg loaded (version $_d_mod_ver)"
+        elif [[ -n "$_d_mod_build" ]]; then
+            _diag_line OK "Kernel module amneziawg loaded ($_d_mod_build)"
         else
             _diag_line OK "Kernel module amneziawg loaded"
         fi

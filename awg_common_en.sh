@@ -508,6 +508,41 @@ awg_module_version() {
     printf '%s' "$ver"
 }
 
+# awg_module_build_id : build identity of the loaded module, on one line.
+# Empty string when nothing could be identified.
+#
+# 🔴 Why this is separate from awg_module_version. The module version string
+# does NOT identify the build: a bench measurement on 30 aug 2026 read
+# `3.1.20260812` BOTH from the PPA build of 14 aug (`4680320`) AND from the one
+# of 28 aug (`3c38e16`) - MODULE_VERSION is a static define and changes far less
+# often than the code. Only srcversion (the source hash the module build
+# computes) and the package version tell the builds apart.
+# Without it the diagnostic report cannot answer "which build do you have",
+# which is exactly the question when a kernel module and a userspace client
+# disagree.
+#
+# AWG_MODULE_SRCVERSION_PATH is overridden by tests only: /sys cannot be
+# replaced otherwise, and what has to be verified is the read of the loaded
+# module.
+awg_module_build_id() {
+    local src="" pkg="" out=""
+    local sysfile="${AWG_MODULE_SRCVERSION_PATH:-/sys/module/amneziawg/srcversion}"
+    if [[ -r "$sysfile" ]]; then
+        # `|| true` for the same reason as in awg_module_version: on a file with
+        # no trailing newline read returns 1 having ALREADY assigned the value.
+        IFS= read -r src 2>/dev/null < "$sysfile" || true
+        src="${src//[[:space:]]/}"
+    fi
+    pkg=$(dpkg-query -W -f='${Version}' amneziawg-dkms 2>/dev/null || true)
+    pkg="${pkg//[[:space:]]/}"
+    [[ -n "$src" ]] && out="srcversion $src"
+    if [[ -n "$pkg" ]]; then
+        [[ -n "$out" ]] && out="$out, "
+        out="${out}package $pkg"
+    fi
+    printf '%s' "$out"
+}
+
 #
 # After an apt kernel upgrade the DKMS module must be rebuilt for the new
 # kernel. If that did not happen automatically (or the module was unbound),

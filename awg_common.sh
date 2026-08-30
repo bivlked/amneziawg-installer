@@ -503,6 +503,38 @@ awg_module_version() {
     printf '%s' "$ver"
 }
 
+# awg_module_build_id : признак СБОРКИ загруженного модуля, одной строкой.
+# Пустая строка, если ничего опознать не удалось.
+#
+# 🔴 Зачем это отдельно от awg_module_version. Строка версии модуля сборку НЕ
+# различает: замер на стенде 30 aug 2026 дал `3.1.20260812` И для сборки PPA от
+# 14 aug (`4680320`), И для сборки от 28 aug (`3c38e16`) - MODULE_VERSION статичен
+# в исходниках и меняется реже, чем сам код. Различают только srcversion (хеш
+# исходников, который считает сборщик модуля) и версия пакета.
+# Без этого признака диагностический отчёт не отвечает на вопрос «какая у тебя
+# сборка», а именно он нужен, когда расходятся модуль ядра и userspace-клиент.
+#
+# AWG_MODULE_SRCVERSION_PATH переопределяется только тестами: подменить /sys
+# иначе нельзя, а проверить надо именно чтение загруженного модуля.
+awg_module_build_id() {
+    local src="" pkg="" out=""
+    local sysfile="${AWG_MODULE_SRCVERSION_PATH:-/sys/module/amneziawg/srcversion}"
+    if [[ -r "$sysfile" ]]; then
+        # `|| true` по той же причине, что и в awg_module_version: на файле без
+        # завершающего перевода строки read возвращает 1, УЖЕ присвоив прочитанное.
+        IFS= read -r src 2>/dev/null < "$sysfile" || true
+        src="${src//[[:space:]]/}"
+    fi
+    pkg=$(dpkg-query -W -f='${Version}' amneziawg-dkms 2>/dev/null || true)
+    pkg="${pkg//[[:space:]]/}"
+    [[ -n "$src" ]] && out="srcversion $src"
+    if [[ -n "$pkg" ]]; then
+        [[ -n "$out" ]] && out="$out, "
+        out="${out}пакет $pkg"
+    fi
+    printf '%s' "$out"
+}
+
 #
 # После apt upgrade ядра DKMS-модуль должен пересобраться для нового kernel.
 # Если это не произошло (или модуль был отвязан), 4 функции ниже выполняют
