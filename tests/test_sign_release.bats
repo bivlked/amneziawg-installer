@@ -1,0 +1,67 @@
+#!/usr/bin/env bats
+# scripts/sign-release.sh - the refusal paths.
+#
+# The happy path cannot be tested here: it needs the private key and its
+# password. What can and must be tested is that every way of NOT signing is
+# loud, because the failure this script was written after was silent. A manual
+# signing loop was run where stdin was not a terminal; `read -rsp` failed
+# immediately, the "&&" chain skipped the signing, nothing was written, no
+# error appeared, and the next command in the line ran as if all was well.
+#
+# Test titles are ASCII on purpose: bats on Git Bash silently refuses to
+# execute a test whose title contains Cyrillic (MyAI-ln09).
+
+setup() {
+    ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+    SCRIPT="$ROOT/scripts/sign-release.sh"
+    FAKE_KEY="$BATS_TEST_TMPDIR/key"
+    printf 'untrusted comment: fake\n' > "$FAKE_KEY"
+}
+
+@test "sign-release: no tag at all is a usage error" {
+    run bash "$SCRIPT"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage:"* ]]
+}
+
+@test "sign-release: a tag without the leading v is rejected before the password" {
+    MINISIGN_KEY="$FAKE_KEY" run bash "$SCRIPT" 5.29.0
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"не похож"* ]]
+    # Nothing about a password: the format is checked first, so a mistyped tag
+    # costs one line rather than six signatures and a failed verification.
+    [[ "$output" != *"Пароль"* ]]
+}
+
+@test "sign-release: a pre-release tag is accepted by the format check" {
+    # It must get past the format gate and stop at the terminal check instead.
+    MINISIGN_KEY="$FAKE_KEY" run bash "$SCRIPT" v5.29.0-rc1 < /dev/null
+    [ "$status" -eq 2 ]
+    [[ "$output" != *"не похож"* ]]
+    [[ "$output" == *"нет терминала"* ]]
+}
+
+@test "sign-release: a missing key is named, not discovered later" {
+    MINISIGN_KEY="$BATS_TEST_TMPDIR/nope" run bash "$SCRIPT" v5.29.0
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"приватный ключ не найден"* ]]
+}
+
+@test "sign-release: no terminal for the password is a loud refusal" {
+    # The regression this file exists for. Without a terminal the script must
+    # refuse and say why; it must never proceed quietly having signed nothing.
+    MINISIGN_KEY="$FAKE_KEY" run bash "$SCRIPT" v5.29.0 < /dev/null
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"нет терминала"* ]]
+    [[ "$output" != *"подписано"* ]]
+}
+
+@test "sign-release: an empty file list stops the run instead of reporting success" {
+    tmp="$BATS_TEST_TMPDIR/repo"
+    mkdir -p "$tmp/scripts"
+    cp "$SCRIPT" "$tmp/scripts/"
+    printf '#!/usr/bin/env bash\n' > "$tmp/scripts/signed-file-list.sh"
+    MINISIGN_KEY="$FAKE_KEY" run bash "$tmp/scripts/sign-release.sh" v5.29.0
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"список подписываемых файлов пуст"* ]]
+}

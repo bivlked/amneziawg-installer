@@ -211,15 +211,20 @@ key never reaches Actions: you sign on your own machine and commit the results
 under `signing/` as part of the release commit, before pushing the tag.
 
 ```bash
-TAG=vX.Y.Z
-KEY=~/.minisign/amneziawg-installer.key
-mkdir -p signing
-for f in $(bash scripts/signed-file-list.sh); do
-  minisign -Sm "$f" -s "$KEY" -x "signing/$f.minisig" \
-           -t "amneziawg-installer $TAG $f"
-done
-bash scripts/verify-signatures.sh "$TAG"
+bash scripts/sign-release.sh vX.Y.Z
 ```
+
+Run it **from a terminal window**. The key is password protected, and the
+script reads the password once and hands it to all six signings; without a
+terminal it refuses and says so. That refusal exists because the manual loop
+did not have it: run where stdin was not a terminal, its `read` failed
+instantly, the `&&` chain skipped the signing, nothing was written and nothing
+was reported. The script also validates the tag format before asking for the
+password, and finishes by running `verify-signatures.sh` itself, so "signed 6"
+never stands on `minisign` merely not crashing.
+
+The private key path can be overridden with `MINISIGN_KEY`; the default is
+`~/.minisign/amneziawg-installer.key`. The key never leaves the machine.
 
 Sign **after** the version headers and the SHA pins are final: signing earlier
 signs bytes that then change, and the tag fails verification. The trusted
