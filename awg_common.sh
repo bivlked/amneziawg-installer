@@ -525,12 +525,19 @@ awg_module_build_id() {
         IFS= read -r src 2>/dev/null < "$sysfile" || true
         src="${src//[[:space:]]/}"
     fi
-    pkg=$(dpkg-query -W -f='${Version}' amneziawg-dkms 2>/dev/null || true)
+    # Только ПЕРВАЯ строка: при нескольких совпадениях склейка дала бы
+    # правдоподобную, но несуществующую версию, а это хуже отказа.
+    pkg=$(dpkg-query -W -f='${Version}\n' amneziawg-dkms 2>/dev/null | head -n 1 || true)
     pkg="${pkg//[[:space:]]/}"
-    [[ -n "$src" ]] && out="srcversion $src"
+    # 🔴 Две части НАЗВАНЫ ПО-РАЗНОМУ намеренно: это разные вещи, и они
+    # расходятся штатно. Пакет можно обновить, а модуль в памяти останется
+    # прежним до перезагрузки или modprobe - ровно это наблюдалось на стенде
+    # 30 aug 2026. Слить их в один «признак сборки» значило бы выдать версию
+    # пакета за версию загруженного кода.
+    [[ -n "$src" ]] && out="srcversion загруженного $src"
     if [[ -n "$pkg" ]]; then
-        [[ -n "$out" ]] && out="$out, "
-        out="${out}пакет $pkg"
+        [[ -n "$out" ]] && out="$out; "
+        out="${out}установлен пакет $pkg"
     fi
     printf '%s' "$out"
 }

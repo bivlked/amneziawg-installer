@@ -533,12 +533,19 @@ awg_module_build_id() {
         IFS= read -r src 2>/dev/null < "$sysfile" || true
         src="${src//[[:space:]]/}"
     fi
-    pkg=$(dpkg-query -W -f='${Version}' amneziawg-dkms 2>/dev/null || true)
+    # FIRST line only: on several matches concatenation would produce a
+    # plausible but non-existent version, and that is worse than no answer.
+    pkg=$(dpkg-query -W -f='${Version}\n' amneziawg-dkms 2>/dev/null | head -n 1 || true)
     pkg="${pkg//[[:space:]]/}"
-    [[ -n "$src" ]] && out="srcversion $src"
+    # 🔴 The two parts are LABELLED DIFFERENTLY on purpose: they are different
+    # things and they diverge routinely. The package can be upgraded while the
+    # module in memory stays the old one until a reboot or modprobe - exactly
+    # what was observed on the bench on 30 aug 2026. Merging them into one
+    # "build id" would pass the package version off as the loaded code.
+    [[ -n "$src" ]] && out="loaded srcversion $src"
     if [[ -n "$pkg" ]]; then
-        [[ -n "$out" ]] && out="$out, "
-        out="${out}package $pkg"
+        [[ -n "$out" ]] && out="$out; "
+        out="${out}installed package $pkg"
     fi
     printf '%s' "$out"
 }
