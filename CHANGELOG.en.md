@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- A dated facts block at the top of `README.md` and `README.en.md`: installer version, release date, recommended and end-of-life systems, architectures, where the kernel module comes from, and the profile of the generated configs. The block is built by `scripts/update-facts-block.sh` from repository data (`SCRIPT_VERSION`, the CHANGELOG heading, `docs/support-matrix.json`, the `arm-build.yml` matrix) instead of being written by hand, so it cannot drift away from its sources or between the two languages.
+- A dated facts block at the top of `README.md` and `README.en.md`: installer version, release date, recommended and end-of-life systems, architectures, where the kernel module comes from, and the profile of the generated configs. The block is built by `scripts/update-facts-block.sh` from repository data (`SCRIPT_VERSION`, the CHANGELOG heading, `docs/support-matrix.json`, the `arm-build.yml` matrix) instead of being written by hand, so it cannot drift away from its sources, and both language versions are rendered from the same values.
 - `scripts/check-docs-consistency.sh`: a check that the block stored in the READMEs matches what the generator produces right now. Runs in CI and in preflight.
 - `tests/test_facts_block.bats`: mutation tests for the guard, including the case where a third-line parameter reaches a config template while the block still promises the 2.0 profile.
 

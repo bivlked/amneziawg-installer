@@ -39,7 +39,7 @@
 |---|---|
 | **For a new server** | Ubuntu 24.04, Debian 13 |
 | **Also supported** | Ubuntu 26.04 |
-| **Not for new servers** | Ubuntu 25.10, Debian 12 - past vendor regular support |
+| **Not for new servers** | Ubuntu 25.10, Debian 12 - no longer under standard vendor support |
 | **Architectures** | x86_64, ARM64, ARMv7 |
 | **Kernel module** | DKMS from the Amnezia PPA; prebuilt packages for some ARM targets |
 | **Config profile** | AmneziaWG 2.0 (the kernel module may be 3.x - generated configs stay 2.0) |

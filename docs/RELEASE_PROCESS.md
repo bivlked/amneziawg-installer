@@ -26,7 +26,23 @@ On every release, regardless of which files changed content:
    as long as the version matches. (The version-triple check also ties
    `SCRIPT_VERSION` to the README badge and the top changelog heading, so this
    number is the release tag.)
-2. Bumping the `# Version:` / `# Версия:` header in `awg_common*.sh` and
+2. Regenerate the dated facts block in both READMEs. The block carries the
+   installer version and the release date, so bumping `SCRIPT_VERSION` and
+   adding the changelog heading changes what it must say:
+
+   ```bash
+   bash scripts/update-facts-block.sh --write   # rewrite the block
+   bash scripts/update-facts-block.sh --check   # confirm it matches its sources
+   ```
+
+   Run it AFTER step 1, because it reads `SCRIPT_VERSION` and the `## [X.Y.Z]`
+   heading. `check-docs-consistency.sh` (preflight step 9, and the docs-check
+   workflow) fails while the block disagrees with its sources, so a forgotten
+   regeneration blocks the release rather than shipping a stale date. The write
+   mode is deliberately explicit: the script refuses to run with no argument, so
+   a dropped flag can never silently rewrite the tree.
+
+3. Bumping the `# Version:` / `# Версия:` header in `awg_common*.sh` and
    `manage_amneziawg*.sh` changes their bytes, so their SHA256 changes on every
    release even when their logic did not. Recompute the four pins
    (`COMMON_SCRIPT_SHA256` / `MANAGE_SCRIPT_SHA256`, RU + EN) with:
@@ -54,7 +70,7 @@ On every release, regardless of which files changed content:
    moved under `git tag -f`, will silently compare against the working tree
    instead. They announce which of the two comparisons they made; read that
    line rather than only the exit code.
-3. Bump the pinned raw-URL tags in `README*.md`, `ADVANCED*.md` and
+4. Bump the pinned raw-URL tags in `README*.md`, `ADVANCED*.md` and
    `INSTALL_VPS*.md` from the previous `vX.Y.Z` to the new one. Users copy the
    install and update one-liners verbatim, so a stale tag silently installs the
    previous release. `check-docs-consistency.sh` (preflight step 9) enforces
