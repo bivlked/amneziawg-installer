@@ -660,6 +660,24 @@ else
     _bad "управляющие байты в текстовых файлах"
 fi
 
+# --- 15. Блок "факты на дату" в README собран из источников ---
+# Блок с датой обещает читателю, что цифры свежие, поэтому он не пишется руками,
+# а собирается scripts/update-facts-block.sh из SCRIPT_VERSION, заголовка
+# CHANGELOG, docs/support-matrix.json и arm-build.yml. Здесь проверяется, что
+# записанное в README совпадает с тем, что генератор даёт прямо сейчас.
+#
+# Проверка нужна именно как проверка, а не как "просто запускайте генератор":
+# забыть запустить его при смене матрицы легко, а результат забывчивости -
+# датированная неправда на первом экране обоих README.
+if [[ ! -f scripts/update-facts-block.sh ]]; then
+    _bad "нет scripts/update-facts-block.sh (генератор блока фактов)"
+elif facts_out="$(bash scripts/update-facts-block.sh --check 2>&1)"; then
+    _ok "блок фактов в README собран из источников"
+else
+    printf '%s\n' "$facts_out" >&2
+    _bad "блок фактов в README разошёлся с источниками (bash scripts/update-facts-block.sh)"
+fi
+
 echo ""
 echo "=== docs-consistency summary: $PASS passed, $FAIL failed ==="
 for r in "${RESULTS[@]}"; do echo "  $r"; done

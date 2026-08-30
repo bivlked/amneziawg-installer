@@ -18,6 +18,8 @@ on:
       # PR, ломающий проверку, не получит сигнала на review (preflight поймает
       # позже, но раньше = лучше).
       - 'scripts/check-docs-consistency.sh'
+      # Генератор блока фактов: его правка меняет то, что checker сверяет.
+      - 'scripts/update-facts-block.sh'
   pull_request:
     paths:
       - '**/*.md'
@@ -27,6 +29,8 @@ on:
       - 'manage_amneziawg*.sh'
       - 'awg_common*.sh'
       - 'scripts/check-docs-consistency.sh'
+      # Генератор блока фактов: его правка меняет то, что checker сверяет.
+      - 'scripts/update-facts-block.sh'
 
 permissions:
   contents: read
