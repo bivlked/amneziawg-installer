@@ -48,6 +48,77 @@ _sha256() {
     sha256sum "$1" | cut -d' ' -f1
 }
 
+# Откуда установщик РЕАЛЬНО скачает помощника: он берёт его с
+# raw.githubusercontent.com/<repo>/${AWG_BRANCH}/<helper>, где AWG_BRANCH по
+# умолчанию равен v$SCRIPT_VERSION. Значит эталон для пина - байты помощника
+# НА ТЕГЕ, и только пока тега нет (релиз готовится, тег пушится последним)
+# эталоном служит рабочее дерево.
+#
+# ВАЖНО, ЧЕГО ЭТА ЛОГИКА НЕ УМЕЕТ: локальный набор тегов принимается за истину.
+# Чекаут, в котором тег v$SCRIPT_VERSION просто не выкачан (shallow, --no-tags,
+# форк, сделанный до тега) либо устарел после git tag -f, неотличим здесь от
+# честного "релиз готовится". Поэтому переход на дерево ОБЪЯВЛЯЕТСЯ вслух, а
+# перед выпуском полагается git fetch --tags --force (docs/RELEASE_PROCESS.md).
+_tag_of_installer() {
+    local ver
+    ver="$(grep -oP '^SCRIPT_VERSION="\K[0-9.]+' "$REPO_ROOT/$1" | head -n1)"
+    [[ -n "$ver" ]] || return 1
+    printf 'v%s' "$ver"
+}
+
+# sha содержимого пути НА ТЕГЕ. Через временный файл, а не через $(...):
+# подстановка срезала бы завершающие переводы строк и изменила хеш, а
+# конвейер "git show | sha256sum" на пустом выводе честно посчитал бы хеш
+# ПУСТОГО ВВОДА - 64 валидных hex-символа, которые прошли бы любую проверку
+# длины и выглядели бы как настоящий эталон.
+_sha256_at_tag() {
+    local tag="$1" path="$2" tmp out
+    tmp="$(mktemp)" || return 1
+    if ! git -C "$REPO_ROOT" show "refs/tags/$tag:$path" > "$tmp" 2>/dev/null; then
+        rm -f "$tmp"
+        return 1
+    fi
+    out="$(_sha256 "$tmp")"
+    rm -f "$tmp"
+    [[ "$out" =~ ^[0-9a-f]{64}$ ]] || return 1
+    printf '%s' "$out"
+}
+
+# Печатает "<sha> <источник>", где источник - "tag vX.Y.Z" либо "worktree".
+# При невозможности определить не печатает В STDOUT ничего и возвращает !=0.
+# Вызывающий ОБЯЗАН проверять этот код возврата отдельным присваиванием:
+# "read ... <<< $(...)" его не увидит, потому что here-string всегда даёт
+# перевод строки и read возвращает 0 даже на пустом выводе.
+_expected_sha() {
+    local installer="$1" helper="$2" tag sha
+    if ! git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+        echo "ОШИБКА: не git-чекаут, эталон для пина определить нечем" >&2
+        return 1
+    fi
+    if [[ -z "$(git -C "$REPO_ROOT" tag --list | head -n1)" ]]; then
+        echo "ОШИБКА: в чекауте нет ни одного тега (склонируйте с тегами)" >&2
+        return 1
+    fi
+    tag="$(_tag_of_installer "$installer")" || {
+        echo "ОШИБКА: не удалось прочитать SCRIPT_VERSION из $installer" >&2
+        return 1
+    }
+    if git -C "$REPO_ROOT" rev-parse -q --verify "refs/tags/$tag" >/dev/null 2>&1; then
+        if ! sha="$(_sha256_at_tag "$tag" "$helper")"; then
+            # Причину не называем: сюда приводит и отсутствие файла на теге, и
+            # повреждённый объект, и недокачанный shallow-чекаут.
+            echo "ОШИБКА: не удалось прочитать $tag:$helper" >&2
+            return 1
+        fi
+        printf '%s tag %s' "$sha" "$tag"
+        return 0
+    fi
+    echo "ЗАМЕЧАНИЕ: тега $tag в этом чекауте нет - считаю, что релиз готовится," >&2
+    echo "           и сверяю с рабочим деревом. Если тег уже опубликован," >&2
+    echo "           выполните git fetch --tags --force и повторите." >&2
+    printf '%s worktree' "$(_sha256 "$REPO_ROOT/$helper")"
+}
+
 # Прочитать текущий пин из установщика (первое совпадение).
 _read_pin() {
     local installer="$1" pin_name="$2"
@@ -72,6 +143,8 @@ _write_pin() {
 
 rc=0
 mismatched=()
+actual_src=""
+expected_line=""
 
 for entry in "${PIN_MAP[@]}"; do
     IFS='|' read -r installer pin_name helper <<< "$entry"
@@ -87,7 +160,11 @@ for entry in "${PIN_MAP[@]}"; do
         continue
     fi
 
-    actual="$(_sha256 "$REPO_ROOT/$helper")"
+    if ! expected_line="$(_expected_sha "$installer" "$helper")"; then
+        rc=1
+        continue
+    fi
+    read -r actual actual_src <<< "$expected_line"
     pinned="$(_read_pin "$installer" "$pin_name")"
 
     if [[ -z "$actual" || ${#actual} -ne 64 ]]; then
@@ -102,17 +179,21 @@ for entry in "${PIN_MAP[@]}"; do
     fi
 
     if [[ "$actual" == "$pinned" ]]; then
-        echo "OK:    $installer $pin_name = $actual ($helper)"
+        echo "OK:    $installer $pin_name = $actual ($helper, $actual_src)"
         continue
     fi
 
     if [[ "$VERIFY_ONLY" -eq 1 ]]; then
         echo "MISMATCH: $installer $pin_name" >&2
         echo "          pinned: $pinned" >&2
-        echo "          actual: $actual ($helper)" >&2
+        echo "          ожидалось: $actual ($helper, источник: $actual_src)" >&2
         mismatched+=("$installer:$pin_name")
         rc=1
     else
+        # Записывается ЭТАЛОН, а не хеш дерева: при существующем теге это
+        # байты с тега, то есть ровно то, что установщик примет. Прежняя
+        # редакция здесь отказывалась писать и тем блокировала единственную
+        # верную починку разъехавшегося пина.
         if _write_pin "$installer" "$pin_name" "$actual"; then
             echo "UPDATE: $installer $pin_name -> $actual ($helper)"
         else

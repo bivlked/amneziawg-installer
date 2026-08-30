@@ -3,9 +3,9 @@ name: Tests
 on:
   push:
     branches: [main]
-    paths: ['*.sh', 'scripts/**', 'tests/**']
+    paths: ['*.sh', 'scripts/**', 'tests/**', '.github/workflows/test.yml']
   pull_request:
-    paths: ['*.sh', 'scripts/**', 'tests/**']
+    paths: ['*.sh', 'scripts/**', 'tests/**', '.github/workflows/test.yml']
 
 permissions:
   contents: read
@@ -20,6 +20,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The SHA pin lockstep test compares each pin with the helper's
+          # bytes at the tag the installer downloads from, so the tags and
+          # their objects have to be here. On the branch and pull_request
+          # events above the default checkout fetches neither (fetch-depth: 1,
+          # fetch-tags: false), and the test then fails loudly rather than
+          # degrade to a comparison that would mean nothing.
+          fetch-depth: 0
 
       - name: Install bats
         run: sudo apt-get update && sudo apt-get install -y bats

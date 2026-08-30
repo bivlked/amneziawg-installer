@@ -39,6 +39,21 @@ On every release, regardless of which files changed content:
    A mismatched pin means a fresh install fails the over-the-network integrity
    check, so the pins must be recomputed after the helper scripts are final and
    before the tag is pushed.
+
+   The pin's source of truth is the helper's bytes at the tag the installer
+   downloads from (`AWG_BRANCH` defaults to `v$SCRIPT_VERSION`), not the bytes
+   in your working tree. Both `update-sha-pins.sh` and the lockstep test follow
+   that rule: while `vX.Y.Z` does not exist they compare against the tree, which
+   is why the pins are recomputed after the version bump and before the tag.
+   After the tag exists they compare against the tag, so a helper edited on main
+   without a version bump does not turn the gate red - the published installer
+   is still correct.
+
+   Run `git fetch --tags --force` before the preflight. Both tools read the
+   local tag set, so a checkout that never fetched `vX.Y.Z`, or one whose tag
+   moved under `git tag -f`, will silently compare against the working tree
+   instead. They announce which of the two comparisons they made; read that
+   line rather than only the exit code.
 3. Bump the pinned raw-URL tags in `README*.md`, `ADVANCED*.md` and
    `INSTALL_VPS*.md` from the previous `vX.Y.Z` to the new one. Users copy the
    install and update one-liners verbatim, so a stale tag silently installs the

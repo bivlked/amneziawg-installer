@@ -58,6 +58,12 @@ Before submitting a PR, ensure:
    ```bash
    bats tests/
    ```
+   > Clone with tags. `tests/test_v515_sha_pins_lockstep.bats` compares the
+   > installers' SHA pins with the helper bytes at the release tag, so a
+   > shallow clone (`git clone --depth 1`, which carries no tags) fails those
+   > four tests for an environment reason rather than a real one. A plain
+   > `git clone` is enough; `git fetch --tags` repairs an existing shallow one.
+
    If you add a new function, add a corresponding test file (see `tests/test_*.bats` for the existing pattern). `test_helper.bash` provides common fixtures. Tests must pass on Linux with `flock` available; cross-platform edge cases use the `require_flock` skip helper where needed.
 
 4. **VPS testing** (for script changes): test on a clean server (Ubuntu 24.04 LTS or Debian 12/13 minimal). The full test matrix includes:
