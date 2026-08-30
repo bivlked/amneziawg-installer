@@ -36,10 +36,18 @@ fi
 # Версия интерполируется в awk-программу (_section): нестандартный тег вида
 # 'v1.0.0[' дал бы битый regex с криптичной ошибкой awk. Валидируем формат
 # заранее и падаем с понятным сообщением.
-if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "::error::invalid version format: '${version}' (expected X.Y.Z)" >&2
+#
+# Суффикс предвыпуска допускается, потому что RELEASE_PROCESS.md предписывает
+# прогонять пайплайн на черновом теге vX.Y.Z-rc1. release.yml передаёт сюда
+# имя тега как есть, и без этой ветки такой прогон падал бы на разборе версии,
+# то есть репетиция не доходила бы до того, ради чего затевается: черновик,
+# заливка ассетов, счётчик, публикация. Заметки берутся из раздела БАЗОВОЙ
+# версии - у предвыпуска своего раздела в CHANGELOG нет и быть не должно.
+if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+    echo "::error::invalid version format: '${version}' (expected X.Y.Z or X.Y.Z-suffix)" >&2
     exit 2
 fi
+version="${version%%-*}"
 
 # Allow overriding the changelog paths for testing.
 RU_CHANGELOG="${RU_CHANGELOG:-$REPO_ROOT/CHANGELOG.md}"

@@ -12,6 +12,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.29.0] - 2026-08-30
+
+**v5.29.0** - releases are signed and published atomically, the list of supported systems became machine readable, and the SHA pin gate now checks what the installer actually downloads.
+
+### Added
+
+- **Release signing.** The six executable scripts are signed with minisign on the maintainer's machine; the private key never reaches GitHub Actions. Every release carries six `.minisig` files and `KEYS.txt` with the public key, and the workflow refuses to publish if any signature fails to verify. A downloaded file can now be checked independently: `minisign -Vm install_amneziawg.sh -P <key from KEYS.txt>`. The trusted comment names both the tag and the file, so a signature from a previous release does not fit a new one and one file cannot be swapped for another inside the same release. Design and threat model: `docs/SIGNING_DESIGN.md`
+- **Releases are assembled atomically.** A release used to be created first and filled with files afterwards, and in between `releases/latest/download/<file>` answered 404 - the very address the documentation tells people to use. Now the release is created as a draft, receives every asset, has its asset count checked against the expected number, and only then becomes visible. An interrupted run can be repeated with the same tag: a draft means "resume", an already published release means "do nothing". Title and notes are rewritten on a repeat, otherwise a corrected changelog would never reach the release
+- **`docs/support-matrix.json`, a machine readable list of supported systems.** The same list of operating systems lived in thirty nine files and drifted quietly, with nothing to arbitrate between the copies. It now has a single source, from which the documentation checker derives the set of systems. A separate check recomputes each system's support state from the vendor dates, which catches a class that comparing documents with each other cannot catch at all: the external fact changed while the documents still agree with one another. That is exactly how the end of Debian 12 regular support went unnoticed
+- **A commit hygiene check in CI.** Co-authorship trailers and mentions of outside tooling in commit messages are now caught by a workflow of their own, not only by the local preflight
+
+### Changed
+
+- **Advice on choosing an operating system distinguishes three states rather than two.** The installer and the documentation used to list five systems as equals. They now say it plainly: for a new server pick Ubuntu 24.04 LTS or Debian 13, and Ubuntu 26.04 will do as well; Ubuntu 25.10 and Debian 12 install and work, but their regular support has ended and they are not a good pick for a new server. The wording is identical in Russian and English - until now the Russian guide warned about Ubuntu 25.10 while the English one offered it as an ordinary choice
+- **The AmneziaWG versus WireGuard comparison table no longer makes undated absolute claims.** Two cells asserted what the project cannot back up
+- **Recovery diagnostics no longer suggest installing `systemd-resolved` on a hunch.** On Debian with a static resolver or with `resolvconf` that package may never have been installed, yet the recovery command named it unconditionally
+
+### Fixed
+
+- **The SHA pin gate compares each pin against what the installer really downloads.** It used to compare a pin with the helper file in the working tree, while the installer fetches the helper from the tag of its own version. That was wrong in both directions: red on `main` after a helper was touched without a version bump, although every published installer was correct, and green in the one genuinely dangerous state, where the pins had been recomputed from the tree while the tag already existed - an installer shipped with such pins would refuse the download it is supposed to accept. `scripts/update-sha-pins.sh` now applies the same criterion, since two gates answering differently about one state would make the preflight green and red at once. Both tools state out loud which comparison they made
+- **Private issue tracker references were removed from the public tree.** One hundred and fourteen mentions that meant nothing to an outside reader
+
 ## [5.28.1] - 2026-08-27
 
 **v5.28.1** - the step 1 system upgrade can no longer remove an installed package.
@@ -1790,7 +1812,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.28.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.29.0...HEAD
+[5.29.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.28.1...v5.29.0
 [5.28.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.28.0...v5.28.1
 [5.28.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.27.1...v5.28.0
 [5.27.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.27.0...v5.27.1

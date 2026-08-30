@@ -50,7 +50,7 @@ sudo ufw allow ВАШ_ПОРТ/tcp
 Дальше сама установка:
 
 ```bash
-wget -O install_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.1/install_amneziawg.sh
+wget -O install_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/install_amneziawg.sh
 chmod +x install_amneziawg.sh
 sudo bash ./install_amneziawg.sh
 ```
@@ -151,7 +151,7 @@ sudo bash /root/awg/manage_amneziawg.sh add phone --json --yes
 Обновить установщик на сервере, где уже работает поддерживаемая версия:
 
 ```bash
-wget -O install_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.28.1/install_amneziawg.sh
+wget -O install_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/install_amneziawg.sh
 sudo bash ./install_amneziawg.sh --force
 ```
 

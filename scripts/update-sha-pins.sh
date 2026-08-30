@@ -113,9 +113,6 @@ _expected_sha() {
         printf '%s tag %s' "$sha" "$tag"
         return 0
     fi
-    echo "ЗАМЕЧАНИЕ: тега $tag в этом чекауте нет - считаю, что релиз готовится," >&2
-    echo "           и сверяю с рабочим деревом. Если тег уже опубликован," >&2
-    echo "           выполните git fetch --tags --force и повторите." >&2
     printf '%s worktree' "$(_sha256 "$REPO_ROOT/$helper")"
 }
 
@@ -143,6 +140,7 @@ _write_pin() {
 
 rc=0
 mismatched=()
+worktree_notice_shown=0
 actual_src=""
 expected_line=""
 
@@ -165,6 +163,16 @@ for entry in "${PIN_MAP[@]}"; do
         continue
     fi
     read -r actual actual_src <<< "$expected_line"
+
+    # Замечание печатает вызывающий, а не _expected_sha: та исполняется внутри
+    # $( ), то есть в подоболочке, и любой флаг "уже показано" там умирает
+    # вместе с ней - предупреждение печаталось бы на каждый из четырёх пинов.
+    if [[ "$actual_src" == "worktree" && "$worktree_notice_shown" -eq 0 ]]; then
+        worktree_notice_shown=1
+        echo "ЗАМЕЧАНИЕ: тега $(_tag_of_installer "$installer") в этом чекауте нет:" >&2
+        echo "           считаю, что релиз готовится, и сверяю с рабочим деревом." >&2
+        echo "           Если тег уже опубликован - git fetch --tags --force и повторить." >&2
+    fi
     pinned="$(_read_pin "$installer" "$pin_name")"
 
     if [[ -z "$actual" || ${#actual} -ne 64 ]]; then

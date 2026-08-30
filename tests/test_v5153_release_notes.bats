@@ -114,3 +114,30 @@ EOF
     run bash "$SCRIPT"
     [ "$status" -eq 2 ]
 }
+
+# The release process rehearses the pipeline on a throwaway pre-release tag
+# (vX.Y.Z-rc1). release.yml passes the tag name through verbatim, so a version
+# parser that rejects the suffix would kill the rehearsal at the notes step,
+# before it reached the draft, the upload, the asset count and the publish -
+# the whole point of rehearsing. The pre-release takes the base version's
+# section: a pre-release has no changelog section of its own, and should not.
+
+@test "T9: a pre-release suffix takes the base version section" {
+    run bash "$SCRIPT" 5.15.3-rc1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"5.15.3"* ]]
+    [[ "$output" == *"РУ-пункт про багфикс"* ]]
+}
+
+@test "T9: a pre-release suffix yields the base version title" {
+    run bash "$SCRIPT" --title 5.15.3-rc1
+    [ "$status" -eq 0 ]
+    base=$(bash "$SCRIPT" --title 5.15.3)
+    [ "$output" = "$base" ]
+}
+
+@test "T9: a malformed version is still rejected" {
+    run bash "$SCRIPT" '5.15.3['
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"invalid version format"* ]]
+}
