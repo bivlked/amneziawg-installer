@@ -228,9 +228,19 @@ SCRIPTS = ('awg_common.sh', 'awg_common_en.sh',
            'install_amneziawg.sh', 'install_amneziawg_en.sh',
            'manage_amneziawg.sh', 'manage_amneziawg_en.sh')
 
+# 🔴 Сторож обязан читать ИСПОЛНЯЕМЫЕ строки, а не любой текст. Комментарий,
+# объясняющий параметр (в том числе комментарий про этот самый сторож), краснил
+# релизный гейт ровно как настоящая запись в конфиг: проба 30 aug показала, что
+# строка `# Раньше было: echo "HeaderProtectionKey = $k"` даёт rc=1. Ложная
+# тревога здесь дороже пропуска - гейт стоит на релизном пути, а сторож, который
+# краснеет на объяснении, приучает себе не верить. Комментарии ГАСЯТСЯ пустой
+# строкой, а не вырезаются: иначе номера строк в отчёте съедут. Форму 1 это не
+# трогает, она и раньше была привязана к началу строки; лечится форма 2.
+COMMENT_RE = re.compile(r'^[ \t]*#.*$', re.M)
+
 hits = []
 for name in SCRIPTS:
-    body = read(name)
+    body = COMMENT_RE.sub('', read(name))
     for m in AWG3_RE.finditer(body):
         hits.append('%s:%d: %s' % (name, body[:m.start()].count('\n') + 1,
                                    m.group(1) or m.group(2)))
