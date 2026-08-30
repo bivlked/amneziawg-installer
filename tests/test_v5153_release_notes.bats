@@ -141,3 +141,41 @@ EOF
     [ "$status" -eq 2 ]
     [[ "$output" == *"invalid version format"* ]]
 }
+
+@test "T9: a heading with no body under it is refused, not published empty" {
+    # The ordinary way this goes wrong: the section is opened during release
+    # prep and the bullets are written later. Checking only for the heading let
+    # that publish a release whose body was the bilingual skeleton and nothing
+    # else, behind a green run.
+    python3 - "$TEST_DIR/ru.md" <<'PY'
+import io, sys
+p = sys.argv[1]
+t = io.open(p, encoding='utf-8', newline='').read()
+i = t.index('## [5.15.3]')
+j = t.index('## [5.15.2]')
+io.open(p, 'w', encoding='utf-8', newline='').write(
+    t[:i] + '## [5.15.3] - 2026-06-03\n\n' + t[j:])
+PY
+    run bash "$SCRIPT" 5.15.3
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"is empty"* ]]
+}
+
+@test "T9: a body line quoting the heading format does not cut the notes" {
+    # CLAUDE.md prescribes the heading format "## [X.Y.Z] - YYYY-MM-DD", so
+    # quoting it inside a changelog entry is natural. Ending the section on any
+    # "## [" dropped everything after such a line, silently and with rc 0.
+    python3 - "$TEST_DIR/en.md" <<'PY'
+import io, sys
+p = sys.argv[1]
+t = io.open(p, encoding='utf-8', newline='').read()
+old = '- EN bugfix bullet.'
+assert t.count(old) == 1
+io.open(p, 'w', encoding='utf-8', newline='').write(
+    t.replace(old, '- Format is `## [X.Y.Z] - YYYY-MM-DD`, quoted here:\n'
+                   '## [X.Y.Z] - YYYY-MM-DD\n' + old, 1))
+PY
+    run bash "$SCRIPT" 5.15.3
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"EN bugfix bullet."* ]]
+}

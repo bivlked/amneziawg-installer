@@ -54,9 +54,16 @@ RU_CHANGELOG="${RU_CHANGELOG:-$REPO_ROOT/CHANGELOG.md}"
 EN_CHANGELOG="${EN_CHANGELOG:-$REPO_ROOT/CHANGELOG.en.md}"
 esc="${version//./\\.}"
 
-# Section body: lines after "## [X.Y.Z] ..." up to the next "## [" heading.
+# Section body: lines after "## [X.Y.Z] ..." up to the next VERSION heading.
+#
+# The terminator requires a digit after the bracket. Ending on any "## [" meant
+# that a body line quoting the heading format - which this project's changelog
+# discussion does naturally, since CLAUDE.md prescribes "## [X.Y.Z] - YYYY-MM-DD"
+# - silently cut the notes there. The run stayed green and the remaining bullets
+# simply vanished, with nothing on stderr. "## [Unreleased]" is not a version
+# heading and never terminated a section anyway, because it sits above them.
 _section() {
-    awk "/^## \\[${esc}\\]/{found=1; next} /^## \\[/{if(found) exit} found" "$1"
+    awk "/^## \\[${esc}\\]/{found=1; next} /^## \\[[0-9]/{if(found) exit} found" "$1"
 }
 
 # Drop leading and trailing blank lines.
@@ -67,6 +74,14 @@ _trim_blanks() {
 for f in "$RU_CHANGELOG" "$EN_CHANGELOG"; do
     if ! grep -q "^## \[${esc}\]" "$f" 2>/dev/null; then
         echo "::error::version ${version} not found in $(basename "$f")" >&2
+        exit 1
+    fi
+    # A heading with nothing under it is the ordinary way this goes wrong: the
+    # section is opened during release prep and the bullets are written later.
+    # Checking only for the heading let that publish a release whose body was
+    # the bilingual skeleton and nothing else, with a green run behind it.
+    if [[ -z "$(_section "$f" | _trim_blanks)" ]]; then
+        echo "::error::section ${version} in $(basename "$f") is empty" >&2
         exit 1
     fi
 done
