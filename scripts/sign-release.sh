@@ -143,13 +143,18 @@ while read -r f; do
         failed=$((failed + 1))
         continue
     fi
-    if printf '%s\n' "$PASSWORD" | minisign -Sm "$f" -s "$KEY" \
+    # Диагностика minisign сохраняется и печатается ПРИ ОТКАЗЕ. Отправлять её
+    # в /dev/null безусловно значит превращать "неверный пароль", "нет места"
+    # и "ключ повреждён" в одно безликое "ОШИБКА подписи".
+    if err="$(printf '%s\n' "$PASSWORD" | minisign -Sm "$f" -s "$KEY" \
             -x "signing/${f}.minisig" \
-            -t "amneziawg-installer ${TAG} ${f}" >/dev/null 2>&1; then
+            -t "amneziawg-installer ${TAG} ${f}" 2>&1 >/dev/null)"; then
         echo "  подписан  $f"
         signed=$((signed + 1))
     else
         echo "  ОШИБКА подписи: $f" >&2
+        # Строка "Password:" - это приглашение, а не диагноз; остальное полезно.
+        printf '%s\n' "$err" | grep -v '^Password:' | sed 's/^/      /' >&2
         failed=$((failed + 1))
     fi
 done <<< "$files"
