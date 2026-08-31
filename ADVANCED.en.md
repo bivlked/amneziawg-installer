@@ -937,12 +937,12 @@ To update the management and shared library scripts **without reinstalling the s
 
 ```bash
 # Russian version:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/manage_amneziawg.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/awg_common.sh
+wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg.sh
+wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common.sh
 
 # English version:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/manage_amneziawg_en.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/awg_common_en.sh
+wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg_en.sh
+wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common_en.sh
 
 # Set permissions
 chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh

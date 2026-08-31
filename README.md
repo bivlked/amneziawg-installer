@@ -50,7 +50,7 @@
 ## 🚀 Быстрый старт
 
 ```bash
-wget -O install_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/install_amneziawg.sh
+wget -O install_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/install_amneziawg.sh
 chmod +x install_amneziawg.sh
 sudo bash ./install_amneziawg.sh
 ```
@@ -353,8 +353,8 @@ cat /sys/module/amneziawg/version    # версия загруженного м�
 
 2.  **Скачайте скрипт:**
     ```bash
-    wget -O install_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/install_amneziawg.sh
-    # или: curl -fLo install_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/install_amneziawg.sh
+    wget -O install_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/install_amneziawg.sh
+    # или: curl -fLo install_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/install_amneziawg.sh
     ```
     > На минимальном Debian curl может отсутствовать (wget обычно есть) - используйте `wget`. Сам curl установщик доставит на шаге 1.
 3.  **Сделайте его исполняемым:**
@@ -369,7 +369,7 @@ cat /sys/module/amneziawg/version    # версия загруженного м�
 
     > **English version:** Для вывода на английском используйте `install_amneziawg_en.sh`:
     > ```bash
-    > wget -O install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/install_amneziawg_en.sh
+    > wget -O install_amneziawg_en.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/install_amneziawg_en.sh
     > sudo bash ./install_amneziawg_en.sh
     > ```
     > Английская версия функционально идентична; только сообщения и логи на английском.
@@ -519,11 +519,11 @@ sudo bash /root/awg/manage_amneziawg.sh <команда> [аргументы]
 
 ```bash
 # Установка (русский)
-wget -O install_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/install_amneziawg.sh
+wget -O install_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/install_amneziawg.sh
 sudo bash ./install_amneziawg.sh          # Запуск (+ 2 перезагрузки)
 
 # Установка (English)
-wget -O install_amneziawg_en.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/install_amneziawg_en.sh
+wget -O install_amneziawg_en.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh       # Запуск (+ 2 перезагрузки)
 
 # Управление клиентами
@@ -611,13 +611,13 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
   <b>О:</b> Скачайте новый скрипт установки и замените скрипты управления на сервере:
   <pre>
   # Русская версия:
-  wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/manage_amneziawg.sh
-  wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/awg_common.sh
+  wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg.sh
+  wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common.sh
   chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
   # Английская версия:
-  wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/manage_amneziawg_en.sh
-  wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/awg_common_en.sh
+  wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg_en.sh
+  wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common_en.sh
   chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
   </pre>
   Переустановка сервера не требуется.
