@@ -1,12 +1,21 @@
 name: Commit hygiene
 
-# Runs on pull requests only. preflight-check.sh already scans for these
-# markers, but it runs at TAG time inside release.yml, and by then a bad commit
-# is long since merged: preflight diffs main..HEAD, so anything already in main
-# is invisible to it. That gap let a commit mentioning a code-review bot reach
-# main on 27 aug 2026 through a "docs-only, surely fine" pull request where the
-# author ran only the docs checker. This workflow closes it at the point where
-# the commit can still be amended.
+# Runs on pull requests only. preflight-check.sh runs the same scan, but at TAG
+# time inside release.yml, and by then a bad commit is long since merged:
+# preflight diffs main..HEAD, so anything already in main is invisible to it.
+# That gap let a commit mentioning a review bot reach main on 27 aug 2026
+# through a "docs-only, surely fine" pull request where the author ran only the
+# docs checker. This workflow closes it while the commit can still be amended.
+#
+# Both callers delegate to scripts/check-markers.sh so the list lives in one
+# place. It used to be copied into both, with a comment asking readers to keep
+# the copies in step; they drifted anyway, and the check that would have noticed
+# was the one being copied.
+#
+# The scan covers commit messages AND the lines the branch adds. Messages alone
+# were not enough: on 30 aug 2026 three lines naming internal documents reached
+# the public tree through green pull requests, because nothing here read file
+# content and preflight could no longer see them once merged.
 
 on:
   pull_request:
@@ -29,56 +38,11 @@ jobs:
           # Need both sides of the comparison, and the commits in between.
           fetch-depth: 0
 
-      - name: No AI-tool markers or co-author trailers in the commits
+      - name: No forbidden markers or co-author trailers, in commits or content
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-
-          # Only OUR commits are in scope. dependabot signs its own commits with
-          # a Co-authored-by trailer naming itself; rejecting that would mean
-          # rejecting every dependency bump, which is not what the rule is for.
-          range="${BASE}..${HEAD}"
-          bad=0
-
-          # Collected before the loop rather than piped into it. Read through
-          # `done < <(git rev-list ...)` a failure is invisible to set -e: the
-          # loop body never runs and the step reports the commits clean having
-          # looked at none of them.
-          if ! shas="$(git rev-list "$range")"; then
-            echo "::error::cannot list commits over $range"
-            exit 1
-          fi
-
-          while read -r sha; do
-            [ -n "$sha" ] || continue
-            author="$(git log -1 --format='%ae' "$sha")"
-            case "$author" in
-              *dependabot*|*github-actions*) continue ;;
-            esac
-            msg="$(git log -1 --format='%B' "$sha")"
-            # Keep this list in step with FORBIDDEN_MARKERS in
-            # scripts/preflight-check.sh. They ran different lists once, and a
-            # word missing here but present there passes the pull request and
-            # then fails at tag time - which is the exact gap this workflow was
-            # written to close. The word boundaries in the pattern are
-            # deliberate: two of the words it lists also occur inside ordinary
-            # domain terms, and without boundaries they would fire on those.
-            hit="$(printf '%s' "$msg" \
-              | grep -inE 'co-authored-by|generated with|claude|anthropic|\bcodex\b|chatgpt|openai|gpt-[0-9]|copilot|\bllm\b|myai-[a-z0-9]{4}' || true)"
-            if [ -n "$hit" ]; then
-              echo "::error::commit ${sha:0:7} carries a forbidden marker:"
-              printf '%s\n' "$hit"
-              bad=1
-            fi
-          done <<< "$shas"
-
-          if [ "$bad" -ne 0 ]; then
-            echo "::error::Rewrite the offending commit messages and force-push the branch."
-            exit 1
-          fi
-          echo "Commit messages are clean over $range."
+        run: bash scripts/check-markers.sh "$BASE" "$HEAD"
 
       - name: No newly added em/en-dash in the diff
         env:
