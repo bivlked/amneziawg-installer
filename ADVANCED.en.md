@@ -281,8 +281,8 @@ Since v5.25.0 the management scripts track this and **warn**: they remember the 
 
 None of the 3.0 features appear in generated configs, and that is deliberate:
 
-- **`HeaderProtectionKey`** needs every one of your clients to understand it at the same time. As of this release `amneziawg-android` 3.0.1 is still a prerelease and the newest `amneziawg-windows-client` release is 2.0.2. Turning it on now would cut off some devices without warning.
-- **`ContentPaddingAddition`** waits on an upstream fix: right now the padding breaks keepalive detection and those packets are dropped with `Packet is neither ipv4 nor ipv6` ([issue #186](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/186)).
+- **`HeaderProtectionKey`** needs every one of your clients to understand it at the same time, and that requirement bites harder than it reads: the parameter is two-sided and fails silently on a mismatch - the handshake simply never happens and nothing reports an error. Where the clients stand on 31 August 2026: `amneziawg-windows-client` has a 3.1.0 release (21 August), `amneziawg-android` has a full `v3.1.20260814` release (14 August; the separate 3.0.1 from 24 July stayed a prerelease), and the light client on Google Play has sat on 2.0.1 since 12 June. While some of your devices update from a store, turning the parameter on would cut them off without warning.
+- **`ContentPaddingAddition`** is left out for a historical reason that no longer applies. The padding broke keepalive detection, so an idle tunnel redid its handshake every 15 seconds instead of roughly 147. The defect is analysed in [issue #186](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/186) and was fixed upstream on 5 August 2026 ([PR #208](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/pull/208)); the fix was verified on a test server - the interval went back to 147 seconds.
 - **The timer parameters** are one-sided and safe, but on their own they buy little, so they travel with the next step.
 
 The situation on kernels older than 6.7 is covered separately in <a href="#debian-support-adv">Debian support</a>.
