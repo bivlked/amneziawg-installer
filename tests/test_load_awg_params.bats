@@ -125,7 +125,7 @@ CONF
 }
 
 @test "load_awg_params: split-brain prevention - corrupt server_conf returns 1 even if init has values" {
-    # The exact scenario from the audit Findings.md #1:
+    # The exact scenario from finding #1 of the code audit:
     # init file has GOOD (stale) values, server_conf exists but is missing
     # required H4. Old behavior would silently fall back to init and pretend
     # success - server runs new config, regen would emit clients old values.

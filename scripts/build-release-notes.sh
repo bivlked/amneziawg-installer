@@ -58,7 +58,7 @@ esc="${version//./\\.}"
 #
 # The terminator requires a digit after the bracket. Ending on any "## [" meant
 # that a body line quoting the heading format - which this project's changelog
-# discussion does naturally, since CLAUDE.md prescribes "## [X.Y.Z] - YYYY-MM-DD"
+# discussion does naturally, since the project prescribes "## [X.Y.Z] - YYYY-MM-DD"
 # - silently cut the notes there. The run stayed green and the remaining bullets
 # simply vanished, with nothing on stderr. "## [Unreleased]" is not a version
 # heading and never terminated a section anyway, because it sits above them.

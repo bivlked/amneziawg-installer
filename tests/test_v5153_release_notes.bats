@@ -162,7 +162,7 @@ PY
 }
 
 @test "T9: a body line quoting the heading format does not cut the notes" {
-    # CLAUDE.md prescribes the heading format "## [X.Y.Z] - YYYY-MM-DD", so
+    # The project prescribes the heading format "## [X.Y.Z] - YYYY-MM-DD", so
     # quoting it inside a changelog entry is natural. Ending the section on any
     # "## [" dropped everything after such a line, silently and with rc 0.
     python3 - "$TEST_DIR/en.md" <<'PY'

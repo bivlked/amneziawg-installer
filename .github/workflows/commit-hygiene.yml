@@ -62,8 +62,9 @@ jobs:
             # scripts/preflight-check.sh. They ran different lists once, and a
             # word missing here but present there passes the pull request and
             # then fails at tag time - which is the exact gap this workflow was
-            # written to close. The word boundaries are deliberate: codex and llm
-            # appear inside ordinary domain words.
+            # written to close. The word boundaries in the pattern are
+            # deliberate: two of the words it lists also occur inside ordinary
+            # domain terms, and without boundaries they would fire on those.
             hit="$(printf '%s' "$msg" \
               | grep -inE 'co-authored-by|generated with|claude|anthropic|\bcodex\b|chatgpt|openai|gpt-[0-9]|copilot|\bllm\b|myai-[a-z0-9]{4}' || true)"
             if [ -n "$hit" ]; then
