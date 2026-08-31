@@ -1689,6 +1689,10 @@ release from 27 August 2026 exists, but we have not verified the protocol genera
 behaviour and we name no number. Until that check it stays in the table as "speaks AmneziaWG",
 nothing more.
 
+> ⚠️ For third-party projects the generation comes from their authors' own documentation and
+> release notes: we read their code, but verified none of them by behaviour. A row we did verify
+> is marked as such.
+
 ### Router Clients
 
 | Project | Platform | Description |
