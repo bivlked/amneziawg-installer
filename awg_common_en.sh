@@ -1799,6 +1799,80 @@ awg_warn_interface_disruption() {
 
 # _awg_device_param_names : names of the AWG device parameters (2.0 and 3.0)
 # that live in the [Interface] section and that syncconf does NOT clear.
+# awg_cps_decoded_size <I string> [...] : total DECODED size in bytes.
+#
+# Why. The I1-I5 parameters land in the device attributes that the kernel emits
+# as a single netlink dump message. Once the device attributes fill most of the
+# buffer, the first peer no longer fits, and `wg_get_device_dump` neither
+# advances nor fails: it returns a non-zero length, netlink asks again, and the
+# same message is produced forever. The reader spins and grows; on a router that
+# is enough to take the box down. Written up with the code path in
+# amneziawg-linux-kernel-module#228 (31 aug 2026); the user-visible symptom is
+# #148. The band just above the looping one answers `Unable to access interface:
+# Message too large`, which is BETTER: an error at least stops.
+#
+# 🔴 The DECODED size is counted, not the string length. `<r 1000>` is nine
+# characters and a thousand bytes on the wire; comparing string lengths would
+# miss exactly the case this check exists for.
+#
+# The tag set is the intersection of both implementations, which is also the set
+# the vendor documents: `<b 0xHEX>` literal bytes, `<r N>` random bytes,
+# `<rc N>` random letters, `<rd N>` random digits, `<t>` a timestamp (4 bytes).
+# `<c>` counts as the same 4 bytes: it exists in the kernel module and not in
+# amneziawg-go, so it affects portability rather than size.
+# Unknown tags are ignored: under-counting is safer than inventing a number,
+# because the outcome here is a warning rather than a refusal.
+awg_cps_decoded_size() {
+    local total=0 s tag n hex unknown=0
+    for s in "$@"; do
+        [[ -n "$s" ]] || continue
+        # A space inside the tag is allowed: both `<r 64>` and `<r64>` show up
+        # in third-party recipes, and both implementations accept them.
+        while [[ "$s" =~ \<[[:space:]]*([a-zA-Z]+)[[:space:]]*([^\>]*)\> ]]; do
+            tag="${BASH_REMATCH[1]}"
+            n="${BASH_REMATCH[2]}"
+            n="${n//[[:space:]]/}"
+            case "${tag,,}" in
+                b)
+                    hex="${n#0x}"; hex="${hex#0X}"
+                    # Two hex characters make a byte. An odd tail is not
+                    # counted: implementations reject such a tag anyway.
+                    if [[ "$hex" =~ ^[0-9a-fA-F]+$ && $(( ${#hex} % 2 )) -eq 0 ]]; then
+                        total=$(( total + ${#hex} / 2 ))
+                    else
+                        unknown=1
+                    fi
+                    ;;
+                r|rc|rd)
+                    # 🔴 `10#` is mandatory. Without it bash reads a
+                    # leading-zero number as octal, `<r 08>` breaks the
+                    # arithmetic, the whole function returns EMPTY, and the
+                    # threshold check silently never fires - a silent failure
+                    # exactly where it hurts most. Measured 31 aug 2026.
+                    if [[ "$n" =~ ^[0-9]+$ ]]; then
+                        total=$(( total + 10#$n ))
+                    else
+                        unknown=1
+                    fi
+                    ;;
+                t|c)
+                    total=$(( total + 4 ))
+                    ;;
+                *)
+                    unknown=1
+                    ;;
+            esac
+            s="${s#*>}"
+        done
+    done
+    printf '%s' "$total"
+    # A code of 2 means "the sum is an under-count, something was not parsed".
+    # The caller must say so out loud: an under-count is indistinguishable from
+    # a genuinely small size, and that is precisely a false "checked, fine".
+    [[ "$unknown" -eq 0 ]] || return 2
+    return 0
+}
+
 _awg_device_param_names() {
     printf '%s\n' Jc Jmin Jmax S1 S2 S3 S4 H1 H2 H3 H4 I1 I2 I3 I4 I5 \
         ContentPaddingAddition HeaderProtectionKey MaxHandshakeAttempts \

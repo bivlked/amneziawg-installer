@@ -1388,6 +1388,59 @@ _diag_line() {
 }
 
 # Main: runs health-checks + optional carrier comparison
+# _diag_cps_guard : CPS size from the CONFIG, before any `awg show`.
+#
+# A function rather than a slab inside diagnose_server, for two reasons. First,
+# it can then be exercised by a test: sourcing the script itself runs main and
+# prints the usage text, whereas extracting a function by an awk range is the
+# established approach here. Second, the block gets a name that says what it is.
+#
+# Writes two variables into the caller: `_cps_unsafe` (1 = do not read the
+# interface further on) and `warn` (the diagnostic warning counter).
+_diag_cps_guard() {
+    # 0. CPS size - COMPUTED FROM THE FILE AND BEFORE ANY `awg show`.
+    # The order here is not cosmetic. Further down I1 is read from `awg show`,
+    # and that very call is what hangs when I1-I5 grow too large: the interface
+    # dump stops advancing and repeats forever (upstream #228). A check placed
+    # after it would never print - in exactly the case it exists for.
+    local _cps_i _cps_total=0 _cps_vals=()
+    local _cps_rc=0
+    if [[ -r "$SERVER_CONF_FILE" ]]; then
+        for _cps_i in I1 I2 I3 I4 I5; do
+            _cps_vals+=("$(sed -n "s/^[[:space:]]*${_cps_i}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | head -n 1)")
+        done
+        _cps_total=$(awg_cps_decoded_size "${_cps_vals[@]}") || _cps_rc=$?
+        # A threshold with room to spare. Upstream puts the dangerous zone at
+        # roughly 3.5 KB, but the exact boundary depends on the interface name
+        # length, on whether a header protection key is set, and on each peer's
+        # address family, so we cannot compute it here. Our generator produces
+        # at most 256 bytes and the documented recipes up to 128, so a kilobyte
+        # already means a hand edit, with a multiple of headroom left.
+        if [[ "$_cps_total" =~ ^[0-9]+$ && "$_cps_total" -gt 1024 ]]; then
+            _cps_unsafe=1
+            _diag_line WARN "CPS (I1-I5) takes ${_cps_total} bytes - that is a lot"
+            echo "        Oversized I1-I5 hang the interface read: the dump stops advancing and"
+            echo "        repeats forever, which on a router is enough to take the box down."
+            echo "        Fix: shorten I1-I5 in /etc/amnezia/amneziawg/awg0.conf, then"
+            echo "        sudo systemctl restart awg-quick@awg0"
+            warn=$((warn+1))
+        elif [[ "$_cps_rc" -ne 0 || ! "$_cps_total" =~ ^[0-9]+$ ]]; then
+            # Parsing failed. An under-count is indistinguishable from "the
+            # size is small", so silence is not an option: treat the size as
+            # unsafe and say so, rather than passing unchecked off as checked.
+            _cps_unsafe=1
+            _diag_line WARN "could not determine the CPS (I1-I5) size - unrecognised tags in the config"
+            warn=$((warn+1))
+        fi
+    else
+        # Same class: "could not read" has to be audible, or the next step
+        # walks into the dangerous dump as if the check had passed.
+        _cps_unsafe=1
+        _diag_line WARN "could not read $SERVER_CONF_FILE - CPS size not checked"
+        warn=$((warn+1))
+    fi
+}
+
 diagnose_server() {
     local carrier="${CLI_CARRIER}"
     local ok=0 warn=0 fail=0
@@ -1398,6 +1451,9 @@ diagnose_server() {
         log_error "Supported: $(_diagnose_carrier_list)"
         return 1
     fi
+
+    local _cps_unsafe=0
+    _diag_cps_guard
 
     # 1. Kernel module
     if lsmod 2>/dev/null | awk '$1 == "amneziawg" {f=1} END {exit !f}'; then
@@ -1507,13 +1563,38 @@ diagnose_server() {
     fi
 
     # 7. Peer count
-    local peer_count
-    peer_count=$(awg show awg0 peers 2>/dev/null | wc -l)
-    _diag_line INFO "Peers configured: $peer_count"
+    # 🔴 The interface dump is skipped when the CPS size is judged unsafe:
+    # warning and then walking straight into the very call that loops protects
+    # nobody. A timeout bounds time, not memory, and on a router it is the
+    # growing reader that eats the memory.
+    local peer_count _peers_out _show_rc=0
+    if [[ "$_cps_unsafe" -eq 1 ]]; then
+        _diag_line WARN "interface read skipped because of the CPS size (see above)"
+        warn=$((warn+1))
+    elif _peers_out=$(timeout 10 awg show awg0 peers 2>/dev/null); then
+        peer_count=$(printf '%s\n' "$_peers_out" | grep -c . || true)
+        _diag_line INFO "Peers configured: $peer_count"
+    else
+        # 🔴 This used to be a pipeline into `wc -l`, which swallowed the
+        # exit code whole: on a timeout it printed "Peers configured: 0", so
+        # "could not check" read as "checked, no peers". Code 124 is named
+        # separately - it means exactly the looping dump this whole check
+        # exists for.
+        _show_rc=$?
+        if [[ "$_show_rc" -eq 124 ]]; then
+            _diag_line FAIL "awg show did not answer within 10 seconds - looks like a looping interface dump"
+            fail=$((fail+1))
+        else
+            _diag_line WARN "awg show exited with code $_show_rc - peer count unknown"
+            warn=$((warn+1))
+        fi
+    fi
 
     # 8. AWG params snapshot (one awg show call instead of four)
-    local _awg_show jc jmin jmax i1
-    _awg_show=$(awg show awg0 2>/dev/null)
+    local _awg_show="" jc jmin jmax i1
+    if [[ "$_cps_unsafe" -ne 1 ]]; then
+        _awg_show=$(timeout 10 awg show awg0 2>/dev/null) || _awg_show=""
+    fi
     jc=$(awk '/^[[:space:]]*jc:/   {print $2; exit}' <<< "$_awg_show")
     jmin=$(awk '/^[[:space:]]*jmin:/ {print $2; exit}' <<< "$_awg_show")
     jmax=$(awk '/^[[:space:]]*jmax:/ {print $2; exit}' <<< "$_awg_show")
@@ -1639,7 +1720,7 @@ list_clients() {
     # Single-pass awg show dump parsing: pubkey → handshake timestamp
     local -A _pk_to_hs
     local awg_dump
-    awg_dump=$(awg show awg0 dump 2>/dev/null) || awg_dump=""
+    awg_dump=$(timeout 10 awg show awg0 dump 2>/dev/null) || awg_dump=""
     if [[ -n "$awg_dump" ]]; then
         # shellcheck disable=SC2034
         while IFS=$'\t' read -r _dpk _dpsk _dep _daips _dhs _drx _dtx _dka; do

@@ -1373,6 +1373,60 @@ _diag_line() {
 }
 
 # Главная функция: пробегается по health-checks + опционально сравнивает с оператором
+# _diag_cps_guard : размер CPS из КОНФИГА, до любого `awg show`.
+#
+# Отдельной функцией, а не куском diagnose_server, по двум причинам. Во-первых,
+# так её можно прогнать в тесте: `source` самого скрипта запускает main и
+# печатает справку, а извлечение функции awk-диапазоном - принятый здесь приём.
+# Во-вторых, у блока появляется имя, по которому видно, что он делает.
+#
+# Пишет в вызывающего две переменные: `_cps_unsafe` (1 = дальше интерфейс не
+# читать) и `warn` (счётчик предупреждений диагностики).
+_diag_cps_guard() {
+    # 0. Размер CPS - СЧИТАЕТСЯ ИЗ ФАЙЛА И ДО ЛЮБОГО `awg show`.
+    # Порядок тут не стилистический. Дальше I1 читается из `awg show`, а именно
+    # этот вызов и зависает, когда I1-I5 слишком велики: дамп интерфейса
+    # перестаёт продвигаться и повторяется бесконечно (upstream #228). Проверка,
+    # стоящая после него, не напечаталась бы никогда - ровно в том случае, ради
+    # которого написана.
+    local _cps_i _cps_total=0 _cps_vals=()
+    local _cps_rc=0
+    if [[ -r "$SERVER_CONF_FILE" ]]; then
+        for _cps_i in I1 I2 I3 I4 I5; do
+            _cps_vals+=("$(sed -n "s/^[[:space:]]*${_cps_i}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | head -n 1)")
+        done
+        _cps_total=$(awg_cps_decoded_size "${_cps_vals[@]}") || _cps_rc=$?
+        # Порог с запасом. Апстрим называет опасной зоной примерно 3.5 КБ, но
+        # точная граница зависит от длины имени интерфейса, наличия ключа защиты
+        # заголовков и семейства адреса каждого пира, то есть считать её у себя
+        # мы не можем. Наш генератор даёт максимум 256 байт, документированные
+        # рецепты - до 128, поэтому килобайт заведомо означает правку руками, а
+        # до зацикливания остаётся кратный запас.
+        if [[ "$_cps_total" =~ ^[0-9]+$ && "$_cps_total" -gt 1024 ]]; then
+            _cps_unsafe=1
+            _diag_line WARN "CPS (I1-I5) занимает ${_cps_total} байт - это много"
+            echo "        Слишком большие I1-I5 подвешивают чтение интерфейса: дамп перестаёт"
+            echo "        продвигаться и повторяется бесконечно, а на роутере это роняет устройство."
+            echo "        Fix: сократить I1-I5 в /etc/amnezia/amneziawg/awg0.conf, затем"
+            echo "        sudo systemctl restart awg-quick@awg0"
+            warn=$((warn+1))
+        elif [[ "$_cps_rc" -ne 0 || ! "$_cps_total" =~ ^[0-9]+$ ]]; then
+            # Разобрать не удалось. Занижение неотличимо от «размер маленький»,
+            # поэтому молчать нельзя: считаем размер небезопасным и говорим об
+            # этом, а не выдаём непроверенное за проверенное.
+            _cps_unsafe=1
+            _diag_line WARN "размер CPS (I1-I5) определить не удалось - в конфиге нераспознанные теги"
+            warn=$((warn+1))
+        fi
+    else
+        # Тот же класс: «не смог прочитать» обязано звучать, иначе следующий
+        # шаг пойдёт на опасный дамп с видом, будто проверка прошла.
+        _cps_unsafe=1
+        _diag_line WARN "конфиг $SERVER_CONF_FILE не прочитан - размер CPS не проверен"
+        warn=$((warn+1))
+    fi
+}
+
 diagnose_server() {
     local carrier="${CLI_CARRIER}"
     local ok=0 warn=0 fail=0
@@ -1383,6 +1437,9 @@ diagnose_server() {
         log_error "Поддерживаемые: $(_diagnose_carrier_list)"
         return 1
     fi
+
+    local _cps_unsafe=0
+    _diag_cps_guard
 
     # 1. Kernel module
     if lsmod 2>/dev/null | awk '$1 == "amneziawg" {f=1} END {exit !f}'; then
@@ -1492,13 +1549,38 @@ diagnose_server() {
     fi
 
     # 7. Peer count
-    local peer_count
-    peer_count=$(awg show awg0 peers 2>/dev/null | wc -l)
-    _diag_line INFO "Peers сконфигурировано: $peer_count"
+    # 🔴 Дамп интерфейса пропускается, если размер CPS признан небезопасным:
+    # предупредить и тут же полезть в тот самый вызов, который зацикливается,
+    # значит не защитить никого. Таймаут ограничивает время, но не память, а
+    # растущий читатель на роутере как раз память и съедает.
+    local peer_count _peers_out _show_rc=0
+    if [[ "$_cps_unsafe" -eq 1 ]]; then
+        _diag_line WARN "чтение интерфейса пропущено из-за размера CPS (см. выше)"
+        warn=$((warn+1))
+    elif _peers_out=$(timeout 10 awg show awg0 peers 2>/dev/null); then
+        peer_count=$(printf '%s\n' "$_peers_out" | grep -c . || true)
+        _diag_line INFO "Peers сконфигурировано: $peer_count"
+    else
+        # 🔴 Раньше здесь стоял конвейер с `wc -l`, и код возврата терялся в
+        # нём целиком: при таймауте печаталось «Peers сконфигурировано: 0», то
+        # есть «не смог проверить» читалось как «проверил, пиров нет». Код 124
+        # называется отдельно - он означает ровно тот зацикленный дамп, ради
+        # которого написана вся эта проверка.
+        _show_rc=$?
+        if [[ "$_show_rc" -eq 124 ]]; then
+            _diag_line FAIL "awg show не ответил за 10 секунд - похоже на зацикленный дамп интерфейса"
+            fail=$((fail+1))
+        else
+            _diag_line WARN "awg show завершился с кодом $_show_rc - число пиров не определено"
+            warn=$((warn+1))
+        fi
+    fi
 
     # 8. AWG params snapshot (один вызов awg show вместо четырёх)
-    local _awg_show jc jmin jmax i1
-    _awg_show=$(awg show awg0 2>/dev/null)
+    local _awg_show="" jc jmin jmax i1
+    if [[ "$_cps_unsafe" -ne 1 ]]; then
+        _awg_show=$(timeout 10 awg show awg0 2>/dev/null) || _awg_show=""
+    fi
     jc=$(awk '/^[[:space:]]*jc:/   {print $2; exit}' <<< "$_awg_show")
     jmin=$(awk '/^[[:space:]]*jmin:/ {print $2; exit}' <<< "$_awg_show")
     jmax=$(awk '/^[[:space:]]*jmax:/ {print $2; exit}' <<< "$_awg_show")
@@ -1625,7 +1707,7 @@ list_clients() {
     # Однопроходный парсинг awg show dump: pubkey → handshake timestamp
     local -A _pk_to_hs
     local awg_dump
-    awg_dump=$(awg show awg0 dump 2>/dev/null) || awg_dump=""
+    awg_dump=$(timeout 10 awg show awg0 dump 2>/dev/null) || awg_dump=""
     if [[ -n "$awg_dump" ]]; then
         # shellcheck disable=SC2034
         while IFS=$'\t' read -r _dpk _dpsk _dep _daips _dhs _drx _dtx _dka; do
