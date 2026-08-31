@@ -956,6 +956,26 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 ## ❓ FAQ (Additional Questions)
 
 <details>
+  <summary><strong>Q: Why is my config highlighted yellow in the Amnezia app?</strong></summary>
+  <b>A:</b> The yellow mark reports the profile generation, not an error: that is how the Amnezia app marks second-line AmneziaWG configurations. On its own the mark does not say anything is wrong with the connection, and nothing needs redoing because of it. As of 31 August 2026 the installer issues a second-line profile, so the mark is expected on any server it sets up.
+</details>
+
+<details>
+  <summary><strong>Q: How do I get a client on Android that speaks the third line?</strong></summary>
+  <b>A:</b> Two paths speak the third line on Android: the flagship Amnezia VPN app, and the light client APK from the project's releases page, full release of 14 August 2026. The light client on Google Play was updated 12 June 2026, before the third-line build shipped, so the advice "install the light client from Play" will most likely leave you on the second line. The full table is in <a href="#client-compat-adv">Client compatibility</a>.
+</details>
+
+<details>
+  <summary><strong>Q: Does my router speak third-line AmneziaWG?</strong></summary>
+  <b>A:</b> We know of no stock firmware supporting the third line as of 31 August 2026, so for a router the second-line profile stays a working path rather than a temporary compromise. On routers the third line comes from third-party projects: AWG Manager for Keenetic (v2.17.4 of 27 August 2026), and for MikroTik and RouterOS two independent projects updated on 26 and 30 August 2026.
+</details>
+
+<details>
+  <summary><strong>Q: Can a third-line config be converted back to the second line?</strong></summary>
+  <b>A:</b> A third-line client config cannot be edited down to the second line: the generation is set on the server side, and some third-line parameters are two-sided. In a measurement on 30 August 2026 a header protection key left on one side only produced zero handshakes and 100% loss, silently, with no error message anywhere. Devices that stay on the second line need a second-generation server.
+</details>
+
+<details>
   <summary><strong>Q: How do I get a split exit - Russian traffic direct, the rest abroad?</strong></summary>
   <b>A:</b> This is built as a two-server cascade: the client connects to an entry server (ideally in Russia), Russian traffic exits directly from it, and everything else goes through a second server abroad. The cascade is not part of the installer (different scale), but there is a separate step-by-step guide - <a href="CASCADE.en.md">CASCADE.en.md</a>.
 </details>
@@ -1641,6 +1661,33 @@ Not all clients support AWG 2.0. Check compatibility before choosing a client:
 | Standard WireGuard | All | ❌ | ❌ | Does not support AWG parameters |
 
 > If a client shows an error about an unknown parameter (S3, S4, I1, or H1 as a range), use one of the first four clients in the table.
+
+### Which AmneziaWG generation a client speaks
+
+Measured 31 August 2026 from the projects' own release pages, and you can check the same way.
+Clients move every few days, so each row carries a date: it says when that version was current.
+
+| Client | Generation | Version | Date | Where to get it |
+|---|---|---|---|---|
+| Amnezia VPN (flagship, all platforms) | third line | 5.0.1.5 | 21 Aug 2026 | GitHub, app stores |
+| AmneziaWG for Android (light, APK) | third line | v3.1.20260814 | 14 Aug 2026 | project releases page |
+| AmneziaWG on Google Play (light) | **inferred from dates: second line** | Play does not publish the version | listing updated **12 Jun 2026** | Google Play |
+| AmneziaWG for Windows (standalone client) | third line | 3.1.0 | 21 Aug 2026 | project releases page |
+| WG Tunnel (third-party, Android) | speaks AmneziaWG; generation not verified by us | 5.6.0 | 27 Aug 2026 | Play, F-Droid, IzzyOnDroid, APK |
+| AWG Manager (Keenetic, third-party) | third line | v2.17.4 | 27 Aug 2026 | project releases page |
+| amneziawg-mikrotik-c (third-party) | third line | v1.2.8 | 26 Aug 2026 | project releases page |
+| AmneziaWG-MikroTik (third-party) | third line | Containers_3.1 | 30 Aug 2026 | project releases page |
+
+⚠️ **The Google Play row is an inference, not an observation.** Google Play does not show a
+version number on the app page, so the generation is inferred from dates: the listing was
+updated 12 June 2026, the release of that same app from 12 June belongs to the second line, and
+the third-line build appeared on 14 August 2026, after the listing was last updated. The version
+number cannot be read directly, and we do not claim to have read it.
+
+⚠️ **The WG Tunnel row is held to the same standard.** It is a third-party project, its 5.6.0
+release from 27 August 2026 exists, but we have not verified the protocol generation by
+behaviour and we name no number. Until that check it stays in the table as "speaks AmneziaWG",
+nothing more.
 
 ### Router Clients
 
