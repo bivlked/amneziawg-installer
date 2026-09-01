@@ -147,6 +147,8 @@ EOF
     local p
     for p in awg_common.sh awg_common_en.sh; do
         grep -qF 'DNS = 1.1.1.1, 1.0.0.1' "${BATS_TEST_DIRNAME}/../$p"
-        grep -qF 'allowed_ips="0.0.0.0/0, ::/0"' "${BATS_TEST_DIRNAME}/../$p"
+        # v5.31.0 moved the decision out of a string comparison into a
+        # predicate over the route set; the ::/0 itself is appended there.
+        grep -qF "printf '%s, ::/0'" "${BATS_TEST_DIRNAME}/../$p"
     done
 }
