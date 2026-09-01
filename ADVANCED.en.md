@@ -281,8 +281,8 @@ Since v5.25.0 the management scripts track this and **warn**: they remember the 
 
 None of the 3.0 features appear in generated configs, and that is deliberate:
 
-- **`HeaderProtectionKey`** needs every one of your clients to understand it at the same time. As of this release `amneziawg-android` 3.0.1 is still a prerelease and the newest `amneziawg-windows-client` release is 2.0.2. Turning it on now would cut off some devices without warning.
-- **`ContentPaddingAddition`** waits on an upstream fix: right now the padding breaks keepalive detection and those packets are dropped with `Packet is neither ipv4 nor ipv6` ([issue #186](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/186)).
+- **`HeaderProtectionKey`** needs every one of your clients to understand it at the same time, and that requirement bites harder than it reads: the parameter is two-sided and fails silently on a mismatch - the handshake simply never happens and nothing reports an error. Where the clients stand on 31 August 2026: `amneziawg-windows-client` has a 3.1.0 release (21 August), `amneziawg-android` has a full `v3.1.20260814` release (14 August; the separate 3.0.1 from 24 July stayed a prerelease), and the light client on Google Play has not been updated since 12 June. While some of your devices update from a store, turning the parameter on would cut them off without warning.
+- **`ContentPaddingAddition`** is left out for a historical reason that no longer applies. The padding broke keepalive detection, so an idle tunnel redid its handshake every 15 seconds instead of roughly 147. The defect is analysed in [issue #186](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/186) and was fixed upstream on 5 August 2026 ([PR #208](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/pull/208)); the fix was verified on a test server - the interval went back to 147 seconds.
 - **The timer parameters** are one-sided and safe, but on their own they buy little, so they travel with the next step.
 
 The situation on kernels older than 6.7 is covered separately in <a href="#debian-support-adv">Debian support</a>.
@@ -917,7 +917,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common.sh` and `manage_amneziawg.sh` from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/awg_common.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.30.0/awg_common.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -937,12 +937,12 @@ To update the management and shared library scripts **without reinstalling the s
 
 ```bash
 # Russian version:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/manage_amneziawg.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/awg_common.sh
+wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg.sh
+wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common.sh
 
 # English version:
-wget -O /root/awg/manage_amneziawg.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/manage_amneziawg_en.sh
-wget -O /root/awg/awg_common.sh https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.29.0/awg_common_en.sh
+wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg_en.sh
+wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common_en.sh
 
 # Set permissions
 chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
@@ -954,6 +954,26 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <a id="faq-advanced-adv"></a>
 ## ❓ FAQ (Additional Questions)
+
+<details>
+  <summary><strong>Q: Why is my config highlighted yellow in the Amnezia app?</strong></summary>
+  <b>A:</b> The yellow mark reports the profile generation, not an error: that is how the Amnezia app marks second-line AmneziaWG configurations. On its own the mark does not say anything is wrong with the connection, and nothing needs redoing because of it. As of 31 August 2026 the installer issues a second-line profile, so the mark is expected on any server it sets up.
+</details>
+
+<details>
+  <summary><strong>Q: How do I get a client on Android that speaks the third line?</strong></summary>
+  <b>A:</b> Two paths speak the third line on Android: the flagship Amnezia VPN app, and the light client APK from the project's releases page, full release of 14 August 2026. The light client on Google Play was updated 12 June 2026, before the third-line build shipped, so the advice "install the light client from Play" will most likely leave you on the second line. The full table is in <a href="#client-compat-adv">Client compatibility</a>.
+</details>
+
+<details>
+  <summary><strong>Q: Does my router speak third-line AmneziaWG?</strong></summary>
+  <b>A:</b> I know of no stock firmware supporting the third line as of 31 August 2026, so for a router the second-line profile stays a working path rather than a temporary compromise. On routers the third line comes from third-party projects: AWG Manager for Keenetic (v2.17.4 of 27 August 2026), and for MikroTik and RouterOS two independent projects updated on 26 and 30 August 2026.
+</details>
+
+<details>
+  <summary><strong>Q: Can a third-line config be converted back to the second line?</strong></summary>
+  <b>A:</b> A third-line client config cannot be edited down to the second line: the generation is set on the server side, and some third-line parameters are two-sided. In a measurement on 30 August 2026 a header protection key left on one side only produced zero handshakes and 100% loss, silently, with no error message anywhere. Devices that stay on the second line need a second-generation server.
+</details>
 
 <details>
   <summary><strong>Q: How do I get a split exit - Russian traffic direct, the rest abroad?</strong></summary>
@@ -1641,6 +1661,39 @@ Not all clients support AWG 2.0. Check compatibility before choosing a client:
 | Standard WireGuard | All | ❌ | ❌ | Does not support AWG parameters |
 
 > If a client shows an error about an unknown parameter (S3, S4, I1, or H1 as a range), use one of the first four clients in the table.
+
+### Which AmneziaWG generation a client speaks
+
+Recorded 31 August 2026 from the projects' own release pages, and you can check the same way.
+Clients move every few days, so each row carries a date: it says when that version was current.
+
+| Client | Generation | Version | Date | Where to get it |
+|---|---|---|---|---|
+| Amnezia VPN (flagship, all platforms) | third line | 5.0.1.5 | 21 Aug 2026 | GitHub, app stores |
+| AmneziaWG for Android (light, APK) | third line | v3.1.20260814 | 14 Aug 2026 | project releases page |
+| AmneziaWG on Google Play (light) | **an inference, not an observation: second line** | 2.0.1 in the release-notes text | listing updated **12 Jun 2026** | Google Play |
+| AmneziaWG for Windows (standalone client) | third line | 3.1.0 | 21 Aug 2026 | project releases page |
+| WG Tunnel (third-party, Android) | speaks AmneziaWG; generation not verified by behaviour | 5.6.0 | 27 Aug 2026 | Play, F-Droid, IzzyOnDroid, APK |
+| AWG Manager (Keenetic, third-party) | third line | v2.17.4 | 27 Aug 2026 | project releases page |
+| amneziawg-mikrotik-c (third-party) | third line | v1.2.8 | 26 Aug 2026 | project releases page |
+| AmneziaWG-MikroTik (third-party) | third line | Containers_3.1 | 30 Aug 2026 | project releases page |
+
+⚠️ **The Google Play row is an inference, not an observation.** Google Play does not show a
+app page no longer carries a separate current-version field: the only number on it is
+`AmneziaWG 2.0.1` inside the release-notes text, which the developer writes by hand and which
+can lag what is actually being served. So the generation is inferred from dates: the listing was
+updated 12 June 2026 and the third-line build appeared on 14 August 2026, after the listing was
+last updated. The number in the notes agrees with that conclusion but does not prove it on its
+own.
+
+⚠️ **The WG Tunnel row is held to the same standard.** It is a third-party project, its 5.6.0
+release from 27 August 2026 exists, but I have not verified the protocol generation by
+behaviour and name no generation number here. Until that check it stays in the table as "speaks AmneziaWG",
+nothing more.
+
+> ⚠️ For third-party projects the generation comes from their authors' own documentation and
+> release notes: I read their code, but verified none of them by behaviour, and no row here is
+> marked as verified.
 
 ### Router Clients
 

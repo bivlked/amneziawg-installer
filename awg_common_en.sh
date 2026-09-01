@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 2.0
 # Author: @bivlked
-# Version: 5.29.0
-# Date: 2026-08-30
+# Version: 5.30.0
+# Date: 2026-09-01
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -24,7 +24,7 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # drifted apart (one file updated, the other not) - otherwise the mismatch shows
 # up as a "command not found" somewhere random. Bumped with the other versions.
 # shellcheck disable=SC2034  # used by the manage script after sourcing
-AWG_COMMON_VERSION="5.29.0"
+AWG_COMMON_VERSION="5.30.0"
 
 # --- Auto-cleanup of temporary files ---
 # NOTE: trap is NOT set here to avoid overwriting the caller's trap handler.
@@ -1795,6 +1795,123 @@ awg_warn_interface_disruption() {
             log_warn "  The fallback for that case is the console or VNC in your provider's panel."
             ;;
     esac
+}
+
+# awg_cps_decoded_size <I string> [...] : total DECODED size in bytes.
+#
+# Why. The I1-I5 parameters land in the device attributes that the kernel emits
+# as a single netlink dump message. Once the device attributes fill most of the
+# buffer, the first peer no longer fits, and `wg_get_device_dump` neither
+# advances nor fails: it returns a non-zero length, netlink asks again, and the
+# same message is produced forever. The reader spins and grows; on a router that
+# is enough to take the box down. Written up with the code path in
+# amneziawg-linux-kernel-module#228 (31 aug 2026); the user-visible symptom is
+# #148. The band just above the looping one answers `Unable to access interface:
+# Message too long`, which is BETTER: an error at least stops. Those are the
+# exact words: errno EMSGSIZE, which glibc renders as "too long", so that is
+# what to grep a log for.
+#
+# 🔴 The DECODED size is counted, not the string length. `<r 1000>` is eight
+# characters and a thousand bytes on the wire; comparing string lengths would
+# miss exactly the case this check exists for.
+#
+# The tag set is the intersection of both implementations, which is also the set
+# the vendor documents: `<b 0xHEX>` literal bytes, `<r N>` random bytes,
+# `<rc N>` random letters, `<rd N>` random digits, `<t>` a timestamp (4 bytes).
+# `<c>` counts as the same 4 bytes: it exists in the kernel module and not in
+# amneziawg-go, so it affects portability rather than size.
+# Nothing unknown is guessed at: an invented number is worse than an honest
+# refusal. But it must not pass in silence either, so anything left unparsed -
+# an unknown tag, an unterminated bracket, junk between tags, an implausibly
+# large count - marks the result with exit code 2, "the sum is an under-count".
+# A zero with code 0 must mean "parsed everything, there is no size", otherwise
+# the caller reads junk as emptiness.
+awg_cps_decoded_size() {
+    local total=0 s tag n hex mat pre unknown=0
+    for s in "$@"; do
+        [[ -n "$s" ]] || continue
+        # The space-less form is accepted DELIBERATELY, even though both
+        # implementations reject it: the kernel splits a tag on the space
+        # (`strsep`) and amneziawg-go uses `strings.Fields`, so `<r64>` is an
+        # unknown key to them and the interface will not come up. Counting it
+        # is still right: this estimates a size, and an over-estimate leads to
+        # a warning while a miss leads to a hang. ⚠️ Do not write this form
+        # into a config.
+        while [[ "$s" =~ \<[[:space:]]*([a-zA-Z]+)[[:space:]]*([^\>]*)\> ]]; do
+            # 🔴 Save the match BEFORE the case: the `b` branch runs its own
+            # `[[ =~ ]]`, which overwrites BASH_REMATCH. That was harmless
+            # while the string advanced to the first `>`; now that it advances
+            # by the match, a value read after the case would be the hex.
+            mat="${BASH_REMATCH[0]}"
+            tag="${BASH_REMATCH[1]}"
+            n="${BASH_REMATCH[2]}"
+            n="${n//[[:space:]]/}"
+            # Whatever sits BEFORE the tag is not a tag. Without this line
+            # `<><r 5>` passed as an honest five bytes.
+            pre="${s%%"$mat"*}"
+            [[ -z "${pre//[[:space:]]/}" ]] || unknown=1
+            case "${tag,,}" in
+                b)
+                    hex="${n#0x}"; hex="${hex#0X}"
+                    # Two hex characters make a byte. An odd tail is not
+                    # counted: implementations reject such a tag anyway.
+                    if [[ "$hex" =~ ^[0-9a-fA-F]+$ && $(( ${#hex} % 2 )) -eq 0 ]]; then
+                        total=$(( total + ${#hex} / 2 ))
+                    else
+                        unknown=1
+                    fi
+                    ;;
+                r|rc|rd)
+                    # 🔴 `10#` is mandatory. Without it bash reads a
+                    # leading-zero number as octal, `<r 08>` breaks the
+                    # arithmetic, the whole function returns EMPTY, and the
+                    # threshold check silently never fires - a silent failure
+                    # exactly where it hurts most. Measured 31 aug 2026.
+                    # The nine-digit limit is not a matter of taste:
+                    # `<r 18446744073709551617>` overflows 64-bit bash
+                    # arithmetic and sums to ONE, so a plainly dangerous value
+                    # slips under the threshold. Measured 1 sep 2026. The
+                    # vendor caps r/rc/rd at a thousand, so nine digits is
+                    # headroom rather than a constraint.
+                    if [[ "$n" =~ ^[0-9]{1,9}$ ]]; then
+                        total=$(( total + 10#$n ))
+                    else
+                        unknown=1
+                    fi
+                    ;;
+                t|c)
+                    # 🔴 `<t>` and `<c>` carry no payload, so non-empty content
+                    # means we parsed the WRONG thing. `<t <r 4096>` matches
+                    # this regex as a single tag whose value is `<r 4096`, and
+                    # without the check it counted four bytes and returned
+                    # success: four thousand bytes became four, and diagnostics
+                    # walked into the dangerous call with a clear conscience.
+                    if [[ -z "$n" ]]; then
+                        total=$(( total + 4 ))
+                    else
+                        unknown=1
+                    fi
+                    ;;
+                *)
+                    unknown=1
+                    ;;
+            esac
+            # 🔴 Advance past the END OF THE MATCH. The `${s#*>}` form cut
+            # to the first `>` in the string, which could sit BEFORE the
+            # match - and then the same tag was counted twice.
+            s="${s#*"$mat"}"
+        done
+        # A non-empty remainder is not a tag. Without this, `garbage` and an
+        # unterminated `<r 5` returned zero with code 0, that is "parsed, no
+        # size".
+        [[ -z "${s//[[:space:]]/}" ]] || unknown=1
+    done
+    printf '%s' "$total"
+    # A code of 2 means "the sum is an under-count, something was not parsed".
+    # The caller must say so out loud: an under-count is indistinguishable from
+    # a genuinely small size, and that is precisely a false "checked, fine".
+    [[ "$unknown" -eq 0 ]] || return 2
+    return 0
 }
 
 # _awg_device_param_names : names of the AWG device parameters (2.0 and 3.0)

@@ -112,10 +112,18 @@ assert_wiring() {
     # The report is meant to be pasted into a public issue. An empty or truncated
     # file announced with a success line and exit 0 is worse than a loud failure:
     # log_error returns success, so without die the branch ends with exit 0.
+    # The `log_error` half is written with `run` and an explicit status check,
+    # not as a bare `! grep`. `!` exempts a command from errexit entirely, so
+    # inside a loop only the FINAL iteration has any effect at all - and that
+    # one only because its status becomes the function's return value. A
+    # failure on the first iteration (the RU installer) was silently discarded,
+    # so this assertion used to cover the EN installer alone. `run` records the
+    # status instead of letting the shell decide, which works in any position.
     for inst in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
         body=$(report_fn "$inst")
         grep -qE '_mask_report_secrets > "\$rf" \|\| die ' <<< "$body"
-        ! grep -qE '_mask_report_secrets > "\$rf" \|\| log_error' <<< "$body"
+        run grep -qE '_mask_report_secrets > "\$rf" \|\| log_error' <<< "$body"
+        [ "$status" -ne 0 ]
     done
 }
 

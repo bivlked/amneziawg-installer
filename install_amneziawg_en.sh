@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.29.0
-# Date: 2026-08-30
+# Version: 5.30.0
+# Date: 2026-09-01
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 set -o pipefail
-SCRIPT_VERSION="5.29.0"
+SCRIPT_VERSION="5.30.0"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -34,8 +34,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="0a3e0dced9b4e7e8efb65719ac537ec51856065687985fc1e5d82cf99bdfa227"
-MANAGE_SCRIPT_SHA256="8cecd8f30b87e660347e9b7272686b996d085d3d12dc58f1e96ad54ddd1d132a"
+COMMON_SCRIPT_SHA256="e90bc0c90969fb7fd61cddf6b5ed5b415cae32b81dc205e9e3b23011d0b93cd9"
+MANAGE_SCRIPT_SHA256="15d5b3e8144a3c69f3e847eb219de6802fbbb454a08637eeac198b4ff6ff29d3"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back
@@ -2535,7 +2535,10 @@ check_service_status() {
         ok=0
     fi
 
-    if ! awg show 2>/dev/null | grep -q "interface: awg0"; then
+    # timeout: re-running the installer over a server with hand-inflated
+    # I1-I5 would otherwise hang here forever (#228). The failure below is
+    # already loud.
+    if ! timeout 10 awg show 2>/dev/null | grep -q "interface: awg0"; then
         log_error "awg show cannot see interface!"
         ok=0
     fi
@@ -2555,7 +2558,7 @@ check_service_status() {
     fi
 
     # AWG 2.0 parameter check
-    if awg show awg0 2>/dev/null | grep -q "jc:"; then
+    if timeout 10 awg show awg0 2>/dev/null | grep -q "jc:"; then
         log "AWG 2.0 parameters active."
     else
         log_warn "AWG 2.0 parameters not detected in awg show."
@@ -2696,7 +2699,12 @@ create_diagnostic_report() {
         systemctl status awg-quick@awg0 --no-pager -l 2>/dev/null || echo "Service not found"
         echo ""
         echo "--- AWG Status ---"
-        awg show 2>/dev/null || echo "awg show failed"
+        # 🔴 The timeout is mandatory: oversized I1-I5 make the interface dump
+        # loop (amneziawg-linux-kernel-module#228), and this is precisely the
+        # command the documentation asks people to attach to a report. Without
+        # a bound, someone hitting the defect could not even collect a report
+        # about it.
+        timeout 10 awg show 2>/dev/null || echo "awg show failed or timed out"
         echo ""
         echo "--- AWG Version ---"
         awg --version 2>/dev/null || echo "awg --version failed"

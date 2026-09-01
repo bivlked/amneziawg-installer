@@ -8,15 +8,15 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 2.0 на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 5.29.0
-# Дата: 2026-08-30
+# Версия: 5.30.0
+# Дата: 2026-09-01
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 set -o pipefail
 
-SCRIPT_VERSION="5.29.0"
+SCRIPT_VERSION="5.30.0"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -34,8 +34,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="06407e51e5c999fd52bcdcb1b27e0b621b702083b36a065d5f2df529e8325629"
-MANAGE_SCRIPT_SHA256="601827bf9c403c230d79e365731dd2b28ad091bf63204382c129f23d5412d1b9"
+COMMON_SCRIPT_SHA256="354ab9609edc0d057c15b6d0ee9342377d7848850df0da6ff72e5a1504d3749b"
+MANAGE_SCRIPT_SHA256="a872e33aa43887ba64504db3be91453ab965de724e10056832565b96872075af"
 
 # AmneziaWG 2.0 пин (H0, 31 jul 2026). Upstream влил AmneziaWG 3.0 в default-ветку
 # amneziawg-linux-kernel-module, и PPA переключился на 3.0. Тогда на ядрах старее
@@ -2508,7 +2508,9 @@ check_service_status() {
         ok=0
     fi
 
-    if ! awg show 2>/dev/null | grep -q "interface: awg0"; then
+    # timeout: перезапуск установщика поверх сервера с раздутыми вручную
+    # I1-I5 иначе повис бы здесь навсегда (#228). Отказ ниже и так громкий.
+    if ! timeout 10 awg show 2>/dev/null | grep -q "interface: awg0"; then
         log_error "awg show не видит интерфейс!"
         ok=0
     fi
@@ -2528,7 +2530,7 @@ check_service_status() {
     fi
 
     # Проверка AWG 2.0 параметров
-    if awg show awg0 2>/dev/null | grep -q "jc:"; then
+    if timeout 10 awg show awg0 2>/dev/null | grep -q "jc:"; then
         log "AWG 2.0 параметры активны."
     else
         log_warn "AWG 2.0 параметры не обнаружены в awg show."
@@ -2662,7 +2664,11 @@ create_diagnostic_report() {
         systemctl status awg-quick@awg0 --no-pager -l 2>/dev/null || echo "Service not found"
         echo ""
         echo "--- AWG Status ---"
-        awg show 2>/dev/null || echo "awg show failed"
+        # 🔴 timeout обязателен: при переросших I1-I5 дамп интерфейса
+        # зацикливается (amneziawg-linux-kernel-module#228), а это ровно та
+        # команда, которую документация просит приложить к обращению. Без
+        # границы попавший в дефект не смог бы собрать даже отчёт о нём.
+        timeout 10 awg show 2>/dev/null || echo "awg show failed or timed out"
         echo ""
         echo "--- AWG Version ---"
         awg --version 2>/dev/null || echo "awg --version failed"
