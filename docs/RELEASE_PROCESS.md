@@ -259,8 +259,12 @@ signs bytes that then change, and the tag fails verification. The trusted
 comment names the tag, so signatures cannot be carried over from the previous
 release; re-sign every time.
 
-Because the workflow has never run for a tag that was not there before, the
-first time is worth doing on a throwaway tag: a semver pre-release suffix
-(`vX.Y.Z-rc1`) publishes as a pre-release and does not displace Latest. Delete
-the pre-release and its tag afterwards. Design and threat model:
-`docs/SIGNING_DESIGN.md`.
+The signing path has run on a real tag since this was first written:
+v5.29.0 on 30 August 2026 published thirteen assets, six of them signatures.
+A release is therefore no longer the first execution of untested code. A
+throwaway tag stays the cheap way to rehearse a change to the workflow itself,
+which cannot be exercised any other way because only a tag push triggers it: a
+semver pre-release suffix (`vX.Y.Z-rc1`) publishes as a pre-release and does
+not displace Latest. Delete the pre-release and its tag afterwards.
+
+Design and threat model: `docs/SIGNING_DESIGN.md`.

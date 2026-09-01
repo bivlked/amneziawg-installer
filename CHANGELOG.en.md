@@ -12,11 +12,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.30.0] - 2026-09-01
+
+**v5.30.0** - install commands that do not go stale, and a guard for oversized masking parameters.
+
+The install and update commands no longer name a version, so a line copied from an article or from a search answer installs the current release rather than the one that was current when the text was written. Diagnostics warn about oversized masking parameters before the interface read hangs on them. And the documentation answers the question people actually arrive with: which generation of the protocol a given client speaks.
+
 ### Added
 
 - A dated facts block at the top of `README.md` and `README.en.md`: installer version, release date, recommended and end-of-life systems, architectures, where the kernel module comes from, and the profile of the generated configs. The block is built by `scripts/update-facts-block.sh` from repository data (`SCRIPT_VERSION`, the CHANGELOG heading, `docs/support-matrix.json`, the `arm-build.yml` matrix) instead of being written by hand, so it cannot drift away from its sources, and both language versions are rendered from the same values.
 - `scripts/check-docs-consistency.sh`: a check that the block stored in the READMEs matches what the generator produces right now. Runs in CI and in preflight.
 - `tests/test_facts_block.bats`: mutation tests for the guard, including the case where a third-line parameter reaches a config template while the block still promises the 2.0 profile.
+- **A client generation matrix in `ADVANCED.md` and `ADVANCED.en.md`.** The documentation could say whether a client supports AmneziaWG 2.0, but not which generation of the protocol it speaks, and that is what people ask now that the vendor app marks second-line configs in yellow. Four answers sit next to the table: why a config is marked yellow, where to get a third-line client on each platform, what a router owner should do, and why the installer still generates a second-line profile. Two rows are deliberately weaker than the rest and say so: the light client on Google Play publishes no version number on its page, and WG Tunnel ships its engine as a prebuilt artifact, so the generation cannot be read from the manifest. For the third-party projects the table states plainly that their generation comes from their own documentation and code rather than from verified behaviour: it does not vouch for another project's implementation
+- **A warning about oversized `I1`-`I5`.** A total decoded size of masking packets above a kilobyte hangs the interface read: the dump stops making progress and repeats forever, the reading side grows in memory, and on a router it takes the device down. Our generator never produces that much (256 bytes at most), but configs are also edited by hand, and nothing warned about it anywhere. `diagnose` computes the size offline, parsing the configuration file before the first call into the interface: a check placed after that call would never print in exactly the case it was written for. If the size is judged unsafe the remaining interface calls are skipped, and the ones that stay are bounded by a timeout that reports itself rather than showing zero peers. An unrecognised tag in the config produces its own warning instead of an understated number: "could not compute" must not look like "computed, all good"
+
+### Changed
+
+- **Install and update commands point at `releases/latest/download`.** Thirty-two commands in `README.md`, `README.en.md` and both installation guides named a specific tag, so a copied line went stale the day the next release shipped, and search answers held on to it for months: a measurement on 31 August 2026 was still handing out `v5.14.1` from 19 May, thirty-five releases back, with neither the critical package protection nor the `/etc/fstab` fix. The version-less address does not age in a cache or in training data, and it serves a signed release asset: `.minisig` files and `KEYS.txt` sit beside it, which a branch address cannot offer. Four pinned addresses stay on purpose: the `ADVANCED` section explains how the installer fetches its own helper scripts, and it fetches them by tag, so a version-less address there would make the section lie about the code it documents; `CASCADE` pins `cascade/ru.zone`, which is not a release asset at all. The guard in `check-docs-consistency.sh` is positive by construction: it requires at least the expected number of commands on the new address and zero on the old one, because a check that only looks for the bad form cannot tell a fixed file from an empty one
+
+### Fixed
+
+- **Two stale claims about why third-line features stay out.** The section pointed at the pre-release status of the Android client and at release 2.0.2 of the Windows client, when both have had full third-line releases for a while, and it promised that `ContentPaddingAddition` was waiting for an upstream fix, when that fix shipped on 5 August 2026 and has been verified on a test box. What is written there now is mechanism, which does not go stale when someone else ships: `HeaderProtectionKey` is two-sided and fails silently on a mismatch, with no handshake and no error from either end, so enabling it would cut off devices that update from an app store
+- **A dead assertion in `tests/test_diagnostic_report_secrets.bats`.** The assertion about masking secrets in the report was not actually checking the Russian installer: a negation inside a loop does not fail a bats test, so a defect in the Russian version passed as success. The assertion now takes a form that does not depend on how `set -e` behaves, confirmed by mutation: the old one went green on a defect the new one catches
 
 ## [5.29.0] - 2026-08-30
 
@@ -1821,7 +1838,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.29.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.30.0...HEAD
+[5.30.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.29.0...v5.30.0
 [5.29.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.28.1...v5.29.0
 [5.28.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.28.0...v5.28.1
 [5.28.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.27.1...v5.28.0
