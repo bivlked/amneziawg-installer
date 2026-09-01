@@ -1429,7 +1429,9 @@ _diag_cps_guard() {
             _diag_line WARN "CPS (I1-I5) takes ${_cps_total} bytes - that is a lot"
             echo "        Oversized I1-I5 hang the interface read: the dump stops advancing and"
             echo "        repeats forever, which on a router is enough to take the box down."
-            echo "        Fix: shorten I1-I5 in /etc/amnezia/amneziawg/awg0.conf, then"
+            # The path comes from the variable rather than a literal: the
+            # message must name the file we actually read.
+            echo "        Fix: shorten I1-I5 in $SERVER_CONF_FILE, then"
             echo "        sudo systemctl restart awg-quick@awg0"
             warn=$((warn+1))
         elif [[ "$_cps_rc" -ne 0 || ! "$_cps_total" =~ ^[0-9]+$ ]]; then

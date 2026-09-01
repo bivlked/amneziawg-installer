@@ -35,7 +35,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="e90bc0c90969fb7fd61cddf6b5ed5b415cae32b81dc205e9e3b23011d0b93cd9"
-MANAGE_SCRIPT_SHA256="8b0fd658f374b8af91e3c2915a729b5eddc797800ecc7c183628a2bf9feb039d"
+MANAGE_SCRIPT_SHA256="15d5b3e8144a3c69f3e847eb219de6802fbbb454a08637eeac198b4ff6ff29d3"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back

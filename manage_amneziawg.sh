@@ -1414,7 +1414,9 @@ _diag_cps_guard() {
             _diag_line WARN "CPS (I1-I5) занимает ${_cps_total} байт - это много"
             echo "        Слишком большие I1-I5 подвешивают чтение интерфейса: дамп перестаёт"
             echo "        продвигаться и повторяется бесконечно, а на роутере это роняет устройство."
-            echo "        Fix: сократить I1-I5 в /etc/amnezia/amneziawg/awg0.conf, затем"
+            # Путь берём из переменной, а не литералом: сообщение обязано
+            # называть тот файл, который мы прочитали.
+            echo "        Fix: сократить I1-I5 в $SERVER_CONF_FILE, затем"
             echo "        sudo systemctl restart awg-quick@awg0"
             warn=$((warn+1))
         elif [[ "$_cps_rc" -ne 0 || ! "$_cps_total" =~ ^[0-9]+$ ]]; then
