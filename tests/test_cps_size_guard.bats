@@ -74,12 +74,6 @@ size() {  # size <lib> <args...>
     [ "$output" = "0" ]
 }
 
-@test "cps size: an unknown tag is ignored rather than guessed at" {
-    # Under-counting is safe here: the outcome is a warning, not a refusal.
-    run size "$COMMON" '<nosuchtag 99>'
-    [ "$output" = "0" ]
-}
-
 @test "cps size: the generator's own upper bound stays far below the threshold" {
     # generate_cps_i1 emits <r 32..256>. The guard warns above 1024.
     run size "$COMMON" '<r 256>'
@@ -225,8 +219,14 @@ guard_out() {
     # `<r 08>` is octal to bash. Before the fix the arithmetic failed, the
     # function returned an empty string, and the threshold comparison never
     # fired - the guard was off and said nothing.
+    #
+    # 🔴 The assertion is the SUM, not `unsafe=1`. Measured on a mutant with
+    # `10#` removed: it also prints `unsafe=1`, by the "could not parse"
+    # branch, so an assertion on the flag alone stays green on the defect it
+    # names. 4104 = 8 + 4096, and only the fixed code can produce it.
     run guard_out "$MANAGE" "$COMMON" '<r 08><r 4096>'
     [[ "$output" == *"unsafe=1"* ]]
+    [[ "$output" == *"4104"* ]]
 }
 
 @test "cps behaviour: an unreadable config is reported rather than passed over" {
@@ -248,4 +248,192 @@ guard_out() {
     run guard_out "$MANAGE_EN" "$COMMON_EN" '<r 4096>'
     [[ "$output" == *"4096"* ]]
     [[ "$output" == *"unsafe=1"* ]]
+}
+
+# ------------------------------------------- контракт «занижение не молчит»
+#
+# 🔴 Эти тесты проверяют КОД ВОЗВРАТА, а не только напечатанное число, и в этом
+# всё дело. Прежний тест на неизвестный тег утверждал только `output = 0`:
+# удали из библиотеки `return 2` - и он остался бы зелёным, хотя вызывающий
+# перестал бы отличать «разобрал, размера нет» от «разобрать не смог». Ноль,
+# полученный от неразобранной строки, ведёт диагностику прямиком в тот вызов,
+# который зависает.
+
+@test "cps size: an unknown tag is flagged, not merely under-counted" {
+    run size "$COMMON" '<nosuchtag 99>'
+    [ "$output" = "0" ]
+    [ "$status" -eq 2 ]
+}
+
+@test "cps size: input with no tags at all is flagged rather than called empty" {
+    # Measured before the fix: 0 with status 0, indistinguishable from an
+    # absent I1 - and an absent I1 is exactly what makes the guard stand aside.
+    run size "$COMMON" 'garbagewithnotags'
+    [ "$status" -eq 2 ]
+}
+
+@test "cps size: an unterminated tag is flagged" {
+    run size "$COMMON" '<r 5'
+    [ "$status" -eq 2 ]
+}
+
+@test "cps size: junk after a valid tag is flagged" {
+    run size "$COMMON" '<b 0xaa> tail'
+    [ "$status" -eq 2 ]
+}
+
+@test "cps size: a stray bracket does not make a tag count twice" {
+    # `${s#*>}` used to cut to the first `>` in the whole string, which could
+    # sit before the match, so the same tag was consumed twice. Measured: 128
+    # for a single `<r 64>`.
+    run size "$COMMON" 'a>b<r 64>'
+    [ "$output" = "64" ]
+    [ "$status" -eq 2 ]
+}
+
+@test "cps size: a count too large for bash arithmetic does not wrap into safety" {
+    # Measured before the fix: `<r 18446744073709551617>` overflowed to 1 with
+    # status 0, so a plainly dangerous value passed under the threshold.
+    run size "$COMMON" '<r 18446744073709551617>'
+    [ "$status" -eq 2 ]
+    [ "$output" -lt 1024 ]
+}
+
+@test "cps size: surrounding whitespace is not mistaken for junk" {
+    # The mirror of the four tests above. Without it a parser that flagged
+    # everything would pass them all and warn on every healthy config.
+    run size "$COMMON" '  <r 64>  '
+    [ "$output" = "64" ]
+    [ "$status" -eq 0 ]
+}
+
+@test "cps size: the EN library enforces the same contract" {
+    run size "$COMMON_EN" 'garbagewithnotags'
+    [ "$status" -eq 2 ]
+    run size "$COMMON_EN" 'a>b<r 64>'
+    [ "$output" = "64" ]
+    run size "$COMMON_EN" '  <r 64>  '
+    [ "$status" -eq 0 ]
+}
+
+@test "cps behaviour: an I1 with no recognisable tag marks the read unsafe" {
+    run guard_out "$MANAGE" "$COMMON" 'notatagatall'
+    [[ "$output" == *"unsafe=1"* ]]
+    [[ "$output" == *"WARN"* ]]
+}
+
+# ------------------------------------- «не прочитал» против «параметра нет»
+#
+# Шаг 8 diagnose печатал `I1=${i1:-absent}`. Пустая строка означает и «в
+# конфиге параметра нет», и «до интерфейса мы не дошли», а это противоположные
+# утверждения: сторож срабатывает ровно тогда, когда I1 огромен, и в этот
+# момент прежний код печатал «I1 absent». Блок вырезается по комментариям-
+# границам и исполняется с заглушками - так же, как guard_out выше.
+
+step8() {  # step8 <manage> <cps_unsafe>
+    bash -c '
+        MANAGE="$1"; _cps_unsafe="$2"
+        warn=0; fail=0
+        _diag_line() { echo "[$1] ${*:2}"; }
+        awg() { echo "  jc: 4"; echo "  i1: <r 171>"; }
+        # `timeout` - внешний бинарь, и функцию-заглушку awg он не увидит.
+        # Без этой строки зеркальный тест падал бы на харнессе, а читался
+        # как провал кода.
+        timeout() { shift; "$@"; }
+        eval "$(awk "/# 8\. AWG params snapshot/,/# 9\. Carrier comparison/" "$MANAGE" | sed "\$d")"
+        echo "warn=$warn fail=$fail"
+    ' _ "$1" "$2"
+}
+
+@test "diagnose: a skipped interface read is not reported as an absent I1" {
+    run step8 "$MANAGE" 1
+    [[ "$output" == *"не прочитан"* ]]
+    run bash -c 'echo "$1"' _ "$output"
+    [[ "$output" != *"I1=absent"* ]]
+}
+
+@test "diagnose: a successful read still prints the parameters" {
+    # The mirror. A branch that always says "not read" would pass the test
+    # above while making diagnose useless on a healthy server.
+    run step8 "$MANAGE" 0
+    [[ "$output" == *"I1=<r 171>"* ]]
+}
+
+@test "diagnose: the EN version reports a skipped read the same way" {
+    run step8 "$MANAGE_EN" 1
+    [[ "$output" == *"not read"* ]]
+}
+
+# ------------------------------------------- структурные проверки-минимумы
+#
+# ⚠️ Ниже именно СТРУКТУРНЫЕ проверки, и это слабейший вид: они смотрят на
+# форму кода, а не на его поведение. Стоят здесь потому, что оба места лежат
+# внутри длинных функций, поведенческий вызов которых требует поднятого
+# интерфейса. Заменить на поведенческие при первой возможности.
+
+@test "list: the handshake default is unreachable when the dump was not read" {
+    # Без этого условия непрочитанный дамп давал «Нет handshake» ВСЕМ
+    # клиентам и то же самое в --json: правдоподобная и полностью неверная
+    # таблица вместо заметного зависания.
+    for f in "$MANAGE" "$MANAGE_EN"; do
+        run grep -c '\-n "\$current_pk" && "\$_dump_ok" -ne 1' "$f"
+        [ "$output" = "1" ]
+        run grep -c '_dump_ok=1' "$f"
+        [ "$output" = "1" ]
+    done
+}
+
+@test "diagnose: the carrier comparison is skipped when nothing was read" {
+    # Профиль со значением i1_mode=absent давал зелёный OK «I1 отсутствует»
+    # на непрочитанном интерфейсе - галочку об условии, из-за которого мы
+    # отказались смотреть.
+    for f in "$MANAGE" "$MANAGE_EN"; do
+        run grep -c '\-n "\$carrier" && "\$_awg_read" -ne 1' "$f"
+        [ "$output" = "1" ]
+    done
+}
+
+@test "diagnose: a timed-out peer read stops step 8 from trying again" {
+    # Зацикливание живёт на интерфейсе, а сторож читает файл; после таймаута
+    # повторный заход удваивал экспозицию, ради которой всё написано.
+    for f in "$MANAGE" "$MANAGE_EN"; do
+        run bash -c 'awk "/_show_rc\" -eq 124/,/^        else$/" "$1" | grep -c "_cps_unsafe=1"' _ "$f"
+        [ "$output" = "1" ]
+    done
+}
+
+@test "every awg show call site is bounded by a timeout" {
+    # check, stats, show и --diagnostic оставались без границы вовсе, а
+    # --diagnostic это ровно та команда, которую документация просит приложить
+    # к обращению: попавший в дефект не собрал бы даже отчёт о нём.
+    #
+    # Считаем ВЫЗОВЫ, а не вхождения подстроки: строковые литералы вырезаются
+    # (в них живут тексты сообщений и справка), комментарии отбрасываются.
+    # Первая редакция этого теста считала всё подряд и краснела на уже
+    # исправленном коде: проверка, не отличающая вызов от рассказа о нём,
+    # бесполезна в обе стороны.
+    for f in "$MANAGE" "$MANAGE_EN"              "${BATS_TEST_DIRNAME}/../install_amneziawg.sh"              "${BATS_TEST_DIRNAME}/../install_amneziawg_en.sh"; do
+        run bash -c 'strip() { sed "s/\"[^\"]*\"//g" "$1" | grep -vE "^[[:space:]]*#"; }
+            calls=$(strip "$1" | grep -cE "(^|[^_[:alnum:]-])awg show") || true
+            bounded=$(strip "$1" | grep -E "(^|[^_[:alnum:]-])awg show" | grep -cE "timeout [0-9]+ awg show") || true
+            echo "$calls $bounded"' _ "$f"
+        # Печатаются оба числа нарочно: равенство при нуле означало бы, что
+        # вызовов не нашли вовсе, то есть проверка сломалась, а не прошла.
+        set -- $output
+        [ "$1" -gt 0 ]
+        [ "$1" = "$2" ]
+    done
+}
+
+@test "cps size: a payload smuggled into a timestamp tag is flagged" {
+    # `<t <r 4096>` matches as one `t` tag whose value is `<r 4096`. Before the
+    # fix it counted four bytes and returned success: four thousand bytes
+    # reported as four, and the caller walked into the dangerous read.
+    run size "$COMMON" '<t <r 4096>'
+    [ "$status" -eq 2 ]
+    run size "$COMMON_EN" '<c junk>'
+    [ "$status" -eq 2 ]
+    run size "$COMMON" '<t><c>'
+    [ "$output" = "8" ]
+    [ "$status" -eq 0 ]
 }

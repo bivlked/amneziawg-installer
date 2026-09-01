@@ -34,8 +34,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="46edbf1d8016cea2d0a90b57165e3270d0fe57102350320fe659db333cf33ac4"
-MANAGE_SCRIPT_SHA256="40635be03f97f578c347bdd4e1df23db849f8c9cd268be82b0d5c575415d3c94"
+COMMON_SCRIPT_SHA256="354ab9609edc0d057c15b6d0ee9342377d7848850df0da6ff72e5a1504d3749b"
+MANAGE_SCRIPT_SHA256="b639b0121c88681555a3cef40faff5818225d847da535121f6fda7bc52015c36"
 
 # AmneziaWG 2.0 пин (H0, 31 jul 2026). Upstream влил AmneziaWG 3.0 в default-ветку
 # amneziawg-linux-kernel-module, и PPA переключился на 3.0. Тогда на ядрах старее
@@ -2508,7 +2508,9 @@ check_service_status() {
         ok=0
     fi
 
-    if ! awg show 2>/dev/null | grep -q "interface: awg0"; then
+    # timeout: перезапуск установщика поверх сервера с раздутыми вручную
+    # I1-I5 иначе повис бы здесь навсегда (#228). Отказ ниже и так громкий.
+    if ! timeout 10 awg show 2>/dev/null | grep -q "interface: awg0"; then
         log_error "awg show не видит интерфейс!"
         ok=0
     fi
@@ -2528,7 +2530,7 @@ check_service_status() {
     fi
 
     # Проверка AWG 2.0 параметров
-    if awg show awg0 2>/dev/null | grep -q "jc:"; then
+    if timeout 10 awg show awg0 2>/dev/null | grep -q "jc:"; then
         log "AWG 2.0 параметры активны."
     else
         log_warn "AWG 2.0 параметры не обнаружены в awg show."
@@ -2662,7 +2664,11 @@ create_diagnostic_report() {
         systemctl status awg-quick@awg0 --no-pager -l 2>/dev/null || echo "Service not found"
         echo ""
         echo "--- AWG Status ---"
-        awg show 2>/dev/null || echo "awg show failed"
+        # 🔴 timeout обязателен: при переросших I1-I5 дамп интерфейса
+        # зацикливается (amneziawg-linux-kernel-module#228), а это ровно та
+        # команда, которую документация просит приложить к обращению. Без
+        # границы попавший в дефект не смог бы собрать даже отчёт о нём.
+        timeout 10 awg show 2>/dev/null || echo "awg show failed or timed out"
         echo ""
         echo "--- AWG Version ---"
         awg --version 2>/dev/null || echo "awg --version failed"

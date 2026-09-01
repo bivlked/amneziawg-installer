@@ -583,7 +583,13 @@ if [[ "$form_fail" -eq 0 ]]; then _ok "форма пинов raw-URL (все vX.
 # сверка «ровно N» падала бы на каждом добавленном примере.
 dl_fail=0
 DL_MIN=2   # минимум команд скачивания на файл из списка ниже
-DL_DOCS=(README.md README.en.md INSTALL_VPS.md INSTALL_VPS.ru.md)
+# ADVANCED держит четыре такие команды на язык и раньше в список не входил:
+# откат одной из них на версионный raw-URL не поймала бы ни эта проверка, ни
+# соседние 6/6b - те следят лишь за ФОРМОЙ уже существующих пинов, а один пин
+# в ADVANCED оставлен намеренно. Он проверку не задевает: это голый URL в блоке
+# кода, без wget и curl в строке, поэтому счётчик bad его не видит (замерено:
+# good=4, bad=0 в обоих языках).
+DL_DOCS=(README.md README.en.md INSTALL_VPS.md INSTALL_VPS.ru.md ADVANCED.md ADVANCED.en.md)
 for f in "${DL_DOCS[@]}"; do
     [[ -f "$f" ]] || continue
     # Команда скачивания = строка с wget/curl, тянущая наш файл.

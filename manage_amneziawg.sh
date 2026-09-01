@@ -1301,8 +1301,13 @@ check_server() {
     # Раньше awg show вызывался через process substitution без проверки exit code,
     # из-за чего check мог отрапортовать "Состояние OK" даже когда awg упал.
     # Теперь захватываем вывод и проверяем exit code (audit).
-    local _awg_out
-    if ! _awg_out=$(awg show awg0 2>&1); then
+    local _awg_out _check_rc=0
+    # timeout: без него переросшие I1-I5 подвешивают check намертво
+    # (amneziawg-linux-kernel-module#228). Отказ здесь и так громкий, границы
+    # по времени не хватало.
+    if ! _awg_out=$(timeout 10 awg show awg0 2>&1); then
+        _check_rc=$?
+        [[ "$_check_rc" -eq 124 ]] && _awg_out="awg show не ответил за 10 секунд - похоже на зацикленный дамп интерфейса, проверьте размер I1-I5"
         log_error " - awg show awg0 завершился с ошибкой:"
         while IFS= read -r _l; do log_error "  $_l"; done <<< "$_awg_out"
         ok=0
@@ -1373,7 +1378,9 @@ _diag_line() {
 }
 
 # Главная функция: пробегается по health-checks + опционально сравнивает с оператором
-# _diag_cps_guard : размер CPS из КОНФИГА, до любого `awg show`.
+# _diag_cps_guard : размер CPS из КОНФИГА, до любого `awg show` В ДИАГНОСТИКЕ.
+# ⚠️ Это утверждение про diagnose, а не про весь скрипт: у check, stats, show
+# и list своей проверки размера нет, они защищены только таймаутом.
 #
 # Отдельной функцией, а не куском diagnose_server, по двум причинам. Во-первых,
 # так её можно прогнать в тесте: `source` самого скрипта запускает main и
@@ -1570,6 +1577,12 @@ diagnose_server() {
         if [[ "$_show_rc" -eq 124 ]]; then
             _diag_line FAIL "awg show не ответил за 10 секунд - похоже на зацикленный дамп интерфейса"
             fail=$((fail+1))
+            # 🔴 Зацикливание живёт на ИНТЕРФЕЙСЕ, а сторож читает ФАЙЛ, и эти
+            # два состояния расходятся: у выполнившего наш же совет «сократить
+            # I1-I5» файл уже мал, а интерфейс ещё нет. Раз вызов только что
+            # завис, шаг 8 обязан в него не ходить - иначе мы удваиваем ровно
+            # ту экспозицию, ради которой всё это написано.
+            _cps_unsafe=1
         else
             _diag_line WARN "awg show завершился с кодом $_show_rc - число пиров не определено"
             warn=$((warn+1))
@@ -1577,18 +1590,54 @@ diagnose_server() {
     fi
 
     # 8. AWG params snapshot (один вызов awg show вместо четырёх)
-    local _awg_show="" jc jmin jmax i1
+    # 🔴 Состояние ТРЁХЗНАЧНОЕ, а не «строка пустая». Пустая строка одинаково
+    # означает «параметра нет» и «мы до интерфейса не дошли», и это
+    # противоположные утверждения: сторож срабатывает ровно тогда, когда I1
+    # огромен, а прежняя форма ${i1:-absent} печатала в этот момент
+    # «I1=absent». Соврать про I1 в отчёте о слишком большом I1 - худшее, что
+    # эта команда могла сделать.
+    local _awg_show="" _awg_read=0 _show2_rc=0 jc jmin jmax i1
     if [[ "$_cps_unsafe" -ne 1 ]]; then
-        _awg_show=$(timeout 10 awg show awg0 2>/dev/null) || _awg_show=""
+        # stderr не выбрасываем: полоса ВЫШЕ зацикливания отвечает
+        # `Unable to access interface: Message too long`, и это единственная
+        # строка, которая называет причину. Голый код возврата вместо неё -
+        # потеря диагностики на ровном месте.
+        if _awg_show=$(timeout 10 awg show awg0 2>&1); then
+            _awg_read=1
+        else
+            _show2_rc=$?
+            if [[ "$_show2_rc" -eq 124 ]]; then
+                _diag_line FAIL "awg show не ответил за 10 секунд - параметры интерфейса не прочитаны"
+                fail=$((fail+1))
+                _cps_unsafe=1
+            else
+                _diag_line WARN "awg show завершился с кодом $_show2_rc - параметры интерфейса не прочитаны${_awg_show:+: ${_awg_show%%$'\n'*}}"
+                warn=$((warn+1))
+            fi
+            _awg_show=""
+        fi
     fi
-    jc=$(awk '/^[[:space:]]*jc:/   {print $2; exit}' <<< "$_awg_show")
-    jmin=$(awk '/^[[:space:]]*jmin:/ {print $2; exit}' <<< "$_awg_show")
-    jmax=$(awk '/^[[:space:]]*jmax:/ {print $2; exit}' <<< "$_awg_show")
-    i1=$(awk -F': ' '/^[[:space:]]*i1:/ {print $2; exit}' <<< "$_awg_show")
-    _diag_line INFO "AWG params: Jc=${jc:-?} Jmin=${jmin:-?} Jmax=${jmax:-?} I1=${i1:-absent}"
+    if [[ "$_awg_read" -eq 1 ]]; then
+        jc=$(awk '/^[[:space:]]*jc:/   {print $2; exit}' <<< "$_awg_show")
+        jmin=$(awk '/^[[:space:]]*jmin:/ {print $2; exit}' <<< "$_awg_show")
+        jmax=$(awk '/^[[:space:]]*jmax:/ {print $2; exit}' <<< "$_awg_show")
+        i1=$(awk -F': ' '/^[[:space:]]*i1:/ {print $2; exit}' <<< "$_awg_show")
+        _diag_line INFO "AWG params: Jc=${jc:-?} Jmin=${jmin:-?} Jmax=${jmax:-?} I1=${i1:-absent}"
+    else
+        _diag_line INFO "AWG params: интерфейс не прочитан, значения не проверялись"
+    fi
 
     # 9. Carrier comparison
-    if [[ -n "$carrier" ]]; then
+    # 🔴 Сравнивать непрочитанное нельзя. У профиля со значением i1_mode=absent
+    # проверка `[[ -z "$i1" ]]` на непрочитанном интерфейсе давала зелёный OK
+    # «I1 отсутствует» - галочку, удостоверяющую ровно то условие, из-за
+    # которого мы отказались смотреть, да ещё и в итоговом счётчике.
+    if [[ -n "$carrier" && "$_awg_read" -ne 1 ]]; then
+        echo ""
+        log "Сравнение с профилем оператора '$carrier'..."
+        _diag_line WARN "пропущено: параметры интерфейса не прочитаны, сравнивать не с чем"
+        warn=$((warn+1))
+    elif [[ -n "$carrier" ]]; then
         echo ""
         log "Сравнение с профилем оператора '$carrier'..."
         local row
@@ -1706,8 +1755,23 @@ list_clients() {
 
     # Однопроходный парсинг awg show dump: pubkey → handshake timestamp
     local -A _pk_to_hs
-    local awg_dump
-    awg_dump=$(timeout 10 awg show awg0 dump 2>/dev/null) || awg_dump=""
+    # 🔴 Пустой дамп НЕ означает «ни у кого нет рукопожатия». Таймаут добавлен
+    # этим же релизом, и без разбора отказа он превратил заметное зависание в
+    # правдоподобную и полностью неверную таблицу: всем клиентам «Нет
+    # handshake», в --json тем же составом. Честное состояние в коде уже есть -
+    # это дефолт "Нет данных"/no_data, надо просто его не затирать.
+    local awg_dump _dump_ok=0 _dump_rc=0
+    if awg_dump=$(timeout 10 awg show awg0 dump 2>/dev/null); then
+        _dump_ok=1
+    else
+        _dump_rc=$?
+        awg_dump=""
+        if [[ "$_dump_rc" -eq 124 ]]; then
+            log_warn "awg show dump не ответил за 10 секунд - состояние клиентов неизвестно (похоже на зацикленный дамп: проверьте размер I1-I5)"
+        else
+            log_warn "awg show dump завершился с кодом $_dump_rc - состояние клиентов неизвестно"
+        fi
+    fi
     if [[ -n "$awg_dump" ]]; then
         # shellcheck disable=SC2034
         while IFS=$'\t' read -r _dpk _dpsk _dep _daips _dhs _drx _dtx _dka; do
@@ -1772,7 +1836,11 @@ list_clients() {
 
             local current_pk="${_name_to_pk[$name]:-}"
 
-            if [[ -n "$current_pk" ]]; then
+            if [[ -n "$current_pk" && "$_dump_ok" -ne 1 ]]; then
+                # Ключ известен, состояние интерфейса - нет. Оставляем дефолт
+                # "Нет данных"/no_data: он и означает «не смотрели».
+                pk="${current_pk:0:10}..."
+            elif [[ -n "$current_pk" ]]; then
                 pk="${current_pk:0:10}..."
                 local handshake="${_pk_to_hs[$current_pk]:-0}"
                 if [[ "$handshake" =~ ^[0-9]+$ && "$handshake" -gt 0 ]]; then
@@ -1877,9 +1945,14 @@ stats_clients() {
     fi
 
     # Получаем данные awg show awg0
-    local awg_dump
-    awg_dump=$(awg show awg0 dump 2>/dev/null) || {
-        log_error "Ошибка получения данных awg show."
+    local awg_dump _stats_rc=0
+    awg_dump=$(timeout 10 awg show awg0 dump 2>/dev/null) || {
+        _stats_rc=$?
+        if [[ "$_stats_rc" -eq 124 ]]; then
+            log_error "awg show dump не ответил за 10 секунд - похоже на зацикленный дамп интерфейса, проверьте размер I1-I5."
+        else
+            log_error "Ошибка получения данных awg show."
+        fi
         return 1
     }
 
@@ -2395,7 +2468,15 @@ case $COMMAND in
 
     show)
         log "Статус AmneziaWG 2.0..."
-        if ! awg show; then log_error "Ошибка awg show."; _cmd_rc=1; fi
+        if ! timeout 10 awg show; then
+            _show_cmd_rc=$?
+            if [[ "$_show_cmd_rc" -eq 124 ]]; then
+                log_error "awg show не ответил за 10 секунд - похоже на зацикленный дамп интерфейса, проверьте размер I1-I5."
+            else
+                log_error "Ошибка awg show."
+            fi
+            _cmd_rc=1
+        fi
         ;;
 
     restart)

@@ -281,7 +281,7 @@ Since v5.25.0 the management scripts track this and **warn**: they remember the 
 
 None of the 3.0 features appear in generated configs, and that is deliberate:
 
-- **`HeaderProtectionKey`** needs every one of your clients to understand it at the same time, and that requirement bites harder than it reads: the parameter is two-sided and fails silently on a mismatch - the handshake simply never happens and nothing reports an error. Where the clients stand on 31 August 2026: `amneziawg-windows-client` has a 3.1.0 release (21 August), `amneziawg-android` has a full `v3.1.20260814` release (14 August; the separate 3.0.1 from 24 July stayed a prerelease), and the light client on Google Play has sat on 2.0.1 since 12 June. While some of your devices update from a store, turning the parameter on would cut them off without warning.
+- **`HeaderProtectionKey`** needs every one of your clients to understand it at the same time, and that requirement bites harder than it reads: the parameter is two-sided and fails silently on a mismatch - the handshake simply never happens and nothing reports an error. Where the clients stand on 31 August 2026: `amneziawg-windows-client` has a 3.1.0 release (21 August), `amneziawg-android` has a full `v3.1.20260814` release (14 August; the separate 3.0.1 from 24 July stayed a prerelease), and the light client on Google Play has not been updated since 12 June. While some of your devices update from a store, turning the parameter on would cut them off without warning.
 - **`ContentPaddingAddition`** is left out for a historical reason that no longer applies. The padding broke keepalive detection, so an idle tunnel redid its handshake every 15 seconds instead of roughly 147. The defect is analysed in [issue #186](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/186) and was fixed upstream on 5 August 2026 ([PR #208](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/pull/208)); the fix was verified on a test server - the interval went back to 147 seconds.
 - **The timer parameters** are one-sided and safe, but on their own they buy little, so they travel with the next step.
 
@@ -967,7 +967,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>Q: Does my router speak third-line AmneziaWG?</strong></summary>
-  <b>A:</b> We know of no stock firmware supporting the third line as of 31 August 2026, so for a router the second-line profile stays a working path rather than a temporary compromise. On routers the third line comes from third-party projects: AWG Manager for Keenetic (v2.17.4 of 27 August 2026), and for MikroTik and RouterOS two independent projects updated on 26 and 30 August 2026.
+  <b>A:</b> I know of no stock firmware supporting the third line as of 31 August 2026, so for a router the second-line profile stays a working path rather than a temporary compromise. On routers the third line comes from third-party projects: AWG Manager for Keenetic (v2.17.4 of 27 August 2026), and for MikroTik and RouterOS two independent projects updated on 26 and 30 August 2026.
 </details>
 
 <details>
@@ -1664,34 +1664,36 @@ Not all clients support AWG 2.0. Check compatibility before choosing a client:
 
 ### Which AmneziaWG generation a client speaks
 
-Measured 31 August 2026 from the projects' own release pages, and you can check the same way.
+Recorded 31 August 2026 from the projects' own release pages, and you can check the same way.
 Clients move every few days, so each row carries a date: it says when that version was current.
 
 | Client | Generation | Version | Date | Where to get it |
 |---|---|---|---|---|
 | Amnezia VPN (flagship, all platforms) | third line | 5.0.1.5 | 21 Aug 2026 | GitHub, app stores |
 | AmneziaWG for Android (light, APK) | third line | v3.1.20260814 | 14 Aug 2026 | project releases page |
-| AmneziaWG on Google Play (light) | **inferred from dates: second line** | Play does not publish the version | listing updated **12 Jun 2026** | Google Play |
+| AmneziaWG on Google Play (light) | **an inference, not an observation: second line** | 2.0.1 in the release-notes text | listing updated **12 Jun 2026** | Google Play |
 | AmneziaWG for Windows (standalone client) | third line | 3.1.0 | 21 Aug 2026 | project releases page |
-| WG Tunnel (third-party, Android) | speaks AmneziaWG; generation not verified by us | 5.6.0 | 27 Aug 2026 | Play, F-Droid, IzzyOnDroid, APK |
+| WG Tunnel (third-party, Android) | speaks AmneziaWG; generation not verified by behaviour | 5.6.0 | 27 Aug 2026 | Play, F-Droid, IzzyOnDroid, APK |
 | AWG Manager (Keenetic, third-party) | third line | v2.17.4 | 27 Aug 2026 | project releases page |
 | amneziawg-mikrotik-c (third-party) | third line | v1.2.8 | 26 Aug 2026 | project releases page |
 | AmneziaWG-MikroTik (third-party) | third line | Containers_3.1 | 30 Aug 2026 | project releases page |
 
 ⚠️ **The Google Play row is an inference, not an observation.** Google Play does not show a
-version number on the app page, so the generation is inferred from dates: the listing was
-updated 12 June 2026, the release of that same app from 12 June belongs to the second line, and
-the third-line build appeared on 14 August 2026, after the listing was last updated. The version
-number cannot be read directly, and we do not claim to have read it.
+app page no longer carries a separate current-version field: the only number on it is
+`AmneziaWG 2.0.1` inside the release-notes text, which the developer writes by hand and which
+can lag what is actually being served. So the generation is inferred from dates: the listing was
+updated 12 June 2026 and the third-line build appeared on 14 August 2026, after the listing was
+last updated. The number in the notes agrees with that conclusion but does not prove it on its
+own.
 
 ⚠️ **The WG Tunnel row is held to the same standard.** It is a third-party project, its 5.6.0
-release from 27 August 2026 exists, but we have not verified the protocol generation by
-behaviour and we name no number. Until that check it stays in the table as "speaks AmneziaWG",
+release from 27 August 2026 exists, but I have not verified the protocol generation by
+behaviour and name no generation number here. Until that check it stays in the table as "speaks AmneziaWG",
 nothing more.
 
 > ⚠️ For third-party projects the generation comes from their authors' own documentation and
-> release notes: we read their code, but verified none of them by behaviour. A row we did verify
-> is marked as such.
+> release notes: I read their code, but verified none of them by behaviour, and no row here is
+> marked as verified.
 
 ### Router Clients
 

@@ -1797,8 +1797,6 @@ awg_warn_interface_disruption() {
     esac
 }
 
-# _awg_device_param_names : names of the AWG device parameters (2.0 and 3.0)
-# that live in the [Interface] section and that syncconf does NOT clear.
 # awg_cps_decoded_size <I string> [...] : total DECODED size in bytes.
 #
 # Why. The I1-I5 parameters land in the device attributes that the kernel emits
@@ -1809,9 +1807,11 @@ awg_warn_interface_disruption() {
 # is enough to take the box down. Written up with the code path in
 # amneziawg-linux-kernel-module#228 (31 aug 2026); the user-visible symptom is
 # #148. The band just above the looping one answers `Unable to access interface:
-# Message too large`, which is BETTER: an error at least stops.
+# Message too long`, which is BETTER: an error at least stops. Those are the
+# exact words: errno EMSGSIZE, which glibc renders as "too long", so that is
+# what to grep a log for.
 #
-# 🔴 The DECODED size is counted, not the string length. `<r 1000>` is nine
+# 🔴 The DECODED size is counted, not the string length. `<r 1000>` is eight
 # characters and a thousand bytes on the wire; comparing string lengths would
 # miss exactly the case this check exists for.
 #
@@ -1820,18 +1820,36 @@ awg_warn_interface_disruption() {
 # `<rc N>` random letters, `<rd N>` random digits, `<t>` a timestamp (4 bytes).
 # `<c>` counts as the same 4 bytes: it exists in the kernel module and not in
 # amneziawg-go, so it affects portability rather than size.
-# Unknown tags are ignored: under-counting is safer than inventing a number,
-# because the outcome here is a warning rather than a refusal.
+# Nothing unknown is guessed at: an invented number is worse than an honest
+# refusal. But it must not pass in silence either, so anything left unparsed -
+# an unknown tag, an unterminated bracket, junk between tags, an implausibly
+# large count - marks the result with exit code 2, "the sum is an under-count".
+# A zero with code 0 must mean "parsed everything, there is no size", otherwise
+# the caller reads junk as emptiness.
 awg_cps_decoded_size() {
-    local total=0 s tag n hex unknown=0
+    local total=0 s tag n hex mat pre unknown=0
     for s in "$@"; do
         [[ -n "$s" ]] || continue
-        # A space inside the tag is allowed: both `<r 64>` and `<r64>` show up
-        # in third-party recipes, and both implementations accept them.
+        # The space-less form is accepted DELIBERATELY, even though both
+        # implementations reject it: the kernel splits a tag on the space
+        # (`strsep`) and amneziawg-go uses `strings.Fields`, so `<r64>` is an
+        # unknown key to them and the interface will not come up. Counting it
+        # is still right: this estimates a size, and an over-estimate leads to
+        # a warning while a miss leads to a hang. ⚠️ Do not write this form
+        # into a config.
         while [[ "$s" =~ \<[[:space:]]*([a-zA-Z]+)[[:space:]]*([^\>]*)\> ]]; do
+            # 🔴 Save the match BEFORE the case: the `b` branch runs its own
+            # `[[ =~ ]]`, which overwrites BASH_REMATCH. That was harmless
+            # while the string advanced to the first `>`; now that it advances
+            # by the match, a value read after the case would be the hex.
+            mat="${BASH_REMATCH[0]}"
             tag="${BASH_REMATCH[1]}"
             n="${BASH_REMATCH[2]}"
             n="${n//[[:space:]]/}"
+            # Whatever sits BEFORE the tag is not a tag. Without this line
+            # `<><r 5>` passed as an honest five bytes.
+            pre="${s%%"$mat"*}"
+            [[ -z "${pre//[[:space:]]/}" ]] || unknown=1
             case "${tag,,}" in
                 b)
                     hex="${n#0x}"; hex="${hex#0X}"
@@ -1849,21 +1867,44 @@ awg_cps_decoded_size() {
                     # arithmetic, the whole function returns EMPTY, and the
                     # threshold check silently never fires - a silent failure
                     # exactly where it hurts most. Measured 31 aug 2026.
-                    if [[ "$n" =~ ^[0-9]+$ ]]; then
+                    # The nine-digit limit is not a matter of taste:
+                    # `<r 18446744073709551617>` overflows 64-bit bash
+                    # arithmetic and sums to ONE, so a plainly dangerous value
+                    # slips under the threshold. Measured 1 sep 2026. The
+                    # vendor caps r/rc/rd at a thousand, so nine digits is
+                    # headroom rather than a constraint.
+                    if [[ "$n" =~ ^[0-9]{1,9}$ ]]; then
                         total=$(( total + 10#$n ))
                     else
                         unknown=1
                     fi
                     ;;
                 t|c)
-                    total=$(( total + 4 ))
+                    # 🔴 `<t>` and `<c>` carry no payload, so non-empty content
+                    # means we parsed the WRONG thing. `<t <r 4096>` matches
+                    # this regex as a single tag whose value is `<r 4096`, and
+                    # without the check it counted four bytes and returned
+                    # success: four thousand bytes became four, and diagnostics
+                    # walked into the dangerous call with a clear conscience.
+                    if [[ -z "$n" ]]; then
+                        total=$(( total + 4 ))
+                    else
+                        unknown=1
+                    fi
                     ;;
                 *)
                     unknown=1
                     ;;
             esac
-            s="${s#*>}"
+            # 🔴 Advance past the END OF THE MATCH. The `${s#*>}` form cut
+            # to the first `>` in the string, which could sit BEFORE the
+            # match - and then the same tag was counted twice.
+            s="${s#*"$mat"}"
         done
+        # A non-empty remainder is not a tag. Without this, `garbage` and an
+        # unterminated `<r 5` returned zero with code 0, that is "parsed, no
+        # size".
+        [[ -z "${s//[[:space:]]/}" ]] || unknown=1
     done
     printf '%s' "$total"
     # A code of 2 means "the sum is an under-count, something was not parsed".
@@ -1873,6 +1914,8 @@ awg_cps_decoded_size() {
     return 0
 }
 
+# _awg_device_param_names : names of the AWG device parameters (2.0 and 3.0)
+# that live in the [Interface] section and that syncconf does NOT clear.
 _awg_device_param_names() {
     printf '%s\n' Jc Jmin Jmax S1 S2 S3 S4 H1 H2 H3 H4 I1 I2 I3 I4 I5 \
         ContentPaddingAddition HeaderProtectionKey MaxHandshakeAttempts \

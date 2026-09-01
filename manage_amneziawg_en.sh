@@ -1316,8 +1316,13 @@ check_server() {
     # Previously awg show was called via process substitution without an exit
     # code check, so check could report "Status OK" even when awg crashed.
     # Now we capture the output and check the exit code (audit).
-    local _awg_out
-    if ! _awg_out=$(awg show awg0 2>&1); then
+    local _awg_out _check_rc=0
+    # timeout: without it oversized I1-I5 hang check outright
+    # (amneziawg-linux-kernel-module#228). The failure here was already loud;
+    # what was missing is a bound on time.
+    if ! _awg_out=$(timeout 10 awg show awg0 2>&1); then
+        _check_rc=$?
+        [[ "$_check_rc" -eq 124 ]] && _awg_out="awg show did not answer within 10 seconds - looks like a looping interface dump, check the size of I1-I5"
         log_error " - awg show awg0 failed:"
         while IFS= read -r _l; do log_error "  $_l"; done <<< "$_awg_out"
         ok=0
@@ -1388,7 +1393,10 @@ _diag_line() {
 }
 
 # Main: runs health-checks + optional carrier comparison
-# _diag_cps_guard : CPS size from the CONFIG, before any `awg show`.
+# _diag_cps_guard : CPS size from the CONFIG, before any `awg show`
+# IN DIAGNOSE. ⚠️ That claim is about diagnose, not about the whole script:
+# check, stats, show and list have no size check of their own and are
+# protected by a timeout alone.
 #
 # A function rather than a slab inside diagnose_server, for two reasons. First,
 # it can then be exercised by a test: sourcing the script itself runs main and
@@ -1584,6 +1592,12 @@ diagnose_server() {
         if [[ "$_show_rc" -eq 124 ]]; then
             _diag_line FAIL "awg show did not answer within 10 seconds - looks like a looping interface dump"
             fail=$((fail+1))
+            # 🔴 The loop lives on the INTERFACE while the guard reads the
+            # FILE, and the two states diverge: someone who followed our own
+            # advice to shrink I1-I5 has a small file and an unchanged
+            # interface. The call just hung, so step 8 must not go back into
+            # it - that would double the very exposure this exists to prevent.
+            _cps_unsafe=1
         else
             _diag_line WARN "awg show exited with code $_show_rc - peer count unknown"
             warn=$((warn+1))
@@ -1591,18 +1605,53 @@ diagnose_server() {
     fi
 
     # 8. AWG params snapshot (one awg show call instead of four)
-    local _awg_show="" jc jmin jmax i1
+    # 🔴 The state is THREE-VALUED, not "the string is empty". An empty string
+    # means both "the parameter is absent" and "we never reached the
+    # interface", and those are opposite claims: the guard fires precisely
+    # when I1 is huge, and the old ${i1:-absent} form printed "I1=absent" at
+    # that exact moment. Lying about I1 in a report about an oversized I1 is
+    # the worst thing this command could do.
+    local _awg_show="" _awg_read=0 _show2_rc=0 jc jmin jmax i1
     if [[ "$_cps_unsafe" -ne 1 ]]; then
-        _awg_show=$(timeout 10 awg show awg0 2>/dev/null) || _awg_show=""
+        # stderr is kept: the band ABOVE looping answers `Unable to access
+        # interface: Message too long`, the only line that names the cause.
+        # Replacing it with a bare exit code throws diagnostics away.
+        if _awg_show=$(timeout 10 awg show awg0 2>&1); then
+            _awg_read=1
+        else
+            _show2_rc=$?
+            if [[ "$_show2_rc" -eq 124 ]]; then
+                _diag_line FAIL "awg show did not answer within 10 seconds - interface parameters not read"
+                fail=$((fail+1))
+                _cps_unsafe=1
+            else
+                _diag_line WARN "awg show exited with code $_show2_rc - interface parameters not read${_awg_show:+: ${_awg_show%%$'\n'*}}"
+                warn=$((warn+1))
+            fi
+            _awg_show=""
+        fi
     fi
-    jc=$(awk '/^[[:space:]]*jc:/   {print $2; exit}' <<< "$_awg_show")
-    jmin=$(awk '/^[[:space:]]*jmin:/ {print $2; exit}' <<< "$_awg_show")
-    jmax=$(awk '/^[[:space:]]*jmax:/ {print $2; exit}' <<< "$_awg_show")
-    i1=$(awk -F': ' '/^[[:space:]]*i1:/ {print $2; exit}' <<< "$_awg_show")
-    _diag_line INFO "AWG params: Jc=${jc:-?} Jmin=${jmin:-?} Jmax=${jmax:-?} I1=${i1:-absent}"
+    if [[ "$_awg_read" -eq 1 ]]; then
+        jc=$(awk '/^[[:space:]]*jc:/   {print $2; exit}' <<< "$_awg_show")
+        jmin=$(awk '/^[[:space:]]*jmin:/ {print $2; exit}' <<< "$_awg_show")
+        jmax=$(awk '/^[[:space:]]*jmax:/ {print $2; exit}' <<< "$_awg_show")
+        i1=$(awk -F': ' '/^[[:space:]]*i1:/ {print $2; exit}' <<< "$_awg_show")
+        _diag_line INFO "AWG params: Jc=${jc:-?} Jmin=${jmin:-?} Jmax=${jmax:-?} I1=${i1:-absent}"
+    else
+        _diag_line INFO "AWG params: interface not read, values not checked"
+    fi
 
     # 9. Carrier comparison
-    if [[ -n "$carrier" ]]; then
+    # 🔴 There is nothing to compare when nothing was read. For a profile with
+    # i1_mode=absent the `[[ -z "$i1" ]]` test on an unread interface produced
+    # a green OK "I1 absent" - a tick certifying the very condition that made
+    # us refuse to look, and it fed the summary counter too.
+    if [[ -n "$carrier" && "$_awg_read" -ne 1 ]]; then
+        echo ""
+        log "Comparing against carrier profile '$carrier'..."
+        _diag_line WARN "skipped: interface parameters were not read, nothing to compare"
+        warn=$((warn+1))
+    elif [[ -n "$carrier" ]]; then
         echo ""
         log "Comparing against carrier profile '$carrier'..."
         local row
@@ -1719,8 +1768,24 @@ list_clients() {
 
     # Single-pass awg show dump parsing: pubkey → handshake timestamp
     local -A _pk_to_hs
-    local awg_dump
-    awg_dump=$(timeout 10 awg show awg0 dump 2>/dev/null) || awg_dump=""
+    # 🔴 An empty dump does NOT mean "nobody has a handshake". The timeout was
+    # added in this same release, and without handling the failure it turned a
+    # visible hang into a plausible, entirely wrong table: every client shown
+    # as "No handshake", and the same under --json. The honest state already
+    # exists in the code as the "No data"/no_data default; it just has to
+    # survive.
+    local awg_dump _dump_ok=0 _dump_rc=0
+    if awg_dump=$(timeout 10 awg show awg0 dump 2>/dev/null); then
+        _dump_ok=1
+    else
+        _dump_rc=$?
+        awg_dump=""
+        if [[ "$_dump_rc" -eq 124 ]]; then
+            log_warn "awg show dump did not answer within 10 seconds - client state unknown (looks like a looping dump: check the size of I1-I5)"
+        else
+            log_warn "awg show dump exited with code $_dump_rc - client state unknown"
+        fi
+    fi
     if [[ -n "$awg_dump" ]]; then
         # shellcheck disable=SC2034
         while IFS=$'\t' read -r _dpk _dpsk _dep _daips _dhs _drx _dtx _dka; do
@@ -1785,7 +1850,12 @@ list_clients() {
 
             local current_pk="${_name_to_pk[$name]:-}"
 
-            if [[ -n "$current_pk" ]]; then
+            if [[ -n "$current_pk" && "$_dump_ok" -ne 1 ]]; then
+                # The key is known, the interface state is not. Keep the
+                # "No data"/no_data default: that is what "not looked at"
+                # means.
+                pk="${current_pk:0:10}..."
+            elif [[ -n "$current_pk" ]]; then
                 pk="${current_pk:0:10}..."
                 local handshake="${_pk_to_hs[$current_pk]:-0}"
                 if [[ "$handshake" =~ ^[0-9]+$ && "$handshake" -gt 0 ]]; then
@@ -1890,9 +1960,14 @@ stats_clients() {
     fi
 
     # Get awg show data
-    local awg_dump
-    awg_dump=$(awg show awg0 dump 2>/dev/null) || {
-        log_error "Failed to get awg show data."
+    local awg_dump _stats_rc=0
+    awg_dump=$(timeout 10 awg show awg0 dump 2>/dev/null) || {
+        _stats_rc=$?
+        if [[ "$_stats_rc" -eq 124 ]]; then
+            log_error "awg show dump did not answer within 10 seconds - looks like a looping interface dump, check the size of I1-I5."
+        else
+            log_error "Failed to get awg show data."
+        fi
         return 1
     }
 
@@ -2409,7 +2484,15 @@ case $COMMAND in
 
     show)
         log "AmneziaWG 2.0 status..."
-        if ! awg show; then log_error "awg show error."; _cmd_rc=1; fi
+        if ! timeout 10 awg show; then
+            _show_cmd_rc=$?
+            if [[ "$_show_cmd_rc" -eq 124 ]]; then
+                log_error "awg show did not answer within 10 seconds - looks like a looping interface dump, check the size of I1-I5."
+            else
+                log_error "awg show failed."
+            fi
+            _cmd_rc=1
+        fi
         ;;
 
     restart)
