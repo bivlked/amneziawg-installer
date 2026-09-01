@@ -1143,11 +1143,11 @@ modify_client() {
             # туннеля. Публичные рецепты вида
             # `modify <имя> AllowedIPs "$ALLOWED_IPS"` делают ровно это.
             # Значение записываем как просили, но молчать об этом нельзя.
-            # declare -f: _is_full_tunnel появилась в 5.31.0, а на
-            # полуобновлённом сервере рядом может лежать старая библиотека;
-            # расхождение MAJOR.MINOR ловит _check_common_compat выше.
+            # Проверять наличие _is_full_tunnel здесь не нужно:
+            # check_dependencies зовёт _check_common_compat ДО диспетчера
+            # команд, и расхождение MAJOR.MINOR приводит к die, поэтому «свежий
+            # manage рядом со старой библиотекой» до этого места не доживает.
             if [[ "$param" == "AllowedIPs" && "$value" != *:* ]] \
-               && declare -f _is_full_tunnel >/dev/null 2>&1 \
                && _is_full_tunnel "$value"; then
                 log_warn "AllowedIPs клиента '$name' задан полным туннелем без ::/0 - IPv6 устройства пойдёт мимо туннеля со своим настоящим адресом. Вернуть маршрут: regen '$name'."
             fi

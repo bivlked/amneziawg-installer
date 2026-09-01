@@ -1158,11 +1158,11 @@ modify_client() {
             # around the tunnel again. Public recipes of the shape
             # `modify <name> AllowedIPs "$ALLOWED_IPS"` do precisely that.
             # The value is written as asked, but staying silent is not an option.
-            # declare -f: _is_full_tunnel arrived in 5.31.0 and a half-upgraded
-            # server may carry an older library next to this script; a
-            # MAJOR.MINOR mismatch is caught by _check_common_compat above.
+            # No need to check that _is_full_tunnel exists here:
+            # check_dependencies calls _check_common_compat BEFORE the command
+            # dispatch and dies on a MAJOR.MINOR mismatch, so "a fresh manage
+            # next to an old library" never reaches this point.
             if [[ "$param" == "AllowedIPs" && "$value" != *:* ]] \
-               && declare -f _is_full_tunnel >/dev/null 2>&1 \
                && _is_full_tunnel "$value"; then
                 log_warn "AllowedIPs of client '$name' is a full tunnel without ::/0 - the device's IPv6 will go around the tunnel with its real address. To restore the route: regen '$name'."
             fi

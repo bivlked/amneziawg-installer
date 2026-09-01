@@ -296,8 +296,8 @@ _is_full_tunnel() {
     # carriage returns are turned into spaces up front. AllowedIPs can be
     # multi-line (wg allows the key to repeat, D#38), and a config edited on
     # Windows arrives with a \r glued to the last token.
-    list="${list//$'\n'/ }"
-    list="${list//$'\r'/ }"
+    list="${list//$'\r'/}"
+    list="${list//$'\n'/, }"
     local IFS=$', \t'
     read -ra toks <<< "$list"
     IFS=$' \t\n'
@@ -368,8 +368,11 @@ _append_ipv6_full_tunnel_route() {
     # gets printed. Otherwise a carriage return from the middle of the line would
     # travel into the client config together with the appended ::/0, and clients
     # reject such a token.
-    list="${list//$'\n'/ }"
-    list="${list//$'\r'/ }"
+    # A carriage return is NEVER meaningful and is simply dropped; a newline is
+    # an element separator, so it becomes a comma rather than a space - a space
+    # would glue two routes into one unreadable token.
+    list="${list//$'\r'/}"
+    list="${list//$'\n'/, }"
     if [[ "$list" != *:* ]] && _is_full_tunnel "$list"; then
         printf '%s, ::/0' "$list"
     else
@@ -3255,24 +3258,38 @@ regenerate_client() {
     # This fork lives here on purpose: without it, re-issuing a profile would
     # not deliver the fix to already issued clients, and "update your profile"
     # would not cure the leak.
-    local _aip_new
-    _aip_new=$(_append_ipv6_full_tunnel_route "$current_allowed_ips") && [[ -n "$_aip_new" ]] || {
-        log_error "Could not compute AllowedIPs for client '$name' - the config was left unchanged."
-        exec {lock_fd}>&-
-        unset CLIENT_PSK
-        return 1
-    }
-    # A client issued with --allow-ipv6-tunnel carries its own IPv6 part in the
-    # list, and the appender leaves it alone - otherwise a re-issue would break
-    # an individual setting. Consequence: such a client does NOT get ::/0 from a
-    # plain regen even for a full tunnel, and the cure is regen --reset-routes.
-    # Staying silent is not an option: the operator would run the prescribed
-    # remedy, keep the old leak, and be told the config was regenerated.
-    if [[ "$current_allowed_ips" == *:* && "$current_allowed_ips" != *"::/0"* ]] \
-       && _is_full_tunnel "$current_allowed_ips"; then
-        log_warn "Client '$name': the IPv6 part of AllowedIPs was kept as-is, ::/0 not appended. Run regen --reset-routes to roll out the current routing mode."
+    # All of this only matters when the saved settings are going to be restored.
+    # Under --reset-routes, and on the recovery path where there was no config,
+    # the value below is not used at all, and a refusal over it would fail a
+    # re-issue that had already succeeded.
+    if [[ "${AWG_REGEN_RESET_ROUTES:-0}" != "1" && "$_had_conf" -eq 1 ]]; then
+        local _aip_new
+        _aip_new=$(_append_ipv6_full_tunnel_route "$current_allowed_ips") && [[ -n "$_aip_new" ]] || {
+            # The file has ALREADY been rewritten by render_client_config, so
+            # "left unchanged" would be a false statement about state, and that
+            # is worse than the failure it replaced: the operator would have no
+            # reason to look at the file.
+            log_error "Could not compute AllowedIPs for client '$name'. The config has already been regenerated from the current routing mode, but individual settings were NOT restored - check $AWG_DIR/${name}.conf."
+            exec {lock_fd}>&-
+            unset CLIENT_PSK
+            return 1
+        }
+        # A client issued with --allow-ipv6-tunnel carries its own IPv6 part in
+        # the list, and the appender leaves it alone - otherwise a re-issue would
+        # break an individual setting. Consequence: such a client does NOT get
+        # ::/0 from a plain regen, and the cure is regen --reset-routes.
+        # 🔴 The native-IPv6 condition is mandatory: WITHOUT native IPv6 the
+        # client is supposed to get the tunnel ULA instead of ::/0 - documented
+        # behaviour, not a leak. Without this check the warning would fire always
+        # and prescribe a command that changes nothing, sending the operator to
+        # fix something that is not broken.
+        if [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" \
+              && "$current_allowed_ips" == *:* && "$current_allowed_ips" != *"::/0"* ]] \
+           && _is_full_tunnel "$current_allowed_ips"; then
+            log_warn "Client '$name': the IPv6 part of AllowedIPs was kept as-is, ::/0 not appended. Run regen --reset-routes to roll out the current routing mode."
+        fi
+        current_allowed_ips="$_aip_new"
     fi
-    current_allowed_ips="$_aip_new"
     [[ "$current_dns" == "1.1.1.1" ]] && current_dns="1.1.1.1, 1.0.0.1"
 
     # Restore user settings (escape & and \ for sed replacement)

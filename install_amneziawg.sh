@@ -34,8 +34,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="b5a449a882d59170f92f2f407a9525006d2ba889c07d622457cf33c860c08272"
-MANAGE_SCRIPT_SHA256="0338dcd6114f6fd0e197964c4b7e9bde6ca8425c1f9a51f6824f6e6efac9ada1"
+COMMON_SCRIPT_SHA256="c7a9b3582b2f979924ad4f6dd6aa61f2a6461741857e5d60c54c38c816d40879"
+MANAGE_SCRIPT_SHA256="d10550aa0fe1ebdf3f6cb330af1e8993025937146abfde9f7664ac2be59eefdd"
 
 # AmneziaWG 2.0 пин (H0, 31 jul 2026). Upstream влил AmneziaWG 3.0 в default-ветку
 # amneziawg-linux-kernel-module, и PPA переключился на 3.0. Тогда на ядрах старее

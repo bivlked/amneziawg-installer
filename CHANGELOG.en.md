@@ -31,7 +31,7 @@ In the "Amnezia" routing mode, which is the default, all IPv4 goes through the t
 
 ### Added
 
-- `tests/test_v5310_ipv6_full_tunnel.bats`: 37 checks of the predicate and of all three places that call it, including client re-issue and a second re-issue (`::/0` is not doubled), a multi-line list, a config with `CRLF`, and the edges of the non-public range table.
+- `tests/test_v5310_ipv6_full_tunnel.bats`: 48 checks of the predicate and of all three places that call it, including client re-issue and a second re-issue (`::/0` is not doubled), a multi-line list, a config with `CRLF`, and the edges of the non-public range table.
 
 ## [5.30.0] - 2026-09-01
 

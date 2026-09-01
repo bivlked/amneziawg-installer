@@ -47,7 +47,12 @@ TMPL_STALE_RE='placeholder:[[:space:]]*"e\.g\.,[[:space:]]*[0-9]+\.[0-9]+\.[0-9]
 @test "T6 #7b: the default mode called split routing is detected" {
     # Without this the guard is only known NOT to fire on the current tree, so a
     # typo in its pattern would leave it green for good.
-    local re='режим(ы|ах|ов) 2 и 3|modes 2 and 3|российские сайты идут мимо туннеля|в режиме раздельной маршрутизации \(по умолчанию\)|in split routing \(the default\)'
+    # The pattern is EXTRACTED from the script, not retyped: a copy would let a
+    # typo in the script live on while this test stayed green - the very failure
+    # this test exists to prevent.
+    local re
+    re=$(sed -n "s/^[[:space:]]*if grep -qE '\(.*\)' \"\$f\"; then$/\1/p" "$SCRIPT" | grep 'modes 2 and 3')
+    [ -n "$re" ]
     for bad in \
         "раздельная маршрутизация (режимы 2 и 3, режим 2 - по умолчанию)" \
         "split routing (modes 2 and 3, mode 2 being the default)" \

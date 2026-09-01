@@ -128,10 +128,10 @@ mode2_list() {
 }
 
 @test "v5.31.0 predicate: a trailing carriage return does not break the parse" {
-    # A config edited on Windows arrives with  glued to the last token.
+    # A config edited on Windows arrives with \r glued to the last token.
     local out rc
     log_warn() { echo "WARN: $*"; }
-    out=$(_is_full_tunnel "$(printf '0.0.0.0/0')" 2>&1) && rc=0 || rc=$?
+    out=$(_is_full_tunnel "$(printf '0.0.0.0/0\r')" 2>&1) && rc=0 || rc=$?
     [ "$rc" -eq 0 ]
     [ -z "$out" ]
 }
@@ -248,8 +248,13 @@ mode2_list() {
     # carry a stray carriage return into the config alongside the ::/0.
     local v
     v=$(_append_ipv6_full_tunnel_route "$(printf '0.0.0.0/0\r')")
-    [ "$v" = "0.0.0.0/0 , ::/0" ]
+    # The carriage return is dropped, not turned into a space: a stray space
+    # before the comma would travel into the client config.
+    [ "$v" = "0.0.0.0/0, ::/0" ]
     [[ "$v" != *$'\r'* ]]
+    # A newline is an element separator, so the result stays a parsable list.
+    v=$(_append_ipv6_full_tunnel_route "$(printf '0.0.0.0/1\n128.0.0.0/1')")
+    [ "$v" = "0.0.0.0/1, 128.0.0.0/1, ::/0" ]
 }
 
 # --- render_client_config: the actual bug ---
@@ -445,18 +450,18 @@ EOF
     # same leak and a cheerful "regenerated".
     local out
     setup_regen_dualstack "dual" "10.9.9.20" "fddd:2c4:2c4:2c4::20" "$(mode2_list), fddd:2c4:2c4:2c4::/64"
-    log_warn() { echo "WARN: $*" >&3; }
+    # log_warn must reach $output, so stderr and NOT fd 3: a stub writing to fd 3
+    # goes to the bats console, where no assertion can ever see it, and the test
+    # stays green with the warning deleted from the code.
+    log_warn() { echo "WARN: $*" >&2; }
     run regenerate_client "dual"
     [ "$status" -eq 0 ]
     grep -q "fddd:2c4:2c4:2c4::/64" "$AWG_DIR/dual.conf"
-    # The warning names the working cure.
+    [[ "$output" == *"reset-routes"* ]]
+    [[ "$output" == *"dual"* ]]
+    # The appender leaves such a list alone - that is why the warning exists.
     out=$(_append_ipv6_full_tunnel_route "$(mode2_list), fddd:2c4:2c4:2c4::/64")
     [ "$out" = "$(mode2_list), fddd:2c4:2c4:2c4::/64" ]
-    # The exact warning is pinned in both twins: a grep for 'reset-routes' alone
-    # would still match the comment above it after the log_warn was deleted.
-    grep -qF 'log_warn "Клиент' "${BATS_TEST_DIRNAME}/../awg_common.sh"
-    grep -qF 'IPv6-часть AllowedIPs сохранена как есть' "${BATS_TEST_DIRNAME}/../awg_common.sh"
-    grep -qF 'the IPv6 part of AllowedIPs was kept as-is' "${BATS_TEST_DIRNAME}/../awg_common_en.sh"
 }
 
 @test "v5.31.0 regen dual-stack: the warning about the kept IPv6 part exists in both twins" {
@@ -469,15 +474,52 @@ EOF
     grep -qF 'regen --reset-routes' "${BATS_TEST_DIRNAME}/../awg_common_en.sh"
 }
 
+@test "v5.31.0 regen dual-stack: no warning under --reset-routes, the cure does not prescribe itself" {
+    require_flock
+    # The warning used to be printed unconditionally, including on the very run
+    # that applies the prescribed cure - the command telling the operator to run
+    # the command they just ran.
+    setup_regen_dualstack "dualreset" "10.9.9.21" "fddd:2c4:2c4:2c4::21" "$(mode2_list), fddd:2c4:2c4:2c4::/64"
+    log_warn() { echo "WARN: $*" >&2; }
+    AWG_REGEN_RESET_ROUTES=1 run regenerate_client "dualreset"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"reset-routes"* ]]
+}
+
+@test "v5.31.0 regen dual-stack: no warning when the server has no native IPv6" {
+    require_flock
+    # Without native IPv6 the client is SUPPOSED to get the tunnel ULA instead of
+    # ::/0 - documented behaviour, not a leak. Warning there would send people to
+    # fix something that is not broken, on every regen, forever.
+    setup_regen_dualstack "dualnonat" "10.9.9.22" "fddd:2c4:2c4:2c4::22" "$(mode2_list), fddd:2c4:2c4:2c4::/64"
+    sed -i 's/^export SERVER_HAS_NATIVE_IPV6=.*/export SERVER_HAS_NATIVE_IPV6=0/' "$CONFIG_FILE"
+    safe_load_config "$CONFIG_FILE"
+    log_warn() { echo "WARN: $*" >&2; }
+    run regenerate_client "dualnonat"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"reset-routes"* ]]
+}
+
 @test "v5.31.0 regen: an empty appender result refuses instead of writing an empty list" {
     require_flock
     # The old code was a string comparison and could not fail; a command
     # substitution can return nothing. Writing 'AllowedIPs = ' and reporting
     # success is exactly the failure class this project treats as the worst.
-    setup_regen "erin" "10.9.9.30" "$(mode2_list)"
+    #
+    # The fixture is dual-stack on purpose: on an IPv4-only client the render
+    # guard fires first and regen never reaches its own check, so the earlier
+    # version of this test asserted a failure that came from somewhere else.
+    setup_regen_dualstack "erin" "10.9.9.30" "fddd:2c4:2c4:2c4::30" "$(mode2_list), fddd:2c4:2c4:2c4::/64"
     _append_ipv6_full_tunnel_route() { printf ''; }
+    # test_helper silences log_error, so without this stub the message cannot
+    # reach $output and the assertion below would check nothing.
+    log_error() { echo "ERR: $*" >&2; }
     run regenerate_client "erin"
     [ "$status" -ne 0 ]
+    # The message must name what actually happened: the file was already
+    # rewritten by the renderer, so "left unchanged" would be a lie about state.
+    [[ "$output" == *"НЕ восстановлены"* ]]
+    [ -f "$AWG_DIR/erin.conf" ]
     run grep -qxF "AllowedIPs = " "$AWG_DIR/erin.conf"
     [ "$status" -ne 0 ]
 }
@@ -490,7 +532,7 @@ _load_modify() {
     local body
     body=$(awk '/^modify_client\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")
     eval "$body"
-    escape_sed() { printf '%s' "$1" | sed 's/[&\/]/\&/g'; }
+    escape_sed() { printf '%s' "$1" | sed 's/[&\\/]/\\&/g'; }
     apply_config() { return 0; }
     generate_qr()        { return 0; }
     generate_vpn_uri()   { return 0; }
@@ -554,7 +596,10 @@ EOF
     grep -qF 'is a full tunnel without ::/0' "${BATS_TEST_DIRNAME}/../manage_amneziawg_en.sh"
     local p
     for p in manage_amneziawg.sh manage_amneziawg_en.sh; do
-        grep -qF 'declare -f _is_full_tunnel' "${BATS_TEST_DIRNAME}/../$p"
+        # The predicate must actually be called, not merely mentioned: without
+        # this the warning text could survive while the condition around it is
+        # gone, and every assertion above would still pass.
+        grep -qF '_is_full_tunnel "$value"' "${BATS_TEST_DIRNAME}/../$p"
     done
 }
 
