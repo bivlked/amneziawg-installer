@@ -199,6 +199,7 @@ while [[ $# -gt 0 ]]; do
             _CLI_APPLY_MODE="${1#*=}"
             shift ;;
         --psk)             CLI_ADD_PSK=1; shift ;;
+        --allowed-ips=*)   CLI_ADD_ALLOWED_IPS="${1#*=}"; shift ;;
         --reset-routes)    CLI_RESET_ROUTES=1; shift ;;
         --yes)             CLI_YES=1; shift ;;
         --carrier=*)       CLI_CARRIER="${1#*=}"; shift ;;
@@ -2156,6 +2157,8 @@ usage() {
     echo "  --server-conf=ПУТЬ    Указать файл конфига сервера"
     echo "  --apply-mode=РЕЖИМ    syncconf (умолч.) или restart (обход kernel panic)"
     echo "  --psk                 (только для add) сгенерировать PresharedKey для клиента"
+    echo "  --allowed-ips=СПИСОК  (только для add) индивидуальные AllowedIPs клиента - CIDR через"
+    echo "                        запятую; без флага - глобальный режим маршрутизации сервера"
     echo "  --reset-routes        (только для regen) сбросить AllowedIPs клиентов на текущий"
     echo "                        глобальный режим маршрутизации (Issue #170)"
     echo "  --yes                 Не спрашивать подтверждение (эквивалент ENV AWG_YES=1)"
@@ -2236,6 +2239,31 @@ case $COMMAND in
         if [[ -n "$EXPIRES_DURATION" ]]; then
             parse_duration "$EXPIRES_DURATION" >/dev/null \
                 || die "Некорректный --expires='$EXPIRES_DURATION'. Используйте: 1h, 12h, 1d, 7d, 30d, 4w."
+        fi
+
+        # --allowed-ips (Issue #253): индивидуальные маршруты клиента при
+        # создании - вместо обходного решения «add, затем modify».
+        # Валидация и нормализация ОДИН раз ДО создания первого клиента - по
+        # образцу --expires выше: невалидный список не должен создавать
+        # клиентов с глобальным режимом "на половине batch-а".
+        if [[ -n "${CLI_ADD_ALLOWED_IPS:-}" ]]; then
+            # Новый хелпер библиотеки: на полуобновлённом сервере (свежий
+            # manage рядом со старой awg_common.sh) его нет - отказ явно, как
+            # modify делает при отсутствии awg_normalize_csv (появилась в
+            # патче 5.27.1, MAJOR.MINOR-проверка её не ловит).
+            command -v awg_validate_allowed_ips_list >/dev/null 2>&1 || {
+                die "awg_common.sh устарела: нет awg_validate_allowed_ips_list. Обнови обе половины под одну версию."
+            }
+            if ! awg_validate_allowed_ips_list "$CLI_ADD_ALLOWED_IPS"; then
+                die "Некорректный --allowed-ips='$CLI_ADD_ALLOWED_IPS'. Ожидается список CIDR IPv4/IPv6 через запятую (например: 10.0.0.0/8, 192.168.0.0/16)."
+            fi
+            _aip_cli=$(awg_normalize_csv "$CLI_ADD_ALLOWED_IPS")
+            [[ -n "$_aip_cli" ]] || die "Нормализация --allowed-ips дала пустое значение."
+            CLI_ADD_ALLOWED_IPS="$_aip_cli"
+            # Env-контракт generate_client/render_client_config (как CLIENT_PSK
+            # у --psk). Применяется ко всем именам batch-а, как --expires.
+            export CLIENT_ALLOWED_IPS="$CLI_ADD_ALLOWED_IPS"
+            log "Индивидуальные AllowedIPs для новых клиентов (--allowed-ips): $CLI_ADD_ALLOWED_IPS"
         fi
 
         _added=0
@@ -2333,6 +2361,8 @@ case $COMMAND in
         fi
         # Hygiene: CLIENT_PSK не должен протекать в будущие операции
         unset CLIENT_PSK
+        # Hygiene: то же для CLIENT_ALLOWED_IPS (Issue #253)
+        unset CLIENT_ALLOWED_IPS
         ;;
 
     remove)

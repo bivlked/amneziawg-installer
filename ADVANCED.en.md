@@ -740,12 +740,16 @@ Options:
   --expires=DURATION    Expiry duration for add (1h, 12h, 1d, 7d, 30d, 4w)
   --apply-mode=MODE     syncconf (default) or restart (bypass kernel panic)
   --psk                 (add only) generate a PresharedKey for the new client (v5.11.1+)
+  --allowed-ips=LIST    (add only) per-client AllowedIPs - comma-separated CIDRs;
+                        without the flag the server-wide routing mode is used
   --yes                 Do not prompt for confirmation (ENV: AWG_YES=1)
   --carrier=NAME        (diagnose only) compare parameters against a carrier profile
   --reset-routes        (regen only) reset client AllowedIPs to the global routing mode
 ```
 
 > **`--psk`** — optional extra layer on top of AWG 2.0 obfuscation. Generates a 32-byte symmetric key via `awg genpsk` and writes it to both the server `[Peer]` and the client `[Peer]` (`PresharedKey = ...`). Compatible with any WireGuard/AmneziaWG client. In batch mode (`add c1 c2 c3 --psk`) each client gets its own PSK. Without the flag clients are created without `PresharedKey` (default — AWG 2.0 obfuscation is sufficient for most scenarios). The flag only affects the new clients created by this `add` invocation — existing clients without PSK stay untouched and keep connecting as before.
+
+> **`--allowed-ips=LIST`** - the client's own routes right at creation, without a follow-up `modify` (Issue #253). A comma-separated list of IPv4/IPv6 CIDRs: `add phone --allowed-ips="10.0.0.0/8, 192.168.0.0/16"`. Validated and normalized before the first client is created (an invalid value aborts the command creating nothing) and applied to every name in the batch - like `--expires`. The value goes through the same rules as the global mode: a full-tunnel IPv4 list gets `::/0` added next to it (the iOS rule), a split list never does, and a list with explicit IPv6 tokens (e.g. `0.0.0.0/0, ::/0`) is written as is. Without the flag - the server-wide routing mode, as before. For existing clients `modify` still changes routes, and `regen` preserves such per-client lists.
 
 **Environment variables:**
 
@@ -765,7 +769,7 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 
 > **How `manage` finds clients in the server config.** Every `[Peer]` created by my installer or by `manage add` has a marker comment `#_Name = <name>` on the first line of the block. That marker is what `list`, `remove`, `regen`, `modify` look up. If you are migrating `awg0.conf` from an older server or adding a peer by hand, include `#_Name = <name>` right after `[Peer]` — otherwise `manage` will not see the client. Example: the `[Peer]` block in the server config above (see [Configuration Examples](#config-examples-adv)).
 
-* **`add <name> [name2 ...] [--expires=DURATION] [--psk]`:** Add one or multiple clients. In batch mode, `awg syncconf` is called once for all. With `--expires` — expiry applies to all clients. With `--psk` — each client gets its own PresharedKey (v5.11.1+).
+* **`add <name> [name2 ...] [--expires=DURATION] [--psk] [--allowed-ips=LIST]`:** Add one or multiple clients. In batch mode, `awg syncconf` is called once for all. With `--expires` - expiry applies to all clients. With `--psk` - each client gets its own PresharedKey (v5.11.1+). With `--allowed-ips` - each gets per-client routes instead of the global mode (Issue #253).
 * **`remove <name> [name2 ...]`:** Remove one or multiple clients. In batch mode, apply_config is called once for all.
 * **`list [-v] [--json]`:** List clients (with details when using `-v`; `--json` - machine-readable, includes the `client_ipv6` and `expires_at` fields).
 * **`regen [name ...] [--reset-routes]`:** Regenerate `.conf`/`.png` files for the listed clients or all at once. By default preserves the client's individual `AllowedIPs`/`DNS`/`PersistentKeepalive` (set via `modify`). With `--reset-routes` - resets `AllowedIPs` to the current global routing mode from `awgsetup_cfg.init`; use it after changing the mode via reinstall (`--force --route-all` / `--route-amnezia` / `--route-custom=`) so the new mode reaches existing clients (Issue #170).

@@ -202,6 +202,7 @@ while [[ $# -gt 0 ]]; do
             _CLI_APPLY_MODE="${1#*=}"
             shift ;;
         --psk)             CLI_ADD_PSK=1; shift ;;
+        --allowed-ips=*)   CLI_ADD_ALLOWED_IPS="${1#*=}"; shift ;;
         --reset-routes)    CLI_RESET_ROUTES=1; shift ;;
         --yes)             CLI_YES=1; shift ;;
         --carrier=*)       CLI_CARRIER="${1#*=}"; shift ;;
@@ -2176,6 +2177,8 @@ usage() {
     echo "  --server-conf=PATH    Specify server config file"
     echo "  --apply-mode=MODE     syncconf (default) or restart (bypass kernel panic)"
     echo "  --psk                 (add only) generate a PresharedKey for the new client"
+    echo "  --allowed-ips=LIST    (add only) per-client AllowedIPs - comma-separated CIDRs;"
+    echo "                        without the flag the server-wide routing mode is used"
     echo "  --reset-routes        (regen only) reset client AllowedIPs to the current"
     echo "                        global routing mode (Issue #170)"
     echo "  --yes                 Skip confirm prompts (equivalent to ENV AWG_YES=1)"
@@ -2256,6 +2259,32 @@ case $COMMAND in
         if [[ -n "$EXPIRES_DURATION" ]]; then
             parse_duration "$EXPIRES_DURATION" >/dev/null \
                 || die "Invalid --expires='$EXPIRES_DURATION'. Use: 1h, 12h, 1d, 7d, 30d, 4w."
+        fi
+
+        # --allowed-ips (Issue #253): the client's own routes at creation -
+        # instead of the "add, then modify" workaround.
+        # Validated and normalized ONCE before creating the first client -
+        # after the --expires pattern above: an invalid list must not create
+        # clients with the global mode "halfway through the batch".
+        if [[ -n "${CLI_ADD_ALLOWED_IPS:-}" ]]; then
+            # A new library helper: on a half-updated server (fresh manage
+            # next to an old awg_common.sh) it is missing - refuse explicitly,
+            # the way modify does when awg_normalize_csv is absent (it
+            # appeared in patch 5.27.1, which the MAJOR.MINOR check misses).
+            command -v awg_validate_allowed_ips_list >/dev/null 2>&1 || {
+                die "awg_common.sh is outdated: awg_validate_allowed_ips_list is missing. Update both halves to the same version."
+            }
+            if ! awg_validate_allowed_ips_list "$CLI_ADD_ALLOWED_IPS"; then
+                die "Invalid --allowed-ips='$CLI_ADD_ALLOWED_IPS'. Expected a comma-separated list of IPv4/IPv6 CIDRs (e.g. 10.0.0.0/8, 192.168.0.0/16)."
+            fi
+            _aip_cli=$(awg_normalize_csv "$CLI_ADD_ALLOWED_IPS")
+            [[ -n "$_aip_cli" ]] || die "Normalizing --allowed-ips produced an empty value."
+            CLI_ADD_ALLOWED_IPS="$_aip_cli"
+            # The env contract of generate_client/render_client_config (like
+            # CLIENT_PSK for --psk). Applies to every name in the batch, like
+            # --expires.
+            export CLIENT_ALLOWED_IPS="$CLI_ADD_ALLOWED_IPS"
+            log "Custom AllowedIPs for new clients (--allowed-ips): $CLI_ADD_ALLOWED_IPS"
         fi
 
         _added=0
@@ -2353,6 +2382,8 @@ case $COMMAND in
         fi
         # Hygiene: do not let CLIENT_PSK leak into later operations
         unset CLIENT_PSK
+        # Hygiene: the same for CLIENT_ALLOWED_IPS (Issue #253)
+        unset CLIENT_ALLOWED_IPS
         ;;
 
     remove)

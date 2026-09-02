@@ -1716,6 +1716,44 @@ awg_normalize_csv() {
     printf '%s' "$out"
 }
 
+# Validation of an AllowedIPs list as a client-config value (Issue #253).
+# The same check structure as modify (C5): dangerous characters cut off +
+# a positive per-token CIDR check (IPv4/IPv6 with an optional /n prefix) +
+# no empty items (leading/trailing/double comma). Used by the early
+# validation of `manage add --allowed-ips` (before the first client is
+# created) and, as defense-in-depth, by generate_client for the
+# CLIENT_ALLOWED_IPS env contract.
+awg_validate_allowed_ips_list() {
+    local value="$1"
+    case "$value" in
+        *$'\n'*|*$'\r'*|*\\*|*\"*|*\'*|"")
+            log_error "Invalid AllowedIPs: '$value'"
+            return 1 ;;
+    esac
+    case "$value" in
+        ,*|*,|*,,*)
+            log_error "Invalid AllowedIPs '$value': empty list item (extra comma)"
+            return 1 ;;
+    esac
+    local _aip_tok _aip_ifs="$IFS"
+    IFS=','
+    for _aip_tok in $value; do
+        _aip_tok="${_aip_tok//[[:space:]]/}"
+        if [[ -z "$_aip_tok" ]]; then
+            IFS="$_aip_ifs"
+            log_error "Invalid AllowedIPs '$value': empty list item (extra comma)"
+            return 1
+        fi
+        if ! _valid_cidr "$_aip_tok"; then
+            IFS="$_aip_ifs"
+            log_error "Invalid AllowedIPs '$value': '$_aip_tok' does not look like a CIDR (IPv4/IPv6 with an optional /n prefix)"
+            return 1
+        fi
+    done
+    IFS="$_aip_ifs"
+    return 0
+}
+
 # Acceptable MTU range for AWG / WireGuard.
 # Lower bound 576 (classic IPv4 minimum), upper bound 9100 (just under jumbo).
 # Values outside the range are treated as invalid and dropped (fallback to 1280).
@@ -1773,27 +1811,40 @@ render_client_config() {
     load_awg_params || return 1
 
     local conf_file="$AWG_DIR/${name}.conf"
+    # Route base: the client's own override (CLIENT_ALLOWED_IPS, Issue #253)
+    # or the server-wide mode (ALLOWED_IPS from awgsetup_cfg.init). An env
+    # value may carry IPv6 tokens - the global list is IPv4-only by
+    # construction, a user-supplied one is not.
+    local _aip_base="${CLIENT_ALLOWED_IPS:-${ALLOWED_IPS:-0.0.0.0/0}}"
     local allowed_ips
     if [[ -n "$client_ipv6" ]]; then
         # Dual-stack: mirror the IPv4 routing intent into IPv6.
         # full tunnel (IPv4=0.0.0.0/0) -> ::/0 (native) or tunnel ULA (no-native).
         # split tunnel (custom ALLOWED_IPS) -> IPv4 split AS-IS + ONLY tunnel ULA,
         # never ::/0 (no IPv6 split-list, must not hijack all IPv6).
-        local ipv4_part ipv6_part
-        ipv4_part="${ALLOWED_IPS:-0.0.0.0/0}"
-        if _is_full_tunnel "$ipv4_part" && [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" ]]; then
-            ipv6_part="::/0"
+        # A list with explicit IPv6 tokens (only possible via
+        # CLIENT_ALLOWED_IPS) is not mirrored on top of itself: the user has
+        # already spelled out both families - the same rule by which regen
+        # leaves the IPv6 part of custom lists untouched.
+        if [[ "$_aip_base" == *:* ]]; then
+            allowed_ips="$_aip_base"
         else
-            ipv6_part="${IPV6_SUBNET:-fddd:2c4:2c4:2c4::/64}"
+            local ipv4_part ipv6_part
+            ipv4_part="$_aip_base"
+            if _is_full_tunnel "$ipv4_part" && [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" ]]; then
+                ipv6_part="::/0"
+            else
+                ipv6_part="${IPV6_SUBNET:-fddd:2c4:2c4:2c4::/64}"
+            fi
+            # Defensive de-dup: ALLOWED_IPS is IPv4-only by construction, but do not
+            # duplicate ipv6_part if it is already present as a token in the list.
+            case ",${ipv4_part// /}," in
+                *",${ipv6_part},"*) allowed_ips="$ipv4_part" ;;
+                *)                  allowed_ips="${ipv4_part}, ${ipv6_part}" ;;
+            esac
         fi
-        # Defensive de-dup: ALLOWED_IPS is IPv4-only by construction, but do not
-        # duplicate ipv6_part if it is already present as a token in the list.
-        case ",${ipv4_part// /}," in
-            *",${ipv6_part},"*) allowed_ips="$ipv4_part" ;;
-            *)                  allowed_ips="${ipv4_part}, ${ipv6_part}" ;;
-        esac
     else
-        allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
+        allowed_ips="$_aip_base"
         # iOS AmneziaVPN in "all traffic" mode requires both address families:
         # with a bare 0.0.0.0/0 it treats the config as incomplete split routing
         # and refuses to bring the tunnel up. For a full tunnel we add ::/0 -
@@ -2969,6 +3020,12 @@ _remove_client_files() {
 #     `awg genpsk` and written to both the server [Peer] and the client
 #     [Peer]. If set to a concrete value (32-byte base64), it is used as
 #     is without regenerating. Empty/unset — no PSK is added (default).
+#   CLIENT_ALLOWED_IPS - optional (Issue #253). The client's own routes
+#     instead of the server-wide mode (ALLOWED_IPS): a comma-separated
+#     list of IPv4/IPv6 CIDRs. The value is validated and normalized
+#     right here; empty/unset - the global mode as before. Exported by
+#     `manage add --allowed-ips=...`; calling directly with the env is
+#     equally valid (a library contract, not just a CLI one).
 generate_client() {
     local name="$1"
     local endpoint="${2:-}"
@@ -2983,6 +3040,22 @@ generate_client() {
     if ! [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         log_error "generate_client: invalid client name '$name'"
         return 1
+    fi
+
+    # CLIENT_ALLOWED_IPS (Issue #253): validated BEFORE key generation and
+    # the lock - an invalid value must leave no artifacts and must not hold
+    # the lock. This check duplicates the early validation in manage add:
+    # the env contract is available directly too, without the CLI.
+    if [[ -n "${CLIENT_ALLOWED_IPS:-}" ]]; then
+        if ! awg_validate_allowed_ips_list "$CLIENT_ALLOWED_IPS"; then
+            log_error "generate_client: invalid CLIENT_ALLOWED_IPS - client '$name' NOT created."
+            return 1
+        fi
+        CLIENT_ALLOWED_IPS=$(awg_normalize_csv "$CLIENT_ALLOWED_IPS")
+        [[ -n "$CLIENT_ALLOWED_IPS" ]] || {
+            log_error "generate_client: normalizing CLIENT_ALLOWED_IPS produced an empty value - client '$name' NOT created."
+            return 1
+        }
     fi
 
     # Load parameters
@@ -3166,6 +3239,15 @@ regenerate_client() {
     fi
 
     load_awg_params || { exec {lock_fd}>&-; return 1; }
+
+    # Hygiene (Issue #253): CLIENT_ALLOWED_IPS is a contract for generating a
+    # NEW client (manage add --allowed-ips); regen must never see it. Without
+    # this cleanup a leaked env override would reach render_client_config,
+    # and with --reset-routes it would even survive in the config, defeating
+    # the very point of resetting routes to the global mode. Regen always
+    # renders with the global mode; the client's own value is restored from
+    # the existing .conf below.
+    unset CLIENT_ALLOWED_IPS
 
     # Check that client exists in server config
     if ! grep -qxF "#_Name = ${name}" "$SERVER_CONF_FILE" 2>/dev/null; then
