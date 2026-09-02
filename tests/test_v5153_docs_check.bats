@@ -44,6 +44,33 @@ TMPL_STALE_RE='placeholder:[[:space:]]*"e\.g\.,[[:space:]]*[0-9]+\.[0-9]+\.[0-9]
     done
 }
 
+@test "T6 #7b: the default mode called split routing is detected" {
+    # Without this the guard is only known NOT to fire on the current tree, so a
+    # typo in its pattern would leave it green for good.
+    # The pattern is EXTRACTED from the script, not retyped: a copy would let a
+    # typo in the script live on while this test stayed green - the very failure
+    # this test exists to prevent.
+    local re
+    re=$(sed -n "s/^[[:space:]]*if grep -qE '\(.*\)' \"\$f\"; then$/\1/p" "$SCRIPT" | grep 'modes 2 and 3')
+    [ -n "$re" ]
+    for bad in \
+        "раздельная маршрутизация (режимы 2 и 3, режим 2 - по умолчанию)" \
+        "split routing (modes 2 and 3, mode 2 being the default)" \
+        "по умолчанию, российские сайты идут мимо туннеля" \
+        "а в режиме раздельной маршрутизации (по умолчанию) ::/0 в конфиг не попадает" \
+        "and in split routing (the default) ::/0 never reaches the client config"; do
+        echo "$bad" | grep -qE "$re" || { echo "missed: $bad"; false; }
+    done
+    # ...and the wording the release actually ships is not flagged.
+    for ok in \
+        "раздельная маршрутизация (режим 3, свой список сетей через --route-custom)" \
+        "split routing (mode 3, your own network list via --route-custom)"; do
+        echo "$ok" | grep -qE "$re" && { echo "false positive: $ok"; false; }
+    done
+    # The pattern under test is the one the script actually runs.
+    grep -qF 'российские сайты идут мимо туннеля' "$SCRIPT"
+}
+
 @test "T6 #7: the corrected wording and past-tense note are NOT flagged" {
     for ok in \
         "в v5.15.0 dual-stack всегда подразумевал full-tunnel (split-tunnel вёл себя иначе)" \

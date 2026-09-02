@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 peer management script
 # Author: @bivlked
-# Version: 5.30.0
-# Date: 2026-09-01
+# Version: 5.31.0
+# Date: 2026-09-02
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.30.0"
+SCRIPT_VERSION="5.31.0"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -1151,6 +1151,21 @@ modify_client() {
             }
             value="$_norm"
             log "Value normalised to: $value"
+            # modify writes exactly what it was asked for - that is its contract,
+            # and it is also how people drop ::/0 when they want working IPv6.
+            # But if the given list is a full tunnel WITHOUT ::/0, the client
+            # loses the route that add and regen hand it, and its IPv6 goes
+            # around the tunnel again. Public recipes of the shape
+            # `modify <name> AllowedIPs "$ALLOWED_IPS"` do precisely that.
+            # The value is written as asked, but staying silent is not an option.
+            # No need to check that _is_full_tunnel exists here:
+            # check_dependencies calls _check_common_compat BEFORE the command
+            # dispatch and dies on a MAJOR.MINOR mismatch, so "a fresh manage
+            # next to an old library" never reaches this point.
+            if [[ "$param" == "AllowedIPs" && "$value" != *:* ]] \
+               && _is_full_tunnel "$value"; then
+                log_warn "AllowedIPs of client '$name' is a full tunnel without ::/0 - the device's IPv6 will go around the tunnel with its real address. To restore the route: regen '$name'."
+            fi
             ;;
     esac
 

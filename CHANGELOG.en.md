@@ -12,6 +12,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.31.0] - 2026-09-02
+
+**v5.31.0** - the default install no longer lets IPv6 out around the tunnel.
+
+In the "Amnezia" routing mode, which is the default, all IPv4 goes through the tunnel while the device's IPv6 kept going out directly with its real address. A blocked site with an AAAA record therefore stayed blocked with the VPN on, and on home Wi-Fi without IPv6 the very same profile behaved perfectly - hence the contradictory reports of the "does not work on mobile data" kind. The IPv6 of such clients now goes into the tunnel and dies there, and the device falls back to IPv4 on its own.
+
+### Fixed
+
+- **The client's IPv6 went around the tunnel on a default install.** The question "is this a full tunnel?" was answered by comparing the `AllowedIPs` string with `0.0.0.0/0`. The "All traffic" mode matched and got its `::/0`; the default "Amnezia" mode is written as a subnet list and never matched, even though it is a full tunnel by meaning: the list covers all public IPv4 and is spelled out as a list only to dodge an iOS bug (Issue #42). A full tunnel is now decided by route coverage, so the default install gets `::/0` just like "All traffic" does.
+- **Re-issuing a profile now delivers the fix to already issued clients.** The same fork sat on the `regen` path, which is why "update your profile" did not help before - the re-issued config still had no `::/0`. To roll the fix out, run `sudo bash /root/awg/manage_amneziawg.sh regen` and re-import the profiles on the devices. Individual `AllowedIPs` set through `modify` are still preserved. Clients issued with `--allow-ipv6-tunnel` will not receive `::/0` from a plain re-issue: their IPv6 part is kept as an individual setting, and a warning now says so and names `regen --reset-routes`.
+
+### Changed
+
+- **A full tunnel is decided by route coverage, not by string equality.** One predicate replaces the three literal comparisons in `awg_common.sh`: a list counts as a full tunnel when it covers all public IPv4. Private and special-purpose ranges may be missing from it - those are meant to stay outside the tunnel. Your own network list (`--route-custom`) usually does not cover the whole public space and gets no `::/0`, exactly as before; a list that does cover it counts as a full tunnel.
+- **`modify` says so when it drops `::/0`.** The command still writes exactly what it was asked for: dropping `::/0` through it is how people get their IPv6 back. But when the given list is a full tunnel without `::/0`, it names the consequence and the command that restores the route. This matters for ready-made recipes shaped like `modify <name> AllowedIPs "$ALLOWED_IPS"`: the list in `awgsetup_cfg.init` is IPv4-only, so such a substitution takes the IPv6 route away from the client.
+- **The price, worth knowing up front.** While the VPN is on, resources reachable ONLY over IPv6 become unreachable, and the local network's IPv6 goes into the tunnel (the LAN stays reachable over IPv4). If you want working IPv6 through the VPN, use `--allow-ipv6-tunnel` on a server with native IPv6. If you want the local IPv6 left alone, use your own route list via `--route-custom`.
+
+### Added
+
+- `tests/test_v5310_ipv6_full_tunnel.bats`: 48 checks of the predicate and of all three places that call it, including client re-issue and a second re-issue (`::/0` is not doubled), a multi-line list, a config with `CRLF`, and the edges of the non-public range table.
+
 ## [5.30.0] - 2026-09-01
 
 **v5.30.0** - install commands that do not go stale, and a guard for oversized masking parameters.
@@ -1841,7 +1862,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.30.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.31.0...HEAD
+[5.31.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.30.0...v5.31.0
 [5.30.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.29.0...v5.30.0
 [5.29.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.28.1...v5.29.0
 [5.28.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.28.0...v5.28.1

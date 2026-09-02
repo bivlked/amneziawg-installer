@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 2.0
 # Author: @bivlked
-# Version: 5.30.0
-# Date: 2026-09-01
+# Version: 5.31.0
+# Date: 2026-09-02
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -24,7 +24,7 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # drifted apart (one file updated, the other not) - otherwise the mismatch shows
 # up as a "command not found" somewhere random. Bumped with the other versions.
 # shellcheck disable=SC2034  # used by the manage script after sourcing
-AWG_COMMON_VERSION="5.30.0"
+AWG_COMMON_VERSION="5.31.0"
 
 # --- Auto-cleanup of temporary files ---
 # NOTE: trap is NOT set here to avoid overwriting the caller's trap handler.
@@ -227,6 +227,157 @@ _cidr_bounds() {
     net=$(( ip & mask ))
     bcast=$(( net | (0xFFFFFFFF ^ mask) ))
     echo "$net $bcast"
+}
+
+# --- Full tunnel: decided by the PROPERTY of the route set, not by a string ---
+
+# IPv4 ranges whose absence from AllowedIPs does NOT make a tunnel split.
+# This is a TOLERANCE list, NOT a description of what any mode excludes: our
+# default list leaves out only 0/8, 10/8, 172.16/12, 192.168/16 and 224/3, and
+# routes the rest of this table into the tunnel. Confusing the two is dangerous:
+# read as "the modes leave these outside the tunnel", it invites someone to
+# align the list generator with this table and silently change what the default
+# tunnels. The contents are POLICY rather than mechanics, so the grounds are
+# named: private networks (10/8, 172.16/12, 192.168/16) and CGNAT (100.64/10)
+# live at the ISP and on the home network; 0/8, 127/8 and 169.254/16 are not
+# routed; 192.0.0/24 is IETF protocol assignments, 192.0.2/24, 198.51.100/24 and
+# 203.0.113/24 are documentation examples, 198.18/15 is benchmarking; 224/3 is
+# multicast, reserved space and the broadcast address. None of these is a place
+# a user reaches through the VPN, so their absence does not make the tunnel any
+# less full.
+# Ascending and non-overlapping - the sweep in _awg_ipv4_range_is_non_public
+# relies on that.
+_AWG_NON_PUBLIC_IPV4=(
+    0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16
+    172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.168.0.0/16
+    198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/3
+)
+
+# _awg_ipv4_range_is_non_public <lo> <hi> : does [lo, hi] lie entirely inside
+# the non-public ranges? Sweep with a cursor: every range is either already
+# behind the cursor or must start no later than it, otherwise a public address
+# sits in between and the answer is no.
+_awg_ipv4_range_is_non_public() {
+    local hi="$2" cidr b slo shi cur="$1"
+    for cidr in "${_AWG_NON_PUBLIC_IPV4[@]}"; do
+        b=$(_cidr_bounds "$cidr") || {
+            # The table is a constant, so a failure here means broken code, not
+            # user input. A silent "split" would look like an honest answer.
+            log_error "The internal table of non-public ranges is corrupt: '$cidr'."
+            return 1
+        }
+        slo="${b%% *}"; shi="${b##* }"
+        (( shi < cur )) && continue
+        (( slo > cur )) && return 1
+        (( shi + 1 > cur )) && cur=$(( shi + 1 ))
+        (( cur > hi )) && return 0
+    done
+    (( cur > hi ))
+}
+
+# _is_full_tunnel <allowed_ips> : does the list cover ALL public IPv4?
+#
+# Mode 1 spells a full tunnel as 0.0.0.0/0; mode 2 (the INSTALL DEFAULT) spells
+# it as a 34-entry list: all public IPv4 minus the private ranges. It is written
+# as a list only to dodge the iOS bug on 0.0.0.0/5 (issue #42), so by meaning it
+# is a full tunnel too. Comparing the string with a literal answered these two
+# cases differently, and the default install lost its ::/0 - the device's IPv6
+# went out with its real address.
+#
+# Real split routing (mode 3) does not cover the public space and still gets a
+# negative answer.
+#
+# Returns: 0 - full tunnel, 1 - not. An unparseable route also returns 1, but
+# LOUDLY: a silent "assuming split" is indistinguishable from an honest answer.
+_is_full_tunnel() {
+    local list="$1" tok b lo hi pairs="" cur=0
+    local -a toks=()
+    # read takes ONLY THE FIRST LINE even with newline in IFS, so newlines and
+    # carriage returns are turned into spaces up front. AllowedIPs can be
+    # multi-line (wg allows the key to repeat, D#38), and a config edited on
+    # Windows arrives with a \r glued to the last token.
+    list="${list//$'\r'/}"
+    list="${list//$'\n'/, }"
+    local IFS=$', \t'
+    read -ra toks <<< "$list"
+    IFS=$' \t\n'
+    # Upper bound on the list size. Every token costs one command substitution,
+    # that is one process: our own lists are under 40 entries, but a user list
+    # of tens of thousands of networks (inverting country ranges is a popular
+    # trick in forum threads) would turn every add and regen into minutes. The
+    # refusal is LOUD and carries the number: the behaviour stays what it was
+    # (no ::/0 appended), but the reason is visible instead of looking checked.
+    if (( ${#toks[@]} > 512 )); then
+        log_warn "AllowedIPs: ${#toks[@]} routes, above the check limit (512) - treating the list as split, not appending ::/0."
+        return 1
+    fi
+    for tok in "${toks[@]}"; do
+        [[ -z "$tok" ]] && continue
+        # An IPv6 token does not change IPv4 coverage: a dual-stack list already
+        # carries its IPv6 part and must not disturb the answer about IPv4.
+        [[ "$tok" == *:* ]] && continue
+        [[ "$tok" == */* ]] || tok="${tok}/32"
+        if ! b=$(_cidr_bounds "$tok"); then
+            log_warn "AllowedIPs: route '$tok' could not be parsed - treating the list as split, not appending ::/0."
+            return 1
+        fi
+        pairs+="${b}"$'\n'
+    done
+    # An empty list (or an IPv6-only one) is not a full tunnel.
+    [[ -n "$pairs" ]] || return 1
+    # Sweep the union of the intervals: whatever stays uncovered must lie
+    # entirely inside the non-public ranges. sort -n gives ascending order;
+    # overlaps and duplicates collapse into the cursor.
+    # Sort into a variable, NOT through process substitution: a failure of sort
+    # inside <(...) is invisible to the parent shell, so the predicate would
+    # silently answer "split" for a sound list - on a broken host the behaviour
+    # from before this change would quietly return, mode 1 included, which never
+    # depended on sort at all.
+    local sorted
+    sorted=$(printf '%s' "$pairs" | LC_ALL=C sort -n -k1,1 -k2,2) || {
+        log_warn "AllowedIPs: could not order the routes - not checking whether the tunnel is full, not appending ::/0."
+        return 1
+    }
+    while read -r lo hi; do
+        if (( lo > cur )); then
+            _awg_ipv4_range_is_non_public "$cur" $(( lo - 1 )) || return 1
+        fi
+        if (( hi + 1 > cur )); then cur=$(( hi + 1 )); fi
+    done <<< "$sorted"
+    if (( cur <= 4294967295 )); then
+        _awg_ipv4_range_is_non_public "$cur" 4294967295 || return 1
+    fi
+    return 0
+}
+
+# _append_ipv6_full_tunnel_route <allowed_ips> : prints the list with ::/0
+# appended when it is a full tunnel and carries no IPv6 yet; otherwise prints
+# the list unchanged.
+#
+# Why: IPv6 does not travel through an IPv4 tunnel, so without this line it goes
+# around the VPN with its real address - a blocked site with an AAAA record stays
+# blocked, and it looks like "the VPN does not work on mobile". ::/0 pulls IPv6
+# into the tunnel where it is dropped, and the client falls back to IPv4 (Happy
+# Eyeballs). iOS AmneziaVPN requires the same for its "all traffic" mode.
+#
+# Idempotence is mandatory: regen runs repeatedly, including over a dual-stack
+# client whose IPv6 part has already been built.
+_append_ipv6_full_tunnel_route() {
+    local list="$1"
+    # The decision is taken on a normalised copy, so the normalised copy is what
+    # gets printed. Otherwise a carriage return from the middle of the line would
+    # travel into the client config together with the appended ::/0, and clients
+    # reject such a token.
+    # A carriage return is NEVER meaningful and is simply dropped; a newline is
+    # an element separator, so it becomes a comma rather than a space - a space
+    # would glue two routes into one unreadable token.
+    list="${list//$'\r'/}"
+    list="${list//$'\n'/, }"
+    if [[ "$list" != *:* ]] && _is_full_tunnel "$list"; then
+        printf '%s, ::/0' "$list"
+    else
+        printf '%s' "$list"
+    fi
 }
 
 # Detect primary (egress) network interface.
@@ -1523,8 +1674,8 @@ _extract_mtu_from_server_conf() {
 # length (e.g. fddd:2c4:2c4:2c4::5). If non-empty and ALLOW_IPV6_TUNNEL=1:
 #   - Address = <ipv4>/32, <ipv6>/128
 #   - AllowedIPs (mirror the IPv4 routing mode into IPv6, intent-mirroring):
-#       full tunnel (ALLOWED_IPS=0.0.0.0/0): + ::/0 (native) or + <IPV6_SUBNET> (no-native)
-#       split tunnel (custom ALLOWED_IPS):   IPv4 list UNCHANGED + ONLY <IPV6_SUBNET>,
+#       full tunnel (_is_full_tunnel, modes 1 and 2): + ::/0 (native) or + <IPV6_SUBNET> (no-native)
+#       split tunnel (mode 3):               IPv4 list UNCHANGED + ONLY <IPV6_SUBNET>,
 #         NEVER ::/0 - there is no IPv6 split-list, hijacking all IPv6 breaks split-tunnel.
 # If empty (legacy client): Address = <ipv4>/32, AllowedIPs unchanged.
 render_client_config() {
@@ -1547,7 +1698,7 @@ render_client_config() {
         # never ::/0 (no IPv6 split-list, must not hijack all IPv6).
         local ipv4_part ipv6_part
         ipv4_part="${ALLOWED_IPS:-0.0.0.0/0}"
-        if [[ "$ipv4_part" == "0.0.0.0/0" && "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" ]]; then
+        if _is_full_tunnel "$ipv4_part" && [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" ]]; then
             ipv6_part="::/0"
         else
             ipv6_part="${IPV6_SUBNET:-fddd:2c4:2c4:2c4::/64}"
@@ -1562,13 +1713,22 @@ render_client_config() {
         allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
         # iOS AmneziaVPN in "all traffic" mode requires both address families:
         # with a bare 0.0.0.0/0 it treats the config as incomplete split routing
-        # and refuses to bring the tunnel up. For full tunnel we add ::/0 - IPv6
-        # goes into the tunnel (and is dropped if the server has no native IPv6),
-        # so it never leaks past the VPN. Affects mode-1 only: split mode uses a
-        # custom list that is not equal to 0.0.0.0/0 and skips this branch.
-        if [[ "$allowed_ips" == "0.0.0.0/0" ]]; then
-            allowed_ips="0.0.0.0/0, ::/0"
-        fi
+        # and refuses to bring the tunnel up. For a full tunnel we add ::/0 -
+        # IPv6 goes into the tunnel (and is dropped if the server has no native
+        # IPv6), so it never leaks past the VPN. A full tunnel is decided by
+        # route coverage, so both mode 1 and the list-shaped mode 2 (the install
+        # default) land here; split routing does not.
+        # Checking the substitution result is mandatory: the old code was a pure
+        # string comparison and could not fail, while a command substitution
+        # returns an empty string when fork/exec fails. Without the check the
+        # config would get 'AllowedIPs = ' with exit code 0 - a loud failure
+        # turned into the quiet delivery of a broken profile.
+        local _aip_new
+        _aip_new=$(_append_ipv6_full_tunnel_route "$allowed_ips") && [[ -n "$_aip_new" ]] || {
+            log_error "Could not compute AllowedIPs - the client config was not created."
+            return 1
+        }
+        allowed_ips="$_aip_new"
     fi
 
     # MTU resolution order: server awg0.conf > AWG_MTU from awgsetup_cfg.init >
@@ -3016,7 +3176,9 @@ regenerate_client() {
 
     # Preserve user settings from current .conf (modified via modify command)
     local current_dns="1.1.1.1, 1.0.0.1" current_keepalive="33" current_allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
+    local _had_conf=0
     if [[ -f "$AWG_DIR/${name}.conf" ]]; then
+        _had_conf=1
         local _v _raw
         # tr -d '[:space:]' stripped the spaces after commas here, so regen
         # wrote the collapsed list into .conf (D#38). Normalise, do not strip.
@@ -3089,11 +3251,45 @@ regenerate_client() {
         return 1
     }
 
-    # On regen, pull in the new defaults for non-customized clients: a
-    # full-tunnel 0.0.0.0/0 gets ::/0 (needed by iOS AmneziaVPN), a single DNS
-    # 1.1.1.1 becomes a pair with a fallback. Values set by the user via modify
-    # differ from the old defaults and are therefore kept as-is.
-    [[ "$current_allowed_ips" == "0.0.0.0/0" ]] && current_allowed_ips="0.0.0.0/0, ::/0"
+    # On regen, pull in the new defaults for non-customized clients: a full
+    # tunnel gets ::/0 (needed by iOS AmneziaVPN, and it closes the IPv6 leak),
+    # a single DNS 1.1.1.1 becomes a pair with a fallback. Split routing set by
+    # the user via modify is not a full tunnel and is kept as-is.
+    # This fork lives here on purpose: without it, re-issuing a profile would
+    # not deliver the fix to already issued clients, and "update your profile"
+    # would not cure the leak.
+    # All of this only matters when the saved settings are going to be restored.
+    # Under --reset-routes, and on the recovery path where there was no config,
+    # the value below is not used at all, and a refusal over it would fail a
+    # re-issue that had already succeeded.
+    if [[ "${AWG_REGEN_RESET_ROUTES:-0}" != "1" && "$_had_conf" -eq 1 ]]; then
+        local _aip_new
+        _aip_new=$(_append_ipv6_full_tunnel_route "$current_allowed_ips") && [[ -n "$_aip_new" ]] || {
+            # The file has ALREADY been rewritten by render_client_config, so
+            # "left unchanged" would be a false statement about state, and that
+            # is worse than the failure it replaced: the operator would have no
+            # reason to look at the file.
+            log_error "Could not compute AllowedIPs for client '$name'. The config has already been regenerated from the current routing mode, but individual settings were NOT restored - check $AWG_DIR/${name}.conf."
+            exec {lock_fd}>&-
+            unset CLIENT_PSK
+            return 1
+        }
+        # A client issued with --allow-ipv6-tunnel carries its own IPv6 part in
+        # the list, and the appender leaves it alone - otherwise a re-issue would
+        # break an individual setting. Consequence: such a client does NOT get
+        # ::/0 from a plain regen, and the cure is regen --reset-routes.
+        # 🔴 The native-IPv6 condition is mandatory: WITHOUT native IPv6 the
+        # client is supposed to get the tunnel ULA instead of ::/0 - documented
+        # behaviour, not a leak. Without this check the warning would fire always
+        # and prescribe a command that changes nothing, sending the operator to
+        # fix something that is not broken.
+        if [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" \
+              && "$current_allowed_ips" == *:* && "$current_allowed_ips" != *"::/0"* ]] \
+           && _is_full_tunnel "$current_allowed_ips"; then
+            log_warn "Client '$name': the IPv6 part of AllowedIPs was kept as-is, ::/0 not appended. Run regen --reset-routes to roll out the current routing mode."
+        fi
+        current_allowed_ips="$_aip_new"
+    fi
     [[ "$current_dns" == "1.1.1.1" ]] && current_dns="1.1.1.1, 1.0.0.1"
 
     # Restore user settings (escape & and \ for sed replacement)
@@ -3122,6 +3318,12 @@ regenerate_client() {
     # A regular regen still preserves per-client customizations.
     if [[ "${AWG_REGEN_RESET_ROUTES:-0}" == "1" ]]; then
         log "AllowedIPs of client '$name' reset to the global routing mode (--reset-routes)."
+    elif [[ "$_had_conf" -eq 0 ]]; then
+        # There was no config (regen used as recovery), so there is nothing to
+        # preserve and the value from render_client_config stands. Previously the
+        # global list was substituted here, which handed ::/0 to a dual-stack
+        # client on a server without native IPv6, against that client's own rule.
+        log "Client '$name' had no config - AllowedIPs taken from the current routing mode."
     elif ! sed -i "s/^AllowedIPs = .*/AllowedIPs = ${_aip}/" "$_client_conf"; then
         log_error "sed error writing AllowedIPs to $_client_conf"
         exec {lock_fd}>&-
