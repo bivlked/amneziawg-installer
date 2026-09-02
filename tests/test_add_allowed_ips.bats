@@ -422,6 +422,7 @@ _setup_regen_stubs() {
     run --separate-stderr bash "$SCRIPT" add carol --allowed-ips="10.0.0.0/999" --json --yes \
         --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
     local rc=$status
+    # shellcheck disable=SC2154  # $stderr is provided by bats `run --separate-stderr`
     local err="$stderr"
     [ "$rc" -ne 0 ]
     [ ! -e "$TEST_DIR/awg/carol.conf" ]
