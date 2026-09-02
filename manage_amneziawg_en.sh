@@ -1900,25 +1900,48 @@ list_clients() {
             fi
         fi
 
-        # Expiry info: table output only (JSON does not print it - a wasted
-        # file read per client). Accept only a numeric timestamp: a corrupted
-        # expiry file would throw a bash arithmetic error from
-        # format_remaining straight into the table.
-        local exp_str=""
-        if [[ "$JSON_OUTPUT" -ne 1 ]]; then
-            local exp_ts
-            exp_ts=$(get_client_expiry "$name" 2>/dev/null)
-            if [[ "$exp_ts" =~ ^[0-9]+$ ]]; then
-                exp_str=" [$(format_remaining "$exp_ts")]"
-            elif [[ -n "$exp_ts" ]]; then
-                exp_str=" [expiry corrupted]"
-            fi
+        # Expiry. Read in BOTH output modes: the table needs the remaining
+        # time, and JSON exposes expires_at (issue #250) - without it an
+        # external consumer cannot tell a client with an expiry from a
+        # permanent one without reading files on the server. It used to be
+        # read for the table only, to save one file open per client; that
+        # saving is not worth a hole in the contract.
+        # Accept only a numeric timestamp: a corrupted expiry file would throw
+        # a bash arithmetic error from format_remaining straight into the table.
+        # Only a canonical decimal counts as a number. A leading zero is
+        # rejected on purpose, and not out of pedantry: JSON forbids such
+        # numbers, so a strict parser on the consumer side (Python, .NET, Go)
+        # would reject the WHOLE document because of one client; and bash reads
+        # such a value as octal, so cron dies on it with 'value too great for
+        # base' and never removes the client - the expiry is already broken.
+        # The honest answer for such a marker is "unreadable", not a number.
+        # Both keys are ALWAYS present, and "not applicable" is expressed by
+        # null. That is the local convention rather than taste: in add the qr,
+        # vpnuri and expires_at fields are always there too, and a missing file
+        # yields null. A key that shows up only sometimes makes the shape of a
+        # record depend on the data, which trips a strict consumer that checks
+        # the key set - exactly how it trips our own contract test.
+        local exp_str="" _jexp="null" _jexp_err="null"
+        local exp_ts
+        exp_ts=$(get_client_expiry "$name" 2>/dev/null)
+        if [[ "$exp_ts" =~ ^(0|[1-9][0-9]*)$ ]]; then
+            _jexp="$exp_ts"
+            [[ "$JSON_OUTPUT" -ne 1 ]] && exp_str=" [$(format_remaining "$exp_ts")]"
+        elif [[ -n "$exp_ts" ]]; then
+            # The marker exists but does not parse. In JSON this is not a plain
+            # null: null means "permanent by design", while here somebody DID
+            # set an expiry and it silently does not work - check_expired_clients
+            # skips such a marker with a warning in the log and never removes
+            # the client. That is a broken state someone has to repair, so
+            # expires_at_error goes alongside and keeps it visible.
+            _jexp_err='"unreadable"'
+            [[ "$JSON_OUTPUT" -ne 1 ]] && exp_str=" [expiry corrupted]"
         fi
 
         if [[ "$JSON_OUTPUT" -eq 1 ]]; then
             local _ip6_val="${ip6}"
             [[ "$_ip6_val" == "-" ]] && _ip6_val=""
-            json_entries+=("{\"name\":\"$(json_escape "$name")\",\"ip\":\"$(json_escape "$ip")\",\"client_ipv6\":\"$(json_escape "$_ip6_val")\",\"status\":\"$(json_escape "$st")\",\"status_code\":\"${st_code}\"}")
+            json_entries+=("{\"name\":\"$(json_escape "$name")\",\"ip\":\"$(json_escape "$ip")\",\"client_ipv6\":\"$(json_escape "$_ip6_val")\",\"status\":\"$(json_escape "$st")\",\"status_code\":\"${st_code}\",\"expires_at\":${_jexp},\"expires_at_error\":${_jexp_err}}")
         elif [[ $verbose -eq 1 ]]; then
             local ip_display
             if [[ "$ip6" != "-" ]]; then

@@ -493,7 +493,7 @@ Full list: `... help` or [ADVANCED.en.md#manage-commands-adv](ADVANCED.en.md#man
 | :-------- | :--------------------- | :----------------------------- | :------: |
 | `add`     | `<name> [name2 ...] [--expires=DUR]`  | Add client(s) (opt. with expiry) | No (auto) |
 | `remove`  | `<name> [name2 ...]`   | Remove client(s)               | No (auto) |
-| `list`    | `[-v] [--json]`        | List clients (`-v` for details, `--json` machine-readable with `client_ipv6`)|    No     |
+| `list`    | `[-v] [--json]`        | List clients (`-v` for details, `--json` machine-readable with `client_ipv6` and `expires_at`)|    No     |
 | `show`    |                        | Run `awg show`                 |    No     |
 | `stats`   | `[--json]`             | Per-client traffic statistics  |    No     |
 

@@ -766,7 +766,7 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 
 * **`add <name> [name2 ...] [--expires=DURATION] [--psk]`:** Add one or multiple clients. In batch mode, `awg syncconf` is called once for all. With `--expires` — expiry applies to all clients. With `--psk` — each client gets its own PresharedKey (v5.11.1+).
 * **`remove <name> [name2 ...]`:** Remove one or multiple clients. In batch mode, apply_config is called once for all.
-* **`list [-v] [--json]`:** List clients (with details when using `-v`; `--json` - machine-readable, includes the `client_ipv6` field).
+* **`list [-v] [--json]`:** List clients (with details when using `-v`; `--json` - machine-readable, includes the `client_ipv6` and `expires_at` fields).
 * **`regen [name ...] [--reset-routes]`:** Regenerate `.conf`/`.png` files for the listed clients or all at once. By default preserves the client's individual `AllowedIPs`/`DNS`/`PersistentKeepalive` (set via `modify`). With `--reset-routes` - resets `AllowedIPs` to the current global routing mode from `awgsetup_cfg.init`; use it after changing the mode via reinstall (`--force --route-all` / `--route-amnezia` / `--route-custom=`) so the new mode reaches existing clients (Issue #170).
 * **`modify <name> <param> <value>`:** Modify a client parameter in the `.conf` file. Allowed parameters: DNS, Endpoint, AllowedIPs, PersistentKeepalive. QR code and vpn:// URI are automatically regenerated after modification.
 * **`backup`:** Create a backup (configs + keys + client expiry data + cron).
@@ -1516,6 +1516,28 @@ sudo bash /root/awg/manage_amneziawg.sh add guest --expires=7d
 4. When the last expiry client is removed, the cron job is automatically cleaned up.
 
 **Checking:** `list -v` shows remaining time for each client with an expiry.
+
+**Machine-readable:** `list --json` returns an `expires_at` field in every record - unix time
+as a number, or `null` for a permanent client. The semantics match `add --json` in `results[]`,
+so an external consumer (GUI, bot, monitoring) does not have to read `/root/awg/expiry/` over SSH.
+
+```bash
+sudo bash /root/awg/manage_amneziawg.sh list --json
+```
+
+```json
+[
+  {"name":"guest","ip":"10.9.9.4","client_ipv6":"","status":"Active","status_code":"active","expires_at":1750000000,"expires_at_error":null},
+  {"name":"pc","ip":"10.9.9.3","client_ipv6":"","status":"Recent","status_code":"recent","expires_at":null,"expires_at_error":null}
+]
+```
+
+> An `expires_at_error` flag goes alongside. It is present in every record and is `null` in the
+> normal case; the value `"unreadable"` means the expiry marker exists on the server but does not
+> parse (corrupted file, edited by hand). On its own, `expires_at: null` would read as "permanent
+> by design", while an expiry was in fact set for that client and silently does not work: the
+> expiry check skips such a marker with a warning in the log and never removes the client. The
+> flag exists so that this state is visible and gets fixed.
 
 ---
 

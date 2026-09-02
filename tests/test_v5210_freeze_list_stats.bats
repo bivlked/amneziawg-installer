@@ -6,6 +6,12 @@
 # byte-compatible: same key set, same types, no envelope. Until now nothing
 # guarded that promise - a refactor could silently rename a key. These tests
 # pin the exact key sets and value types in both language variants.
+#
+# The pinned set is NOT immutable: the documented contract (ADVANCED, "JSON
+# API") allows new fields to appear and forbids renaming or retyping existing
+# ones. So a key ADDED here on purpose is a contract-compliant change and the
+# expectation moves with it; a key that DISAPPEARS or changes type is the
+# breach this file exists to catch. `expires_at` was added for issue #250.
 
 bats_require_minimum_version 1.5.0
 
@@ -66,11 +72,17 @@ teardown() {
     [ "$status" -eq 0 ]
     printf '%s' "$output" | jq -e 'type == "array"' >/dev/null
     keys=$(printf '%s' "$output" | jq -cS '.[0] | keys')
-    [ "$keys" = '["client_ipv6","ip","name","status","status_code"]' ]
+    [ "$keys" = '["client_ipv6","expires_at","expires_at_error","ip","name","status","status_code"]' ]
     printf '%s' "$output" | jq -e '
         .[0] | (.name | type == "string") and (.ip | type == "string")
         and (.client_ipv6 | type == "string")
         and (.status | type == "string") and (.status_code | type == "string")' >/dev/null
+    # expires_at is the one non-string field: a number for a client with an
+    # expiry, null for a permanent one. A quoted timestamp would be a type
+    # change, which the contract forbids - hence the explicit type assertion
+    # rather than mere presence in the key set.
+    printf '%s' "$output" | jq -e '.[0].expires_at | type == "number" or type == "null"' >/dev/null
+    printf '%s' "$output" | jq -e '.[0].expires_at_error | type == "string" or type == "null"' >/dev/null
 }
 
 @test "freeze: list --json on empty server is a bare empty array" {

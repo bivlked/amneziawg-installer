@@ -12,6 +12,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`list --json` now reports client expiry (`expires_at`).** The field is present in every record and mirrors the semantics of `add`: unix time as a number for a client created with `--expires`, `null` for a permanent one. Previously only `add` returned it in `results[]`, so an external interface (GUI, bot, monitoring) could not tell a temporary client from a permanent one without reading `/root/awg/expiry/` on the server. The `-v` flag still does not affect machine output - it only changes the human-readable table. Requested in Issue #250.
+- **A corrupted expiry marker no longer looks like the absence of one.** Every record carries an `expires_at_error` flag: `null` in the normal case, and `"unreadable"` when a file in `/root/awg/expiry/` exists but does not parse. On its own, `expires_at: null` would mean "permanent by design", while an expiry was in fact set and silently does not work: the expiry check skips such a marker with a warning in the log and never removes the client. Both fields are always present, and "not applicable" is expressed by `null` - the same way `qr` and `vpnuri` behave in the `add` response.
+
 ## [5.31.0] - 2026-09-02
 
 **v5.31.0** - the default install no longer lets IPv6 out around the tunnel.
@@ -27,7 +32,7 @@ In the "Amnezia" routing mode, which is the default, all IPv4 goes through the t
 
 - **A full tunnel is decided by route coverage, not by string equality.** One predicate replaces the three literal comparisons in `awg_common.sh`: a list counts as a full tunnel when it covers all public IPv4. Private and special-purpose ranges may be missing from it - those are meant to stay outside the tunnel. Your own network list (`--route-custom`) usually does not cover the whole public space and gets no `::/0`, exactly as before; a list that does cover it counts as a full tunnel.
 - **`modify` says so when it drops `::/0`.** The command still writes exactly what it was asked for: dropping `::/0` through it is how people get their IPv6 back. But when the given list is a full tunnel without `::/0`, it names the consequence and the command that restores the route. This matters for ready-made recipes shaped like `modify <name> AllowedIPs "$ALLOWED_IPS"`: the list in `awgsetup_cfg.init` is IPv4-only, so such a substitution takes the IPv6 route away from the client.
-- **The price, worth knowing up front.** While the VPN is on, resources reachable ONLY over IPv6 become unreachable, and the local network's IPv6 goes into the tunnel (the LAN stays reachable over IPv4). If you want working IPv6 through the VPN, use `--allow-ipv6-tunnel` on a server with native IPv6. If you want the local IPv6 left alone, use your own route list via `--route-custom`.
+- **The price, worth knowing up front.** While the VPN is on, resources reachable ONLY over IPv6 become unreachable, and the local network's IPv6 goes into the tunnel and dies there (the LAN stays reachable over IPv4). If you want working IPv6 through the VPN, use `--allow-ipv6-tunnel` on a server with native IPv6. If you want the local IPv6 left alone, use your own route list via `--route-custom`.
 
 ### Added
 
