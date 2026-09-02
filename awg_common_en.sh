@@ -3599,8 +3599,27 @@ check_expired_clients() {
             continue
         fi
         local expires_at
-        expires_at=$(cat "$efile" 2>/dev/null)
-        if [[ -z "$expires_at" || ! "$expires_at" =~ ^[0-9]+$ ]]; then
+        # The exit status is captured the same way list_clients does it: cat
+        # can emit parseable bytes and still fail (an I/O error, a truncated
+        # read). Without the check THIS reader - the only one of the three that
+        # deletes - would act on data from a failed read.
+        local _exp_rc=0
+        expires_at=$(cat "$efile" 2>/dev/null) || _exp_rc=$?
+        if [[ "$_exp_rc" -ne 0 ]]; then
+            log_warn "Expiry marker for '$name' was not read (status $_exp_rc) - leaving the client alone."
+            continue
+        fi
+        # A canonical decimal of at most 10 digits - the same form list_clients
+        # uses, and the two must not diverge. The previous ^[0-9]+$ accepted a
+        # leading zero, and the comparison below reads such a value as OCTAL:
+        # the marker 01750000000 became 262144000, that is 1978, the condition
+        # fired and the client was removed silently on a bogus date. With a
+        # value containing 8 or 9 the comparison instead failed with 'value too
+        # great for base', evaluated false and the client stayed - one and the
+        # same corruption behaving in two different ways. The length bound
+        # closes the third path: a value beyond bash integer range wraps
+        # silently in arithmetic.
+        if [[ -z "$expires_at" || ! "$expires_at" =~ ^(0|[1-9][0-9]*)$ || "${#expires_at}" -gt 15 ]]; then
             log_warn "Malformed expiry data for '$name': '$(head -c 50 "$efile" 2>/dev/null)'"
             continue
         fi

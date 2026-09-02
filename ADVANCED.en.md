@@ -766,7 +766,7 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 
 * **`add <name> [name2 ...] [--expires=DURATION] [--psk]`:** Add one or multiple clients. In batch mode, `awg syncconf` is called once for all. With `--expires` — expiry applies to all clients. With `--psk` — each client gets its own PresharedKey (v5.11.1+).
 * **`remove <name> [name2 ...]`:** Remove one or multiple clients. In batch mode, apply_config is called once for all.
-* **`list [-v] [--json]`:** List clients (with details when using `-v`; `--json` - machine-readable, includes the `client_ipv6` field).
+* **`list [-v] [--json]`:** List clients (with details when using `-v`; `--json` - machine-readable, includes the `client_ipv6` and `expires_at` fields).
 * **`regen [name ...] [--reset-routes]`:** Regenerate `.conf`/`.png` files for the listed clients or all at once. By default preserves the client's individual `AllowedIPs`/`DNS`/`PersistentKeepalive` (set via `modify`). With `--reset-routes` - resets `AllowedIPs` to the current global routing mode from `awgsetup_cfg.init`; use it after changing the mode via reinstall (`--force --route-all` / `--route-amnezia` / `--route-custom=`) so the new mode reaches existing clients (Issue #170).
 * **`modify <name> <param> <value>`:** Modify a client parameter in the `.conf` file. Allowed parameters: DNS, Endpoint, AllowedIPs, PersistentKeepalive. QR code and vpn:// URI are automatically regenerated after modification.
 * **`backup`:** Create a backup (configs + keys + client expiry data + cron).
@@ -810,7 +810,7 @@ Since v5.21.0 the `--json` flag is supported not only by `list`/`stats` but also
 
 - **stdout = exactly one JSON document** on a single line, on every outcome including errors. Human messages go to stderr. Read stdout as a whole - there is no streaming, but for batch commands `results[]` grows linearly with the number of names.
 - **The exit code is the source of truth.** The `ok` field mirrors it for bots that only read stdout: `ok=false` on any failure, including a partial one (`add a b` where `b` already exists).
-- **Compatibility is additive:** new fields may appear; existing ones are never renamed and never change type. The `status` value sets may grow - treat an unknown value as a failure of that entry. `list`/`stats` are frozen as-is (bare arrays, no envelope).
+- **Compatibility is additive:** new fields may appear; existing ones are never renamed and never change type. The `status` value sets may grow - treat an unknown value as a failure of that entry. `list`/`stats` are frozen as-is in terms of the SHAPE of the reply - bare arrays, no envelope; the freeze does not cover the key set, which grows under the rule above.
 - **The `error` field is human-readable text** (may be localized); do not parse it - make machine decisions from `ok`, `rc` and `status`.
 - **Aliases are canonicalized:** the response always says `"command":"check"` and `"command":"repair-module"`, however you typed the command.
 - `--json` does **not** imply `--yes`: destructive commands still ask for confirmation.
@@ -837,6 +837,7 @@ Field notes:
 - `restore` returns an envelope on failure too (with `error` and `rolled_back` - the bot needs to know whether a rollback happened). `restored.clients` is the number of `[Peer]` blocks in the restored server config, not files in the working directory.
 - `repair-module.rc` - the internal module-check code (0 - module and service OK, 1 - module failed, 2 - module OK, service down), not the process exit code.
 - `check.module.loaded=false` is not an error by itself: userspace installs (amneziawg-go, LXC) never have the module.
+- `list.expires_at` is unix time as a number for a client with an expiry, or `null` for a permanent one; a canonical decimal of at most 15 digits. `list.expires_at_error` is `null` in the normal case, and `"unreadable"` means the marker exists on the server but no value could be obtained from it (empty file, corrupted content, a directory in its place, a failed read). Both fields are present in every record; see [Temporary clients](#expires-adv) for details.
 - `check.port.number` is always an integer, and `0` reads as "port unknown". A missing or empty setting is a warning and leaves `ok` alone. Any non-empty value that is not a port in 1-65535 counts as a corrupt config: `ok=false` and exit code 1. The value is normalised, so `0080` in the config comes back as `80`, and surrounding whitespace is ignored. This field alone says nothing about the live port - read it together with `port.listening`.
 
 <a id="strict-confirm-adv"></a>
@@ -1516,6 +1517,38 @@ sudo bash /root/awg/manage_amneziawg.sh add guest --expires=7d
 4. When the last expiry client is removed, the cron job is automatically cleaned up.
 
 **Checking:** `list -v` shows remaining time for each client with an expiry.
+
+**Machine-readable:** `list --json` returns two fields in every record. `expires_at` is unix time
+as a number, or `null` for a permanent client; the semantics match the `add --json` success
+record in `results[]`. `expires_at_error` is `null` in the normal case. An external consumer
+(GUI, bot, monitoring) does not have to read `/root/awg/expiry/` over SSH.
+
+```bash
+sudo bash /root/awg/manage_amneziawg.sh list --json
+```
+
+```json
+[
+  {"name":"guest","ip":"10.9.9.4","client_ipv6":"","status":"Active","status_code":"active","expires_at":1788912000,"expires_at_error":null},
+  {"name":"pc","ip":"10.9.9.3","client_ipv6":"","status":"Recent","status_code":"recent","expires_at":null,"expires_at_error":null}
+]
+```
+
+> The `expires_at` value is a canonical decimal of at most 15 digits. A leading zero, an empty
+> marker, junk and an over-long number do not count as a value: JSON forbids numbers with a
+> leading zero, and a number beyond int64 is rejected by Go and .NET parsers, so one corrupted
+> file would break the parsing of the whole document.
+
+> When the marker EXISTS on the server but no value could be obtained from it, `expires_at` stays
+> `null` and `expires_at_error` becomes `"unreadable"`. That covers an empty file, corrupted
+> content, a directory in place of the file, and a file that cannot be read because of its
+> read. Note that a PERMISSION denial is not one of them in practice: the script runs as root
+> and root bypasses permission checks - measured on a stand, `chmod 000` on a marker did not hide
+> its value. What remains is an I/O error, a security module refusing the read, and a truncated
+> read. On its own, `expires_at: null` would read as "permanent by design", while an
+> expiry was in fact set for that client. The reason goes to the log: a JSON consumer needs one
+> question answered, whether the value can be trusted, and it is the administrator who deals with
+> the particular file. The expiry check does not remove a client whose marker looks like this.
 
 ---
 

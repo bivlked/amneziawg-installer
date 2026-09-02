@@ -1900,25 +1900,81 @@ list_clients() {
             fi
         fi
 
-        # Expiry info: table output only (JSON does not print it - a wasted
-        # file read per client). Accept only a numeric timestamp: a corrupted
-        # expiry file would throw a bash arithmetic error from
-        # format_remaining straight into the table.
-        local exp_str=""
-        if [[ "$JSON_OUTPUT" -ne 1 ]]; then
-            local exp_ts
-            exp_ts=$(get_client_expiry "$name" 2>/dev/null)
-            if [[ "$exp_ts" =~ ^[0-9]+$ ]]; then
-                exp_str=" [$(format_remaining "$exp_ts")]"
-            elif [[ -n "$exp_ts" ]]; then
-                exp_str=" [expiry corrupted]"
+        # Expiry. Read in BOTH output modes: the table needs the remaining
+        # time, and JSON exposes expires_at (issue #250) - without it an
+        # external consumer cannot tell a client with an expiry from a
+        # permanent one without reading files on the server.
+        #
+        # There are three states and they are DIFFERENT. No marker: the client
+        # is permanent, both keys null. Marker read and parsed: a number.
+        # Marker EXISTS but no value could be obtained from it: expires_at
+        # stays null and expires_at_error becomes "unreadable". The difference
+        # between the first and the third matters: a bare null would mean
+        # "permanent by design", while somebody did set an expiry. The reason
+        # it failed goes to log_warn (stderr and the log file), because a JSON
+        # consumer needs one question answered - can the value be trusted - and
+        # it is the administrator who deals with the particular file.
+        #
+        # Only a canonical decimal of at most 10 digits counts as a number. A
+        # leading zero is rejected for a reason, not out of pedantry: JSON
+        # forbids such numbers and a strict parser on the consumer side
+        # (Python, .NET, Go) would reject the WHOLE document because of one
+        # client. The length is bounded for the same reason - a value beyond
+        # int64 is rejected by Go and .NET, and bash silently wraps it in
+        # arithmetic on top of that.
+        # The bound is 15 rather than "whatever looks like a date": parse_duration
+        # has no upper limit, and --expires=100000d yields a legitimate 11 digits.
+        # A tighter bound would silently break such an expiry - the client would
+        # live forever while the output called its marker unreadable. 15 digits
+        # sit well inside int64 and inside JavaScript's exact integer range.
+        #
+        # Both keys are ALWAYS present and express "not applicable" as null. A
+        # key that shows up only sometimes makes the shape of a record depend
+        # on the data, which trips a strict consumer that checks the key set -
+        # exactly how it trips our own contract test,
+        # tests/test_v5210_freeze_list_stats.bats.
+        local exp_str="" _jexp="null" _jexp_err="null"
+        local exp_ts="" _exp_rc=0 _exp_file="$EXPIRY_DIR/$name"
+        if [[ ! "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            # The name comes from #_Name in the server config and goes into a
+            # path. check_expired_clients validates it before the same action
+            # and for the same reason: the file is read as root, and a '../' in
+            # the name would take the read outside the marker directory.
+            log_warn "Client '$name': the name does not pass validation, not reading its expiry."
+            _jexp_err='"unreadable"'
+            [[ "$JSON_OUTPUT" -ne 1 ]] && exp_str=" [expiry unreadable]"
+        elif [[ -e "$_exp_file" || -L "$_exp_file" ]]; then
+            # Testing existence separately from reading is required: the helper
+            # returns an empty string for a missing file, for an empty one and
+            # for a directory in place of the file alike. Without this test a
+            # broken marker would silently pass for "permanent client".
+            exp_ts=$(get_client_expiry "$name" 2>/dev/null) || _exp_rc=$?
+            if [[ "$_exp_rc" -ne 0 ]]; then
+                # The file is there and could not be read: an I/O error, a
+                # security module refusing the read, a truncated read. The exit
+                # status is the only source of truth here - the output in that
+                # case is empty and indistinguishable from an empty file.
+                # A PERMISSION denial is not one of these: the script runs as
+                # root and root bypasses permission checks (measured on a stand:
+                # chmod 000 on a marker did not hide its value). The branch
+                # exists for the remaining cases.
+                log_warn "Client '$name': expiry marker not read (status $_exp_rc), file $_exp_file."
+                _jexp_err='"unreadable"'
+                [[ "$JSON_OUTPUT" -ne 1 ]] && exp_str=" [expiry unreadable]"
+            elif [[ "$exp_ts" =~ ^(0|[1-9][0-9]*)$ && "${#exp_ts}" -le 15 ]]; then
+                _jexp="$exp_ts"
+                [[ "$JSON_OUTPUT" -ne 1 ]] && exp_str=" [$(format_remaining "$exp_ts")]"
+            else
+                log_warn "Client '$name': expiry marker did not parse, file $_exp_file."
+                _jexp_err='"unreadable"'
+                [[ "$JSON_OUTPUT" -ne 1 ]] && exp_str=" [expiry unreadable]"
             fi
         fi
 
         if [[ "$JSON_OUTPUT" -eq 1 ]]; then
             local _ip6_val="${ip6}"
             [[ "$_ip6_val" == "-" ]] && _ip6_val=""
-            json_entries+=("{\"name\":\"$(json_escape "$name")\",\"ip\":\"$(json_escape "$ip")\",\"client_ipv6\":\"$(json_escape "$_ip6_val")\",\"status\":\"$(json_escape "$st")\",\"status_code\":\"${st_code}\"}")
+            json_entries+=("{\"name\":\"$(json_escape "$name")\",\"ip\":\"$(json_escape "$ip")\",\"client_ipv6\":\"$(json_escape "$_ip6_val")\",\"status\":\"$(json_escape "$st")\",\"status_code\":\"${st_code}\",\"expires_at\":${_jexp},\"expires_at_error\":${_jexp_err}}")
         elif [[ $verbose -eq 1 ]]; then
             local ip_display
             if [[ "$ip6" != "-" ]]; then
@@ -2250,7 +2306,10 @@ case $COMMAND in
                 [[ -f "$AWG_DIR/${_cname}.vpnuri" ]] && _juri="\"$(json_escape "$AWG_DIR/${_cname}.vpnuri")\""
                 if [[ -n "$EXPIRES_DURATION" ]]; then
                     _jexp_val=$(get_client_expiry "$_cname" 2>/dev/null) || _jexp_val=""
-                    [[ "$_jexp_val" =~ ^[0-9]+$ ]] && _jexp="$_jexp_val"
+                    # The same canonical form list_clients and the expiry check
+                    # use: otherwise three places would disagree on what a valid
+                    # marker is, and a non-canonical number breaks strict parsing.
+                    [[ "$_jexp_val" =~ ^(0|[1-9][0-9]*)$ && "${#_jexp_val}" -le 15 ]] && _jexp="$_jexp_val"
                 fi
                 _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"created\",\"conf\":\"$(json_escape "$AWG_DIR/${_cname}.conf")\",\"qr\":$_jqr,\"vpnuri\":$_juri,\"expires_at\":$_jexp}")
             else

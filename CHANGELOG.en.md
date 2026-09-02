@@ -12,6 +12,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`list --json` now reports client expiry (`expires_at`).** The field is present in every record and mirrors the semantics of the `add` success record: unix time as a number for a client created with `--expires`, `null` for a permanent one. Previously only `add` returned it in `results[]`, so an external interface (GUI, bot, monitoring) could not tell a temporary client from a permanent one without reading `/root/awg/expiry/` on the server. The `-v` flag still does not affect machine output - it only changes the human-readable table. Requested in Issue #250.
+- **A broken expiry marker no longer looks like the absence of one.** Every record carries an `expires_at_error` flag: `null` in the normal case, and `"unreadable"` when the marker exists on the server but no value could be obtained from it - the file is empty, corrupted, unreadable, or a directory sits in its place. On its own, `expires_at: null` would mean "permanent by design", while an expiry was in fact set for that client. The reason it failed goes to the log: a JSON consumer needs one question answered, whether the value can be trusted, and it is the administrator who deals with the particular file. Both fields are always present and express "not applicable" as `null`.
+
+### Fixed
+
+- **An expiry marker with a leading zero caused a client to be deleted silently.** The expiry check accepted any sequence of digits, and the comparison reads such a value as OCTAL: the marker `01750000000` became `262144000`, that is 1978, the condition fired, and the client was removed along with its config and keys on a date nobody had set. A value containing an 8 or a 9 instead made the comparison fail with `value too great for base`, which evaluated false and kept the client - one and the same corruption behaving in two different ways. The expiry check, `list --json` and `add --json` now use one form: a canonical decimal of at most 15 digits. A leading zero, an empty marker, junk and an over-long number are all treated the same way - the expiry is undetermined, the client is not removed, and a warning goes to the log. The expiry check also no longer decides on data from a failed read: the exit status is captured, and on failure the client is left alone.
+- **The client name from the server config is validated before it is used in a path.** `list` read the expiry marker at `/root/awg/expiry/<name>` without validating the name, although the expiry check next to it does. A name containing `../` made it read a file outside the marker directory and publish its contents in the output. Such a name cannot come from `add`, but the server config is also edited by hand.
+
 ## [5.31.0] - 2026-09-02
 
 **v5.31.0** - the default install no longer lets IPv6 out around the tunnel.
@@ -27,7 +37,7 @@ In the "Amnezia" routing mode, which is the default, all IPv4 goes through the t
 
 - **A full tunnel is decided by route coverage, not by string equality.** One predicate replaces the three literal comparisons in `awg_common.sh`: a list counts as a full tunnel when it covers all public IPv4. Private and special-purpose ranges may be missing from it - those are meant to stay outside the tunnel. Your own network list (`--route-custom`) usually does not cover the whole public space and gets no `::/0`, exactly as before; a list that does cover it counts as a full tunnel.
 - **`modify` says so when it drops `::/0`.** The command still writes exactly what it was asked for: dropping `::/0` through it is how people get their IPv6 back. But when the given list is a full tunnel without `::/0`, it names the consequence and the command that restores the route. This matters for ready-made recipes shaped like `modify <name> AllowedIPs "$ALLOWED_IPS"`: the list in `awgsetup_cfg.init` is IPv4-only, so such a substitution takes the IPv6 route away from the client.
-- **The price, worth knowing up front.** While the VPN is on, resources reachable ONLY over IPv6 become unreachable, and the local network's IPv6 goes into the tunnel (the LAN stays reachable over IPv4). If you want working IPv6 through the VPN, use `--allow-ipv6-tunnel` on a server with native IPv6. If you want the local IPv6 left alone, use your own route list via `--route-custom`.
+- **The price, worth knowing up front.** While the VPN is on, resources reachable ONLY over IPv6 become unreachable, and the local network's IPv6 goes into the tunnel and dies there (the LAN stays reachable over IPv4). If you want working IPv6 through the VPN, use `--allow-ipv6-tunnel` on a server with native IPv6. If you want the local IPv6 left alone, use your own route list via `--route-custom`.
 
 ### Added
 
