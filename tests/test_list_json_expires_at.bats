@@ -183,17 +183,27 @@ _EN="${BATS_TEST_DIRNAME}/../manage_amneziawg_en.sh"
     echo "$output" | grep -q '"expires_at_error":"unreadable"' || { echo "over-long value accepted: $output"; false; }
 }
 
+@test "expires_at: an 11-digit expiry is a number, not junk" {
+    _one_client
+    _set_marker alice 10428400000
+    _load_list_clients "$_RU"
+
+    run list_clients
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q '"expires_at":10428400000' || { echo "a legitimate long expiry was rejected: $output"; false; }
+}
+
 @test "expires_at: accepted and rejected value forms" {
     _one_client
     _load_list_clients "$_RU"
 
     local v
-    for v in 0 1 1750000000 9999999999; do
+    for v in 0 1 1750000000 9999999999 10428400000; do
         _set_marker alice "$v"
         run list_clients
         echo "$output" | grep -q "\"expires_at\":$v" || { echo "form '$v' should be accepted, got: $output"; false; }
     done
-    for v in -1 +1 01 007 1e9 "17.0" 12345678901; do
+    for v in -1 +1 01 007 1e9 "17.0" 1234567890123456; do
         _set_marker alice "$v"
         run list_clients
         echo "$output" | grep -q '"expires_at":null' || { echo "form '$v' should be rejected, got: $output"; false; }
@@ -392,9 +402,13 @@ assert d[0]["expires_at_error"] == "unreadable"
     _one_client
     _set_marker alice 1750000000
     chmod 000 "$EXPIRY_DIR/alice" 2>/dev/null || true
-    # Self-check: on filesystems where the mode does not actually deny reads
-    # (Windows checkouts) this case cannot be exercised, and asserting anyway
-    # would make the suite pass for the wrong reason on CI and fail here.
+    # Self-check: where the mode does not actually deny the read this case
+    # cannot be exercised, and asserting anyway would make the suite pass for
+    # the wrong reason. Two situations hit that: a Windows checkout, and running
+    # as root - which is how the script runs in production, so on a real server
+    # a permission denial is NOT how this branch gets reached. It is reached by
+    # an I/O error or a security module; the mode is only a convenient way to
+    # make the read fail here.
     if cat "$EXPIRY_DIR/alice" >/dev/null 2>&1; then
         chmod 644 "$EXPIRY_DIR/alice" 2>/dev/null || true
         skip "permissions are not enforced on this filesystem"
@@ -418,8 +432,12 @@ assert d[0]["expires_at_error"] == "unreadable"
 # what a valid marker is - and the looser side is the one that DELETES clients.
 
 _load_expiry_check() {
-    _removed=""
-    remove_peer_from_server() { _removed="$_removed $1"; return 0; }
+    # Removals are recorded in a FILE, not a variable: `run` executes in a
+    # subshell, so a variable set inside it is invisible to the assertions and
+    # the control below would have proved nothing.
+    rm -f "$TEST_DIR/removed.txt"
+    remove_peer_from_server() { printf '%s
+' "$1" >> "$TEST_DIR/removed.txt"; return 0; }
     _remove_client_files()    { :; }
     remove_client_expiry()    { rm -f "$EXPIRY_DIR/$1"; }
     log_warn() { printf '%s\n' "$*" >> "$TEST_DIR/warns.txt"; }
@@ -432,10 +450,60 @@ _load_expiry_check() {
     _load_expiry_check
 
     run check_expired_clients
-    # Without this control the two cases below would pass even if the function
-    # had stopped removing anything at all.
-    [ -f "$EXPIRY_DIR/alice" ] && { echo "marker still present, nothing was removed"; false; }
+    # Without this control the cases below would pass even if the function had
+    # stopped removing anything at all. Asserting on the marker file alone was
+    # not enough either: remove_client_expiry deletes it, so an implementation
+    # that skipped the peer removal still looked correct. The peer removal is
+    # what actually revokes access, so that is what gets asserted.
+    [ -f "$TEST_DIR/removed.txt" ] || { echo "remove_peer_from_server was never called"; false; }
+    grep -qx "alice" "$TEST_DIR/removed.txt" || { echo "wrong client removed: $(cat "$TEST_DIR/removed.txt")"; false; }
+    [ -f "$EXPIRY_DIR/alice" ] && { echo "marker still present"; false; }
     :
+}
+
+@test "expiry check: a second, different expired timestamp is removed too" {
+    _one_client
+    _set_marker alice 1400000000
+    _load_expiry_check
+
+    run check_expired_clients
+    # A single hardcoded timestamp in the control would let an implementation
+    # that only recognises that one value pass the whole file.
+    grep -qx "alice" "$TEST_DIR/removed.txt" || { echo "a different expired value was not acted on"; false; }
+}
+
+@test "expiry check: an 11-digit future expiry is accepted and the client kept" {
+    _one_client
+    # parse_duration has no upper bound, so --expires=100000d writes a
+    # legitimate 11-digit epoch. A tighter digit bound would treat it as junk:
+    # the client would never expire and the output would call its marker
+    # unreadable. This pins the bound against being tightened back.
+    _set_marker alice 10428400000
+    _load_expiry_check
+
+    run check_expired_clients
+    [ -f "$EXPIRY_DIR/alice" ] || { echo "a valid long expiry was treated as corrupt"; false; }
+    [ -f "$TEST_DIR/removed.txt" ] && { echo "client removed on a future date"; false; }
+    :
+}
+
+@test "expiry check: the EN library behaves the same way" {
+    _one_client
+    _set_marker alice 01750000000
+    _load_expiry_check
+    # The suite would otherwise never touch awg_common_en.sh, so reverting the
+    # destructive regex there alone would ship unnoticed.
+    (
+        source "${BATS_TEST_DIRNAME}/../awg_common_en.sh"
+        remove_peer_from_server() { printf '%s
+' "$1" >> "$TEST_DIR/removed.txt"; return 0; }
+        _remove_client_files()    { :; }
+        remove_client_expiry()    { rm -f "$EXPIRY_DIR/$1"; }
+        log_warn() { :; }
+        log()      { :; }
+        check_expired_clients
+    )
+    [ -f "$EXPIRY_DIR/alice" ] || { echo "EN library deleted the client on an octal-misread marker"; false; }
 }
 
 @test "expiry check: a leading-zero marker does NOT delete the client" {
@@ -465,4 +533,21 @@ _load_expiry_check() {
 
     run check_expired_clients
     [ -f "$EXPIRY_DIR/alice" ] || { echo "client was deleted on an over-long marker"; false; }
+}
+
+@test "expiry check: a read that fails but emits digits does not delete the client" {
+    _one_client
+    _set_marker alice 1000000000
+    _load_expiry_check
+    # A shell function shadows the external command, so this reproduces the one
+    # case that neither permissions nor file types can stage here: cat emits
+    # parseable bytes for an EXPIRED date and still exits non-zero, the way a
+    # truncated read or an I/O error does. The value looks actionable, the read
+    # was not trustworthy, and this reader is the one that deletes.
+    cat() { printf '1000000000'; return 1; }
+
+    run check_expired_clients
+    [ -f "$EXPIRY_DIR/alice" ] || { echo "client deleted on data from a failed read"; false; }
+    [ -f "$TEST_DIR/removed.txt" ] && { echo "peer removal was called on a failed read"; false; }
+    :
 }

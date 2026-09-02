@@ -837,7 +837,7 @@ Field notes:
 - `restore` returns an envelope on failure too (with `error` and `rolled_back` - the bot needs to know whether a rollback happened). `restored.clients` is the number of `[Peer]` blocks in the restored server config, not files in the working directory.
 - `repair-module.rc` - the internal module-check code (0 - module and service OK, 1 - module failed, 2 - module OK, service down), not the process exit code.
 - `check.module.loaded=false` is not an error by itself: userspace installs (amneziawg-go, LXC) never have the module.
-- `list.expires_at` is unix time as a number for a client with an expiry, or `null` for a permanent one; a canonical decimal of at most 10 digits. `list.expires_at_error` is `null` in the normal case, and `"unreadable"` means the marker exists on the server but no value could be obtained from it (empty file, corrupted content, a directory in its place, a permission failure). Both fields are present in every record; see [Temporary clients](#expires-adv) for details.
+- `list.expires_at` is unix time as a number for a client with an expiry, or `null` for a permanent one; a canonical decimal of at most 15 digits. `list.expires_at_error` is `null` in the normal case, and `"unreadable"` means the marker exists on the server but no value could be obtained from it (empty file, corrupted content, a directory in its place, a failed read). Both fields are present in every record; see [Temporary clients](#expires-adv) for details.
 - `check.port.number` is always an integer, and `0` reads as "port unknown". A missing or empty setting is a warning and leaves `ok` alone. Any non-empty value that is not a port in 1-65535 counts as a corrupt config: `ok=false` and exit code 1. The value is normalised, so `0080` in the config comes back as `80`, and surrounding whitespace is ignored. This field alone says nothing about the live port - read it together with `port.listening`.
 
 <a id="strict-confirm-adv"></a>
@@ -1534,7 +1534,7 @@ sudo bash /root/awg/manage_amneziawg.sh list --json
 ]
 ```
 
-> The `expires_at` value is a canonical decimal of at most 10 digits. A leading zero, an empty
+> The `expires_at` value is a canonical decimal of at most 15 digits. A leading zero, an empty
 > marker, junk and an over-long number do not count as a value: JSON forbids numbers with a
 > leading zero, and a number beyond int64 is rejected by Go and .NET parsers, so one corrupted
 > file would break the parsing of the whole document.
@@ -1542,7 +1542,10 @@ sudo bash /root/awg/manage_amneziawg.sh list --json
 > When the marker EXISTS on the server but no value could be obtained from it, `expires_at` stays
 > `null` and `expires_at_error` becomes `"unreadable"`. That covers an empty file, corrupted
 > content, a directory in place of the file, and a file that cannot be read because of its
-> permissions. On its own, `expires_at: null` would read as "permanent by design", while an
+> read. Note that a PERMISSION denial is not one of them in practice: the script runs as root
+> and root bypasses permission checks - measured on a stand, `chmod 000` on a marker did not hide
+> its value. What remains is an I/O error, a security module refusing the read, and a truncated
+> read. On its own, `expires_at: null` would read as "permanent by design", while an
 > expiry was in fact set for that client. The reason goes to the log: a JSON consumer needs one
 > question answered, whether the value can be trusted, and it is the administrator who deals with
 > the particular file. The expiry check does not remove a client whose marker looks like this.

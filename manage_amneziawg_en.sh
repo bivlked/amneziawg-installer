@@ -1922,6 +1922,11 @@ list_clients() {
         # client. The length is bounded for the same reason - a value beyond
         # int64 is rejected by Go and .NET, and bash silently wraps it in
         # arithmetic on top of that.
+        # The bound is 15 rather than "whatever looks like a date": parse_duration
+        # has no upper limit, and --expires=100000d yields a legitimate 11 digits.
+        # A tighter bound would silently break such an expiry - the client would
+        # live forever while the output called its marker unreadable. 15 digits
+        # sit well inside int64 and inside JavaScript's exact integer range.
         #
         # Both keys are ALWAYS present and express "not applicable" as null. A
         # key that shows up only sometimes makes the shape of a record depend
@@ -1945,14 +1950,18 @@ list_clients() {
             # broken marker would silently pass for "permanent client".
             exp_ts=$(get_client_expiry "$name" 2>/dev/null) || _exp_rc=$?
             if [[ "$_exp_rc" -ne 0 ]]; then
-                # The file is there and could not be read: permissions, an I/O
-                # error, a truncated read. The exit status is the only source of
-                # truth here - the output in that case is empty and
-                # indistinguishable from an empty file.
+                # The file is there and could not be read: an I/O error, a
+                # security module refusing the read, a truncated read. The exit
+                # status is the only source of truth here - the output in that
+                # case is empty and indistinguishable from an empty file.
+                # A PERMISSION denial is not one of these: the script runs as
+                # root and root bypasses permission checks (measured on a stand:
+                # chmod 000 on a marker did not hide its value). The branch
+                # exists for the remaining cases.
                 log_warn "Client '$name': expiry marker not read (status $_exp_rc), file $_exp_file."
                 _jexp_err='"unreadable"'
                 [[ "$JSON_OUTPUT" -ne 1 ]] && exp_str=" [expiry unreadable]"
-            elif [[ "$exp_ts" =~ ^(0|[1-9][0-9]*)$ && "${#exp_ts}" -le 10 ]]; then
+            elif [[ "$exp_ts" =~ ^(0|[1-9][0-9]*)$ && "${#exp_ts}" -le 15 ]]; then
                 _jexp="$exp_ts"
                 [[ "$JSON_OUTPUT" -ne 1 ]] && exp_str=" [$(format_remaining "$exp_ts")]"
             else
@@ -2300,7 +2309,7 @@ case $COMMAND in
                     # The same canonical form list_clients and the expiry check
                     # use: otherwise three places would disagree on what a valid
                     # marker is, and a non-canonical number breaks strict parsing.
-                    [[ "$_jexp_val" =~ ^(0|[1-9][0-9]*)$ && "${#_jexp_val}" -le 10 ]] && _jexp="$_jexp_val"
+                    [[ "$_jexp_val" =~ ^(0|[1-9][0-9]*)$ && "${#_jexp_val}" -le 15 ]] && _jexp="$_jexp_val"
                 fi
                 _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"created\",\"conf\":\"$(json_escape "$AWG_DIR/${_cname}.conf")\",\"qr\":$_jqr,\"vpnuri\":$_juri,\"expires_at\":$_jexp}")
             else
