@@ -822,7 +822,7 @@ sudo bash /root/awg/manage_amneziawg.sh restore
 Форма успеха (пример `add`):
 
 ```json
-{"command":"add","ok":true,"added":1,"failed":0,"applied":true,"results":[{"name":"phone","status":"created","conf":"/root/awg/phone.conf","qr":"/root/awg/phone.png","vpnuri":"/root/awg/phone.vpnuri","expires_at":null}]}
+{"command":"add","ok":true,"added":1,"failed":0,"applied":true,"results":[{"name":"phone","status":"created","conf":"/root/awg/phone.conf","qr":"/root/awg/phone.png","vpnuri":"/root/awg/phone.vpnuri","expires_at":null,"allowed_ips":"0.0.0.0/0, ::/0"}]}
 ```
 
 Форма любого аварийного выхода (die, неверная опция, отказ подтверждения, сигнал):
@@ -837,6 +837,7 @@ sudo bash /root/awg/manage_amneziawg.sh restore
 
 - `applied` - применён ли конфиг к live-интерфейсу. У `regen` и `modify` поля нет: они не меняют серверное состояние (ключи и IP переиспользуются). При `AWG_SKIP_APPLY=1` всегда `false`.
 - `qr`/`vpnuri` - путь, если файл существовал на момент ответа. QR и URI генерируются вне конфиг-блокировки: при параллельной операции файл может исчезнуть, гарантий свежести нет.
+- `results[].allowed_ips` (у `add`, записи со статусом `created`) - применённые маршруты клиента, прочитанные из только что созданного `.conf`. Может отличаться от аргумента `--allowed-ips`: полный туннель IPv4 дополняется `::/0` (iOS-правило). Внешнему потребителю (боту) поле снимает проверочный вызов после создания (Issue #253).
 - `restore` возвращает конверт и на провале (с полями `error` и `rolled_back` - боту важно знать, был ли откат). `restored.clients` - число `[Peer]`-блоков в восстановленном серверном конфиге, не файлов в рабочей папке.
 - `repair-module.rc` - код внутренней проверки модуля (0 - модуль и сервис OK, 1 - модуль не поднялся, 2 - модуль OK, сервис нет), не exit-код процесса.
 - `check.module.loaded=false` сам по себе не ошибка: на userspace-инсталляциях (amneziawg-go, LXC) модуля нет и не будет.

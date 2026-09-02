@@ -824,7 +824,7 @@ Since v5.21.0 the `--json` flag is supported not only by `list`/`stats` but also
 Success form (an `add` example):
 
 ```json
-{"command":"add","ok":true,"added":1,"failed":0,"applied":true,"results":[{"name":"phone","status":"created","conf":"/root/awg/phone.conf","qr":"/root/awg/phone.png","vpnuri":"/root/awg/phone.vpnuri","expires_at":null}]}
+{"command":"add","ok":true,"added":1,"failed":0,"applied":true,"results":[{"name":"phone","status":"created","conf":"/root/awg/phone.conf","qr":"/root/awg/phone.png","vpnuri":"/root/awg/phone.vpnuri","expires_at":null,"allowed_ips":"0.0.0.0/0, ::/0"}]}
 ```
 
 The form of any emergency exit (die, bad option, confirmation refusal, signal):
@@ -839,6 +839,7 @@ Field notes:
 
 - `applied` - whether the config was applied to the live interface. `regen` and `modify` have no such field: they do not change server state (keys and IPs are reused). Always `false` under `AWG_SKIP_APPLY=1`.
 - `qr`/`vpnuri` - a path if the file existed at response time. QR and URI are generated outside the config lock: a parallel operation can remove the file, no freshness guarantee.
+- `results[].allowed_ips` (`add`, entries with status `created`) - the client's applied routes, read from the just-created `.conf`. May differ from the `--allowed-ips` argument: a full-tunnel IPv4 list gets `::/0` added (the iOS rule). For an external consumer (a bot) the field removes the verification call after creation (Issue #253).
 - `restore` returns an envelope on failure too (with `error` and `rolled_back` - the bot needs to know whether a rollback happened). `restored.clients` is the number of `[Peer]` blocks in the restored server config, not files in the working directory.
 - `repair-module.rc` - the internal module-check code (0 - module and service OK, 1 - module failed, 2 - module OK, service down), not the process exit code.
 - `check.module.loaded=false` is not an error by itself: userspace installs (amneziawg-go, LXC) never have the module.

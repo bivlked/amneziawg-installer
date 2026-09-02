@@ -1070,36 +1070,16 @@ modify_client() {
             { [[ "$_ept" =~ ^[0-9]+$ ]] && [[ "$_ept" -ge 1 && "$_ept" -le 65535 ]]; } || { log_error "Invalid Endpoint '$value': port must be 1-65535"; return 1; }
             ;;
         AllowedIPs)
-            # C5: beyond rejecting dangerous chars - positive CIDR-list check.
-            case "$value" in
-                *$'\n'*|*$'\r'*|*\\*|*\"*|*\'*|"")
-                    log_error "Invalid AllowedIPs: '$value'"
-                    return 1 ;;
-            esac
-            # Stray commas: word-splitting on IFS=',' silently drops a TRAILING
-            # empty element (e.g. "10.0.0.0/24,"), so check list structure
-            # separately: leading/trailing/doubled comma.
-            case "$value" in
-                ,*|*,|*,,*)
-                    log_error "Invalid AllowedIPs '$value': empty list element (stray comma)"
-                    return 1 ;;
-            esac
-            local _aip_tok _aip_ifs="$IFS"
-            IFS=','
-            for _aip_tok in $value; do
-                _aip_tok="${_aip_tok//[[:space:]]/}"
-                if [[ -z "$_aip_tok" ]]; then
-                    IFS="$_aip_ifs"
-                    log_error "Invalid AllowedIPs '$value': empty list element (stray comma)"
-                    return 1
-                fi
-                if ! _valid_cidr "$_aip_tok"; then
-                    IFS="$_aip_ifs"
-                    log_error "Invalid AllowedIPs '$value': '$_aip_tok' is not a CIDR (IPv4/IPv6 with optional /n prefix)"
-                    return 1
-                fi
-            done
-            IFS="$_aip_ifs"
+            # C5: positive CIDR-list check. Since Issue #253 the check lives in
+            # the library helper awg_validate_allowed_ips_list and is shared
+            # with `add --allowed-ips`: two inline copies drift apart silently
+            # (the forbidden-marker list once lived in two files and drifted -
+            # it took a separate PR to fix).
+            command -v awg_validate_allowed_ips_list >/dev/null 2>&1 || {
+                log_error "awg_common.sh is outdated: awg_validate_allowed_ips_list is missing. Update both halves to the same version."
+                return 1
+            }
+            awg_validate_allowed_ips_list "$value" || return 1
             ;;
     esac
 
@@ -2353,7 +2333,15 @@ case $COMMAND in
                     # marker is, and a non-canonical number breaks strict parsing.
                     [[ "$_jexp_val" =~ ^(0|[1-9][0-9]*)$ && "${#_jexp_val}" -le 15 ]] && _jexp="$_jexp_val"
                 fi
-                _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"created\",\"conf\":\"$(json_escape "$AWG_DIR/${_cname}.conf")\",\"qr\":$_jqr,\"vpnuri\":$_juri,\"expires_at\":$_jexp}")
+                # The applied AllowedIPs (maintainer request in Issue #253):
+                # routes are read from the created .conf - the source of truth.
+                # The value may differ from the flag argument: a full-tunnel
+                # IPv4 list gets ::/0 added (the iOS rule). This spares a bot
+                # its verification call after creation.
+                _jaip="null"
+                _jaip_val=$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$AWG_DIR/${_cname}.conf" 2>/dev/null)
+                [[ -n "$_jaip_val" ]] && _jaip="\"$(json_escape "$_jaip_val")\""
+                _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"created\",\"conf\":\"$(json_escape "$AWG_DIR/${_cname}.conf")\",\"qr\":$_jqr,\"vpnuri\":$_juri,\"expires_at\":$_jexp,\"allowed_ips\":$_jaip}")
             else
                 log_error "Error adding client '$_cname'."
                 _cmd_rc=1

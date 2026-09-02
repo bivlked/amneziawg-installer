@@ -463,3 +463,79 @@ _setup_regen_stubs() {
     [ "$(sed -n 's/^AllowedIPs = //p' "$TEST_DIR/awg/fenrir.conf")" = "10.50.0.0/16" ]
     teardown_manage_env
 }
+
+# ---------------------------------------------------------------------------
+# Maintainer follow-up (Issue #253 comment):
+#   (A) modify reuses the shared validator instead of an inline copy
+#   (B) add --json reports the APPLIED AllowedIPs in results[]
+# ---------------------------------------------------------------------------
+
+@test "modify: RU/EN call the shared validator, no inline copy left" {
+    local MANAGE_RU="${BATS_TEST_DIRNAME}/../manage_amneziawg.sh"
+    local MANAGE_EN="${BATS_TEST_DIRNAME}/../manage_amneziawg_en.sh"
+    for f in "$MANAGE_RU" "$MANAGE_EN"; do
+        local body
+        body=$(awk '/^modify_client\(\)/,/^}/' "$f")
+        [ -n "$body" ]
+        # The AllowedIPs arm delegates to the library helper...
+        printf '%s' "$body" | grep -q 'awg_validate_allowed_ips_list "\$value" || return 1'
+        # ...and the inline per-token copy is gone (single source of truth)
+        ! printf '%s' "$body" | grep -q '_valid_cidr'
+    done
+}
+
+@test "modify e2e: invalid AllowedIPs value is rejected through the shared validator" {
+    require_flock
+    setup_manage_env
+    local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+    run --separate-stderr bash "$SCRIPT" add gina --json --yes \
+        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+    [ "$status" -eq 0 ]
+    # Invalid list must die in validation, BEFORE any sed touches the conf
+    # (validation precedes the lock and the backup), so this also works
+    # where sed -i is unavailable.
+    run --separate-stderr bash "$SCRIPT" modify gina AllowedIPs "10.0.0.0/999" --json --yes \
+        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+    [ "$status" -ne 0 ]
+    # The untouched conf still carries the routes add wrote
+    [ "$(sed -n 's/^AllowedIPs = //p' "$TEST_DIR/awg/gina.conf")" = "0.0.0.0/0, ::/0" ]
+    teardown_manage_env
+}
+
+@test "add --json: results[] reports the applied AllowedIPs (override)" {
+    require_flock
+    command -v jq &>/dev/null || skip "jq not available"
+    setup_manage_env
+    local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+    run --separate-stderr bash "$SCRIPT" add hilda --allowed-ips="10.0.0.0/8,192.168.0.0/16" --json --yes \
+        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq -r '.results[0].allowed_ips')" = "10.0.0.0/8, 192.168.0.0/16" ]
+    teardown_manage_env
+}
+
+@test "add --json: results[] reports the applied AllowedIPs (global mode, with ::/0)" {
+    require_flock
+    command -v jq &>/dev/null || skip "jq not available"
+    setup_manage_env
+    local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+    run --separate-stderr bash "$SCRIPT" add ivar --json --yes \
+        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+    [ "$status" -eq 0 ]
+    # Applied value comes from the conf: full tunnel mirrors into ::/0 (iOS rule)
+    [ "$(printf '%s' "$output" | jq -r '.results[0].allowed_ips')" = "0.0.0.0/0, ::/0" ]
+    teardown_manage_env
+}
+
+@test "add --json EN: results[] carries the same allowed_ips field" {
+    require_flock
+    command -v jq &>/dev/null || skip "jq not available"
+    setup_manage_env
+    cp "$BATS_TEST_DIRNAME/../awg_common_en.sh" "$TEST_DIR/awg/awg_common.sh"
+    local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
+    run --separate-stderr bash "$SCRIPT" add jarl --allowed-ips="10.50.0.0/16" --json --yes \
+        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq -r '.results[0].allowed_ips')" = "10.50.0.0/16" ]
+    teardown_manage_env
+}

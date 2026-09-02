@@ -69,17 +69,24 @@ load test_helper
 
 # --- source-level: modify_client must use the shared validators ---
 
-@test "C3 RU modify_client uses _valid_cidr / _valid_host_or_ipv4 / _valid_ipv6" {
-    run grep -E '_valid_cidr|_valid_host_or_ipv4|_valid_ipv6' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+# Issue #253: the AllowedIPs check moved from modify's inline copy into the
+# library helper awg_validate_allowed_ips_list (shared with `add
+# --allowed-ips`); modify delegates to it instead of carrying a second copy
+# that would drift. Endpoint/DNS still use _valid_host_or_ipv4/_valid_ipv6
+# inline, and the helper itself is unit-tested in test_add_allowed_ips.bats
+# (where the per-token _valid_cidr loop now lives).
+
+@test "C3 RU modify_client validates AllowedIPs via the shared helper" {
+    run grep -E '_valid_host_or_ipv4|_valid_ipv6' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     [ "$status" -eq 0 ]
-    run grep -E '_valid_cidr "\$_aip_tok"' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+    run grep -E 'awg_validate_allowed_ips_list "\$value" \|\| return 1' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     [ "$status" -eq 0 ]
 }
 
-@test "C3 EN modify_client uses _valid_cidr / _valid_host_or_ipv4 / _valid_ipv6" {
-    run grep -E '_valid_cidr|_valid_host_or_ipv4|_valid_ipv6' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
+@test "C3 EN modify_client validates AllowedIPs via the shared helper" {
+    run grep -E '_valid_host_or_ipv4|_valid_ipv6' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
     [ "$status" -eq 0 ]
-    run grep -E '_valid_cidr "\$_aip_tok"' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
+    run grep -E 'awg_validate_allowed_ips_list "\$value" \|\| return 1' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
     [ "$status" -eq 0 ]
 }
 

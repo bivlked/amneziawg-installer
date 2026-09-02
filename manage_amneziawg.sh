@@ -1056,36 +1056,16 @@ modify_client() {
             { [[ "$_ept" =~ ^[0-9]+$ ]] && [[ "$_ept" -ge 1 && "$_ept" -le 65535 ]]; } || { log_error "Невалидный Endpoint '$value': порт должен быть 1-65535"; return 1; }
             ;;
         AllowedIPs)
-            # C5: помимо отсечения опасных символов - позитивная проверка CIDR-списка.
-            case "$value" in
-                *$'\n'*|*$'\r'*|*\\*|*\"*|*\'*|"")
-                    log_error "Невалидный AllowedIPs: '$value'"
-                    return 1 ;;
-            esac
-            # Лишние запятые: word-splitting по IFS=',' молча отбрасывает
-            # ХВОСТОВОЙ пустой элемент (например "10.0.0.0/24,"), поэтому проверяем
-            # структуру списка отдельно: ведущая/хвостовая/двойная запятая.
-            case "$value" in
-                ,*|*,|*,,*)
-                    log_error "Невалидный AllowedIPs '$value': пустой элемент списка (лишняя запятая)"
-                    return 1 ;;
-            esac
-            local _aip_tok _aip_ifs="$IFS"
-            IFS=','
-            for _aip_tok in $value; do
-                _aip_tok="${_aip_tok//[[:space:]]/}"
-                if [[ -z "$_aip_tok" ]]; then
-                    IFS="$_aip_ifs"
-                    log_error "Невалидный AllowedIPs '$value': пустой элемент списка (лишняя запятая)"
-                    return 1
-                fi
-                if ! _valid_cidr "$_aip_tok"; then
-                    IFS="$_aip_ifs"
-                    log_error "Невалидный AllowedIPs '$value': '$_aip_tok' не похож на CIDR (IPv4/IPv6 с опциональным префиксом /n)"
-                    return 1
-                fi
-            done
-            IFS="$_aip_ifs"
+            # C5: позитивная проверка CIDR-списка. С Issue #253 проверка живёт
+            # в библиотечном хелпере awg_validate_allowed_ips_list и разделяется
+            # с `add --allowed-ips`: две инлайн-копии тихо разъезжаются (список
+            # запрещённых маркеров уже жил в двух файлах и разъехался - чинили
+            # отдельным PR).
+            command -v awg_validate_allowed_ips_list >/dev/null 2>&1 || {
+                log_error "awg_common.sh устарела: нет awg_validate_allowed_ips_list. Обнови обе половины под одну версию."
+                return 1
+            }
+            awg_validate_allowed_ips_list "$value" || return 1
             ;;
     esac
 
@@ -2331,7 +2311,15 @@ case $COMMAND in
                     # валидная метка, а неканоническое число ломает строгий разбор.
                     [[ "$_jexp_val" =~ ^(0|[1-9][0-9]*)$ && "${#_jexp_val}" -le 15 ]] && _jexp="$_jexp_val"
                 fi
-                _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"created\",\"conf\":\"$(json_escape "$AWG_DIR/${_cname}.conf")\",\"qr\":$_jqr,\"vpnuri\":$_juri,\"expires_at\":$_jexp}")
+                # Применённый AllowedIPs (просьба мейнтейнера в Issue #253):
+                # маршруты читаются из созданного .conf - источник правды.
+                # Значение может отличаться от аргумента флага: полный туннель
+                # IPv4 дополняется ::/0 (iOS-правило). Боту это снимает
+                # проверочный вызов после создания.
+                _jaip="null"
+                _jaip_val=$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$AWG_DIR/${_cname}.conf" 2>/dev/null)
+                [[ -n "$_jaip_val" ]] && _jaip="\"$(json_escape "$_jaip_val")\""
+                _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"created\",\"conf\":\"$(json_escape "$AWG_DIR/${_cname}.conf")\",\"qr\":$_jqr,\"vpnuri\":$_juri,\"expires_at\":$_jexp,\"allowed_ips\":$_jaip}")
             else
                 log_error "Ошибка добавления клиента '$_cname'."
                 _cmd_rc=1
