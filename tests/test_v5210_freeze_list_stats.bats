@@ -11,7 +11,8 @@
 # API") allows new fields to appear and forbids renaming or retyping existing
 # ones. So a key ADDED here on purpose is a contract-compliant change and the
 # expectation moves with it; a key that DISAPPEARS or changes type is the
-# breach this file exists to catch. `expires_at` was added for issue #250.
+# breach this file exists to catch. `expires_at` and `expires_at_error` were
+# added for issue #250.
 
 bats_require_minimum_version 1.5.0
 
@@ -77,10 +78,11 @@ teardown() {
         .[0] | (.name | type == "string") and (.ip | type == "string")
         and (.client_ipv6 | type == "string")
         and (.status | type == "string") and (.status_code | type == "string")' >/dev/null
-    # expires_at is the one non-string field: a number for a client with an
-    # expiry, null for a permanent one. A quoted timestamp would be a type
-    # change, which the contract forbids - hence the explicit type assertion
-    # rather than mere presence in the key set.
+    # The two expiry fields are the non-string ones: expires_at is a number for
+    # a client with an expiry and null for a permanent one, expires_at_error is
+    # a string only when the marker exists but yields no value. A quoted
+    # timestamp would be a type change, which the contract forbids - hence the
+    # explicit type assertions rather than mere presence in the key set.
     printf '%s' "$output" | jq -e '.[0].expires_at | type == "number" or type == "null"' >/dev/null
     printf '%s' "$output" | jq -e '.[0].expires_at_error | type == "string" or type == "null"' >/dev/null
 }
