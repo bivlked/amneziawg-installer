@@ -1015,12 +1015,95 @@ safe_load_config() {
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
                 AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
-                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_SERVER_NAME)
+                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_SERVER_NAME)
                     export "$key=$value"
                     ;;
             esac
         fi
     done < "$config_file"
+}
+
+# awg_installed_protocol : the INSTALLATION's generation, from the AWG_PROTOCOL
+# marker in awgsetup_cfg.init (already loaded by safe_load_config). Prints '2.0'
+# or '3.1'.
+# 🔴 A missing field IS 2.0, not "unknown": that is what every install made
+# before the marker existed looks like, and any other answer could silently
+# change its generation. Any other value is a failure (code 1) with NO output
+# and no quiet default: a corrupt marker on a third-line server would otherwise
+# (once regen consults the marker) make regen hand out second-line profiles that
+# silently fail to connect. The
+# caller prints the error text: the function body is identical in all four
+# copies (RU/EN, shared library/installer), and the parity test checks that.
+# Optional argument: path to the init file. With it the file is checked
+# fail-closed by one anchored grep without a pipeline (a pipeline under pipefail
+# took SIGPIPE on a large file and switched the guard off): a line of the form
+# "AWG_PROTOCOL =" in any case with an empty value (the field did not parse:
+# indentation, spaces around '=', broken quotes; or it was written empty) is a
+# corrupt marker, not a missing one; two or more such lines are corrupt too
+# (which one is true cannot be guessed). Both fail, or a corrupt marker would
+# quietly read as 2.0.
+# 🔴 The pattern allows a leading BOM ON PURPOSE: safe_load_config parses such a
+# line, so the guard has to see it too. Without that, a corrupt marker behind a
+# BOM (a file that went through a Windows editor) did not match the pattern, the
+# guard read the marker as absent and answered 2.0 - exactly the silent
+# substitution it is written against. For the same reason a second marker line
+# did not match when the first carried a BOM, so a duplicate passed as a single
+# marker.
+# 🔴 grep's exit codes are not interchangeable: 1 means no match (normal), 2 and
+# above mean grep itself failed (unreadable file, a directory in place of a
+# file). The former '|| n=0' form equated them and turned a failure into "no
+# marker", that is, into a confident 2.0. A read error now refuses as well.
+awg_installed_protocol() {
+    local cfg="${1:-}" n=0 _rc=0 _bom=$'\xef\xbb\xbf'
+    if [[ -n "$cfg" && -f "$cfg" ]]; then
+        n=$(grep -ciE "^(${_bom})?[[:space:]]*(export[[:space:]]+)?AWG_PROTOCOL[[:space:]]*=" "$cfg")
+        _rc=$?
+        if [[ "$_rc" -ge 2 ]]; then
+            return 1
+        fi
+        [[ "$_rc" -eq 0 ]] || n=0
+        if [[ "$n" -gt 1 ]]; then
+            return 1
+        fi
+    fi
+    case "${AWG_PROTOCOL:-}" in
+        "")
+            if [[ "$n" -ge 1 ]]; then
+                return 1
+            fi
+            echo "2.0" ;;
+        2.0) echo "2.0" ;;
+        3.1) echo "3.1" ;;
+        *)   return 1 ;;
+    esac
+}
+
+# awg_restore_generation_notice <init from the backup> <live init>
+# restore is an explicit action and brings back a consistent set (config + init
+# + keys), so it does not forbid a generation change, but the change must not
+# be silent either: when the generation in the backup differs from the current
+# one, a warning is printed BEFORE the service is stopped, right after the
+# backup completeness check, when the archive is already unpacked and the
+# human can still abort the restore. A missing field reads as 2.0 (the
+# awg_installed_protocol rule); a backup without the init itself gets its own
+# warning (the marker then stays as it is, restore does not touch the file);
+# an unreadable marker prints as "?" and always warns, even when the other
+# side is unreadable too. Always returns 0: the restore is not interrupted,
+# the warning stays in the log.
+awg_restore_generation_notice() {
+    local backup_init="$1" live_init="$2" backup_gen live_gen
+    live_gen=$(AWG_PROTOCOL=""; if [[ -f "$live_init" ]]; then safe_load_config "$live_init" >/dev/null 2>&1; fi; awg_installed_protocol "$live_init") || live_gen="?"
+    if [[ ! -f "$backup_init" ]]; then
+        log_warn "The backup has no awgsetup_cfg.init: the generation marker stays as it is (${live_gen}). After the restore compare it with the restored server config."
+        return 0
+    fi
+    backup_gen=$(AWG_PROTOCOL=""; safe_load_config "$backup_init" >/dev/null 2>&1; awg_installed_protocol "$backup_init") || backup_gen="?"
+    if [[ "$backup_gen" == "?" || "$live_gen" == "?" ]]; then
+        log_warn "The generation marker AWG_PROTOCOL cannot be read (backup: ${backup_gen}, current installation: ${live_gen}; 2.0 and 3.1 are allowed). Check ${live_init} by hand after the restore."
+    elif [[ "$backup_gen" != "$live_gen" ]]; then
+        log_warn "Protocol generation in the backup: ${backup_gen}, in the current installation: ${live_gen}. After the restore the server will be generation ${backup_gen}; client profiles of the other generation will not connect to it."
+    fi
+    return 0
 }
 
 # Parser for the live AmneziaWG server config (source of truth for AWG_*).

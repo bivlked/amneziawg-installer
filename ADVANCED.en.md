@@ -584,6 +584,7 @@ export AWG_H3='56789012-67890123'
 export AWG_H4='456789012-567890123'
 export AWG_I1='<r 128>'
 export AWG_PRESET='default'
+export AWG_PROTOCOL='2.0'
 ```
 </details>
 
