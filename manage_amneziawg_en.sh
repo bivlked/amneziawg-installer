@@ -851,6 +851,19 @@ restore_backup() {
         return 1
     fi
 
+    # The backup brings awgsetup_cfg.init back too, i.e. the generation marker.
+    # A generation change on restore is not forbidden (explicit action, a
+    # consistent set), but it must not be silent: the warning is printed HERE,
+    # while the service is still running and the restore can still be aborted.
+    # The compat gate compares MAJOR.MINOR only and this function is new: on a
+    # server with an updated manage and an old library the call would fail
+    # "command not found" silently (the issue #183 class). Warn about the library then.
+    if command -v awg_restore_generation_notice >/dev/null 2>&1; then
+        awg_restore_generation_notice "$td/clients/awgsetup_cfg.init" "$CONFIG_FILE"
+    else
+        log_warn "awg_common.sh is outdated: awg_restore_generation_notice is missing, the generation check on restore was skipped. Update the scripts (section "How to Update Scripts" in ADVANCED.en.md)."
+    fi
+
     log "Stopping service..."
     systemctl stop awg-quick@awg0 || log_warn "Service not stopped."
 

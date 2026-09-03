@@ -841,6 +841,19 @@ restore_backup() {
         return 1
     fi
 
+    # Бэкап возвращает и awgsetup_cfg.init, то есть маркер поколения. Смена
+    # поколения при restore не запрещена (явное действие, согласованный набор),
+    # но молчаливой быть не должна: предупреждение печатается ЗДЕСЬ, пока сервис
+    # ещё работает и restore можно прервать.
+    # Гейт совместимости сверяет только MAJOR.MINOR, а функция новая: на сервере
+    # с обновлённым manage и старой библиотекой вызов упал бы «command not found»
+    # молча (класс issue #183). Тогда предупреждаем о самой библиотеке.
+    if command -v awg_restore_generation_notice >/dev/null 2>&1; then
+        awg_restore_generation_notice "$td/clients/awgsetup_cfg.init" "$CONFIG_FILE"
+    else
+        log_warn "awg_common.sh устарела: нет awg_restore_generation_notice, проверка поколения при восстановлении пропущена. Обновите скрипты (раздел «Как обновить скрипты» в ADVANCED.md)."
+    fi
+
     log "Остановка сервиса..."
     systemctl stop awg-quick@awg0 || log_warn "Сервис не остановлен."
 

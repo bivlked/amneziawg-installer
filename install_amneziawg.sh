@@ -723,7 +723,7 @@ safe_load_config() {
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
                 AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
-                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_SERVER_NAME)
+                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_SERVER_NAME)
                     export "$key=$value"
                     ;;
             esac
@@ -756,6 +756,44 @@ safe_read_config_key() {
         fi
     done < "$config_file"
     return 1
+}
+
+# awg_installed_protocol : поколение УСТАНОВКИ по маркеру AWG_PROTOCOL из
+# awgsetup_cfg.init (файл уже загружен safe_load_config). Печатает '2.0' или '3.1'.
+# 🔴 Отсутствие поля - это 2.0, а не «не знаю»: так выглядят все установки,
+# сделанные до появления маркера, и любой другой ответ мог бы молча сменить им
+# поколение. Любое другое значение - отказ (код 1) БЕЗ вывода и без тихого
+# дефолта: испорченный маркер на сервере третьей линии иначе (когда regen начнёт
+# учитывать маркер) заставил бы regen выдать профили второй, которые молча не
+# подключаются. Текст ошибки печатает
+# вызывающий: тело функции одинаково во всех четырёх копиях (RU/EN, общая
+# библиотека/установщик), и тест паритета это проверяет.
+# Необязательный аргумент - путь к init. С ним файл проверяется fail-closed
+# одним anchored-grep без конвейера (конвейер под pipefail на большом файле
+# получал SIGPIPE и выключал сторожа): строка вида «AWG_PROTOCOL =» в любом
+# регистре при пустом значении (поле не разобралось: сдвиг, пробелы вокруг
+# «=», сломанные кавычки; либо записано пустым) - это порча маркера, а не его
+# отсутствие; две и больше таких строк - тоже порча (какая из них истинная,
+# угадать нельзя). В обоих случаях отказ, иначе испорченный маркер тихо стал
+# бы «2.0».
+awg_installed_protocol() {
+    local cfg="${1:-}" n=0
+    if [[ -n "$cfg" && -f "$cfg" ]]; then
+        n=$(grep -ciE '^[[:space:]]*(export[[:space:]]+)?AWG_PROTOCOL[[:space:]]*=' "$cfg") || n=0
+        if [[ "$n" -gt 1 ]]; then
+            return 1
+        fi
+    fi
+    case "${AWG_PROTOCOL:-}" in
+        "")
+            if [[ "$n" -ge 1 ]]; then
+                return 1
+            fi
+            echo "2.0" ;;
+        2.0) echo "2.0" ;;
+        3.1) echo "3.1" ;;
+        *)   return 1 ;;
+    esac
 }
 
 validate_jc_value() {
@@ -3009,6 +3047,9 @@ initialize_setup() {
 
     # Жёсткий сброс до загрузки конфига: значение не должно приезжать из env.
     AWG_SERVER_NAME=""
+    # Маркер поколения сбрасывается так же: `AWG_PROTOCOL=3.1 bash install.sh`
+    # не должен пометить установку третьей линией мимо файла.
+    AWG_PROTOCOL=""
 
     # Загрузка конфига
     if [[ -f "$CONFIG_FILE" ]]; then
@@ -3045,6 +3086,21 @@ initialize_setup() {
         log "Настройки из файла загружены."
     else
         log "Файл конфигурации $CONFIG_FILE не найден."
+    fi
+
+    # Поколение установки: из маркера в init, при его отсутствии 2.0. Читается
+    # ЗДЕСЬ один раз из файла; --force (с пресетом, --no-cps, --jc* или без них)
+    # и запуск при неактивном сервисе получают значение из файла и пишут его
+    # обратно как есть (tests/test_protocol_marker.bats). Любой будущий
+    # CLI-override обязан стоять НИЖЕ этой строки и проходить ту же проверку
+    # awg_installed_protocol.
+    local _proto_raw="${AWG_PROTOCOL:-}"
+    AWG_PROTOCOL=$(awg_installed_protocol "$CONFIG_FILE") || die "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается (значение '${_proto_raw}'; допустимы 2.0 и 3.1, строка должна иметь вид export AWG_PROTOCOL='2.0'; найдено: $(grep -niE '^[[:space:]]*(export[[:space:]]+)?AWG_PROTOCOL' "$CONFIG_FILE" 2>/dev/null | head -3 | tr '\n' ' ')). Исправьте файл вручную, указав поколение, на котором сервер работает на самом деле."
+    # Профиль третьей линии в этой версии установщика ещё не реализован: маркер
+    # 3.1 без генератора 3.1 дал бы «конфиг 2.0 под ярлыком 3.1» - та же тихая
+    # подмена, от которой маркер защищает. Отказ до появления генератора.
+    if [[ "$AWG_PROTOCOL" == "3.1" ]]; then
+        die "Установка помечена поколением AmneziaWG 3.1 (AWG_PROTOCOL в $CONFIG_FILE), а эта версия установщика умеет только 2.0. Возьмите версию установщика, которая поддерживает 3.1, либо не запускайте эту поверх сервера третьей линии."
     fi
 
     # Старый порт из awgsetup_cfg.init: нужен шагу 4, чтобы удалить устаревшее
@@ -3283,6 +3339,9 @@ export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
 export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
 export IPV6_SUBNET='${IPV6_SUBNET}'
 export SERVER_HAS_NATIVE_IPV6=${SERVER_HAS_NATIVE_IPV6:-0}
+# Поколение протокола этой установки. Не редактируйте вручную: другое поколение
+# требует перевыпуска всех клиентских профилей. Отсутствие поля читается как 2.0.
+export AWG_PROTOCOL='${AWG_PROTOCOL}'
 EOF
     # Отложенное удаление UFW-правила старого порта обязано пережить reboot:
     # шаг 4 выполняется в другом процессе после 1-2 перезагрузок, переменная
@@ -3298,7 +3357,7 @@ EOF
     fi
     chmod 600 "$CONFIG_FILE" || log_warn "Ошибка chmod $CONFIG_FILE"
     log "Настройки сохранены."
-    export AWG_PORT AWG_TUNNEL_SUBNET DISABLE_IPV6 ALLOWED_IPS_MODE ALLOWED_IPS AWG_ENDPOINT
+    export AWG_PORT AWG_TUNNEL_SUBNET DISABLE_IPV6 ALLOWED_IPS_MODE ALLOWED_IPS AWG_ENDPOINT AWG_PROTOCOL
     log "Порт: ${AWG_PORT}/udp"
     log "Подсеть: ${AWG_TUNNEL_SUBNET}"
     log "Откл. IPv6: $DISABLE_IPV6"

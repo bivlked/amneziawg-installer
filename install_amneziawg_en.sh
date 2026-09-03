@@ -733,7 +733,7 @@ safe_load_config() {
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
                 AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
-                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_SERVER_NAME)
+                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_SERVER_NAME)
                     export "$key=$value"
                     ;;
             esac
@@ -766,6 +766,45 @@ safe_read_config_key() {
         fi
     done < "$config_file"
     return 1
+}
+
+# awg_installed_protocol : the INSTALLATION's generation, from the AWG_PROTOCOL
+# marker in awgsetup_cfg.init (already loaded by safe_load_config). Prints '2.0'
+# or '3.1'.
+# 🔴 A missing field IS 2.0, not "unknown": that is what every install made
+# before the marker existed looks like, and any other answer could silently
+# change its generation. Any other value is a failure (code 1) with NO output
+# and no quiet default: a corrupt marker on a third-line server would otherwise
+# (once regen consults the marker) make regen hand out second-line profiles that
+# silently fail to connect. The
+# caller prints the error text: the function body is identical in all four
+# copies (RU/EN, shared library/installer), and the parity test checks that.
+# Optional argument: path to the init file. With it the file is checked
+# fail-closed by one anchored grep without a pipeline (a pipeline under pipefail
+# took SIGPIPE on a large file and switched the guard off): a line of the form
+# "AWG_PROTOCOL =" in any case with an empty value (the field did not parse:
+# indentation, spaces around '=', broken quotes; or it was written empty) is a
+# corrupt marker, not a missing one; two or more such lines are corrupt too
+# (which one is true cannot be guessed). Both fail, or a corrupt marker would
+# quietly read as 2.0.
+awg_installed_protocol() {
+    local cfg="${1:-}" n=0
+    if [[ -n "$cfg" && -f "$cfg" ]]; then
+        n=$(grep -ciE '^[[:space:]]*(export[[:space:]]+)?AWG_PROTOCOL[[:space:]]*=' "$cfg") || n=0
+        if [[ "$n" -gt 1 ]]; then
+            return 1
+        fi
+    fi
+    case "${AWG_PROTOCOL:-}" in
+        "")
+            if [[ "$n" -ge 1 ]]; then
+                return 1
+            fi
+            echo "2.0" ;;
+        2.0) echo "2.0" ;;
+        3.1) echo "3.1" ;;
+        *)   return 1 ;;
+    esac
 }
 
 validate_jc_value() {
@@ -3049,6 +3088,9 @@ initialize_setup() {
 
     # Hard reset before the config is loaded: the value must not come from env.
     AWG_SERVER_NAME=""
+    # The generation marker is reset the same way: `AWG_PROTOCOL=3.1 bash install.sh`
+    # must not mark an install as third-line behind the file's back.
+    AWG_PROTOCOL=""
 
     # Load config
     if [[ -f "$CONFIG_FILE" ]]; then
@@ -3087,6 +3129,22 @@ initialize_setup() {
         log "Settings loaded from file."
     else
         log "Configuration file $CONFIG_FILE not found."
+    fi
+
+    # The installation's generation: from the marker in the init, 2.0 when absent.
+    # Read HERE once from the file; --force (with or without presets, --no-cps,
+    # --jc*) and a run while the service is down take the value from the file
+    # and write it back as is (tests/test_protocol_marker.bats). Any future CLI
+    # override must come BELOW this line and pass the same awg_installed_protocol
+    # check.
+    local _proto_raw="${AWG_PROTOCOL:-}"
+    AWG_PROTOCOL=$(awg_installed_protocol "$CONFIG_FILE") || die "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read (value '${_proto_raw}'; 2.0 and 3.1 are allowed, the line must look like export AWG_PROTOCOL='2.0'; found: $(grep -niE '^[[:space:]]*(export[[:space:]]+)?AWG_PROTOCOL' "$CONFIG_FILE" 2>/dev/null | head -3 | tr '\n' ' ')). Fix the file by hand, stating the generation the server actually runs."
+    # The third-line profile is not implemented in this installer version yet: a
+    # 3.1 marker without a 3.1 generator would produce "a 2.0 config under a 3.1
+    # label" - the same silent substitution the marker guards against. Refuse
+    # until the generator exists.
+    if [[ "$AWG_PROTOCOL" == "3.1" ]]; then
+        die "This installation is marked as AmneziaWG 3.1 (AWG_PROTOCOL in $CONFIG_FILE), and this installer version only supports 2.0. Use an installer version that supports 3.1, or do not run this one on top of a third-line server."
     fi
 
     # The old port from awgsetup_cfg.init: step 4 needs it to delete the stale
@@ -3329,6 +3387,9 @@ export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
 export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
 export IPV6_SUBNET='${IPV6_SUBNET}'
 export SERVER_HAS_NATIVE_IPV6=${SERVER_HAS_NATIVE_IPV6:-0}
+# Protocol generation of this installation. Do not edit by hand: a different
+# generation requires reissuing every client profile. A missing field reads as 2.0.
+export AWG_PROTOCOL='${AWG_PROTOCOL}'
 EOF
     # The pending delete of the old port's UFW rule must survive a reboot:
     # step 4 runs in a different process after 1-2 reboots, a process variable
@@ -3344,7 +3405,7 @@ EOF
     fi
     chmod 600 "$CONFIG_FILE" || log_warn "chmod $CONFIG_FILE error"
     log "Settings saved."
-    export AWG_PORT AWG_TUNNEL_SUBNET DISABLE_IPV6 ALLOWED_IPS_MODE ALLOWED_IPS AWG_ENDPOINT
+    export AWG_PORT AWG_TUNNEL_SUBNET DISABLE_IPV6 ALLOWED_IPS_MODE ALLOWED_IPS AWG_ENDPOINT AWG_PROTOCOL
     log "Port: ${AWG_PORT}/udp"
     log "Subnet: ${AWG_TUNNEL_SUBNET}"
     log "IPv6 disable: $DISABLE_IPV6"
