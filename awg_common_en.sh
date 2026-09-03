@@ -1042,10 +1042,26 @@ safe_load_config() {
 # corrupt marker, not a missing one; two or more such lines are corrupt too
 # (which one is true cannot be guessed). Both fail, or a corrupt marker would
 # quietly read as 2.0.
+# 🔴 The pattern allows a leading BOM ON PURPOSE: safe_load_config parses such a
+# line, so the guard has to see it too. Without that, a corrupt marker behind a
+# BOM (a file that went through a Windows editor) did not match the pattern, the
+# guard read the marker as absent and answered 2.0 - exactly the silent
+# substitution it is written against. For the same reason a second marker line
+# did not match when the first carried a BOM, so a duplicate passed as a single
+# marker.
+# 🔴 grep's exit codes are not interchangeable: 1 means no match (normal), 2 and
+# above mean grep itself failed (unreadable file, a directory in place of a
+# file). The former '|| n=0' form equated them and turned a failure into "no
+# marker", that is, into a confident 2.0. A read error now refuses as well.
 awg_installed_protocol() {
-    local cfg="${1:-}" n=0
+    local cfg="${1:-}" n=0 _rc=0 _bom=$'\xef\xbb\xbf'
     if [[ -n "$cfg" && -f "$cfg" ]]; then
-        n=$(grep -ciE '^[[:space:]]*(export[[:space:]]+)?AWG_PROTOCOL[[:space:]]*=' "$cfg") || n=0
+        n=$(grep -ciE "^(${_bom})?[[:space:]]*(export[[:space:]]+)?AWG_PROTOCOL[[:space:]]*=" "$cfg")
+        _rc=$?
+        if [[ "$_rc" -ge 2 ]]; then
+            return 1
+        fi
+        [[ "$_rc" -eq 0 ]] || n=0
         if [[ "$n" -gt 1 ]]; then
             return 1
         fi

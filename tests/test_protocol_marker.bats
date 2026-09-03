@@ -137,10 +137,13 @@ render_init() {
     done
 }
 
-@test "awg_installed_protocol: the four copies are byte-identical in SOURCE (RU/EN, common/installer)" {
+@test "awg_installed_protocol: the four copies are identical in SOURCE, CR aside (RU/EN, common/installer)" {
     # Source text from the function's first line to its closing brace, compared
-    # as bytes: a normalized declare -f would hide formatting or syntax
-    # variants that happen to serialize the same way.
+    # as text rather than through declare -f: a normalized declare -f would hide
+    # formatting or syntax variants that happen to serialize the same way.
+    # CR is stripped on purpose and the title says so: a Windows checkout has
+    # CRLF in the working tree, so a literal byte compare would fail there for a
+    # reason that has nothing to do with the four copies agreeing.
     local f body first=""
     for f in "$COMMON_RU" "$COMMON_EN" "$INSTALL_RU" "$INSTALL_EN"; do
         body=$(func_from "$f" awg_installed_protocol | tr -d '\r')
@@ -167,6 +170,67 @@ render_init() {
         [ "$status" -ne 0 ] || { echo "quietly read as 2.0: $bad"; false; }
         [ -z "$output" ]
     done
+}
+
+@test "awg_installed_protocol: a BOM does not let a corrupt marker read as 2.0" {
+    # safe_load_config PARSES a line that sits behind a UTF-8 BOM, so the
+    # fail-closed grep has to see that line too. While the pattern was anchored
+    # at ^ without allowing the BOM, the guard did not match it, concluded the
+    # marker was absent, and answered 2.0 - the exact silent substitution this
+    # function exists to prevent. A file that went through a Windows editor is
+    # precisely the hand-damaged case the guard is for.
+    local bad
+    for bad in "export AWG_PROTOCOL=''" "export AWG_PROTOCOL = '3.1'" "AWG_PROTOCOL='3.1"; do
+        printf '\xef\xbb\xbf%s\n' "$bad" > "$CONFIG_FILE"
+        unset AWG_PROTOCOL
+        safe_load_config "$CONFIG_FILE" || true
+        run awg_installed_protocol "$CONFIG_FILE"
+        [ "$status" -ne 0 ] || { echo "BOM hid a corrupt marker: $bad"; false; }
+        [ -z "$output" ]
+    done
+}
+
+@test "awg_installed_protocol: a BOM in front of a VALID marker still reads correctly" {
+    # The other half of the same rule: tolerating the BOM must not make the
+    # guard reject a healthy file. Both generations are checked, because a
+    # false refusal on 3.1 would be as bad as a false 2.0.
+    local gen
+    for gen in 2.0 3.1; do
+        printf '\xef\xbb\xbfexport AWG_PROTOCOL=%s%s%s\n' "'" "$gen" "'" > "$CONFIG_FILE"
+        unset AWG_PROTOCOL
+        safe_load_config "$CONFIG_FILE" || true
+        run awg_installed_protocol "$CONFIG_FILE"
+        [ "$status" -eq 0 ] || { echo "BOM broke a valid marker: $gen"; false; }
+        [ "$output" = "$gen" ]
+    done
+}
+
+@test "awg_installed_protocol: two markers are still caught when the FIRST carries a BOM" {
+    # Duplicate detection counts matching lines, so a BOM that hid the first
+    # line turned a duplicate into a single marker and the file was accepted.
+    printf '\xef\xbb\xbfexport AWG_PROTOCOL=%s2.0%s\nAWG_PROTOCOL=3.1\n' "'" "'" > "$CONFIG_FILE"
+    unset AWG_PROTOCOL
+    safe_load_config "$CONFIG_FILE" || true
+    run awg_installed_protocol "$CONFIG_FILE"
+    [ "$status" -ne 0 ] || { echo "duplicate accepted: $output"; false; }
+    [ -z "$output" ]
+}
+
+@test "awg_installed_protocol: a grep FAILURE is not read as a missing marker" {
+    # grep exits 1 when there is no match and 2 or more when it could not do
+    # its job (unreadable file, a directory in place of a file). The earlier
+    # form '|| n=0' equated the two, so a read error became 'no marker', which
+    # by the rule means 2.0 - a confident answer produced by a failure. The
+    # stub makes the failure deterministic instead of relying on chmod, which
+    # is a no-op on a Windows checkout.
+    printf "export AWG_PROTOCOL=''\n" > "$CONFIG_FILE"
+    unset AWG_PROTOCOL
+    safe_load_config "$CONFIG_FILE" || true
+    grep() { return 2; }
+    run awg_installed_protocol "$CONFIG_FILE"
+    unset -f grep
+    [ "$status" -ne 0 ] || { echo "a grep failure answered: $output"; false; }
+    [ -z "$output" ]
 }
 
 @test "awg_installed_protocol: the fail-closed check survives a large init under pipefail (no SIGPIPE inversion)" {
