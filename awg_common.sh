@@ -377,6 +377,19 @@ _append_ipv6_full_tunnel_route() {
     fi
 }
 
+# Полный туннель с явной IPv6-частью AllowedIPs, но без ::/0, на сервере с
+# нативным IPv6 (Issue #253): ровно то состояние, о котором regen предупреждает
+# при сохранении индивидуального списка. Единый предикат для regen и render -
+# две копии условия разъедутся молча. Условие про нативный IPv6 обязательно:
+# без него клиенту положена туннельная ULA вместо ::/0, это документированное
+# правило, а не утечка, и предупреждение звало бы чинить исправное.
+_aip_full_tunnel_v6_gap() {
+    local list="$1"
+    [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" \
+        && "$list" == *:* && "$list" != *"::/0"* ]] \
+        && _is_full_tunnel "$list"
+}
+
 # Определение основного сетевого интерфейса (egress).
 # Цепочка fallback, чтобы не падать на хостах, где зонд к 1.1.1.1 не отдаёт
 # интерфейс: провайдер null-route'ит/блокирует адрес, policy-routing или
@@ -1689,6 +1702,46 @@ awg_normalize_csv() {
     printf '%s' "$out"
 }
 
+# Валидация списка AllowedIPs как значения для клиентского конфига (Issue #253).
+# Отсечение опасных символов + позитивная проверка каждого токена как CIDR
+# (IPv4/IPv6 с опциональным /n) + запрет пустых элементов (ведущая/хвостовая/
+# двойная запятая). Исходный вызывающий - modify (исторически валидация жила
+# инлайн в его диспетчере, C5); с Issue #253 хелпер - единая точка и для ранней
+# валидации `manage add --allowed-ips` (до создания первого клиента), и для
+# defense-in-depth в generate_client (env-контракт CLIENT_ALLOWED_IPS).
+# Разбор через read -a с квоченным обходом, а не `for x in $value`: невошедший
+# в кавычки цикл раскрывает пути (файл с именем «10.0.0.0» в текущем каталоге
+# пропускал значение «10.0.0.*»), та же причина, по которой awg_normalize_csv
+# парсит массивом.
+awg_validate_allowed_ips_list() {
+    local value="$1"
+    case "$value" in
+        *$'\n'*|*$'\r'*|*\\*|*\"*|*\'*|"")
+            log_error "Невалидный AllowedIPs: '$value'"
+            return 1 ;;
+    esac
+    case "$value" in
+        ,*|*,|*,,*)
+            log_error "Невалидный AllowedIPs '$value': пустой элемент списка (лишняя запятая)"
+            return 1 ;;
+    esac
+    local -a _aip_parts
+    local _aip_tok
+    IFS=',' read -r -a _aip_parts <<< "$value"
+    for _aip_tok in "${_aip_parts[@]}"; do
+        _aip_tok="${_aip_tok//[[:space:]]/}"
+        if [[ -z "$_aip_tok" ]]; then
+            log_error "Невалидный AllowedIPs '$value': пустой элемент списка (лишняя запятая)"
+            return 1
+        fi
+        if ! _valid_cidr "$_aip_tok"; then
+            log_error "Невалидный AllowedIPs '$value': '$_aip_tok' не похож на CIDR (IPv4/IPv6 с опциональным префиксом /n)"
+            return 1
+        fi
+    done
+    return 0
+}
+
 # Допустимый диапазон MTU для AWG / WireGuard.
 # Минимум 576 (классический минимум IPv4), максимум 9100 (verge на jumbo frame).
 # Значения вне диапазона трактуются как ошибочные и игнорируются (fallback к 1280).
@@ -1746,27 +1799,43 @@ render_client_config() {
     load_awg_params || return 1
 
     local conf_file="$AWG_DIR/${name}.conf"
+    # База маршрутов: индивидуальный override клиента (CLIENT_ALLOWED_IPS,
+    # Issue #253) или глобальный режим сервера (ALLOWED_IPS из
+    # awgsetup_cfg.init).
+    local _aip_base="${CLIENT_ALLOWED_IPS:-${ALLOWED_IPS:-0.0.0.0/0}}"
     local allowed_ips
     if [[ -n "$client_ipv6" ]]; then
         # Dual-stack: зеркалю IPv4 routing intent в IPv6.
         # full tunnel (IPv4=0.0.0.0/0) -> ::/0 (native) или tunnel-ULA (no-native).
-        # split tunnel (кастомный ALLOWED_IPS) -> IPv4-split AS-IS + ТОЛЬКО tunnel-ULA,
-        # никогда ::/0 (нет IPv6 split-list, нельзя угонять весь IPv6).
-        local ipv4_part ipv6_part
-        ipv4_part="${ALLOWED_IPS:-0.0.0.0/0}"
-        if _is_full_tunnel "$ipv4_part" && [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" ]]; then
-            ipv6_part="::/0"
+        # split tunnel -> IPv4-split AS-IS + ТОЛЬКО tunnel-ULA, никогда ::/0
+        # (нет IPv6 split-list, нельзя угонять весь IPv6).
+        # Override с явными IPv6-токенами не зеркалируется поверх самого себя:
+        # пользователь расписал обе семьи явно - то же правило, по которому regen
+        # не трогает IPv6-часть индивидуальных списков. Гейт ключуется на САМ
+        # override, а не на слитую базу: awgsetup_cfg.init правят руками, и
+        # глобальный список может нести IPv6-токены - такой список идёт
+        # зеркалированием, как всегда (dedup ниже для этого и живёт), иначе
+        # dual-stack клиент молча теряет маршрут до туннельной подсети.
+        if [[ -n "${CLIENT_ALLOWED_IPS:-}" && "$CLIENT_ALLOWED_IPS" == *:* ]]; then
+            allowed_ips="$_aip_base"
         else
-            ipv6_part="${IPV6_SUBNET:-fddd:2c4:2c4:2c4::/64}"
+            local ipv4_part ipv6_part
+            ipv4_part="$_aip_base"
+            if _is_full_tunnel "$ipv4_part" && [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" ]]; then
+                ipv6_part="::/0"
+            else
+                ipv6_part="${IPV6_SUBNET:-fddd:2c4:2c4:2c4::/64}"
+            fi
+            # Защитный de-dup: не дублирую ipv6_part, если он уже присутствует
+            # токеном в списке (достижимо для глобального списка с IPv6-токенами
+            # из hand-edited awgsetup_cfg.init).
+            case ",${ipv4_part// /}," in
+                *",${ipv6_part},"*) allowed_ips="$ipv4_part" ;;
+                *)                  allowed_ips="${ipv4_part}, ${ipv6_part}" ;;
+            esac
         fi
-        # Защитный de-dup: ALLOWED_IPS по конструкции IPv4-only, но не дублирую
-        # ipv6_part если он уже присутствует токеном в списке.
-        case ",${ipv4_part// /}," in
-            *",${ipv6_part},"*) allowed_ips="$ipv4_part" ;;
-            *)                  allowed_ips="${ipv4_part}, ${ipv6_part}" ;;
-        esac
     else
-        allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
+        allowed_ips="$_aip_base"
         # iOS AmneziaVPN в режиме "весь трафик" требует обе семьи адресов: при
         # голом 0.0.0.0/0 он считает это незавершённой раздельной маршрутизацией
         # и не поднимает туннель. Для полного туннеля добавляем ::/0 - IPv6
@@ -1785,6 +1854,16 @@ render_client_config() {
             return 1
         }
         allowed_ips="$_aip_new"
+    fi
+
+    # Индивидуальный список с явным IPv6 без ::/0 при полном туннеле: regen о
+    # таком состоянии предупреждает (правило сохранения индивидуальных списков),
+    # и создатель конфига не должен быть тише regen-а - иначе человек узнает о
+    # своих маршрутах месяц спустя и от другой команды. Глобальный режим не
+    # предупреждаем: установщик такие списки не пишет, а hand-edited вариант и
+    # раньше проходил молча.
+    if [[ -n "${CLIENT_ALLOWED_IPS:-}" ]] && _aip_full_tunnel_v6_gap "$allowed_ips"; then
+        log_warn "Клиент '$name': индивидуальный AllowedIPs расписан по IPv6 без ::/0 - при полном туннеле IPv6 устройства идёт мимо туннеля. Нужно ::/0 - допишите его в --allowed-ips или выполните regen --reset-routes '$name'."
     fi
 
     # MTU: приоритет server awg0.conf > AWG_MTU из awgsetup_cfg.init > 1280 fallback.
@@ -2943,6 +3022,12 @@ _remove_client_files() {
 #     [Peer], и в клиентский [Peer]. Если установлен в конкретное
 #     значение (32-байт base64) — использует его без генерации. Если
 #     пуст/не установлен — PSK не добавляется (default behaviour).
+#   CLIENT_ALLOWED_IPS - необязательный (Issue #253). Индивидуальные
+#     маршруты клиента вместо глобального режима сервера (ALLOWED_IPS):
+#     список CIDR IPv4/IPv6 через запятую. Значение проверяется и
+#     нормализуется здесь же; пустой/unset - глобальный режим как раньше.
+#     Экспортирует `manage add --allowed-ips=...`; прямой вызов с env -
+#     тоже валиден (контракт библиотеки, а не только CLI).
 generate_client() {
     local name="$1"
     local endpoint="${2:-}"
@@ -2957,6 +3042,22 @@ generate_client() {
     if ! [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         log_error "generate_client: невалидное имя клиента '$name'"
         return 1
+    fi
+
+    # CLIENT_ALLOWED_IPS (Issue #253): валидация ДО генерации ключей и
+    # блокировки - невалидное значение не должно оставлять артефактов и не
+    # должно занимать lock. Проверка здесь дублирует раннюю валидацию в
+    # manage add: env-контракт доступен и напрямую, без CLI.
+    if [[ -n "${CLIENT_ALLOWED_IPS:-}" ]]; then
+        if ! awg_validate_allowed_ips_list "$CLIENT_ALLOWED_IPS"; then
+            log_error "generate_client: некорректный CLIENT_ALLOWED_IPS - клиент '$name' НЕ создан."
+            return 1
+        fi
+        CLIENT_ALLOWED_IPS=$(awg_normalize_csv "$CLIENT_ALLOWED_IPS")
+        [[ -n "$CLIENT_ALLOWED_IPS" ]] || {
+            log_error "generate_client: нормализация CLIENT_ALLOWED_IPS дала пустое значение - клиент '$name' НЕ создан."
+            return 1
+        }
     fi
 
     # Загружаем параметры
@@ -3137,6 +3238,14 @@ regenerate_client() {
     fi
 
     load_awg_params || { exec {lock_fd}>&-; return 1; }
+
+    # Гигиена (Issue #253): CLIENT_ALLOWED_IPS - контракт генерации НОВОГО
+    # клиента (manage add --allowed-ips), у regen его быть не должно. Без
+    # зачистки утёкший в env override доехал бы до render_client_config, а с
+    # --reset-routes ещё и остался бы в конфиге, отменяя сам смысл сброса
+    # маршрутов на глобальный режим. Регенерируем всегда глобальным режимом,
+    # индивидуальное значение ниже восстанавливается из существующего .conf.
+    unset CLIENT_ALLOWED_IPS
 
     # Проверяем, что клиент существует в серверном конфиге
     if ! grep -qxF "#_Name = ${name}" "$SERVER_CONF_FILE" 2>/dev/null; then
@@ -3334,9 +3443,9 @@ regenerate_client() {
         # туннельная ULA вместо ::/0, это документированное правило, а не утечка.
         # Без этой проверки предупреждение печаталось бы всегда и советовало бы
         # команду, которая ничего не изменит - то есть звало бы чинить исправное.
-        if [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" \
-              && "$current_allowed_ips" == *:* && "$current_allowed_ips" != *"::/0"* ]] \
-           && _is_full_tunnel "$current_allowed_ips"; then
+        # С Issue #253 условие живёт в предикате _aip_full_tunnel_v6_gap и
+        # разделяется с render_client_config (создаёт такие же списки).
+        if _aip_full_tunnel_v6_gap "$current_allowed_ips"; then
             log_warn "Клиент '$name': IPv6-часть AllowedIPs сохранена как есть, ::/0 не дописан. Чтобы раздать текущий режим маршрутизации, выполните regen --reset-routes."
         fi
         current_allowed_ips="$_aip_new"

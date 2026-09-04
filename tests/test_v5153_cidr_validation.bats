@@ -69,26 +69,34 @@ load test_helper
 
 # --- source-level: modify_client must use the shared validators ---
 
-@test "C3 RU modify_client uses _valid_cidr / _valid_host_or_ipv4 / _valid_ipv6" {
-    run grep -E '_valid_cidr|_valid_host_or_ipv4|_valid_ipv6' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+# Issue #253: the AllowedIPs check moved from modify's inline copy into the
+# library helper awg_validate_allowed_ips_list (shared with `add
+# --allowed-ips`); modify delegates to it instead of carrying a second copy
+# that would drift. Endpoint/DNS still use _valid_host_or_ipv4/_valid_ipv6
+# inline, and the helper itself is unit-tested in test_add_allowed_ips.bats
+# (where the per-token _valid_cidr loop now lives).
+
+@test "C3 RU modify_client validates AllowedIPs via the shared helper" {
+    run grep -E '_valid_host_or_ipv4|_valid_ipv6' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     [ "$status" -eq 0 ]
-    run grep -E '_valid_cidr "\$_aip_tok"' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+    run grep -E 'awg_validate_allowed_ips_list "\$value" \|\| return 1' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     [ "$status" -eq 0 ]
 }
 
-@test "C3 EN modify_client uses _valid_cidr / _valid_host_or_ipv4 / _valid_ipv6" {
-    run grep -E '_valid_cidr|_valid_host_or_ipv4|_valid_ipv6' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
+@test "C3 EN modify_client validates AllowedIPs via the shared helper" {
+    run grep -E '_valid_host_or_ipv4|_valid_ipv6' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
     [ "$status" -eq 0 ]
-    run grep -E '_valid_cidr "\$_aip_tok"' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
+    run grep -E 'awg_validate_allowed_ips_list "\$value" \|\| return 1' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
     [ "$status" -eq 0 ]
 }
 
 @test "C3 empty AllowedIPs list element is rejected (stray comma), not skipped" {
-    # The fix replaced `continue` with an error on empty tokens; assert neither
-    # script silently continues on an empty token in the AllowedIPs loop.
-    run grep -nE '\[\[ -z "\$_aip_tok" \]\] && continue' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+    # Review follow-up (#254): the loop that must not `continue` on an empty
+    # token now lives in awg_validate_allowed_ips_list, so the guard targets
+    # the library, not manage (where _aip_tok no longer occurs at all).
+    run grep -nE '\[\[ -z "\$_aip_tok" \]\] && continue' "$BATS_TEST_DIRNAME/../awg_common.sh"
     [ "$status" -ne 0 ]
-    run grep -nE '\[\[ -z "\$_aip_tok" \]\] && continue' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
+    run grep -nE '\[\[ -z "\$_aip_tok" \]\] && continue' "$BATS_TEST_DIRNAME/../awg_common_en.sh"
     [ "$status" -ne 0 ]
 }
 
@@ -119,10 +127,21 @@ allowedips_comma_ok() {
 }
 
 @test "C3 source: both manage scripts carry the trailing-comma guard" {
-    run grep -E ',\*\|\*,\|\*,,\*' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
-    [ "$status" -eq 0 ]
-    run grep -E ',\*\|\*,\|\*,,\*' "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
-    [ "$status" -eq 0 ]
+    # Review follow-up (#254): the AllowedIPs comma guard moved from modify's
+    # inline copy into awg_validate_allowed_ips_list; a manage-wide grep now
+    # matches the DNS arm's identical guard instead. Target the library (the
+    # guard occurs there exactly once - in the validator) and assert the
+    # delegation point in manage, so neither copy can vanish silently.
+    local f
+    for f in awg_common.sh awg_common_en.sh; do
+        run grep -cF ',*|*,|*,,' "$BATS_TEST_DIRNAME/../$f"
+        [ "$status" -eq 0 ]
+        [ "$output" = "1" ]
+    done
+    for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
+        run grep -E 'awg_validate_allowed_ips_list "\$value" \|\| return 1' "$BATS_TEST_DIRNAME/../$f"
+        [ "$status" -eq 0 ]
+    done
 }
 
 @test "C3 RU/EN parity: validator definitions present in both awg_common" {

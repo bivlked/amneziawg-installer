@@ -199,6 +199,7 @@ while [[ $# -gt 0 ]]; do
             _CLI_APPLY_MODE="${1#*=}"
             shift ;;
         --psk)             CLI_ADD_PSK=1; shift ;;
+        --allowed-ips=*)   CLI_ADD_ALLOWED_IPS="${1#*=}"; CLI_ADD_ALLOWED_IPS_SEEN=1; shift ;;
         --reset-routes)    CLI_RESET_ROUTES=1; shift ;;
         --yes)             CLI_YES=1; shift ;;
         --carrier=*)       CLI_CARRIER="${1#*=}"; shift ;;
@@ -1055,36 +1056,16 @@ modify_client() {
             { [[ "$_ept" =~ ^[0-9]+$ ]] && [[ "$_ept" -ge 1 && "$_ept" -le 65535 ]]; } || { log_error "Невалидный Endpoint '$value': порт должен быть 1-65535"; return 1; }
             ;;
         AllowedIPs)
-            # C5: помимо отсечения опасных символов - позитивная проверка CIDR-списка.
-            case "$value" in
-                *$'\n'*|*$'\r'*|*\\*|*\"*|*\'*|"")
-                    log_error "Невалидный AllowedIPs: '$value'"
-                    return 1 ;;
-            esac
-            # Лишние запятые: word-splitting по IFS=',' молча отбрасывает
-            # ХВОСТОВОЙ пустой элемент (например "10.0.0.0/24,"), поэтому проверяем
-            # структуру списка отдельно: ведущая/хвостовая/двойная запятая.
-            case "$value" in
-                ,*|*,|*,,*)
-                    log_error "Невалидный AllowedIPs '$value': пустой элемент списка (лишняя запятая)"
-                    return 1 ;;
-            esac
-            local _aip_tok _aip_ifs="$IFS"
-            IFS=','
-            for _aip_tok in $value; do
-                _aip_tok="${_aip_tok//[[:space:]]/}"
-                if [[ -z "$_aip_tok" ]]; then
-                    IFS="$_aip_ifs"
-                    log_error "Невалидный AllowedIPs '$value': пустой элемент списка (лишняя запятая)"
-                    return 1
-                fi
-                if ! _valid_cidr "$_aip_tok"; then
-                    IFS="$_aip_ifs"
-                    log_error "Невалидный AllowedIPs '$value': '$_aip_tok' не похож на CIDR (IPv4/IPv6 с опциональным префиксом /n)"
-                    return 1
-                fi
-            done
-            IFS="$_aip_ifs"
+            # C5: позитивная проверка CIDR-списка. С Issue #253 проверка живёт
+            # в библиотечном хелпере awg_validate_allowed_ips_list и разделяется
+            # с `add --allowed-ips`: две инлайн-копии тихо разъезжаются (список
+            # запрещённых маркеров уже жил в двух файлах и разъехался - чинили
+            # отдельным PR).
+            command -v awg_validate_allowed_ips_list >/dev/null 2>&1 || {
+                log_error "awg_common.sh устарела: нет awg_validate_allowed_ips_list. Обнови обе половины под одну версию."
+                return 1
+            }
+            awg_validate_allowed_ips_list "$value" || return 1
             ;;
     esac
 
@@ -2156,6 +2137,8 @@ usage() {
     echo "  --server-conf=ПУТЬ    Указать файл конфига сервера"
     echo "  --apply-mode=РЕЖИМ    syncconf (умолч.) или restart (обход kernel panic)"
     echo "  --psk                 (только для add) сгенерировать PresharedKey для клиента"
+    echo "  --allowed-ips=СПИСОК  (только для add) индивидуальные AllowedIPs клиента - CIDR через"
+    echo "                        запятую; без флага - глобальный режим маршрутизации сервера"
     echo "  --reset-routes        (только для regen) сбросить AllowedIPs клиентов на текущий"
     echo "                        глобальный режим маршрутизации (Issue #170)"
     echo "  --yes                 Не спрашивать подтверждение (эквивалент ENV AWG_YES=1)"
@@ -2238,6 +2221,38 @@ case $COMMAND in
                 || die "Некорректный --expires='$EXPIRES_DURATION'. Используйте: 1h, 12h, 1d, 7d, 30d, 4w."
         fi
 
+        # --allowed-ips (Issue #253): индивидуальные маршруты клиента при
+        # создании - вместо обходного решения «add, затем modify».
+        # Валидация и нормализация ОДИН раз ДО создания первого клиента - по
+        # образцу --expires выше: невалидный список не должен создавать
+        # клиентов с глобальным режимом "на половине batch-а".
+        # Гейт по «флаг видели», а не по непустому значению: пустой
+        # --allowed-ips= не должен молча откатываться к глобальному режиму -
+        # это расширяет маршруты (бот с пустой переменной из-за ошибки выше
+        # раздал бы более широкий доступ с ok:true). Пустое значение -
+        # ошибка ввода, отвергаем явно.
+        if [[ "${CLI_ADD_ALLOWED_IPS_SEEN:-0}" == "1" ]]; then
+            # Новый хелпер библиотеки: на полуобновлённом сервере (свежий
+            # manage рядом со старой awg_common.sh) его нет - отказ явно, как
+            # modify делает при отсутствии awg_normalize_csv (появилась в
+            # патче 5.27.1, MAJOR.MINOR-проверка её не ловит).
+            command -v awg_validate_allowed_ips_list >/dev/null 2>&1 || {
+                die "awg_common.sh устарела: нет awg_validate_allowed_ips_list. Обнови обе половины под одну версию."
+            }
+            [[ -n "$CLI_ADD_ALLOWED_IPS" ]] \
+                || die "Пустой --allowed-ips= - укажите список CIDR (например: 10.0.0.0/8, 192.168.0.0/16) или уберите флаг."
+            if ! awg_validate_allowed_ips_list "$CLI_ADD_ALLOWED_IPS"; then
+                die "Некорректный --allowed-ips='$CLI_ADD_ALLOWED_IPS'. Ожидается список CIDR IPv4/IPv6 через запятую (например: 10.0.0.0/8, 192.168.0.0/16)."
+            fi
+            _aip_cli=$(awg_normalize_csv "$CLI_ADD_ALLOWED_IPS")
+            [[ -n "$_aip_cli" ]] || die "Нормализация --allowed-ips дала пустое значение."
+            CLI_ADD_ALLOWED_IPS="$_aip_cli"
+            # Env-контракт generate_client/render_client_config (как CLIENT_PSK
+            # у --psk). Применяется ко всем именам batch-а, как --expires.
+            export CLIENT_ALLOWED_IPS="$CLI_ADD_ALLOWED_IPS"
+            log "Индивидуальные AllowedIPs для новых клиентов (--allowed-ips): $CLI_ADD_ALLOWED_IPS"
+        fi
+
         _added=0
         _jr=()
         for _cname in "${ARGS[@]}"; do
@@ -2303,7 +2318,23 @@ case $COMMAND in
                     # валидная метка, а неканоническое число ломает строгий разбор.
                     [[ "$_jexp_val" =~ ^(0|[1-9][0-9]*)$ && "${#_jexp_val}" -le 15 ]] && _jexp="$_jexp_val"
                 fi
-                _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"created\",\"conf\":\"$(json_escape "$AWG_DIR/${_cname}.conf")\",\"qr\":$_jqr,\"vpnuri\":$_juri,\"expires_at\":$_jexp}")
+                # Применённый AllowedIPs (просьба мейнтейнера в Issue #253):
+                # маршруты читаются из созданного .conf - источник правды.
+                # Значение может отличаться от аргумента флага: полный туннель
+                # IPv4 дополняется ::/0 (iOS-правило). Боту это снимает
+                # проверочный вызов после создания.
+                _jaip="null"
+                _jaip_val=$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$AWG_DIR/${_cname}.conf")
+                if [[ -n "$_jaip_val" ]]; then
+                    _jaip="\"$(json_escape "$_jaip_val")\""
+                else
+                    # Файл только что написали мы, так что пустой результат -
+                    # отказ чтения, и при ok:true молчать о нём нельзя; причину
+                    # (stderr sed) не глушим. Двусмысленность null разведена по
+                    # образцу expires_at_error из этого же [Unreleased].
+                    log_error "Не удалось прочитать применённый AllowedIPs клиента '$_cname' из $AWG_DIR/${_cname}.conf - в JSON ушло allowed_ips:null."
+                fi
+                _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"created\",\"conf\":\"$(json_escape "$AWG_DIR/${_cname}.conf")\",\"qr\":$_jqr,\"vpnuri\":$_juri,\"expires_at\":$_jexp,\"allowed_ips\":$_jaip}")
             else
                 log_error "Ошибка добавления клиента '$_cname'."
                 _cmd_rc=1
@@ -2333,6 +2364,8 @@ case $COMMAND in
         fi
         # Hygiene: CLIENT_PSK не должен протекать в будущие операции
         unset CLIENT_PSK
+        # Hygiene: то же для CLIENT_ALLOWED_IPS (Issue #253)
+        unset CLIENT_ALLOWED_IPS
         ;;
 
     remove)

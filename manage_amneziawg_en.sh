@@ -202,6 +202,7 @@ while [[ $# -gt 0 ]]; do
             _CLI_APPLY_MODE="${1#*=}"
             shift ;;
         --psk)             CLI_ADD_PSK=1; shift ;;
+        --allowed-ips=*)   CLI_ADD_ALLOWED_IPS="${1#*=}"; CLI_ADD_ALLOWED_IPS_SEEN=1; shift ;;
         --reset-routes)    CLI_RESET_ROUTES=1; shift ;;
         --yes)             CLI_YES=1; shift ;;
         --carrier=*)       CLI_CARRIER="${1#*=}"; shift ;;
@@ -1069,36 +1070,16 @@ modify_client() {
             { [[ "$_ept" =~ ^[0-9]+$ ]] && [[ "$_ept" -ge 1 && "$_ept" -le 65535 ]]; } || { log_error "Invalid Endpoint '$value': port must be 1-65535"; return 1; }
             ;;
         AllowedIPs)
-            # C5: beyond rejecting dangerous chars - positive CIDR-list check.
-            case "$value" in
-                *$'\n'*|*$'\r'*|*\\*|*\"*|*\'*|"")
-                    log_error "Invalid AllowedIPs: '$value'"
-                    return 1 ;;
-            esac
-            # Stray commas: word-splitting on IFS=',' silently drops a TRAILING
-            # empty element (e.g. "10.0.0.0/24,"), so check list structure
-            # separately: leading/trailing/doubled comma.
-            case "$value" in
-                ,*|*,|*,,*)
-                    log_error "Invalid AllowedIPs '$value': empty list element (stray comma)"
-                    return 1 ;;
-            esac
-            local _aip_tok _aip_ifs="$IFS"
-            IFS=','
-            for _aip_tok in $value; do
-                _aip_tok="${_aip_tok//[[:space:]]/}"
-                if [[ -z "$_aip_tok" ]]; then
-                    IFS="$_aip_ifs"
-                    log_error "Invalid AllowedIPs '$value': empty list element (stray comma)"
-                    return 1
-                fi
-                if ! _valid_cidr "$_aip_tok"; then
-                    IFS="$_aip_ifs"
-                    log_error "Invalid AllowedIPs '$value': '$_aip_tok' is not a CIDR (IPv4/IPv6 with optional /n prefix)"
-                    return 1
-                fi
-            done
-            IFS="$_aip_ifs"
+            # C5: positive CIDR-list check. Since Issue #253 the check lives in
+            # the library helper awg_validate_allowed_ips_list and is shared
+            # with `add --allowed-ips`: two inline copies drift apart silently
+            # (the forbidden-marker list once lived in two files and drifted -
+            # it took a separate PR to fix).
+            command -v awg_validate_allowed_ips_list >/dev/null 2>&1 || {
+                log_error "awg_common.sh is outdated: awg_validate_allowed_ips_list is missing. Update both halves to the same version."
+                return 1
+            }
+            awg_validate_allowed_ips_list "$value" || return 1
             ;;
     esac
 
@@ -2176,6 +2157,8 @@ usage() {
     echo "  --server-conf=PATH    Specify server config file"
     echo "  --apply-mode=MODE     syncconf (default) or restart (bypass kernel panic)"
     echo "  --psk                 (add only) generate a PresharedKey for the new client"
+    echo "  --allowed-ips=LIST    (add only) per-client AllowedIPs - comma-separated CIDRs;"
+    echo "                        without the flag the server-wide routing mode is used"
     echo "  --reset-routes        (regen only) reset client AllowedIPs to the current"
     echo "                        global routing mode (Issue #170)"
     echo "  --yes                 Skip confirm prompts (equivalent to ENV AWG_YES=1)"
@@ -2258,6 +2241,39 @@ case $COMMAND in
                 || die "Invalid --expires='$EXPIRES_DURATION'. Use: 1h, 12h, 1d, 7d, 30d, 4w."
         fi
 
+        # --allowed-ips (Issue #253): the client's own routes at creation -
+        # instead of the "add, then modify" workaround.
+        # Validated and normalized ONCE before creating the first client -
+        # after the --expires pattern above: an invalid list must not create
+        # clients with the global mode "halfway through the batch".
+        # Gate on "the flag was seen", not on a non-empty value: an empty
+        # --allowed-ips= must not silently fall back to the global mode - that
+        # WIDENS the routes (a bot with an empty variable due to an upstream
+        # bug would hand out broader access with ok:true). An empty value is
+        # an input error; refuse it explicitly.
+        if [[ "${CLI_ADD_ALLOWED_IPS_SEEN:-0}" == "1" ]]; then
+            # A new library helper: on a half-updated server (fresh manage
+            # next to an old awg_common.sh) it is missing - refuse explicitly,
+            # the way modify does when awg_normalize_csv is absent (it
+            # appeared in patch 5.27.1, which the MAJOR.MINOR check misses).
+            command -v awg_validate_allowed_ips_list >/dev/null 2>&1 || {
+                die "awg_common.sh is outdated: awg_validate_allowed_ips_list is missing. Update both halves to the same version."
+            }
+            [[ -n "$CLI_ADD_ALLOWED_IPS" ]] \
+                || die "Empty --allowed-ips= - pass a CIDR list (e.g. 10.0.0.0/8, 192.168.0.0/16) or drop the flag."
+            if ! awg_validate_allowed_ips_list "$CLI_ADD_ALLOWED_IPS"; then
+                die "Invalid --allowed-ips='$CLI_ADD_ALLOWED_IPS'. Expected a comma-separated list of IPv4/IPv6 CIDRs (e.g. 10.0.0.0/8, 192.168.0.0/16)."
+            fi
+            _aip_cli=$(awg_normalize_csv "$CLI_ADD_ALLOWED_IPS")
+            [[ -n "$_aip_cli" ]] || die "Normalizing --allowed-ips produced an empty value."
+            CLI_ADD_ALLOWED_IPS="$_aip_cli"
+            # The env contract of generate_client/render_client_config (like
+            # CLIENT_PSK for --psk). Applies to every name in the batch, like
+            # --expires.
+            export CLIENT_ALLOWED_IPS="$CLI_ADD_ALLOWED_IPS"
+            log "Custom AllowedIPs for new clients (--allowed-ips): $CLI_ADD_ALLOWED_IPS"
+        fi
+
         _added=0
         _jr=()
         for _cname in "${ARGS[@]}"; do
@@ -2324,7 +2340,24 @@ case $COMMAND in
                     # marker is, and a non-canonical number breaks strict parsing.
                     [[ "$_jexp_val" =~ ^(0|[1-9][0-9]*)$ && "${#_jexp_val}" -le 15 ]] && _jexp="$_jexp_val"
                 fi
-                _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"created\",\"conf\":\"$(json_escape "$AWG_DIR/${_cname}.conf")\",\"qr\":$_jqr,\"vpnuri\":$_juri,\"expires_at\":$_jexp}")
+                # The applied AllowedIPs (maintainer request in Issue #253):
+                # routes are read from the created .conf - the source of truth.
+                # The value may differ from the flag argument: a full-tunnel
+                # IPv4 list gets ::/0 added (the iOS rule). This spares a bot
+                # its verification call after creation.
+                _jaip="null"
+                _jaip_val=$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$AWG_DIR/${_cname}.conf")
+                if [[ -n "$_jaip_val" ]]; then
+                    _jaip="\"$(json_escape "$_jaip_val")\""
+                else
+                    # We have just written the file, so an empty result is a
+                    # read failure; it must not pass silently under ok:true,
+                    # and the reason (sed's stderr) is not suppressed. The
+                    # null ambiguity is disambiguated the same way
+                    # expires_at_error does it in this very [Unreleased].
+                    log_error "Failed to read the applied AllowedIPs of client '$_cname' from $AWG_DIR/${_cname}.conf - the JSON carries allowed_ips:null."
+                fi
+                _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"created\",\"conf\":\"$(json_escape "$AWG_DIR/${_cname}.conf")\",\"qr\":$_jqr,\"vpnuri\":$_juri,\"expires_at\":$_jexp,\"allowed_ips\":$_jaip}")
             else
                 log_error "Error adding client '$_cname'."
                 _cmd_rc=1
@@ -2353,6 +2386,8 @@ case $COMMAND in
         fi
         # Hygiene: do not let CLIENT_PSK leak into later operations
         unset CLIENT_PSK
+        # Hygiene: the same for CLIENT_ALLOWED_IPS (Issue #253)
+        unset CLIENT_ALLOWED_IPS
         ;;
 
     remove)
