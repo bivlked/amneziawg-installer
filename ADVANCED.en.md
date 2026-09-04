@@ -749,7 +749,9 @@ Options:
 
 > **`--psk`** — optional extra layer on top of AWG 2.0 obfuscation. Generates a 32-byte symmetric key via `awg genpsk` and writes it to both the server `[Peer]` and the client `[Peer]` (`PresharedKey = ...`). Compatible with any WireGuard/AmneziaWG client. In batch mode (`add c1 c2 c3 --psk`) each client gets its own PSK. Without the flag clients are created without `PresharedKey` (default — AWG 2.0 obfuscation is sufficient for most scenarios). The flag only affects the new clients created by this `add` invocation — existing clients without PSK stay untouched and keep connecting as before.
 
-> **`--allowed-ips=LIST`** - the client's own routes right at creation, without a follow-up `modify` (Issue #253). A comma-separated list of IPv4/IPv6 CIDRs: `add phone --allowed-ips="10.0.0.0/8, 192.168.0.0/16"`. Validated and normalized before the first client is created (an invalid value aborts the command creating nothing) and applied to every name in the batch - like `--expires`. The value goes through the same rules as the global mode: a full-tunnel IPv4 list gets `::/0` added next to it (the iOS rule), a split list never does, and a list with explicit IPv6 tokens (e.g. `0.0.0.0/0, ::/0`) is written as is. Without the flag - the server-wide routing mode, as before. For existing clients `modify` still changes routes, and `regen` preserves such per-client lists.
+> **`--allowed-ips=LIST`** - the client's own routes right at creation, without a follow-up `modify` (Issue #253). A comma-separated list of IPv4/IPv6 CIDRs: `add phone --allowed-ips="10.0.0.0/8, 192.168.0.0/16"`. Validated and normalized before the first client is created (an invalid or EMPTY value aborts the command creating nothing) and applied to every name in the batch - like `--expires`. The value goes through the same rules as the global mode: a full-tunnel IPv4 list gets an IPv6 route next to it - `::/0` on a server with native IPv6, the tunnel ULA on dual-stack without native (the iOS rule); a split list never gets `::/0`, and a list with explicit IPv6 tokens (e.g. `0.0.0.0/0, ::/0`) is written as is - and when a full tunnel spells out IPv6 without `::/0`, `add` warns right away, the way `regen` does. Without the flag - the server-wide routing mode, as before. For existing clients `modify` still changes routes, and `regen` preserves such per-client lists.
+>
+> **The list replaces the global one entirely.** Including the tunnel subnet the installer appends to `AllowedIPs` with `--isolation=off`: a client created with `--allowed-ips="10.0.0.0/8"` will not see the other peers. Need in-VPN device visibility - add the tunnel subnet (default `10.9.9.0/24`) to the list by hand.
 
 **Environment variables:**
 
@@ -824,7 +826,7 @@ Since v5.21.0 the `--json` flag is supported not only by `list`/`stats` but also
 Success form (an `add` example):
 
 ```json
-{"command":"add","ok":true,"added":1,"failed":0,"applied":true,"results":[{"name":"phone","status":"created","conf":"/root/awg/phone.conf","qr":"/root/awg/phone.png","vpnuri":"/root/awg/phone.vpnuri","expires_at":null,"allowed_ips":"0.0.0.0/0, ::/0"}]}
+{"command":"add","ok":true,"added":1,"failed":0,"applied":true,"results":[{"name":"phone","status":"created","conf":"/root/awg/phone.conf","qr":"/root/awg/phone.png","vpnuri":"/root/awg/phone.vpnuri","expires_at":null,"allowed_ips":"1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6, 8.0.0.0/7, 11.0.0.0/8, 12.0.0.0/6, 16.0.0.0/4, 32.0.0.0/3, 64.0.0.0/2, 128.0.0.0/3, 160.0.0.0/5, 168.0.0.0/6, 172.0.0.0/12, 172.32.0.0/11, 172.64.0.0/10, 172.128.0.0/9, 173.0.0.0/8, 174.0.0.0/7, 176.0.0.0/4, 192.0.0.0/9, 192.128.0.0/11, 192.160.0.0/13, 192.169.0.0/16, 192.170.0.0/15, 192.172.0.0/14, 192.176.0.0/12, 192.192.0.0/10, 193.0.0.0/8, 194.0.0.0/7, 196.0.0.0/6, 200.0.0.0/5, 208.0.0.0/4, 8.8.8.8/32, 1.1.1.1/32, ::/0"}]}
 ```
 
 The form of any emergency exit (die, bad option, confirmation refusal, signal):
@@ -839,7 +841,7 @@ Field notes:
 
 - `applied` - whether the config was applied to the live interface. `regen` and `modify` have no such field: they do not change server state (keys and IPs are reused). Always `false` under `AWG_SKIP_APPLY=1`.
 - `qr`/`vpnuri` - a path if the file existed at response time. QR and URI are generated outside the config lock: a parallel operation can remove the file, no freshness guarantee.
-- `results[].allowed_ips` (`add`, entries with status `created`) - the client's applied routes, read from the just-created `.conf`. May differ from the `--allowed-ips` argument: a full-tunnel IPv4 list gets `::/0` added (the iOS rule). For an external consumer (a bot) the field removes the verification call after creation (Issue #253).
+- `results[].allowed_ips` (`add`, entries with status `created`) - the client's applied routes, read from the just-created `.conf`. May differ from the `--allowed-ips` argument: a full-tunnel IPv4 list gets `::/0` or the tunnel ULA added (the iOS rule). `null` means the value could not be read - the reason goes to the log as an error, like `qr`/`vpnuri`. For an external consumer (a bot) the field removes the verification call after creation (Issue #253).
 - `restore` returns an envelope on failure too (with `error` and `rolled_back` - the bot needs to know whether a rollback happened). `restored.clients` is the number of `[Peer]` blocks in the restored server config, not files in the working directory.
 - `repair-module.rc` - the internal module-check code (0 - module and service OK, 1 - module failed, 2 - module OK, service down), not the process exit code.
 - `check.module.loaded=false` is not an error by itself: userspace installs (amneziawg-go, LXC) never have the module.

@@ -47,9 +47,9 @@ setup_params() {
 # Same harness style as test_v5210_json_commands.bats: the real manage script
 # end-to-end in a mock environment (stubbed awg, AWG_SKIP_APPLY=1).
 setup_manage_env() {
-    TEST_DIR=$(mktemp -d)
-    mkdir -p "$TEST_DIR/bin" "$TEST_DIR/awg/keys"
-    cat > "$TEST_DIR/bin/awg" << 'STUB'
+    MGMT_DIR=$(mktemp -d)
+    mkdir -p "$MGMT_DIR/bin" "$MGMT_DIR/awg/keys"
+    cat > "$MGMT_DIR/bin/awg" << 'STUB'
 #!/bin/bash
 case "$1" in
     genkey|genpsk) echo "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;
@@ -57,10 +57,10 @@ case "$1" in
     *) exit 0 ;;
 esac
 STUB
-    chmod +x "$TEST_DIR/bin/awg"
-    export PATH="$TEST_DIR/bin:$PATH"
-    cp "$BATS_TEST_DIRNAME/../awg_common.sh" "$TEST_DIR/awg/awg_common.sh"
-    cat > "$TEST_DIR/awg/awgsetup_cfg.init" << 'CONF'
+    chmod +x "$MGMT_DIR/bin/awg"
+    export PATH="$MGMT_DIR/bin:$PATH"
+    cp "$BATS_TEST_DIRNAME/../awg_common.sh" "$MGMT_DIR/awg/awg_common.sh"
+    cat > "$MGMT_DIR/awg/awgsetup_cfg.init" << 'CONF'
 export AWG_PORT=39743
 export AWG_TUNNEL_SUBNET='10.9.9.1/24'
 export DISABLE_IPV6=1
@@ -79,7 +79,7 @@ export AWG_H3='10000000-80000000'
 export AWG_H4='100000000-800000000'
 export AWG_APPLY_MODE='syncconf'
 CONF
-    cat > "$TEST_DIR/awg/awg0.conf" << 'CONF'
+    cat > "$MGMT_DIR/awg/awg0.conf" << 'CONF'
 [Interface]
 PrivateKey = TESTKEY
 Address = 10.9.9.1/24
@@ -102,7 +102,17 @@ CONF
 
 teardown_manage_env() {
     unset AWG_SKIP_APPLY
-    rm -rf "$TEST_DIR"
+    rm -rf "${MGMT_DIR:-}"
+}
+
+# Review follow-up: the helper's setup() creates its own $TEST_DIR; reusing
+# that name in setup_manage_env leaked one temp dir per e2e test. The manage
+# environment lives in MGMT_DIR, and cleanup runs from teardown() so it also
+# fires when an assert above fails (an explicit call as the last body line
+# did not).
+teardown() {
+    rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
+    unset AWG_SKIP_APPLY
 }
 
 _client_allowed_ips() {
@@ -239,6 +249,95 @@ _client_allowed_ips() {
     unset CLIENT_ALLOWED_IPS ALLOW_IPV6_TUNNEL IPV6_SUBNET SERVER_HAS_NATIVE_IPV6
 }
 
+@test "render: global list with an IPv6 token still mirrors (hand-edited init, main behavior)" {
+    # Review follow-up: awgsetup_cfg.init is hand-editable, and the global
+    # ALLOWED_IPS may carry IPv6 tokens. The as-is gate must key on the
+    # OVERRIDE only - the global list follows the mirror rules as before,
+    # otherwise a dual-stack client silently loses its route to the tunnel
+    # subnet (rc=0).
+    setup_params
+    sed 's/^export ALLOWED_IPS=.*/export ALLOWED_IPS='"'"'10.0.0.0\/8, fd00:dead::\/32'"'"'/' "$CONFIG_FILE" > "$CONFIG_FILE.new" && mv "$CONFIG_FILE.new" "$CONFIG_FILE"
+    export ALLOW_IPV6_TUNNEL=1
+    export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
+    export SERVER_HAS_NATIVE_IPV6=0
+    unset CLIENT_ALLOWED_IPS
+    run render_client_config "gv6" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::9"
+    unset ALLOW_IPV6_TUNNEL IPV6_SUBNET SERVER_HAS_NATIVE_IPV6
+    [ "$status" -eq 0 ]
+    # The tunnel ULA is appended to the hand-edited global list, as on main
+    [ "$(_client_allowed_ips gv6)" = "10.0.0.0/8, fd00:dead::/32, fddd:2c4:2c4:2c4::/64" ]
+}
+
+@test "render: full-tunnel override with a foreign v6 token warns like regen does" {
+    # Review follow-up: regen warns when it PRESERVES a full-tunnel list with
+    # explicit v6 tokens but no ::/0 on a native-IPv6 server; add, which
+    # CREATES such a list, must not be quieter than regen.
+    setup_params
+    export ALLOW_IPV6_TUNNEL=1
+    export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
+    export SERVER_HAS_NATIVE_IPV6=1
+    export CLIENT_ALLOWED_IPS="0.0.0.0/0, fdab:1::/48"
+    _warns="$TEST_DIR/warns.txt"; export _warns
+    # shellcheck disable=SC2317
+    log_warn() { printf '%s\n' "$*" >> "$_warns"; }
+    export -f log_warn
+    run render_client_config "warn1" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::9"
+    [ "$status" -eq 0 ]
+    [ "$(_client_allowed_ips warn1)" = "0.0.0.0/0, fdab:1::/48" ]
+    # Separate asserts: bats does not reliably fail a compound `a && b` list
+    [ -s "$_warns" ]
+    grep -q "warn1" "$_warns"
+    grep -q "::/0" "$_warns"
+    unset CLIENT_ALLOWED_IPS ALLOW_IPV6_TUNNEL IPV6_SUBNET SERVER_HAS_NATIVE_IPV6 _warns
+}
+
+@test "render: as-is list already carrying ::/0 stays silent" {
+    setup_params
+    export ALLOW_IPV6_TUNNEL=1
+    export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
+    export SERVER_HAS_NATIVE_IPV6=1
+    export CLIENT_ALLOWED_IPS="0.0.0.0/0, ::/0"
+    _warns="$TEST_DIR/warns2.txt"; export _warns
+    # shellcheck disable=SC2317
+    log_warn() { printf '%s\n' "$*" >> "$_warns"; }
+    export -f log_warn
+    run render_client_config "warn2" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::9"
+    [ "$status" -eq 0 ]
+    [ "$(_client_allowed_ips warn2)" = "0.0.0.0/0, ::/0" ]
+    [ ! -s "$_warns" ]
+    unset CLIENT_ALLOWED_IPS ALLOW_IPV6_TUNNEL IPV6_SUBNET SERVER_HAS_NATIVE_IPV6 _warns
+}
+
+@test "allowed-ips gap predicate: RU/EN bodies are structurally identical (code lines)" {
+    local ru en
+    ru=$(awk '/^_aip_full_tunnel_v6_gap\(\)/,/^}/' "$BATS_TEST_DIRNAME/../awg_common.sh" | grep -vE '^[[:space:]]*(#|log |log_error |log_warn |die )')
+    en=$(awk '/^_aip_full_tunnel_v6_gap\(\)/,/^}/' "$BATS_TEST_DIRNAME/../awg_common_en.sh" | grep -vE '^[[:space:]]*(#|log |log_error |log_warn |die )')
+    [ -n "$ru" ]
+    [ "$ru" = "$en" ]
+}
+
+@test "validator: a glob token stays a literal and is rejected (no pathname expansion)" {
+    # Review follow-up: `for x in $value` expands globs, so with a file named
+    # 10.0.0.0 in the cwd the value `10.0.0.*` validated as a real address
+    # while the raw star reached the conf. The quoted read -a form must keep
+    # the token literal and reject it.
+    setup_params
+    _errs="$TEST_DIR/errs.txt"; export _errs
+    # shellcheck disable=SC2317
+    log_error() { printf '%s\n' "$*" >> "$_errs"; }
+    export -f log_error
+    mkdir -p "$TEST_DIR/globtrap" && touch "$TEST_DIR/globtrap/10.0.0.0"
+    _cwd="$PWD"
+    cd "$TEST_DIR/globtrap" || skip "cd failed"
+    run awg_validate_allowed_ips_list "10.0.0.*"
+    _rc=$status _out="$output"
+    cd "$_cwd" || true
+    [ "$_rc" -ne 0 ]
+    # The rejection message names the RAW token - proof it never expanded
+    grep -q "10.0.0.\\*" "$_errs"
+    unset _errs
+}
+
 # ---------------------------------------------------------------------------
 # generate_client: env contract + defense-in-depth
 # ---------------------------------------------------------------------------
@@ -332,7 +431,11 @@ _setup_regen_stubs() {
         generate_vpn_uri generate_qr_vpnuri
 }
 
-@test "regen: a leaked CLIENT_ALLOWED_IPS never reaches the rendered conf" {
+@test "regen: the client's own list wins over a leaked CLIENT_ALLOWED_IPS (restore path)" {
+    # Review follow-up: this exercises the .conf restore path - with the
+    # hygiene unset REMOVED it still passes, because plain regen restores the
+    # client's own list anyway. The unset itself is pinned by the
+    # --reset-routes test below, where render's value survives.
     require_flock
     _make_server_conf_with_peer "alice" "10.9.9.2"
     _setup_regen_stubs
@@ -383,10 +486,13 @@ _setup_regen_stubs() {
 }
 
 @test "manage: help mentions --allowed-ips in RU and EN" {
-    local MANAGE_RU="${BATS_TEST_DIRNAME}/../manage_amneziawg.sh"
-    local MANAGE_EN="${BATS_TEST_DIRNAME}/../manage_amneziawg_en.sh"
-    grep -q -- '--allowed-ips' "$MANAGE_RU"
-    grep -q -- '--allowed-ips' "$MANAGE_EN"
+    # Review follow-up: a whole-file grep was satisfied by the parser line
+    # alone - assert the actual help output instead.
+    local out
+    out=$(bash "${BATS_TEST_DIRNAME}/../manage_amneziawg.sh" help)
+    [[ "$out" == *"--allowed-ips"* ]]
+    out=$(bash "${BATS_TEST_DIRNAME}/../manage_amneziawg_en.sh" help)
+    [[ "$out" == *"--allowed-ips"* ]]
 }
 
 @test "manage e2e: add --allowed-ips writes the list into the client conf" {
@@ -395,10 +501,10 @@ _setup_regen_stubs() {
     local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     run --separate-stderr bash "$SCRIPT" add alice \
         --allowed-ips="10.0.0.0/8,192.168.0.0/16" --json --yes \
-        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+        --conf-dir="$MGMT_DIR/awg" --server-conf="$MGMT_DIR/awg/awg0.conf"
     # Unnormalized input lands canonical ("a, b"), split list stays split
     [ "$status" -eq 0 ]
-    [ "$(sed -n 's/^AllowedIPs = //p' "$TEST_DIR/awg/alice.conf")" = "10.0.0.0/8, 192.168.0.0/16" ]
+    [ "$(sed -n 's/^AllowedIPs = //p' "$MGMT_DIR/awg/alice.conf")" = "10.0.0.0/8, 192.168.0.0/16" ]
     teardown_manage_env
 }
 
@@ -408,10 +514,10 @@ _setup_regen_stubs() {
     local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     run --separate-stderr bash "$SCRIPT" add b1 b2 \
         --allowed-ips="10.50.0.0/16" --json --yes \
-        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+        --conf-dir="$MGMT_DIR/awg" --server-conf="$MGMT_DIR/awg/awg0.conf"
     [ "$status" -eq 0 ]
-    [ "$(sed -n 's/^AllowedIPs = //p' "$TEST_DIR/awg/b1.conf")" = "10.50.0.0/16" ]
-    [ "$(sed -n 's/^AllowedIPs = //p' "$TEST_DIR/awg/b2.conf")" = "10.50.0.0/16" ]
+    [ "$(sed -n 's/^AllowedIPs = //p' "$MGMT_DIR/awg/b1.conf")" = "10.50.0.0/16" ]
+    [ "$(sed -n 's/^AllowedIPs = //p' "$MGMT_DIR/awg/b2.conf")" = "10.50.0.0/16" ]
     teardown_manage_env
 }
 
@@ -420,13 +526,17 @@ _setup_regen_stubs() {
     setup_manage_env
     local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     run --separate-stderr bash "$SCRIPT" add carol --allowed-ips="10.0.0.0/999" --json --yes \
-        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+        --conf-dir="$MGMT_DIR/awg" --server-conf="$MGMT_DIR/awg/awg0.conf"
     local rc=$status
     # shellcheck disable=SC2154  # $stderr is provided by bats `run --separate-stderr`
     local err="$stderr"
     [ "$rc" -ne 0 ]
-    [ ! -e "$TEST_DIR/awg/carol.conf" ]
-    [[ "$err" == *'--allowed-ips'* ]]
+    [ ! -e "$MGMT_DIR/awg/carol.conf" ]
+    # Review follow-up: '*--allowed-ips*' also matched the SUCCESS info line
+    # of a valid run; the early die has a message of its own - match it, so
+    # the test tells the early validation apart from generate_client's
+    # defense-in-depth fallback.
+    [[ "$err" == *"Некорректный --allowed-ips="* ]]
     teardown_manage_env
 }
 
@@ -435,9 +545,38 @@ _setup_regen_stubs() {
     setup_manage_env
     local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     run --separate-stderr bash "$SCRIPT" add dan --allowed-ips="10.0.0.0/8," --json --yes \
-        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+        --conf-dir="$MGMT_DIR/awg" --server-conf="$MGMT_DIR/awg/awg0.conf"
     [ "$status" -ne 0 ]
-    [ ! -e "$TEST_DIR/awg/dan.conf" ]
+    [ ! -e "$MGMT_DIR/awg/dan.conf" ]
+    teardown_manage_env
+}
+
+@test "manage e2e: empty --allowed-ips= refuses instead of widening routes" {
+    # Review follow-up: an empty value must not silently fall back to the
+    # server-wide mode - a bot with an empty variable would hand out WIDER
+    # routes with ok:true. Fail closed, like any other invalid value.
+    require_flock
+    setup_manage_env
+    local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+    run --separate-stderr bash "$SCRIPT" add ghost --allowed-ips= --json --yes \
+        --conf-dir="$MGMT_DIR/awg" --server-conf="$MGMT_DIR/awg/awg0.conf"
+    [ "$status" -ne 0 ]
+    [ ! -e "$MGMT_DIR/awg/ghost.conf" ]
+    teardown_manage_env
+}
+
+@test "manage e2e: invalid --allowed-ips on a batch creates NO client at all" {
+    # Review follow-up: the early die must fire before the FIRST client,
+    # not at the first per-client failure - pin the "created nothing" half
+    # of the promise, single-name tests cannot tell the two apart.
+    require_flock
+    setup_manage_env
+    local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+    run --separate-stderr bash "$SCRIPT" add m1 m2 --allowed-ips="not-a-cidr" --json --yes \
+        --conf-dir="$MGMT_DIR/awg" --server-conf="$MGMT_DIR/awg/awg0.conf"
+    [ "$status" -ne 0 ]
+    [ ! -e "$MGMT_DIR/awg/m1.conf" ]
+    [ ! -e "$MGMT_DIR/awg/m2.conf" ]
     teardown_manage_env
 }
 
@@ -446,22 +585,22 @@ _setup_regen_stubs() {
     setup_manage_env
     local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     run --separate-stderr bash "$SCRIPT" add eve --json --yes \
-        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+        --conf-dir="$MGMT_DIR/awg" --server-conf="$MGMT_DIR/awg/awg0.conf"
     [ "$status" -eq 0 ]
     # The harness init config is full tunnel (mode 1) -> iOS ::/0 pair
-    [ "$(sed -n 's/^AllowedIPs = //p' "$TEST_DIR/awg/eve.conf")" = "0.0.0.0/0, ::/0" ]
+    [ "$(sed -n 's/^AllowedIPs = //p' "$MGMT_DIR/awg/eve.conf")" = "0.0.0.0/0, ::/0" ]
     teardown_manage_env
 }
 
 @test "manage e2e EN: add --allowed-ips works in the English script too" {
     require_flock
     setup_manage_env
-    cp "$BATS_TEST_DIRNAME/../awg_common_en.sh" "$TEST_DIR/awg/awg_common.sh"
+    cp "$BATS_TEST_DIRNAME/../awg_common_en.sh" "$MGMT_DIR/awg/awg_common.sh"
     local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
     run --separate-stderr bash "$SCRIPT" add fenrir --allowed-ips="10.50.0.0/16" --json --yes \
-        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+        --conf-dir="$MGMT_DIR/awg" --server-conf="$MGMT_DIR/awg/awg0.conf"
     [ "$status" -eq 0 ]
-    [ "$(sed -n 's/^AllowedIPs = //p' "$TEST_DIR/awg/fenrir.conf")" = "10.50.0.0/16" ]
+    [ "$(sed -n 's/^AllowedIPs = //p' "$MGMT_DIR/awg/fenrir.conf")" = "10.50.0.0/16" ]
     teardown_manage_env
 }
 
@@ -472,16 +611,23 @@ _setup_regen_stubs() {
 # ---------------------------------------------------------------------------
 
 @test "modify: RU/EN call the shared validator, no inline copy left" {
+    # Review follow-up: `! cmd` inside a for-loop made the LAST iteration the
+    # test status, so a copy returning to the Russian file passed unnoticed,
+    # and grepping the raw body tripped on comments mentioning _valid_cidr.
+    # Explicit if/fail per file (bats `run !` does not take pipelines),
+    # code lines only.
     local MANAGE_RU="${BATS_TEST_DIRNAME}/../manage_amneziawg.sh"
     local MANAGE_EN="${BATS_TEST_DIRNAME}/../manage_amneziawg_en.sh"
+    local f body
     for f in "$MANAGE_RU" "$MANAGE_EN"; do
-        local body
-        body=$(awk '/^modify_client\(\)/,/^}/' "$f")
+        body=$(awk '/^modify_client\(\)/,/^}/' "$f" | grep -vE '^[[:space:]]*#')
         [ -n "$body" ]
-        # The AllowedIPs arm delegates to the library helper...
-        printf '%s' "$body" | grep -q 'awg_validate_allowed_ips_list "\$value" || return 1'
-        # ...and the inline per-token copy is gone (single source of truth)
-        ! printf '%s' "$body" | grep -q '_valid_cidr'
+        printf '%s' "$body" | grep -q 'awg_validate_allowed_ips_list "\$value" || return 1' \
+            || { echo "modify does not delegate to the shared validator: $f"; false; }
+        if printf '%s' "$body" | grep -q '_valid_cidr'; then
+            echo "inline _valid_cidr copy left in modify: $f"
+            false
+        fi
     done
 }
 
@@ -490,16 +636,16 @@ _setup_regen_stubs() {
     setup_manage_env
     local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     run --separate-stderr bash "$SCRIPT" add gina --json --yes \
-        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+        --conf-dir="$MGMT_DIR/awg" --server-conf="$MGMT_DIR/awg/awg0.conf"
     [ "$status" -eq 0 ]
     # Invalid list must die in validation, BEFORE any sed touches the conf
     # (validation precedes the lock and the backup), so this also works
     # where sed -i is unavailable.
     run --separate-stderr bash "$SCRIPT" modify gina AllowedIPs "10.0.0.0/999" --json --yes \
-        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+        --conf-dir="$MGMT_DIR/awg" --server-conf="$MGMT_DIR/awg/awg0.conf"
     [ "$status" -ne 0 ]
     # The untouched conf still carries the routes add wrote
-    [ "$(sed -n 's/^AllowedIPs = //p' "$TEST_DIR/awg/gina.conf")" = "0.0.0.0/0, ::/0" ]
+    [ "$(sed -n 's/^AllowedIPs = //p' "$MGMT_DIR/awg/gina.conf")" = "0.0.0.0/0, ::/0" ]
     teardown_manage_env
 }
 
@@ -509,7 +655,7 @@ _setup_regen_stubs() {
     setup_manage_env
     local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     run --separate-stderr bash "$SCRIPT" add hilda --allowed-ips="10.0.0.0/8,192.168.0.0/16" --json --yes \
-        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+        --conf-dir="$MGMT_DIR/awg" --server-conf="$MGMT_DIR/awg/awg0.conf"
     [ "$status" -eq 0 ]
     [ "$(printf '%s' "$output" | jq -r '.results[0].allowed_ips')" = "10.0.0.0/8, 192.168.0.0/16" ]
     teardown_manage_env
@@ -521,7 +667,7 @@ _setup_regen_stubs() {
     setup_manage_env
     local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
     run --separate-stderr bash "$SCRIPT" add ivar --json --yes \
-        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+        --conf-dir="$MGMT_DIR/awg" --server-conf="$MGMT_DIR/awg/awg0.conf"
     [ "$status" -eq 0 ]
     # Applied value comes from the conf: full tunnel mirrors into ::/0 (iOS rule)
     [ "$(printf '%s' "$output" | jq -r '.results[0].allowed_ips')" = "0.0.0.0/0, ::/0" ]
@@ -532,10 +678,10 @@ _setup_regen_stubs() {
     require_flock
     command -v jq &>/dev/null || skip "jq not available"
     setup_manage_env
-    cp "$BATS_TEST_DIRNAME/../awg_common_en.sh" "$TEST_DIR/awg/awg_common.sh"
+    cp "$BATS_TEST_DIRNAME/../awg_common_en.sh" "$MGMT_DIR/awg/awg_common.sh"
     local SCRIPT="$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
     run --separate-stderr bash "$SCRIPT" add jarl --allowed-ips="10.50.0.0/16" --json --yes \
-        --conf-dir="$TEST_DIR/awg" --server-conf="$TEST_DIR/awg/awg0.conf"
+        --conf-dir="$MGMT_DIR/awg" --server-conf="$MGMT_DIR/awg/awg0.conf"
     [ "$status" -eq 0 ]
     [ "$(printf '%s' "$output" | jq -r '.results[0].allowed_ips')" = "10.50.0.0/16" ]
     teardown_manage_env

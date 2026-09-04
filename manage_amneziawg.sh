@@ -199,7 +199,7 @@ while [[ $# -gt 0 ]]; do
             _CLI_APPLY_MODE="${1#*=}"
             shift ;;
         --psk)             CLI_ADD_PSK=1; shift ;;
-        --allowed-ips=*)   CLI_ADD_ALLOWED_IPS="${1#*=}"; shift ;;
+        --allowed-ips=*)   CLI_ADD_ALLOWED_IPS="${1#*=}"; CLI_ADD_ALLOWED_IPS_SEEN=1; shift ;;
         --reset-routes)    CLI_RESET_ROUTES=1; shift ;;
         --yes)             CLI_YES=1; shift ;;
         --carrier=*)       CLI_CARRIER="${1#*=}"; shift ;;
@@ -2226,7 +2226,12 @@ case $COMMAND in
         # Валидация и нормализация ОДИН раз ДО создания первого клиента - по
         # образцу --expires выше: невалидный список не должен создавать
         # клиентов с глобальным режимом "на половине batch-а".
-        if [[ -n "${CLI_ADD_ALLOWED_IPS:-}" ]]; then
+        # Гейт по «флаг видели», а не по непустому значению: пустой
+        # --allowed-ips= не должен молча откатываться к глобальному режиму -
+        # это расширяет маршруты (бот с пустой переменной из-за ошибки выше
+        # раздал бы более широкий доступ с ok:true). Пустое значение -
+        # ошибка ввода, отвергаем явно.
+        if [[ "${CLI_ADD_ALLOWED_IPS_SEEN:-0}" == "1" ]]; then
             # Новый хелпер библиотеки: на полуобновлённом сервере (свежий
             # manage рядом со старой awg_common.sh) его нет - отказ явно, как
             # modify делает при отсутствии awg_normalize_csv (появилась в
@@ -2234,6 +2239,8 @@ case $COMMAND in
             command -v awg_validate_allowed_ips_list >/dev/null 2>&1 || {
                 die "awg_common.sh устарела: нет awg_validate_allowed_ips_list. Обнови обе половины под одну версию."
             }
+            [[ -n "$CLI_ADD_ALLOWED_IPS" ]] \
+                || die "Пустой --allowed-ips= - укажите список CIDR (например: 10.0.0.0/8, 192.168.0.0/16) или уберите флаг."
             if ! awg_validate_allowed_ips_list "$CLI_ADD_ALLOWED_IPS"; then
                 die "Некорректный --allowed-ips='$CLI_ADD_ALLOWED_IPS'. Ожидается список CIDR IPv4/IPv6 через запятую (например: 10.0.0.0/8, 192.168.0.0/16)."
             fi
@@ -2317,8 +2324,16 @@ case $COMMAND in
                 # IPv4 дополняется ::/0 (iOS-правило). Боту это снимает
                 # проверочный вызов после создания.
                 _jaip="null"
-                _jaip_val=$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$AWG_DIR/${_cname}.conf" 2>/dev/null)
-                [[ -n "$_jaip_val" ]] && _jaip="\"$(json_escape "$_jaip_val")\""
+                _jaip_val=$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$AWG_DIR/${_cname}.conf")
+                if [[ -n "$_jaip_val" ]]; then
+                    _jaip="\"$(json_escape "$_jaip_val")\""
+                else
+                    # Файл только что написали мы, так что пустой результат -
+                    # отказ чтения, и при ok:true молчать о нём нельзя; причину
+                    # (stderr sed) не глушим. Двусмысленность null разведена по
+                    # образцу expires_at_error из этого же [Unreleased].
+                    log_error "Не удалось прочитать применённый AllowedIPs клиента '$_cname' из $AWG_DIR/${_cname}.conf - в JSON ушло allowed_ips:null."
+                fi
                 _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"created\",\"conf\":\"$(json_escape "$AWG_DIR/${_cname}.conf")\",\"qr\":$_jqr,\"vpnuri\":$_juri,\"expires_at\":$_jexp,\"allowed_ips\":$_jaip}")
             else
                 log_error "Ошибка добавления клиента '$_cname'."

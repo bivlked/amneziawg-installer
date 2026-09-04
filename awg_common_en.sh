@@ -380,6 +380,20 @@ _append_ipv6_full_tunnel_route() {
     fi
 }
 
+# A full tunnel whose AllowedIPs carry an explicit IPv6 part but no ::/0,
+# on a server with native IPv6 (Issue #253): exactly the state regen warns
+# about when it preserves a custom list. One predicate for regen and render -
+# two copies of the condition would drift silently. The native-IPv6 clause is
+# mandatory: without it the client is due the tunnel ULA instead of ::/0,
+# which is the documented rule, not a leak, and the warning would invite
+# fixing what is not broken.
+_aip_full_tunnel_v6_gap() {
+    local list="$1"
+    [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" \
+        && "$list" == *:* && "$list" != *"::/0"* ]] \
+        && _is_full_tunnel "$list"
+}
+
 # Detect primary (egress) network interface.
 # Fallback chain so we don't abort on hosts where the 1.1.1.1 probe returns no
 # interface: the provider null-routes/blocks the address, policy-routing, or
@@ -1717,12 +1731,17 @@ awg_normalize_csv() {
 }
 
 # Validation of an AllowedIPs list as a client-config value (Issue #253).
-# The same check structure as modify (C5): dangerous characters cut off +
-# a positive per-token CIDR check (IPv4/IPv6 with an optional /n prefix) +
-# no empty items (leading/trailing/double comma). Used by the early
-# validation of `manage add --allowed-ips` (before the first client is
-# created) and, as defense-in-depth, by generate_client for the
-# CLIENT_ALLOWED_IPS env contract.
+# Dangerous characters cut off + a positive per-token CIDR check (IPv4/IPv6
+# with an optional /n prefix) + no empty items (leading/trailing/double
+# comma). The original caller is modify (the validation historically lived
+# inline in its dispatcher, C5); since Issue #253 the helper is the single
+# point for the early validation of `manage add --allowed-ips` (before the
+# first client is created) and for the defense-in-depth check in
+# generate_client (the CLIENT_ALLOWED_IPS env contract).
+# Parsing uses read -a with a quoted walk, not `for x in $value`: an
+# unquoted loop expands pathnames (a file named "10.0.0.0" in the current
+# directory let the value "10.0.0.*" through) - the same reason
+# awg_normalize_csv parses into an array.
 awg_validate_allowed_ips_list() {
     local value="$1"
     case "$value" in
@@ -1735,22 +1754,20 @@ awg_validate_allowed_ips_list() {
             log_error "Invalid AllowedIPs '$value': empty list item (extra comma)"
             return 1 ;;
     esac
-    local _aip_tok _aip_ifs="$IFS"
-    IFS=','
-    for _aip_tok in $value; do
+    local -a _aip_parts
+    local _aip_tok
+    IFS=',' read -r -a _aip_parts <<< "$value"
+    for _aip_tok in "${_aip_parts[@]}"; do
         _aip_tok="${_aip_tok//[[:space:]]/}"
         if [[ -z "$_aip_tok" ]]; then
-            IFS="$_aip_ifs"
             log_error "Invalid AllowedIPs '$value': empty list item (extra comma)"
             return 1
         fi
         if ! _valid_cidr "$_aip_tok"; then
-            IFS="$_aip_ifs"
             log_error "Invalid AllowedIPs '$value': '$_aip_tok' does not look like a CIDR (IPv4/IPv6 with an optional /n prefix)"
             return 1
         fi
     done
-    IFS="$_aip_ifs"
     return 0
 }
 
@@ -1812,21 +1829,23 @@ render_client_config() {
 
     local conf_file="$AWG_DIR/${name}.conf"
     # Route base: the client's own override (CLIENT_ALLOWED_IPS, Issue #253)
-    # or the server-wide mode (ALLOWED_IPS from awgsetup_cfg.init). An env
-    # value may carry IPv6 tokens - the global list is IPv4-only by
-    # construction, a user-supplied one is not.
+    # or the server-wide mode (ALLOWED_IPS from awgsetup_cfg.init).
     local _aip_base="${CLIENT_ALLOWED_IPS:-${ALLOWED_IPS:-0.0.0.0/0}}"
     local allowed_ips
     if [[ -n "$client_ipv6" ]]; then
         # Dual-stack: mirror the IPv4 routing intent into IPv6.
         # full tunnel (IPv4=0.0.0.0/0) -> ::/0 (native) or tunnel ULA (no-native).
-        # split tunnel (custom ALLOWED_IPS) -> IPv4 split AS-IS + ONLY tunnel ULA,
-        # never ::/0 (no IPv6 split-list, must not hijack all IPv6).
-        # A list with explicit IPv6 tokens (only possible via
-        # CLIENT_ALLOWED_IPS) is not mirrored on top of itself: the user has
-        # already spelled out both families - the same rule by which regen
-        # leaves the IPv6 part of custom lists untouched.
-        if [[ "$_aip_base" == *:* ]]; then
+        # split tunnel -> IPv4 split AS-IS + ONLY tunnel ULA, never ::/0 (no
+        # IPv6 split-list, must not hijack all IPv6).
+        # An override carrying explicit IPv6 tokens is not mirrored on top of
+        # itself: the user has spelled out both families - the same rule by
+        # which regen leaves the IPv6 part of custom lists untouched. The gate
+        # keys on the OVERRIDE itself, not on the merged base: awgsetup_cfg.init
+        # is hand-editable and the global list may carry IPv6 tokens - such a
+        # list goes through mirroring as always (the dedup below stays live for
+        # it), otherwise a dual-stack client silently loses its route to the
+        # tunnel subnet.
+        if [[ -n "${CLIENT_ALLOWED_IPS:-}" && "$CLIENT_ALLOWED_IPS" == *:* ]]; then
             allowed_ips="$_aip_base"
         else
             local ipv4_part ipv6_part
@@ -1836,8 +1855,9 @@ render_client_config() {
             else
                 ipv6_part="${IPV6_SUBNET:-fddd:2c4:2c4:2c4::/64}"
             fi
-            # Defensive de-dup: ALLOWED_IPS is IPv4-only by construction, but do not
-            # duplicate ipv6_part if it is already present as a token in the list.
+            # Defensive de-dup: do not duplicate ipv6_part if it is already
+            # present as a token in the list (reachable for a global list with
+            # IPv6 tokens from a hand-edited awgsetup_cfg.init).
             case ",${ipv4_part// /}," in
                 *",${ipv6_part},"*) allowed_ips="$ipv4_part" ;;
                 *)                  allowed_ips="${ipv4_part}, ${ipv6_part}" ;;
@@ -1863,6 +1883,16 @@ render_client_config() {
             return 1
         }
         allowed_ips="$_aip_new"
+    fi
+
+    # A per-client list with explicit IPv6 but no ::/0 over a full tunnel:
+    # regen warns about this state (its custom-list preservation rule), and
+    # the creator of the config must not be quieter than regen - otherwise
+    # the person learns about their routes a month later from another
+    # command. The global mode is not warned about: the installer never
+    # writes such lists, and a hand-edited one passed silently before too.
+    if [[ -n "${CLIENT_ALLOWED_IPS:-}" ]] && _aip_full_tunnel_v6_gap "$allowed_ips"; then
+        log_warn "Client '$name': the per-client AllowedIPs spells out IPv6 without ::/0 - over a full tunnel the device's IPv6 goes outside the tunnel. Need ::/0 - add it to --allowed-ips or run regen --reset-routes '$name'."
     fi
 
     # MTU resolution order: server awg0.conf > AWG_MTU from awgsetup_cfg.init >
@@ -3447,10 +3477,10 @@ regenerate_client() {
         # client is supposed to get the tunnel ULA instead of ::/0 - documented
         # behaviour, not a leak. Without this check the warning would fire always
         # and prescribe a command that changes nothing, sending the operator to
-        # fix something that is not broken.
-        if [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" \
-              && "$current_allowed_ips" == *:* && "$current_allowed_ips" != *"::/0"* ]] \
-           && _is_full_tunnel "$current_allowed_ips"; then
+        # fix something that is not broken. Since Issue #253 the condition
+        # lives in the _aip_full_tunnel_v6_gap predicate, shared with
+        # render_client_config (which creates lists of the same shape).
+        if _aip_full_tunnel_v6_gap "$current_allowed_ips"; then
             log_warn "Client '$name': the IPv6 part of AllowedIPs was kept as-is, ::/0 not appended. Run regen --reset-routes to roll out the current routing mode."
         fi
         current_allowed_ips="$_aip_new"
