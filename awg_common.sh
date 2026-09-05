@@ -370,7 +370,7 @@ _append_ipv6_full_tunnel_route() {
     # пробел склеил бы два маршрута в один нечитаемый токен.
     list="${list//$'\r'/}"
     list="${list//$'\n'/, }"
-    if [[ "$list" != *:* ]] && _is_full_tunnel "$list"; then
+    if [[ "${DISABLE_IPV6:-0}" != "1" && "$list" != *:* ]] && _is_full_tunnel "$list"; then
         printf '%s, ::/0' "$list"
     else
         printf '%s' "$list"
