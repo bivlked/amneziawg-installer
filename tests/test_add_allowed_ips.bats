@@ -202,6 +202,16 @@ _client_allowed_ips() {
     unset CLIENT_ALLOWED_IPS
 }
 
+@test "render: full-tunnel v4 override does not get ::/0 when IPv6 is disabled" {
+    setup_params
+    export DISABLE_IPV6=1
+    export CLIENT_ALLOWED_IPS="0.0.0.0/0"
+    run render_client_config "fullv4_no_v6" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "1.2.3.4" "39743"
+    [ "$status" -eq 0 ]
+    [ "$(_client_allowed_ips fullv4_no_v6)" = "0.0.0.0/0" ]
+    unset CLIENT_ALLOWED_IPS DISABLE_IPV6
+}
+
 @test "render: override that already carries ::/0 is written as-is" {
     setup_params
     export CLIENT_ALLOWED_IPS="0.0.0.0/0, ::/0"
