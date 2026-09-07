@@ -538,6 +538,183 @@ _kernel_supports_awg3() {
     return 1
 }
 
+# -- Environment gate for the AmneziaWG 3.1 profile ---------------------------
+# The gate has TWO stages, and that is a requirement of the plan rather than an
+# elaboration: the refusal has to be explained BEFORE the first package is
+# installed, while what actually landed on the machine can only be established
+# AFTER it.
+#   pre  - step 0, before any change to the system: architecture and kernel;
+#   post - step 3, after the module and the tools are installed: tools capability.
+#
+# Both stages live HERE and not in awg_common.sh, even though the specification
+# files the function under the library. The reason is the same one that makes
+# the installer carry its own safe_load_config(): awg_common.sh is downloaded at
+# step 5, while the gate has to answer at steps 0 and 3, when it is not on the
+# server yet.
+#
+# The reason code exists so that a refusal tells the operator what exactly is
+# wrong on their machine. A single "3.1 is unavailable" would send the owner of
+# a Debian 12 box and the owner of an ARM box into the same dead end, even
+# though their ways out are different.
+
+# _awg31_host_arch : package architecture, falling back to uname -m.
+_awg31_host_arch() {
+    local a=""
+    a=$(dpkg --print-architecture 2>/dev/null) || a=""
+    [[ -z "$a" ]] && a=$(uname -m 2>/dev/null)
+    printf '%s' "$a"
+}
+
+# awg31_tools_support : do the INSTALLED awg tools understand 3.1 parameters?
+# Returns 0 when they do, 1 when they do not, are missing, or answer implausibly.
+#
+# CAPABILITY is probed, not the version, and that is not pedantry. The PPA
+# package amneziawg-tools carries the version string 1.0.20210914 plus a build
+# suffix: that is wireguard-tools heritage, and 3.1 support is not visible in it
+# at all. Measured 7 sep 2026: the PPA builds the tools from commit ee0f0a9,
+# that is from tag v3.1.20260812 ("feat: add awg 3.1 params"), while the package
+# version stays 1.0.20210914-0~202608130144. A version gate would have blocked
+# an environment that is in fact ready, and a build-date gate even more so.
+# The version must not come back as a FALLBACK signal either ("accept it also
+# when --version advertises 3.1"): a version claim is not confirmed by the
+# usage, and that kind of mistake errs in the dangerous direction - it would
+# hand a 3.1 profile to tools that cannot parse it.
+#
+# The probe: `awg set` with fewer than three arguments prints the FULL usage
+# with the list of supported parameters and returns 1 without opening a device
+# (upstream src/set.c: the argc < 3 branch sits BEFORE config_read_cmd, and the
+# dispatcher in wg.c calls function(argc - 1, argv + 1), so `awg set` arrives
+# with argc = 1). The presence of `header-protection-key` in that output is what
+# says the tools know the third line.
+#
+# The status must be EXACTLY 1; "any non-zero" will not do. The codes 124
+# (timeout fired), 125 (timeout itself failed) and 137 (KILL) are non-zero too,
+# so under an "rc != 0" check a wrapper that printed the usage with the key and
+# then hung would be counted as supporting - precisely the case the timeout is
+# there for. Measured by an external review on 7 sep 2026.
+# Erring towards refusal is the safe direction here: the price of a false "not
+# supported" is an installation that stays on 2.0, and 2.0 works everywhere.
+awg31_tools_support() {
+    local usage="" rc=0
+    command -v awg >/dev/null 2>&1 || return 1
+    usage=$(timeout 5 awg set 2>&1); rc=$?
+    (( rc == 1 )) || return 1
+    [[ "$usage" == *header-protection-key* ]]
+}
+
+# awg31_environment_blocker : empty when the 3.1 profile is available on this
+# environment, otherwise the reason CODE.
+# Codes: arch_unknown | arch_unsupported | arm | kernel | tools_old |
+#        not_implemented_yet | internal_error.
+# Arg $1: stage, REQUIRED: 'pre' or 'post'.
+# Arg $2: architecture (for tests; defaults to _awg31_host_arch).
+# Arg $3: kernel release (for tests; defaults to uname -r).
+#
+# THE post STAGE CONTAINS pre IN FULL, and that is not duplication. An empty
+# answer means "install 3.1", so every stage has to be a self-contained final
+# verdict. Had post checked the tools alone, calling post on ARM would return
+# empty - that is, allow what pre forbade - and the whole protection would rest
+# on the caller not forgetting to carry the pre answer across a reboot. There
+# are two of those between steps 0 and 3.
+#
+# THE ORDER OF THE CHECKS IS PART OF THE CONTRACT: architecture and kernel come
+# BEFORE the tools probe. Otherwise an ARM box with old tools would be told
+# tools_old - a temporary reason instead of a permanent one - the operator would
+# go and upgrade the tools, which cannot possibly help, and we would have run an
+# external binary on a platform we deliberately do not ship on.
+awg31_environment_blocker() {
+    local stage="${1-}" arch="${2:-}" kver="${3:-}"
+
+    case "$stage" in
+        pre|post) : ;;
+        *)
+            # The stage has NO default on purpose. `${1:-pre}` looks convenient
+            # but makes the WEAKEST stage the default: an empty string from an
+            # unset variable would silently become pre, and the tools probe would
+            # be skipped without a single message. The branch below catches a
+            # misspelled stage name, but with a default it could not catch an
+            # empty string at all. There are two reboots between steps 0 and 3
+            # and the caller reads its state from disk, so losing a variable is
+            # easy.
+            #
+            # And not die here: the typical call is
+            # blocker=$(awg31_environment_blocker ...), and inside a substitution
+            # die would kill the SUBSHELL, the installer would carry on, and
+            # blocker would stay EMPTY - that is, "3.1 is available". So the
+            # output itself carries the safety: a non-empty code blocks in any
+            # case, a non-zero return is visible to callers that check the
+            # status, and a human reads the reason on stderr.
+            printf 'internal_error'
+            echo "awg31_environment_blocker: stage must be pre or post, got '${stage}'" >&2
+            return 2
+            ;;
+    esac
+
+    [[ -z "$arch" ]] && arch=$(_awg31_host_arch)
+    [[ -z "$kver" ]] && kver=$(uname -r)
+    arch="${arch//[[:space:]]/}"
+
+    # Not knowing the architecture is NOT the same as knowing it is suitable. An
+    # empty answer here would read as permission, so the unknown blocks with an
+    # explicit code.
+    if [[ -z "$arch" ]]; then
+        printf 'arch_unknown'
+        return 0
+    fi
+
+    # An ALLOW list, not a deny list, and this is the only place in the installer
+    # shaped that way. The reason is that an empty answer means "ship it": "not
+    # ARM" is not the same as "amd64" here. The PPA builds the dkms package for
+    # riscv64, ppc64el and s390x among others (checked against the Launchpad
+    # index on 7 sep 2026), and with a deny list such a machine would be handed a
+    # 3.1 profile on a platform nobody measured.
+    #
+    # The arm code covers ANY ARM, not only a matched prebuilt. Telling "the
+    # prebuilt matched" from "we went the DKMS way" is impossible here: in the
+    # second case the module would be third line, the gate would formally pass,
+    # and we would ship the profile on a platform we decided not to ship on until
+    # a separate measurement. The pattern covers both dpkg names (arm64, armhf,
+    # armel) and uname -m ones (armv7l, aarch64, aarch64_be).
+    case "$arch" in
+        amd64|x86_64)
+            :
+            ;;
+        arm*|aarch64*)
+            printf 'arm'
+            return 0
+            ;;
+        *)
+            printf 'arch_unsupported'
+            return 0
+            ;;
+    esac
+
+    if ! _kernel_supports_awg3 "$kver"; then
+        printf 'kernel'
+        return 0
+    fi
+
+    if [[ "$stage" == "post" ]]; then
+        awg31_tools_support || { printf 'tools_old'; return 0; }
+        # The line of the LOADED module is not checked here, and that is a
+        # boundary of this change rather than an omission. An honest probe needs
+        # a temporary interface and stand time, while deriving the line from the
+        # module version string is FORBIDDEN by the 30 aug 2026 measurement: the
+        # very same string 3.1.20260812 was observed on two different builds.
+        # The module_line2 code arrives together with the real probe in phase 3.
+        :
+    fi
+
+    # PHASE 3: the 3.1 profile generator does not exist yet, so the environment
+    # may be as suitable as it likes - there is nothing to hand out. This check
+    # is LAST on purpose: that way an operator on an unsuitable platform gets the
+    # durable reason, the one that stays true after phase 3, instead of a
+    # temporary one. This line goes away in the same change that adds the
+    # generator, and removing it must turn red the test that watches for it.
+    printf 'not_implemented_yet'
+    return 0
+}
+
 check_free_space() {
     log "Checking disk space..."
     local req=2048
