@@ -262,6 +262,12 @@ break_arch_detection() {
     load_gate
     local saved="$PATH"
     mkdir -p "$TEST_DIR/empty-bin"
+    # An empty search path is enough for the gate itself: the architecture is
+    # passed in, the kernel check is pure bash, and the probe stops at
+    # `command -v awg`. It is put back before the assertion so that teardown
+    # still has its tools.
+    # shellcheck disable=SC2123  # replacing the search path wholesale is the
+    # point: that is how a missing binary is simulated without deleting one.
     PATH="$TEST_DIR/empty-bin"; export PATH
     run awg31_environment_blocker post "amd64" "6.14.0-generic"
     PATH="$saved"; export PATH
