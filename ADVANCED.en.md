@@ -259,19 +259,22 @@ This is the part most often misread, because the kernel module's own README stil
 - **`HeaderProtectionKey` has to be identical.** Tested: the key on the server only, on the client only, or two different keys all give no handshake and 100% loss. It is not a gradual degradation but a switch: the moment the server has it, every peer without it drops.
 - **`Jc`/`Jmin`/`Jmax` and `I1`-`I5` do not have to match.** Junk and concealment packets are sent by whoever initiates the handshake, and the other side simply ignores them.
 
-🔴 **Do not enable `RandomTrailers` until a fix ships.** On its own the parameter is free: on a
-bare config, with no junk packets, no `S` padding and no concealment packets, it gives the same
-**11.94 MB/s** as without it. The trouble appears in COMBINATION with the full obfuscation set,
-where throughput drops to **0.09-0.14 MB/s**, roughly a 125-fold fall.
+🔴 **Do not enable `RandomTrailers` until a fix ships.** The flag itself does not cost speed: on
+a bare config (`Jc = 0`, `S1`-`S4 = 0`, `H1`-`H4 = 1..4`, no `I1`-`I5`) the measurement was
+**11.94 MB/s** both with and without it. The drop appears in combination with the rest of the
+obfuscation: with `Jc`, `S1`-`S4`, `H1`-`H4` and `I1` together with the flag, throughput came out
+at **0.09-0.14 MB/s**, that is 85 to 133 times lower.
 
-The degradation grows with the number of parameter groups in play: `S1`-`S3` together with
-`H1`-`H4` give 5.60 MB/s, and adding `S4` drops it to 0.11. Taken one at a time, no group
-conflicts with the flag: `S4`, `S1`-`S3`, `H1`-`H4`, `Jc` and `I1` each give 11.7-11.9 MB/s.
+What was measured per combination, all values **with the flag on**: `S1`-`S3` together with
+`H1`-`H4` gave 5.60 MB/s, and adding `S4` dropped it to 0.11. Each group on its own - `S4`,
+`S1`-`S3`, `H1`-`H4`, `Jc`, `I1` - produced no drop at all: 11.7-11.9 MB/s. So it is not these
+parameters that cost the throughput but their combination with the flag, and there is no need to
+turn obfuscation off for the sake of speed.
 
-That this is an implementation defect rather than a property of the route is shown by a
-measurement on a local network with no internet leg: **44.22 MB/s without the parameter against
-0.09 with it**. Explaining the drop by packet loss along the path is therefore wrong - the loss
-here is a consequence, not the cause.
+The drop also reproduces on a local network with no internet leg: **44.22 MB/s without the flag
+against 0.09 with it**. The route is therefore not involved. The earlier explanation through
+packet loss along the path was checked and refuted: the loss turned out to be a symptom rather
+than the cause.
 
 <a id="awg3-gotchas-adv"></a>
 ### Three things that can cost you an evening
@@ -1762,7 +1765,7 @@ nothing more.
 
 > **Keenetic native AWG 2.0:** Firmware 4.x supports AWG 2.0 natively without extra packages. If the tunnel connects but traffic doesn't flow — the issue is the I1 format. Working options: `I1 = <r 64>` or the DNS-mimicking pattern `I1 = <r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>`. After replacing I1 in the server config: `sudo systemctl restart awg-quick@awg0` + `manage regen <client>`. [Discussion #45](https://github.com/bivlked/amneziawg-installer/discussions/45).
 >
-> 🔴 **The `<r 2>` prefix in this pattern is mandatory - do not copy the block without it.** Those two random bytes are the DNS transaction ID that every packet of the protocol starts with. Without them the whole payload shifts by two bytes and parsing breaks outright: the ID field receives `0x8580`, the flags become `0x0001` - the packet declares itself a query rather than a reply - the additional-records counter grows to 1641, and the first name label claims 99 bytes with 29 remaining. Such a packet does not parse as DNS at all. The second reason matters just as much: without the random prefix all 42 bytes are constant, so the CPS packet becomes byte-for-byte identical for everyone who copied the recipe from here, which is a ready-made signature to search for.
+> 🔴 **The `<r 2>` prefix in this pattern is mandatory - do not copy the block without it.** Those two random bytes are the DNS transaction ID that every packet of the protocol starts with. Without them the whole payload shifts by two bytes and the packet does not parse as DNS at all: the ID field receives `0x8580`, the flags become `0x0001` - the packet declares itself a query rather than a reply - the additional-records counter grows to 1641, and the first name label claims 99 bytes with 29 remaining. And a second reason: without the random prefix all 42 bytes are constant, so the packet comes out byte-for-byte identical for everyone who copied the recipe from here. Note that the prefix only makes the packets differ from one another; the constant 42-byte block inside stays and remains usable as a signature to search for.
 
 > **Keenetic Speedster (firmware 5.0.6), AmneziaWG won't connect:** older firmware does not yet parse H1-H4 as ranges (`lower-upper`) and raises an `invalid H1` error. Set H1-H4 to concrete numbers - the other obfuscation layers (Jc/Jmin/Jmax, I1, S1-S4) keep working. If the handshake clears but no traffic flows - lower the junk (`Jc=3`, `Jmin=10`, `Jmax=50`), and if needed remove the `I1` line and zero out `S3`/`S4`. A firmware-independent workaround is the userspace [AWG Manager](https://github.com/hoaxisr/awg-manager) (does not depend on the Keenetic firmware version). [Discussion #81](https://github.com/bivlked/amneziawg-installer/discussions/81).
 

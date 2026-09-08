@@ -30,7 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Documentation
 
-- **`ADVANCED`: a warning about `RandomTrailers`.** On its own the parameter is free - on a bare config it gives the same 11.94 MB/s as without it - but combined with the full obfuscation set throughput drops to 0.09-0.14 MB/s, roughly 125-fold. The measurements are given per parameter group, together with a local-network measurement (44.22 against 0.09 MB/s) showing the cause is the implementation rather than the route. Do not enable it until a fix ships.
+- **`ADVANCED`: a warning about `RandomTrailers`.** The flag itself does not cost speed: on a bare config the measurement was 11.94 MB/s both with and without it. Combined with the rest of the obfuscation, throughput came out at 0.09-0.14 MB/s, that is 85 to 133 times lower. The measurements are given per parameter combination, together with a local-network run (44.22 against 0.09 MB/s) showing the route is not involved. Do not enable it until a fix ships.
 - **`ADVANCED`: why the DNS-mimicking `I1` needs the `<r 2>` prefix.** Those two random bytes are the DNS transaction ID. Without them the payload shifts and the packet stops parsing as DNS at all: the flags declare a query instead of a reply, the additional-records counter grows to 1641, and the first name label claims more bytes than remain. The second reason is that without the random prefix all 42 bytes are constant, so the packet is identical for everyone who copied the recipe from the documentation.
 
 ## [5.31.0] - 2026-09-02
