@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.32.0] - 2026-09-08
+
+**v5.32.0** - the machine-readable interface reports client expiry, an installation records its protocol generation, and client routes can be set at creation time.
+
 ### Added
 
 - **Per-client AllowedIPs at creation: `manage add --allowed-ips=LIST`.** Until now `add` only took `--expires` and `--psk`, and a new client always received the server-wide routing mode - custom routes could only be patched in afterwards with `modify <name> AllowedIPs <value>`. JSON-interface consumers (bots, scripts, panels) had to run two calls - `add`, then `modify` - deliver files only after the `modify`, and compensate for its possible failure with a warning (the awgram Telegram bot still works this way; Issue #253). Now a single call creates the client with the right routes from the start: the list of IPv4/IPv6 CIDRs is validated and normalized before the first client is created (an invalid or EMPTY value aborts the command creating nothing - an empty one does not silently widen the routes to the server-wide mode) and applies to every name in the batch, like `--expires`. When a full tunnel spells out IPv6 without `::/0`, `add` warns right away - by the same condition `regen` uses (one shared predicate). The value follows the same rules as the global mode: a full-tunnel IPv4 list gets `::/0` added next to it (the iOS rule), a split list never does, and a list with explicit IPv6 tokens is written as is. Under the hood it is the `CLIENT_ALLOWED_IPS` env contract in `generate_client`/`render_client_config`, modeled after `CLIENT_PSK`; `regen` clears it and per-client routes of existing clients are unaffected. The list validation moved out of the `modify` dispatcher into the shared helper `awg_validate_allowed_ips_list`, called from both places - copies of such checks have drifted apart before. `created` entries in `add --json` `results[]` gained an `allowed_ips` field - the applied routes from the created `.conf` (with the `::/0` mirroring); for a bot this removes the verification call after creation.
@@ -23,6 +27,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **An expiry marker with a leading zero caused a client to be deleted silently.** The expiry check accepted any sequence of digits, and the comparison reads such a value as OCTAL: the marker `01750000000` became `262144000`, that is 1978, the condition fired, and the client was removed along with its config and keys on a date nobody had set. A value containing an 8 or a 9 instead made the comparison fail with `value too great for base`, which evaluated false and kept the client - one and the same corruption behaving in two different ways. The expiry check, `list --json` and `add --json` now use one form: a canonical decimal of at most 15 digits. A leading zero, an empty marker, junk and an over-long number are all treated the same way - the expiry is undetermined, the client is not removed, and a warning goes to the log. The expiry check also no longer decides on data from a failed read: the exit status is captured, and on failure the client is left alone.
 - **The client name from the server config is validated before it is used in a path.** `list` read the expiry marker at `/root/awg/expiry/<name>` without validating the name, although the expiry check next to it does. A name containing `../` made it read a file outside the marker directory and publish its contents in the output. Such a name cannot come from `add`, but the server config is also edited by hand.
+
+### Documentation
+
+- **`ADVANCED`: a warning about `RandomTrailers`.** The flag itself does not cost speed: on a bare config the measurement was 11.94 MB/s both with and without it. Combined with the rest of the obfuscation, throughput came out at 0.09-0.14 MB/s, that is 85 to 133 times lower. The measurements are given per parameter combination, together with a local-network run (44.22 against 0.09 MB/s) showing the route is not involved. Do not enable it until a fix ships.
+- **`ADVANCED`: why the DNS-mimicking `I1` needs the `<r 2>` prefix.** Those two random bytes are the DNS transaction ID. Without them the payload shifts and the packet stops parsing as DNS at all: the flags declare a query instead of a reply, the additional-records counter grows to 1641, and the first name label claims more bytes than remain. The second reason is that without the random prefix all 42 bytes are constant, so the packet is identical for everyone who copied the recipe from the documentation.
 
 ## [5.31.0] - 2026-09-02
 
@@ -1874,7 +1883,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.31.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.32.0...HEAD
+[5.32.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.31.0...v5.32.0
 [5.31.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.30.0...v5.31.0
 [5.30.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.29.0...v5.30.0
 [5.29.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.28.1...v5.29.0
