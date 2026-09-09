@@ -60,6 +60,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 - [🔧 Raspberry Pi and ARM64 Support](#arm-support-adv)
 - [🐧 Connecting a Linux machine as a client](#linux-client-adv)
 - [📦 LXC / Docker via amneziawg-go (userspace)](#lxc-userspace-adv)
+- [🗄️ AmneziaWG on a Synology NAS (DSM)](#synology-adv)
 - [⚠️ Known Limitations](#limitations-adv)
 - [🤝 Contributing](#contributing-adv)
 - [💖 Acknowledgements](#thanks-adv)
@@ -2030,6 +2031,95 @@ My `manage_amneziawg.sh` targets a kernel-native setup (expects `/root/awg/awgse
 ### Source
 
 The minimal working recipe for Debian 13 in a privileged LXC on Proxmox was shared by [@Akh-commits](https://github.com/Akh-commits) in [issue #51](https://github.com/bivlked/amneziawg-installer/issues/51#issuecomment-4288953829) — this section builds on it with additions covering the prebuilt path, the security warning, and the Debian 12 Go nuances.
+
+---
+
+<a id="synology-adv"></a>
+
+## 🗄️ AmneziaWG on a Synology NAS (DSM)
+
+My installer does not run on DSM, but AmneziaWG itself can be brought up on a Synology by
+hand, through the userspace implementation. Everything below was checked on a DS918+ running
+DSM 7.4.1.
+
+### Why the installer does not fit
+
+| what I checked | what DSM 7.4.1 has |
+|---|---|
+| kernel version | 4.4.302+ |
+| minimum for the AmneziaWG module | 5.15; below that the installer warns and asks for confirmation |
+| build tree `/usr/lib/modules/$(uname -r)/build` | missing |
+| compiler `gcc` / `make` | missing |
+| DKMS | missing |
+
+It all comes down to the kernel version. The CPU is fine: a DS918+ is ordinary x86_64. The
+kernel, though, is about ten years older than what the module builds against. And there is
+nothing on the box to build it with, no headers and no compiler. Cross building with
+Synology's toolchain is possible in principle, but you would have to redo it for every DSM
+update.
+
+### The built-in DSM VPN client
+
+It speaks three protocols: L2TP, OpenVPN and PPTP. WireGuard is not among them, there is no
+module in the kernel, and no `wg` utility in the system either. So stock DSM cannot bring this
+protocol up at all, and my script has nothing to do with it.
+
+### What does work: userspace
+
+[`amneziawg-go`](https://github.com/amnezia-vpn/amneziawg-go) is the official userspace
+implementation. It needs no kernel module, only `/dev/net/tun`. DSM has it, and the `tun`
+module is already loaded.
+
+I checked it for real: a tunnel came up from a DS918+ to a server installed by this script.
+The handshake went through, data flowed both ways, and a ping inside the tunnel answers.
+Obfuscation was fully on the whole time - `Jc`/`Jmin`/`Jmax`, `S1`-`S4`, `H1`-`H4` and the
+`I1` concealment packet. What runs is a normal AmneziaWG 2.0 profile, not a hollowed out
+WireGuard.
+
+### What it costs you
+
+- **Speed.** The CPU does the encryption with no offload of any kind. On a Celeron in the
+  J3455 class expect tens of megabits. I will not quote exact numbers, I did not measure them.
+- **Your time.** All of it happens by hand from a console: you need SSH into the NAS and root.
+  `/dev/net/tun` is owned by `root:root`, and the web interface will not get you there. The
+  binary has to be built on another machine and copied over, since DSM has neither Go nor a
+  compiler.
+- **Autostart.** DSM has no systemd; autostart lives in Task Scheduler under root. Skip that
+  step and the tunnel disappears on the first reboot of the NAS, by which point remembering
+  why will be hard.
+
+### Traps
+
+- **`/tmp` is mounted `noexec`.** A binary placed there will not start, and `Permission
+  denied` does not even hint at the real cause. Put it on the volume.
+- **No `nc`, `socat` or `perl`.** There is `python3` and `curl` though, and the control socket
+  is easiest to drive from Python.
+- **The client address usually comes with a `/32` mask.** With it no route to the server
+  subnet appears on its own, and packets leave outside the tunnel. You have to add it by hand:
+  normally `awg-quick` does that from `AllowedIPs`, but DSM does not have it.
+- **A DSM update may wipe whatever sits in system directories.** Where to keep the binary so
+  that does not happen is something I did not look into.
+
+### If what you want is a server on the NAS itself
+
+On models with Virtual Machine Manager you can run an ordinary Ubuntu in a virtual machine,
+and the installer works inside it just as it does on any VPS. The DS918+ has everything for
+that: the VMM package installed, hardware virtualisation on the CPU, a btrfs volume.
+
+Two caveats. The VM will eat a noticeable share of the NAS memory. And from the outside it is
+still a server behind a home router: you need a UDP port forward, and the VM address is worth
+reserving, otherwise the forward points nowhere after a reboot. I did not run the whole chain
+of DSM plus VMM plus Ubuntu plus installer, only the last link, the installer working on
+ordinary Ubuntu.
+
+### What I did not check
+
+Routing all of the NAS traffic through the tunnel - I checked the tunnel itself and left the
+default route alone. Also: how this survives reboots and DSM updates, whether it works through
+Container Manager, and what throughput comes out.
+
+DSM is not among the supported platforms: the installer does not run there, and I do not test
+it as a target.
 
 ---
 
