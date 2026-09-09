@@ -33,9 +33,11 @@
 #      precisely because an unset variable would otherwise degrade silently to
 #      the weakest stage, and the refusal is carried by the printed code rather
 #      than by die(), which would only kill a subshell.
-#      NOTE: the gate is defined but NOT yet wired into the installer state
-#      machine - there is no call site at step 0 or step 3 yet. The tests below
-#      simulate callers; they do not cover a real call path.
+#      NOTE: this file covers the gate as a FUNCTION. Its call sites - step 0
+#      through _awg31_resolve_protocol, step 3 through step3_check_module - and
+#      the refusal texts live in test_awg31_protocol_flag.bats. The callers
+#      simulated below are deliberate: a failure here must mean "wrong verdict",
+#      never "wrong call site".
 #   7. The gate must work with nothing but the installer. awg_common.sh is
 #      downloaded at step 5, while the gate answers at steps 0 and 3.
 #
