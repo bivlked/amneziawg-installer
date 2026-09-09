@@ -345,7 +345,7 @@ break_arch_detection() {
     local body
     for f in "$INSTALL_RU" "$INSTALL_EN"; do
         body=$(func_from "$f" awg31_tools_support)
-        [[ "$body" == *"timeout "*"awg set"* ]]
+        [[ "$body" == *"timeout -k "*"awg set"* ]]
     done
 }
 

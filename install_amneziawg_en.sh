@@ -69,8 +69,8 @@ CLI_PROTOCOL=""
 # our own test missed it because it passed a space, not an empty string.
 CLI_PROTOCOL_SET=0
 # 🔴 The default of this PHASE, not of the final release. eng.md describes
-# v6.0.0, where the default is 3.1; the switch is a separate phase
-# later phase, after the third-line generator works. Until then the default
+# v6.0.0, where the default is 3.1; the switch is a separate, later phase,
+# after the third-line generator works. Until then the default
 # is 2.0, and that is not a forgotten edit: a 3.1 marker without a 3.1
 # generator would produce a second-line config under a third-line label.
 PROTOCOL_DEFAULT="2.0"
@@ -131,7 +131,12 @@ while [[ $# -gt 0 ]]; do
         # one. An unconditional shift would eat the neighbouring flag:
         # "--protocol --yes" would take "--yes" as the value and lose the
         # auto-confirmation.
-        --protocol)      CLI_PROTOCOL_SET=1
+        # 🔴 The value is cleared BEFORE the next argument is inspected.
+        # Without the reset a repeated valueless flag ("--protocol=2.0
+        # --protocol --yes") would quietly keep the earlier value and the
+        # installation would carry on, although the second time no value
+        # was given at all.
+        --protocol)      CLI_PROTOCOL_SET=1; CLI_PROTOCOL=""
                          if [[ -n "${2-}" && "${2-}" != -* ]]; then
                              CLI_PROTOCOL="$2"; shift
                          fi ;;
@@ -349,9 +354,11 @@ Options:
                         (mobile carriers often kill non-standard UDP ports).
                         An explicit --port=N wins over port 443
   --protocol=2.0|3.1    Protocol generation for a NEW install (default 2.0).
-                        Ignored on an already configured server: the
-                        generation of a running install changes only by
-                        reinstalling and reissuing every client profile.
+                        On an already configured server a flag naming a
+                        DIFFERENT generation ends the install: the generation
+                        of a running install changes only by reinstalling and
+                        reissuing every client profile. A matching one is
+                        accepted quietly.
                         This version does not emit 3.1 yet - it refuses and
                         names the reason
   -y, --yes             Auto-confirm (reboots, UFW, etc.)
@@ -542,7 +549,7 @@ check_kernel_version() {
     fi
 }
 
-# shellcheck disable=SC2120  # called without args in the installer (uses uname -r); bats passes versions
+# shellcheck disable=SC2120  # called both with an argument (from awg31_environment_blocker) and without (uses uname -r); bats passes versions
 _kernel_supports_awg3() {
     # Returns 0 if the kernel version is >= 6.7 - there we take the module from the
     # PPA as is. Returns 1 if the kernel is older than 6.7 - there we go the pinned
@@ -633,7 +640,15 @@ _awg31_host_arch() {
 awg31_tools_support() {
     local usage="" rc=0
     command -v awg >/dev/null 2>&1 || return 1
-    usage=$(timeout 5 awg set 2>&1); rc=$?
+    # 🔴 -k IS REQUIRED, not decoration. Without it timeout sends TERM and
+    # WAITS: a wrapper that ignores the signal is not bounded at all, and
+    # step 3 hangs forever without printing a thing. The verdict would stay
+    # correct (124 is not 1, so tools_old), but an unattended install would
+    # stall. Found by review of this pull request.
+    # </dev/null for the same reason every read in this project uses
+    # /dev/tty: the probe must not eat the rest of a script fed through a
+    # pipe.
+    usage=$(timeout -k 1 5 awg set </dev/null 2>&1); rc=$?
     (( rc == 1 )) || return 1
     [[ "$usage" == *header-protection-key* ]]
 }
@@ -749,6 +764,14 @@ awg31_environment_blocker() {
     # generator, and removing it must turn red the test that watches for it.
     printf 'not_implemented_yet'
     return 0
+
+    # 🔴 The explicit "environment fits" terminal: empty output, status 0.
+    # Unreachable today, and here for phase 3: delete the TWO lines above
+    # without leaving this one and the function's last command becomes the
+    # stage check, which is false on pre - the function would return 1 with
+    # empty output. The refusal would be safe, but the third line would be
+    # dead on arrival and the symptom would look like a crashed gate.
+    return 0
 }
 
 # _awg31_blocker_message : the human-readable refusal for a reason CODE.
@@ -769,7 +792,7 @@ _awg31_blocker_message() {
     local code="${1-}"
     case "$code" in
         kernel)
-            printf '%s' "The AmneziaWG 3.1 profile will not run on this server: kernel $(uname -r) is older than 6.7. On such kernels the installer deliberately builds the proven second-line module, and the third line will not work here. Way out: install with --protocol=2.0, which is a working and supported path. If you need the third line on this very machine, it takes a system with kernel 6.7 or newer."
+            printf '%s' "The AmneziaWG 3.1 profile will not run on this server: kernel $(uname -r) is older than 6.7. On such kernels the installer deliberately builds the proven second-line module, and the third line will not work here. Way out: install with --protocol=2.0, which is a working and supported path. If you need the third line on this very machine, it takes a system with kernel 6.7 or newer AND an installer version that can already emit it."
             ;;
         arm)
             printf '%s' "The AmneziaWG 3.1 profile is not released for ARM yet. Here the installer pins the second-line module, and the pin is deliberate until a separate measurement on this architecture. Upgrading packages changes nothing. Way out: --protocol=2.0."
@@ -840,8 +863,15 @@ _awg31_resolve_protocol() {
             # is the config file, not whether the service runs: --force on top of a
             # working install lands here too, and rightly so - profiles are already
             # out there.
+            # 🔴 A REFUSAL, NOT A WARNING. Carrying on with the previous
+            # generation would hand the person something OTHER than what
+            # they asked for, and the warning about it would drown in a long
+            # installation log. That is exactly the silent substitution the
+            # rest of this code exists to prevent. The same choice is already
+            # made above for a 3.1 marker in the config: die there too,
+            # rather than "quietly correct it".
             if [[ "$CLI_PROTOCOL" != "$AWG_PROTOCOL" ]]; then
-                log_warn "--protocol=${CLI_PROTOCOL} ignored: this installation is already marked as generation ${AWG_PROTOCOL} (the AWG_PROTOCOL marker in $CONFIG_FILE), and the flag does not change it. The generation of a running install changes only by reinstalling and reissuing every client profile."
+                die "--protocol=${CLI_PROTOCOL} cannot be carried out on this server: the installation is marked as generation ${AWG_PROTOCOL} (the AWG_PROTOCOL marker in $CONFIG_FILE), and the generation of a running install does not change in place - that means reissuing EVERY client profile and handing them out again. Drop the flag to continue on ${AWG_PROTOCOL}, or deploy the server from scratch."
             else
                 log "The requested generation ${CLI_PROTOCOL} matches the generation of this installation."
             fi
@@ -4949,6 +4979,12 @@ step3_check_module() {
     # shipping the third line on tools that cannot parse it, and hearing about it
     # from a user whose handshake silently never happens. A test calls it
     # directly with the marker injected, so the branch cannot rot unnoticed.
+    # ⚠️ The 2.0 default here is the one place in this change where absence
+    # reads as an answer, and it is safe for two reasons at once:
+    # initialize_setup runs before EVERY step and either sets the marker or
+    # dies, so an empty one never reaches here; and if it did, the mistake
+    # would lead to 2.0, the generation that works everywhere. The opposite
+    # default would be permission. Noted by review of this pull request.
     if [[ "${AWG_PROTOCOL:-2.0}" == "3.1" ]]; then
         local _awg31_blocker _awg31_rc
         _awg31_blocker=$(awg31_environment_blocker post); _awg31_rc=$?

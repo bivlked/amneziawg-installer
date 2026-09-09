@@ -393,6 +393,12 @@ initialize_setup_body() {
     # were added with the --protocol flag; they are matched EXACTLY, so the
     # guard still fails on any other assignment. Widening this test is the
     # deliberate part of adding a writer: the count going up must be noticed.
+    # The printf -v pattern allows one non-word character before the name: the
+    # first version required it bare, so `printf -v "AWG_PROTOCOL" ...` slipped
+    # past the whole scan while the five approved lines still counted as five.
+    # A quote character cannot be written literally in an unquoted regex here -
+    # bash would treat it as shell quoting - hence the negated class rather than
+    # ["'] . Found by external review of this pull request.
     # ANY other occurrence of an assignment - at line start, mid-line after a
     # ';', inside an if/then, via printf -v or read - is a path that could
     # rewrite the generation of a live server. The scan is done in bash, not in
@@ -411,7 +417,7 @@ initialize_setup_body() {
             if [[ "$line" =~ ^[[:space:]]*AWG_PROTOCOL=\"\$PROTOCOL_DEFAULT\"$ ]]; then n=$((n+1)); continue; fi
             if [[ "$line" =~ AWG_PROTOCOL\+?= ]] \
                || [[ "$line" =~ AWG_PROTOCOL:= ]] \
-               || [[ "$line" =~ -v[[:space:]]+AWG_PROTOCOL([^A-Za-z0-9_]|$) ]] \
+               || [[ "$line" =~ -v[[:space:]]+[^A-Za-z0-9_]?AWG_PROTOCOL([^A-Za-z0-9_]|$) ]] \
                || [[ "$line" =~ (^|[^A-Za-z0-9_])read[[:space:]].*AWG_PROTOCOL([^A-Za-z0-9_]|$) ]] \
                || [[ "$line" =~ (^|[^A-Za-z0-9_])(unset|local|declare|typeset|readarray|mapfile)[[:space:]]+AWG_PROTOCOL([^A-Za-z0-9_]|$) ]]; then
                 extra+="$line"$'\n'
@@ -428,7 +434,7 @@ initialize_setup_body() {
             [[ "$line" =~ ^[[:space:]]*# ]] && continue
             if [[ "$line" =~ AWG_PROTOCOL\+?= ]] \
                || [[ "$line" =~ AWG_PROTOCOL:= ]] \
-               || [[ "$line" =~ -v[[:space:]]+AWG_PROTOCOL([^A-Za-z0-9_]|$) ]] \
+               || [[ "$line" =~ -v[[:space:]]+[^A-Za-z0-9_]?AWG_PROTOCOL([^A-Za-z0-9_]|$) ]] \
                || [[ "$line" =~ (^|[^A-Za-z0-9_])read[[:space:]].*AWG_PROTOCOL([^A-Za-z0-9_]|$) ]] \
                || [[ "$line" =~ (^|[^A-Za-z0-9_])(unset|local|declare|typeset|readarray|mapfile)[[:space:]]+AWG_PROTOCOL([^A-Za-z0-9_]|$) ]]; then
                 extra+="$line"$'\n'

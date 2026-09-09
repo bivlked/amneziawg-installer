@@ -213,19 +213,30 @@ run_argparse() {
     [ "$kernel_out" != "$arm_out" ]
 }
 
-@test "on an existing install the flag is refused loudly and changes nothing" {
+@test "on an existing install a different generation ends the install" {
     build_harness
+    # Carrying on with the old generation would hand the operator something OTHER
+    # than what they asked for, and the warning would drown in a long install log.
+    # The refusal names both generations so the message is actionable on its own.
     CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" run_resolve 1
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"RESULT: 2.0"* ]]
-    [[ "$output" == *"WARN:"* ]]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"DIE:"* ]]
     [[ "$output" == *"3.1"* ]]
+    [[ "$output" == *"2.0"* ]]
 }
 
 @test "on an existing install the gate is not called at all" {
     build_harness
     CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" run_resolve 1
     [ ! -s "$GATE_LOG" ]
+}
+
+@test "the refusal on an existing install never rewrites the marker" {
+    build_harness
+    # The marker is what says which generation the running server actually is.
+    # A refusal that changed it on the way out would be worse than no refusal.
+    CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" run_resolve 1
+    [[ "$output" != *"RESULT: 3.1"* ]]
 }
 
 @test "a flag matching the existing generation is accepted quietly" {
@@ -327,6 +338,21 @@ run_argparse() {
     [[ "$output" == *"YES=1"* ]]
 }
 
+@test "a repeated --protocol with no value discards the earlier one" {
+    build_harness
+    # Without clearing the value on entry the second, valueless flag would
+    # silently keep the first one and the install would proceed on it.
+    run_argparse "$INSTALL_RU" --protocol=2.0 --protocol --yes
+    [[ "$output" == *"PROTOCOL=[] SET=1"* ]]
+    [[ "$output" == *"YES=1"* ]]
+}
+
+@test "the English installer discards it the same way" {
+    build_harness "$INSTALL_EN"
+    run_argparse "$INSTALL_EN" --protocol=2.0 --protocol
+    [[ "$output" == *"PROTOCOL=[] SET=1"* ]]
+}
+
 @test "no flag at all leaves the supplied marker clear" {
     build_harness
     run_argparse "$INSTALL_RU" --yes
@@ -351,7 +377,7 @@ run_step3() {
         echo 'die() { echo "DIE: $*" >&2; exit 1; }'
         echo 'log() { echo "LOG: $*"; }'
         echo 'log_warn() { echo "WARN: $*"; }'
-        echo 'update_state() { :; }'
+        echo 'update_state() { echo "$1" >> "$STATE_LOG"; }'
         echo 'lsmod() { echo "amneziawg 100000 0"; }'
         echo 'modinfo() { echo "vermagic: $(uname -r)"; echo "version: test"; }'
         echo 'command() { if [ "$1" = "-v" ] && [ "$2" = "awg" ]; then return 0; fi; builtin command "$@"; }'
@@ -366,7 +392,9 @@ run_step3() {
         echo 'step3_check_module'
     } > "$TEST_DIR/step3.sh"
     export GATE_LOG="$TEST_DIR/gate.log"
+    export STATE_LOG="$TEST_DIR/state.log"
     : > "$GATE_LOG"
+    : > "$STATE_LOG"
     run bash "$TEST_DIR/step3.sh"
 }
 
@@ -390,6 +418,38 @@ run_step3() {
 @test "the English installer wires step 3 the same way" {
     AWG_PROTOCOL="3.1" BLOCKER_CODE="" run_step3 "$INSTALL_EN"
     [ "$(cat "$GATE_LOG")" = "post" ]
+}
+
+@test "step 3 stops when the gate cannot answer at all" {
+    # Empty output means "3.1 is allowed", and a crashed call prints nothing
+    # either. Deleting the status check at THIS call site left every other
+    # step 3 test green, because they all supply a zero status - named by
+    # external review of this pull request.
+    AWG_PROTOCOL="3.1" BLOCKER_CODE="" GATE_RC=1 run_step3
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"DIE:"* ]]
+}
+
+@test "a step 3 that stopped never advances the state machine" {
+    # Printing a refusal is not the same as stopping: the proof is that the
+    # step never hands the installer over to step 4.
+    AWG_PROTOCOL="3.1" BLOCKER_CODE="" GATE_RC=1 run_step3
+    grep -qx 4 "$STATE_LOG" && { echo "state advanced to 4 despite the refusal"; return 1; }
+    return 0
+}
+
+@test "the English installer stops at step 3 on a gate that cannot answer" {
+    AWG_PROTOCOL="3.1" BLOCKER_CODE="" GATE_RC=1 run_step3 "$INSTALL_EN"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"DIE:"* ]]
+}
+
+@test "a step 3 that passed does advance the state machine" {
+    # The negative test above is worthless without this one: a state log that
+    # is always empty would satisfy it.
+    AWG_PROTOCOL="2.0" run_step3
+    [ "$status" -eq 0 ]
+    grep -qx 4 "$STATE_LOG"
 }
 
 # --------------------------------------------------------------- both locales
