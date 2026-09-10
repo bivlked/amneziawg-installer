@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AmneziaWG 2.0 VPN Installer for Ubuntu and Debian VPS</title>
+<title>AmneziaWG 2.0 / 3.0 VPN Installer for Ubuntu and Debian VPS</title>
 <meta name="description" content="One command turns your own Ubuntu or Debian VPS into an AmneziaWG 2.0 / 3.0 VPN server. About twenty minutes, then a QR code for your phone. DPI bypass, hardened firewall, MIT licensed.">
 <link rel="canonical" href="https://bivlked.github.io/amneziawg-installer/">
 <link rel="alternate" hreflang="en" href="https://bivlked.github.io/amneziawg-installer/">
 <link rel="alternate" hreflang="ru" href="https://bivlked.github.io/amneziawg-installer/ru/">
 <link rel="alternate" hreflang="x-default" href="https://bivlked.github.io/amneziawg-installer/">
 <meta property="og:type" content="website">
-<meta property="og:title" content="AmneziaWG 2.0 VPN Installer for Ubuntu and Debian VPS">
+<meta property="og:title" content="AmneziaWG 2.0 / 3.0 VPN Installer for Ubuntu and Debian VPS">
 <meta property="og:description" content="One command turns a clean Ubuntu or Debian VPS into a DPI-resistant AmneziaWG 2.0 / 3.0 VPN server. Open source, MIT licensed.">
 <meta property="og:url" content="https://bivlked.github.io/amneziawg-installer/">
 <meta property="og:site_name" content="amneziawg-installer">
@@ -22,7 +22,7 @@
 <meta property="og:locale:alternate" content="ru_RU">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="https://bivlked.github.io/amneziawg-installer/assets/og.png">
-<meta name="twitter:title" content="AmneziaWG 2.0 VPN Installer for Ubuntu and Debian VPS">
+<meta name="twitter:title" content="AmneziaWG 2.0 / 3.0 VPN Installer for Ubuntu and Debian VPS">
 <meta name="twitter:description" content="One command turns a clean Ubuntu or Debian VPS into a DPI-resistant AmneziaWG 2.0 / 3.0 VPN server. Open source, MIT licensed.">
 <meta name="google-site-verification" content="3E6FtjgNbCI2T4Ho99Hl--kZt4UFRLLwphMFXHerhmE">
 <meta name="theme-color" content="#0e1116">
@@ -80,7 +80,7 @@
     { "@type": "Question", "name": "Do I need Linux experience?", "acceptedAnswer": { "@type": "Answer", "text": "No, you do not need Linux experience: you copy one command into an SSH session on a clean VPS. The script handles the kernel module, firewall, forwarding, and the first client, then prints a QR code and a vpn link." } },
     { "@type": "Question", "name": "Which VPS should I pick?", "acceptedAnswer": { "@type": "Answer", "text": "A clean Ubuntu or Debian VPS with 1 vCPU and at least 512 MB of RAM. It is meant for a dedicated VPS, not a home router or shared hosting. Check separately whether your host gives you an emergency console and whether it actually works: that is the simplest way back in if SSH stops answering, either after a reboot or because of a firewall rule. If there is none, recovery takes much longer: provider support, a snapshot rollback, or a reinstall. And if your SSH listens on a non-standard port, pass it at install time with --ssh-port=PORT. The installer does detect the port on its own, but an unattended --yes install skips the confirmation, so there is nobody left to double-check it." } },
     { "@type": "Question", "name": "Does it bypass DPI and censorship?", "acceptedAnswer": { "@type": "Answer", "text": "AmneziaWG 2.0 adds obfuscation on top of WireGuard to resist the deep packet inspection used in Russia, Iran, China, and on school or corporate networks. No method is guaranteed against every operator, but the protocol gives you the obfuscation settings that get through today." } },
-    { "@type": "Question", "name": "Which AmneziaWG version does the installer set up, 2.0 or 3.0?", "acceptedAnswer": { "@type": "Answer", "text": "The kernel decides, not the distribution name. If the server runs kernel 6.7 or newer, the module comes from the official PPA, which has been on the 3.0 line since the end of July - that is what you get on current Ubuntu 24.04 and later and Debian 13 images. On kernels older than 6.7 the installer builds a pinned 2.0 module from source: the 3.0 line is not validated there yet, so we keep 2.0 on purpose. ARM servers we ship a prebuilt module for get that instead and also stay on 2.0. The generated configs are the same either way - the 2.0 parameters Jc/Jmin/Jmax, S1-S4, H1-H4 and the I1 concealment packet - and none of the new 3.0 features are enabled, so configs handed out earlier need no changes." } },
+    { "@type": "Question", "name": "Which AmneziaWG version does the installer set up, 2.0 or 3.0?", "acceptedAnswer": { "@type": "Answer", "text": "The kernel decides, not the distribution name. If the server runs kernel 6.7 or newer, the module comes from the official PPA, and that is a third-line module - that is what you get on current Ubuntu 24.04 and later and Debian 13 images. Which line runs on your server is answered by one command: cat /sys/module/amneziawg/version. On kernels older than 6.7 the installer builds a pinned 2.0 module from source: the third line is not validated there, so we keep the second on purpose. ARM servers we ship a prebuilt module for get that instead and also stay on 2.0. The generated configs are the same either way - the 2.0 parameters Jc/Jmin/Jmax, S1-S4, H1-H4 and the I1 concealment packet - and none of the third-line features are enabled, so configs handed out earlier need no changes." } },
     { "@type": "Question", "name": "Does it run on ARM and Raspberry Pi?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, prebuilt ARM64 modules cover Raspberry Pi 3, 4 and 5, Hetzner CAX, Oracle Ampere A1, and AWS Graviton. The same command picks the right one." } },
     { "@type": "Question", "name": "How do I update to a new release?", "acceptedAnswer": { "@type": "Answer", "text": "Download the new release script on the same server and run it with the --force flag. Server keys, clients, and obfuscation settings survive the reinstall. After a kernel update DKMS builds the module for the new kernel on its own. On the ARM prebuilt path, running the installer again installs the module for the current kernel." } },
     { "@type": "Question", "name": "Can I drive it from a script or a bot?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, most management commands take --json and answer with a single JSON object even when the command failed, so the reply is always parseable. The exceptions: list and stats return an array, and show and diagnose do not take the flag. New fields show up over time; existing ones do not get renamed. For unattended runs there is --yes, and with AWG_STRICT_CONFIRM=1 a command like removing a client refuses to run when --yes is missing instead of quietly agreeing. A third-party Telegram bot, awgram, already runs on this interface." } },
@@ -109,8 +109,9 @@
 
 <section class="hero">
   <div class="wrap">
-    <h1>AmneziaWG 2.0 VPN server in one command</h1>
+    <h1>AmneziaWG 2.0 / 3.0 VPN server in one command</h1>
     <p class="lede">Turn a clean Ubuntu or Debian VPS into a self-hosted, DPI-resistant VPN. No Docker, no web panel, no Linux experience required.</p>
+    <p class="inline-note">On servers with a recent kernel the module comes from the third line, while the configuration profile stays 2.0: it is the same on the server and on the clients, so configs handed out earlier keep working untouched. <a href="/amneziawg-installer/awg3/">Check what you have</a></p>
     <div class="cta-row">
       <a class="btn btn-primary" href="#quick-start">Quick start</a>
       <a class="btn" href="https://github.com/bivlked/amneziawg-installer/blob/main/INSTALL_VPS.md">Full guide</a>
@@ -266,7 +267,7 @@
       <details><summary>Do I need Linux experience?</summary><div class="answer">No, you do not need Linux experience: you copy one command into an SSH session on a clean VPS. The script handles the kernel module, firewall, forwarding, and the first client, then prints a QR code and a vpn link.</div></details>
       <details><summary>Which VPS should I pick?</summary><div class="answer">A clean Ubuntu or Debian VPS with 1 vCPU and at least 512 MB of RAM. It is meant for a dedicated VPS, not a home router or shared hosting. Check separately whether your host gives you an emergency console and whether it actually works: that is the simplest way back in if SSH stops answering, either after a reboot or because of a firewall rule. If there is none, recovery takes much longer: provider support, a snapshot rollback, or a reinstall. And if your SSH listens on a non-standard port, pass it at install time with <code>--ssh-port=PORT</code>. The installer does detect the port on its own, but an unattended <code>--yes</code> install skips the confirmation, so there is nobody left to double-check it.</div></details>
       <details><summary>Does it bypass DPI and censorship?</summary><div class="answer">AmneziaWG 2.0 adds obfuscation on top of WireGuard to resist the deep packet inspection used in Russia, Iran, China, and on school or corporate networks. No method is guaranteed against every operator, but the protocol gives you the obfuscation settings that get through today.</div></details>
-      <details><summary>Which AmneziaWG version does the installer set up, 2.0 or 3.0?</summary><div class="answer">The kernel decides, not the distribution name. If the server runs kernel 6.7 or newer, the module comes from the official PPA, which has been on the 3.0 line since the end of July - that is what you get on current Ubuntu 24.04 and later and Debian 13 images. On kernels older than 6.7 the installer builds a pinned 2.0 module from source: the 3.0 line is not validated there yet, so we keep 2.0 on purpose. ARM servers we ship a prebuilt module for get that instead and also stay on 2.0. The generated configs are the same either way - the 2.0 parameters Jc/Jmin/Jmax, S1-S4, H1-H4 and the I1 concealment packet - and none of the new 3.0 features are enabled, so configs handed out earlier need no changes.</div></details>
+      <details><summary>Which AmneziaWG version does the installer set up, 2.0 or 3.0?</summary><div class="answer">The kernel decides, not the distribution name. If the server runs kernel 6.7 or newer, the module comes from the official PPA, and that is a third-line module - that is what you get on current Ubuntu 24.04 and later and Debian 13 images. Which line runs on your server is answered by one command: cat /sys/module/amneziawg/version. On kernels older than 6.7 the installer builds a pinned 2.0 module from source: the third line is not validated there, so we keep the second on purpose. ARM servers we ship a prebuilt module for get that instead and also stay on 2.0. The generated configs are the same either way - the 2.0 parameters Jc/Jmin/Jmax, S1-S4, H1-H4 and the I1 concealment packet - and none of the third-line features are enabled, so configs handed out earlier need no changes.</div></details>
       <details><summary>Does it run on ARM and Raspberry Pi?</summary><div class="answer">Yes, prebuilt ARM64 modules cover Raspberry Pi 3, 4 and 5, Hetzner CAX, Oracle Ampere A1, and AWS Graviton. The same command picks the right one.</div></details>
       <details><summary>How do I update to a new release?</summary><div class="answer">Download the new release script on the same server and run it with the <code>--force</code> flag. Server keys, clients, and obfuscation settings survive the reinstall. After a kernel update DKMS builds the module for the new kernel on its own. On the ARM prebuilt path, running the installer again installs the module for the current kernel.</div></details>
       <details><summary>Can I drive it from a script or a bot?</summary><div class="answer">Yes, most management commands take <code>--json</code> and answer with a single JSON object even when the command failed, so the reply is always parseable. The exceptions: <code>list</code> and <code>stats</code> return an array, and <code>show</code> and <code>diagnose</code> do not take the flag. New fields show up over time; existing ones do not get renamed. For unattended runs there is <code>--yes</code>, and with <code>AWG_STRICT_CONFIRM=1</code> a command like removing a client refuses to run when <code>--yes</code> is missing instead of quietly agreeing. A third-party Telegram bot, <a href="https://github.com/ekuraev/awgram">awgram</a>, already runs on this interface.</div></details>
@@ -281,6 +282,13 @@
   <div class="wrap">
     <div class="cols">
       <div>
+        <div class="foot-links">
+          <a href="/amneziawg-installer/compare/">Compare with the app</a>
+          <a href="/amneziawg-installer/cascade/">Two-server cascade</a>
+          <a href="/amneziawg-installer/manage/">Client management</a>
+          <a href="/amneziawg-installer/warp-ru/">Russian sites via VPN</a>
+          <a href="/amneziawg-installer/awg3/">AmneziaWG versions</a>
+        </div>
         <div class="foot-links">
           <a href="https://github.com/bivlked/amneziawg-installer">Repository</a>
           <a href="https://github.com/bivlked/amneziawg-installer/blob/main/INSTALL_VPS.md">Install guide</a>

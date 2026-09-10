@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AmneziaWG 3.0 on your own server: which line you get and whether to upgrade</title>
-<meta name="description" content="Which AmneziaWG protocol line the installer puts on your server, how to check the loaded module version with one command, whether you need to upgrade, and what happens to existing client configs.">
+<title>AmneziaWG 3.0 and 3.1 on your own server: which line you get and whether to upgrade</title>
+<meta name="description" content="Which AmneziaWG protocol line the installer puts on your server - 3.0 or 3.1, how to check the loaded module version with one command, whether you need to upgrade, and what happens to existing client configs.">
 <link rel="canonical" href="https://bivlked.github.io/amneziawg-installer/awg3/">
 <link rel="alternate" hreflang="en" href="https://bivlked.github.io/amneziawg-installer/awg3/">
 <link rel="alternate" hreflang="ru" href="https://bivlked.github.io/amneziawg-installer/ru/awg3/">
 <link rel="alternate" hreflang="x-default" href="https://bivlked.github.io/amneziawg-installer/awg3/">
 <meta property="og:type" content="article">
-<meta property="og:title" content="AmneziaWG 3.0 on your own server: which line you get and whether to upgrade">
+<meta property="og:title" content="AmneziaWG 3.0 and 3.1 on your own server: which line you get and whether to upgrade">
 <meta property="og:description" content="The installer picks the module line from your kernel and architecture. How to see what is running, and why the third line needs no manual switch.">
 <meta property="og:url" content="https://bivlked.github.io/amneziawg-installer/awg3/">
 <meta property="og:site_name" content="amneziawg-installer">
@@ -22,7 +22,7 @@
 <meta property="og:locale:alternate" content="ru_RU">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="https://bivlked.github.io/amneziawg-installer/assets/og-awg3.png">
-<meta name="twitter:title" content="AmneziaWG 3.0 on your own server: which line you get and whether to upgrade">
+<meta name="twitter:title" content="AmneziaWG 3.0 and 3.1 on your own server: which line you get and whether to upgrade">
 <meta name="twitter:description" content="How to tell which AmneziaWG line runs on your server, and whether anything needs doing.">
 <meta name="theme-color" content="#0e1116">
 <meta name="color-scheme" content="dark">
@@ -34,7 +34,7 @@
   "@context": "https://schema.org",
   "@type": "FAQPage",
   "mainEntity": [
-    { "@type": "Question", "name": "Which AmneziaWG version does the installer put on a server?", "acceptedAnswer": { "@type": "Answer", "text": "It depends on your kernel and architecture, and the installer decides on its own. On x86_64 with kernel 6.7 or newer the module comes from the Amnezia team's PPA, and that PPA carries the third protocol line right now (checked 17 August 2026). On kernels older than 6.7, such as Debian 12 with 6.1, a pinned second line is built from source at tag v1.0.20260725. On ARM the order differs: the installer first tries our prebuilt package, pinned to that same second line, and the kernel rule decides the outcome only when nothing matched. So on ARM the second line is possible even with a recent kernel." } },
+    { "@type": "Question", "name": "Which AmneziaWG version does the installer put on a server?", "acceptedAnswer": { "@type": "Answer", "text": "It depends on your kernel and architecture, and the installer decides on its own. On x86_64 with kernel 6.7 or newer the module comes from the Amnezia team's PPA, and that PPA carries the third protocol line. On kernels older than 6.7, such as Debian 12 with 6.1, a pinned second line is built from source at tag v1.0.20260725. On ARM the order differs: the installer first tries our prebuilt package, pinned to that same second line, and the kernel rule decides the outcome only when nothing matched. So on ARM the second line is possible even with a recent kernel." } },
     { "@type": "Question", "name": "How do I check which AmneziaWG version runs on my server?", "acceptedAnswer": { "@type": "Answer", "text": "Run cat /sys/module/amneziawg/version - it reads the version attribute of the module loaded into the kernel, not of a file on disk. For the userspace tools, run awg --version. Do not use modinfo for this: it reads a file on disk, and if two module trees with the same name ended up on the host it may name the one that is not running." } },
     { "@type": "Question", "name": "Do I need to upgrade AmneziaWG on my own server?", "acceptedAnswer": { "@type": "Answer", "text": "The arrival of the third line requires no manual switch. Once the installer has chosen the PPA path, later releases arrive through a normal apt upgrade. On Debian 12 or on ARM with a matching prebuilt the module is pinned on purpose to an immutable tag, and a plain apt upgrade will not move it to the third line: the PPA package is held, and the choice is only revisited when the installer runs again. After a kernel change the module has to appear for the new kernel: on the DKMS path an apt hook and a boot-time service do that, while manage repair-module stays a manual recovery for when the automation fails. On ARM with a prebuilt there is nothing to rebuild, you run the installer again with --force." } },
     { "@type": "Question", "name": "Will my existing client configs stop working?", "acceptedAnswer": { "@type": "Answer", "text": "No, configs you have already handed out keep working without a single edit. The installer generates them in second-line format, and a third-line module serves those configs. The vpn:// link shows this too: its protocol_version field is 2. There is no need to reissue clients. That is about the module line changing. Reissuing is needed in a different case: run the reinstall with obfuscation flags, that is --preset, --jc, --jmin, --jmax or --no-cps, and the installer regenerates the whole Jc, S, H and I1 set and warns you that the configs you handed out have to be replaced." } },
@@ -92,7 +92,7 @@
 
 <section class="hero">
   <div class="wrap">
-    <h1>AmneziaWG 3.0 on your own server: which line you get and whether to upgrade</h1>
+    <h1>AmneziaWG 3.0 and 3.1 on your own server: which line you get and whether to upgrade</h1>
     <p class="lede">Short answer: the installer picks the protocol line for your kernel and architecture, and you enable nothing by hand. On x86 with a recent kernel the third line already arrives on its own; on Debian 12 and on part of the ARM range the proven second line stays. Client configs work either way, and you do not need to reissue them.</p>
     <div class="cta-row">
       <a class="btn btn-primary" href="#check">Check your server</a>
@@ -112,7 +112,7 @@ awg --version                      # version of the userspace tools</pre>
     </div>
     <p class="inline-note">The first command reads the <code>version</code> attribute of the module running in the kernel right now, not of a file on disk. That attribute is declared in both lines. If the module is not loaded there will be no output - then <code>modinfo amneziawg | grep ^version</code> shows what sits on disk.</p>
     <p>Why not <code>modinfo</code> by default: it reads metadata from whichever file is selected on disk. If two module trees with the same name ended up on the host, which happens on ARM, it will name the wrong one. Since v5.25.0 both <code>manage check</code> and <code>manage diagnose</code> ask the loaded module first.</p>
-    <p class="inline-note">⚠️ The apt package version does not answer this question, and it is easy to be misled here. <code>dpkg -l amneziawg-dkms</code> prints a string starting with <code>1.0.0</code> - that is the <strong>packaging</strong> version, not the protocol one, and people who see it usually conclude they are on the first version. Only the commit hash at the end identifies the line. Rather than guessing from apt, ask the module itself with the command above.</p>
+    <p class="inline-note">⚠️ The apt package version does not answer this question, and it is easy to be misled here. <code>dpkg -l amneziawg-dkms</code> prints a string starting with <code>1.0.0</code> - that is the <strong>packaging</strong> version, not the protocol one, and people who see it usually conclude they are on the first version. Only the commit hash after the plus identifies the build, and you cannot tell the line from it without going upstream. Rather than guessing from apt, ask the module itself with the command above.</p>
   </div>
 </section>
 
@@ -186,7 +186,7 @@ awg --version                      # version of the userspace tools</pre>
       </table>
     </div>
     <p class="inline-note">All of these are optional and set separately. While none of them is set, a third-line engine puts exactly the same format on the wire as the second one - which is precisely why your current configs keep working. The installer sets none of them.</p>
-    <p>Releases continue inside the third line. As of 17 August 2026 the PPA carried 3.1, which added two more parameters; a repository can lag behind a fresh upstream release, so we do not print a fixed number here. The check command above answers accurately on any given day.</p>
+    <p>Inside the third line the number keeps going up - 3.0, 3.1 and onwards. Which release sits in the PPA on the day you install is up to the PPA, so we do not print a fixed number here. And it matters which question you are asking: the line is what the command above shows, while a specific build is only in the package version, because the string inside the module does not change between builds.</p>
   </div>
 </section>
 
@@ -194,7 +194,7 @@ awg --version                      # version of the userspace tools</pre>
   <div class="wrap">
     <h2>FAQ</h2>
     <div class="faq">
-      <details><summary>Which AmneziaWG version does the installer put on a server?</summary><div class="answer">It depends on your kernel and architecture, and the installer decides on its own. On x86_64 with kernel 6.7 or newer the module comes from the Amnezia team's PPA, and that PPA carries the third protocol line right now (checked 17 August 2026). On kernels older than 6.7, such as Debian 12 with 6.1, a pinned second line is built from source at tag <code>v1.0.20260725</code>. On ARM the order differs: the installer first tries our prebuilt package, pinned to that same second line, and the kernel rule decides the outcome only when nothing matched. So on ARM the second line is possible even with a recent kernel.</div></details>
+      <details><summary>Which AmneziaWG version does the installer put on a server?</summary><div class="answer">It depends on your kernel and architecture, and the installer decides on its own. On x86_64 with kernel 6.7 or newer the module comes from the Amnezia team's PPA, and that PPA carries the third protocol line. On kernels older than 6.7, such as Debian 12 with 6.1, a pinned second line is built from source at tag <code>v1.0.20260725</code>. On ARM the order differs: the installer first tries our prebuilt package, pinned to that same second line, and the kernel rule decides the outcome only when nothing matched. So on ARM the second line is possible even with a recent kernel.</div></details>
       <details><summary>How do I check which AmneziaWG version runs on my server?</summary><div class="answer">Run <code>cat /sys/module/amneziawg/version</code> - it reads the version attribute of the module loaded into the kernel, not of a file on disk. For the userspace tools, run <code>awg --version</code>. Do not use <code>modinfo</code> for this: it reads a file on disk, and if two module trees with the same name ended up on the host it may name the one that is not running.</div></details>
       <details><summary>Do I need to upgrade AmneziaWG on my own server?</summary><div class="answer">The arrival of the third line requires no manual switch. Once the installer has chosen the PPA path, later releases arrive through a normal <code>apt upgrade</code>. On Debian 12 or on ARM with a matching prebuilt the module is pinned on purpose to an immutable tag, and a plain <code>apt upgrade</code> will not move it to the third line: the PPA package is held, and the choice is only revisited when the installer runs again. After a kernel change the module has to appear for the new kernel: on the DKMS path an apt hook and a boot-time service do that, while <code>manage repair-module</code> stays a manual recovery for when the automation fails. On ARM with a prebuilt there is nothing to rebuild, you run the installer again with <code>--force</code>.</div></details>
       <details><summary>Will my existing client configs stop working?</summary><div class="answer">No, configs you have already handed out keep working without a single edit. The installer generates them in second-line format, and a third-line module serves those configs. The <code>vpn://</code> link shows this too: its <code>protocol_version</code> field is 2. There is no need to reissue clients. That is about the module line changing. Reissuing is needed in a different case: run the reinstall with obfuscation flags, that is <code>--preset</code>, <code>--jc</code>, <code>--jmin</code>, <code>--jmax</code> or <code>--no-cps</code>, and the installer regenerates the whole Jc, S, H and I1 set and warns you that the configs you handed out have to be replaced.</div></details>
@@ -234,6 +234,13 @@ awg --version                      # version of the userspace tools</pre>
   <div class="wrap">
     <div class="cols">
       <div>
+        <div class="foot-links">
+          <a href="/amneziawg-installer/">Home</a>
+          <a href="/amneziawg-installer/compare/">Compare with the app</a>
+          <a href="/amneziawg-installer/cascade/">Two-server cascade</a>
+          <a href="/amneziawg-installer/manage/">Client management</a>
+          <a href="/amneziawg-installer/warp-ru/">Russian sites via VPN</a>
+        </div>
         <div class="foot-links">
           <a href="/amneziawg-installer/">Home</a>
           <a href="https://github.com/bivlked/amneziawg-installer">Repository</a>
