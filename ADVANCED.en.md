@@ -664,7 +664,7 @@ Notes for manual setups:
 
 - **S3/S4** are AWG 2.0 parameters added to the protocol later than S1/S2. Configs from the earlier AWG 1.x release may not have them - add by hand, `S3` takes `0-64` and `S4` takes `0-32`, the key point is that the keys exist at all.
 - **H1–H4** can be single-value (`H1 = 1234567`) or a range (`H1 = 100000-200000`); ranges must not overlap. Keep the upper bound at `2147483647` (`INT32_MAX`) or below, otherwise `amneziawg-windows-client` may flag the value as invalid.
-- **I1-I5** (CPS / special-junk packets) are optional. Without `I1` the AWG client falls back to AWG 1.0 mode; for full AWG 2.0 obfuscation add `I1 = <r 128>` (random 128 bytes) or `I1 = <b 0xHEX>` (binary). Since v5.18.0 all five (`I1`-`I5`) are carried into client configs, not just `I1`: set `I2`-`I5` in the `[Interface]` section of `awg0.conf`, restart the service (`sudo systemctl restart awg-quick@awg0`), and distribute to clients with `sudo bash /root/awg/manage_amneziawg.sh regen <name>` - the values flow into the `.conf`, QR, and `vpn://`. Ready-made sets come from, e.g., the VoidWaifu list; tag formats: `<r N>`, `<b 0xHEX>`, `<c>`, `<t>`. These values do not have to match the server: the receiver never validates them, and a node without `I1` simply sends no concealment packets. Case does matter - uppercase only. Unset `I2`-`I5` are simply not emitted.
+- **I1-I5** (CPS / special-junk packets) are optional. Without `I1` the AWG client falls back to AWG 1.0 mode; for full AWG 2.0 obfuscation add `I1 = <r 128>` (random 128 bytes) or `I1 = <b 0xHEX>` (binary). ⚠️ The `<r 128>` example shows the FORMAT, not a recommended value: by the September 2026 measurement a packet of random bytes is dropped on some cellular networks and the handshake never completes. If the tunnel does not come up on cellular, see [the handshake never completes on cellular](#no-hs-mobile-adv). Since v5.18.0 all five (`I1`-`I5`) are carried into client configs, not just `I1`: set `I2`-`I5` in the `[Interface]` section of `awg0.conf`, restart the service (`sudo systemctl restart awg-quick@awg0`), and distribute to clients with `sudo bash /root/awg/manage_amneziawg.sh regen <name>` - the values flow into the `.conf`, QR, and `vpn://`. Ready-made sets come from, e.g., the VoidWaifu list; tag formats: `<r N>`, `<b 0xHEX>`, `<c>`, `<t>`. These values do not have to match the server: the receiver never validates them, and a node without `I1` simply sends no concealment packets. Case does matter - uppercase only. Unset `I2`-`I5` are simply not emitted.
 - **MTU**, **PostUp/PostDown** are optional and depend on the setup (see the `amneziawg-go` LXC section on `iptables` MASQUERADE).
 
 After creating such an `awg0.conf`, `manage_amneziawg.sh` also needs `/root/awg/server_public.key` (compute it with `awg pubkey < /etc/amnezia/amneziawg/server_private.key > /root/awg/server_public.key`) and a minimal `/root/awg/awgsetup_cfg.init` containing at least `AWG_PORT`, `AWG_TUNNEL_SUBNET`, `AWG_ENDPOINT`.
@@ -1189,7 +1189,7 @@ sudo systemctl restart awg-quick@awg0</pre>
   <br>
   <b>"I1=absent"</b> means: in <code>/etc/amnezia/amneziawg/awg0.conf</code> and in client <code>.conf</code> files, remove the <code>I1 = ...</code> line entirely (do not leave it empty). This is the AWG 1.0 fallback — no CPS masking, but the handshake clears DPI at some regional carriers where CPS packets themselves trigger blocks (Issue <a href="https://github.com/bivlked/amneziawg-installer/issues/42">#42</a>, @alkorrnd). On the server: <code>sudo systemctl restart awg-quick@awg0</code>. On clients — <code>sudo bash /root/awg/manage_amneziawg.sh regen &lt;name&gt;</code> for each, then redistribute the configs.
   <br>
-  <b>Update, May 2026:</b> in the May blocking wave the <code>I1=absent</code> option stopped working on Tele2 (Krasnoyarsk), while a short <code>I1 = &lt;r 48&gt;</code> cleared DPI. The same worked on MTS (Primorsky Krai). It looks like the I1 size matters for these carriers: a smaller value <code>&lt;r 48&gt;</code> may be less conspicuous to DPI. If <code>--preset=mobile</code> or <code>I1=absent</code> do not help - try <code>I1 = &lt;r 48&gt;</code>. The <code>diagnose --carrier=tele2_krasnoyarsk</code> profile still reflects the earlier <code>I1=absent</code> (Issue #42), so for the May 2026 wave set <code>I1 = &lt;r 48&gt;</code> manually (Discussion <a href="https://github.com/bivlked/amneziawg-installer/discussions/38">#38</a>, @alkorrnd + @etotent).
+  <b>Update, May 2026:</b> in the May blocking wave the <code>I1=absent</code> option stopped working on Tele2 (Krasnoyarsk), while a short <code>I1 = &lt;r 48&gt;</code> cleared DPI. The same worked on MTS (Primorsky Krai). At the time this was put down to size: a smaller value <code>&lt;r 48&gt;</code> may be less conspicuous to DPI. ⚠️ <b>The September 2026 measurement refines the cause: what decides is the SHAPE of the packet, not its size.</b> A packet of random bytes is dropped whether it is large or small (small ones just less often), while a packet of the same length that resembles a real protocol gets through. A short <code>&lt;r 48&gt;</code> helps because there is little for the filter to catch on to in a short piece of noise, and that is weaker than a meaningful shape. Details and the table: <a href="#no-hs-mobile-adv">the handshake never completes on cellular</a>. If <code>--preset=mobile</code> or <code>I1=absent</code> do not help - try <code>I1 = &lt;r 48&gt;</code>. The <code>diagnose --carrier=tele2_krasnoyarsk</code> profile still reflects the earlier <code>I1=absent</code> (Issue #42), so for the May 2026 wave set <code>I1 = &lt;r 48&gt;</code> manually (Discussion <a href="https://github.com/bivlked/amneziawg-installer/discussions/38">#38</a>, @alkorrnd + @etotent).
   <br>
   <b>QUIC-mimicry I1 (experimental):</b> instead of a random <code>&lt;r N&gt;</code> you can set I1 as a block that mimics the start of a QUIC packet: <code>I1 = &lt;b 0xc30000000108&gt;&lt;r 8&gt;&lt;b 0x08&gt;&lt;r 8&gt;&lt;b 0x0045dc&gt;&lt;t&gt;&lt;r 16&gt;</code>. The first bytes (<code>0xC3</code> + version) look like a QUIC v1 long-header, and DPI that classifies UDP/443 as QUIC let the flow through in this report. It held for 2+ days on Tele2/Megafon (Kemerovo) (Issue <a href="https://github.com/bivlked/amneziawg-installer/issues/42">#42</a>, @Fourdot-co). This is a client-side parameter, changed only in client <code>.conf</code> files, no server sync needed; mind that editing just one exported <code>.conf</code> will be lost on the next client <code>regen</code>. Note: do not base it on a TLS ClientHello (<code>&lt;b 0x160301...&gt;</code>) - that is a TCP format, over UDP the DPI will see the TCP structure and drop the packet. For UDP mimicry use a QUIC long-header or DTLS (the same ClientHello handshake type, but with a record header that adds epoch and sequence number).
   <br>
@@ -1441,10 +1441,63 @@ Since vanilla WireGuard works, the network, the port and the firewall are ruled 
 
 What to check:
 
-1. Compare the obfuscation parameters in the `[Interface]` section on the server and the client. `S1`-`S4` and `H1`-`H4` must match: the receiver strips that padding and checks those headers, so any mismatch here means the packet is dropped and the handshake never completes. In 2.0, `H1`-`H4` are ranges - the same ranges on both sides. `Jc`/`Jmin`/`Jmax` and `I1`-`I5` do not have to match: they are separate decoy packets, the other side discards them, and a node without `I1` simply never sends them, which does not stop the handshake. Case does matter for `I1`-`I5`: uppercase only.
+1. Compare the obfuscation parameters in the `[Interface]` section on the server and the client. `S1`-`S4` and `H1`-`H4` must match: the receiver strips that padding and checks those headers, so any mismatch here means the packet is dropped and the handshake never completes. In 2.0, `H1`-`H4` are ranges - the same ranges on both sides. `Jc`/`Jmin`/`Jmax` and `I1`-`I5` do not have to match: they are separate decoy packets, the other side discards them, and a node without `I1` simply never sends them, so there is nothing here to **mismatch**. ⚠️ That does not make `I1` irrelevant to the handshake: it requires no agreement between the sides, but its shape can stop the handshake packet from arriving, because the two travel in the same burst. That is a separate case, covered below: [the handshake never completes on cellular](#no-hs-mobile-adv). Case does matter for `I1`-`I5`: uppercase only.
 2. Compare versions on both ends: `awg --version`. A client built separately (for example `amneziawg-tools` from the AUR on Arch) is often older and does not speak AWG 2.0 - then the server expects a 2.0 envelope while the client sends the old format. See [AWG 2.0 Client Compatibility](#client-compat-adv) for the list of compatible clients.
 
 The specific case (an AWG 2.0 server with `S3`/`S4` > 0 and an old AWG 1.0 client) is a known upstream issue, covered in the [FAQ](#faq-advanced-adv).
+</details>
+
+<a id="no-hs-mobile-adv"></a>
+
+<details>
+<summary><strong>The handshake never completes on cellular, while the same profile works on Wi-Fi</strong></summary>
+
+**Symptom.** On a cellular network the client hangs at "connecting" forever and no traffic flows. The very same profile, server and port come up and work fully over Wi-Fi.
+
+🔴 **From the server side this looks like a working connection, and that is the trap.** In `awg show` the peer IS there: `endpoint` switches to the client's cellular address and the received byte counter grows. Exactly one field never updates: `latest handshake`.
+
+**Why.** A transport packet travels alone and gets through. A handshake packet does not: ahead of it goes a burst of junk packets (`Jc` of them) and the concealment packet `I1`. If the network drops that burst, the handshake goes down with it. Individual transport packets from the client still reach the server, which updates `endpoint` from them, and that is where the misleading picture comes from.
+
+**Telling it apart from neighbouring causes.** All three read as "no connection", but they look different:
+
+| What the server shows | Cause |
+|---|---|
+| no packets from the client at all | wrong port, firewall, address-based block |
+| packets arrive, `latest handshake` empty, `endpoint` does NOT change | `S1`-`S4` or `H1`-`H4` mismatch (see the previous entry) |
+| **packets arrive, `endpoint` changes, counter grows, `latest handshake` empty** | **this case: the burst is filtered in transit** |
+
+**How to confirm.** On the server, look at the peer and take a capture:
+
+```bash
+awg show awg0 | grep -A5 '<client public key>'
+tcpdump -i any -n "udp port <your VPN port> and host <client address>"
+```
+
+If the capture shows packets from the client and replies from the server, yet `latest handshake` has not moved after a minute of attempts, this is it.
+
+**Cause and what to do.** By default the installer writes the concealment packet as `I1 = <r N>`, that is N random bytes. Some cellular networks drop such a packet. Ways out, best first:
+
+1. **Replace `I1` with a packet that has a meaningful shape.** A string like `<r 2><b 0x8580...>` imitates a DNS response: two random bytes are the transaction id, then the header and a record. A ready-made QUIC string comes from the generator in [AS-based blocking and the I1/CPS workaround](#as-blocking-adv); it fits here too, because what decides is the packet's shape, not its size.
+2. **Drop `I1` entirely** by reinstalling with `--no-cps`. Blunter: the handshake loses its disguise along with the problem.
+3. Lowering `Jc`, `Jmin`, `Jmax` **does not help** - see the measurement below.
+
+**Measurement (September 2026, MTS Moscow, server in the US).** Exactly one parameter changed at a time, everything else identical across runs:
+
+| `I1` | `Jc` | `Jmin`-`Jmax` | Handshake |
+|---|---|---|---|
+| `<r 64>` | 3 | 40-90 | **yes** |
+| `<r 64>` | 6 | 40-90 | **yes** |
+| `<r 64>` | 6 | 89-339 | **yes** |
+| `<r 96>` | 6 | 89-339 | no |
+| `<r 128>` | 6 | 89-339 | no |
+| `<r 192>` | 6 | 89-339 | no |
+| `<r 256>` | 6 | 89-339 | no |
+| **DNS-shaped, 128 bytes** | 6 | 89-339 | **yes** |
+
+The last two rows are the deciding pair: **the same 128 bytes, different content.** The random one does not pass, the DNS-shaped one does. So it is neither the packet size nor the number of junk packets: `Jc = 6` and junk up to 339 bytes pass perfectly well.
+
+⚠️ **Limits of the measurement.** One carrier (MTS, Moscow), one route (Russia to the US), one device. One alternative shape was tried, DNS. Whether it is the DNS shape specifically or any non-random structure was not separated. Other carriers and other routes may behave differently: on the Kazakhstan route, by our earlier measurements, even the full burst passes.
+
 </details>
 
 <details>
@@ -1641,7 +1694,13 @@ The rule is applied automatically on install and reinstall (`--force`) for v5.17
 
 ### Carrier blocks the port (no connection)
 
-If the tunnel does not come up at all on cellular (the handshake never completes) while it works fine on Wi-Fi, the problem may be the port rather than the obfuscation. By default the server listens on UDP 39743; some carriers (MTS, for example) drop that non-standard UDP port but reliably pass `443/udp` - it looks like QUIC/HTTP3. In this case `--preset=mobile` does not help (it changes the traffic disguise, not the port).
+If the tunnel does not come up at all on cellular (the handshake never completes) while it works fine on Wi-Fi, there are TWO known causes, and one look at the server tells them apart.
+
+**Cause one: the port.** By default the server listens on UDP 39743; some carriers drop that non-standard UDP port but reliably pass `443/udp` - it looks like QUIC/HTTP3. `--preset=mobile` does not help here: it changes the traffic disguise, not the port. The tell: the server sees **nothing at all** - `tcpdump` on your port is silent and there is no peer activity in `awg show`.
+
+**Cause two: the shape of the `I1` concealment packet.** The tell is the opposite: packets from the client **do arrive**, the peer's `endpoint` updates, the received counter grows, and `latest handshake` never moves. Analysis and measurement: [the handshake never completes on cellular](#no-hs-mobile-adv).
+
+⚠️ Do not assume the port by default. In our September 2026 measurement on MTS (Moscow) a non-standard UDP port passed freely and the cause was entirely `I1`. Look at the server first, change the port second.
 
 Set the port at install time - `sudo bash install_amneziawg.sh --port=443 ...`. On an already running server, change the port without reinstalling:
 
@@ -1663,7 +1722,9 @@ Then re-issue the client configs (`sudo bash /root/awg/manage_amneziawg.sh regen
 
 **Symptom.** A VPN server on Hetzner behaves like this: the handshake completes, the client shows a recent handshake and receives a few kilobytes, after which the flow stops. The in-tunnel ping to the server (`10.x.x.x`) goes to 100% loss, incoming traffic freezes, and new handshakes never complete. It looks like the server died, even though it is alive and reachable over SSH.
 
-**Mechanism.** It looks like this is not a per-IP block but the server address landing in an autonomous system (AS) that is not on the allowlist. According to DPI researcher 0ka ([Habr, article 997088](https://habr.com/ru/articles/997088/)), the filtering relies on an allowlist of roughly 72 ASes; it excludes, for example, Hetzner `AS24940` as well as ranges of OVH, DigitalOcean, AWS and Cloudflare, and traffic to them is degraded at the carrier (TSPU) level. The key point: ordinary junk parameters (`Jc`/`Jmin`/`Jmax`) do not help here, because they change the packet signature rather than the destination AS. In our tests, what got through was an `I1`/CPS packet disguised as a QUIC handshake to an allowlisted SNI. The SNI is chosen per hoster; for Hetzner, `7-zip.org` worked.
+**Mechanism.** It looks like this is not a per-IP block but the server address landing in an autonomous system (AS) that is not on the allowlist. According to DPI researcher 0ka ([Habr, article 997088](https://habr.com/ru/articles/997088/)), the filtering relies on an allowlist of roughly 72 ASes; it excludes, for example, Hetzner `AS24940` as well as ranges of OVH, DigitalOcean, AWS and Cloudflare, and traffic to them is degraded at the carrier (TSPU) level. The key point: ordinary junk parameters (`Jc`/`Jmin`/`Jmax`) do not help here, because they change the packet signature rather than the destination AS. In our tests, what got through was an `I1`/CPS packet disguised as a QUIC handshake to an allowlisted SNI.
+
+⚠️ **Refinement from the September 2026 measurement: AS-based blocking alone does not explain it.** The same effect reproduced against a server in the US that has nothing to do with Hetzner: an `I1` concealment packet made of random bytes did not get through, while a packet of the same length shaped like DNS did. So the filter reacts to the **shape of the packet itself**, not only to the destination address, and swapping `I1` helps for a reason other than dodging an AS list. The detailed measurement is in [the handshake never completes on cellular](#no-hs-mobile-adv). The SNI is chosen per hoster; for Hetzner, `7-zip.org` worked.
 
 **Field test (June 2026).** The recipe was verified live on a clean Hetzner server (AS24940) from a Russian client across three Moscow ISPs, comparing the default configuration (generic `I1 = <r N>`) against the QUIC mimicry (`I1` generated for SNI `7-zip.org`).
 
