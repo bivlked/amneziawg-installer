@@ -59,6 +59,21 @@ CLI_ALLOW_IPV6_TUNNEL=0
 CLI_ISOLATION="default"
 CLI_SERVER_NAME=""
 CLI_MOBILE=0
+# Protocol generation requested by the flag. Empty = not given; then the marker
+# of an existing install applies, and on a new one PROTOCOL_DEFAULT below.
+CLI_PROTOCOL=""
+# 🔴 A separate "was supplied" flag, because an empty value and a missing
+# flag are DIFFERENT cases. A check like [[ -n "$CLI_PROTOCOL" ]] cannot
+# tell them apart, and then --protocol= quietly falls through to the
+# default instead of a clear refusal. Found by external review 9 sep 2026;
+# our own test missed it because it passed a space, not an empty string.
+CLI_PROTOCOL_SET=0
+# 🔴 The default of this PHASE, not of the final release. eng.md describes
+# v6.0.0, where the default is 3.1; the switch is a separate, later phase,
+# after the third-line generator works. Until then the default
+# is 2.0, and that is not a forgotten edit: a 3.1 marker without a 3.1
+# generator would produce a second-line config under a third-line label.
+PROTOCOL_DEFAULT="2.0"
 
 # --- Auto-cleanup of temporary files ---
 _install_temp_files=()
@@ -105,6 +120,26 @@ while [[ $# -gt 0 ]]; do
         --endpoint=*)    CLI_ENDPOINT="${1#*=}" ;;
         --server-name=*) CLI_SERVER_NAME="${1#*=}" ;;
         --mobile)        CLI_MOBILE=1 ;;
+        --protocol=*)    CLI_PROTOCOL="${1#*=}"; CLI_PROTOCOL_SET=1 ;;
+        # The space form is accepted on purpose, even though every other
+        # valued flag here takes "=" only. This one gets typed right after a
+        # refusal, from what the refusal printed, and the spec and docs write
+        # the way out as "--protocol 2.0". Being picky about the equals sign
+        # at that moment costs more than uniformity buys. A missing value
+        # yields an empty string and fails the check below.
+        # The next argument is taken as the value ONLY if it looks like
+        # one. An unconditional shift would eat the neighbouring flag:
+        # "--protocol --yes" would take "--yes" as the value and lose the
+        # auto-confirmation.
+        # 🔴 The value is cleared BEFORE the next argument is inspected.
+        # Without the reset a repeated valueless flag ("--protocol=2.0
+        # --protocol --yes") would quietly keep the earlier value and the
+        # installation would carry on, although the second time no value
+        # was given at all.
+        --protocol)      CLI_PROTOCOL_SET=1; CLI_PROTOCOL=""
+                         if [[ -n "${2-}" && "${2-}" != -* ]]; then
+                             CLI_PROTOCOL="$2"; shift
+                         fi ;;
         --yes|-y)        AUTO_YES=1 ;;
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
         --no-cps)        NO_CPS=1; CLI_NO_CPS=1 ;;
@@ -318,6 +353,14 @@ Options:
   --mobile              Mobile setup in one flag: --preset=mobile + port 443/udp
                         (mobile carriers often kill non-standard UDP ports).
                         An explicit --port=N wins over port 443
+  --protocol=2.0|3.1    Protocol generation for a NEW install (default 2.0).
+                        On an already configured server a flag naming a
+                        DIFFERENT generation ends the install: the generation
+                        of a running install changes only by reinstalling and
+                        reissuing every client profile. A matching one is
+                        accepted quietly.
+                        This version does not emit 3.1 yet - it refuses and
+                        names the reason
   -y, --yes             Auto-confirm (reboots, UFW, etc.)
   -f, --force           Force reinstall on top of an already-running AmneziaWG
                         (by default a run on a configured server aborts;
@@ -506,7 +549,7 @@ check_kernel_version() {
     fi
 }
 
-# shellcheck disable=SC2120  # called without args in the installer (uses uname -r); bats passes versions
+# shellcheck disable=SC2120  # called both with an argument (from awg31_environment_blocker) and without (uses uname -r); bats passes versions
 _kernel_supports_awg3() {
     # Returns 0 if the kernel version is >= 6.7 - there we take the module from the
     # PPA as is. Returns 1 if the kernel is older than 6.7 - there we go the pinned
@@ -536,6 +579,343 @@ _kernel_supports_awg3() {
         return 0
     fi
     return 1
+}
+
+# -- Environment gate for the AmneziaWG 3.1 profile ---------------------------
+# The gate has TWO stages, and that is a requirement of the plan rather than an
+# elaboration: the refusal has to be explained BEFORE the first package is
+# installed, while what actually landed on the machine can only be established
+# AFTER it.
+#   pre  - step 0, before any change to the system: architecture and kernel;
+#   post - step 3, after the module and the tools are installed: tools capability.
+#
+# Both stages live HERE and not in awg_common.sh, even though the specification
+# files the function under the library. The reason is the same one that makes
+# the installer carry its own safe_load_config(): awg_common.sh is downloaded at
+# step 5, while the gate has to answer at steps 0 and 3, when it is not on the
+# server yet.
+#
+# The reason code exists so that a refusal tells the operator what exactly is
+# wrong on their machine. A single "3.1 is unavailable" would send the owner of
+# a Debian 12 box and the owner of an ARM box into the same dead end, even
+# though their ways out are different.
+
+# _awg31_host_arch : package architecture, falling back to uname -m.
+_awg31_host_arch() {
+    local a=""
+    a=$(dpkg --print-architecture 2>/dev/null) || a=""
+    [[ -z "$a" ]] && a=$(uname -m 2>/dev/null)
+    printf '%s' "$a"
+}
+
+# awg31_tools_support : do the INSTALLED awg tools understand 3.1 parameters?
+# Returns 0 when they do, 1 when they do not, are missing, or answer implausibly.
+#
+# CAPABILITY is probed, not the version, and that is not pedantry. The PPA
+# package amneziawg-tools carries the version string 1.0.20210914 plus a build
+# suffix: that is wireguard-tools heritage, and 3.1 support is not visible in it
+# at all. Measured 7 sep 2026: the PPA builds the tools from commit ee0f0a9,
+# that is from tag v3.1.20260812 ("feat: add awg 3.1 params"), while the package
+# version stays 1.0.20210914-0~202608130144. A version gate would have blocked
+# an environment that is in fact ready, and a build-date gate even more so.
+# The version must not come back as a FALLBACK signal either ("accept it also
+# when --version advertises 3.1"): a version claim is not confirmed by the
+# usage, and that kind of mistake errs in the dangerous direction - it would
+# hand a 3.1 profile to tools that cannot parse it.
+#
+# The probe: `awg set` with fewer than three arguments prints the FULL usage
+# with the list of supported parameters and returns 1 without opening a device
+# (upstream src/set.c: the argc < 3 branch sits BEFORE config_read_cmd, and the
+# dispatcher in wg.c calls function(argc - 1, argv + 1), so `awg set` arrives
+# with argc = 1). The presence of `header-protection-key` in that output is what
+# says the tools know the third line.
+#
+# The status must be EXACTLY 1; "any non-zero" will not do. The codes 124
+# (timeout fired), 125 (timeout itself failed) and 137 (KILL) are non-zero too,
+# so under an "rc != 0" check a wrapper that printed the usage with the key and
+# then hung would be counted as supporting - precisely the case the timeout is
+# there for. Measured by an external review on 7 sep 2026.
+# Erring towards refusal is the safe direction here: the price of a false "not
+# supported" is an installation that stays on 2.0, and 2.0 works everywhere.
+awg31_tools_support() {
+    local usage="" rc=0
+    command -v awg >/dev/null 2>&1 || return 1
+    # 🔴 -k IS REQUIRED, not decoration. Without it timeout sends TERM and
+    # WAITS: a wrapper that ignores the signal is not bounded at all, and
+    # step 3 hangs forever without printing a thing. The verdict would stay
+    # correct (124 is not 1, so tools_old), but an unattended install would
+    # stall. Found by review of this pull request.
+    # </dev/null for the same reason every read in this project uses
+    # /dev/tty: the probe must not eat the rest of a script fed through a
+    # pipe.
+    usage=$(timeout -k 1 5 awg set </dev/null 2>&1); rc=$?
+    (( rc == 1 )) || return 1
+    [[ "$usage" == *header-protection-key* ]]
+}
+
+# awg31_environment_blocker : empty when the 3.1 profile is available on this
+# environment, otherwise the reason CODE.
+# Codes: arch_unknown | arch_unsupported | arm | kernel | tools_old |
+#        not_implemented_yet | internal_error.
+# Arg $1: stage, REQUIRED: 'pre' or 'post'.
+# Arg $2: architecture (for tests; defaults to _awg31_host_arch).
+# Arg $3: kernel release (for tests; defaults to uname -r).
+#
+# THE post STAGE CONTAINS pre IN FULL, and that is not duplication. An empty
+# answer means "install 3.1", so every stage has to be a self-contained final
+# verdict. Had post checked the tools alone, calling post on ARM would return
+# empty - that is, allow what pre forbade - and the whole protection would rest
+# on the caller not forgetting to carry the pre answer across a reboot. There
+# are two of those between steps 0 and 3.
+#
+# THE ORDER OF THE CHECKS IS PART OF THE CONTRACT: architecture and kernel come
+# BEFORE the tools probe. Otherwise an ARM box with old tools would be told
+# tools_old - a temporary reason instead of a permanent one - the operator would
+# go and upgrade the tools, which cannot possibly help, and we would have run an
+# external binary on a platform we deliberately do not ship on.
+awg31_environment_blocker() {
+    local stage="${1-}" arch="${2:-}" kver="${3:-}"
+
+    case "$stage" in
+        pre|post) : ;;
+        *)
+            # The stage has NO default on purpose. `${1:-pre}` looks convenient
+            # but makes the WEAKEST stage the default: an empty string from an
+            # unset variable would silently become pre, and the tools probe would
+            # be skipped without a single message. The branch below catches a
+            # misspelled stage name, but with a default it could not catch an
+            # empty string at all. There are two reboots between steps 0 and 3
+            # and the caller reads its state from disk, so losing a variable is
+            # easy.
+            #
+            # And not die here: the typical call is
+            # blocker=$(awg31_environment_blocker ...), and inside a substitution
+            # die would kill the SUBSHELL, the installer would carry on, and
+            # blocker would stay EMPTY - that is, "3.1 is available". So the
+            # output itself carries the safety: a non-empty code blocks in any
+            # case, a non-zero return is visible to callers that check the
+            # status, and a human reads the reason on stderr.
+            printf 'internal_error'
+            echo "awg31_environment_blocker: stage must be pre or post, got '${stage}'" >&2
+            return 2
+            ;;
+    esac
+
+    [[ -z "$arch" ]] && arch=$(_awg31_host_arch)
+    [[ -z "$kver" ]] && kver=$(uname -r)
+    arch="${arch//[[:space:]]/}"
+
+    # Not knowing the architecture is NOT the same as knowing it is suitable. An
+    # empty answer here would read as permission, so the unknown blocks with an
+    # explicit code.
+    if [[ -z "$arch" ]]; then
+        printf 'arch_unknown'
+        return 0
+    fi
+
+    # An ALLOW list, not a deny list, and this is the only place in the installer
+    # shaped that way. The reason is that an empty answer means "ship it": "not
+    # ARM" is not the same as "amd64" here. The PPA builds the dkms package for
+    # riscv64, ppc64el and s390x among others (checked against the Launchpad
+    # index on 7 sep 2026), and with a deny list such a machine would be handed a
+    # 3.1 profile on a platform nobody measured.
+    #
+    # The arm code covers ANY ARM, not only a matched prebuilt. Telling "the
+    # prebuilt matched" from "we went the DKMS way" is impossible here: in the
+    # second case the module would be third line, the gate would formally pass,
+    # and we would ship the profile on a platform we decided not to ship on until
+    # a separate measurement. The pattern covers both dpkg names (arm64, armhf,
+    # armel) and uname -m ones (armv7l, aarch64, aarch64_be).
+    case "$arch" in
+        amd64|x86_64)
+            :
+            ;;
+        arm*|aarch64*)
+            printf 'arm'
+            return 0
+            ;;
+        *)
+            printf 'arch_unsupported'
+            return 0
+            ;;
+    esac
+
+    if ! _kernel_supports_awg3 "$kver"; then
+        printf 'kernel'
+        return 0
+    fi
+
+    if [[ "$stage" == "post" ]]; then
+        awg31_tools_support || { printf 'tools_old'; return 0; }
+        # The line of the LOADED module is not checked here, and that is a
+        # boundary of this change rather than an omission. An honest probe needs
+        # a temporary interface and stand time, while deriving the line from the
+        # module version string is FORBIDDEN by the 30 aug 2026 measurement: the
+        # very same string 3.1.20260812 was observed on two different builds.
+        # The module_line2 code arrives together with the real probe in phase 3.
+        :
+    fi
+
+    # PHASE 3: the 3.1 profile generator does not exist yet, so the environment
+    # may be as suitable as it likes - there is nothing to hand out. This check
+    # is LAST on purpose: that way an operator on an unsuitable platform gets the
+    # durable reason, the one that stays true after phase 3, instead of a
+    # temporary one. This line goes away in the same change that adds the
+    # generator, and removing it must turn red the test that watches for it.
+    printf 'not_implemented_yet'
+    return 0
+
+    # 🔴 The explicit "environment fits" terminal: empty output, status 0.
+    # Unreachable today, and here for phase 3: delete the TWO lines above
+    # without leaving this one and the function's last command becomes the
+    # stage check, which is false on pre - the function would return 1 with
+    # empty output. The refusal would be safe, but the third line would be
+    # dead on arrival and the symptom would look like a crashed gate.
+    return 0
+}
+
+# _awg31_blocker_message : the human-readable refusal for a reason CODE.
+# Arg $1: the code from awg31_environment_blocker.
+#
+# 🔴 Every code has its OWN way out, and that is the whole point of codes. One
+# shared "the 3.1 profile is unavailable" would send a Debian 12 owner, an ARM
+# owner and someone with old tools into the same dead end, while their exits
+# differ: the first needs another system, the second cannot be helped until a
+# separate measurement, the third only needs apt. A test asserts the texts are
+# DIFFERENT and that each names its own exit - otherwise in a year they collapse
+# back into one.
+#
+# ⚠️ The reasons split into permanent (kernel, arm, arch_*) and temporary
+# (tools_old). The temporary one says so in plain words, so that nobody
+# abandons a machine that is almost ready.
+_awg31_blocker_message() {
+    local code="${1-}"
+    case "$code" in
+        kernel)
+            printf '%s' "The AmneziaWG 3.1 profile will not run on this server: kernel $(uname -r) is older than 6.7. On such kernels the installer deliberately builds the proven second-line module, and the third line will not work here. Way out: install with --protocol=2.0, which is a working and supported path. If you need the third line on this very machine, it takes a system with kernel 6.7 or newer AND an installer version that can already emit it."
+            ;;
+        arm)
+            printf '%s' "The AmneziaWG 3.1 profile is not released for ARM yet. Here the installer pins the second-line module, and the pin is deliberate until a separate measurement on this architecture. Upgrading packages changes nothing. Way out: --protocol=2.0."
+            ;;
+        arch_unsupported)
+            printf '%s' "The AmneziaWG 3.1 profile ships for x86_64 only, and this machine is '$(_awg31_host_arch)'. We have not measured it and will not emit the third line there. Way out: --protocol=2.0."
+            ;;
+        arch_unknown)
+            printf '%s' "The machine architecture could not be determined, and not knowing it is not the same as knowing it fits. Way out: --protocol=2.0. If you believe this is wrong, send the output of 'dpkg --print-architecture' and 'uname -m'."
+            ;;
+        tools_old)
+            printf '%s' "The installed awg tools do not understand third-line parameters. This is the ONLY reason on the list that an upgrade fixes: apt-get update && apt-get install --only-upgrade amneziawg-tools, then run the installer again. Or install with --protocol=2.0."
+            ;;
+        not_implemented_yet)
+            printf '%s' "This installer version (v${SCRIPT_VERSION}) does not carry the AmneziaWG 3.1 generator yet: your environment fits, we are the ones with nothing to emit. It is not your machine. Way out for now: --protocol=2.0."
+            ;;
+        internal_error)
+            printf '%s' "Internal error in the environment gate: the gate itself got invalid input. This is our defect, not a problem with your machine. Install with --protocol=2.0 and report it with the installer output attached."
+            ;;
+        *)
+            # An unknown code is NOT treated as permission: staying silent here
+            # would mean a new reason code added later without a text quietly
+            # becomes an empty refusal with no explanation.
+            printf '%s' "The AmneziaWG 3.1 profile is unavailable, and reason code '${code}' is unknown to this installer version. Install with --protocol=2.0 and report the code to the developer."
+            ;;
+    esac
+}
+
+# _awg31_resolve_protocol : settle the installation generation and, when the
+# third line is requested, run the environment through the gate (stage pre).
+# Arg $1: 1 - an installation config already exists, 0 - this install is new.
+# Mutates the global AWG_PROTOCOL. On a gate refusal or a bad flag value it ends
+# the installation through die.
+#
+# 🔴 Split out into its own function for testability, not for looks: inside
+# initialize_setup this logic would sit amid four hundred lines with no test at
+# all, while it IS the protective contour this phase exists for. Here bats calls
+# it directly.
+# 🔴 config_exists is passed as an ARGUMENT even though bash would hand it over
+# through the caller's dynamic scope. The implicit link would survive a rename
+# in the caller silently, and the function would start treating every install as
+# new - that is, allowing a generation change where profiles are already handed
+# out.
+_awg31_resolve_protocol() {
+    local config_exists="${1-}"
+
+    # 🔴 The argument is checked, not assumed. [[ "$x" -eq 1 ]] is equally
+    # FALSE for an empty string and for an unknown word, i.e. "this install
+    # is new", and the requested generation would overwrite the marker
+    # where profiles are already handed out. A caller bug must not turn
+    # into permission.
+    case "$config_exists" in
+        0|1) : ;;
+        *) die "_awg31_resolve_protocol: the existing-install flag must be 0 or 1, got '${config_exists}'. This is an internal installer error, please report it." ;;
+    esac
+
+    if [[ "$CLI_PROTOCOL_SET" -eq 1 ]]; then
+        case "$CLI_PROTOCOL" in
+            2.0|3.1) : ;;
+            *) die "--protocol='${CLI_PROTOCOL}': only 2.0 and 3.1 are allowed. An empty value usually means a missing argument: write --protocol=2.0 or --protocol 2.0." ;;
+        esac
+        if [[ "$config_exists" -eq 1 ]]; then
+            # 🔴 The flag does NOT change the generation of an existing install,
+            # and staying silent about that is not an option. Changing the
+            # generation in place means reissuing EVERY client profile and handing
+            # them out again; doing it in passing from a flag would void other
+            # people's distributed configs without asking. The marker of "existing"
+            # is the config file, not whether the service runs: --force on top of a
+            # working install lands here too, and rightly so - profiles are already
+            # out there.
+            # 🔴 A REFUSAL, NOT A WARNING. Carrying on with the previous
+            # generation would hand the person something OTHER than what
+            # they asked for, and the warning about it would drown in a long
+            # installation log. That is exactly the silent substitution the
+            # rest of this code exists to prevent. The same choice is already
+            # made above for a 3.1 marker in the config: die there too,
+            # rather than "quietly correct it".
+            if [[ "$CLI_PROTOCOL" != "$AWG_PROTOCOL" ]]; then
+                die "--protocol=${CLI_PROTOCOL} cannot be carried out on this server: the installation is marked as generation ${AWG_PROTOCOL} (the AWG_PROTOCOL marker in $CONFIG_FILE), and the generation of a running install does not change in place - that means reissuing EVERY client profile and handing them out again. Drop the flag to continue on ${AWG_PROTOCOL}, or deploy the server from scratch."
+            else
+                log "The requested generation ${CLI_PROTOCOL} matches the generation of this installation."
+            fi
+        else
+            AWG_PROTOCOL="$CLI_PROTOCOL"
+            log "Generation for the new installation set by flag: ${AWG_PROTOCOL}."
+        fi
+    elif [[ "$config_exists" -eq 0 ]]; then
+        # 🔴 The default of a NEW install and the rule for reading the marker are
+        # DIFFERENT things and must not share a line. awg_installed_protocol has
+        # to read a missing marker as 2.0 forever: that is how every install made
+        # before the marker existed is marked, and changing it would declare them
+        # third-line after the fact. The new-install default, in turn, flips in
+        # phase 5. Today both values are 2.0, so the line below changes nothing -
+        # it exists so that in phase 5 the edit is in ONE place and in plain
+        # sight, rather than found by searching the file.
+        AWG_PROTOCOL="$PROTOCOL_DEFAULT"
+    fi
+
+    # ── Environment gate, stage pre ──────────────────────────────────────────
+    # Called ONLY when the third line is requested. On an ordinary 2.0 install
+    # the gate is useless and harmful: it would run the tools probe and could
+    # refuse someone who never wanted the third line.
+    # Stage pre runs at step 0 - before packages are installed, sysctl is
+    # touched and the machine reboots. (The working directory, the log and the
+    # lock file already exist by then: those are our own files, not changes to
+    # the system. Correction from external review 9 sep: the earlier wording,
+    # "before the first change to the system", claimed more than was true.)
+    if [[ "$AWG_PROTOCOL" == "3.1" ]]; then
+        local _awg31_blocker _awg31_rc
+        _awg31_blocker=$(awg31_environment_blocker pre); _awg31_rc=$?
+        if [[ -n "$_awg31_blocker" ]]; then
+            log "3.1 environment gate (pre): reason code '${_awg31_blocker}'."
+            die "$(_awg31_blocker_message "$_awg31_blocker")"
+        fi
+        # 🔴 A GATE THAT COULD NOT ANSWER IS NOT PERMISSION. Empty output means
+        # "the third line is allowed", and looking at the output alone is not
+        # enough: a call that failed prints nothing either, and its silence
+        # would read as "yes". So the status is checked separately from the
+        # output. Found by external review 9 sep 2026.
+        if (( _awg31_rc != 0 )); then
+            die "The environment gate could not determine whether this machine fits the AmneziaWG 3.1 profile (exit code ${_awg31_rc}, no reason given). Without an answer we do not ship the third line. Install with --protocol=2.0 and report this."
+        fi
+    fi
 }
 
 check_free_space() {
@@ -3163,6 +3543,10 @@ initialize_setup() {
         die "This installation is marked as AmneziaWG 3.1 (AWG_PROTOCOL in $CONFIG_FILE), and this installer version only supports 2.0. Use an installer version that supports 3.1, or do not run this one on top of a third-line server."
     fi
 
+    # The installation generation and, when the third line is requested, the
+    # environment gate. The body lives in _awg31_resolve_protocol - see there.
+    _awg31_resolve_protocol "$config_exists"
+
     # The old port from awgsetup_cfg.init: step 4 needs it to delete the stale
     # UFW rule on a port change (Issue #175). Captured BEFORE the CLI override,
     # otherwise the old value is lost for good - uninstall reads the already
@@ -4580,6 +4964,40 @@ step3_check_module() {
         log "awg version: $awg_ver"
     else
         log_warn "awg command not found!"
+    fi
+
+    # ── Environment gate, stage post ─────────────────────────────────────────
+    # This asks what step 0 could not know: whether the tools that ARRIVED
+    # understand third-line parameters. There are two reboots between steps 0
+    # and 3, so the generation comes from the marker read afresh from disk, not
+    # from the memory of an earlier run.
+    #
+    # ⚠️ THE BRANCH COMES ALIVE IN PHASE 3, together with the profile generator.
+    # Today a 3.1 marker never reaches here: the flag is refused by stage pre at
+    # step 0, and a config carrying a 3.1 marker is refused there too. It stands
+    # here in advance for one reason: forgetting it in phase 3 would mean
+    # shipping the third line on tools that cannot parse it, and hearing about it
+    # from a user whose handshake silently never happens. A test calls it
+    # directly with the marker injected, so the branch cannot rot unnoticed.
+    # ⚠️ The 2.0 default here is the one place in this change where absence
+    # reads as an answer, and it is safe for two reasons at once:
+    # initialize_setup runs before EVERY step and either sets the marker or
+    # dies, so an empty one never reaches here; and if it did, the mistake
+    # would lead to 2.0, the generation that works everywhere. The opposite
+    # default would be permission. Noted by review of this pull request.
+    if [[ "${AWG_PROTOCOL:-2.0}" == "3.1" ]]; then
+        local _awg31_blocker _awg31_rc
+        _awg31_blocker=$(awg31_environment_blocker post); _awg31_rc=$?
+        if [[ -n "$_awg31_blocker" ]]; then
+            log "3.1 environment gate (post): reason code '${_awg31_blocker}'."
+            die "$(_awg31_blocker_message "$_awg31_blocker")"
+        fi
+        # The same fail-closed rule as at step 0: the silence of a gate that
+        # crashed is not permission.
+        if (( _awg31_rc != 0 )); then
+            die "The environment gate could not check the tools for the AmneziaWG 3.1 profile (exit code ${_awg31_rc}, no reason given). The installation stops: without an answer we do not ship the third line."
+        fi
+        log "3.1 environment gate (post) passed."
     fi
 
     log "Step 3 completed."

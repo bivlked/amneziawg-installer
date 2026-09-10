@@ -386,8 +386,19 @@ initialize_setup_body() {
 }
 
 @test "installer RU/EN: nothing else in the whole installer assigns AWG_PROTOCOL" {
-    # Exactly three lines may assign the marker: the hard reset, the guarded
-    # assignment from the function, and the heredoc line that writes it back.
+    # Exactly five lines may assign the marker: the hard reset, the guarded
+    # assignment from the function, the heredoc line that writes it back, and
+    # the two lines in _awg31_resolve_protocol that settle the generation of a
+    # NEW install - one from the flag, one from the phase default. The last two
+    # were added with the --protocol flag; they are matched EXACTLY, so the
+    # guard still fails on any other assignment. Widening this test is the
+    # deliberate part of adding a writer: the count going up must be noticed.
+    # The printf -v pattern allows one non-word character before the name: the
+    # first version required it bare, so `printf -v "AWG_PROTOCOL" ...` slipped
+    # past the whole scan while the five approved lines still counted as five.
+    # A quote character cannot be written literally in an unquoted regex here -
+    # bash would treat it as shell quoting - hence the negated class rather than
+    # ["'] . Found by external review of this pull request.
     # ANY other occurrence of an assignment - at line start, mid-line after a
     # ';', inside an if/then, via printf -v or read - is a path that could
     # rewrite the generation of a live server. The scan is done in bash, not in
@@ -402,15 +413,17 @@ initialize_setup_body() {
             if [[ "$line" =~ ^[[:space:]]*AWG_PROTOCOL=\"\"$ ]]; then n=$((n+1)); continue; fi
             if [[ "$line" =~ ^[[:space:]]*AWG_PROTOCOL=\$\(awg_installed_protocol\ \"\$CONFIG_FILE\"\)\ \|\|\ die\  ]]; then n=$((n+1)); continue; fi
             if [[ "$line" == "export AWG_PROTOCOL='\${AWG_PROTOCOL}'" ]]; then n=$((n+1)); continue; fi
+            if [[ "$line" =~ ^[[:space:]]*AWG_PROTOCOL=\"\$CLI_PROTOCOL\"$ ]]; then n=$((n+1)); continue; fi
+            if [[ "$line" =~ ^[[:space:]]*AWG_PROTOCOL=\"\$PROTOCOL_DEFAULT\"$ ]]; then n=$((n+1)); continue; fi
             if [[ "$line" =~ AWG_PROTOCOL\+?= ]] \
                || [[ "$line" =~ AWG_PROTOCOL:= ]] \
-               || [[ "$line" =~ -v[[:space:]]+AWG_PROTOCOL([^A-Za-z0-9_]|$) ]] \
+               || [[ "$line" =~ -v[[:space:]]+[^A-Za-z0-9_]?AWG_PROTOCOL([^A-Za-z0-9_]|$) ]] \
                || [[ "$line" =~ (^|[^A-Za-z0-9_])read[[:space:]].*AWG_PROTOCOL([^A-Za-z0-9_]|$) ]] \
                || [[ "$line" =~ (^|[^A-Za-z0-9_])(unset|local|declare|typeset|readarray|mapfile)[[:space:]]+AWG_PROTOCOL([^A-Za-z0-9_]|$) ]]; then
                 extra+="$line"$'\n'
             fi
         done < "$f"
-        [ "$n" -eq 3 ] || { echo "$f: expected the 3 known assignment lines, matched $n"; false; }
+        [ "$n" -eq 5 ] || { echo "$f: expected the 5 known assignment lines, matched $n"; false; }
         [ -z "$extra" ] || { echo "$f: extra assignment(s):"; echo "$extra"; false; }
     done
     # The management script must not assign the marker at all (backup/restore
@@ -421,7 +434,7 @@ initialize_setup_body() {
             [[ "$line" =~ ^[[:space:]]*# ]] && continue
             if [[ "$line" =~ AWG_PROTOCOL\+?= ]] \
                || [[ "$line" =~ AWG_PROTOCOL:= ]] \
-               || [[ "$line" =~ -v[[:space:]]+AWG_PROTOCOL([^A-Za-z0-9_]|$) ]] \
+               || [[ "$line" =~ -v[[:space:]]+[^A-Za-z0-9_]?AWG_PROTOCOL([^A-Za-z0-9_]|$) ]] \
                || [[ "$line" =~ (^|[^A-Za-z0-9_])read[[:space:]].*AWG_PROTOCOL([^A-Za-z0-9_]|$) ]] \
                || [[ "$line" =~ (^|[^A-Za-z0-9_])(unset|local|declare|typeset|readarray|mapfile)[[:space:]]+AWG_PROTOCOL([^A-Za-z0-9_]|$) ]]; then
                 extra+="$line"$'\n'
