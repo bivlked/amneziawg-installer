@@ -795,10 +795,24 @@ _awg31_blocker_message() {
             printf '%s' "The AmneziaWG 3.1 profile will not run on this server: kernel $(uname -r) is older than 6.7. On such kernels the installer deliberately builds the proven second-line module, and the third line will not work here. Way out: install with --protocol=2.0, which is a working and supported path. If you need the third line on this very machine, it takes a system with kernel 6.7 or newer AND an installer version that can already emit it."
             ;;
         arm)
-            printf '%s' "The AmneziaWG 3.1 profile is not released for ARM yet. Here the installer pins the second-line module, and the pin is deliberate until a separate measurement on this architecture. Upgrading packages changes nothing. Way out: --protocol=2.0."
+            # 🔴 The text makes NO claim about which module gets installed here,
+            # and that is a correction of fact, not of style. The earlier wording
+            # said "here the installer pins the second-line module" - untrue for an
+            # ARM64 box on a recent kernel with no matching prebuilt:
+            # _try_install_prebuilt_arm picks a target from a closed list, returns 1
+            # on a miss, the flow falls back to DKMS, and on kernel 6.7+ an UNPINNED
+            # module arrives from the PPA. A refusal must explain the REASON FOR THE
+            # REFUSAL, not describe someone else's machine from memory. The precise
+            # wording about prebuilts lives in the README.
+            printf '%s' "An AmneziaWG 3.1 profile is not issued on ARM: this architecture has not been measured for the third line, and the decision is deliberate until a separate measurement. Upgrading packages changes nothing. Separately, so you do not look for the way out in the wrong place: this installer version carries no 3.1 generator, so no architecture gets the third line right now. Way out: --protocol=2.0."
             ;;
         arch_unsupported)
-            printf '%s' "The AmneziaWG 3.1 profile ships for x86_64 only, and this machine is '$(_awg31_host_arch)'. We have not measured it and will not emit the third line there. Way out: --protocol=2.0."
+            # 🔴 "REQUIRES x86_64", not "ships for x86_64 only": today the 3.1
+            # profile ships NOWHERE, and on a suitable machine the gate ends at
+            # not_implemented_yet. The check order is such that the owner of an ARM
+            # or exotic box sees THIS text and never sees not_implemented_yet, so
+            # they would leave believing x86_64 already gets the third line.
+            printf '%s' "The AmneziaWG 3.1 profile requires x86_64, and this machine is '$(_awg31_host_arch)'. We have not measured it and will not emit the third line there. Separately, so you do not change machines for nothing: this installer version carries no 3.1 generator, so no architecture gets the third line right now. Way out: --protocol=2.0."
             ;;
         arch_unknown)
             printf '%s' "The machine architecture could not be determined, and not knowing it is not the same as knowing it fits. Way out: --protocol=2.0. If you believe this is wrong, send the output of 'dpkg --print-architecture' and 'uname -m'."

@@ -153,6 +153,85 @@ run_argparse() {
     [[ "$output" == *"0.0.0-test"* ]]
 }
 
+@test "a refusal says nothing about which module this machine gets" {
+    # 🔴 The neighbouring message tests CANNOT catch what went wrong here, and
+    # that is the point of this one. They assert the seven texts are non-empty,
+    # pairwise DIFFERENT and each names the way out - properties a confidently
+    # false sentence satisfies just as well as a true one.
+    #
+    # What it protects. The arm text used to say the installer pins the
+    # second-line module here. Untrue for an ARM64 box on a recent kernel with no
+    # matching prebuilt: the prebuilt lookup misses, the flow falls back to DKMS,
+    # and an UNPINNED module arrives from the PPA. The verdict was right and the
+    # explanation was wrong, which is the worse of the two.
+    #
+    # 🔴 The assertion is on the WORD STEM, not on the sentence that was there.
+    # A first version of this guard banned the exact strings "закреплённ" and
+    # "pins the", and review defeated it in one move: "installs a pinned
+    # second-line module" and "пришпиленный модуль" both sailed through while the
+    # guard stayed green. A blacklist of the wording someone already used only
+    # catches a literal revert. What is pinned instead is the property the
+    # decision actually has - a refusal explains the refusal and does not
+    # describe the host's module at all. Both stems are checked against both
+    # locales, so an English sentence landing in the Russian file is caught too.
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message arm"
+        [ "$status" -eq 0 ]
+        [ -n "$output" ]
+        [[ "$output" != *"модул"* ]]  || { echo "arm describes the module ($script): $output"; return 1; }
+        [[ "$output" != *"module"* ]] || { echo "arm describes the module ($script): $output"; return 1; }
+    done
+}
+
+@test "no refusal scopes a 3.1 release to an architecture" {
+    # arch_unsupported used to say the profile "ships for x86_64 only". It ships
+    # NOWHERE: on a suitable machine the gate ends at not_implemented_yet. The
+    # check order guarantees that the owner of an ARM or exotic box sees this
+    # text and never sees that one, so the old wording sent them away believing
+    # x86_64 already had the third line - at the price of provisioning one.
+    #
+    # 🔴 What is banned is the false SCOPING, not a verb. A first version of this
+    # guard forbade the word "выпускается" outright, and review pointed out that
+    # it would reject a future TRUE sentence such as "третья линия нигде не
+    # выпускается", pushing the next author to reword a correct statement. The
+    # requirement is asserted positively alongside, so deleting the claim
+    # altogether does not pass either.
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message arch_unsupported"
+        [ "$status" -eq 0 ]
+        [ -n "$output" ]
+        [[ "$output" != *"только для x86_64"* ]] || { echo "arch_unsupported scopes a release ($script): $output"; return 1; }
+        [[ "$output" != *"for x86_64 only"* ]]   || { echo "arch_unsupported scopes a release ($script): $output"; return 1; }
+        [[ "$output" == *"требует x86_64"* || "$output" == *"requires x86_64"* ]]             || { echo "arch_unsupported no longer states the requirement ($script): $output"; return 1; }
+        run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message arm"
+        [ "$status" -eq 0 ]
+        [ -n "$output" ]
+        [[ "$output" != *"не выпускается"* ]] || { echo "arm implies a release elsewhere ($script): $output"; return 1; }
+        [[ "$output" != *"not released"* ]]   || { echo "arm implies a release elsewhere ($script): $output"; return 1; }
+    done
+}
+
+@test "a refusal on an unsupported architecture does not send the reader shopping" {
+    # Concrete cost this prevents: a riscv64 owner reads "requires x86_64",
+    # provisions an x86_64 host, runs --protocol=3.1 there, and only then learns
+    # that no build emits the third line at all. The gate order means they never
+    # reach not_implemented_yet, so the architecture texts have to carry that
+    # fact themselves.
+    local script code
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        for code in arm arch_unsupported; do
+            run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message '$code'"
+            [ "$status" -eq 0 ]
+            [[ "$output" == *"ни на одной архитектуре"* || "$output" == *"no architecture"* ]]                 || { echo "$code lets the reader infer another architecture has it ($script): $output"; return 1; }
+        done
+    done
+}
+
 @test "an unknown reason code refuses and repeats the code" {
     build_harness
     run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message future_code"
