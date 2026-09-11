@@ -729,6 +729,14 @@ Options:
   --endpoint=ADDR       External server endpoint: FQDN, IPv4 or [IPv6] (NAT)
   --server-name=NAME    Server name shown in the Amnezia app on vpn:// import (default 'AWG Server')
   --mobile              Mobile setup in one flag: preset mobile + port 443/udp (an explicit --port wins)
+  --protocol=2.0|3.1    Protocol generation for a NEW install (default 2.0). The spaced form
+                        is accepted too: --protocol 3.1
+                        On an already configured server a flag naming a DIFFERENT generation
+                        ends the install: the generation of a running install changes only by
+                        reinstalling and reissuing every client profile. One matching the
+                        installed generation is accepted quietly
+                        3.1 is not something this installer version emits yet: it refuses and
+                        names the reason
   --preset=TYPE         Obfuscation parameter preset: default, mobile
                         mobile: Jc=3, narrow Jmax — for mobile carriers (Tele2, Yota, Megafon)
   --jc=N                Set Jc manually (1-128, overrides preset)

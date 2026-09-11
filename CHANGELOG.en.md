@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **The installer's `--protocol=2.0|3.1` flag.** Sets the protocol generation for a NEW install; the default is 2.0, as before. The spaced form (`--protocol 3.1`) is accepted too, because that is how the way out is written in the refusal messages. On an already configured server a flag naming a DIFFERENT generation ends the install and explains why: the generation of a running install does not change in place - that is reissuing every client profile and handing them out again; a flag matching the installed generation is accepted quietly. This installer version does not emit 3.1 yet - the request is declined with a named reason, one per case: an old kernel, an unsuitable architecture, `awg` tools without support for the parameters, an undetermined architecture. The refusal also says when the machine may not be the problem at all: the installer carries no third-line generator on any architecture yet.
+
 ### Fixed
 
 - **The `I1` concealment packet now has a meaningful shape.** The generator emitted `I1 = <r N>` - 32 to 256 random bytes. Some cellular networks drop such a packet together with the handshake packet that travels in the same opening burst: the tunnel never comes up, while the server shows the peer and its received counter grows, so the failure is easily mistaken for a working link. A measurement on a live carrier separated size from shape: two 128-byte profiles, the random one never completed a handshake, the DNS-reply-shaped one completed in 40 seconds. The generator now writes a DNS-shaped packet of 70-128 bytes using tags both implementations understand (`<b>`, `<r>`, `<rc>`); the transaction id and the name label are expanded afresh in every packet, so this is a structure rather than a fixed block of bytes. Existing installations keep their previous value - `ADVANCED.en.md`, section "The handshake never completes on cellular", explains how to fix them without reinstalling.
