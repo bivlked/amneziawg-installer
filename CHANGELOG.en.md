@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.33.0] - 2026-09-11
+
+**v5.33.0** - the `I1` concealment packet takes the shape of a DNS reply instead of the random bytes that kept the handshake from completing on some cellular networks, and the protocol generation for a new install is now set by a flag.
+
 ### Added
 
 - **The installer's `--protocol=2.0|3.1` flag.** Sets the protocol generation for a NEW install; the default is 2.0, as before. The spaced form (`--protocol 3.1`) is accepted too, because that is how the way out is written in the refusal messages. On an already configured server a flag naming a DIFFERENT generation ends the install and explains why: the generation of a running install does not change in place - that is reissuing every client profile and handing them out again; a flag matching the installed generation is accepted quietly. This installer version does not emit 3.1 yet - the request is declined with a named reason, one per case: an old kernel, an unsuitable architecture, `awg` tools without support for the parameters, an undetermined architecture. The refusal also says when the machine may not be the problem at all: the installer carries no third-line generator on any architecture yet.
@@ -1894,7 +1898,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.32.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.33.0...HEAD
+[5.33.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.32.0...v5.33.0
 [5.32.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.31.0...v5.32.0
 [5.31.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.30.0...v5.31.0
 [5.30.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.29.0...v5.30.0
