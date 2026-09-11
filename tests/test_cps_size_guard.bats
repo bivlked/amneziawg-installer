@@ -75,7 +75,11 @@ size() {  # size <lib> <args...>
 }
 
 @test "cps size: the generator's own upper bound stays far below the threshold" {
-    # generate_cps_i1 emits <r 32..256>. The guard warns above 1024.
+    # generate_cps_i1 emits a DNS-shaped packet of 70..128 bytes since 10 sep
+    # 2026; the value below is the widest thing it ever emitted before that.
+    # The guard warns above 1024, so both are far from it - which is the point:
+    # this test protects the THRESHOLD, not the generator. The generator's own
+    # shape is guarded in test_cps_i1_shape.bats.
     run size "$COMMON" '<r 256>'
     [ "$status" -eq 0 ]
     [ "$output" -lt 1024 ]

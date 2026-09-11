@@ -12,6 +12,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.33.0] - 2026-09-11
+
+**v5.33.0** - the `I1` concealment packet takes the shape of a DNS reply instead of the random bytes that kept the handshake from completing on some cellular networks, and the protocol generation for a new install is now set by a flag.
+
+### Added
+
+- **The installer's `--protocol=2.0|3.1` flag.** Sets the protocol generation for a NEW install; the default is 2.0, as before. The spaced form (`--protocol 3.1`) is accepted too, because that is how the way out is written in the refusal messages. On an already configured server a flag naming a DIFFERENT generation ends the install and explains why: the generation of a running install does not change in place - that is reissuing every client profile and handing them out again; a flag matching the installed generation is accepted quietly. This installer version does not emit 3.1 yet - the request is declined with a named reason, one per case: an old kernel, an unsuitable architecture, `awg` tools without support for the parameters, an undetermined architecture. The refusal also says when the machine may not be the problem at all: the installer carries no third-line generator on any architecture yet.
+
+### Fixed
+
+- **The `I1` concealment packet now has a meaningful shape.** The generator emitted `I1 = <r N>` - 32 to 256 random bytes. Some cellular networks drop such a packet together with the handshake packet that travels in the same opening burst: the tunnel never comes up, while the server shows the peer and its received counter grows, so the failure is easily mistaken for a working link. A measurement on a live carrier separated size from shape: two 128-byte profiles, the random one never completed a handshake, the DNS-reply-shaped one completed in 40 seconds. The generator now writes a DNS-shaped packet of 70-128 bytes using tags both implementations understand (`<b>`, `<r>`, `<rc>`); the transaction id and the name label are expanded afresh in every packet, so this is a structure rather than a fixed block of bytes. Existing installations keep their previous value - `ADVANCED.en.md`, section "The handshake never completes on cellular", explains how to fix them without reinstalling.
+- **An older installation now hears about itself.** The packet-shape change applies to new installations only: a reinstall over a live server deliberately keeps the parameters already set, because regenerating them would change a working server's settings without asking and would cut off every client config handed out so far. There is therefore nothing to migrate silently - but nothing to be silent about either: when the settings carry an `I1` of random bytes, the installer says so and points at the documentation section about the handshake on cellular networks. Installations with the new packet, and installations without `I1` at all (the `--no-cps` flag), see no message.
+- **The `I1` generator no longer emits a half-built packet silently.** The function had no failure signal at all: its exit status is that of the last `printf`, which succeeds whatever the content is. With the randomness source degraded it produced a packet with an empty count in a tag and zero answer records, and such a value travelled into the settings file, into the server config and into every client profile, failing only at step 7 when the interface comes up. The packet is now checked before it is handed out, and an installation stops with a clear message on an invalid value, having written nothing.
+- **The carrier diagnostic no longer scolds our own default.** `manage_amneziawg.sh diagnose` compares the installed `I1` against a carrier profile, and where the profile expects a random packet only the `<r N>` form was accepted. A shaped packet fell into "unusual format" and pushed the user back towards random bytes, that is towards exactly what was measured as not working on cellular. A structured `I1` is now accepted, and the carrier profile is honestly marked as confirmed on the earlier form.
+
 ## [5.32.0] - 2026-09-08
 
 **v5.32.0** - the machine-readable interface reports client expiry, an installation records its protocol generation, and client routes can be set at creation time.
@@ -1883,7 +1898,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.32.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.33.0...HEAD
+[5.33.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.32.0...v5.33.0
 [5.32.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.31.0...v5.32.0
 [5.31.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.30.0...v5.31.0
 [5.30.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.29.0...v5.30.0

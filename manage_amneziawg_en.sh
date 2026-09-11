@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 peer management script
 # Author: @bivlked
-# Version: 5.32.0
-# Date: 2026-09-08
+# Version: 5.33.0
+# Date: 2026-09-11
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.32.0"
+SCRIPT_VERSION="5.33.0"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -1366,7 +1366,8 @@ check_server() {
 
 # Known carriers and recommended AWG params.
 # Format: jc_min jc_max jmin_lo jmin_hi jmax_offset_lo jmax_offset_hi i1_mode
-#   i1_mode: random ("<r N>" form), absent (no I1), binary ("<r N><b 0xHEX>" form)
+#   i1_mode: random (a random "<r N>" OR a shaped packet - see the random branch
+#           below), absent (no I1), binary ("<r N><b 0xHEX>" form)
 # Source: ADVANCED.en.md operator matrix (only confirmed ✅ rows).
 # Megafon Moscow in the table is still 🔄 testing (Jc=3, Jmin=80, Jmax=268) -
 # the range is wider than mobile preset; will add once the operator is
@@ -1431,7 +1432,7 @@ _diag_cps_guard() {
         # roughly 3.5 KB, but the exact boundary depends on the interface name
         # length, on whether a header protection key is set, and on each peer's
         # address family, so we cannot compute it here. Our generator produces
-        # at most 256 bytes and the documented recipes up to 128, so a kilobyte
+        # at most 128 bytes (256 before September 2026) and the documented recipes the same, so a kilobyte
         # already means a hand edit, with a multiple of headroom left.
         if [[ "$_cps_total" =~ ^[0-9]+$ && "$_cps_total" -gt 1024 ]]; then
             _cps_unsafe=1
@@ -1714,6 +1715,25 @@ diagnose_server() {
             random)
                 if [[ -n "$i1" && "$i1" =~ ^\<r\ [0-9]+\>$ ]]; then
                     _diag_line OK "I1 random ($i1) - suitable for $carrier"; ok=$((ok+1))
+                elif awg_cps_is_shaped "$i1"; then
+                    # 🔴 Do not scold our own default. Since September 2026 the
+                    # installer writes a DNS-reply-shaped I1, and a carrier
+                    # profile built on the `<r N>` form confirms that form
+                    # without claiming the converse. The previous wording swept
+                    # every structured packet into "unusual format" and pushed
+                    # the user back towards random bytes - exactly what was
+                    # measured as not working on MTS.
+                    #
+                    # What counts as structure is decided by awg_cps_is_shaped,
+                    # and its boundaries are explained there. What matters here
+                    # is why the check moved into the shared library: the first
+                    # two versions of this condition were written inline and both
+                    # turned out too wide (a `<b 0x...>` substring, then an
+                    # anchor that still let `<r 99>` and the non-portable `<c>`
+                    # through). One check in one place, and it can be exercised
+                    # directly.
+                    _diag_line OK "I1 structured ($i1)"; ok=$((ok+1))
+                    echo "        The $carrier profile is confirmed on the <r N> form; a structured packet was not measured on it separately. On MTS (Moscow) a packet of this shape got through where a random one never did."
                 elif [[ -z "$i1" ]]; then
                     _diag_line WARN "I1 missing, $carrier usually works with random I1 (<r N>)"
                     warn=$((warn+1))

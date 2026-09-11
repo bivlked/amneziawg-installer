@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.32.0
-# Date: 2026-09-08
+# Version: 5.33.0
+# Date: 2026-09-11
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 set -o pipefail
-SCRIPT_VERSION="5.32.0"
+SCRIPT_VERSION="5.33.0"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -34,8 +34,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="142d0ae2ed3629ea59be148c635a954b9ee851c1c4e0de65d87eced3741f02ad"
-MANAGE_SCRIPT_SHA256="397fb18828f318355458b09db56c021f9d91d38f0796118d8635458b3b0f7c47"
+COMMON_SCRIPT_SHA256="93f733809cdd259402faf4986224ed11890a24df3d75ef76ae0088b81cb740f8"
+MANAGE_SCRIPT_SHA256="473b695c0f60b8a511e0f72b130e250263ad83719e09baeb8593b3dbd4b9809b"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back
@@ -1704,12 +1704,115 @@ generate_awg_h_ranges() {
     return 1
 }
 
-# Generate CPS string for I1
-# Format: "<r N>" where N is the number of random bytes (32-256)
+# Generate the CPS string for I1: a concealment packet shaped like a DNS reply.
+#
+# 🔴 Until 10 sep 2026 this emitted `<r 32..256>` - 32 to 256 bytes of pure
+# randomness - and on Russian cellular that broke the handshake. A device-window
+# measurement (MTS Moscow, route to Los Angeles) produced a decisive pair of
+# profiles of the SAME 128-byte size: the random one never completed a handshake,
+# the DNS-shaped one completed in 40 seconds. The packet's SHAPE decides, not its
+# size, so the fix is not to lower the upper bound - the packet has to look like
+# something. The vendor does exactly this: its stock first special packet is a
+# forged DNS reply.
+#
+# ⚠️ The failure looks deceptively like a working link: the server shows the
+# peer, the endpoint moves to the mobile address, the received counter grows -
+# and the latest handshake never moves. Transport packets travel alone and get
+# through; the handshake packet travels inside the opening burst together with
+# I1 and is lost along with it.
+#
+# Portable tags only: `<b>`, `<r>` and `<rc>` are understood by both the kernel
+# module and amneziawg-go. `<r 2>` (the transaction id) and `<rc N>` (the name
+# label) are expanded afresh in EVERY packet, so this is a structure and not a
+# static blob: two consecutive I1 packets do not match byte for byte.
+#
+# The upper bound is held at the measured 128 bytes: above that nothing was
+# tested, and there is nothing to guess on the measurement's behalf. The lower 70
+# does NOT follow from the measurement - it follows from the packet's shape, it
+# never went on the wire, and it rests only on the vendor's ~44-byte packet
+# living in the field across the whole fleet of the application.
 generate_cps_i1() {
-    local n
-    n=$(rand_range 32 256)
-    echo "<r ${n}>"
+    local label answers hex qtail ttl o1 o2 o3 o4 i
+    label=$(rand_range 20 62)          # name label; the DNS limit is 63 bytes
+    answers=$(rand_range 1 2)
+
+    # Header: flags 0x8580, one question, answers answer records, zero
+    # authority and additional records. The last byte is the label length,
+    # immediately followed by the label's letters.
+    #
+    # ⚠️ 0x8580 is QR+AA+RD+RA, that is "authoritative answer" and "recursion
+    # available" at the same time - an odd combination for a real resolver, and
+    # the urge to rewrite it as the usual 0x8180 comes naturally. DO NOT: 0x8580
+    # is exactly what the vendor's stock special packet carries, so that is what
+    # the whole fleet of the official application sends, and it is what our
+    # measurement passed with. A "common sense" fix would move us out of the
+    # measurement and out of a large foreign population into a small own one.
+    hex=$(printf '85800001%04x00000000%02x' "$answers" "$label")
+
+    # Question tail: cdns.icloud.com, type A, class IN.
+    qtail='0463646e730669636c6f756403636f6d0000010001'
+
+    # The TTL is drawn ONCE per packet: records of one set must carry the same
+    # TTL, and that is how resolvers answer. Two records for one name with
+    # different TTLs is precisely the small thing a forgery is spotted by.
+    case $(rand_range 1 4) in
+        1) ttl='0000003c' ;;           # 60 s
+        2) ttl='0000012c' ;;           # 300 s
+        3) ttl='00000384' ;;           # 900 s
+        *) ttl='00000e10' ;;           # 3600 s
+    esac
+
+    for (( i = 0; i < answers; i++ )); do
+        # Answer address. The first octet stays within 1-221, and the two
+        # special values are remapped onto 222 and 223. That is a one-to-one
+        # mapping, so 221 equally likely values without 10 and 127.
+        #
+        # 🔴 Why a remap and not a redraw loop, and not one constant for both. A
+        # constant would occur twice as often as any other value and would
+        # become a marker of its own. The `while` loop was written first and
+        # struck out: `rand_range` is called through command substitution, that
+        # is in a subshell, and any counter or state inside it is lost - on the
+        # bench such a loop went infinite, and in the installer that would have
+        # been a step wedged for good. A remap has neither a loop nor state and
+        # therefore cannot hang.
+        #
+        # ⚠️ This is NOT the full list of special-purpose ranges: 172.16/12,
+        # 192.168/16, 169.254/16 and 100.64/10 can still land here. The packet
+        # is never routed and nobody resolves its contents, so more than this is
+        # not needed.
+        o1=$(rand_range 1 221)
+        case "$o1" in
+            10)  o1=222 ;;
+            127) o1=223 ;;
+        esac
+        o2=$(rand_range 0 255)
+        o3=$(rand_range 0 255)
+        o4=$(rand_range 1 254)
+        # Pointer 0xc00c to the question's name, type A, class IN, TTL, length 4.
+        qtail="${qtail}$(printf 'c00c00010001%s0004%02x%02x%02x%02x' \
+            "$ttl" "$o1" "$o2" "$o3" "$o4")"
+    done
+
+    local out
+    out=$(printf '<r 2><b 0x%s><rc %s><b 0x%s>' "$hex" "$label" "$qtail")
+
+    # 🔴 A self-check before handing the value out. Without it the function has
+    # no failure signal at all: its exit status is that of the last printf, and
+    # that succeeds whatever the content is. A degradation measurement
+    # (rand_range returning an empty string) produced `<rc >` with an empty
+    # count and ANCOUNT=0000 at exit status 0 - such a value travels into the
+    # settings file, into the server config and into EVERY client profile, and
+    # only fails at step 7 when the interface comes up. The check lives here
+    # rather than at the call site because at this step the installer has not
+    # fetched awg_common.sh yet and cannot use our own parser. Note also that
+    # `%02x` is a MINIMUM WIDTH, not a truncation, so a value above 255 would
+    # give an odd number of hex characters, and both implementations reject such
+    # a tag. The label and answer bounds are checked separately: today they are
+    # held only by the literal rand_range arguments, and that link is invisible.
+    [[ "$out" =~ ^\<r\ 2\>\<b\ 0x[0-9a-f]{22}\>\<rc\ [0-9]{1,2}\>\<b\ 0x([0-9a-f]{2})+\>$ ]] || return 1
+    [[ "$label" -ge 1 && "$label" -le 63 && "$answers" -ge 1 && "$answers" -le 9 ]] || return 1
+
+    printf '%s\n' "$out"
 }
 
 # Generate all AWG 2.0 parameters
@@ -1813,7 +1916,7 @@ generate_awg_params() {
     AWG_H4="${_h_lines[3]}"
 
     # I1: CPS concealment
-    AWG_I1=$(generate_cps_i1)
+    AWG_I1=$(generate_cps_i1) || die "Could not build the I1 concealment packet - the generator returned an invalid value"
 
     # I2-I5 are NOT generated here (the admin sets them manually in awg0.conf, issue #71).
     # A fresh param set (first install or --preset/--jc/--jmin/--jmax) clears any stale
@@ -3731,6 +3834,16 @@ initialize_setup() {
         generate_awg_params
     else
         log "AWG 2.0 parameters already set from config."
+        # Installations made before September 2026 carry an I1 of random bytes.
+        # On some cellular networks such a packet is dropped together with the
+        # handshake packet and the tunnel never comes up, even though the server
+        # shows the peer. Regenerating it here silently is NOT an option: that
+        # would change the parameters of a working installation without asking.
+        # So it is simply said out loud, and only to those it concerns.
+        if [[ "${AWG_I1:-}" =~ ^\<r\ [0-9]+\>$ ]]; then
+            log_warn "I1 here is random bytes (${AWG_I1}): that is what versions before September 2026 wrote."
+            log_warn "If the tunnel does not come up on a cellular network, see ADVANCED.en.md, section \"The handshake never completes on cellular\"."
+        fi
     fi
 
     # CPS (I1) toggle (issue #159): --no-cps drops the I1 parameter that makes the
