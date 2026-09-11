@@ -110,7 +110,7 @@ All parameters are generated automatically during installation and saved to `/ro
 | `H2` | Response message identifier | uint32 range | `3456789-4567890` |
 | `H3` | Cookie message identifier | uint32 range | `56789012-67890123` |
 | `H4` | Data message identifier | uint32 range | `456789012-567890123` |
-| `I1` | CPS concealment packet | Format `<r N>` | `<r 128>` |
+| `I1` | CPS concealment packet | Tags `<b 0xHEX>` / `<r N>` / `<rc N>` / `<rd N>` / `<t>` | A DNS-reply-shaped packet, 70-128 bytes |
 | `I2`-`I5` | Extra CPS / special-junk packets, optional (carried to clients since v5.18.0) | Tags `<r N>` / `<b 0xHEX>` / `<c>` / `<t>` | `<b 0xf1>` |
 
 **Critical constraints:**
@@ -600,7 +600,7 @@ export AWG_H1='234567-345678'
 export AWG_H2='3456789-4567890'
 export AWG_H3='56789012-67890123'
 export AWG_H4='456789012-567890123'
-export AWG_I1='<r 128>'
+export AWG_I1='<r 2><b 0x858000010002000000001c><rc 28><b 0x0463646e730669636c6f756403636f6d0000010001c00c000100010000003c00043c263e6bc00c000100010000003c000475bb065f>'
 export AWG_PRESET='default'
 export AWG_PROTOCOL='2.0'
 ```
@@ -628,7 +628,7 @@ H1 = 234567-345678
 H2 = 3456789-4567890
 H3 = 56789012-67890123
 H4 = 456789012-567890123
-I1 = <r 128>
+I1 = <r 2><b 0x858000010002000000001c><rc 28><b 0x0463646e730669636c6f756403636f6d0000010001c00c000100010000003c00043c263e6bc00c000100010000003c000475bb065f>
 
 [Peer]
 #_Name = my_phone
@@ -691,7 +691,7 @@ H1 = 234567-345678
 H2 = 3456789-4567890
 H3 = 56789012-67890123
 H4 = 456789012-567890123
-I1 = <r 128>
+I1 = <r 2><b 0x858000010002000000001c><rc 28><b 0x0463646e730669636c6f756403636f6d0000010001c00c000100010000003c00043c263e6bc00c000100010000003c000475bb065f>
 
 [Peer]
 PublicKey = [SERVER_PUBLIC_KEY]
@@ -1475,9 +1475,9 @@ tcpdump -i any -n "udp port <your VPN port> and host <client address>"
 
 If the capture shows packets from the client and replies from the server, yet `latest handshake` has not moved after a minute of attempts, this is it.
 
-**Cause and what to do.** By default the installer writes the concealment packet as `I1 = <r N>`, that is N random bytes. Some cellular networks drop such a packet. Ways out, best first:
+**Cause and what to do.** Installations made before September 2026 carry the concealment packet as `I1 = <r N>`, that is N random bytes, and some cellular networks drop such a packet. Since September 2026 the installer writes a DNS-reply-shaped packet instead, and on the measured route a fresh install no longer reproduces the problem; what needs fixing is what was deployed earlier. ⚠️ This is not a promise for every network: for the carriers that the table above wants `I1` absent for, a fresh install keeps the problem. Ways out, best first:
 
-1. **Replace `I1` with a packet that has a meaningful shape.** A string like `<r 2><b 0x8580...>` imitates a DNS response: two random bytes are the transaction id, then the header and a record. A ready-made QUIC string comes from the generator in [AS-based blocking and the I1/CPS workaround](#as-blocking-adv); it fits here too, because what decides is the packet's shape, not its size.
+1. **Replace `I1` with a packet that has a meaningful shape.** A string like `<r 2><b 0x8580...>` imitates a DNS response: two random bytes are the transaction id, then the header and a record. A ready-made QUIC string comes from the generator in [AS-based blocking and the I1/CPS workaround](#as-blocking-adv); it fits here too, because what decides is the packet's shape, not its size. A string of this kind - DNS-shaped rather than QUIC-shaped - is what the installer itself emits from September 2026 onwards, so you can take one from a fresh install. `I1` does not have to match between the peers, and concealment packets are sent by the handshake initiator - so for a single client an edit in its own `.conf` is enough and the server can be left alone.
 2. **Drop `I1` entirely** by reinstalling with `--no-cps`. Blunter: the handshake loses its disguise along with the problem.
 3. Lowering `Jc`, `Jmin`, `Jmax` **does not help** - see the measurement below.
 
@@ -1726,7 +1726,7 @@ Then re-issue the client configs (`sudo bash /root/awg/manage_amneziawg.sh regen
 
 ⚠️ **Refinement from the September 2026 measurement: AS-based blocking alone does not explain it.** The same effect reproduced against a server in the US that has nothing to do with Hetzner: an `I1` concealment packet made of random bytes did not get through, while a packet of the same length shaped like DNS did. So the filter reacts to the **shape of the packet itself**, not only to the destination address, and swapping `I1` helps for a reason other than dodging an AS list. The detailed measurement is in [the handshake never completes on cellular](#no-hs-mobile-adv). The SNI is chosen per hoster; for Hetzner, `7-zip.org` worked.
 
-**Field test (June 2026).** The recipe was verified live on a clean Hetzner server (AS24940) from a Russian client across three Moscow ISPs, comparing the default configuration (generic `I1 = <r N>`) against the QUIC mimicry (`I1` generated for SNI `7-zip.org`).
+**Field test (June 2026).** The recipe was verified live on a clean Hetzner server (AS24940) from a Russian client across three Moscow ISPs, comparing the then-default configuration (generic `I1 = <r N>`) against the QUIC mimicry (`I1` generated for SNI `7-zip.org`).
 
 | ISP | Default (generic I1) | QUIC I1 (SNI 7-zip.org) |
 |-----|----------------------|--------------------------|
