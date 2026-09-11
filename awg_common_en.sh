@@ -2238,6 +2238,53 @@ awg_cps_decoded_size() {
     return 0
 }
 
+# Does a CPS string have STRUCTURE rather than just random bytes.
+#
+# 🔴 This answers the diagnostic's question "should this value be scolded", and
+# the boundary matters more than convenience. Measured 10 sep 2026 on a live
+# Russian carrier: a packet of random bytes never completes the handshake, a
+# DNS-reply-shaped packet of the same size does. So "structured" has to mean
+# structure, not the presence of one literal tag somewhere in the string:
+# `<r 200><b 0xaa>` is two hundred bytes of randomness with a one-byte tail, and
+# the first version of this check blessed it. Three conditions, each its own:
+#   1. the string parses through our counter in full (truncation and odd hex out);
+#   2. tags only from the intersection of the implementations - `<c>` and `<d>`
+#      break portability;
+#   3. no random run is longer than a DNS label (63 bytes), and there are at
+#      least thirty literal bytes. Our generator gives a label up to 62 and from
+#      48 literal bytes; the documented QUIC recipes are nearly all literal.
+#
+# Returns 0 when the structure is there.
+awg_cps_is_shaped() {
+    local s="${1:-}" rest tag n lit=0 rnd_max=0
+    [[ -n "$s" ]] || return 1
+    # Разбирается целиком: код 2 означает «встретилось неразобранное», и такой
+    # тег обе реализации отвергнут - интерфейс не поднимется.
+    awg_cps_decoded_size "$s" >/dev/null 2>&1 || return 1
+    rest="$s"
+    while [[ "$rest" =~ \<[[:space:]]*([a-zA-Z]+)[[:space:]]*([^\>]*)\> ]]; do
+        tag="${BASH_REMATCH[1],,}"
+        n="${BASH_REMATCH[2]//[[:space:]]/}"
+        case "$tag" in
+            b)
+                n="${n#0x}"; n="${n#0X}"
+                lit=$(( lit + ${#n} / 2 ))
+                ;;
+            r|rc|rd)
+                [[ "$n" =~ ^[0-9]{1,9}$ ]] || return 1
+                [[ $(( 10#$n )) -gt "$rnd_max" ]] && rnd_max=$(( 10#$n ))
+                ;;
+            t) : ;;
+            *) return 1 ;;
+        esac
+        rest="${rest#*"${BASH_REMATCH[0]}"}"
+    done
+    # Ни одного случайного куска длиннее метки DNS и не меньше тридцати
+    # литеральных байт структуры.
+    [[ "$rnd_max" -le 63 && "$lit" -ge 30 ]]
+}
+
+
 # _awg_device_param_names : names of the AWG device parameters (2.0 and 3.0)
 # that live in the [Interface] section and that syncconf does NOT clear.
 _awg_device_param_names() {
