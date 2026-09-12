@@ -249,7 +249,7 @@ run_routing_fn() {   # $1 installer, $2 CLI mode, $3 AUTO_YES, $4 saved mode, $5
 # So each scenario names the message it must produce, and the two guards - the
 # read exit status and the retry cap - are told apart.
 run_prompt3() {             # $1 installer, $2 "eof" | $3 "cap"
-    local script="${BATS_TEST_DIRNAME}/../$1" fn body
+    local script="${BATS_TEST_DIRNAME}/../$1" fn
     printf '3\n' > "$TEST_DIR/tty.txt"
     fn=$(awk '/^validate_cidr_list\(\)/,/^}/' "$script"
          awk '/^configure_routing_mode\(\)/,/^}/' "$script")
@@ -375,10 +375,14 @@ run_prompt3() {             # $1 installer, $2 "eof" | $3 "cap"
     # Ties the inference to the behaviour it exists to protect: a legacy list is
     # labelled mode 2, and mode 2 with isolation off must still append the tunnel
     # subnet, or the clients stop seeing each other.
-    local fns
-    fns=$(awk '/^tunnel_network_cidr\(\)/,/^}/' "${BATS_TEST_DIRNAME}/../install_amneziawg.sh"
-          awk '/^_apply_isolation_to_allowed_ips\(\)/,/^}/' "${BATS_TEST_DIRNAME}/../install_amneziawg.sh")
-    [ -n "$fns" ]
+    local s fns
+    for s in "${SCRIPTS[@]}"; do
+    fns=$(awk '/^tunnel_network_cidr\(\)/,/^}/' "${BATS_TEST_DIRNAME}/../$s"
+          awk '/^_apply_isolation_to_allowed_ips\(\)/,/^}/' "${BATS_TEST_DIRNAME}/../$s")
+    # -n alone is satisfied by the first function on its own, so a rename of the
+    # second one would fail on the VALUE instead of naming the extraction.
+    printf '%s\n' "$fns" | grep -q '^tunnel_network_cidr()'
+    printf '%s\n' "$fns" | grep -q '^_apply_isolation_to_allowed_ips()'
     run bash -c '
         log(){ :; }
         '"$fns"'
@@ -398,6 +402,35 @@ run_prompt3() {             # $1 installer, $2 "eof" | $3 "cap"
     [[ "$output" == *'inferred2:1.0.0.0/8, 8.8.8.8/32, 10.9.9.0/24'* ]]
     [[ "$output" == *'mode1off:0.0.0.0/0'* ]]
     [[ "$output" == *'mode1on:0.0.0.0/0'* ]]
+    done
+}
+
+@test "default routing: dual-stack on the new default mirrors IPv4 into IPv6" {
+    # The dual-stack branch was only ever driven through the list-shaped mode,
+    # which is no longer what an install produces by default.
+    setup_default_install
+    cat >> "$CONFIG_FILE" << 'CONF'
+export ALLOW_IPV6_TUNNEL=1
+export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
+export SERVER_HAS_NATIVE_IPV6=1
+CONF
+    safe_load_config "$CONFIG_FILE"
+    render_client_config "d6" "10.9.9.6" "FAKEPRIV" "FAKEPUB" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::6"
+    grep -qxF "AllowedIPs = 0.0.0.0/0, ::/0" "$AWG_DIR/d6.conf"
+}
+
+@test "default routing: dual-stack without native IPv6 gets the tunnel ULA, not ::/0" {
+    setup_default_install
+    cat >> "$CONFIG_FILE" << 'CONF'
+export ALLOW_IPV6_TUNNEL=1
+export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
+export SERVER_HAS_NATIVE_IPV6=0
+CONF
+    safe_load_config "$CONFIG_FILE"
+    render_client_config "d7" "10.9.9.7" "FAKEPRIV" "FAKEPUB" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::7"
+    grep -qxF "AllowedIPs = 0.0.0.0/0, fddd:2c4:2c4:2c4::/64" "$AWG_DIR/d7.conf"
+    run grep -qF "::/0" "$AWG_DIR/d7.conf"
+    [ "$status" -ne 0 ]
 }
 
 @test "default routing: mode 3 keeps taking the list it was given" {
