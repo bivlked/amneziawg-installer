@@ -119,6 +119,56 @@ Co-authored-by: dependabot[bot] <support@github.com>"
     [ "$status" -eq 0 ]
 }
 
+# --- text on stdin ----------------------------------------------------------
+# The third surface. A pull request title and body are published when the
+# request opens and outlive it, yet neither is a commit message nor a diff
+# line, so both git-side scans above look straight past them.
+
+# 🔴 The case the text mode exists for: the marker sits ONLY in the body.
+# Commits and diff are clean, both scans above pass, and before this mode the
+# text went public with every check green.
+@test "markers: a marker in text on stdin fails" {
+    body="Summary of the change.
+
+    Closes $(_marker)."
+    run bash "$SCRIPT" --text "pull request body" <<< "$body"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"pull request body carries a forbidden marker"* ]]
+}
+
+@test "markers: clean text on stdin passes" {
+    run bash "$SCRIPT" --text "pull request title" <<< "feat: an ordinary title"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No forbidden markers in pull request title"* ]]
+}
+
+# The label is what tells whoever has to fix it WHICH text is at fault, so it
+# has to reach the message rather than stay decoration at the call site.
+@test "markers: the text scan names the surface it was given" {
+    run bash "$SCRIPT" --text "annotated tag message" <<< "see $(_marker)"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"annotated tag message carries"* ]]
+}
+
+@test "markers: the per-line exemption applies to text too" {
+    line="MARKERS='$(_marker)'  # allow-markers"
+    run bash "$SCRIPT" --text "pull request body" <<< "$line"
+    [ "$status" -eq 0 ]
+}
+
+# Without a label the scan would still run and still report, just anonymously.
+# Refusing keeps the caller honest about what it is scanning.
+@test "markers: --text without a label refuses rather than scanning anonymously" {
+    run bash "$SCRIPT" --text <<< "x"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage"* ]]
+}
+
+# An empty body is the normal state of a small pull request, not an error.
+@test "markers: empty text on stdin passes" {
+    run bash "$SCRIPT" --text "pull request body" < /dev/null
+    [ "$status" -eq 0 ]
+}
 @test "markers: an unreadable base ref is a loud failure, not a clean pass" {
     run bash "$SCRIPT" "does-not-exist-ref" HEAD
     [ "$status" -ne 0 ]
