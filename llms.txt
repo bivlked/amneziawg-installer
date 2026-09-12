@@ -1,0 +1,56 @@
+# amneziawg-installer
+
+> Open-source Bash installer that turns a clean Ubuntu or Debian VPS into a self-hosted AmneziaWG 2.0 / 3.0 VPN server with one command. The kernel module comes through DKMS; there is no Docker and no web panel. MIT licensed.
+
+- It installs upstream AmneziaWG and automates and tunes the server around it. It is not a fork of the protocol and not the official Amnezia VPN app.
+- Install (English script):
+
+```bash
+wget -O install_amneziawg_en.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/install_amneziawg_en.sh
+chmod +x install_amneziawg_en.sh
+sudo bash ./install_amneziawg_en.sh
+```
+
+- The Russian-language script is `install_amneziawg.sh` at the same address. Use the `releases/latest/download` address: release assets carry minisign signatures, and the public key is `KEYS.txt` next to them.
+- About 20 minutes and two reboots. After each reboot, run the same script again and it continues from the step where it stopped.
+- Meant for a clean VPS dedicated to the VPN, not a home router, shared hosting or a server that does other work: the installer hardens and tunes the whole machine (UFW, Fail2Ban, sysctl).
+- Systems: for a new server Ubuntu 24.04 or Debian 13; Ubuntu 26.04 is also supported; Ubuntu 25.10 and Debian 12 still work but are kept for existing servers, not new ones. Architectures: x86_64, ARM64, ARMv7. The machine-readable source of truth is `docs/support-matrix.json` (linked below).
+- At the end it prints a QR code and a `vpn://` link for one-tap import into the Amnezia client. Clients are managed afterwards with `manage_amneziawg.sh` (`add`, `remove`, `list`, `regen`); time-limited access is `add <name> --expires=7d`.
+- Generated client configs use the AmneziaWG 2.0 profile even when the kernel module is 3.x. Which protocol line a server gets is explained on the AmneziaWG 3.0 and 3.1 page below.
+- Everything below exists in English and in Russian.
+
+## Docs
+
+- [README](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/README.en.md): overview, quick start, features, supported systems, FAQ
+- [Install guide for a VPS](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/INSTALL_VPS.md): step by step from choosing a VPS to the first client, update, uninstall and troubleshooting
+- [Advanced reference](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/ADVANCED.en.md): AmneziaWG 2.0 parameters, presets, mobile carriers, ARM, LXC, deep troubleshooting. Large file
+- [Two-server cascade](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/CASCADE.en.md): split exit, Russian traffic through a Russian server and the rest abroad
+- [Russian networks through Cloudflare WARP](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/WARP-RU.en.md): route the Russian segment separately on an existing install, without a second server
+- [Supported systems, machine-readable](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/docs/support-matrix.json): platforms, vendor support dates and project policy
+- [Security policy](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/SECURITY.md): threat model and how to report a vulnerability
+- [Changelog](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/CHANGELOG.en.md): changes per release
+
+## Guides
+
+- [AmneziaWG VPN installer for Ubuntu and Debian](https://bivlked.github.io/amneziawg-installer/): what the installer does, in one page
+- [How it differs from the official Amnezia app](https://bivlked.github.io/amneziawg-installer/compare/): same protocol, different deployment and tuning
+- [Add and remove clients](https://bivlked.github.io/amneziawg-installer/manage/): QR codes, vpn:// links, time-limited access, backups, JSON output
+- [Two-server cascade VPN](https://bivlked.github.io/amneziawg-installer/cascade/): Russian sites from a Russian IP, the rest through a foreign exit
+- [Russian sites that fail through a VPN](https://bivlked.github.io/amneziawg-installer/warp-ru/): a separate route through Cloudflare WARP
+- [AmneziaWG 3.0 and 3.1 on your own server](https://bivlked.github.io/amneziawg-installer/awg3/): which line you get, how to check it, whether to upgrade
+
+## Russian
+
+- [README на русском](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/README.md)
+- [Установка на VPS](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/INSTALL_VPS.ru.md)
+- [Расширенный справочник](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/ADVANCED.md)
+- [Каскад из двух серверов](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/CASCADE.md)
+- [Российский сегмент через Cloudflare WARP](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/WARP-RU.md)
+- [Список изменений](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/CHANGELOG.md)
+- [Сайт на русском](https://bivlked.github.io/amneziawg-installer/ru/): те же страницы, что в разделе Guides
+
+## Optional
+
+- [Release signing design](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/docs/SIGNING_DESIGN.md): why minisign and how releases are signed
+- [Releases](https://github.com/bivlked/amneziawg-installer/releases): all versions with notes and signed assets
+- [Repository](https://github.com/bivlked/amneziawg-installer): source, issues and discussions
