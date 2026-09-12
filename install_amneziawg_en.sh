@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.33.0
-# Date: 2026-09-11
+# Version: 5.34.0
+# Date: 2026-09-12
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 set -o pipefail
-SCRIPT_VERSION="5.33.0"
+SCRIPT_VERSION="5.34.0"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -34,8 +34,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="93f733809cdd259402faf4986224ed11890a24df3d75ef76ae0088b81cb740f8"
-MANAGE_SCRIPT_SHA256="473b695c0f60b8a511e0f72b130e250263ad83719e09baeb8593b3dbd4b9809b"
+COMMON_SCRIPT_SHA256="1be3dc6894194d2995ba1bbdf166868f5aa8121e0e12792ea60ae25aa2a30f0d"
+MANAGE_SCRIPT_SHA256="739558853d77cb8178ee2da7a46e310795245500ac6495a2d7060b939b353250"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back
@@ -342,9 +342,9 @@ Options:
   --allow-ipv6          Keep IPv6 enabled non-interactively
   --disallow-ipv6       Force-disable IPv6 non-interactively
   --allow-ipv6-tunnel   Enable dual-stack IPv6 inside the tunnel (ULA, opt-in)
-  --route-all           Use 'All traffic' mode non-interactively
-  --route-amnezia       Use 'Amnezia' mode non-interactively
-  --route-custom=NETS   Use 'Custom' mode non-interactively
+  --route-all           'All traffic' mode (0.0.0.0/0) - chosen by default
+  --route-amnezia       'Amnezia' mode - public IPv4 into the tunnel, private networks outside
+  --route-custom=NETS   'Custom' mode: only the listed networks go into the tunnel
   --isolation=on|off    Isolate VPN clients from each other (default on).
                         off: the tunnel subnet is added to client AllowedIPs
   --endpoint=ADDR       External server endpoint: FQDN, IPv4 or [IPv6] (NAT)
@@ -381,7 +381,7 @@ Options:
 Examples:
   sudo bash install_amneziawg_en.sh                             # Interactive installation
   sudo bash install_amneziawg_en.sh --port=51820 --route-all    # Non-interactive
-  sudo bash install_amneziawg_en.sh --route-amnezia --yes       # Fully automated
+  sudo bash install_amneziawg_en.sh --yes                       # Fully automated
   sudo bash install_amneziawg_en.sh --preset=mobile --yes       # Optimized for mobile networks
   sudo bash install_amneziawg_en.sh --uninstall                 # Uninstall
   sudo bash install_amneziawg_en.sh --diagnostic                # Diagnostics
@@ -1570,6 +1570,7 @@ validate_cidr_list() {
 }
 
 configure_routing_mode() {
+    local r_mode=""
     if [[ "$CLI_ROUTING_MODE" != "default" ]]; then
         ALLOWED_IPS_MODE=$CLI_ROUTING_MODE
         if [[ "$CLI_ROUTING_MODE" -eq 3 ]]; then
@@ -1577,26 +1578,69 @@ configure_routing_mode() {
             if [ -z "$ALLOWED_IPS" ]; then die "No networks specified for --route-custom."; fi
         fi
         log "Routing mode from CLI: $ALLOWED_IPS_MODE"
+    elif [[ "$ALLOWED_IPS_MODE" != "default" && -n "$ALLOWED_IPS_MODE" ]]; then
+        # The mode is ALREADY known - read from the server config or inferred from
+        # it further down this file, and we are
+        # here only because the route list is empty. It must be REBUILT for the
+        # saved mode rather than have the mode replaced by today's default:
+        # otherwise changing the installer default silently changes the mode of a
+        # working server. The --yes branch used to assign its default over the
+        # saved value whatever it was, so the same defect predates this change.
+        # Mode 3 has NOTHING to rebuild from: its list is written by a human.
+        # Without it the branch below would go and ask through /dev/tty, and when
+        # there is no terminal read fails instantly, validation rejects the empty
+        # string, and the "try again" loop spins FOREVER printing nothing.
+        # Measured: with and without --yes alike. So the refusal is unconditional,
+        # loud and carries the next step - a silent hang costs more than a refusal.
+        if [[ "$ALLOWED_IPS_MODE" == "3" && -z "$CLI_CUSTOM_ROUTES" && -z "$ALLOWED_IPS" ]]; then
+            die "$CONFIG_FILE says routing mode 3, but the network list is empty. Pass --route-custom=NETS or put ALLOWED_IPS into the config."
+        fi
+        log_warn "Server routing mode: $ALLOWED_IPS_MODE, but the route list is empty - rebuilding it for that mode."
     elif [[ "$AUTO_YES" -eq 1 ]]; then
-        ALLOWED_IPS_MODE=2
-        log "Routing mode: Amnezia+DNS (--yes, default)."
+        ALLOWED_IPS_MODE=1
+        log "Routing mode: all traffic (--yes, default)."
     else
         echo ""
         log "Select routing mode (client AllowedIPs):"
-        echo "  1) All traffic (0.0.0.0/0) - Max privacy, may block LAN"
-        echo "  2) Amnezia List+DNS (default) - Recommended for bypassing restrictions"
+        echo "  1) All traffic (0.0.0.0/0) (default) - the full-tunnel form clients expect"
+        echo "  2) Amnezia List+DNS - public IPv4 into the tunnel, private networks outside;"
+        echo "     some clients treat such a list as split routing"
         echo "  3) Only specified networks (Split Tunneling)"
-        read -rp "Your choice [2]: " r_mode < /dev/tty
-        ALLOWED_IPS_MODE=${r_mode:-2}
+        # The exit status of read matters here too: with no terminal r_mode would
+        # be taken FROM THE ENVIRONMENT, so a stray r_mode=2 would silently pick a
+        # mode nobody asked about, and r_mode=3 would walk into the network prompt.
+        if ! read -rp "Your choice [1]: " r_mode < /dev/tty; then
+            r_mode=""
+            log_warn "No terminal available, could not ask about the routing mode - using the default."
+        fi
+        ALLOWED_IPS_MODE=${r_mode:-1}
     fi
     case "$ALLOWED_IPS_MODE" in
-        1) ALLOWED_IPS="0.0.0.0/0"
-           log "Selected mode: All traffic." ;;
+        2) # iOS breaks the tunnel if the list starts with 0.0.0.0/5: that block covers
+           # the reserved 0.0.0.0/8 which the iOS kernel chokes on, so it never reaches the
+           # rest of the routes. 1.0.0.0/8 + 2.0.0.0/7 + 4.0.0.0/6 is the same range minus the
+           # zero block (0.0.0.0/8 is non-routable anyway). Do not revert to 0.0.0.0/5 (Issue #42).
+           ALLOWED_IPS="1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6, 8.0.0.0/7, 11.0.0.0/8, 12.0.0.0/6, 16.0.0.0/4, 32.0.0.0/3, 64.0.0.0/2, 128.0.0.0/3, 160.0.0.0/5, 168.0.0.0/6, 172.0.0.0/12, 172.32.0.0/11, 172.64.0.0/10, 172.128.0.0/9, 173.0.0.0/8, 174.0.0.0/7, 176.0.0.0/4, 192.0.0.0/9, 192.128.0.0/11, 192.160.0.0/13, 192.169.0.0/16, 192.170.0.0/15, 192.172.0.0/14, 192.176.0.0/12, 192.192.0.0/10, 193.0.0.0/8, 194.0.0.0/7, 196.0.0.0/6, 200.0.0.0/5, 208.0.0.0/4, 8.8.8.8/32, 1.1.1.1/32"
+           log "Selected mode: Amnezia List+DNS." ;;
         3) if [[ -z "$CLI_CUSTOM_ROUTES" ]]; then
-               read -rp "Enter networks (a.b.c.d/xx,...): " ALLOWED_IPS < /dev/tty
-               while ! validate_cidr_list "$ALLOWED_IPS"; do
+               # 🔴 The EXIT STATUS of read must be checked, not just its value.
+               # With no terminal (a dropped ssh session, cron, a run without -t)
+               # the /dev/tty redirect fails and read does not execute AT ALL,
+               # leaving the previous value; on Ctrl-D it does execute and yields
+               # an empty string. Either way the validator rejects the empty string
+               # and an unbounded loop spins forever, flooding the log: measured at
+               # over seventy thousand iterations in five seconds. The correct
+               # pattern lives in this same file - the package removal question.
+               local _aip_tries=0
+               while :; do
+                   if ! read -rp "Enter networks (a.b.c.d/xx,...): " ALLOWED_IPS < /dev/tty; then
+                       die "Input ended or no terminal is available - nobody to ask for the network list. Pass --route-custom=NETS or pick another routing mode."
+                   fi
+                   validate_cidr_list "$ALLOWED_IPS" && break
+                   if (( ++_aip_tries >= 5 )); then
+                       die "Five invalid entries in a row. Pass --route-custom=NETS or pick another routing mode."
+                   fi
                    log_warn "Invalid CIDR format: '$ALLOWED_IPS'. Expected: x.x.x.x/y[,x.x.x.x/y]"
-                   read -rp "Try again: " ALLOWED_IPS < /dev/tty
                done
            else
                ALLOWED_IPS=$CLI_CUSTOM_ROUTES
@@ -1605,13 +1649,17 @@ configure_routing_mode() {
                fi
            fi
            log "Selected mode: Custom ($ALLOWED_IPS)" ;;
-        *) ALLOWED_IPS_MODE=2
-           # iOS breaks the tunnel if the list starts with 0.0.0.0/5: that block covers
-           # the reserved 0.0.0.0/8 which the iOS kernel chokes on, so it never reaches the
-           # rest of the routes. 1.0.0.0/8 + 2.0.0.0/7 + 4.0.0.0/6 is the same range minus the
-           # zero block (0.0.0.0/8 is non-routable anyway). Do not revert to 0.0.0.0/5 (Issue #42).
-           ALLOWED_IPS="1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6, 8.0.0.0/7, 11.0.0.0/8, 12.0.0.0/6, 16.0.0.0/4, 32.0.0.0/3, 64.0.0.0/2, 128.0.0.0/3, 160.0.0.0/5, 168.0.0.0/6, 172.0.0.0/12, 172.32.0.0/11, 172.64.0.0/10, 172.128.0.0/9, 173.0.0.0/8, 174.0.0.0/7, 176.0.0.0/4, 192.0.0.0/9, 192.128.0.0/11, 192.160.0.0/13, 192.169.0.0/16, 192.170.0.0/15, 192.172.0.0/14, 192.176.0.0/12, 192.192.0.0/10, 193.0.0.0/8, 194.0.0.0/7, 196.0.0.0/6, 200.0.0.0/5, 208.0.0.0/4, 8.8.8.8/32, 1.1.1.1/32"
-           log "Selected mode: Amnezia List+DNS." ;;
+        *) # Anything unrecognised falls back to the default mode - the contract
+           # is unchanged, only WHICH mode that is has moved. But it must not be
+           # silent: someone who missed the "2" key would otherwise learn their
+           # mode from the issued config. An empty answer is a deliberate choice
+           # of the default and gets no warning.
+           if [[ -n "$ALLOWED_IPS_MODE" && "$ALLOWED_IPS_MODE" != "1" ]]; then
+               log_warn "Mode '$ALLOWED_IPS_MODE' not recognised - falling back to the default (all traffic)."
+           fi
+           ALLOWED_IPS_MODE=1
+           ALLOWED_IPS="0.0.0.0/0"
+           log "Selected mode: All traffic." ;;
     esac
     if [ -z "$ALLOWED_IPS" ]; then die "Failed to determine AllowedIPs."; fi
     export ALLOWED_IPS_MODE ALLOWED_IPS
@@ -3629,6 +3677,21 @@ initialize_setup() {
                 CLIENT_ISOLATION=1
                 ;;
         esac
+        # ALLOWED_IPS_MODE from the config: strictly 1|2|3. It was the only routing
+        # key with no validation, and a garbage value reached
+        # _apply_isolation_to_allowed_ips, where the comparisons against "1" and "2"
+        # give mode-3 semantics: with isolation off the tunnel subnet was appended
+        # to 0.0.0.0/0 and the client profile stopped being the exact pair
+        # 0.0.0.0/0, ::/0 - the very thing the default was moved for. The check
+        # lives HERE and not inside configure_routing_mode: that one runs only when
+        # the route list is empty, so a config with a garbage mode AND a non-empty
+        # list never reaches it.
+        case "${ALLOWED_IPS_MODE:-}" in
+            ""|default|1|2|3) : ;;
+            *)
+                die "ALLOWED_IPS_MODE='$ALLOWED_IPS_MODE' in $CONFIG_FILE is invalid (1, 2 or 3 allowed). Fix the value or pass --route-all / --route-amnezia / --route-custom=NETS."
+                ;;
+        esac
         # CLIENT_ISOLATION_NET is an internal ownership marker: exactly one
         # canonical IPv4 CIDR (tunnel_network_cidr output). Comma-carrying
         # garbage would let the substring replace in
@@ -3680,6 +3743,14 @@ initialize_setup() {
     # --isolation=off transition would not warn about regen.
     _cfg_client_isolation=""
     if [[ "$config_exists" -eq 1 ]]; then _cfg_client_isolation="${CLIENT_ISOLATION:-1}"; fi
+
+    # Previous routing mode - for the change warning when no flag was passed.
+    # A flag is caught through CLI_ROUTING_MODE, but the mode also changes without
+    # one: a key-less config has it inferred, and an unrecognised value normalised.
+    # A legacy config with no key yields 'default', which never equals 1|2|3, so the
+    # legacy -> current default transition does get the warning.
+    _cfg_allowed_ips_mode=""
+    if [[ "$config_exists" -eq 1 ]]; then _cfg_allowed_ips_mode="${ALLOWED_IPS_MODE:-default}"; fi
 
     # Previous server name - for the change warning (D#180).
     # A legacy config without the key = 'AWG Server' (the old hardcode).
@@ -3792,7 +3863,26 @@ initialize_setup() {
     # Default values
     if [[ "$DISABLE_IPV6" == "default" ]]; then DISABLE_IPV6=1; fi
     configure_ipv6_tunnel
-    if [[ "$ALLOWED_IPS_MODE" == "default" ]]; then ALLOWED_IPS_MODE=2; fi
+    # A config WITHOUT the ALLOWED_IPS_MODE key but WITH a list is an install older
+    # than the key itself. Whose list it is we do not know - it may well be a custom
+    # one. But it must not be labelled mode 1, because the mode decides what happens
+    # to the tunnel subnet: with isolation off, mode 1 does not append it (0.0.0.0/0
+    # already covers it) while a list-based mode does - and the clients would stop
+    # seeing each other. Hence a CONSERVATIVE inference: a non-empty list that is not
+    # 0.0.0.0/0 counts as the list-based mode. That is exactly what such a config used
+    # to get, back when every key-less config became mode 2.
+    # ⚠️ The second branch does differ from the former behaviour, deliberately: a
+    # key-less config whose list is EXACTLY 0.0.0.0/0 used to be labelled mode 2 as
+    # well and is now labelled 1. Clients still get the same 0.0.0.0/0; what changes
+    # is that with isolation off the tunnel subnet is no longer appended - the zero
+    # route already covers it.
+    if [[ "$ALLOWED_IPS_MODE" == "default" ]]; then
+        if [[ -n "$ALLOWED_IPS" && "${ALLOWED_IPS//[[:space:]]/}" != "0.0.0.0/0" ]]; then
+            ALLOWED_IPS_MODE=2
+        else
+            ALLOWED_IPS_MODE=1
+        fi
+    fi
     if [[ -z "$ALLOWED_IPS" ]]; then configure_routing_mode; fi
 
     # Client isolation (issue #178): choice + AllowedIPs alignment. Called
@@ -3944,7 +4034,9 @@ EOF
     # the new list, but for existing ones regen deliberately preserves
     # AllowedIPs (per-client modify customizations). Hint the explicit way to
     # apply the new mode to everyone (Issue #170).
-    if [[ "$config_exists" -eq 1 && "$CLI_ROUTING_MODE" != "default" ]]; then
+    if [[ "$config_exists" -eq 1 ]] \
+       && { [[ "$CLI_ROUTING_MODE" != "default" ]] \
+            || [[ "$_cfg_allowed_ips_mode" != "$ALLOWED_IPS_MODE" ]]; }; then
         log_warn "Routing mode changed. Existing client configs keep their old AllowedIPs."
         log_warn "Apply the new mode to all clients: sudo bash $MANAGE_SCRIPT_PATH regen --reset-routes"
     fi
@@ -3993,6 +4085,7 @@ EOF
     # (Issue #175). Roll back to step 4: firewall (port) + config regen (step 6).
     if (( current_step > 4 )) && { [[ -n "$CLI_PORT" ]] || [[ -n "$CLI_SUBNET" ]] \
         || [[ -n "$CLI_SSH_PORT" ]] || [[ "$CLI_ROUTING_MODE" != "default" ]] \
+        || [[ -n "$_cfg_allowed_ips_mode" && "$_cfg_allowed_ips_mode" != "$ALLOWED_IPS_MODE" ]] \
         || [[ -n "$CLI_ENDPOINT" ]] || [[ "$CLI_DISABLE_IPV6" != "default" ]] \
         || [[ "${CLI_ALLOW_IPV6_TUNNEL:-0}" -eq 1 ]] || [[ -n "${CLI_PRESET:-}" ]] \
         || [[ -n "${CLI_JC:-}" ]] || [[ -n "${CLI_JMIN:-}" ]] || [[ -n "${CLI_JMAX:-}" ]] \

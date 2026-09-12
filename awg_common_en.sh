@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 2.0
 # Author: @bivlked
-# Version: 5.33.0
-# Date: 2026-09-11
+# Version: 5.34.0
+# Date: 2026-09-12
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -24,7 +24,7 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # drifted apart (one file updated, the other not) - otherwise the mismatch shows
 # up as a "command not found" somewhere random. Bumped with the other versions.
 # shellcheck disable=SC2034  # used by the manage script after sourcing
-AWG_COMMON_VERSION="5.33.0"
+AWG_COMMON_VERSION="5.34.0"
 
 # --- Auto-cleanup of temporary files ---
 # NOTE: trap is NOT set here to avoid overwriting the caller's trap handler.
@@ -277,11 +277,11 @@ _awg_ipv4_range_is_non_public() {
 
 # _is_full_tunnel <allowed_ips> : does the list cover ALL public IPv4?
 #
-# Mode 1 spells a full tunnel as 0.0.0.0/0; mode 2 (the INSTALL DEFAULT) spells
-# it as a 34-entry list: all public IPv4 minus the private ranges. It is written
+# Mode 1 spells a full tunnel as 0.0.0.0/0; mode 2 (the install default until
+# v5.34.0) spells it as a 34-entry list: all public IPv4 minus the private ranges. It is written
 # as a list only to dodge the iOS bug on 0.0.0.0/5 (issue #42), so by meaning it
 # is a full tunnel too. Comparing the string with a literal answered these two
-# cases differently, and the default install lost its ::/0 - the device's IPv6
+# cases differently, and the install default lost its ::/0 back then - the device's IPv6
 # went out with its real address.
 #
 # Real split routing (mode 3) does not cover the public space and still gets a
@@ -1870,8 +1870,8 @@ render_client_config() {
         # and refuses to bring the tunnel up. For a full tunnel we add ::/0 -
         # IPv6 goes into the tunnel (and is dropped if the server has no native
         # IPv6), so it never leaks past the VPN. A full tunnel is decided by
-        # route coverage, so both mode 1 and the list-shaped mode 2 (the install
-        # default) land here; split routing does not.
+        # route coverage, so both mode 1 and the list-shaped mode 2 land here;
+        # split routing does not.
         # Checking the substitution result is mandatory: the old code was a pure
         # string comparison and could not fail, while a command substitution
         # returns an empty string when fork/exec fails. Without the check the

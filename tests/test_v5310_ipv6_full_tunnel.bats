@@ -1,12 +1,13 @@
 #!/usr/bin/env bats
-# v5.31.0 - the default install stopped leaking IPv6.
+# v5.31.0 - the list-based routing mode 2 stopped leaking IPv6.
+# (mode 2 was the install default until the default moved to mode 1)
 #
 # Three forks in awg_common.sh decided "is this a full tunnel?" by comparing the
-# AllowedIPs string with the literal 0.0.0.0/0. Routing mode 2 - the INSTALL
-# DEFAULT - is a 34-entry list (all public IPv4 minus the private ranges); it is
-# written as a list only to dodge the iOS bug on 0.0.0.0/5 (issue #42), so by
-# meaning it is a full tunnel, but the string never matched. Result: the default
-# client config carried no ::/0, the device's IPv6 went around the tunnel with
+# AllowedIPs string with the literal 0.0.0.0/0. Routing mode 2 - the install
+# default back then - is a 34-entry list (all public IPv4 minus the private
+# ranges); it is written as a list only to dodge the iOS bug on 0.0.0.0/5
+# (issue #42), so by meaning it is a full tunnel, but the string never matched.
+# Result: the client config of that default carried no ::/0, the device's IPv6 went around the tunnel with
 # its real address, and because the third fork sits on the regen path, telling
 # the user to re-issue the profile did not help either.
 #
@@ -17,7 +18,7 @@
 
 load test_helper
 
-# The real default list, read out of the installer rather than copied here: a
+# The real mode-2 list, read out of the installer rather than copied here: a
 # copy would keep passing after someone edits the installer and breaks the
 # property. Both language variants must carry the same list.
 mode2_list() {
@@ -43,7 +44,7 @@ mode2_list() {
     _is_full_tunnel "0.0.0.0/0"
 }
 
-@test "v5.31.0 predicate: mode 2 (the default list) is a full tunnel" {
+@test "v5.31.0 predicate: mode 2 (the list) is a full tunnel" {
     _is_full_tunnel "$(mode2_list)"
 }
 
@@ -207,7 +208,7 @@ mode2_list() {
     [ "$(_append_ipv6_full_tunnel_route '0.0.0.0/0')" = "0.0.0.0/0, ::/0" ]
 }
 
-@test "v5.31.0 append: the default list gains ::/0" {
+@test "v5.31.0 append: the mode-2 list gains ::/0" {
     local list
     list=$(mode2_list)
     [ "$(_append_ipv6_full_tunnel_route "$list")" = "$list, ::/0" ]
@@ -259,10 +260,10 @@ mode2_list() {
 
 # --- render_client_config: the actual bug ---
 
-setup_default_mode() {
+setup_mode2() {
     create_server_config
     create_init_config
-    # Replace the truncated fixture list with the real mode-2 default.
+    # Replace the truncated fixture list with the real mode-2 list.
     local list
     list=$(mode2_list)
     [ -n "$list" ]
@@ -270,14 +271,14 @@ setup_default_mode() {
     safe_load_config "$CONFIG_FILE"
 }
 
-@test "v5.31.0 render: the DEFAULT install writes ::/0 into the client config" {
-    setup_default_mode
+@test "v5.31.0 render: mode 2 writes ::/0 into the client config" {
+    setup_mode2
     render_client_config "def" "10.9.9.2" "FAKEPRIV" "FAKEPUB" "1.2.3.4" "39743"
     grep -q "^AllowedIPs = .*, ::/0$" "$AWG_DIR/def.conf"
 }
 
-@test "v5.31.0 render: the default client keeps its whole IPv4 list" {
-    setup_default_mode
+@test "v5.31.0 render: the mode-2 client keeps its whole IPv4 list" {
+    setup_mode2
     render_client_config "def2" "10.9.9.3" "FAKEPRIV" "FAKEPUB" "1.2.3.4" "39743"
     grep -q "^AllowedIPs = 1.0.0.0/8, .*208.0.0.0/4, 8.8.8.8/32, 1.1.1.1/32, ::/0$" "$AWG_DIR/def2.conf"
 }
@@ -304,8 +305,8 @@ setup_default_mode() {
 
 # --- dual-stack: the same fork, the other branch ---
 
-@test "v5.31.0 dual-stack: default list plus native server IPv6 mirrors into ::/0" {
-    setup_default_mode
+@test "v5.31.0 dual-stack: mode-2 list plus native server IPv6 mirrors into ::/0" {
+    setup_mode2
     cat >> "$CONFIG_FILE" << 'CONF'
 export ALLOW_IPV6_TUNNEL=1
 export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
@@ -316,8 +317,8 @@ CONF
     grep -q "^AllowedIPs = .*, ::/0$" "$AWG_DIR/d6.conf"
 }
 
-@test "v5.31.0 dual-stack: default list without native IPv6 still gets the tunnel ULA" {
-    setup_default_mode
+@test "v5.31.0 dual-stack: mode-2 list without native IPv6 still gets the tunnel ULA" {
+    setup_mode2
     cat >> "$CONFIG_FILE" << 'CONF'
 export ALLOW_IPV6_TUNNEL=1
 export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
@@ -562,7 +563,7 @@ PersistentKeepalive = 33
 EOF
 }
 
-@test "v5.31.0 modify: setting the default list back strips ::/0 and says so" {
+@test "v5.31.0 modify: setting the mode-2 list back strips ::/0 and says so" {
     require_flock
     # A published recipe does exactly this (modify <name> AllowedIPs "$ALLOWED_IPS"),
     # and awgsetup_cfg.init holds an IPv4-only list, so it removes the route this
