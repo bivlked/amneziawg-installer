@@ -135,10 +135,10 @@ Presets are ready-made obfuscation parameter profiles optimized for specific net
 
 ```bash
 # Standard profile (default)
-sudo bash install_amneziawg_en.sh --yes --route-amnezia
+sudo bash install_amneziawg_en.sh --yes
 
 # Mobile profile — for SIM cards, LTE/5G modems, mobile routers
-sudo bash install_amneziawg_en.sh --preset=mobile --yes --route-amnezia
+sudo bash install_amneziawg_en.sh --preset=mobile --yes
 ```
 
 > **Note:** `install_amneziawg_en.sh` and `install_amneziawg.sh` are functionally identical — only the output language differs.
@@ -149,10 +149,10 @@ Individual parameters can be overridden on top of any preset:
 
 ```bash
 # Mobile preset, but Jc=4 instead of 3
-sudo bash install_amneziawg_en.sh --preset=mobile --jc=4 --yes --route-amnezia
+sudo bash install_amneziawg_en.sh --preset=mobile --jc=4 --yes
 
 # Fully manual parameters
-sudo bash install_amneziawg_en.sh --jc=2 --jmin=20 --jmax=60 --yes --route-amnezia
+sudo bash install_amneziawg_en.sh --jc=2 --jmin=20 --jmax=60 --yes
 ```
 
 | Flag | Range | Description |
@@ -315,13 +315,15 @@ The situation on kernels older than 6.7 is covered separately in <a href="#debia
 
 Defines which traffic the **client** routes through the VPN tunnel.
 
-1.  **Mode 1: All traffic (`0.0.0.0/0`)**
-    * All client IPv4 traffic → VPN.
-    * Maximum privacy. May block LAN access.
+1.  **Mode 1: All traffic (`0.0.0.0/0`) - the default**
+    * All client IPv4 traffic → VPN, plus `::/0` so the device's IPv6 does not bypass the tunnel (without `--allow-ipv6-tunnel`; with it the rules differ, see the dual-stack section below).
+    * This exact pair of routes is what the Amnezia app recognises as a full tunnel: its own split-tunneling page stays available, and `awg-quick` on Linux engages policy routing instead of looping the routes.
+    * The cost: the LAN goes into the tunnel along with everything else. Whether it stays reachable is decided by the client, not by the config.
 
-2.  **Mode 2: Amnezia List + DNS (Default)**
-    * List of public IP ranges + DNS `1.1.1.1`, `8.8.8.8`.
-    * **Purpose:** DPI bypass, DNS tunneling. Recommended.
+2.  **Mode 2: Amnezia List + DNS**
+    * List of public IP ranges + DNS `1.1.1.1`, `8.8.8.8`. Private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) stay outside the tunnel.
+    * **Purpose:** keep the LAN outside the tunnel. In terms of PUBLIC IPv4 coverage it is the same full tunnel, with no separate gain for bypassing restrictions; what stays out of the list is the private networks, the reserved `0.0.0.0/8` and multicast.
+    * The cost: the Amnezia app sees a list that is not `0.0.0.0/0, ::/0`, concludes that the server already does split routing and disables its own page; on Linux `awg-quick` such a config can produce a routing loop.
 
 3.  **Mode 3: Custom (Split-Tunneling)**
     * Only traffic to specified networks → VPN.
@@ -358,11 +360,11 @@ If a site has to see one and the same address, splitting by destination cannot g
 
 **IPv6 is a separate layer, and an easy one to mix up.** When the guides say "IPv6 is off, that is how the installer sets it up", they mean IPv6 **on the server** (the host sysctl). IPv6 **on your device** is something the installer never touches, and the traffic split does not apply to it either: the list of Russian networks used by the cascade and the BGP feed used by the WARP scheme are IPv4-only (the `cascade/ru.zone` snapshot holds no IPv6 entries at all). Whether your device's IPv6 goes around the tunnel is decided not by the scheme but by whether a `::/0` route made it into `AllowedIPs`:
 
-- **full tunnel without `--allow-ipv6-tunnel`** - both the "All traffic" mode (`--route-all`) and the default "Amnezia" mode land here: the client gets `::/0` next to its IPv4 routes, so the device's IPv6 goes into the tunnel. The tunnel itself carries no IPv6, so that traffic gets no further - but it does not leak outside the VPN either. The flip side: while the VPN is on, resources reachable ONLY over IPv6 are unreachable, and the local network's IPv6 goes into the tunnel too (the LAN stays reachable over IPv4);
+- **full tunnel without `--allow-ipv6-tunnel`** - both the default "All traffic" mode (`--route-all`) and the "Amnezia" mode land here: the client gets `::/0` next to its IPv4 routes, so the device's IPv6 goes into the tunnel. The tunnel itself carries no IPv6, so that traffic gets no further - but it does not leak outside the VPN either. The flip side: while the VPN is on, resources reachable ONLY over IPv6 are unreachable, and the local network's IPv6 goes into the tunnel too (the LAN stays reachable over IPv4);
 - **split routing** (mode 3, your own network list via `--route-custom`): `::/0` is never added, since that would break the split itself. The device's IPv6 goes around the tunnel with its real address, and then the site needs no scripts at all - it sees that address directly;
 - **`--allow-ipv6-tunnel` enabled**: the rules are different and depend on whether the server has native IPv6. They are documented in exactly one place, [IPv6 Dual-Stack Tunnel](#ipv6-tunnel-adv) - including the case where the client only gets the tunnel ULA and the device's global IPv6 goes around again.
 
-> **Profiles issued before v5.31.0 keep the old list.** The default "Amnezia" mode gained `::/0` in v5.31.0; before that only "All traffic" got it, and the device's IPv6 went around the tunnel. Re-issuing delivers the fix to already issued clients: `sudo bash /root/awg/manage_amneziawg.sh regen`, then re-import the profiles on the devices. Individual `AllowedIPs` set through `modify` are preserved. A client issued with `--allow-ipv6-tunnel` will not get `::/0` from a plain re-issue - its IPv6 part counts as an individual setting too; such a client needs `regen --reset-routes`, and the installer prints that hint itself.
+> **Profiles issued before v5.31.0 keep the old list.** The "Amnezia" mode, the default back then, gained `::/0` in v5.31.0; before that only "All traffic" got it, and the device's IPv6 went around the tunnel. Re-issuing delivers the fix to already issued clients: `sudo bash /root/awg/manage_amneziawg.sh regen`, then re-import the profiles on the devices. Individual `AllowedIPs` set through `modify` are preserved. A client issued with `--allow-ipv6-tunnel` will not get `::/0` from a plain re-issue - its IPv6 part counts as an individual setting too; such a client needs `regen --reset-routes`, and the installer prints that hint itself.
 
 To check from a connected device: `curl -6 ifconfig.co`. Look at the address rather than at the fact that an answer arrived - with IPv6 working inside the tunnel an answer comes back too. If it is your home address, IPv6 is going around the tunnel. If you want a guarantee that nothing does, turn IPv6 off on the device itself: a server-side filter does not help here, because that direct IPv6 traffic never reaches the server.
 
@@ -388,7 +390,7 @@ The setting is persisted in `awgsetup_cfg.init` (the `CLIENT_ISOLATION` key). Ju
 
 By default the tunnel carries IPv4 only. Starting with v5.15.0 you can also enable IPv6 inside the tunnel - clients get an IPv6 address next to IPv4 (dual-stack).
 
-> **IPv6 in the default IPv4-only mode.** When the tunnel is IPv4-only, your device's IPv6 traffic goes out directly, outside the VPN - by design: an IPv4-only tunnel does not carry IPv6, and the server has no say in it (this is a property of the mode, not a server-side leak). One qualifier: that holds for split routing (mode 3, your own network list). In a full tunnel - which means both `--route-all` and the default "Amnezia" mode - the client is handed `::/0` next to its IPv4 routes, so the device's IPv6 goes into the tunnel and dies there rather than going out directly - see [What a site can see when traffic is split by destination](#split-detect-adv). If you want IPv6 inside the tunnel, enable `--allow-ipv6-tunnel` (below). If instead you want a guarantee that nothing goes outside the VPN, turn IPv6 off on the device itself: a server-side filter does not help here, because that direct IPv6 traffic never reaches the server.
+> **IPv6 in the default IPv4-only mode.** When the tunnel is IPv4-only, your device's IPv6 traffic goes out directly, outside the VPN - by design: an IPv4-only tunnel does not carry IPv6, and the server has no say in it (this is a property of the mode, not a server-side leak). One qualifier: that holds for split routing (mode 3, your own network list). In a full tunnel - which means both the default `--route-all` and the "Amnezia" mode - the client is handed `::/0` next to its IPv4 routes, so the device's IPv6 goes into the tunnel and dies there rather than going out directly - see [What a site can see when traffic is split by destination](#split-detect-adv). If you want IPv6 inside the tunnel, enable `--allow-ipv6-tunnel` (below). If instead you want a guarantee that nothing goes outside the VPN, turn IPv6 off on the device itself: a server-side filter does not help here, because that direct IPv6 traffic never reaches the server.
 
 **When it activates:** only with the explicit `--allow-ipv6-tunnel` flag on `install_amneziawg.sh`. Without the flag the behavior is identical to earlier versions. This is separate from `--allow-ipv6` / `--disallow-ipv6`, which control host-level IPv6 (sysctl) and are unchanged.
 
@@ -396,7 +398,7 @@ By default the tunnel carries IPv4 only. Starting with v5.15.0 you can also enab
 
 **IPv6 routing mirrors the chosen IPv4 mode (intent-mirroring).** When `--allow-ipv6-tunnel` is enabled, the client's IPv6 `AllowedIPs` mirror the IPv4 mode:
 
-- **Full tunnel** ("All traffic" or the default "Amnezia" mode - both cover all public IPv4 with routes): with native IPv6 on the server, `::/0` is added next to the IPv4 routes and all IPv6 traffic goes out to the internet through the VPN; without native IPv6 the tunnel subnet `fddd:2c4:2c4:2c4::/64` is added instead - IPv6 only works peer-to-peer inside the tunnel.
+- **Full tunnel** (the default "All traffic" mode, or "Amnezia" - both cover all public IPv4 with routes): with native IPv6 on the server, `::/0` is added next to the IPv4 routes and all IPv6 traffic goes out to the internet through the VPN; without native IPv6 the tunnel subnet `fddd:2c4:2c4:2c4::/64` is added instead - IPv6 only works peer-to-peer inside the tunnel.
 - **Split-tunnel** (custom list via `--route-custom`): the IPv4 list is kept unchanged and ONLY the tunnel ULA subnet `fddd:2c4:2c4:2c4::/64` is added. `::/0` is never added - capturing all IPv6 in split mode would break split routing. IPv6 in a split tunnel reaches other peers but not the internet.
 
 > Historical note: in v5.15.0 dual-stack always implied a full tunnel (split-tunnel with IPv6 behaved differently). Since v5.15.1 split-tunnel and IPv6 combine correctly per the rules above. If a client was created on v5.15.0, recreate it (`manage remove` + `add`) to get the corrected `AllowedIPs`.
@@ -586,8 +588,8 @@ With `--yes` no question is asked and the behaviour stays as before, that is the
 export AWG_PORT=39743
 export AWG_TUNNEL_SUBNET='10.9.9.1/24'
 export DISABLE_IPV6=1
-export ALLOWED_IPS_MODE=2
-export ALLOWED_IPS='1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6, 8.0.0.0/7, ...'
+export ALLOWED_IPS_MODE=1
+export ALLOWED_IPS='0.0.0.0/0'
 export AWG_ENDPOINT=''
 export AWG_Jc=6
 export AWG_Jmin=55
@@ -722,8 +724,8 @@ Options:
   --allow-ipv6          Keep IPv6 enabled
   --disallow-ipv6       Force-disable IPv6
   --allow-ipv6-tunnel   Enable dual-stack IPv6 inside the tunnel (ULA, opt-in)
-  --route-all           Mode: All traffic (0.0.0.0/0)
-  --route-amnezia       Mode: Amnezia List + DNS (default)
+  --route-all           Mode: All traffic (0.0.0.0/0) (default)
+  --route-amnezia       Mode: Amnezia List + DNS (private networks stay outside)
   --route-custom=NETS   Mode: Only specified networks
   --isolation=on|off    Isolate clients from each other (default on)
   --endpoint=ADDR       External server endpoint: FQDN, IPv4 or [IPv6] (NAT)
@@ -954,7 +956,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common.sh` and `manage_amneziawg.sh` from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.33.0/awg_common.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.34.0/awg_common.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -1024,7 +1026,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>Q: AmneziaVPN says "this server does not support split tunneling". How do I enable it?</strong></summary>
-  <b>A:</b> This is a limitation of the client, not the server. The AmneziaVPN app's built-in split tunneling by sites and apps only turns on when the config sends all traffic through the tunnel. The client looks at <code>AllowedIPs</code>: a full tunnel unlocks the feature, while a partial subnet list is treated as already split at the routing level, so the client hides its toggle with that message. The full-tunnel form it reliably recognizes is the pair <code>0.0.0.0/0, ::/0</code>. The "Amnezia" routing mode (the default) produces a subnet list, which is why the feature is unavailable. Fix, no docker needed: switch the client to a full tunnel - replace the line in its <code>.conf</code> with <code>AllowedIPs = 0.0.0.0/0, ::/0</code> and re-import, or re-issue the client in "All traffic" mode (<code>--route-all</code>). The split tunneling page in the app then opens and you pick sites/apps there. If you only need part of the traffic in the tunnel (a network-level split), <code>AllowedIPs</code> already does that - the app feature is not required for it.
+  <b>A:</b> This is a limitation of the client, not the server. The AmneziaVPN app's built-in split tunneling by sites and apps only turns on when the config sends all traffic through the tunnel. The client looks at <code>AllowedIPs</code>: a full tunnel unlocks the feature, while a partial subnet list is treated as already split at the routing level, so the client hides its toggle with that message. The full-tunnel form it reliably recognizes is the pair <code>0.0.0.0/0, ::/0</code>, and that is exactly what a default install hands out. The message shows up when the client was handed a subnet list instead of <code>0.0.0.0/0, ::/0</code>: that is what the "Amnezia" mode (<code>--route-amnezia</code>), your own network list (<code>--route-custom=</code>) and an individual <code>AllowedIPs</code> set through <code>modify</code> all produce. Fix, no docker needed: switch the client to a full tunnel - replace the line in its <code>.conf</code> with <code>AllowedIPs = 0.0.0.0/0, ::/0</code> and re-import, or re-issue the client in "All traffic" mode (<code>--route-all</code>). The split tunneling page in the app then opens and you pick sites/apps there. If you only need part of the traffic in the tunnel (a network-level split), <code>AllowedIPs</code> already does that - the app feature is not required for it.
 </details>
 
 <details>
@@ -1159,7 +1161,7 @@ sudo systemctl restart awg-quick@awg0</pre>
 
 <details>
   <summary><strong>Q: iPhone connects but traffic stops after ~10 seconds (the tunnel "hangs")</strong></summary>
-  <b>A:</b> Fixed in v5.16.1. The default routing mode (mode 2, "Amnezia List + DNS") started with the <code>0.0.0.0/5</code> range, which covers the reserved <code>0.0.0.0/8</code>. The iOS kernel chokes on that block and never reaches the rest of the routes, so the tunnel comes up and then stalls after ~10 seconds (easy to mistake for DPI). Traced and fixed by @LiaNdrY (Issue #42). In v5.16.1 the first range is split into <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code> - the same coverage without the problematic zero block, and split-tunnel is preserved.
+  <b>A:</b> Fixed in v5.16.1. The routing mode that was default back then (mode 2, "Amnezia List + DNS") started with the <code>0.0.0.0/5</code> range, which covers the reserved <code>0.0.0.0/8</code>. The iOS kernel chokes on that block and never reaches the rest of the routes, so the tunnel comes up and then stalls after ~10 seconds (easy to mistake for DPI). Traced and fixed by @LiaNdrY (Issue #42). In v5.16.1 the first range is split into <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code> - the same coverage without the problematic zero block, and split-tunnel is preserved.
   <br><br>
   <b>On an existing server (before v5.16.1)</b> the stored list lives in <code>/root/awg/awgsetup_cfg.init</code> and a plain <code>--force</code> reinstall does not change it (it is read back from the config). So: (1) quick per-client fix - replace the <code>AllowedIPs = ...</code> line in the iOS client config with <code>AllowedIPs = 0.0.0.0/0</code>; (2) keep split-tunnel - edit <code>/root/awg/awgsetup_cfg.init</code>, replace the leading <code>0.0.0.0/5</code> with <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code>, then recreate the client (<code>remove</code> + <code>add</code>); (3) or a clean reinstall (<code>--uninstall</code>, then install v5.16.1) regenerates the list correctly.
 </details>
@@ -1169,7 +1171,7 @@ sudo systemctl restart awg-quick@awg0</pre>
   <b>A:</b> Starting with v5.10.0, simply install with the <code>--preset=mobile</code> flag — it automatically sets optimal parameters for mobile networks (Jc=3, narrow Jmax). Discussion #38 (@elvaleto): on Tattelecom (Letai) with Jc=4-8 it took multiple attempts to connect, but after setting <code>Jc = 3</code> it worked immediately.
   <br><br>
   <b>Fresh install (recommended):</b>
-  <pre>sudo bash install_amneziawg_en.sh --preset=mobile --yes --route-amnezia</pre>
+  <pre>sudo bash install_amneziawg_en.sh --preset=mobile --yes</pre>
 
   <b>Existing install — manual edit:</b>
   <ol>
@@ -1240,7 +1242,7 @@ sudo ufw reload</pre>
   <br><br>
   <b>Verify:</b> from the client <code>ping &lt;server_tunnel_IP&gt;</code>. From the server to a client (<code>ping &lt;client_IP&gt;</code>) the client itself may not reply: on Windows and iOS the built-in firewall often drops echo-request — testing client → server is the cleanest path.
   <br><br>
-  <b>If you manually customized <code>AllowedIPs</code> on the client for split tunneling</b> (only some subnets go through the VPN — e.g. only Telegram/Discord, everything else stays direct), make sure the <b>tunnel subnet</b> (<code>10.9.9.0/24</code> or your custom one) is in that list. Without it, the client does not route through the tunnel even packets destined for the server itself — <code>ufw status verbose</code> and <code>iptables -L ufw-before-input -v -n</code> can look correct, and ping still fails. Coverage depends on the routing mode chosen at install time: <code>--route-all</code> (full tunnel <code>0.0.0.0/0</code>) includes the tunnel subnet automatically; the default <code>--route-amnezia</code> (Amnezia List, excludes <code>10.0.0.0/8</code>) and <code>--route-custom=</code> do not, add it explicitly.
+  <b>If you manually customized <code>AllowedIPs</code> on the client for split tunneling</b> (only some subnets go through the VPN - e.g. only Telegram/Discord, everything else stays direct), make sure the <b>tunnel subnet</b> (<code>10.9.9.0/24</code> or your custom one) is in that list. Without it, the client does not route through the tunnel even packets destined for the server itself - <code>ufw status verbose</code> and <code>iptables -L ufw-before-input -v -n</code> can look correct, and ping still fails. Coverage depends on the routing mode chosen at install time: the default <code>--route-all</code> (full tunnel <code>0.0.0.0/0</code>) includes the tunnel subnet automatically; <code>--route-amnezia</code> (Amnezia List, excludes <code>10.0.0.0/8</code>) and <code>--route-custom=</code> do not, add it explicitly.
   <br><br>
   <b>For client-to-client ping</b> (phone ↔ router via the server): <code>sudo ufw route allow in on awg0 out on awg0 &amp;&amp; sudo ufw reload</code>. <code>AllowedIPs</code> in client <code>.conf</code> depends on the routing mode chosen at install (see the paragraph above). Discussion <a href="https://github.com/bivlked/amneziawg-installer/discussions/63">#63</a>.
 </details>

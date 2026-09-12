@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/Architecture-x86__64_|_ARM64_|_ARMv7-green" alt="x86_64 | ARM64 | ARMv7">
   <img src="https://img.shields.io/badge/AmneziaWG-2.0_&#124;_3.x-blueviolet" alt="AmneziaWG 2.0 and 3.x">
   <a href="https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
-  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-5.33.0-blue" alt="Version"></a>
+  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-5.34.0-blue" alt="Version"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/stargazers"><img src="https://img.shields.io/github/stars/bivlked/amneziawg-installer?style=flat" alt="Stars"></a>
   <img src="https://img.shields.io/github/last-commit/bivlked/amneziawg-installer" alt="Last commit">
@@ -34,7 +34,7 @@
 <!-- facts:begin -->
 <!-- Собирается scripts/update-facts-block.sh из данных репозитория.
      Руками не править: check-docs-consistency.sh сверит блок с источниками. -->
-**Факты на 2026-09-11.** Установщик 5.33.0. Сроки поддержки ОС проверены по данным вендоров на 2026-08-29.
+**Факты на 2026-09-12.** Установщик 5.34.0. Сроки поддержки ОС проверены по данным вендоров на 2026-08-29.
 
 | | |
 |---|---|
@@ -379,7 +379,7 @@ cat /sys/module/amneziawg/version    # версия загруженного м�
     * **UDP порт:** Порт для подключения клиентов (1-65535). По умолчанию: `39743`.
     * **Подсеть туннеля:** Внутренняя сеть для VPN. По умолчанию: `10.9.9.1/24`.
     * **Отключение IPv6:** Рекомендуется отключить (`Y`) для избежания утечек трафика.
-    * **Режим маршрутизации:** Определяет, какой трафик пойдет через VPN. По умолчанию `2` (Список Amnezia+DNS) - рекомендуется для лучшей совместимости и обхода блокировок.
+    * **Режим маршрутизации:** Определяет, какой трафик пойдет через VPN. По умолчанию `1` (весь трафик, `0.0.0.0/0`) - привычная клиентам форма полного туннеля. Режим `2` (Список Amnezia+DNS) оставляет частные сети (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) вне туннеля, но часть клиентов считает такой список раздельной маршрутизацией и ведёт себя иначе.
     * **Изоляция клиентов:** Блокировать ли трафик между клиентами внутри VPN. По умолчанию включена (`Y`) - клиенты не видят друг друга; неинтерактивно: `--isolation=on|off`.
 
     * **Имя сервера:** Под этим именем сервер появится в приложении Amnezia при импорте `vpn://`. По умолчанию `AWG Server`; неинтерактивно: `--server-name=ИМЯ`.
@@ -586,7 +586,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 <details>
   <summary><strong>В: Handshake проходит, но трафик не идёт - что не так?</strong></summary>
-  <b>О:</b> Частая причина - split-tunneling AllowedIPs gotcha при ручной правке. Если хочешь пинговать/SSH'иться к серверу по его внутреннему IP (<code>10.9.9.1</code> в дефолтной подсети), добавь в <code>AllowedIPs</code> клиента <b>подсеть туннеля</b> (по умолчанию <code>10.9.9.0/24</code>, или твою кастомную, если менял <code>--subnet</code>). Иначе клиент не маршрутизирует трафик к серверу даже изнутри тоннеля. Режим <code>--route-all</code> (полный туннель <code>0.0.0.0/0</code>) покрывает подсеть автоматически; режим <code>--route-amnezia</code> (по умолчанию, Amnezia List) и <code>--route-custom=</code> - нет, добавляй вручную. Подробнее - в <a href="ADVANCED.md#allowedips-adv">ADVANCED.md → AllowedIPs</a>.
+  <b>О:</b> Частая причина - split-tunneling AllowedIPs gotcha при ручной правке. Если хочешь пинговать/SSH'иться к серверу по его внутреннему IP (<code>10.9.9.1</code> в дефолтной подсети), добавь в <code>AllowedIPs</code> клиента <b>подсеть туннеля</b> (по умолчанию <code>10.9.9.0/24</code>, или твою кастомную, если менял <code>--subnet</code>). Иначе клиент не маршрутизирует трафик к серверу даже изнутри тоннеля. Режим <code>--route-all</code> (полный туннель <code>0.0.0.0/0</code>, по умолчанию) покрывает подсеть автоматически; режим <code>--route-amnezia</code> (Amnezia List) и <code>--route-custom=</code> - нет, добавляй вручную. Подробнее - в <a href="ADVANCED.md#allowedips-adv">ADVANCED.md → AllowedIPs</a>.
   <br><br>
   Отдельно от режима маршрутизации: по умолчанию клиенты изолированы друг от друга на сервере (правило <code>FORWARD awg0→awg0 DROP</code>), даже если оба в одном режиме. Чтобы устройства видели друг друга внутри VPN, ставь <code>--isolation=off</code> при установке - сервер снимает блокировку, а подсеть туннеля сама добавляется в <code>AllowedIPs</code> клиентов. Подробнее - в <a href="ADVANCED.md#client-isolation-adv">ADVANCED.md → Изоляция клиентов</a>.
 </details>
@@ -657,7 +657,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 <details>
   <summary><strong>В: iPhone подключается, но через ~10 секунд трафик пропадает</strong></summary>
-  <b>О:</b> Исправлено в v5.16.1 (Issue #42, спасибо @LiaNdrY). Дефолтный режим маршрутизации начинался с <code>0.0.0.0/5</code> - на iOS этот блок ломал весь список маршрутов, и туннель вставал примерно через 10 секунд. На уже установленном сервере проще всего поставить в конфиге iOS-клиента <code>AllowedIPs = 0.0.0.0/0</code> (обычная переустановка с <code>--force</code> сохранённый список не меняет). Точечная правка с сохранением split-tunnel - в <a href="ADVANCED.md#faq-advanced-adv">ADVANCED.md</a>.
+  <b>О:</b> Исправлено в v5.16.1 (Issue #42, спасибо @LiaNdrY). Тогдашний режим маршрутизации по умолчанию (mode 2, «Список Amnezia+DNS») начинался с <code>0.0.0.0/5</code> - на iOS этот блок ломал весь список маршрутов, и туннель вставал примерно через 10 секунд. На уже установленном сервере проще всего поставить в конфиге iOS-клиента <code>AllowedIPs = 0.0.0.0/0</code> (обычная переустановка с <code>--force</code> сохранённый список не меняет). Точечная правка с сохранением split-tunnel - в <a href="ADVANCED.md#faq-advanced-adv">ADVANCED.md</a>.
 </details>
 
 <details>

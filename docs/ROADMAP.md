@@ -24,7 +24,7 @@ tracked in issues and discussions, not here:
 - Ubuntu 24.04 / 25.10 / 26.04 and Debian 12 / 13 support.
 - CI and docs-consistency gates around releases.
 - Security and reliability hardening across installation and client management (atomic peer carry-over in the server config on `--force` reinstall, strict key permissions, careful temp-file and secret handling, Amnezia PPA GPG key pinned by full fingerprint).
-- iOS clients work correctly in the default routing mode (Amnezia List + DNS): the bundled route list no longer stalls the iOS tunnel.
+- iOS clients work correctly in the list-based routing mode (Amnezia List + DNS): the bundled route list no longer stalls the iOS tunnel.
 - Reliability on mobile, double-NAT and cascade paths: the TCP MSS is clamped to the tunnel size, which fixes the common PMTU-blackhole stall where large TCP pages and downloads hang when path-MTU discovery is blocked along the way.
 - Full special-junk pass-through: all CPS concealment params `I1`-`I5` set in the server `awg0.conf` now reach clients (`.conf`, QR, `vpn://`), not just `I1`. Multi-packet concealment profiles can be configured server-side and distributed with `manage regen`.
 - Companion guides: how the project compares to the official Amnezia app, and a two-server cascade with split-tunnel routing.
@@ -77,7 +77,7 @@ Carrier reports (operator, region, working parameters) are especially useful.
 - Поддержка Ubuntu 24.04 / 25.10 / 26.04 и Debian 12 / 13.
 - CI и проверки согласованности документации вокруг релизов.
 - Закалка безопасности и надёжности при установке и управлении клиентами (атомарный перенос peer-блоков в серверном конфиге при переустановке `--force`, строгие права на ключи, аккуратная работа с временными файлами и секретами, GPG-ключ Amnezia PPA закреплён по полному отпечатку).
-- Клиенты iOS работают корректно в дефолтном режиме маршрутизации (Amnezia List + DNS): встроенный список маршрутов больше не подвешивает туннель на iOS.
+- Клиенты iOS работают корректно в списочном режиме маршрутизации (Amnezia List + DNS): встроенный список маршрутов больше не подвешивает туннель на iOS.
 - Надёжность на мобильных, double-NAT и каскадных путях: TCP MSS ограничивается под размер туннеля, что устраняет типичный PMTU-блэкхол, когда крупные TCP-страницы и закачки зависают при заблокированном по пути обнаружении path-MTU.
 - Полный проброс special-junk: все CPS-параметры маскировки `I1`-`I5`, заданные в серверном `awg0.conf`, теперь доходят до клиентов (`.conf`, QR, `vpn://`), а не только `I1`. Многопакетные профили маскировки можно задать на сервере и раздать через `manage regen`.
 - Сопутствующие гайды: сравнение проекта с официальным приложением Amnezia и каскад из двух серверов со split-tunnel-маршрутизацией.

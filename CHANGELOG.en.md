@@ -12,6 +12,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.34.0] - 2026-09-12
+
+**v5.34.0** - the default routing mode becomes the full tunnel: client profiles get `AllowedIPs = 0.0.0.0/0, ::/0` instead of the subnet list that some clients read as split routing already configured on the server.
+
+### Changed
+
+- 🔴 **The default routing mode is now the full tunnel.** A fresh install hands clients `AllowedIPs = 0.0.0.0/0, ::/0` instead of the 34-subnet list ("Amnezia List + DNS"). The old mode has not gone anywhere: it is still the second menu entry and the `--route-amnezia` flag.
+  **Why.** The Amnezia app opens its own split-tunneling page only when it sees `0.0.0.0/0` among the client routes; the form it reliably recognises is the pair `0.0.0.0/0, ::/0`. Handed a subnet list, the app concludes that split routing is already configured on the server, reports that the server does not support it, and hides its own toggle. On Linux, `awg-quick` engages its fwmark machinery only for a `/0` route, and a list-shaped IPv4 config has none: on our test bench that produces a routing loop in which the encrypted packets to the server itself are sent back into the tunnel. The Amnezia app's own server template, incidentally, also emits `0.0.0.0/0, ::/0`.
+  **The cost, plainly.** The LAN goes into the tunnel along with everything else; whether it stays reachable is decided by the client, not by the config. If you need your home devices while the VPN is up, install with `--route-amnezia`.
+  **A running server keeps its mode.** The new default applies to new installs only; a reinstall takes the mode recorded in `awgsetup_cfg.init`, and client profiles do not change by themselves. To switch the mode on a running server: reinstall with the flag you want, then `manage regen --reset-routes`.
+- **The routing menu was rewritten.** The old one called the list-based mode the one recommended for bypassing restrictions, although it sends the same public IPv4 into the tunnel as the full tunnel does; the only difference is the private networks, which stay outside. Each mode now names both its benefit and its price.
+
+### Fixed
+
+- **The network prompt of the "only the listed networks" mode could spin forever.** The input was read without checking the exit status: on end of input (Ctrl-D) the string came back empty, and with the terminal gone the read did not execute at all - either way the "try again" loop ran endlessly, flooding the server log with format errors. The exit status is now checked, the number of attempts is bounded, and the refusal names a ready command.
+- **Reinstalling silently changed the routing mode of a working server.** When the server settings carried a mode but an empty route list, the installer assigned the default mode over the saved one. The list is now rebuilt for the saved mode, and a config that says "only the listed networks" without carrying that list is refused with a ready command instead of falling through to the interactive prompt.
+- **The `ALLOWED_IPS_MODE` value in the server settings was never validated.** It was the only routing key without a check; an arbitrary value reached the client route calculation and was treated as "your own network list", so with client isolation off the tunnel subnet was appended to the routes and the profile stopped being a full tunnel in the shape clients recognise. Only 1, 2 and 3 are accepted now; anything else stops the install with a clear message.
+- **Changing the mode without a flag printed no re-issue hint.** The `regen --reset-routes` hint was tied to an explicit `--route-*`, yet the mode also changes without one. It is now printed on any divergence from what the server settings record.
+- **An unrecognised answer in the routing menu fell back to the default mode silently.** It now prints a warning naming the mode it picked; an empty answer still counts as a deliberate choice of the default and raises no warning.
+
 ## [5.33.0] - 2026-09-11
 
 **v5.33.0** - the `I1` concealment packet takes the shape of a DNS reply instead of the random bytes that kept the handshake from completing on some cellular networks, and the protocol generation for a new install is now set by a flag.
@@ -1898,7 +1918,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.33.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.34.0...HEAD
+[5.34.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.33.0...v5.34.0
 [5.33.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.32.0...v5.33.0
 [5.32.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.31.0...v5.32.0
 [5.31.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.30.0...v5.31.0

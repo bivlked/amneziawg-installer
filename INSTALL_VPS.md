@@ -63,7 +63,17 @@ flowchart LR
     C --> D["VPN ready"]
 ```
 
-For a non-interactive run pass `--yes` and the routing flag of your choice, e.g. `sudo bash ./install_amneziawg_en.sh --yes --route-amnezia`. Common flags: `--port=39743` (any port 1-65535), `--subnet=10.9.9.1/24`, `--disallow-ipv6`, `--allow-ipv6-tunnel` (dual-stack IPv6 inside the tunnel), `--mobile` (mobile obfuscation preset plus port 443/udp in one flag; an explicit `--port` wins), `--isolation=on|off` (client-to-client isolation, on by default), `--endpoint=<public-IP>` (required when the server's public IP differs from its interface IP, typical on Oracle Cloud, GCP, or any NAT'd cloud setup). Full CLI: `--help` or [ADVANCED.en.md](ADVANCED.en.md#install-cli-adv).
+For a non-interactive run pass `--yes`: `sudo bash ./install_amneziawg_en.sh --yes`. The routing mode then falls back to the default.
+
+**Routing modes** (what goes into the tunnel):
+
+| Flag | Mode | When to pick it |
+|---|---|---|
+| `--route-all` | "All traffic" (`0.0.0.0/0`) | the default, the full-tunnel form clients expect |
+| `--route-amnezia` | "Amnezia", a subnet list | when the private networks must stay out of the tunnel |
+| `--route-custom=NETS` | "Custom" | when the subnet list is your own |
+
+⚠️ The "Amnezia" mode sends the same public IPv4 into the tunnel as the full tunnel does: the only difference is the private networks, which stay outside. But the Amnezia app reads such a list as split routing already configured on the server and disables its own split-tunneling page, and a Linux client can loop its routes on it. That is why `--route-all` is the default. The details: [ADVANCED, AllowedIPs](ADVANCED.en.md#allowedips-adv). Common flags: `--port=39743` (any port 1-65535), `--subnet=10.9.9.1/24`, `--disallow-ipv6`, `--allow-ipv6-tunnel` (dual-stack IPv6 inside the tunnel), `--mobile` (mobile obfuscation preset plus port 443/udp in one flag; an explicit `--port` wins), `--isolation=on|off` (client-to-client isolation, on by default), `--endpoint=<public-IP>` (required when the server's public IP differs from its interface IP, typical on Oracle Cloud, GCP, or any NAT'd cloud setup). Full CLI: `--help` or [ADVANCED.en.md](ADVANCED.en.md#install-cli-adv).
 
 ## First-time client setup
 
