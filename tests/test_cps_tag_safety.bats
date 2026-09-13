@@ -22,6 +22,7 @@
 # breaks the arithmetic, the function exits non-zero for the wrong reason, and a
 # mutant that lets a negative length through goes unnoticed.
 
+# shellcheck disable=SC2154  # $stderr is set by bats `run --separate-stderr`
 load test_helper
 
 bats_require_minimum_version 1.5.0
