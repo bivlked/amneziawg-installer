@@ -1224,6 +1224,11 @@ load_awg_params() {
         safe_load_config "$CONFIG_FILE" || log_warn "Failed to load $CONFIG_FILE"
     fi
 
+    # Where the AWG parameters come from: the I1-I5 refusal names this file as
+    # the place to fix. The init file by default; the live-config branch below
+    # overrides it.
+    _AWG_PARAMS_SOURCE="$CONFIG_FILE"
+
     # 2. AWG protocol parameters
     # If CLI specified --preset/--jc/--jmin/--jmax, params are already set via generate_awg_params.
     # Skip reload from awg0.conf to preserve the fresh values.
@@ -1244,6 +1249,7 @@ load_awg_params() {
             return 1
         fi
         log_debug "AWG parameters loaded from $SERVER_CONF_FILE (live config)"
+        _AWG_PARAMS_SOURCE="$SERVER_CONF_FILE"
     else
         # Bootstrap: server config does not exist yet (first install).
         # AWG_* must be in env via safe_load_config above.
@@ -1261,6 +1267,26 @@ load_awg_params() {
     done
     if [[ $missing -eq 1 ]]; then
         return 1
+    fi
+    # 4. Safety of I1-I5, whatever the source. From here the parameters go into
+    # the server config and the client profiles: generate_client,
+    # regenerate_client and render_server_config fail on a refusal, while modify
+    # only warns and does not update vpn://. A dangerous value typed into
+    # awg0.conf by hand or carried in with someone else's config stops here
+    # instead of being handed to clients.
+    # ⚠️ The boundary: the client removal path (remove, the expiry cron),
+    # manage restart and systemctl restart do not call this function and apply
+    # the awg0.conf already in place to the interface without a check. The
+    # refusal does not block them, and it does not protect them either.
+    # ⚠️ One exception: when render_server_config calls us, it runs the check
+    # itself, AFTER --no-cps clears I1. Otherwise a reinstall with --no-cps -
+    # the documented way to remove I1 - would be refused because of the very I1
+    # it removes. The deferral is tied to the NAME of the direct caller, not to
+    # a variable: a variable can be inherited from the environment and silently
+    # switch the check off. Client paths do not honour NO_CPS, so they get no
+    # deferral.
+    if [[ "${FUNCNAME[1]:-}" != "render_server_config" ]]; then
+        awg_cps_refuse_unsafe || return 1
     fi
     return 0
 }
@@ -1500,6 +1526,10 @@ render_server_config() {
     if grep -qE '^[[:space:]]*(export[[:space:]]+)?NO_CPS=1' "$CONFIG_FILE" 2>/dev/null; then
         AWG_I1=''
     fi
+    # I1-I5 are checked here, AFTER --no-cps: load_awg_params deferred the check
+    # for us (see step 4 there), otherwise a reinstall with --no-cps would be
+    # refused because of the very I1 it removes.
+    awg_cps_refuse_unsafe || return 1
 
     # Port for the NEW awg0.conf comes from the init file (the user's intent:
     # the --port flag or the previously saved port), NOT from the old awg0.conf
@@ -2282,6 +2312,117 @@ awg_cps_is_shaped() {
     # Ни одного случайного куска длиннее метки DNS и не меньше тридцати
     # литеральных байт структуры.
     [[ "$rnd_max" -le 63 && "$lit" -ge 30 ]]
+}
+
+# awg_cps_check_safe <I string> : is a CPS string safe for BOTH implementations.
+# 0 - safe; 1 - not, and the reason goes to stdout.
+#
+# Why. The kernel module parses the length of `<r>`/`<rc>`/`<rd>` with
+# kstrtoint and never looks at the value: tag sizes are summed into an int that
+# sizes an allocation, while each tag's own length drives a copy. A negative
+# length next to `<b>` keeps the sum small and positive, so the buffer is small
+# and the literal copy is not (upstream amneziawg-linux-kernel-module#233 and
+# #187); a lone negative length makes the sum negative, and then the kernel
+# refuses by itself. amneziawg-go reads the same length with strconv.Atoi and
+# crashes on a slice when it builds the packet. Such a config is accepted
+# without an error, and regen would hand it to every client.
+#
+# 🔴 The refusal is narrow ON PURPOSE: only what the code of both
+# implementations shows to be dangerous. A length must be a non-negative
+# decimal of at most nine significant digits (both accept a sign, leading zeros
+# and `-0`, and a working config with them must not break); the total must not
+# exceed 65535, more certainly does not fit in UDP. Nine digits is the limit of
+# OUR arithmetic, not a property of the implementations: bash silently wraps
+# 2^64+1 into 1. An unknown tag and junk are NOT touched: the implementations
+# reject those loudly on their own, and refusing them here could break a
+# userspace server that works today.
+#
+# 🔴 The value is read THE WAY IT IS APPLIED, or any difference is a way past:
+#   - amneziawg-tools cut a line at `#`, so the comment is dropped;
+#   - the kernel splits tags with strsep, and strsep without `>` returns the
+#     rest of the string, so an unterminated LAST tag is parsed like a closed one;
+#   - both implementations compare the tag name with its case (strcmp and a map),
+#     so `<R -1>` is an unknown tag for them, and it is left alone.
+# The form without a space (`<r-1>`) is parsed as in awg_cps_decoded_size;
+# refusing it is harmless, both implementations reject that form themselves.
+# The total is counted here rather than by awg_cps_decoded_size: that one does
+# not accept a leading plus, and `<r +999999999>` three times would slip past
+# the overflow check.
+awg_cps_check_safe() {
+    local s="${1:-}" rest mat tag n digits hex total=0
+    s="${s%%#*}"
+    [[ -n "${s//[[:space:]]/}" ]] || return 0
+    rest="$s"
+    while [[ "$rest" =~ \<[[:space:]]*([a-zA-Z]+)[[:space:]]*([^\>]*)(\>|$) ]]; do
+        # 🔴 Save the match and advance BEFORE any other [[ =~ ]]: those clobber
+        # BASH_REMATCH, and advancing by a clobbered match would not shorten the
+        # string. On `<b 0xGG>` or `<r 1 2>` the loop would then never end, and in
+        # restore that would happen after the files were replaced and before the
+        # rollback.
+        mat="${BASH_REMATCH[0]}"
+        tag="${BASH_REMATCH[1]}"
+        n="${BASH_REMATCH[2]//[[:space:]]/}"
+        rest="${rest#*"$mat"}"
+        case "$tag" in
+            r|rc|rd)
+                # The sign is stripped once, leading zeros before the digit
+                # limit: both implementations read `-0`, `+0` and `0000000001`
+                # as plain numbers, and refusing them would break a working
+                # config.
+                digits="${n#[-+]}"
+                if ! [[ "$digits" =~ ^[0-9]+$ ]]; then
+                    printf 'the length in tag <%s %s> is not a decimal' "$tag" "$n"
+                    return 1
+                fi
+                while [[ "$digits" == 0?* ]]; do digits="${digits#0}"; done
+                # The memory corruption text is for a real negative number only,
+                # not for a minus in front of zero or junk.
+                if [[ "$n" == -* && "$digits" != "0" ]]; then
+                    printf 'negative length in tag <%s %s>: amneziawg-go crashes on it when building the packet, and the kernel module writes past the buffer when a <b> stands next to it' "$tag" "$n"
+                    return 1
+                fi
+                if ! [[ "$digits" =~ ^[0-9]{1,9}$ ]]; then
+                    printf 'the length in tag <%s %s> has more than nine significant digits: certainly above 65535 bytes, and such a number would overflow the arithmetic of this check' "$tag" "$n"
+                    return 1
+                fi
+                total=$(( total + 10#$digits ))
+                ;;
+            b)
+                hex="${n#0x}"; hex="${hex#0X}"
+                [[ "$hex" =~ ^[0-9a-fA-F]+$ ]] && total=$(( total + ${#hex} / 2 ))
+                ;;
+            t|c)
+                total=$(( total + 4 ))
+                ;;
+        esac
+    done
+    if [[ "$total" -gt 65535 ]]; then
+        printf 'the total size of %s bytes exceeds 65535: such a packet certainly does not fit in UDP, and huge lengths overflow the summed size in the kernel module' "$total"
+        return 1
+    fi
+    return 0
+}
+
+# awg_cps_refuse_unsafe : check AWG_I1..AWG_I5 of the current environment.
+# 0 - all safe; 1 - not, the reasons are already logged.
+# One refusal text for load_awg_params and render_server_config; the validator
+# checks the lines of the file itself and writes its own. The file to fix is
+# named by the actual source load_awg_params records: on a first install there
+# is no awg0.conf yet and the values come from the init file.
+awg_cps_refuse_unsafe() {
+    local v why bad=0
+    for v in AWG_I1 AWG_I2 AWG_I3 AWG_I4 AWG_I5; do
+        [[ -n "${!v:-}" ]] || continue
+        if ! why=$(awg_cps_check_safe "${!v}"); then
+            log_error "Parameter ${v#AWG_} is unsafe: ${why}."
+            bad=1
+        fi
+    done
+    if [[ $bad -eq 1 ]]; then
+        log_error "Not issuing profiles or a server config with such a value (upstream amneziawg-linux-kernel-module#233). Fix I1-I5 in ${_AWG_PARAMS_SOURCE:-$SERVER_CONF_FILE}."
+        return 1
+    fi
+    return 0
 }
 
 
@@ -3698,6 +3839,26 @@ validate_awg_config() {
             done
         done
     fi
+
+    # I1-I5: the same dangerous lengths load_awg_params refuses. restore runs the
+    # validator BEFORE starting the service and rolls back on a refusal, so this
+    # is where a dangerous backup is kept off the live interface.
+    # 🔴 EVERY I1-I5 line of the file is checked, in any case and any section,
+    # not the loader's values. The config is applied not by the loader but by
+    # amneziawg-tools, which match the key and the section header regardless of
+    # case, so `i1 = ` and an `I1` under a second `[interface]` header reach the
+    # device while the loader never sees them. A superset cannot hide the real
+    # value; an extra refusal can only fall on a [Peer] line, which the tools
+    # reject by themselves.
+    local _cps_line _cps_key _cps_why
+    while IFS= read -r _cps_line || [[ -n "$_cps_line" ]]; do
+        [[ "$_cps_line" =~ ^[[:space:]]*([Ii][1-5])[[:space:]]*=(.*)$ ]] || continue
+        _cps_key="${BASH_REMATCH[1]}"
+        if ! _cps_why=$(awg_cps_check_safe "${BASH_REMATCH[2]}"); then
+            log_error "Parameter '$_cps_key' is unsafe: ${_cps_why} (upstream amneziawg-linux-kernel-module#233)"
+            ok=0
+        fi
+    done < "$SERVER_CONF_FILE"
 
     # I1 is optional. Absent = either not set, or intentionally disabled via
     # --no-cps (issue #159): the desktop AmneziaVPN on macOS does not support CPS.

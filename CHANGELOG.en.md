@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A dangerous tag length in `I1`-`I5` no longer reaches the server config or the clients.** `amneziawg-go` accepts `<r>`, `<rc>` and `<rd>` with a negative length and crashes when it builds the packet, while the kernel module, when a `<b>` stands next to it, accepts it without an error and writes past the end of the buffer (upstream `amneziawg-linux-kernel-module#233`). The installer itself never generates such a value, but it could reach `awg0.conf` through a manual edit or someone else's config, and `regen` would hand it to every client. Issuing profiles and the server config with such a value now stops with a clear error, and `restore` refuses such a backup and rolls back. Only what is proven dangerous is refused: a negative length, a length that is not a number or has more than nine significant digits, and a total above 65535 bytes. The value is read the way the implementations apply it: key and section regardless of case, a comment after `#` dropped, an unterminated last tag parsed too. Unknown tags and other malformed input are still rejected by the implementations themselves. The boundary: the check guards issuing profiles, generating the server config and `restore`. It does not stop an `awg0.conf` that is already in place from being applied to the interface: not by `systemctl restart`, not by `manage restart`, and not by the apply after `remove` or after expired clients are removed.
+
 ## [5.34.0] - 2026-09-12
 
 **v5.34.0** - the default routing mode becomes the full tunnel: client profiles get `AllowedIPs = 0.0.0.0/0, ::/0` instead of the subnet list that some clients read as split routing already configured on the server.
