@@ -1107,6 +1107,32 @@ modify_client() {
         return 1
     fi
 
+    # The I1-I5 lines of the client config itself get the same check as the
+    # server's: modify builds QR and vpn:// from this file, and a dangerous value
+    # could have reached it earlier, for example through a regen before the check
+    # existed. Such a profile is not reissued, and neither the .conf nor the
+    # files are touched.
+    command -v awg_cps_check_safe >/dev/null 2>&1 || {
+        log_error "awg_common.sh is outdated: awg_cps_check_safe is missing. Update both halves to one version."
+        exec {modify_lock_fd}>&-
+        return 1
+    }
+    local _cl _ck _cw _cbad=0
+    while IFS= read -r _cl || [[ -n "$_cl" ]]; do
+        [[ "$_cl" =~ ^[[:space:]]*([Ii][1-5])[[:space:]]*=(.*)$ ]] || continue
+        _ck="${BASH_REMATCH[1]}"
+        if ! _cw=$(awg_cps_check_safe "${BASH_REMATCH[2]}"); then
+            log_error "Parameter '$_ck' in $cf is unsafe: ${_cw} (upstream amneziawg-linux-kernel-module#233)"
+            _cbad=1
+        fi
+    done < "$cf"
+    if [[ "$_cbad" -eq 1 ]]; then
+        log_error "Not reissuing profile '$name' with such a value. Fix I1-I5 on the server and run: regen '$name'."
+        _JSON_ERR="unsafe I1-I5 in the client config $cf"
+        exec {modify_lock_fd}>&-
+        return 1
+    fi
+
     log "Changing '$param' to '$value' for '$name'..."
     local bak
     bak="${cf}.bak-$(date +%F_%H-%M-%S)"
@@ -1174,6 +1200,8 @@ modify_client() {
         [[ -e "$_df" || -L "$_df" ]] || continue
         if ! rm -f "$_df" || [[ -e "$_df" || -L "$_df" ]]; then
             log_error "Failed to remove $_df before the edit - parameter '$param' was not changed."
+            log_warn "QR and vpn:// files removed before this one will be rebuilt by regen '$name' once the cause is fixed."
+            _JSON_ERR="could not remove $_df, the .conf is unchanged"
             rm -f "$bak"
             exec {modify_lock_fd}>&-
             return 1
@@ -1188,6 +1216,7 @@ modify_client() {
         # remove it so repeated failed modifies do not pile .bak files in $AWG_DIR.
         if cp "$bak" "$cf"; then rm -f "$bak"; else log_warn "Restore error."; fi
         log_warn "QR and vpn:// files of client '$name' may have been removed before the edit - rebuild them: regen '$name'."
+        _JSON_ERR="edit rolled back, the .conf is restored; regen $name rebuilds QR and vpn://"
         exec {modify_lock_fd}>&-
         return 1
     fi
@@ -1198,6 +1227,7 @@ modify_client() {
         log_error "Replacement failed for '$param'. Restoring..."
         if cp "$bak" "$cf"; then rm -f "$bak"; else log_warn "Restore error."; fi
         log_warn "QR and vpn:// files of client '$name' may have been removed before the edit - rebuild them: regen '$name'."
+        _JSON_ERR="edit rolled back, the .conf is restored; regen $name rebuilds QR and vpn://"
         exec {modify_lock_fd}>&-
         return 1
     fi

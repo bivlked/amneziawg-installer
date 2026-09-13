@@ -1150,6 +1150,10 @@ load_awg_params_from_server_conf() {
         if [[ "$line" =~ ^[[:space:]]*([A-Za-z0-9]+)[[:space:]]*=[[:space:]]*(.+)$ ]]; then
             key="${BASH_REMATCH[1]}"
             value="${BASH_REMATCH[2]}"
+            # Drop a trailing comment the way amneziawg-tools do (config_read_line
+            # cuts the line at #). Otherwise a `# ...` tail would reach the client
+            # config and vpn://, and the I1-I5 check never sees it.
+            value="${value%%#*}"
             value="${value%"${value##*[![:space:]]}"}"
             case "$key" in
                 Jc)         _Jc="$value" ;;
@@ -1272,13 +1276,13 @@ load_awg_params() {
     # the server config and the client profiles: generate_client,
     # regenerate_client and render_server_config fail on a refusal, while modify
     # builds no vpn:// and has already removed the previous file before the edit.
-    # A dangerous value typed into
-    # awg0.conf by hand or carried in with someone else's config stops here
-    # instead of being handed to clients.
-    # ⚠️ The boundary: the client removal path (remove, the expiry cron),
-    # manage restart and systemctl restart do not call this function and apply
-    # the awg0.conf already in place to the interface without a check. The
-    # refusal does not block them, and it does not protect them either.
+    # A dangerous value typed into awg0.conf by hand or carried in with
+    # someone else's config stops here instead of being handed to clients.
+    # ⚠️ The boundary: paths that only start or reload the service do not call
+    # this function and apply the awg0.conf already in place without a check:
+    # remove and the expiry cron, manage restart, repair-module, systemctl
+    # restart and the start at boot. The refusal does not block them, and it
+    # does not protect them either.
     # ⚠️ One exception: when render_server_config calls us, it runs the check
     # itself, AFTER --no-cps clears I1. Otherwise a reinstall with --no-cps -
     # the documented way to remove I1 - would be refused because of the very I1
