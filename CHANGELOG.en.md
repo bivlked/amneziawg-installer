@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.34.1] - 2026-09-13
+
+**v5.34.1** - I1-I5 tag checks and fresh QR and vpn:// files after modify.
+
 ### Fixed
 
 - **A dangerous tag length in `I1`-`I5` no longer reaches the server config or the clients.** `amneziawg-go` accepts `<r>`, `<rc>` and `<rd>` with a negative length and crashes when it builds the packet, while the kernel module, when a `<b>` stands next to it, accepts it without an error and writes past the end of the buffer (upstream `amneziawg-linux-kernel-module#233`). The installer itself never generates such a value, but it could reach `awg0.conf` through a manual edit or someone else's config, and `regen` would hand it to every client. Issuing profiles and the server config with such a value now stops with a clear error, and `restore` refuses such a backup and rolls back. Only what is proven dangerous is refused: a negative length, a length that is not a number or has more than nine significant digits, and a total above 65535 bytes. The value is read the way the implementations apply it: key and section regardless of case, a comment after `#` dropped, an unterminated last tag parsed too. Unknown tags and other malformed input are still rejected by the implementations themselves. The boundary: the check guards issuing profiles, generating the server config and `restore`. It does not stop an `awg0.conf` that is already in place from being applied to the interface: not by `systemctl restart`, not by `manage restart`, and not by the apply after `remove` or after expired clients are removed.
@@ -1923,7 +1927,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.34.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.34.1...HEAD
+[5.34.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.34.0...v5.34.1
 [5.34.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.33.0...v5.34.0
 [5.33.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.32.0...v5.33.0
 [5.32.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.31.0...v5.32.0
