@@ -12,14 +12,23 @@ name: Commit hygiene
 # the copies in step; they drifted anyway, and the check that would have noticed
 # was the one being copied.
 #
-# The scan covers commit messages AND the lines the branch adds. Messages alone
-# were not enough: on 30 aug 2026 three lines naming internal documents reached
-# the public tree through green pull requests, because nothing here read file
-# content and preflight could no longer see them once merged.
+# The scan covers commit messages, the lines the branch adds AND the title and
+# body of the request itself. Messages alone were not enough: on 30 aug 2026
+# three lines naming internal documents reached the public tree through green
+# pull requests, because nothing here read file content and preflight could no
+# longer see them once merged. Title and body were the surface left over after
+# that: they are published when the request opens, they outlive it, and they are
+# neither a commit message nor a diff line. A full-history count on 1 sep 2026
+# found 15 of 121 carrying a marker, the most recent from 27 aug 2026.
+#
+# 'edited' is in the trigger list on purpose. Without it the body is read once,
+# when the request opens, and every later rewrite of it goes unscanned - which
+# is how the body is normally written.
 
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
@@ -43,6 +52,23 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: bash scripts/check-markers.sh "$BASE" "$HEAD"
+
+      - name: No forbidden markers in the pull request title or body
+        env:
+          # Handed over through the environment, not pasted into the command
+          # line: this text belongs to whoever opened the request, and an
+          # expression expanded into a shell line would be theirs to shape.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -uo pipefail
+          # Scanned as two separate texts so a reported line number points
+          # somewhere real, and both run even when the first one fails: whoever
+          # has to fix this should see all of it in one go.
+          bad=0
+          printf '%s\n' "$PR_TITLE" | bash scripts/check-markers.sh --text "pull request title" || bad=1
+          printf '%s\n' "$PR_BODY" | bash scripts/check-markers.sh --text "pull request body" || bad=1
+          exit "$bad"
 
       - name: No newly added em/en-dash in the diff
         env:

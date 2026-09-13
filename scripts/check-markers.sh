@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 # check-markers.sh <base> [head]
+# check-markers.sh --text <label>   # reads the text to scan on stdin
 #
-# Fails when a forbidden marker appears in the commits of <base>..<head> OR in
-# the lines those commits ADD. One implementation, one list, two surfaces.
+# Fails when a forbidden marker appears in the commits of <base>..<head>, in the
+# lines those commits ADD, or in the text handed to --text. One implementation,
+# one list, three surfaces.
+#
+# Why the text half exists. A pull request title and body are published the
+# moment the request opens and outlive it, but neither is a commit message nor a
+# diff line, so the two git-side scans look straight past them. Measured over
+# the full history on 1 sep 2026: 15 of 121 pull request titles and bodies
+# carried a marker, one of them from 27 aug 2026, so this is not an old habit
+# that stopped on its own.
 #
 # Why the content half exists. The pull-request workflow used to read commit
 # messages only, and preflight-check.sh reads the diff but runs at tag time over
@@ -37,8 +46,33 @@ ALLOW_TAG='allow-markers'
 
 usage() {
     echo "usage: $0 <base-ref> [head-ref]" >&2
+    echo "       $0 --text <label>   # scans stdin instead of git" >&2
     exit 2
 }
+
+# --- text on stdin -----------------------------------------------------------
+# The text arrives on stdin rather than as an argument on purpose: it is written
+# by whoever opened the request, and an argument would have to be quoted
+# correctly by every caller forever.
+if [ "${1:-}" = "--text" ]; then
+    label="${2:-}"
+    [ -n "$label" ] || usage
+    if ! text="$(cat)"; then
+        echo "cannot read the text to scan on stdin" >&2
+        exit 1
+    fi
+    # Same list and the same per-line exemption as the content scan, so no
+    # caller ends up with its own idea of what a marker is.
+    hits="$(printf '%s\n' "$text" | grep -v -- "$ALLOW_TAG" | grep -inE "$MARKERS" || true)"
+    if [ -n "$hits" ]; then
+        echo "$label carries a forbidden marker:" >&2
+        printf '%s\n' "$hits" >&2
+        echo "Remove the marker. If a line must spell one out, tag that line with ${ALLOW_TAG}." >&2
+        exit 1
+    fi
+    echo "No forbidden markers in $label."
+    exit 0
+fi
 
 base="${1:-}"
 head_ref="${2:-HEAD}"
