@@ -1260,10 +1260,10 @@ load_awg_params() {
     # vpn:// не собирает, прежний файл он удалил ещё до правки. Опасное
     # значение, вписанное в awg0.conf руками или приехавшее с чужим конфигом,
     # останавливается здесь, а не раздаётся клиентам.
-    # ⚠️ Граница: пути, которые только запускают или перезагружают сервис, эту
-    # функцию не зовут и применяют уже лежащий awg0.conf без проверки: remove и
-    # cron истечения, manage restart, repair-module, systemctl restart и старт
-    # при загрузке системы. Отказ их не блокирует, но и не защищает.
+    # ⚠️ Граница: пути, которые применяют уже лежащий awg0.conf к интерфейсу, эту
+    # функцию не зовут и I1-I5 не проверяют: применение после remove и cron
+    # истечения, manage restart, repair-module, откат restore, systemctl restart
+    # и старт при загрузке системы. Отказ их не блокирует, но и не защищает.
     # ⚠️ Одно исключение: когда нас зовёт render_server_config, проверку делает
     # он сам, ПОСЛЕ --no-cps, который обнуляет I1. Иначе переустановка с
     # --no-cps - штатный способ убрать I1 - упиралась бы в отказ из-за того
@@ -3721,7 +3721,7 @@ validate_awg_config() {
     # один пробел и брал first-wins - вручную поправленный 'Jc=4' успешно
     # загружался, но проваливал валидацию с ложным "параметр не найден".
     for param in "${int_params[@]}"; do
-        val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
+        val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
         if [[ -z "$val" ]]; then
             log_error "Параметр '$param' не найден в серверном конфиге"
             ok=0
@@ -3733,11 +3733,11 @@ validate_awg_config() {
 
     # Протокольные границы (defense-in-depth для восстановленных бэкапов)
     local jc jmin jmax s3 s4
-    jc=$(sed -n 's/^[[:space:]]*Jc[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
-    jmin=$(sed -n 's/^[[:space:]]*Jmin[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
-    jmax=$(sed -n 's/^[[:space:]]*Jmax[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
-    s3=$(sed -n 's/^[[:space:]]*S3[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
-    s4=$(sed -n 's/^[[:space:]]*S4[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
+    jc=$(sed -n 's/^[[:space:]]*Jc[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+    jmin=$(sed -n 's/^[[:space:]]*Jmin[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+    jmax=$(sed -n 's/^[[:space:]]*Jmax[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+    s3=$(sed -n 's/^[[:space:]]*S3[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+    s4=$(sed -n 's/^[[:space:]]*S4[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
     if [[ "$jc" =~ ^[0-9]+$ ]]; then
         if [[ "$jc" -lt 1 || "$jc" -gt 128 ]]; then
             log_error "Jc=$jc вне допустимого диапазона (1-128)"
@@ -3769,7 +3769,7 @@ validate_awg_config() {
 
     local _h_ranges=()
     for param in "${range_params[@]}"; do
-        val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
+        val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
         if [[ -z "$val" ]]; then
             log_error "Параметр '$param' не найден в серверном конфиге"
             ok=0

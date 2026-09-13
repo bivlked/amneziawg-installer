@@ -39,6 +39,7 @@ setup() {
     ORIG_PATH="$PATH"
     REAL_RM=$(command -v rm)
     REAL_SED=$(command -v sed)
+    REAL_CP=$(command -v cp)
     MGMT_DIR=$(mktemp -d)
     A="$MGMT_DIR/awg"
     mkdir -p "$MGMT_DIR/bin" "$A/keys"
@@ -310,8 +311,10 @@ unsafe_client_config_is_not_reissued() {
     [ "$(sha256sum "$A/alice.conf" | cut -d' ' -f1)" = "$before" ]
     grep -qxF 'OLD' "$A/alice.png"
     [[ "$stderr" == *"I3"* ]]
+    # regen resets Endpoint, and the refusal says so before recommending it.
+    [[ "$stderr" == *"Endpoint"* ]]
     one_json_line
-    printf '%s' "$output" | jq -e '.ok == false and .rc == 1 and (.error | contains("I1-I5"))' >/dev/null
+    printf '%s' "$output" | jq -e '.ok == false and .rc == 1 and (.error | contains("I1-I5")) and (.error | contains("I3"))' >/dev/null
 }
 
 unremovable_file_refuses_before_the_edit() {
@@ -353,7 +356,7 @@ rm_that_lies_is_caught() {
     grep -qxF 'OLD' "$A/alice.png"
 }
 
-partial_removal_points_to_regen() {
+partial_removal_asks_to_repeat_modify() {
     require_flock
     require_jq
     stub_qrencode_fail
@@ -370,11 +373,11 @@ partial_removal_points_to_regen() {
     # The PNG before it is already gone, and the operator is told how to get it back.
     [ ! -e "$A/alice.png" ]
     [ -d "$A/alice.vpnuri" ]
-    [[ "$stderr" == *"regen"* ]]
-    printf '%s' "$output" | jq -e '.ok == false and (.error | contains("alice.vpnuri"))' >/dev/null
+    [[ "$stderr" == *"modify"* ]]
+    printf '%s' "$output" | jq -e '.ok == false and (.error | contains("alice.vpnuri")) and (.error | contains("modify"))' >/dev/null
 }
 
-rollback_after_a_failed_edit_points_to_regen() {
+rollback_after_a_failed_edit_asks_to_repeat_modify() {
     require_flock
     require_jq
     stub_qrencode_fail
@@ -392,8 +395,38 @@ rollback_after_a_failed_edit_points_to_regen() {
     [ -z "$(find "$A" -maxdepth 1 -name 'alice.conf.bak-*')" ]
     [ ! -e "$A/alice.png" ]
     [ ! -e "$A/alice.vpnuri" ]
-    [[ "$stderr" == *"regen"* ]]
-    printf '%s' "$output" | jq -e '.ok == false and (.error | contains("regen"))' >/dev/null
+    [[ "$stderr" == *"modify"* ]]
+    printf '%s' "$output" | jq -e '.ok == false and (.error | contains("modify"))' >/dev/null
+}
+
+unsafe_client_line_in_windows_form_is_caught() {
+    require_flock
+    stub_qrencode_fail
+    add_alice
+    # A config edited on Windows: lower-case key, CRLF, no final newline.
+    printf 'i3 = %s\r' "$REPRO" >> "$A/alice.conf"
+    plant alice.png
+    run --separate-stderr mgmt modify alice DNS 8.8.4.4
+    [ "$status" -eq 1 ]
+    grep -qxF 'OLD' "$A/alice.png"
+    [[ "$stderr" == *"i3"* ]]
+}
+
+rollback_that_cannot_restore_keeps_the_backup() {
+    require_flock
+    require_jq
+    stub_qrencode_fail
+    add_alice
+    # sed fails the in-place edit of alice.conf, cp refuses to copy the backup back.
+    printf '#!/bin/bash\ni=0; c=0\nfor a in "$@"; do case "$a" in -i) i=1 ;; *alice.conf) c=1 ;; esac; done\n[ "$i$c" = 11 ] && exit 1\nexec %q "$@"\n' \
+        "$REAL_SED" > "$MGMT_DIR/bin/sed"
+    printf '#!/bin/bash\ncase "$1" in *alice.conf.bak-*) exit 1 ;; esac\nexec %q "$@"\n' \
+        "$REAL_CP" > "$MGMT_DIR/bin/cp"
+    chmod +x "$MGMT_DIR/bin/sed" "$MGMT_DIR/bin/cp"
+    run --separate-stderr mgmt modify alice DNS 8.8.4.4 --json
+    [ "$status" -eq 1 ]
+    [ -n "$(find "$A" -maxdepth 1 -name 'alice.conf.bak-*')" ]
+    printf '%s' "$output" | jq -e '.ok == false and (.error | contains(".bak-"))' >/dev/null
 }
 
 # ------------------------------------------------------------------ RU
@@ -442,12 +475,20 @@ rollback_after_a_failed_edit_points_to_regen() {
     rm_that_lies_is_caught
 }
 
-@test "modify RU: a partial removal points the operator to regen" {
-    partial_removal_points_to_regen
+@test "modify RU: a partial removal asks to repeat modify" {
+    partial_removal_asks_to_repeat_modify
 }
 
-@test "modify RU: a failed edit rolls back and points to regen" {
-    rollback_after_a_failed_edit_points_to_regen
+@test "modify RU: a failed edit rolls back and asks to repeat modify" {
+    rollback_after_a_failed_edit_asks_to_repeat_modify
+}
+
+@test "modify RU: an unsafe I1-I5 line in Windows form is caught" {
+    unsafe_client_line_in_windows_form_is_caught
+}
+
+@test "modify RU: a rollback that cannot restore keeps the backup and names it" {
+    rollback_that_cannot_restore_keeps_the_backup
 }
 
 # ------------------------------------------------------------------ EN
@@ -507,12 +548,22 @@ rollback_after_a_failed_edit_points_to_regen() {
     rm_that_lies_is_caught
 }
 
-@test "modify EN: a partial removal points the operator to regen" {
+@test "modify EN: a partial removal asks to repeat modify" {
     use_en
-    partial_removal_points_to_regen
+    partial_removal_asks_to_repeat_modify
 }
 
-@test "modify EN: a failed edit rolls back and points to regen" {
+@test "modify EN: a failed edit rolls back and asks to repeat modify" {
     use_en
-    rollback_after_a_failed_edit_points_to_regen
+    rollback_after_a_failed_edit_asks_to_repeat_modify
+}
+
+@test "modify EN: an unsafe I1-I5 line in Windows form is caught" {
+    use_en
+    unsafe_client_line_in_windows_form_is_caught
+}
+
+@test "modify EN: a rollback that cannot restore keeps the backup and names it" {
+    use_en
+    rollback_that_cannot_restore_keeps_the_backup
 }

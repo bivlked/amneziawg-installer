@@ -1278,9 +1278,9 @@ load_awg_params() {
     # builds no vpn:// and has already removed the previous file before the edit.
     # A dangerous value typed into awg0.conf by hand or carried in with
     # someone else's config stops here instead of being handed to clients.
-    # ⚠️ The boundary: paths that only start or reload the service do not call
-    # this function and apply the awg0.conf already in place without a check:
-    # remove and the expiry cron, manage restart, repair-module, systemctl
+    # ⚠️ The boundary: paths that apply the awg0.conf already in place do not
+    # call this function and do not check I1-I5: the apply after remove and the
+    # expiry cron, manage restart, repair-module, the restore rollback, systemctl
     # restart and the start at boot. The refusal does not block them, and it
     # does not protect them either.
     # ⚠️ One exception: when render_server_config calls us, it runs the check
@@ -3762,7 +3762,7 @@ validate_awg_config() {
     # one space and took first-wins - a hand-edited 'Jc=4' loaded fine but
     # failed validation with a bogus "parameter not found".
     for param in "${int_params[@]}"; do
-        val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
+        val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
         if [[ -z "$val" ]]; then
             log_error "Parameter '$param' not found in server config"
             ok=0
@@ -3774,11 +3774,11 @@ validate_awg_config() {
 
     # Protocol boundary checks (defense-in-depth for restored backups)
     local jc jmin jmax s3 s4
-    jc=$(sed -n 's/^[[:space:]]*Jc[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
-    jmin=$(sed -n 's/^[[:space:]]*Jmin[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
-    jmax=$(sed -n 's/^[[:space:]]*Jmax[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
-    s3=$(sed -n 's/^[[:space:]]*S3[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
-    s4=$(sed -n 's/^[[:space:]]*S4[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
+    jc=$(sed -n 's/^[[:space:]]*Jc[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+    jmin=$(sed -n 's/^[[:space:]]*Jmin[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+    jmax=$(sed -n 's/^[[:space:]]*Jmax[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+    s3=$(sed -n 's/^[[:space:]]*S3[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+    s4=$(sed -n 's/^[[:space:]]*S4[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
     if [[ "$jc" =~ ^[0-9]+$ ]]; then
         if [[ "$jc" -lt 1 || "$jc" -gt 128 ]]; then
             log_error "Jc=$jc is out of range (1-128)"
@@ -3810,7 +3810,7 @@ validate_awg_config() {
 
     local _h_ranges=()
     for param in "${range_params[@]}"; do
-        val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | tr -d '[:space:]')
+        val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
         if [[ -z "$val" ]]; then
             log_error "Parameter '$param' not found in server config"
             ok=0
