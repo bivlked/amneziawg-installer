@@ -1262,6 +1262,22 @@ load_awg_params() {
     if [[ $missing -eq 1 ]]; then
         return 1
     fi
+    # 4. Safety of I1-I5, whatever the source. From here the parameters go into
+    # the server config and into every client profile, and every caller fails
+    # loudly on a refusal. So a dangerous value typed into awg0.conf by hand or
+    # carried in with someone else's config stops here instead of being handed
+    # to clients. The client removal path (remove, the expiry cron) does not
+    # call this function, so the refusal does not block it.
+    # ⚠️ One exception: when render_server_config calls us, it runs the check
+    # itself, AFTER --no-cps clears I1. Otherwise a reinstall with --no-cps -
+    # the documented way to remove I1 - would be refused because of the very I1
+    # it removes. The deferral is tied to the NAME of the direct caller, not to
+    # a variable: a variable can be inherited from the environment and silently
+    # switch the check off. Client paths do not honour NO_CPS, so they get no
+    # deferral.
+    if [[ "${FUNCNAME[1]:-}" != "render_server_config" ]]; then
+        awg_cps_refuse_unsafe || return 1
+    fi
     return 0
 }
 
@@ -1500,6 +1516,10 @@ render_server_config() {
     if grep -qE '^[[:space:]]*(export[[:space:]]+)?NO_CPS=1' "$CONFIG_FILE" 2>/dev/null; then
         AWG_I1=''
     fi
+    # I1-I5 are checked here, AFTER --no-cps: load_awg_params deferred the check
+    # for us (see step 4 there), otherwise a reinstall with --no-cps would be
+    # refused because of the very I1 it removes.
+    awg_cps_refuse_unsafe || return 1
 
     # Port for the NEW awg0.conf comes from the init file (the user's intent:
     # the --port flag or the previously saved port), NOT from the old awg0.conf
@@ -2282,6 +2302,106 @@ awg_cps_is_shaped() {
     # Ни одного случайного куска длиннее метки DNS и не меньше тридцати
     # литеральных байт структуры.
     [[ "$rnd_max" -le 63 && "$lit" -ge 30 ]]
+}
+
+# awg_cps_check_safe <I string> : is a CPS string safe for BOTH implementations.
+# 0 - safe; 1 - not, and the reason goes to stdout.
+#
+# Why. The kernel module parses the length of `<r>`/`<rc>`/`<rd>` with
+# kstrtoint and never looks at the value: tag sizes are summed into an int that
+# sizes an allocation, while each tag's own length drives a copy. A negative
+# length next to `<b>` keeps the sum small and positive, so the buffer is small
+# and the literal copy is not (upstream amneziawg-linux-kernel-module#233 and
+# #187). amneziawg-go reads the same length with strconv.Atoi, and a negative
+# one crashes the process on a slice when the packet is built. Both
+# implementations ACCEPT such a config without an error, and regen would hand
+# it to every client.
+#
+# 🔴 The refusal is narrow ON PURPOSE: only what the code of both
+# implementations shows to be dangerous. A length must be a non-negative decimal
+# of at most nine significant digits (both accept a sign, leading zeros and
+# `-0`, and a working config with them must not break); the total must not
+# exceed 65535: more does not fit in UDP, and huge lengths overflow the
+# kernel's sum. An unknown tag and junk are NOT touched: the implementations
+# reject those loudly on their own, and refusing them here could break a
+# userspace server that works today. The form without a space (`<r-1>`) is
+# parsed as in awg_cps_decoded_size; refusing it is harmless, both
+# implementations reject that form themselves.
+# The total is counted here rather than by awg_cps_decoded_size: that one does
+# not accept a leading plus, and `<r +999999999>` three times would slip past
+# the overflow check.
+awg_cps_check_safe() {
+    local s="${1:-}" rest mat tag n digits hex total=0
+    [[ -n "$s" ]] || return 0
+    rest="$s"
+    while [[ "$rest" =~ \<[[:space:]]*([a-zA-Z]+)[[:space:]]*([^\>]*)\> ]]; do
+        # 🔴 Save the match and advance BEFORE any other [[ =~ ]]: those clobber
+        # BASH_REMATCH, and advancing by a clobbered match would not shorten the
+        # string. The first version spun forever that way on `<b 0xGG>` and
+        # `<r 1 2>` - in restore that would have happened after the files were
+        # replaced and before the rollback.
+        mat="${BASH_REMATCH[0]}"
+        tag="${BASH_REMATCH[1]}"
+        n="${BASH_REMATCH[2]//[[:space:]]/}"
+        rest="${rest#*"$mat"}"
+        case "${tag,,}" in
+            r|rc|rd)
+                # The sign is stripped once, leading zeros before the digit
+                # limit: both implementations read `-0`, `+0` and `0000000001`
+                # as plain numbers, and refusing them would break a working
+                # config.
+                digits="${n#[-+]}"
+                if ! [[ "$digits" =~ ^[0-9]+$ ]]; then
+                    printf 'the length in tag <%s %s> is not a decimal' "$tag" "$n"
+                    return 1
+                fi
+                while [[ "$digits" == 0?* ]]; do digits="${digits#0}"; done
+                # The memory corruption text is for a real negative number only,
+                # not for a minus in front of zero or junk.
+                if [[ "$n" == -* && "$digits" != "0" ]]; then
+                    printf 'negative length in tag <%s %s>: both the kernel module and amneziawg-go accept it, and what follows is memory corruption in the module and a crashed process in amneziawg-go' "$tag" "$n"
+                    return 1
+                fi
+                if ! [[ "$digits" =~ ^[0-9]{1,9}$ ]]; then
+                    printf 'the length in tag <%s %s> has more than nine significant digits: such lengths overflow the summed size in the kernel module' "$tag" "$n"
+                    return 1
+                fi
+                total=$(( total + 10#$digits ))
+                ;;
+            b)
+                hex="${n#0x}"; hex="${hex#0X}"
+                [[ "$hex" =~ ^[0-9a-fA-F]+$ ]] && total=$(( total + ${#hex} / 2 ))
+                ;;
+            t|c)
+                total=$(( total + 4 ))
+                ;;
+        esac
+    done
+    if [[ "$total" -gt 65535 ]]; then
+        printf 'the total size of %s bytes exceeds 65535: such a packet does not fit in UDP, and huge lengths overflow the summed size in the kernel module' "$total"
+        return 1
+    fi
+    return 0
+}
+
+# awg_cps_refuse_unsafe : check AWG_I1..AWG_I5 of the current environment.
+# 0 - all safe; 1 - not, the reasons are already logged.
+# One refusal text for both places that need it: load_awg_params and
+# render_server_config.
+awg_cps_refuse_unsafe() {
+    local v why bad=0
+    for v in AWG_I1 AWG_I2 AWG_I3 AWG_I4 AWG_I5; do
+        [[ -n "${!v:-}" ]] || continue
+        if ! why=$(awg_cps_check_safe "${!v}"); then
+            log_error "Parameter ${v#AWG_} is unsafe: ${why}."
+            bad=1
+        fi
+    done
+    if [[ $bad -eq 1 ]]; then
+        log_error "Not issuing profiles or a server config with such a value (upstream amneziawg-linux-kernel-module#233). Fix I1-I5 in $SERVER_CONF_FILE."
+        return 1
+    fi
+    return 0
 }
 
 
@@ -3697,6 +3817,37 @@ validate_awg_config() {
                 fi
             done
         done
+    fi
+
+    # I1-I5: the same dangerous lengths load_awg_params refuses. restore runs the
+    # validator BEFORE starting the service and rolls back on a refusal, so this
+    # is where a dangerous backup is kept off the live interface.
+    # 🔴 The values come from THE SAME parser the loader uses, not from sed over
+    # the file: the loader reads [Interface] only and skips an empty value,
+    # while sed would see something else - a line from a [Peer] section or an
+    # empty `I1=` duplicate instead of the real value. A subshell keeps the
+    # caller's environment untouched.
+    # 🔴 A failed parse means I1-I5 were NOT CHECKED, not that they are clean:
+    # such a config does not pass. Likewise when AWG_I* are readonly in the
+    # caller and cannot be cleared: otherwise the inherited value would be
+    # checked instead of the one in the file.
+    local _cps_report _cps_name _cps_why _cps_rc=0
+    _cps_report=$(
+        unset AWG_I1 AWG_I2 AWG_I3 AWG_I4 AWG_I5 2>/dev/null || exit 3
+        load_awg_params_from_server_conf "$SERVER_CONF_FILE" >/dev/null 2>&1 || exit 3
+        for _v in AWG_I1 AWG_I2 AWG_I3 AWG_I4 AWG_I5; do
+            [[ -n "${!_v:-}" ]] || continue
+            _w=$(awg_cps_check_safe "${!_v}") || printf '%s\t%s\n' "${_v#AWG_}" "$_w"
+        done
+    ) || _cps_rc=$?
+    if [[ $_cps_rc -ne 0 ]]; then
+        log_error "I1-I5 not checked: the [Interface] section of $SERVER_CONF_FILE could not be parsed by the parser that reads it for clients."
+        ok=0
+    elif [[ -n "$_cps_report" ]]; then
+        while IFS=$'\t' read -r _cps_name _cps_why; do
+            log_error "Parameter '$_cps_name' is unsafe: ${_cps_why} (upstream amneziawg-linux-kernel-module#233)"
+        done <<< "$_cps_report"
+        ok=0
     fi
 
     # I1 is optional. Absent = either not set, or intentionally disabled via
