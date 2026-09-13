@@ -1271,7 +1271,8 @@ load_awg_params() {
     # 4. Safety of I1-I5, whatever the source. From here the parameters go into
     # the server config and the client profiles: generate_client,
     # regenerate_client and render_server_config fail on a refusal, while modify
-    # only warns and does not update vpn://. A dangerous value typed into
+    # builds no vpn:// and has already removed the previous file before the edit.
+    # A dangerous value typed into
     # awg0.conf by hand or carried in with someone else's config stops here
     # instead of being handed to clients.
     # ⚠️ The boundary: the client removal path (remove, the expiry cron),
@@ -2979,7 +2980,7 @@ generate_vpn_uri() {
     fi
 
     local client_privkey client_ip client_ipv6 server_pubkey endpoint allowed_ips client_psk
-    client_privkey=$(grep -oP 'PrivateKey\s*=\s*\K\S+' "$conf_file") || return 1
+    client_privkey=$(grep -oP 'PrivateKey\s*=\s*\K\S+' "$conf_file") || { log_warn "PrivateKey could not be read from '$conf_file' - vpn:// URI not created for '$name'."; return 1; }
     # Extract IPv4 from Address (first field before comma, without /prefix).
     # Regex stops at digits and dots - does not capture IPv6 in dual-stack configs.
     client_ip=$(awk '/^Address[[:space:]]*=/{
@@ -3003,7 +3004,7 @@ generate_vpn_uri() {
     }' "$conf_file" 2>/dev/null)
     client_ipv6="${client_ipv6:-}"
     _ensure_server_public_key || return 1
-    server_pubkey=$(cat "$AWG_DIR/server_public.key" 2>/dev/null) || return 1
+    server_pubkey=$(cat "$AWG_DIR/server_public.key" 2>/dev/null) || { log_warn "Could not read $AWG_DIR/server_public.key - vpn:// URI not created for '$name'."; return 1; }
     # PresharedKey is optional. awk instead of grep so an empty result is not
     # treated as failure (grep -P without a match → rc=1, not what we want here).
     # Also strip a trailing CR (CRLF from Windows editors) and trailing spaces
@@ -3013,7 +3014,7 @@ generate_vpn_uri() {
     # fix v5.11.4).
     client_psk=$(awk '/^[[:space:]]*PresharedKey[[:space:]]*=/{sub(/^[[:space:]]*PresharedKey[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf_file" 2>/dev/null)
     local raw_endpoint
-    raw_endpoint=$(grep -oP 'Endpoint\s*=\s*\K\S+' "$conf_file") || return 1
+    raw_endpoint=$(grep -oP 'Endpoint\s*=\s*\K\S+' "$conf_file") || { log_warn "Endpoint could not be read from '$conf_file' - vpn:// URI not created for '$name'."; return 1; }
     if [[ "$raw_endpoint" == \[* ]]; then
         # IPv6: [addr]:port
         endpoint="${raw_endpoint%%]:*}"

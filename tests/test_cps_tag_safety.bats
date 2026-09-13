@@ -266,9 +266,11 @@ check() {  # check <lib> <value> : bounded, so a hang shows up as status 124
 }
 
 # ------------------------------------------------------------------ load_awg_params
-# Every path that writes a client profile goes through load_awg_params and fails
-# on its refusal; modify only warns and leaves the existing vpn:// file alone.
-# That is what stops the value from reaching clients.
+# Every path that renders a client profile from the server parameters goes
+# through load_awg_params and fails
+# on its refusal; modify removes the vpn:// files it can no longer rebuild
+# (tests/test_modify_stale_artifacts.bats). That is what stops the value from
+# reaching clients.
 
 @test "load_awg_params: a live config carrying the reproducer is refused" {
     create_server_config
