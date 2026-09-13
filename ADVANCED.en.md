@@ -803,7 +803,7 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 * **`remove <name> [name2 ...]`:** Remove one or multiple clients. In batch mode, apply_config is called once for all.
 * **`list [-v] [--json]`:** List clients (with details when using `-v`; `--json` - machine-readable, includes the `client_ipv6` and `expires_at` fields).
 * **`regen [name ...] [--reset-routes]`:** Regenerate `.conf`/`.png` files for the listed clients or all at once. By default preserves the client's individual `AllowedIPs`/`DNS`/`PersistentKeepalive` (set via `modify`). With `--reset-routes` - resets `AllowedIPs` to the current global routing mode from `awgsetup_cfg.init`; use it after changing the mode via reinstall (`--force --route-all` / `--route-amnezia` / `--route-custom=`) so the new mode reaches existing clients (Issue #170).
-* **`modify <name> <param> <value>`:** Modify a client parameter in the `.conf` file. Allowed parameters: DNS, Endpoint, AllowedIPs, PersistentKeepalive. QR code and vpn:// URI are automatically regenerated after modification.
+* **`modify <name> <param> <value>`:** Modify a client parameter in the `.conf` file. Allowed parameters: DNS, Endpoint, AllowedIPs, PersistentKeepalive. QR code and vpn:// URI are automatically regenerated after modification; the previous copies are removed before the edit, so a file that could not be rebuilt is missing rather than stale.
 * **`backup`:** Create a backup (configs + keys + client expiry data + cron).
 * **`restore [file]`:** Restore from a backup (including expiry data and cron job).
 * **`check` / `status`:** Check server status (service, port, AWG 2.0 parameters).
@@ -868,7 +868,7 @@ The form of any emergency exit (die, bad option, confirmation refusal, signal):
 Field notes:
 
 - `applied` - whether the config was applied to the live interface. `regen` and `modify` have no such field: they do not change server state (keys and IPs are reused). Always `false` under `AWG_SKIP_APPLY=1`.
-- `qr`/`vpnuri` - a path if the file existed at response time. QR and URI are generated outside the config lock: a parallel operation can remove the file, no freshness guarantee.
+- `qr`/`vpnuri` - a path if the file existed at response time. For `add` and `regen`, QR and URI are generated outside the config lock: a parallel operation can remove the file, no freshness guarantee. For `modify` the previous copies are removed before the edit and the rebuild runs under the same lock: a file that could not be built is missing and the field is `null`. Without a parallel operation on the same client, a path leads to a copy built from the new `.conf`.
 - `results[].allowed_ips` (`add`, entries with status `created`) - the client's applied routes, read from the just-created `.conf`. May differ from the `--allowed-ips` argument: a full-tunnel IPv4 list gets `::/0` or the tunnel ULA added (the iOS rule). `null` means the value could not be read - the reason goes to the log as an error, like `qr`/`vpnuri`. For an external consumer (a bot) the field removes the verification call after creation (Issue #253).
 - `restore` returns an envelope on failure too (with `error` and `rolled_back` - the bot needs to know whether a rollback happened). `restored.clients` is the number of `[Peer]` blocks in the restored server config, not files in the working directory.
 - `repair-module.rc` - the internal module-check code (0 - module and service OK, 1 - module failed, 2 - module OK, service down), not the process exit code.

@@ -1252,9 +1252,10 @@ load_awg_params() {
     fi
     # 4. Безопасность I1-I5, по значениям ЛЮБОГО источника. Отсюда параметры
     # уходят в серверный конфиг и в клиентские профили: generate_client,
-    # regenerate_client и render_server_config на отказе падают, а modify лишь
-    # предупреждает и не обновляет vpn://. Опасное значение, вписанное в
-    # awg0.conf руками или приехавшее с чужим конфигом, останавливается здесь, а
+    # regenerate_client и render_server_config на отказе падают, а modify
+    # vpn:// не собирает, прежний файл он удалил ещё до правки. Опасное
+    # значение, вписанное в awg0.conf руками или приехавшее с чужим конфигом,
+    # останавливается здесь, а
     # не раздаётся клиентам.
     # ⚠️ Граница: путь удаления клиентов (remove, cron истечения), manage restart
     # и systemctl restart эту функцию не зовут и применяют уже лежащий awg0.conf
@@ -2946,7 +2947,7 @@ generate_vpn_uri() {
     fi
 
     local client_privkey client_ip client_ipv6 server_pubkey endpoint allowed_ips client_psk
-    client_privkey=$(grep -oP 'PrivateKey\s*=\s*\K\S+' "$conf_file") || return 1
+    client_privkey=$(grep -oP 'PrivateKey\s*=\s*\K\S+' "$conf_file") || { log_warn "PrivateKey не прочитан из '$conf_file' - vpn:// URI не создан для '$name'."; return 1; }
     # Извлекаем IPv4 из Address (первое поле до запятой, без /prefix).
     # Regex останавливается на цифрах и точках - не захватывает IPv6 при dual-stack.
     client_ip=$(awk '/^Address[[:space:]]*=/{
@@ -2970,7 +2971,7 @@ generate_vpn_uri() {
     }' "$conf_file" 2>/dev/null)
     client_ipv6="${client_ipv6:-}"
     _ensure_server_public_key || return 1
-    server_pubkey=$(cat "$AWG_DIR/server_public.key" 2>/dev/null) || return 1
+    server_pubkey=$(cat "$AWG_DIR/server_public.key" 2>/dev/null) || { log_warn "Не прочитан $AWG_DIR/server_public.key - vpn:// URI не создан для '$name'."; return 1; }
     # PresharedKey — опциональный. awk вместо grep чтобы пустой результат
     # не считался ошибкой (grep -P без match → rc=1, нам это здесь не нужно).
     # Дополнительно срезаем CR (CRLF от Windows-редакторов) и хвостовые
@@ -2979,7 +2980,7 @@ generate_vpn_uri() {
     # vpn:// теряет PSK и handshake падает (issue #67, fix v5.11.4).
     client_psk=$(awk '/^[[:space:]]*PresharedKey[[:space:]]*=/{sub(/^[[:space:]]*PresharedKey[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf_file" 2>/dev/null)
     local raw_endpoint
-    raw_endpoint=$(grep -oP 'Endpoint\s*=\s*\K\S+' "$conf_file") || return 1
+    raw_endpoint=$(grep -oP 'Endpoint\s*=\s*\K\S+' "$conf_file") || { log_warn "Endpoint не прочитан из '$conf_file' - vpn:// URI не создан для '$name'."; return 1; }
     if [[ "$raw_endpoint" == \[* ]]; then
         # IPv6: [addr]:port
         endpoint="${raw_endpoint%%]:*}"

@@ -1148,6 +1148,23 @@ modify_client() {
             ;;
     esac
 
+    # QR и vpn:// удаляются ДО правки .conf и собираются заново после неё.
+    # Прежняя копия несёт старые значения, и тот, кто раздаёт эти файлы, выдал
+    # бы её за актуальную. Удаление до правки даёт два свойства: отказ или
+    # прерывание перевыпуска оставляют отсутствие файла, а не старую копию, а
+    # отказ удаления возвращает ошибку при нетронутом .conf. Проверки значения
+    # стоят выше, поэтому отвергнутая правка файлы не трогает.
+    local _df
+    for _df in "$AWG_DIR/${name}.png" "$AWG_DIR/${name}.vpnuri" "$AWG_DIR/${name}.vpnuri.png"; do
+        [[ -e "$_df" || -L "$_df" ]] || continue
+        if ! rm -f "$_df" || [[ -e "$_df" || -L "$_df" ]]; then
+            log_error "Не удалось удалить $_df перед правкой - параметр '$param' не изменён."
+            rm -f "$bak"
+            exec {modify_lock_fd}>&-
+            return 1
+        fi
+    done
+
     local escaped_value
     escaped_value=$(escape_sed "$value")
     if ! sed -i "s#^${param}[[:space:]]*=[[:space:]]*.*#${param} = ${escaped_value}#" "$cf"; then
@@ -1155,6 +1172,7 @@ modify_client() {
         # После успешного отката .bak идентичен конфигу - удаляем, чтобы
         # повторные неудачные modify не копили .bak-файлы в $AWG_DIR.
         if cp "$bak" "$cf"; then rm -f "$bak"; else log_warn "Ошибка восстановления."; fi
+        log_warn "QR и vpn:// клиента '$name' могли быть удалены до правки - пересоберите их: regen '$name'."
         exec {modify_lock_fd}>&-
         return 1
     fi
@@ -1164,6 +1182,7 @@ modify_client() {
     if ! grep -q -E "^${param} = .+" "$cf"; then
         log_error "Замена не выполнена для '$param'. Восстановление..."
         if cp "$bak" "$cf"; then rm -f "$bak"; else log_warn "Ошибка восстановления."; fi
+        log_warn "QR и vpn:// клиента '$name' могли быть удалены до правки - пересоберите их: regen '$name'."
         exec {modify_lock_fd}>&-
         return 1
     fi
@@ -1173,11 +1192,11 @@ modify_client() {
     rm -f "$bak"
 
     log "Перегенерация QR-кода и vpn:// URI..."
-    generate_qr "$name" || log_warn "Не удалось обновить QR-код."
+    generate_qr "$name" || log_warn "Не удалось обновить QR-код - файла ${name}.png сейчас нет."
     if generate_vpn_uri "$name"; then
-        generate_qr_vpnuri "$name" || log_warn "Не удалось обновить QR vpn://."
+        generate_qr_vpnuri "$name" || log_warn "Не удалось обновить QR vpn:// - файла ${name}.vpnuri.png сейчас нет."
     else
-        log_warn "Не удалось обновить vpn:// URI."
+        log_warn "Не удалось обновить vpn:// URI - файлов ${name}.vpnuri и ${name}.vpnuri.png сейчас нет."
     fi
 
     exec {modify_lock_fd}>&-
@@ -2558,10 +2577,17 @@ case $COMMAND in
         [[ -z "$CLIENT_NAME" ]] && die "Не указано имя клиента."
         validate_client_name "$CLIENT_NAME" || { _JSON_ERR="невалидное имя клиента"; exit 1; }
         if modify_client "$CLIENT_NAME" "$PARAM" "$VALUE"; then
-            # modify правит ТОЛЬКО клиентский конфиг (DNS/MTU/AllowedIPs/...):
+            # modify правит ТОЛЬКО клиентский конфиг (DNS/Endpoint/AllowedIPs/PersistentKeepalive):
             # серверное состояние не меняется, apply не нужен - поля applied
             # в конверте нет намеренно (симметрия с regen).
-            json_out "{\"command\":\"modify\",\"ok\":true,\"name\":\"$(json_escape "$CLIENT_NAME")\",\"param\":\"$(json_escape "$PARAM")\",\"value\":\"$(json_escape "$VALUE")\"}"
+            # qr/vpnuri - как у add: путь, если файл есть на момент ответа.
+            # modify удаляет прежние копии до правки .conf, поэтому путь ведёт
+            # на файл, собранный в этом запуске (если параллельно с тем же
+            # клиентом ничего не делали), а null значит, что актуального файла нет.
+            _jqr="null"; _juri="null"
+            [[ -f "$AWG_DIR/${CLIENT_NAME}.png" ]] && _jqr="\"$(json_escape "$AWG_DIR/${CLIENT_NAME}.png")\""
+            [[ -f "$AWG_DIR/${CLIENT_NAME}.vpnuri" ]] && _juri="\"$(json_escape "$AWG_DIR/${CLIENT_NAME}.vpnuri")\""
+            json_out "{\"command\":\"modify\",\"ok\":true,\"name\":\"$(json_escape "$CLIENT_NAME")\",\"param\":\"$(json_escape "$PARAM")\",\"value\":\"$(json_escape "$VALUE")\",\"qr\":$_jqr,\"vpnuri\":$_juri}"
         else
             _cmd_rc=1
         fi
