@@ -10,19 +10,21 @@
 # without an error, and regen would hand it to every client.
 #
 # 🔴 The refusal is deliberately narrow. Only what the code of BOTH
-# implementations shows to be dangerous is refused: a length that is not an
-# unsigned decimal, and a total large enough to overflow. An unknown tag or
+# implementations shows to be dangerous is refused: a negative length, a
+# length that is not a decimal or is too long to be a real one, and a total too
+# large for UDP. An unknown tag or
 # plain junk is left to the implementations, which refuse those loudly on
 # their own. Refusing them here could break a userspace server that works
 # today, and a check that breaks working servers gets switched off.
 #
-# 🔴 Refusals are asserted by their REASON, not only by the exit status. A
-# first version of these tests checked the status alone, and a mutant that let
-# a negative length through still passed: `10#-1` broke the arithmetic, the
-# function exited non-zero for the wrong reason, and the test read that as a
-# refusal.
+# 🔴 Refusals are asserted by their REASON, not only by the exit status. A test
+# that checks the status alone passes when the function merely crashes: `10#-1`
+# breaks the arithmetic, the function exits non-zero for the wrong reason, and a
+# mutant that lets a negative length through goes unnoticed.
 
 load test_helper
+
+bats_require_minimum_version 1.5.0
 
 REPRO='<b 0x0102><r -1>'
 DNS_RECIPE='<r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>'
@@ -209,9 +211,9 @@ check() {  # check <lib> <value> : bounded, so a hang shows up as status 124
     [ "$status" -eq 0 ]
 }
 
-# The validator must see the value the loader sees. The loader reads [Interface]
-# only and skips an empty value, so an I1 line in a peer section or a bare
-# `I1=` after the real one must not hide the interface value from the check.
+# The validator must see every value the tools will apply. amneziawg-tools match
+# section headers and the I1-I5 keys without regard to case, so a peer-section
+# line or an empty duplicate must not hide a dangerous interface value.
 @test "validate: an I1 line in a peer section does not mask the interface value" {
     create_server_config
     printf 'I1 = %s\n\n[Peer]\nPublicKey = X\nI1 = <r 1>\n' "$REPRO" >> "$SERVER_CONF_FILE"
@@ -251,7 +253,7 @@ check() {  # check <lib> <value> : bounded, so a hang shows up as status 124
     printf 'I1 = %s\n\n[Peer]\nPublicKey = X\nS4 = 16\n' "$REPRO" >> "$SERVER_CONF_FILE"
     run bash -c 'unset -f log log_warn log_error log_debug; source "$1" >/dev/null 2>&1 || true; validate_awg_config' _ "$COMMON_EN"
     [ "$status" -eq 1 ]
-    [[ "$output" == *"not checked"* ]]
+    [[ "$output" == *"I1"* && "$output" == *"<r -1>"* ]]
 }
 
 @test "validate: the EN library fails the same config" {
@@ -263,9 +265,9 @@ check() {  # check <lib> <value> : bounded, so a hang shows up as status 124
 }
 
 # ------------------------------------------------------------------ load_awg_params
-# Every path that writes a client profile goes through load_awg_params, and
-# every caller already fails loudly on its refusal. That is what stops the
-# value from reaching clients.
+# Every path that writes a client profile goes through load_awg_params and fails
+# on its refusal; modify only warns and leaves the existing vpn:// file alone.
+# That is what stops the value from reaching clients.
 
 @test "load_awg_params: a live config carrying the reproducer is refused" {
     create_server_config
@@ -281,8 +283,9 @@ check() {  # check <lib> <value> : bounded, so a hang shows up as status 124
     [ "$AWG_I1" = "$DNS_RECIPE" ]
 }
 
-# The deferral belongs to render_server_config alone. Nothing a caller sets in
-# its environment may switch the check off.
+# The deferral belongs to render_server_config alone and is tied to the caller's
+# name. An earlier draft of this change deferred through a variable with this
+# name; the test keeps a variable-based deferral from coming back.
 @test "load_awg_params: a variable named like the deferral does not switch the check off" {
     create_server_config
     printf 'I1 = %s\n' "$REPRO" >> "$SERVER_CONF_FILE"
@@ -352,4 +355,310 @@ check() {  # check <lib> <value> : bounded, so a hang shows up as status 124
     printf 'export NO_CPS=1\n' >> "$CONFIG_FILE"
     run load_awg_params
     [ "$status" -eq 1 ]
+}
+
+# ------------------------------------------------------------ what must still pass
+# The refusal is only worth having if everything the installer itself produces
+# still passes it. A tightened check (for example the vendor's documented cap
+# applied to <rc>) would otherwise leave every refusal test green while every
+# fresh install dies in render_server_config.
+
+gen_i1() {  # gen_i1 <installer> <count>
+    bash -c '
+        eval "$(sed -n "/^rand_range()/,/^}/p" "$1")"
+        eval "$(sed -n "/^generate_cps_i1()/,/^}/p" "$1")"
+        for _ in $(seq 1 "$2"); do generate_cps_i1; done
+    ' _ "$1" "$2"
+}
+
+@test "cps safety: every I1 the RU and EN installers generate passes both libraries" {
+    local inst v n=0
+    for inst in install_amneziawg.sh install_amneziawg_en.sh; do
+        while IFS= read -r v; do
+            [ -n "$v" ] || continue
+            n=$((n + 1))
+            run check "$COMMON" "$v"
+            [ "$status" -eq 0 ] || { echo "RU refused output of $inst: $v -> $output"; false; }
+            run check "$COMMON_EN" "$v"
+            [ "$status" -eq 0 ] || { echo "EN refused output of $inst: $v -> $output"; false; }
+        done < <(gen_i1 "$BATS_TEST_DIRNAME/../$inst" 40)
+    done
+    # Guards against a vacuous pass: an extraction that yields nothing would
+    # otherwise leave the loop above with nothing to refuse.
+    [ "$n" -eq 80 ]
+}
+
+@test "cps safety: positive lengths of every tag the check owns are accepted" {
+    local v
+    for v in '<rc 62>' '<rd 10>' '<r 128>' '<rc 1>' '<rd 1000>'; do
+        run check "$COMMON" "$v"
+        [ "$status" -eq 0 ] || { echo "RU refused: $v -> $output"; false; }
+        run check "$COMMON_EN" "$v"
+        [ "$status" -eq 0 ] || { echo "EN refused: $v -> $output"; false; }
+    done
+}
+
+# ------------------------------------------------------ render_server_config, EN
+# The deferral by caller name and the check after --no-cps exist in both
+# libraries. The RU pair is covered above; without these the EN pair could go
+# missing with every test green.
+
+render_en() {
+    bash -c 'unset -f log log_warn log_error log_debug; source "$1" >/dev/null 2>&1 || true; get_main_nic() { echo eth0; }; render_server_config' _ "$COMMON_EN"
+}
+
+@test "render_server_config EN: without --no-cps a dangerous I1 is refused and named" {
+    create_server_config
+    printf 'I1 = %s\n' "$REPRO" >> "$SERVER_CONF_FILE"
+    create_init_config
+    printf 'TESTPRIVKEY\n' > "$AWG_DIR/server_private.key"
+    run render_en
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"<r -1>"* ]]
+    grep -qF "$REPRO" "$SERVER_CONF_FILE"
+}
+
+@test "render_server_config EN: --no-cps removes a dangerous I1 instead of refusing" {
+    create_server_config
+    printf 'I1 = %s\n' "$REPRO" >> "$SERVER_CONF_FILE"
+    create_init_config
+    printf 'export NO_CPS=1\n' >> "$CONFIG_FILE"
+    printf 'TESTPRIVKEY\n' > "$AWG_DIR/server_private.key"
+    run render_en
+    [ "$status" -eq 0 ]
+    run grep -qE '^[[:space:]]*I1[[:space:]]*=' "$SERVER_CONF_FILE"
+    [ "$status" -eq 1 ]
+}
+
+# ------------------------------------------------------- paths that must not block
+# Client removal and the expiry cron must keep working on a server that already
+# carries a dangerous value: blocking them would leave expired clients connected,
+# and nobody reads the cron output. They do not call load_awg_params today; these
+# tests are what keeps it that way.
+
+@test "expiry: an expired client is still removed when the server carries a dangerous I2" {
+    require_flock
+    create_server_config
+    # Into [Interface], right after H4: appended at the end it would land in a
+    # peer section, where the loader never looks, and prove nothing.
+    sed -i "/^H4 = /a I2 = $REPRO" "$SERVER_CONF_FILE"
+    grep -qxF "I2 = $REPRO" "$SERVER_CONF_FILE"
+    printf '\n[Peer]\n#_Name = bob\nPublicKey = BOBKEY\nAllowedIPs = 10.9.9.2/32\n' >> "$SERVER_CONF_FILE"
+    mkdir -p "$EXPIRY_DIR"
+    printf '1' > "$EXPIRY_DIR/bob"
+    export AWG_SKIP_APPLY=1
+    run check_expired_clients
+    [ "$status" -eq 0 ]
+    run grep -qxF '#_Name = bob' "$SERVER_CONF_FILE"
+    [ "$status" -eq 1 ]
+    [ ! -f "$EXPIRY_DIR/bob" ]
+}
+
+# --------------------------------------------------------------- manage end to end
+# The real manage script in a mock environment (stubbed awg, AWG_SKIP_APPLY=1),
+# in the style of test_add_allowed_ips.bats. The unit tests above prove that
+# load_awg_params refuses; these prove that the refusal happens BEFORE anything is
+# written, which no unit test can see.
+
+MANAGE="${BATS_TEST_DIRNAME}/../manage_amneziawg.sh"
+
+setup_manage_env() {
+    MGMT_DIR=$(mktemp -d)
+    mkdir -p "$MGMT_DIR/bin" "$MGMT_DIR/awg/keys"
+    cat > "$MGMT_DIR/bin/awg" << 'STUB'
+#!/bin/bash
+case "$1" in
+    genkey|genpsk) echo "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;
+    pubkey) cat >/dev/null; echo "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=" ;;
+    *) exit 0 ;;
+esac
+STUB
+    chmod +x "$MGMT_DIR/bin/awg"
+    export PATH="$MGMT_DIR/bin:$PATH"
+    cp "$BATS_TEST_DIRNAME/../awg_common.sh" "$MGMT_DIR/awg/awg_common.sh"
+    cat > "$MGMT_DIR/awg/awgsetup_cfg.init" << 'CONF'
+export AWG_PORT=39743
+export AWG_TUNNEL_SUBNET='10.9.9.1/24'
+export DISABLE_IPV6=1
+export ALLOWED_IPS_MODE=1
+export ALLOWED_IPS='0.0.0.0/0'
+export AWG_Jc=6
+export AWG_Jmin=55
+export AWG_Jmax=380
+export AWG_S1=72
+export AWG_S2=56
+export AWG_S3=32
+export AWG_S4=16
+export AWG_H1='100000-800000'
+export AWG_H2='1000000-8000000'
+export AWG_H3='10000000-80000000'
+export AWG_H4='100000000-800000000'
+export AWG_APPLY_MODE='syncconf'
+CONF
+    cat > "$MGMT_DIR/awg/awg0.conf" << 'CONF'
+[Interface]
+PrivateKey = TESTKEY
+Address = 10.9.9.1/24
+MTU = 1280
+ListenPort = 39743
+Jc = 6
+Jmin = 55
+Jmax = 380
+S1 = 72
+S2 = 56
+S3 = 32
+S4 = 16
+H1 = 100000-800000
+H2 = 1000000-8000000
+H3 = 10000000-80000000
+H4 = 100000000-800000000
+CONF
+    export AWG_SKIP_APPLY=1
+}
+
+# Overrides the helper's teardown so the manage environment is removed even when
+# an assertion above fails.
+teardown() {
+    rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
+    unset AWG_SKIP_APPLY
+}
+
+mgmt() {  # mgmt <manage args...>
+    bash "$MANAGE" "$@" --yes --conf-dir="$MGMT_DIR/awg" --server-conf="$MGMT_DIR/awg/awg0.conf"
+}
+
+poison_i3() {
+    sed -i "/^H4 = /a I3 = $REPRO" "$MGMT_DIR/awg/awg0.conf"
+    grep -qxF "I3 = $REPRO" "$MGMT_DIR/awg/awg0.conf"
+}
+
+@test "manage e2e: add issues nothing when the server carries a dangerous I3" {
+    require_flock
+    setup_manage_env
+    poison_i3
+    run --separate-stderr mgmt add bob --json
+    [ "$status" -ne 0 ]
+    [[ "$stderr$output" == *"I3"* ]]
+    [ ! -f "$MGMT_DIR/awg/bob.conf" ]
+    run grep -qxF '#_Name = bob' "$MGMT_DIR/awg/awg0.conf"
+    [ "$status" -eq 1 ]
+}
+
+@test "manage e2e: regen leaves an existing profile untouched when the server carries a dangerous I3" {
+    require_flock
+    setup_manage_env
+    run --separate-stderr mgmt add alice --json
+    [ "$status" -eq 0 ]
+    [ -f "$MGMT_DIR/awg/alice.conf" ]
+    local before
+    before=$(sha256sum "$MGMT_DIR/awg/alice.conf" | cut -d' ' -f1)
+    poison_i3
+    run --separate-stderr mgmt regen alice
+    [ "$status" -ne 0 ]
+    [[ "$stderr$output" == *"I3"* ]]
+    [ "$(sha256sum "$MGMT_DIR/awg/alice.conf" | cut -d' ' -f1)" = "$before" ]
+}
+
+@test "manage e2e: remove still works when the server carries a dangerous I3" {
+    require_flock
+    setup_manage_env
+    run --separate-stderr mgmt add carol --json
+    [ "$status" -eq 0 ]
+    poison_i3
+    run --separate-stderr mgmt remove carol
+    [ "$status" -eq 0 ]
+    run grep -qxF '#_Name = carol' "$MGMT_DIR/awg/awg0.conf"
+    [ "$status" -eq 1 ]
+}
+
+# ------------------------------------------------ as the implementations parse it
+# The check has to read a value the way the code that applies it does. Every
+# difference between the two is a way past it.
+
+# The kernel splits tags with strsep, and strsep on a missing '>' returns the rest
+# of the string: an unterminated LAST tag is parsed like a closed one.
+@test "cps safety: an unterminated last tag is still checked, as the kernel parses it" {
+    local lit
+    lit=$(printf '41%.0s' $(seq 1 200))
+    run check "$COMMON" "<b 0x${lit}><r -100"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"<r -100>"* ]]
+    run check "$COMMON" '<b 0x41><r 999999'
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1000000"* ]]
+    run check "$COMMON_EN" "<b 0x${lit}><r -100"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"<r -100>"* ]]
+}
+
+# Both implementations compare the tag name with its case (strcmp in the kernel,
+# a map lookup in amneziawg-go): <R -1> is an unknown tag they reject
+# themselves, and the negative-length message would be false for it.
+@test "cps safety: a tag name in the wrong case is left to the implementations" {
+    run check "$COMMON" '<R -1>'
+    [ "$status" -eq 0 ]
+    run check "$COMMON_EN" '<RC -5>'
+    [ "$status" -eq 0 ]
+}
+
+# amneziawg-tools cut a line at '#'. A comment after a working value is not part
+# of what gets applied, so it must neither refuse the value nor hide one.
+@test "cps safety: a comment after the value is ignored the way the tools ignore it" {
+    run check "$COMMON" '<r 10> # was <r -100>'
+    [ "$status" -eq 0 ]
+    run check "$COMMON" '<r -100> # keep'
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"<r -100>"* ]]
+    run check "$COMMON_EN" '<r 10> # was <r -100>'
+    [ "$status" -eq 0 ]
+}
+
+# amneziawg-tools match the I1-I5 keys with strncasecmp: a lowercase key is
+# applied like the uppercase one, while the loader does not even see it.
+@test "validate: a lowercase i1 key is checked, the tools apply it" {
+    create_server_config
+    sed -i "/^H4 = /a i1 = $REPRO" "$SERVER_CONF_FILE"
+    grep -qxF "i1 = $REPRO" "$SERVER_CONF_FILE"
+    run validate_awg_config
+    [ "$status" -eq 1 ]
+}
+
+@test "validate: a later lowercase key does not hide behind a safe uppercase one" {
+    create_server_config
+    sed -i "/^H4 = /a i1 = $REPRO" "$SERVER_CONF_FILE"
+    sed -i "/^H4 = /a I1 = <r 10>" "$SERVER_CONF_FILE"
+    grep -qxF "I1 = <r 10>" "$SERVER_CONF_FILE"
+    run validate_awg_config
+    [ "$status" -eq 1 ]
+}
+
+# Section headers are compared with strcasecmp after whitespace is stripped: a
+# second [interface] after the peers switches the tools back to the device.
+@test "validate: an I1 under a second, lowercase [interface] header is checked" {
+    create_server_config
+    printf '\n[Peer]\n#_Name = bob\nPublicKey = X\nAllowedIPs = 10.9.9.2/32\n\n[interface]\nI1 = %s\n' "$REPRO" >> "$SERVER_CONF_FILE"
+    run validate_awg_config
+    [ "$status" -eq 1 ]
+}
+
+@test "validate: the EN library checks a lowercase key and names it" {
+    create_server_config
+    sed -i "/^H4 = /a i1 = $REPRO" "$SERVER_CONF_FILE"
+    run bash -c 'unset -f log log_warn log_error log_debug; source "$1" >/dev/null 2>&1 || true; validate_awg_config' _ "$COMMON_EN"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"i1"* && "$output" == *"<r -1>"* ]]
+}
+
+# On a first install there is no awg0.conf yet and the values come from the init
+# file. Pointing the operator at a file that does not exist would send them to
+# create one, and the loader would then take it as the source of truth.
+@test "load_awg_params: on a first install the refusal names the init file" {
+    create_init_config
+    printf "export AWG_I2='%s'\n" "$REPRO" >> "$CONFIG_FILE"
+    [ ! -f "$SERVER_CONF_FILE" ]
+    log_error() { printf '%s\n' "$*" >> "$AWG_DIR/.errors"; }
+    run load_awg_params
+    [ "$status" -eq 1 ]
+    grep -qF "I2" "$AWG_DIR/.errors"
+    grep -qF "$CONFIG_FILE" "$AWG_DIR/.errors"
 }
