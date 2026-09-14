@@ -1913,9 +1913,10 @@ generate_awg_params() {
     AWG_PRESET="$preset"
     # The third line (AWG_PROTOCOL=3.1) is meant for a header protection key (the
     # next part adds generating it and writing it into the config), and with the
-    # key the first 12 bytes of the S padding serve as the nonce: the S3 and S4 lower
-    # bounds are raised to 12 (S1 and S2 already start at 15). The 2.0 branch sets
-    # no key, and without a key S below 12 is legal, so its ranges stay as they were.
+    # key the first 12 bytes of the S padding serve as the nonce: the S3 and S4
+    # lower bounds are raised to 12 (S1 and S2 already start at 15). The 2.0 branch
+    # is not meant for a key, and without a key S below 12 is legal, so its ranges
+    # stay as they were.
     local _s3_min=8 _s4_min=4
     if [[ "${AWG_PROTOCOL:-2.0}" == "3.1" ]]; then
         _s3_min=12
@@ -1940,7 +1941,7 @@ generate_awg_params() {
     # (present since v3.0.0). So the failure is LOUD - there is no silent crypto
     # weakening; verified against upstream sources on 2 aug 2026. That is why the
     # 3.1 branch raises both lower bounds to 12 (_s3_min and _s4_min above), while
-    # the 2.0 branch sets no key and keeps its ranges. The raise must apply to both
+    # the 2.0 branch is not meant for a key and keeps its ranges. The raise must apply to both
     # the first S3 draw and the collision retry below, otherwise the retry brings
     # S3 below 12 back.
     AWG_S3=$(rand_range "$_s3_min" 55)

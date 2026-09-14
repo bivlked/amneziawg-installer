@@ -3886,8 +3886,8 @@ validate_awg_config() {
         fi
     fi
 
-    # Without the key, parsing is aligned with load_awg_params_from_server_conf: arbitrary spaces
-    # around '=', last-wins for duplicate lines (validate the value that will
+    # Without the key, parsing is aligned with load_awg_params_from_server_conf:
+    # arbitrary spaces around '=', last-wins for duplicate lines (validate the value that will
     # actually load), trim spaces/CR. Previously the validator required exactly
     # one space and took first-wins - a hand-edited 'Jc=4' loaded fine but
     # failed validation with a bogus "parameter not found".

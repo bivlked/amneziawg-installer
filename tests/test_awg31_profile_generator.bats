@@ -150,11 +150,14 @@ both() {
     [ "$seen" -eq 2 ]
 }
 
-# expect_refused <lib> <ru-reason> <en-reason> [brokenparse]
+# expect_refused <lib> <ru-reason> <en-reason> [brokenparse] : the RU library must give
+# the RU reason and the EN library the EN one.
 expect_refused() {
     run --separate-stderr validate "$1" "${4:-}"
     [ "$status" -eq 1 ] || { echo "accepted, expected refusal ($1): $output"; return 1; }
-    [[ "$output" == *"$2"* || "$output" == *"$3"* ]] || { echo "wrong reason ($1): $output"; return 1; }
+    local want="$3"
+    [[ "$1" == "$COMMON" ]] && want="$2"
+    [[ "$output" == *"$want"* ]] || { echo "wrong reason ($1), expected '$want': $output"; return 1; }
 }
 
 # expect_accepted <lib>
@@ -567,6 +570,7 @@ v_31_key_edges() {
     create_server_config
     printf '# HeaderProtectionKey = %s\n' "$HPK" >> "$SERVER_CONF_FILE"
     sed -i 's/^S3 = .*/S3 = 8/' "$SERVER_CONF_FILE"
+    grep -q '^S3 = 8$' "$SERVER_CONF_FILE" || { echo "fixture: S3 not replaced"; return 1; }
     expect_accepted "$1" || return 1
     write_31_conf
     sed -i 's/^HeaderProtectionKey = .*/HeaderProtectionKey =/' "$SERVER_CONF_FILE"
@@ -579,6 +583,7 @@ v_31_key_edges() {
     expect_refused "$1" "Jmax (339) меньше Jmin (400)" "Jmax (339) is less than Jmin (400)" || return 1
     create_server_config
     sed -i -e 's/^H1 = .*/H1 = 1/' -e 's/^H2 = .*/H2 = 2/' -e 's/^H3 = .*/H3 = 3/' -e 's/^H4 = .*/H4 = 4/' "$SERVER_CONF_FILE"
+    [ "$(grep -c '^H[1-4] = [1-4]$' "$SERVER_CONF_FILE")" -eq 4 ] || { echo "fixture: H not replaced"; return 1; }
     printf '\n[Peer]\nPublicKey = X\n\n[interface]\nHeaderProtectionKey = %s\n' "$HPK" >> "$SERVER_CONF_FILE"
     expect_accepted "$1"
 }
@@ -593,17 +598,17 @@ v_all_reasons_and_placement() {
     run --separate-stderr validate "$1"
     [ "$status" -eq 1 ] || { echo "accepted, expected refusal ($1): $output"; return 1; }
     if [[ "$1" == "$COMMON" ]]; then
-        for r in "S3=11 меньше 12" "пересекаются" "65536"; do
+        for r in "S3=11 меньше 12" "пересекаются" '"65536" больше 65535'; do
             [[ "$output" == *"$r"* ]] || { echo "reason missing: $r ($1): $output"; return 1; }
         done
     else
-        for r in "S3=11 is below 12" "overlap" "65536"; do
+        for r in "S3=11 is below 12" "overlap" '"65536" exceeds 65535'; do
             [[ "$output" == *"$r"* ]] || { echo "reason missing: $r ($1): $output"; return 1; }
         done
     fi
     create_server_config
     printf '\n[Peer]\nPublicKey = X\nContentPaddingAddition = 65536\n' >> "$SERVER_CONF_FILE"
-    expect_refused "$1" "65536" "65536" || return 1
+    expect_refused "$1" '"65536" больше 65535' '"65536" exceeds 65535' || return 1
     create_server_config
     expect_refused "$1" "Не удалось разобрать" "Could not parse" brokenparse
 }
