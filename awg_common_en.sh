@@ -3906,6 +3906,14 @@ validate_awg_config() {
         elif ! [[ "$val" =~ ^[0-9]+$ ]]; then
             log_error "Parameter '$param' has invalid value: '$val' (expected integer)"
             ok=0
+        elif [[ "$_hpk" -eq 1 ]]; then
+            # bash silently wraps a number longer than int64, so 20 digits would pass
+            # the comparisons below as a small value. Cut it off before any arithmetic.
+            val=$(_awg_dec_strip "$val")
+            if (( ${#val} > 10 )) || (( val > 4294967295 )); then
+                log_error "Parameter '$param': value exceeds 4294967295"
+                ok=0
+            fi
         fi
     done
 
@@ -3961,14 +3969,14 @@ validate_awg_config() {
     if [[ "$_hpk" -eq 1 ]]; then
     # With the key the first 12 bytes of the S padding serve as the nonce, and both
     # the kernel module (netlink.c) and amneziawg-go (uapi.go) reject S below 12.
-    # Presence and form were checked by the loop above on the same parse; leading
-    # zeros do not hide a small number.
+    # Presence and form were checked by the loop above on the same parse, and it
+    # already refused numbers past uint32; leading zeros do not hide a small number.
         local _sn _sv
         for _sn in s1 s2 s3 s4; do
             _sv="${_if_last[$_sn]:-}"
             [[ "$_sv" =~ ^[0-9]+$ ]] || continue
             _sv=$(_awg_dec_strip "$_sv")
-            if (( ${#_sv} <= 5 )) && (( _sv < 12 )); then
+            if (( ${#_sv} <= 10 )) && (( _sv < 12 )); then
                 log_error "${_sn^^}=${_if_last[$_sn]} is below 12: with HeaderProtectionKey the first 12 bytes of the S padding serve as the nonce, and both the kernel module and amneziawg-go reject such a config"
                 ok=0
             fi

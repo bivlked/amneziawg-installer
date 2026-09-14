@@ -451,9 +451,24 @@ v_31_s_bound() {
     expect_refused "$1" "S4=33 превышает максимум (32)" "S4=33 exceeds maximum (32)" || return 1
     write_31_conf
     printf 'jc = 500\n' >> "$SERVER_CONF_FILE"
-    expect_refused "$1" "Jc=500 вне допустимого диапазона" "Jc=500 is out of range"
+    expect_refused "$1" "Jc=500 вне допустимого диапазона" "Jc=500 is out of range" || return 1
+    write_31_conf
+    sed -i 's/^S1 = .*/S1 = 18446744073709551616/' "$SERVER_CONF_FILE"
+    expect_refused "$1" "Параметр 'S1': значение больше 4294967295" "Parameter 'S1': value exceeds 4294967295" || return 1
+    write_31_conf
+    sed -i 's/^S3 = .*/S3 = 18446744073709551628/' "$SERVER_CONF_FILE"
+    expect_refused "$1" "Параметр 'S3': значение больше 4294967295" "Parameter 'S3': value exceeds 4294967295" || return 1
+    write_31_conf
+    printf 'jmax = 18446744073709551955\n' >> "$SERVER_CONF_FILE"
+    expect_refused "$1" "Параметр 'Jmax': значение больше 4294967295" "Parameter 'Jmax': value exceeds 4294967295" || return 1
+    write_31_conf
+    sed -i 's/^S1 = .*/S1 = 4294967296/' "$SERVER_CONF_FILE"
+    expect_refused "$1" "Параметр 'S1': значение больше 4294967295" "Parameter 'S1': value exceeds 4294967295" || return 1
+    write_31_conf
+    sed -i 's/^S1 = .*/S1 = 0000000000000000000150/' "$SERVER_CONF_FILE"
+    expect_accepted "$1"
 }
-@test "validate 3.1: S below 12 (with zeros, lowercase, later), missing S, and upper bounds from the same parse, both twins" {
+@test "validate 3.1: S below 12 (with zeros, lowercase, later), missing S, upper bounds from the same parse, numbers past uint32, both twins" {
     both v_31_s_bound
 }
 
