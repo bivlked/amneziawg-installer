@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [5.34.1] - 2026-09-13
+## [5.34.1] - 2026-09-14
 
 **v5.34.1** - I1-I5 tag checks and fresh QR and vpn:// files after modify.
 

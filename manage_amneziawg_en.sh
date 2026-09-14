@@ -9,7 +9,7 @@ fi
 # AmneziaWG 2.0 peer management script
 # Author: @bivlked
 # Version: 5.34.1
-# Date: 2026-09-13
+# Date: 2026-09-14
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
