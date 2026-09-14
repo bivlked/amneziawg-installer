@@ -22,6 +22,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
   - [What the installer does not enable yet](#awg3-not-yet-adv)
 - [⚙️ Client Configuration Details](#config-details-adv)
   - [AllowedIPs](#allowedips-adv)
+  - [Device IPv6, `::/0` and the local network](#client-ipv6-adv)
   - [What a site can see when traffic is split by destination](#split-detect-adv)
   - [Client Isolation](#client-isolation-adv)
   - [IPv6 Dual-Stack Tunnel (v5.15.0+)](#ipv6-tunnel-adv)
@@ -324,12 +325,25 @@ Defines which traffic the **client** routes through the VPN tunnel.
     * List of public IP ranges + DNS `1.1.1.1`, `8.8.8.8`. Private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) stay outside the tunnel.
     * **Purpose:** keep the LAN outside the tunnel. In terms of PUBLIC IPv4 coverage it is the same full tunnel, with no separate gain for bypassing restrictions; what stays out of the list is the private networks, the reserved `0.0.0.0/8` and multicast.
     * The cost: the Amnezia app sees a list that is not `0.0.0.0/0, ::/0`, concludes that the server already does split routing and disables its own page; on Linux `awg-quick` such a config can produce a routing loop.
+    * IPv6: without `--allow-ipv6-tunnel`, `::/0` is added to this list too, so only the IPv4 side of the LAN stays outside the tunnel, and the local IPv6 goes into the tunnel while the VPN is on. If the device's IPv6 has to keep working, see [Device IPv6, `::/0` and the local network](#client-ipv6-adv).
 
 3.  **Mode 3: Custom (Split-Tunneling)**
     * Only traffic to specified networks → VPN.
     * Example: `192.168.1.0/24,10.50.0.0/16`
+    * `::/0` is not added as long as the list does not cover all public IPv4: the device's IPv6 goes around the tunnel directly.
 
 **AllowedIPs Calculator:** [WireGuard AllowedIPs Calculator](https://www.procustodibus.com/blog/2021/03/wireguard-allowedips-calculator/).
+
+<a id="client-ipv6-adv"></a>
+### Device IPv6, `::/0` and the local network
+
+`--disallow-ipv6` and the `DISABLE_IPV6` key in `awgsetup_cfg.init` turn IPv6 off on the server itself (the host sysctl). They do not touch your device's IPv6 and do not decide whether a `::/0` route goes into the client's `AllowedIPs`. The routing mode decides that:
+
+- **a full tunnel** (modes 1 and 2) without `--allow-ipv6-tunnel` gets `::/0`. The device's IPv6 goes into the tunnel, gets no further, and the device falls back to IPv4. While the VPN is on, resources reachable only over IPv6 do not open, and the home network's local IPv6 is out of reach;
+- **your own network list** (mode 3, `--route-custom`) does not get `::/0` unless it covers all public IPv4. The device's IPv6 goes around the tunnel with its own address;
+- **with `--allow-ipv6-tunnel`** the rules differ: a full tunnel gets `::/0` only when the server has native IPv6, and then the device's IPv6 goes through the VPN. Without native IPv6 the client gets only the tunnel subnet, and the device's global IPv6 goes around the tunnel again. Details in [IPv6 Dual-Stack Tunnel](#ipv6-tunnel-adv).
+
+`manage regen` also adds `::/0` to already issued full-tunnel profiles whose `AllowedIPs` hold no IPv6 route, including lists edited through `modify`. How this looks from a site's side and how to check from the device is covered in [What a site can see when traffic is split by destination](#split-detect-adv).
 
 <a id="split-detect-adv"></a>
 ### What a site can see when traffic is split by destination
@@ -360,8 +374,8 @@ If a site has to see one and the same address, splitting by destination cannot g
 
 **IPv6 is a separate layer, and an easy one to mix up.** When the guides say "IPv6 is off, that is how the installer sets it up", they mean IPv6 **on the server** (the host sysctl). IPv6 **on your device** is something the installer never touches, and the traffic split does not apply to it either: the list of Russian networks used by the cascade and the BGP feed used by the WARP scheme are IPv4-only (the `cascade/ru.zone` snapshot holds no IPv6 entries at all). Whether your device's IPv6 goes around the tunnel is decided not by the scheme but by whether a `::/0` route made it into `AllowedIPs`:
 
-- **full tunnel without `--allow-ipv6-tunnel`** - both the default "All traffic" mode (`--route-all`) and the "Amnezia" mode land here: the client gets `::/0` next to its IPv4 routes, so the device's IPv6 goes into the tunnel. The tunnel itself carries no IPv6, so that traffic gets no further - but it does not leak outside the VPN either. The flip side: while the VPN is on, resources reachable ONLY over IPv6 are unreachable, and the local network's IPv6 goes into the tunnel too (the LAN stays reachable over IPv4);
-- **split routing** (mode 3, your own network list via `--route-custom`): `::/0` is never added, since that would break the split itself. The device's IPv6 goes around the tunnel with its real address, and then the site needs no scripts at all - it sees that address directly;
+- **full tunnel without `--allow-ipv6-tunnel`** - both the default "All traffic" mode (`--route-all`) and the "Amnezia" mode land here: the client gets `::/0` next to its IPv4 routes, so the device's IPv6 goes into the tunnel. The tunnel itself carries no IPv6, so that traffic gets no further - but it does not leak outside the VPN either. The flip side: while the VPN is on, resources reachable ONLY over IPv6 are unreachable, and the local network's IPv6 goes into the tunnel too (in the "Amnezia" mode the LAN stays reachable over IPv4);
+- **split routing** (mode 3, your own network list via `--route-custom`): `::/0` is not added as long as the list does not cover all public IPv4, since that would break the split itself. The device's IPv6 goes around the tunnel with its real address, and then the site needs no scripts at all - it sees that address directly;
 - **`--allow-ipv6-tunnel` enabled**: the rules are different and depend on whether the server has native IPv6. They are documented in exactly one place, [IPv6 Dual-Stack Tunnel](#ipv6-tunnel-adv) - including the case where the client only gets the tunnel ULA and the device's global IPv6 goes around again.
 
 > **Profiles issued before v5.31.0 keep the old list.** The "Amnezia" mode, the default back then, gained `::/0` in v5.31.0; before that only "All traffic" got it, and the device's IPv6 went around the tunnel. Re-issuing delivers the fix to already issued clients: `sudo bash /root/awg/manage_amneziawg.sh regen`, then re-import the profiles on the devices. Individual `AllowedIPs` set through `modify` are preserved. A client issued with `--allow-ipv6-tunnel` will not get `::/0` from a plain re-issue - its IPv6 part counts as an individual setting too; such a client needs `regen --reset-routes`, and the installer prints that hint itself.

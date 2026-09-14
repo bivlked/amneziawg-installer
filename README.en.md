@@ -377,7 +377,7 @@ Installing AmneziaWG on Ubuntu or Debian comes down to three commands: download 
 5.  **Initial setup:** The script will interactively ask for:
     * **UDP port:** Port for client connections (1-65535). Default: `39743`.
     * **Tunnel subnet:** Internal VPN network. Default: `10.9.9.1/24`.
-    * **Disable IPv6:** Recommended (`Y`) to prevent traffic leaks.
+    * **Disable IPv6:** recommended (`Y`). This is IPv6 on the server itself; whether your device's IPv6 goes into the tunnel is decided by the routing mode, see [Device IPv6, `::/0` and the local network](ADVANCED.en.md#client-ipv6-adv).
     * **Routing mode:** Determines which traffic goes through the VPN. Default `1` (all traffic, `0.0.0.0/0`) - the full-tunnel form clients expect. Mode `2` (Amnezia List + DNS) keeps the private ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) out of the tunnel, but some clients treat such a list as split routing and behave differently.
     * **Client isolation:** Whether to block traffic between clients inside the VPN. Enabled (`Y`) by default - clients cannot see each other; non-interactive: `--isolation=on|off`.
 
