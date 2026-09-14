@@ -756,12 +756,14 @@ awg31_environment_blocker() {
         :
     fi
 
-    # PHASE 3: the 3.1 profile generator does not exist yet, so the environment
-    # may be as suitable as it likes - there is nothing to hand out. This check
+    # PHASE 3: the 3.1 profile generator exists, but the key and writing the
+    # profile into the config do not yet, so the environment may be as suitable
+    # as it likes - there is nothing to hand out. This check
     # is LAST on purpose: that way an operator on an unsuitable platform gets the
     # durable reason, the one that stays true after phase 3, instead of a
-    # temporary one. This line goes away in the same change that adds the
-    # generator, and removing it must turn red the test that watches for it.
+    # temporary one. This line goes away in the same change that adds the key
+    # and writing the profile into the config, and removing it must turn red the
+    # test that watches for it.
     printf 'not_implemented_yet'
     return 0
 
@@ -1909,8 +1911,9 @@ generate_awg_params() {
     fi
 
     AWG_PRESET="$preset"
-    # The third line (AWG_PROTOCOL=3.1) sets a header protection key, and the
-    # first 12 bytes of the S padding serve as the nonce: the S3 and S4 lower
+    # The third line (AWG_PROTOCOL=3.1) is meant for a header protection key (the
+    # next part adds generating it and writing it into the config), and with the
+    # key the first 12 bytes of the S padding serve as the nonce: the S3 and S4 lower
     # bounds are raised to 12 (S1 and S2 already start at 15). The 2.0 branch sets
     # no key, and without a key S below 12 is legal, so its ranges stay as they were.
     local _s3_min=8 _s4_min=4

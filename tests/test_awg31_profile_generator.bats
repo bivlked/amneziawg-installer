@@ -3,8 +3,9 @@
 #
 # The 3.1 branch of generate_awg_params raises the S3/S4 lower bounds to 12
 # (with a header protection key the first 12 bytes of the S padding are the
-# nonce, and both implementations reject less), writes H1..H4 = 1/2/3/4 and a
-# ContentPaddingAddition of 32-128. The 2.0 branch keeps its old ranges: S3
+# nonce, and both implementations reject less), sets and exports H1..H4 = 1/2/3/4 and a
+# ContentPaddingAddition of 32-128 (writing them with the key into a config is
+# the next part). The 2.0 branch keeps its old ranges: S3
 # 8..55, S4 4..27, random H ranges, no ContentPaddingAddition. An unset or empty
 # AWG_PROTOCOL means 2.0.
 #
@@ -13,7 +14,8 @@
 # (section and key case-insensitive). ContentPaddingAddition is checked in any
 # config, because the tools wrap an overflowing value modulo 65536 silently. H
 # numbers are read in base 10 and capped at uint32, as the tools read them.
-# Configs without the key and ContentPaddingAddition keep their old results:
+# Configs without the key and ContentPaddingAddition and with ordinary H ranges
+# keep their old results:
 # the regression cases below were taken by running the validator from main.
 #
 # 🔴 Refusals are asserted by their REASON, not only by the exit status: a check
@@ -60,8 +62,8 @@ gen() {
 }
 
 # forced_retry <installer> <lib> <protocol|UNSET|EMPTY> : S3's first draw is
-# forced onto the S2+28 collision, so the retry path decides S3; every other draw
-# returns its lower bound. rand_range lives in $( ), so its state goes through a
+# forced onto the S2+28 collision, so the retry path decides S3; S1 and S2 draws
+# return 20 (S2+28 = 48), every other draw returns its lower bound. rand_range lives in $( ), so its state goes through a
 # file. Prints "S3 S4".
 forced_retry() {
     rm -f "$BATS_TEST_TMPDIR/s3hit"
@@ -113,7 +115,7 @@ cpa() {
 
 HPK=$(printf 'test-only-header-protection-key!' | base64)
 
-# A server config in the shape the 3.1 generator produces, with test key values.
+# A server config in the shape the 3.1 profile is meant to have, with test values.
 write_31_conf() {
     cat > "$SERVER_CONF_FILE" << CONF
 [Interface]
@@ -555,4 +557,56 @@ v_parse_failure() {
 }
 @test "validate: a failed config parse refuses instead of switching the key rules off, both twins" {
     both v_parse_failure
+}
+
+v_31_key_edges() {
+    create_server_config
+    printf '# HeaderProtectionKey = %s\n' "$HPK" >> "$SERVER_CONF_FILE"
+    sed -i 's/^H1 = .*/H1 = 1/' "$SERVER_CONF_FILE"
+    expect_refused "$1" "ожидается формат MIN-MAX" "expected MIN-MAX format" || return 1
+    create_server_config
+    printf '# HeaderProtectionKey = %s\n' "$HPK" >> "$SERVER_CONF_FILE"
+    sed -i 's/^S3 = .*/S3 = 8/' "$SERVER_CONF_FILE"
+    expect_accepted "$1" || return 1
+    write_31_conf
+    sed -i 's/^HeaderProtectionKey = .*/HeaderProtectionKey =/' "$SERVER_CONF_FILE"
+    expect_refused "$1" "32 байта в base64" "32 bytes in base64" || return 1
+    write_31_conf
+    sed -i 's/^HeaderProtectionKey = .*/HeaderProtectionKey = # off/' "$SERVER_CONF_FILE"
+    expect_refused "$1" "32 байта в base64" "32 bytes in base64" || return 1
+    write_31_conf
+    printf 'jmin = 400\n' >> "$SERVER_CONF_FILE"
+    expect_refused "$1" "Jmax (339) меньше Jmin (400)" "Jmax (339) is less than Jmin (400)" || return 1
+    create_server_config
+    sed -i -e 's/^H1 = .*/H1 = 1/' -e 's/^H2 = .*/H2 = 2/' -e 's/^H3 = .*/H3 = 3/' -e 's/^H4 = .*/H4 = 4/' "$SERVER_CONF_FILE"
+    printf '\n[Peer]\nPublicKey = X\n\n[interface]\nHeaderProtectionKey = %s\n' "$HPK" >> "$SERVER_CONF_FILE"
+    expect_accepted "$1"
+}
+@test "validate 3.1: commented and empty key, a late lowercase jmin, the key in a second [interface], both twins" {
+    both v_31_key_edges
+}
+
+v_all_reasons_and_placement() {
+    local r
+    write_31_conf
+    sed -i -e 's/^S3 = .*/S3 = 11/' -e 's/^H2 = .*/H2 = 1/' -e 's/^ContentPaddingAddition = .*/ContentPaddingAddition = 65536/' "$SERVER_CONF_FILE"
+    run --separate-stderr validate "$1"
+    [ "$status" -eq 1 ] || { echo "accepted, expected refusal ($1): $output"; return 1; }
+    if [[ "$1" == "$COMMON" ]]; then
+        for r in "S3=11 меньше 12" "пересекаются" "65536"; do
+            [[ "$output" == *"$r"* ]] || { echo "reason missing: $r ($1): $output"; return 1; }
+        done
+    else
+        for r in "S3=11 is below 12" "overlap" "65536"; do
+            [[ "$output" == *"$r"* ]] || { echo "reason missing: $r ($1): $output"; return 1; }
+        done
+    fi
+    create_server_config
+    printf '\n[Peer]\nPublicKey = X\nContentPaddingAddition = 65536\n' >> "$SERVER_CONF_FILE"
+    expect_refused "$1" "65536" "65536" || return 1
+    create_server_config
+    expect_refused "$1" "Не удалось разобрать" "Could not parse" brokenparse
+}
+@test "validate: several violations are all reported, CPA in [Peer] and a failed parse without the key are refused, both twins" {
+    both v_all_reasons_and_placement
 }

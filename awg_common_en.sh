@@ -3836,8 +3836,8 @@ validate_awg_config() {
     # decides where the other numbers come from. The key rules are switched on by
     # ITS PRESENCE in the file, not by the generation marker: restore checks the
     # restored files, the kernel module and amneziawg-go turn header protection on
-    # when a key is present, and the vendor client tells the generation from such
-    # markers in the config. The parse mirrors amneziawg-tools (section and key
+    # when a key is present, and the vendor client tells the generation from the
+    # presence of such keys in the config. The parse mirrors amneziawg-tools (section and key
     # case-insensitive, last value). Boundary: the check reads the file only and
     # does not see a key left in a live interface.
     local _pairs _sec _k _v _cpa_why _hpk=0 _hpk_count=0 _hpk_val=""
@@ -3886,7 +3886,7 @@ validate_awg_config() {
         fi
     fi
 
-    # Parsing aligned with load_awg_params_from_server_conf: arbitrary spaces
+    # Without the key, parsing is aligned with load_awg_params_from_server_conf: arbitrary spaces
     # around '=', last-wins for duplicate lines (validate the value that will
     # actually load), trim spaces/CR. Previously the validator required exactly
     # one space and took first-wins - a hand-edited 'Jc=4' loaded fine but
