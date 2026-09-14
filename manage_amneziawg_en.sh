@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 peer management script
 # Author: @bivlked
-# Version: 5.34.0
-# Date: 2026-09-12
+# Version: 5.34.1
+# Date: 2026-09-14
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.34.0"
+SCRIPT_VERSION="5.34.1"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -1107,6 +1107,35 @@ modify_client() {
         return 1
     fi
 
+    # The I1-I5 lines of the client config itself get the same check as the
+    # server's: modify encodes the QR from this file as is (vpn:// takes I1-I5
+    # from the server, which load_awg_params checks), and a dangerous value could
+    # have reached it earlier, for example through a regen before the check
+    # existed. Such a profile is not reissued, and neither the .conf nor the
+    # files are touched.
+    command -v awg_cps_check_safe >/dev/null 2>&1 || {
+        log_error "awg_common.sh is outdated: awg_cps_check_safe is missing. Update both halves to one version."
+        _JSON_ERR="awg_common.sh is outdated: awg_cps_check_safe is missing"
+        exec {modify_lock_fd}>&-
+        return 1
+    }
+    local _cl _ck _cw _cbad=0 _cfirst=""
+    while IFS= read -r _cl || [[ -n "$_cl" ]]; do
+        [[ "$_cl" =~ ^[[:space:]]*([Ii][1-5])[[:space:]]*=(.*)$ ]] || continue
+        _ck="${BASH_REMATCH[1]}"
+        if ! _cw=$(awg_cps_check_safe "${BASH_REMATCH[2]}"); then
+            log_error "Parameter '$_ck' in $cf is unsafe: ${_cw} (upstream amneziawg-linux-kernel-module#233)"
+            _cbad=1
+            [[ -n "$_cfirst" ]] || _cfirst="$_ck: $_cw"
+        fi
+    done < "$cf"
+    if [[ "$_cbad" -eq 1 ]]; then
+        log_error "Not reissuing profile '$name' with such a value. Run regen '$name': it rewrites I1-I5 from the server, but it also resets Endpoint to the server's, so repeat a changed Endpoint with modify afterwards. If regen refuses too, the unsafe value is in $SERVER_CONF_FILE."
+        _JSON_ERR="unsafe I1-I5 in the client config $cf ($_cfirst)"
+        exec {modify_lock_fd}>&-
+        return 1
+    fi
+
     log "Changing '$param' to '$value' for '$name'..."
     local bak
     bak="${cf}.bak-$(date +%F_%H-%M-%S)"
@@ -1174,6 +1203,8 @@ modify_client() {
         [[ -e "$_df" || -L "$_df" ]] || continue
         if ! rm -f "$_df" || [[ -e "$_df" || -L "$_df" ]]; then
             log_error "Failed to remove $_df before the edit - parameter '$param' was not changed."
+            log_warn "Fix the cause and repeat this modify: it rebuilds the QR and vpn:// files removed before this one."
+            _JSON_ERR="could not remove $_df, the .conf is unchanged; repeat modify once the cause is fixed"
             rm -f "$bak"
             exec {modify_lock_fd}>&-
             return 1
@@ -1186,8 +1217,14 @@ modify_client() {
         log_error "sed error. Restoring..."
         # After a successful rollback the .bak is identical to the config -
         # remove it so repeated failed modifies do not pile .bak files in $AWG_DIR.
-        if cp "$bak" "$cf"; then rm -f "$bak"; else log_warn "Restore error."; fi
-        log_warn "QR and vpn:// files of client '$name' may have been removed before the edit - rebuild them: regen '$name'."
+        if cp "$bak" "$cf"; then
+            rm -f "$bak"
+            log_warn "QR and vpn:// files of client '$name' may have been removed before the edit - fix the cause and repeat modify, it rebuilds them."
+            _JSON_ERR="edit rolled back, the .conf is restored; repeat modify to rebuild QR and vpn://"
+        else
+            log_error "Could not restore $cf from $bak - the backup is kept, put it back by hand."
+            _JSON_ERR="edit failed and the .conf was not restored; backup: $bak"
+        fi
         exec {modify_lock_fd}>&-
         return 1
     fi
@@ -1196,8 +1233,14 @@ modify_client() {
     # backup was deleted.
     if ! grep -q -E "^${param} = .+" "$cf"; then
         log_error "Replacement failed for '$param'. Restoring..."
-        if cp "$bak" "$cf"; then rm -f "$bak"; else log_warn "Restore error."; fi
-        log_warn "QR and vpn:// files of client '$name' may have been removed before the edit - rebuild them: regen '$name'."
+        if cp "$bak" "$cf"; then
+            rm -f "$bak"
+            log_warn "QR and vpn:// files of client '$name' may have been removed before the edit - fix the cause and repeat modify, it rebuilds them."
+            _JSON_ERR="edit rolled back, the .conf is restored; repeat modify to rebuild QR and vpn://"
+        else
+            log_error "Could not restore $cf from $bak - the backup is kept, put it back by hand."
+            _JSON_ERR="edit failed and the .conf was not restored; backup: $bak"
+        fi
         exec {modify_lock_fd}>&-
         return 1
     fi

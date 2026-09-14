@@ -11,11 +11,11 @@
 #
 # 🔴 The refusal is deliberately narrow. Only what the code of BOTH
 # implementations shows to be dangerous is refused: a negative length, a
-# length that is not a decimal or is too long to be a real one, and a total too
-# large for UDP. An unknown tag or
-# plain junk is left to the implementations, which refuse those loudly on
-# their own. Refusing them here could break a userspace server that works
-# today, and a check that breaks working servers gets switched off.
+# length that is not a decimal or has more than nine significant digits, and a
+# total too large for UDP. An unknown tag or plain junk is left to the
+# implementations, which refuse those loudly on their own. Refusing them here
+# could break a userspace server that works today, and a check that breaks
+# working servers gets switched off.
 #
 # 🔴 Refusals are asserted by their REASON, not only by the exit status. A test
 # that checks the status alone passes when the function merely crashes: `10#-1`
@@ -284,6 +284,44 @@ check() {  # check <lib> <value> : bounded, so a hang shows up as status 124
     printf 'I1 = %s\n' "$DNS_RECIPE" >> "$SERVER_CONF_FILE"
     load_awg_params
     [ "$AWG_I1" = "$DNS_RECIPE" ]
+}
+
+# The loader drops a trailing comment the way amneziawg-tools do. Without that a
+# `# ...` tail would reach client profiles and vpn:// while the check, which
+# strips the comment, never sees it.
+@test "load_awg_params: a trailing comment is dropped from the values, as the tools read them" {
+    create_server_config
+    sed -i 's/^H1 = .*/& # note/' "$SERVER_CONF_FILE"
+    printf 'I1 = %s # %s\n' "<b 0x0102><r 10>" "$REPRO" >> "$SERVER_CONF_FILE"
+    load_awg_params
+    [ "$AWG_I1" = "<b 0x0102><r 10>" ]
+    [[ "$AWG_H1" != *"#"* ]]
+    [ -n "$AWG_H1" ]
+}
+
+@test "load_awg_params: the EN library drops a trailing comment too" {
+    create_server_config
+    printf 'I1 = %s # %s\n' "<b 0x0102><r 10>" "$REPRO" >> "$SERVER_CONF_FILE"
+    run bash -c 'unset -f log log_warn log_error log_debug; source "$1" >/dev/null 2>&1 || true; load_awg_params >/dev/null 2>&1 || exit 9; printf "%s" "$AWG_I1"' _ "$COMMON_EN"
+    [ "$status" -eq 0 ]
+    [ "$output" = "<b 0x0102><r 10>" ]
+}
+
+@test "validate: a trailing comment after a value passes, as the loader reads it" {
+    create_server_config
+    sed -i 's/^H1 = .*/& # tuned/; s/^Jc = .*/& # note/' "$SERVER_CONF_FILE"
+    grep -q '^H1 = .*# tuned$' "$SERVER_CONF_FILE"
+    grep -q '^Jc = .*# note$' "$SERVER_CONF_FILE"
+    run validate_awg_config
+    [ "$status" -eq 0 ]
+}
+
+@test "validate: the EN library accepts the same trailing comments" {
+    create_server_config
+    sed -i 's/^H1 = .*/& # tuned/; s/^Jc = .*/& # note/' "$SERVER_CONF_FILE"
+    grep -q '^H1 = .*# tuned$' "$SERVER_CONF_FILE"
+    run bash -c 'unset -f log log_warn log_error log_debug; source "$1" >/dev/null 2>&1 || true; validate_awg_config' _ "$COMMON_EN"
+    [ "$status" -eq 0 ]
 }
 
 # The deferral belongs to render_server_config alone and is tied to the caller's

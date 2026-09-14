@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # Скрипт для управления пользователями (пирами) AmneziaWG 2.0
 # Автор: @bivlked
-# Версия: 5.34.0
-# Дата: 2026-09-12
+# Версия: 5.34.1
+# Дата: 2026-09-14
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.34.0"
+SCRIPT_VERSION="5.34.1"
 set -o pipefail
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -1093,6 +1093,34 @@ modify_client() {
         return 1
     fi
 
+    # Строки I1-I5 самого клиентского конфига проходят ту же проверку, что и
+    # серверные: QR modify кодирует из этого файла как есть (I1-I5 для vpn://
+    # берутся с сервера и проверяются в load_awg_params), а опасное значение
+    # могло попасть сюда раньше, например через regen до появления проверки.
+    # Такой профиль не перевыпускаю и ни .conf, ни файлы не трогаю.
+    command -v awg_cps_check_safe >/dev/null 2>&1 || {
+        log_error "awg_common.sh устарела: нет awg_cps_check_safe. Обновите обе половины под одну версию."
+        _JSON_ERR="awg_common.sh устарела: нет awg_cps_check_safe"
+        exec {modify_lock_fd}>&-
+        return 1
+    }
+    local _cl _ck _cw _cbad=0 _cfirst=""
+    while IFS= read -r _cl || [[ -n "$_cl" ]]; do
+        [[ "$_cl" =~ ^[[:space:]]*([Ii][1-5])[[:space:]]*=(.*)$ ]] || continue
+        _ck="${BASH_REMATCH[1]}"
+        if ! _cw=$(awg_cps_check_safe "${BASH_REMATCH[2]}"); then
+            log_error "Параметр '$_ck' в $cf небезопасен: ${_cw} (апстрим amneziawg-linux-kernel-module#233)"
+            _cbad=1
+            [[ -n "$_cfirst" ]] || _cfirst="$_ck: $_cw"
+        fi
+    done < "$cf"
+    if [[ "$_cbad" -eq 1 ]]; then
+        log_error "Профиль '$name' с таким значением не перевыпускаю. Выполните regen '$name': он перепишет I1-I5 с сервера, но вернёт к серверному и Endpoint, так что изменённый Endpoint потом повторите через modify. Если regen тоже откажет, небезопасное значение лежит в $SERVER_CONF_FILE."
+        _JSON_ERR="небезопасный I1-I5 в клиентском конфиге $cf ($_cfirst)"
+        exec {modify_lock_fd}>&-
+        return 1
+    fi
+
     log "Изменение '$param' на '$value' для '$name'..."
     local bak
     bak="${cf}.bak-$(date +%F_%H-%M-%S)"
@@ -1159,6 +1187,8 @@ modify_client() {
         [[ -e "$_df" || -L "$_df" ]] || continue
         if ! rm -f "$_df" || [[ -e "$_df" || -L "$_df" ]]; then
             log_error "Не удалось удалить $_df перед правкой - параметр '$param' не изменён."
+            log_warn "Устраните причину и повторите этот modify: он пересоберёт QR и vpn://, удалённые до этого файла."
+            _JSON_ERR="не удалось удалить $_df, .conf не изменён; после устранения причины повторите modify"
             rm -f "$bak"
             exec {modify_lock_fd}>&-
             return 1
@@ -1171,8 +1201,14 @@ modify_client() {
         log_error "Ошибка sed. Восстановление..."
         # После успешного отката .bak идентичен конфигу - удаляем, чтобы
         # повторные неудачные modify не копили .bak-файлы в $AWG_DIR.
-        if cp "$bak" "$cf"; then rm -f "$bak"; else log_warn "Ошибка восстановления."; fi
-        log_warn "QR и vpn:// клиента '$name' могли быть удалены до правки - пересоберите их: regen '$name'."
+        if cp "$bak" "$cf"; then
+            rm -f "$bak"
+            log_warn "QR и vpn:// клиента '$name' могли быть удалены до правки - устраните причину и повторите modify, он их пересоберёт."
+            _JSON_ERR="правка отменена, .conf восстановлен; повторите modify, он пересоберёт QR и vpn://"
+        else
+            log_error "Не удалось восстановить $cf из $bak - бэкап оставлен, верните его вручную."
+            _JSON_ERR="правка не удалась, .conf не восстановлен; бэкап: $bak"
+        fi
         exec {modify_lock_fd}>&-
         return 1
     fi
@@ -1181,8 +1217,14 @@ modify_client() {
     # бэкап при этом удалялся.
     if ! grep -q -E "^${param} = .+" "$cf"; then
         log_error "Замена не выполнена для '$param'. Восстановление..."
-        if cp "$bak" "$cf"; then rm -f "$bak"; else log_warn "Ошибка восстановления."; fi
-        log_warn "QR и vpn:// клиента '$name' могли быть удалены до правки - пересоберите их: regen '$name'."
+        if cp "$bak" "$cf"; then
+            rm -f "$bak"
+            log_warn "QR и vpn:// клиента '$name' могли быть удалены до правки - устраните причину и повторите modify, он их пересоберёт."
+            _JSON_ERR="правка отменена, .conf восстановлен; повторите modify, он пересоберёт QR и vpn://"
+        else
+            log_error "Не удалось восстановить $cf из $bak - бэкап оставлен, верните его вручную."
+            _JSON_ERR="правка не удалась, .conf не восстановлен; бэкап: $bak"
+        fi
         exec {modify_lock_fd}>&-
         return 1
     fi
