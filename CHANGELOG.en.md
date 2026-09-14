@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The server config check understands the header protection key.** `restore` runs it before starting the service and rolls back on a refusal, and the installer runs it too, as a warning. When `HeaderProtectionKey` is set in `[Interface]`, the check accepts `H1`-`H4` as a single number, requires `S1`-`S4` to be at least 12, as the kernel module and `amneziawg-go` require, and refuses a repeated key, a key of the wrong form and a key outside `[Interface]`. With such a key `Jc`, `Jmin`, `Jmax`, `S1`-`S4` and `H1`-`H4` are read the way `amneziawg-tools` read them: section and key case-insensitive, the last value applies, and a value above 4294967295 is refused before any comparison. `ContentPaddingAddition` is checked in any config: a value above 65535 is now refused, because `amneziawg-tools` silently wrap it modulo 65536, and a reversed range is refused before the service starts. `H1`-`H4` are now read in base 10, as `amneziawg-tools` read them, so a value with a leading zero is checked correctly, and a value above 4294967295 is refused at once rather than when the service starts. Configs without `HeaderProtectionKey` and `ContentPaddingAddition` and with ordinary `H1`-`H4` ranges are checked as before.
+
 ### Documentation
 
 - **Where device IPv6 is decided.** `ADVANCED` gains a section "Device IPv6, `::/0` and the local network". It says plainly: `--disallow-ipv6` and `DISABLE_IPV6` turn IPv6 off on the server, while whether a client gets `::/0` is decided by the routing mode. The mode 2 description now says plainly that only the IPv4 side of the LAN stays outside the tunnel, the README hint about disabling IPv6 makes clear it means the server, and the IPv6 walkthrough in `ADVANCED` names the exact condition: without `--allow-ipv6-tunnel`, your own network list gets `::/0` when it covers all public IPv4. It also says that with `--allow-ipv6-tunnel` on a server without native IPv6 the client gets only the tunnel subnet.

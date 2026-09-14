@@ -756,12 +756,14 @@ awg31_environment_blocker() {
         :
     fi
 
-    # PHASE 3: the 3.1 profile generator does not exist yet, so the environment
-    # may be as suitable as it likes - there is nothing to hand out. This check
+    # PHASE 3: the 3.1 profile generator exists, but the key and writing the
+    # profile into the config do not yet, so the environment may be as suitable
+    # as it likes - there is nothing to hand out. This check
     # is LAST on purpose: that way an operator on an unsuitable platform gets the
     # durable reason, the one that stays true after phase 3, instead of a
-    # temporary one. This line goes away in the same change that adds the
-    # generator, and removing it must turn red the test that watches for it.
+    # temporary one. This line goes away in the same change that adds the key
+    # and writing the profile into the config, and removing it must turn red the
+    # test that watches for it.
     printf 'not_implemented_yet'
     return 0
 
@@ -1866,7 +1868,7 @@ generate_cps_i1() {
 # Generate all AWG 2.0 parameters
 generate_awg_params() {
     local preset="${CLI_PRESET:-default}"
-    log "Generating AWG 2.0 parameters (preset: $preset)..."
+    log "Generating AWG ${AWG_PROTOCOL:-2.0} parameters (preset: $preset)..."
 
     case "$preset" in
         default)
@@ -1909,6 +1911,17 @@ generate_awg_params() {
     fi
 
     AWG_PRESET="$preset"
+    # The third line (AWG_PROTOCOL=3.1) is meant for a header protection key (the
+    # next part adds generating it and writing it into the config), and with the
+    # key the first 12 bytes of the S padding serve as the nonce: the S3 and S4
+    # lower bounds are raised to 12 (S1 and S2 already start at 15). The 2.0 branch
+    # is not meant for a key, and without a key S below 12 is legal, so its ranges
+    # stay as they were.
+    local _s3_min=8 _s4_min=4
+    if [[ "${AWG_PROTOCOL:-2.0}" == "3.1" ]]; then
+        _s3_min=12
+        _s4_min=12
+    fi
     AWG_S1=$(rand_range 15 150)
     AWG_S2=$(rand_range 15 150)
 
@@ -1918,7 +1931,7 @@ generate_awg_params() {
         AWG_S2=$(rand_range 15 150)
     done
 
-    # ⚠️ The lower bounds of S3/S4 are incompatible with AmneziaWG 3.0 header
+    # ⚠️ The 2.0 lower bounds (S3 from 8, S4 from 4) are incompatible with AmneziaWG 3.0 header
     # protection. There the ChaCha20 nonce is never transmitted: it is taken from
     # the first 12 bytes of the S padding of the message in question
     # (HEADER_PROTECTION_NONCE_SIZE = 12), so both implementations REJECT a config
@@ -1926,12 +1939,12 @@ generate_awg_params() {
     # kernel module returns -EINVAL (src/netlink.c, has_protection && val16 <
     # HEADER_PROTECTION_NONCE_SIZE); amneziawg-go errors out in device/uapi.go
     # (present since v3.0.0). So the failure is LOUD - there is no silent crypto
-    # weakening; verified against upstream sources on 2 aug 2026. While we stay on
-    # 2.0 and set no header protection key, these ranges are safe. WHEN header
-    # protection is enabled, raise both lower bounds to 12, otherwise a share of
-    # installs will simply fail to bring the interface up. Keep this in step with
-    # the _kernel_supports_awg3 gate.
-    AWG_S3=$(rand_range 8 55)
+    # weakening; verified against upstream sources on 2 aug 2026. That is why the
+    # 3.1 branch raises both lower bounds to 12 (_s3_min and _s4_min above), while
+    # the 2.0 branch is not meant for a key and keeps its ranges. The raise must apply to both
+    # the first S3 draw and the collision retry below, otherwise the retry brings
+    # S3 below 12 back.
+    AWG_S3=$(rand_range "$_s3_min" 55)
 
     # Second size collision: response+S2 != cookie+S3, that is S3 != S2+28.
     # Message sizes (src/messages.h of the kernel module): init 148, response 92,
@@ -1944,24 +1957,33 @@ generate_awg_params() {
     #                                     while S3 tops out at 55, no loop needed)
     # We regenerate S3 rather than S2, since S2 already passed the S1+56 check.
     while [[ $((AWG_S2 + 28)) -eq $AWG_S3 ]]; do
-        AWG_S3=$(rand_range 8 55)
+        AWG_S3=$(rand_range "$_s3_min" 55)
     done
 
-    AWG_S4=$(rand_range 4 27)
+    AWG_S4=$(rand_range "$_s4_min" 27)
 
     # H1-H4: 4 random non-overlapping uint32 ranges.
     # Per-install randomization protects against Russian DPI fingerprinting
     # of static H values (Discussion #38, elvaleto/Klavishnik).
     # Algorithm: 8 random uint32 → sort → 4 non-overlapping pairs.
-    local _h_lines
-    mapfile -t _h_lines < <(generate_awg_h_ranges) || true
-    if [[ ${#_h_lines[@]} -ne 4 ]]; then
-        die "Failed to generate H1-H4 ranges."
+    if [[ "${AWG_PROTOCOL:-2.0}" == "3.1" ]]; then
+        # With a header protection key the wire is statistically indistinguishable for
+        # any H, and random ranges no longer hide anything; H must still not overlap.
+        AWG_H1=1
+        AWG_H2=2
+        AWG_H3=3
+        AWG_H4=4
+    else
+        local _h_lines
+        mapfile -t _h_lines < <(generate_awg_h_ranges) || true
+        if [[ ${#_h_lines[@]} -ne 4 ]]; then
+            die "Failed to generate H1-H4 ranges."
+        fi
+        AWG_H1="${_h_lines[0]}"
+        AWG_H2="${_h_lines[1]}"
+        AWG_H3="${_h_lines[2]}"
+        AWG_H4="${_h_lines[3]}"
     fi
-    AWG_H1="${_h_lines[0]}"
-    AWG_H2="${_h_lines[1]}"
-    AWG_H3="${_h_lines[2]}"
-    AWG_H4="${_h_lines[3]}"
 
     # I1: CPS concealment
     AWG_I1=$(generate_cps_i1) || die "Could not build the I1 concealment packet - the generator returned an invalid value"
@@ -1971,6 +1993,18 @@ generate_awg_params() {
     # I2-I5 loaded from awgsetup_cfg.init so the new obfuscation set does not carry old
     # values (--preset regenerates the whole set).
     unset AWG_I2 AWG_I3 AWG_I4 AWG_I5
+
+    # ContentPaddingAddition only in the 3.1 branch, value 32-128. A constant rather
+    # than a draw: the generator runs before awg_common_en.sh is downloaded and does
+    # not call awg_cpa_check_safe. That the value stays under the 65535 cap (above it
+    # the tools silently wrap it modulo 65536) is checked by the test through that
+    # predicate.
+    if [[ "${AWG_PROTOCOL:-2.0}" == "3.1" ]]; then
+        AWG_CPA='32-128'
+        export AWG_CPA
+    else
+        unset AWG_CPA
+    fi
 
     export AWG_Jc AWG_Jmin AWG_Jmax AWG_S1 AWG_S2 AWG_S3 AWG_S4 AWG_PRESET
     export AWG_H1 AWG_H2 AWG_H3 AWG_H4 AWG_I1
@@ -1982,7 +2016,10 @@ generate_awg_params() {
     log "  H3=$AWG_H3"
     log "  H4=$AWG_H4"
     log "  I1=$AWG_I1"
-    log "AWG 2.0 parameters generated."
+    if [[ -n "${AWG_CPA:-}" ]]; then
+        log "  ContentPaddingAddition=$AWG_CPA"
+    fi
+    log "AWG ${AWG_PROTOCOL:-2.0} parameters generated."
 }
 
 # ==============================================================================

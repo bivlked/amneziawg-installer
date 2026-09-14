@@ -2368,6 +2368,82 @@ awg_cps_check_safe() {
     return 0
 }
 
+# awg_cpa_check_safe <значение> : ContentPaddingAddition в форме, которую
+# amneziawg-tools разберут без молчаливого искажения.
+# Tools читают значение через u16_range_from_string и сворачивают число по
+# модулю 65536: 65536 становится 0, то есть профилем без добавочного паддинга
+# при полностью зелёной установке (замер 10 sep 2026). Поэтому потолок 65535
+# проверяем сами, до инструмента. Число длиннее 10 значащих цифр отвергаем ДО
+# арифметики оболочки: иначе огромное значение перевалит через 2^63 и сравнение
+# соврёт; ведущие нули в длину не входят (_awg_dec_strip). Перевёрнутый
+# диапазон tools отвергают громко и сами, здесь он
+# отвергается раньше, до запуска сервиса.
+# Возврат: 0 - безопасно; 1 - нет, причина в stdout.
+awg_cpa_check_safe() {
+    local v="${1:-}" lo hi
+    v="${v%%#*}"
+    v="${v//[[:space:]]/}"
+    if [[ "$v" =~ ^([0-9]+)$ ]]; then
+        lo="${BASH_REMATCH[1]}"
+        hi="$lo"
+    elif [[ "$v" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+        lo="${BASH_REMATCH[1]}"
+        hi="${BASH_REMATCH[2]}"
+    else
+        printf 'значение "%s" не число и не диапазон MIN-MAX' "$v"
+        return 1
+    fi
+    lo=$(_awg_dec_strip "$lo")
+    hi=$(_awg_dec_strip "$hi")
+    if (( ${#lo} > 10 || ${#hi} > 10 )) || (( lo > 4294967295 || hi > 4294967295 )); then
+        printf 'значение "%s" больше 4294967295: amneziawg-tools его не примут' "$v"
+        return 1
+    fi
+    if (( lo > 65535 || hi > 65535 )); then
+        printf 'значение "%s" больше 65535: amneziawg-tools молча свернут его по модулю 65536' "$v"
+        return 1
+    fi
+    if (( lo > hi )); then
+        printf 'в диапазоне "%s" нижняя граница больше верхней' "$v"
+        return 1
+    fi
+    return 0
+}
+
+# _awg_dec_strip <цифры> : то же число без ведущих нулей ("0", если нули одни).
+# Длину числа для проверки переполнения считаем по значащим цифрам: tools читают
+# 00000000001 как 1, и отказ по длине записи был бы ложным. Результат без ведущих
+# нулей безопасен и для арифметики оболочки, которая иначе читала бы 010 как 8.
+_awg_dec_strip() {
+    local d="${1#"${1%%[!0]*}"}"
+    printf '%s' "${d:-0}"
+}
+
+# _awg_conf_pairs <файл> : строки "секция<TAB>ключ<TAB>значение" конфига в том
+# виде, в каком их читают amneziawg-tools: заголовок секции и ключ без учёта
+# регистра (ключ печатается в нижнем регистре), комментарий после # и все
+# пробельные символы отброшены, CR снят. Секция - interface, other или none (строка
+# до первого заголовка; tools на ней отказывают, а нам важно не пропустить её
+# молча). Совпадает с tools для однотокенных ключей; пробелы внутри I1-I5 не
+# сохраняются, поэтому для I1-I5 эта функция не годится. Порядок сохранён, дубли
+# НЕ схлопываются.
+_awg_conf_pairs() {
+    awk '
+        BEGIN { sec = "none" }
+        { gsub(/\r/, ""); sub(/#.*/, "") }
+        /^[[:space:]]*\[/ {
+            h = tolower($0); gsub(/[[:space:]]/, "", h)
+            sec = (h == "[interface]") ? "interface" : "other"
+            next
+        }
+        /=/ {
+            k = $0; sub(/=.*/, "", k); gsub(/[[:space:]]/, "", k)
+            v = $0; sub(/^[^=]*=/, "", v); gsub(/[[:space:]]/, "", v)
+            if (k != "") print sec "\t" tolower(k) "\t" v
+        }
+    ' "$1"
+}
+
 # awg_cps_refuse_unsafe : проверить AWG_I1..AWG_I5 текущего окружения.
 # 0 - все безопасны; 1 - нет, причины уже записаны в журнал.
 # Общий текст отказа для load_awg_params и render_server_config; валидатор
@@ -3715,29 +3791,111 @@ validate_awg_config() {
     local int_params=("Jc" "Jmin" "Jmax" "S1" "S2" "S3" "S4")
     local range_params=("H1" "H2" "H3" "H4")
 
-    # Парсинг выровнен с load_awg_params_from_server_conf: произвольные пробелы
-    # вокруг '=', last-wins при дублях строк (валидируем то значение, которое
+    # Ключ защиты заголовков и паддинг содержимого разбираем ПЕРВЫМИ: от ключа
+    # зависит, откуда брать остальные числа. Правила ключа включаются ЕГО
+    # НАЛИЧИЕМ в файле, а не маркером поколения: restore проверяет
+    # восстановленные файлы, модуль ядра и amneziawg-go включают защиту
+    # заголовков по наличию ключа, а клиент вендора определяет поколение по
+    # наличию таких ключей в конфиге. Разбор повторяет amneziawg-tools (секция и ключ
+    # без учёта регистра, последнее значение). Граница: проверка читает только
+    # файл и не видит ключ, оставшийся на живом интерфейсе.
+    local _pairs _sec _k _v _cpa_why _hpk=0 _hpk_count=0 _hpk_val=""
+    local -A _if_last=()
+    if ! _pairs=$(_awg_conf_pairs "$SERVER_CONF_FILE"); then
+        # Без разбора молча выключились бы все правила ключа, включая потолок
+        # ContentPaddingAddition, который модуль ядра сам не ловит.
+        log_error "Не удалось разобрать $SERVER_CONF_FILE: ключ защиты заголовков и ContentPaddingAddition не проверены"
+        ok=0
+    fi
+    while IFS=$'\t' read -r _sec _k _v; do
+        [[ -n "$_k" ]] || continue
+        case "$_k" in
+            headerprotectionkey)
+                if [[ "$_sec" != "interface" ]]; then
+                    log_error "HeaderProtectionKey стоит вне секции [Interface]"
+                    ok=0
+                    continue
+                fi
+                _hpk_count=$((_hpk_count + 1))
+                _hpk_val="$_v"
+                ;;
+            contentpaddingaddition)
+                # Каждую строку, а не последнюю. Tools применяют последнюю, но
+                # строка вне допустимого - признак ручной правки, и надёжнее
+                # отказать, чем полагаться на порядок строк.
+                if ! _cpa_why=$(awg_cpa_check_safe "$_v"); then
+                    log_error "Параметр 'ContentPaddingAddition' небезопасен: ${_cpa_why}"
+                    ok=0
+                fi
+                ;;
+        esac
+        [[ "$_sec" == "interface" ]] && _if_last[$_k]="$_v"
+    done <<< "$_pairs"
+
+    if [[ "$_hpk_count" -ge 1 ]]; then
+        _hpk=1
+        if [[ "$_hpk_count" -gt 1 ]]; then
+            log_error "HeaderProtectionKey задан в [Interface] ${_hpk_count} раза: применится только последний, оставьте один ключ"
+            ok=0
+        # Как key_from_base64 в tools: 44 символа, в конце '=', последний
+        # значащий символ несёт нулевые младшие биты. Значение не печатаем.
+        elif ! [[ "$_hpk_val" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]]; then
+            log_error "HeaderProtectionKey не похож на ключ: нужны 32 байта в base64, 44 символа"
+            ok=0
+        fi
+    fi
+
+    # Без ключа парсинг выровнен с load_awg_params_from_server_conf:
+    # произвольные пробелы вокруг '=', last-wins при дублях строк (валидируем то значение, которое
     # реально загрузится), trim пробелов/CR. Раньше валидатор требовал ровно
     # один пробел и брал first-wins - вручную поправленный 'Jc=4' успешно
     # загружался, но проваливал валидацию с ложным "параметр не найден".
+    # При ключе числа берутся из разбора выше, как их применят tools: иначе
+    # строчный `s4 = 12` дал бы ложное "не найден", а поздний `s4 = 33` прошёл бы
+    # мимо верхней границы. Без ключа путь прежний.
     for param in "${int_params[@]}"; do
-        val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+        if [[ "$_hpk" -eq 1 ]]; then
+            val="${_if_last[${param,,}]:-}"
+        else
+            val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+        fi
         if [[ -z "$val" ]]; then
             log_error "Параметр '$param' не найден в серверном конфиге"
             ok=0
         elif ! [[ "$val" =~ ^[0-9]+$ ]]; then
             log_error "Параметр '$param' содержит невалидное значение: '$val' (ожидается целое число)"
             ok=0
+        elif [[ "$_hpk" -eq 1 ]]; then
+            # Число длиннее int64 bash молча заворачивает, и 20 цифр прошли бы
+            # сравнения ниже как малое значение. Отсекаем до любой арифметики.
+            val=$(_awg_dec_strip "$val")
+            if (( ${#val} > 10 )) || (( val > 4294967295 )); then
+                log_error "Параметр '$param': значение больше 4294967295"
+                ok=0
+            fi
         fi
     done
 
     # Протокольные границы (defense-in-depth для восстановленных бэкапов)
     local jc jmin jmax s3 s4
-    jc=$(sed -n 's/^[[:space:]]*Jc[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
-    jmin=$(sed -n 's/^[[:space:]]*Jmin[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
-    jmax=$(sed -n 's/^[[:space:]]*Jmax[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
-    s3=$(sed -n 's/^[[:space:]]*S3[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
-    s4=$(sed -n 's/^[[:space:]]*S4[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+    if [[ "$_hpk" -eq 1 ]]; then
+        jc="${_if_last[jc]:-}"
+        [[ "$jc" =~ ^[0-9]+$ ]] && jc=$(_awg_dec_strip "$jc")
+        jmin="${_if_last[jmin]:-}"
+        [[ "$jmin" =~ ^[0-9]+$ ]] && jmin=$(_awg_dec_strip "$jmin")
+        jmax="${_if_last[jmax]:-}"
+        [[ "$jmax" =~ ^[0-9]+$ ]] && jmax=$(_awg_dec_strip "$jmax")
+        s3="${_if_last[s3]:-}"
+        [[ "$s3" =~ ^[0-9]+$ ]] && s3=$(_awg_dec_strip "$s3")
+        s4="${_if_last[s4]:-}"
+        [[ "$s4" =~ ^[0-9]+$ ]] && s4=$(_awg_dec_strip "$s4")
+    else
+        jc=$(sed -n 's/^[[:space:]]*Jc[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+        jmin=$(sed -n 's/^[[:space:]]*Jmin[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+        jmax=$(sed -n 's/^[[:space:]]*Jmax[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+        s3=$(sed -n 's/^[[:space:]]*S3[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+        s4=$(sed -n 's/^[[:space:]]*S4[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+    fi
     if [[ "$jc" =~ ^[0-9]+$ ]]; then
         if [[ "$jc" -lt 1 || "$jc" -gt 128 ]]; then
             log_error "Jc=$jc вне допустимого диапазона (1-128)"
@@ -3767,18 +3925,63 @@ validate_awg_config() {
         ok=0
     fi
 
+    if [[ "$_hpk" -eq 1 ]]; then
+    # При ключе первые 12 байт S-паддинга служат nonce, и модуль ядра
+    # (netlink.c), и amneziawg-go (uapi.go) отвергают S ниже 12. Наличие и форму
+    # проверил цикл выше по тому же разбору, числа больше uint32 он уже отверг;
+    # ведущие нули не прячут малое число.
+        local _sn _sv
+        for _sn in s1 s2 s3 s4; do
+            _sv="${_if_last[$_sn]:-}"
+            [[ "$_sv" =~ ^[0-9]+$ ]] || continue
+            _sv=$(_awg_dec_strip "$_sv")
+            if (( ${#_sv} <= 10 )) && (( _sv < 12 )); then
+                log_error "${_sn^^}=${_if_last[$_sn]} меньше 12: при HeaderProtectionKey первые 12 байт S-паддинга служат nonce, и модуль ядра, и amneziawg-go такой конфиг отвергают"
+                ok=0
+            fi
+        done
+    fi
+
     local _h_ranges=()
     for param in "${range_params[@]}"; do
-        val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+        # При ключе H берём из того же разбора. Без ключа наш профиль требует
+        # диапазонов (защита от отпечатка по H); при ключе заголовок закрыт и
+        # одно число ничего не раскрывает, поэтому его допускаем. Протокол одно
+        # число принимает в обоих случаях. Без ключа путь прежний.
+        if [[ "$_hpk" -eq 1 ]]; then
+            val="${_if_last[${param,,}]:-}"
+        else
+            val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+        fi
         if [[ -z "$val" ]]; then
             log_error "Параметр '$param' не найден в серверном конфиге"
             ok=0
+        elif [[ "$_hpk" -eq 1 && "$val" =~ ^[0-9]+$ ]]; then
+            # Числа H читаем в десятичной системе, как tools (strtoul, основание
+            # 10): без снятия нулей 010 было бы восьмеричным 8, а 08 - ошибкой,
+            # после которой пара молча не сравнивается. Длину значащих цифр
+            # проверяем ДО арифметики.
+            val=$(_awg_dec_strip "$val")
+            if (( ${#val} > 10 )) || (( val > 4294967295 )); then
+                log_error "Параметр '$param': значение больше 4294967295"
+                ok=0
+            else
+                _h_ranges+=("$val $val $param")
+            fi
         elif ! [[ "$val" =~ ^[0-9]+-[0-9]+$ ]]; then
             log_error "Параметр '$param' содержит невалидное значение: '$val' (ожидается формат MIN-MAX)"
             ok=0
         else
-            local range_lo="${val%-*}" range_hi="${val#*-}"
-            if [[ "$range_lo" -ge "$range_hi" ]]; then
+            local range_lo range_hi
+            range_lo=$(_awg_dec_strip "${val%-*}")
+            range_hi=$(_awg_dec_strip "${val#*-}")
+            # Границы тоже без ведущих нулей и с проверкой длины до арифметики.
+            # Без ключа диапазон строго возрастающий, как и раньше; при ключе
+            # допустимо и N-N, это тот же скаляр.
+            if (( ${#range_lo} > 10 || ${#range_hi} > 10 )) || (( range_lo > 4294967295 || range_hi > 4294967295 )); then
+                log_error "Параметр '$param': граница диапазона больше 4294967295"
+                ok=0
+            elif (( range_lo > range_hi )) || [[ "$_hpk" -ne 1 && "$range_lo" -eq "$range_hi" ]]; then
                 log_error "Параметр '$param': нижняя граница ($range_lo) >= верхней ($range_hi)"
                 ok=0
             else
