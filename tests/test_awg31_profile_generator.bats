@@ -454,6 +454,7 @@ v_31_s_bound() {
     expect_refused "$1" "S4=09 меньше 12" "S4=09 is below 12" || return 1
     write_31_conf
     sed -i 's/^S4 = .*/S4 = 012/' "$SERVER_CONF_FILE"
+    has '^S4 = 012$' || return 1
     expect_accepted "$1" || return 1
     write_31_conf
     printf '[interface]\ns4 = 11\n' >> "$SERVER_CONF_FILE"
@@ -466,6 +467,7 @@ v_31_s_bound() {
     expect_refused "$1" "S4=0000011 меньше 12" "S4=0000011 is below 12" || return 1
     write_31_conf
     sed -i 's/^S4 = .*/s4 = 12/' "$SERVER_CONF_FILE"
+    has '^s4 = 12$' || return 1
     expect_accepted "$1" || return 1
     write_31_conf
     printf 's4 = 33\n' >> "$SERVER_CONF_FILE"
@@ -487,6 +489,7 @@ v_31_s_bound() {
     expect_refused "$1" "Параметр 'S1': значение больше 4294967295" "Parameter 'S1': value exceeds 4294967295" || return 1
     write_31_conf
     sed -i 's/^S1 = .*/S1 = 0000000000000000000150/' "$SERVER_CONF_FILE"
+    has '^S1 = 0000000000000000000150$' || return 1
     expect_accepted "$1"
 }
 @test "validate 3.1: S below 12 (with zeros, lowercase, later), missing S, upper bounds from the same parse, numbers past uint32, both twins" {
