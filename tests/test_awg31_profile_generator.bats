@@ -193,7 +193,18 @@ expect_accepted() {
             while read -r s1 s2 s3 s4 h1 h2 h3 h4 c; do
                 n=$((n + 1))
                 (( s3 >= 8 && s3 <= 55 && s4 >= 4 && s4 <= 27 )) || { echo "S3/S4 out: $s3 $s4 ($inst $proto)"; return 1; }
-                [[ "$h1" =~ ^[0-9]+-[0-9]+$ && "$h4" =~ ^[0-9]+-[0-9]+$ ]] || { echo "H not ranges: $h1 $h4 ($inst $proto)"; return 1; }
+                local hv lo hi los=() his=() i j
+                for hv in "$h1" "$h2" "$h3" "$h4"; do
+                    [[ "$hv" =~ ^([0-9]+)-([0-9]+)$ ]] || { echo "H not a range: $hv ($inst $proto)"; return 1; }
+                    lo="${BASH_REMATCH[1]}"; hi="${BASH_REMATCH[2]}"
+                    (( lo < hi )) || { echo "H not ordered: $hv ($inst $proto)"; return 1; }
+                    los+=("$lo"); his+=("$hi")
+                done
+                for ((i = 0; i < 4; i++)); do
+                    for ((j = i + 1; j < 4; j++)); do
+                        (( los[i] > his[j] || los[j] > his[i] )) || { echo "H ranges overlap: $h1 $h2 $h3 $h4 ($inst $proto)"; return 1; }
+                    done
+                done
                 [[ "$c" == "unset" ]] || { echo "CPA=$c ($inst $proto)"; return 1; }
                 (( s3 != s2 + 28 && s2 != s1 + 56 )) || { echo "collision ($inst $proto)"; return 1; }
             done <<< "$output"
@@ -251,7 +262,7 @@ expect_accepted() {
 
 cpa_accepts() {
     local v
-    for v in 0 16 65535 32-128 0-65535 128-128 "32 - 128" "32-128 # comment" 00032-00128; do
+    for v in 0 16 65535 32-128 0-65535 128-128 "32 - 128" "32-128 # comment" 00032-00128 00000065535; do
         run --separate-stderr cpa "$1" "$v"
         [ "$status" -eq 0 ] || { echo "rejected '$v' ($1): $output"; return 1; }
     done
@@ -274,25 +285,25 @@ cpa_wrap() {
 
 cpa_uint32() {
     local v
-    for v in 4294967296 9999999999 1-4294967296; do
+    for v in 4294967296 9999999999 1-4294967296 99999999999 18446744073709551616; do
         run --separate-stderr cpa "$1" "$v"
         [ "$status" -eq 1 ] || { echo "accepted '$v' ($1)"; return 1; }
         [[ "$output" == *"4294967295"* ]] || { echo "no uint32 reason for '$v' ($1): $output"; return 1; }
     done
 }
-@test "cpa: a value the tools would not accept at all is refused with that reason, both twins" {
+@test "cpa: a value the tools would not accept at all, however long, is refused with that reason, both twins" {
     both cpa_uint32
 }
 
 cpa_form() {
     local v
-    for v in abc "" -5 1-2-3 99999999999 18446744073709551616 "0x10"; do
+    for v in abc "" -5 1-2-3 "0x10"; do
         run --separate-stderr cpa "$1" "$v"
         [ "$status" -eq 1 ] || { echo "accepted '$v' ($1)"; return 1; }
         [[ "$output" == *"MIN-MAX"* ]] || { echo "wrong reason for '$v' ($1): $output"; return 1; }
     done
 }
-@test "cpa: junk and over-long numbers are refused by form, both twins" {
+@test "cpa: junk is refused by form, both twins" {
     both cpa_form
 }
 
@@ -363,6 +374,9 @@ v_h_decimal() {
     sed -i 's/^H1 = .*/H1 = 0100000-0800000/' "$SERVER_CONF_FILE"
     expect_accepted "$1" || return 1
     create_server_config
+    sed -i 's/^H1 = .*/H1 = 00000000001-00000000002/' "$SERVER_CONF_FILE"
+    expect_accepted "$1" || return 1
+    create_server_config
     sed -i 's/^H4 = .*/H4 = 100000000-4294967296/' "$SERVER_CONF_FILE"
     expect_refused "$1" "больше 4294967295" "exceeds 4294967295" || return 1
     create_server_config
@@ -425,9 +439,21 @@ v_31_s_bound() {
     expect_refused "$1" "S4=11 меньше 12" "S4=11 is below 12" || return 1
     write_31_conf
     sed -i '/^S2 = /d' "$SERVER_CONF_FILE"
-    expect_refused "$1" "S2 в [Interface] не найден" "S2 is missing from [Interface]"
+    expect_refused "$1" "Параметр 'S2' не найден" "Parameter 'S2' not found" || return 1
+    write_31_conf
+    sed -i 's/^S4 = .*/S4 = 0000011/' "$SERVER_CONF_FILE"
+    expect_refused "$1" "S4=0000011 меньше 12" "S4=0000011 is below 12" || return 1
+    write_31_conf
+    sed -i 's/^S4 = .*/s4 = 12/' "$SERVER_CONF_FILE"
+    expect_accepted "$1" || return 1
+    write_31_conf
+    printf 's4 = 33\n' >> "$SERVER_CONF_FILE"
+    expect_refused "$1" "S4=33 превышает максимум (32)" "S4=33 exceeds maximum (32)" || return 1
+    write_31_conf
+    printf 'jc = 500\n' >> "$SERVER_CONF_FILE"
+    expect_refused "$1" "Jc=500 вне допустимого диапазона" "Jc=500 is out of range"
 }
-@test "validate 3.1: S below 12, octal-looking and lowercase later S, missing S are refused by reason, both twins" {
+@test "validate 3.1: S below 12 (with zeros, lowercase, later), missing S, and upper bounds from the same parse, both twins" {
     both v_31_s_bound
 }
 
@@ -449,6 +475,9 @@ v_31_h_rules() {
     expect_refused "$1" "пересекаются" "overlap" || return 1
     write_31_conf
     sed -i 's/^H4 = .*/H4 = 4294967295/' "$SERVER_CONF_FILE"
+    expect_accepted "$1" || return 1
+    write_31_conf
+    sed -i 's/^H4 = .*/H4 = 00000000004294967295/' "$SERVER_CONF_FILE"
     expect_accepted "$1" || return 1
     write_31_conf
     sed -i 's/^H4 = .*/H4 = 4294967296/' "$SERVER_CONF_FILE"
