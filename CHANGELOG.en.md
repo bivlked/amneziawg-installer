@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **Where device IPv6 is decided.** `ADVANCED` gains a section "Device IPv6, `::/0` and the local network". It says plainly: `--disallow-ipv6` and `DISABLE_IPV6` turn IPv6 off on the server, while whether a client gets `::/0` is decided by the routing mode. The mode 2 description now says plainly that only the IPv4 side of the LAN stays outside the tunnel, the README hint about disabling IPv6 makes clear it means the server, and the IPv6 walkthrough in `ADVANCED` names the exact condition: your own network list gets `::/0` when it covers all public IPv4.
+
 ## [5.34.1] - 2026-09-14
 
 **v5.34.1** - I1-I5 tag checks and fresh QR and vpn:// files after modify.
