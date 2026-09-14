@@ -160,6 +160,14 @@ expect_refused() {
     [[ "$output" == *"$want"* ]] || { echo "wrong reason ($1), expected '$want': $output"; return 1; }
 }
 
+# has <ERE> [count] : the fixture edit happened. A sed that misses leaves a config
+# the validator accepts anyway, and the acceptance case would prove nothing.
+has() {
+    local n
+    n=$(grep -cE "$1" "$SERVER_CONF_FILE" || true)
+    [ "$n" -eq "${2:-1}" ] || { echo "fixture edit missed: '$1' found $n, expected ${2:-1}"; return 1; }
+}
+
 # expect_accepted <lib>
 expect_accepted() {
     run --separate-stderr validate "$1"
@@ -330,6 +338,7 @@ v_2_0_basics() {
     create_server_config
     expect_accepted "$1" || return 1
     sed -i 's/^S3 = .*/S3 = 8/; s/^S4 = .*/S4 = 4/' "$SERVER_CONF_FILE"
+    has '^S3 = 8$' && has '^S4 = 4$' || return 1
     expect_accepted "$1" || return 1
     create_server_config
     sed -i 's/^H1 = .*/H1 = 1/' "$SERVER_CONF_FILE"
@@ -361,9 +370,11 @@ v_2_0_same_as_main() {
     expect_accepted "$1" || return 1
     create_server_config
     sed -i 's/^S4 = 16$/S4 = 16 # pad/; s/^H1 = 100000-800000$/H1 = 100000-800000 # h/' "$SERVER_CONF_FILE"
+    has '^S4 = 16 # pad$' && has '^H1 = 100000-800000 # h$' || return 1
     expect_accepted "$1" || return 1
     create_server_config
     sed -i 's/$/\r/' "$SERVER_CONF_FILE"
+    has $'\r$' "$(wc -l < "$SERVER_CONF_FILE")" || return 1
     expect_accepted "$1" || return 1
     # Refused in main with exactly this reason.
     create_server_config
@@ -377,9 +388,11 @@ v_2_0_same_as_main() {
 v_h_decimal() {
     create_server_config
     sed -i 's/^H1 = .*/H1 = 0100000-0800000/' "$SERVER_CONF_FILE"
+    has '^H1 = 0100000-0800000$' || return 1
     expect_accepted "$1" || return 1
     create_server_config
     sed -i 's/^H1 = .*/H1 = 00000000001-00000000002/' "$SERVER_CONF_FILE"
+    has '^H1 = 00000000001-00000000002$' || return 1
     expect_accepted "$1" || return 1
     create_server_config
     sed -i 's/^H4 = .*/H4 = 100000000-4294967296/' "$SERVER_CONF_FILE"
@@ -395,7 +408,7 @@ v_h_decimal() {
 v_cpa_any_config() {
     create_server_config
     printf 'ContentPaddingAddition = 70000-70016\n' >> "$SERVER_CONF_FILE"
-    expect_refused "$1" "ContentPaddingAddition" "ContentPaddingAddition" || return 1
+    expect_refused "$1" '"70000-70016" больше 65535' '"70000-70016" exceeds 65535' || return 1
     create_server_config
     printf 'ContentPaddingAddition = 32-128\n' >> "$SERVER_CONF_FILE"
     expect_accepted "$1"
@@ -411,12 +424,15 @@ v_31_accepted() {
     expect_accepted "$1" || return 1
     write_31_conf
     sed -i 's/$/\r/' "$SERVER_CONF_FILE"
+    has $'\r$' "$(wc -l < "$SERVER_CONF_FILE")" || return 1
     expect_accepted "$1" || return 1
     write_31_conf
     sed -i 's/^\[Interface\]$/[Interface] # main/; s/^S4 = 12$/S4 = 12 # nonce/' "$SERVER_CONF_FILE"
+    has '^\[Interface\] # main$' && has '^S4 = 12 # nonce$' || return 1
     expect_accepted "$1" || return 1
     write_31_conf
     sed -i 's/^H1 = .*/h1 = 1/; s/^H2 = .*/h2 = 2/; s/^H3 = .*/h3 = 3/; s/^H4 = .*/h4 = 4/' "$SERVER_CONF_FILE"
+    has '^h[1-4] = [1-4]$' 4 || return 1
     expect_accepted "$1" || return 1
     write_31_conf
     printf '\n[Peer]\nPublicKey = X\nS1 = 11\n' >> "$SERVER_CONF_FILE"
@@ -480,6 +496,7 @@ v_31_s_bound() {
 v_31_h_rules() {
     write_31_conf
     sed -i 's/^H1 = .*/H1 = 1-1/; s/^H2 = .*/H2 = 2-2/' "$SERVER_CONF_FILE"
+    has '^H1 = 1-1$' && has '^H2 = 2-2$' || return 1
     expect_accepted "$1" || return 1
     write_31_conf
     sed -i 's/^H2 = .*/H2 = 1/' "$SERVER_CONF_FILE"
@@ -489,15 +506,18 @@ v_31_h_rules() {
     expect_refused "$1" "пересекаются" "overlap" || return 1
     write_31_conf
     sed -i 's/^H1 = .*/H1 = 010/; s/^H2 = .*/H2 = 8/' "$SERVER_CONF_FILE"
+    has '^H1 = 010$' && has '^H2 = 8$' || return 1
     expect_accepted "$1" || return 1
     write_31_conf
     sed -i 's/^H1 = .*/H1 = 08/; s/^H2 = .*/H2 = 8/' "$SERVER_CONF_FILE"
     expect_refused "$1" "пересекаются" "overlap" || return 1
     write_31_conf
     sed -i 's/^H4 = .*/H4 = 4294967295/' "$SERVER_CONF_FILE"
+    has '^H4 = 4294967295$' || return 1
     expect_accepted "$1" || return 1
     write_31_conf
     sed -i 's/^H4 = .*/H4 = 00000000004294967295/' "$SERVER_CONF_FILE"
+    has '^H4 = 00000000004294967295$' || return 1
     expect_accepted "$1" || return 1
     write_31_conf
     sed -i 's/^H4 = .*/H4 = 4294967296/' "$SERVER_CONF_FILE"
@@ -544,11 +564,11 @@ v_cpa_hidden_and_placed() {
     write_31_conf
     sed -i 's/^ContentPaddingAddition = .*/ContentPaddingAddition = 65536/' "$SERVER_CONF_FILE"
     printf 'ContentPaddingAddition = 32\n' >> "$SERVER_CONF_FILE"
-    expect_refused "$1" "65536" "65536" || return 1
+    expect_refused "$1" '"65536" больше 65535' '"65536" exceeds 65535' || return 1
     create_server_config
     { printf 'ContentPaddingAddition = 65536\n'; cat "$SERVER_CONF_FILE"; } > "$SERVER_CONF_FILE.new"
     mv "$SERVER_CONF_FILE.new" "$SERVER_CONF_FILE"
-    expect_refused "$1" "65536" "65536"
+    expect_refused "$1" '"65536" больше 65535' '"65536" exceeds 65535'
 }
 @test "validate: a later good CPA line does not hide an overflow, CPA before the header is checked, both twins" {
     both v_cpa_hidden_and_placed
