@@ -373,7 +373,8 @@ partial_removal_asks_to_repeat_modify() {
     # The PNG before it is already gone, and the operator is told how to get it back.
     [ ! -e "$A/alice.png" ]
     [ -d "$A/alice.vpnuri" ]
-    [[ "$stderr" == *"modify"* ]]
+    # The hint itself, in either language, not just the word modify somewhere.
+    [[ "$stderr" == *"этот modify"* || "$stderr" == *"this modify"* ]]
     printf '%s' "$output" | jq -e '.ok == false and (.error | contains("alice.vpnuri")) and (.error | contains("modify"))' >/dev/null
 }
 
