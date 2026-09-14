@@ -325,7 +325,7 @@ Defines which traffic the **client** routes through the VPN tunnel.
     * List of public IP ranges + DNS `1.1.1.1`, `8.8.8.8`. Private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) stay outside the tunnel.
     * **Purpose:** keep the LAN outside the tunnel. In terms of PUBLIC IPv4 coverage it is the same full tunnel, with no separate gain for bypassing restrictions; what stays out of the list is the private networks, the reserved `0.0.0.0/8` and multicast.
     * The cost: the Amnezia app sees a list that is not `0.0.0.0/0, ::/0`, concludes that the server already does split routing and disables its own page; on Linux `awg-quick` such a config can produce a routing loop.
-    * IPv6: `::/0` is added to this list too, so only the IPv4 side of the LAN stays outside the tunnel, and the local IPv6 goes into the tunnel while the VPN is on. If the device's IPv6 has to keep working, see [Device IPv6, `::/0` and the local network](#client-ipv6-adv).
+    * IPv6: without `--allow-ipv6-tunnel`, `::/0` is added to this list too, so only the IPv4 side of the LAN stays outside the tunnel, and the local IPv6 goes into the tunnel while the VPN is on. If the device's IPv6 has to keep working, see [Device IPv6, `::/0` and the local network](#client-ipv6-adv).
 
 3.  **Mode 3: Custom (Split-Tunneling)**
     * Only traffic to specified networks → VPN.
@@ -339,9 +339,9 @@ Defines which traffic the **client** routes through the VPN tunnel.
 
 `--disallow-ipv6` and the `DISABLE_IPV6` key in `awgsetup_cfg.init` turn IPv6 off on the server itself (the host sysctl). They do not touch your device's IPv6 and do not decide whether a `::/0` route goes into the client's `AllowedIPs`. The routing mode decides that:
 
-- **a full tunnel** (modes 1 and 2) gets `::/0`. The device's IPv6 goes into the tunnel, gets no further, and the device falls back to IPv4. While the VPN is on, resources reachable only over IPv6 do not open, and the home network's local IPv6 is out of reach;
+- **a full tunnel** (modes 1 and 2) without `--allow-ipv6-tunnel` gets `::/0`. The device's IPv6 goes into the tunnel, gets no further, and the device falls back to IPv4. While the VPN is on, resources reachable only over IPv6 do not open, and the home network's local IPv6 is out of reach;
 - **your own network list** (mode 3, `--route-custom`) does not get `::/0` unless it covers all public IPv4. The device's IPv6 goes around the tunnel with its own address;
-- **IPv6 inside the tunnel** is a separate switch, the `--allow-ipv6-tunnel` flag, see [IPv6 Dual-Stack Tunnel](#ipv6-tunnel-adv).
+- **with `--allow-ipv6-tunnel`** the rules differ: a full tunnel gets `::/0` only when the server has native IPv6, and then the device's IPv6 goes through the VPN. Without native IPv6 the client gets only the tunnel subnet, and the device's global IPv6 goes around the tunnel again. Details in [IPv6 Dual-Stack Tunnel](#ipv6-tunnel-adv).
 
 `manage regen` also adds `::/0` to already issued full-tunnel profiles whose `AllowedIPs` hold no IPv6 route, including lists edited through `modify`. How this looks from a site's side and how to check from the device is covered in [What a site can see when traffic is split by destination](#split-detect-adv).
 
