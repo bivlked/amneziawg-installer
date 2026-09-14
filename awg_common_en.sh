@@ -2408,6 +2408,69 @@ awg_cps_check_safe() {
     return 0
 }
 
+# awg_cpa_check_safe <value> : ContentPaddingAddition in a form amneziawg-tools
+# parse without silently distorting it.
+# The tools read the value with u16_range_from_string and wrap the number modulo
+# 65536: 65536 becomes 0, that is a profile with no added padding on a fully
+# green install (measured 10 sep 2026). So the 65535 cap is checked here, before
+# the tool. A number longer than 10 digits is refused by form BEFORE shell
+# arithmetic: otherwise a huge value wraps past 2^63 and the comparison lies. The
+# tools refuse a reversed range loudly on their own; here it is refused earlier,
+# before the service starts.
+# Returns: 0 - safe; 1 - not, the reason on stdout.
+awg_cpa_check_safe() {
+    local v="${1:-}" lo hi
+    v="${v%%#*}"
+    v="${v//[[:space:]]/}"
+    if [[ "$v" =~ ^([0-9]{1,10})$ ]]; then
+        lo="${BASH_REMATCH[1]}"
+        hi="$lo"
+    elif [[ "$v" =~ ^([0-9]{1,10})-([0-9]{1,10})$ ]]; then
+        lo="${BASH_REMATCH[1]}"
+        hi="${BASH_REMATCH[2]}"
+    else
+        printf 'value "%s" is neither a number nor a MIN-MAX range' "$v"
+        return 1
+    fi
+    if (( 10#$lo > 4294967295 || 10#$hi > 4294967295 )); then
+        printf 'value "%s" exceeds 4294967295: amneziawg-tools will not accept it' "$v"
+        return 1
+    fi
+    if (( 10#$lo > 65535 || 10#$hi > 65535 )); then
+        printf 'value "%s" exceeds 65535: amneziawg-tools silently wrap it modulo 65536' "$v"
+        return 1
+    fi
+    if (( 10#$lo > 10#$hi )); then
+        printf 'in the range "%s" the lower bound is greater than the upper one' "$v"
+        return 1
+    fi
+    return 0
+}
+
+# _awg_conf_pairs <file> : "section<TAB>key<TAB>value" lines of a config, the way
+# amneziawg-tools read them: section header and key case-insensitive (the key is
+# printed lowercase), the comment after # and all whitespace dropped, CR removed.
+# The section is interface, other or none (a line before the first header; the
+# tools refuse it, and we must not skip it silently). Matches the tools for
+# single-token keys; spaces inside I1-I5 are not kept, so this function is not
+# for I1-I5. Order is kept, duplicates are NOT collapsed.
+_awg_conf_pairs() {
+    awk '
+        BEGIN { sec = "none" }
+        { gsub(/\r/, ""); sub(/#.*/, "") }
+        /^[[:space:]]*\[/ {
+            h = tolower($0); gsub(/[[:space:]]/, "", h)
+            sec = (h == "[interface]") ? "interface" : "other"
+            next
+        }
+        /=/ {
+            k = $0; sub(/=.*/, "", k); gsub(/[[:space:]]/, "", k)
+            v = $0; sub(/^[^=]*=/, "", v); gsub(/[[:space:]]/, "", v)
+            if (k != "") print sec "\t" tolower(k) "\t" v
+        }
+    ' "$1"
+}
+
 # awg_cps_refuse_unsafe : check AWG_I1..AWG_I5 of the current environment.
 # 0 - all safe; 1 - not, the reasons are already logged.
 # One refusal text for load_awg_params and render_server_config; the validator
@@ -3808,22 +3871,119 @@ validate_awg_config() {
         ok=0
     fi
 
+    # Header protection key and content padding. The key rules are switched on
+    # by ITS PRESENCE in the file, not by the generation marker: restore checks
+    # the restored files, the kernel module and amneziawg-go turn header
+    # protection on when a key is present, and the vendor client tells the
+    # generation from such markers in the config. The parse is separate and
+    # mirrors amneziawg-tools (section and key case-insensitive), otherwise a
+    # lowercase `s4 = 11` under `[interface]` would slip past the lower bound.
+    # The checks above look at keys case-sensitively across the whole file and
+    # are left as they were. Boundary: the check reads the file only and does
+    # not see a key left in a live interface.
+    local _pairs _sec _k _v _cpa_why _hpk=0 _hpk_count=0 _hpk_val=""
+    local -A _if_last=()
+    if ! _pairs=$(_awg_conf_pairs "$SERVER_CONF_FILE"); then
+        # Without the parse every rule below would silently switch off, including
+        # the ContentPaddingAddition cap, which the kernel module does not catch.
+        log_error "Could not parse $SERVER_CONF_FILE: the header protection key and ContentPaddingAddition were not checked"
+        ok=0
+    fi
+    while IFS=$'\t' read -r _sec _k _v; do
+        [[ -n "$_k" ]] || continue
+        case "$_k" in
+            headerprotectionkey)
+                if [[ "$_sec" != "interface" ]]; then
+                    log_error "HeaderProtectionKey is set outside the [Interface] section"
+                    ok=0
+                    continue
+                fi
+                _hpk_count=$((_hpk_count + 1))
+                _hpk_val="$_v"
+                ;;
+            contentpaddingaddition)
+                # Every line, not the last one. The tools apply the last one, but an
+                # out-of-range line is a sign of a manual edit, and refusing is safer
+                # than relying on line order.
+                if ! _cpa_why=$(awg_cpa_check_safe "$_v"); then
+                    log_error "Parameter 'ContentPaddingAddition' is unsafe: ${_cpa_why}"
+                    ok=0
+                fi
+                ;;
+        esac
+        [[ "$_sec" == "interface" ]] && _if_last[$_k]="$_v"
+    done <<< "$_pairs"
+
+    if [[ "$_hpk_count" -ge 1 ]]; then
+        _hpk=1
+        if [[ "$_hpk_count" -gt 1 ]]; then
+            log_error "HeaderProtectionKey is set ${_hpk_count} times in [Interface]: only the last one takes effect, keep a single key"
+            ok=0
+        # As key_from_base64 in the tools: 44 characters, '=' at the end, the last
+        # significant character carries zero low bits. The value is not printed.
+        elif ! [[ "$_hpk_val" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]]; then
+            log_error "HeaderProtectionKey does not look like a key: 32 bytes in base64, 44 characters, are expected"
+            ok=0
+        fi
+        # With the key the first 12 bytes of the S padding serve as the nonce, and
+        # both the kernel module (netlink.c) and amneziawg-go (uapi.go) reject S
+        # below 12. The last value in [Interface] is taken: the final structure
+        # applies it.
+        local _sn _sv
+        for _sn in s1 s2 s3 s4; do
+            _sv="${_if_last[$_sn]:-}"
+            if ! [[ "$_sv" =~ ^[0-9]{1,5}$ ]]; then
+                log_error "${_sn^^} is missing from [Interface] or not a number, and with HeaderProtectionKey it must be at least 12"
+                ok=0
+            elif (( 10#$_sv < 12 )); then
+                log_error "${_sn^^}=$_sv is below 12: with HeaderProtectionKey the first 12 bytes of the S padding serve as the nonce, and both the kernel module and amneziawg-go reject such a config"
+                ok=0
+            fi
+        done
+    fi
+
     local _h_ranges=()
     for param in "${range_params[@]}"; do
-        val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+        # With the key H comes from the same parse as S. Without the key our profile
+        # requires ranges (protection against a fingerprint by H); with the key the
+        # header is closed and a single number reveals nothing, so it is allowed.
+        # The protocol accepts a single number either way. Without the key the path
+        # is unchanged.
+        if [[ "$_hpk" -eq 1 ]]; then
+            val="${_if_last[${param,,}]:-}"
+        else
+            val=$(sed -n "s/^[[:space:]]*${param}[[:space:]]*=[[:space:]]*//p" "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
+        fi
         if [[ -z "$val" ]]; then
             log_error "Parameter '$param' not found in server config"
             ok=0
+        elif [[ "$_hpk" -eq 1 && "$val" =~ ^[0-9]+$ ]]; then
+            # H numbers are read in base 10, as the tools do (strtoul, base 10):
+            # in shell arithmetic 010 would be octal 8, and 08 an error after
+            # which the pair is silently not compared. The length is checked
+            # BEFORE arithmetic.
+            if (( ${#val} > 10 )) || (( 10#$val > 4294967295 )); then
+                log_error "Parameter '$param': value exceeds 4294967295"
+                ok=0
+            else
+                _h_ranges+=("$((10#$val)) $((10#$val)) $param")
+            fi
         elif ! [[ "$val" =~ ^[0-9]+-[0-9]+$ ]]; then
             log_error "Parameter '$param' has invalid value: '$val' (expected MIN-MAX format)"
             ok=0
         else
             local range_lo="${val%-*}" range_hi="${val#*-}"
-            if [[ "$range_lo" -ge "$range_hi" ]]; then
+            # Bounds in base 10 too, with the length checked before arithmetic.
+            # Without the key the range is strictly increasing, as before; with the
+            # key N-N is also fine, it is the same scalar.
+            if (( ${#range_lo} > 10 || ${#range_hi} > 10 )) || (( 10#$range_lo > 4294967295 || 10#$range_hi > 4294967295 )); then
+                log_error "Parameter '$param': a range bound exceeds 4294967295"
+                ok=0
+            elif (( 10#$range_lo > 10#$range_hi )) || [[ "$_hpk" -ne 1 && $((10#$range_lo)) -eq $((10#$range_hi)) ]]; then
                 log_error "Parameter '$param': lower bound ($range_lo) >= upper bound ($range_hi)"
                 ok=0
             else
-                _h_ranges+=("$range_lo $range_hi $param")
+                _h_ranges+=("$((10#$range_lo)) $((10#$range_hi)) $param")
             fi
         fi
     done
