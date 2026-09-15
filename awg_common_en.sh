@@ -1402,6 +1402,7 @@ warn_awg_init_drift() {
 # generate_keypair <name>
 # Result: keys/<name>.private, keys/<name>.public
 generate_keypair() {
+    case $- in *x*) _awg_xtrace_guard generate_keypair "$@"; return ;; esac
     local name="$1"
     if [[ -z "$name" ]]; then
         log_error "generate_keypair: name not specified"
@@ -1448,6 +1449,7 @@ generate_keypair() {
 # Generate server keys
 # Result: server_private.key, server_public.key in AWG_DIR
 generate_server_keys() {
+    case $- in *x*) _awg_xtrace_guard generate_server_keys; return ;; esac
     local privkey pubkey
     privkey=$(awg genkey) || {
         log_error "Failed to generate server private key"
@@ -1475,6 +1477,7 @@ generate_server_keys() {
 # server pubkey from install step 6 does not exist). Returns 0 if the
 # key is already there or has been reconstructed, 1 otherwise.
 _ensure_server_public_key() {
+    case $- in *x*) _awg_xtrace_guard _ensure_server_public_key; return ;; esac
     [[ -f "$AWG_DIR/server_public.key" ]] && return 0
 
     [[ -f "$SERVER_CONF_FILE" ]] || {
@@ -1544,6 +1547,23 @@ awg_hpk_path() {
 # arguments are traced BEFORE tracing goes off, so pass only non-secret ones; the
 # body does not exit or die, only return, or tracing stays off; the body does not
 # print the secret to stdout for a caller's $( ).
+# Functions that hold keys themselves (key generation, server config rendering,
+# client creation and regeneration, add_peer_to_server, vpn://, apply_config
+# and the manage functions that read keys or the service status) start with a
+# self-guard line:
+#     case $- in *x*) _awg_xtrace_guard <own name> "$@"; return ;; esac
+# (without "$@" in a function that takes no arguments).
+# Under tracing the function calls itself once more with tracing off, so the
+# body runs once; the function name and FUNCNAME[1] of nested calls are kept.
+# A function with a secret argument cannot do this: the self-guard line prints
+# its arguments. Exception to the no-die rule: modify_client ends the process
+# through die on some refusals; tracing is not restored there, but the process
+# exits anyway.
+# The body runs under `||` (under tracing for functions with the self-guard
+# line, always for wrappers of the form `_awg_xtrace_guard _..._body`), so
+# set -e and an ERR trap do not apply inside it. The entry points that load
+# this library turn neither on, and the installer calls these functions under
+# `||`; if set -e is ever added, revisit this.
 _awg_xtrace_guard() {
     local _xt=0 _rc=0
     case $- in *x*) _xt=1; set +x ;; esac
@@ -1825,6 +1845,7 @@ _derive_ipv6_server_addr() {
 # peer-less file (losing all peers on --force reinstall).
 # shellcheck disable=SC2154  # AWG_* vars loaded via load_awg_params -> source
 render_server_config() {
+    case $- in *x*) _awg_xtrace_guard render_server_config "$@"; return ;; esac
     local peers_source="${1:-}"
     load_awg_params || return 1
 
@@ -2891,6 +2912,7 @@ awg_record_device_params() {
 # AWG_APPLY_MODE=syncconf|restart: apply method (config or --apply-mode CLI)
 # flock on .awg_apply.lock: prevents concurrent apply calls
 apply_config() {
+    case $- in *x*) _awg_xtrace_guard apply_config; return ;; esac
     # Skip apply (AWG_SKIP_APPLY=1 manage add/remove ...)
     if [[ "${AWG_SKIP_APPLY:-0}" == "1" ]]; then
         log_debug "apply_config skipped (AWG_SKIP_APPLY=1)."
@@ -3123,6 +3145,7 @@ get_next_client_ipv6() {
 # If non-empty: AllowedIPs = <ipv4>/32, <ipv6>/128
 # If empty (legacy): AllowedIPs = <ipv4>/32
 add_peer_to_server() {
+    case $- in *x*) _awg_xtrace_guard add_peer_to_server "$@"; return ;; esac
     local name="$1"
     local pubkey="$2"
     local client_ip="$3"
@@ -3333,6 +3356,7 @@ generate_qr() {
 # Generate vpn:// URI for import into Amnezia Client
 # generate_vpn_uri <name>
 generate_vpn_uri() {
+    case $- in *x*) _awg_xtrace_guard generate_vpn_uri "$@"; return ;; esac
     local name="$1"
     local conf_file="$AWG_DIR/${name}.conf"
     local uri_file="$AWG_DIR/${name}.vpnuri"
@@ -3629,6 +3653,7 @@ _remove_client_files() {
 #     `manage add --allowed-ips=...`; calling directly with the env is
 #     equally valid (a library contract, not just a CLI one).
 generate_client() {
+    case $- in *x*) _awg_xtrace_guard generate_client "$@"; return ;; esac
     local name="$1"
     local endpoint="${2:-}"
 
@@ -3813,6 +3838,7 @@ generate_client() {
 # it. Including QR/URI in the lock is more expensive (holding the lock
 # for several seconds) with no server-state integrity gain.
 regenerate_client() {
+    case $- in *x*) _awg_xtrace_guard regenerate_client "$@"; return ;; esac
     local name="$1"
     local endpoint="${2:-}"
 
