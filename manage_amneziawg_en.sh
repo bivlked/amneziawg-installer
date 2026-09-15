@@ -1294,7 +1294,7 @@ show_awg_status() {
     if [[ "${_st[0]}" -eq 124 ]]; then
         _awg_err="awg show did not answer within 10 seconds - looks like a looping interface dump, check the size of I1-I5."
     elif [[ "${_st[0]}" -ne 0 ]]; then
-        _awg_err="awg show failed."
+        _awg_err="awg show failed (code ${_st[0]})."
     fi
     # The filter first: when it dies first, awg show gets SIGPIPE (141), and a filter
     # failure would look like an awg show failure. Any other awg show status (a
@@ -1460,7 +1460,8 @@ check_server() {
         fi
         ok=0
     # An output hidden by a failed filter is not judged: a warning about obfuscation
-    # parameters would be false. A failed awg show is named by its code above.
+    # parameters would be false. In that case a failed awg show is already named above:
+    # a timeout by its message, any other status by its code.
     elif (( _filter_ok )); then
         while IFS= read -r _l; do log "  $_l"; done <<< "$_awg_out"
         if grep -q "jc:" <<< "$_awg_out"; then

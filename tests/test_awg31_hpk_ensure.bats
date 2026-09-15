@@ -325,6 +325,7 @@ s_write_value_no_link_into_dir() {
     run lib_run "$1" "_hs_val='$KEY_A'; _awg_hpk_write_value \"\$AWG_DIR/server_hpk.key\"; echo \"rc=\$?\""
     [[ "$output" == *"rc=1"* ]] || { echo "the writer did not refuse a directory at the key path ($1): $output"; return 1; }
     [ -z "$(ls -A "$d/server_hpk.key")" ] || { echo "the key was linked into the directory ($1): $(ls -A "$d/server_hpk.key")"; return 1; }
+    [ -z "$(find "$d" -maxdepth 1 -name 'tmp.*')" ] || { echo "the refused writer left its temporary key file ($1): $(find "$d" -maxdepth 1 -name 'tmp.*')"; return 1; }
 }
 @test "ensure: the key writer does not link into a directory that took the key path, both twins" {
     both s_write_value_no_link_into_dir

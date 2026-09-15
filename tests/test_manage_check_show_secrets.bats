@@ -50,13 +50,19 @@ EOF
         timeout)
             printf '#!/usr/bin/env bash\nexit 124\n' > "$bin/awg"
             ;;
+        failempty)
+            printf '#!/usr/bin/env bash\nexit 1\n' > "$bin/awg"
+            ;;
         slow)
+            # Writes after a pause and leaves a marker only if it survived the writes:
+            # the show test needs awg show killed by SIGPIPE, and checks that it was.
             cat > "$bin/awg" <<EOF
 #!/usr/bin/env bash
 sleep 0.3
 echo "interface: awg0"
 echo "  header protection key: ${SECRET}"
 echo "  jc: 6"
+touch "${BATS_TEST_TMPDIR}/slow-finished"
 exit 0
 EOF
             ;;
@@ -163,6 +169,29 @@ c_filter_and_awg_fail() {
     both c_filter_and_awg_fail
 }
 
+c_filter_and_timeout() {
+    local want="The secrets filter failed" timed="did not answer within 10 seconds"
+    ru "$1" && { want="Фильтр секретов не отработал"; timed="не ответил за 10 секунд"; }
+    BROKEN_MASK=1 run _run_check "$1" timeout
+    [ "$status" -eq 1 ] || { echo "check passed with a failed filter and a timeout ($1): status $status"; return 1; }
+    [[ "$output" == *"$want"* ]] || { echo "filter failure not named ($1): $output"; return 1; }
+    [[ "$output" == *"$timed"* ]] || { echo "a timeout next to a failed filter is not named as a timeout ($1): $output"; return 1; }
+}
+@test "check: a timeout is still named as a timeout when the secrets filter failed too, both twins" {
+    both c_filter_and_timeout
+}
+
+c_fail_empty() {
+    local want="awg show awg0 failed (code 1)"
+    ru "$1" && want="awg show awg0 завершился с ошибкой (код 1)"
+    run _run_check "$1" failempty
+    [ "$status" -eq 1 ] || { echo "a silent failing awg show did not fail check ($1): status $status"; return 1; }
+    [[ "$output" == *"$want"* ]] || { echo "a silent failure is not named by its code ($1), expected '$want': $output"; return 1; }
+}
+@test "check: an awg show that fails without output is named by its code, both twins" {
+    both c_fail_empty
+}
+
 # _run_show <manage script> <awg mode> : show_awg_status lifted from the manage script,
 # the library sourced for the masking filter, the same stubs as check.
 _run_show() {
@@ -220,10 +249,15 @@ s_timeout() {
 s_filter_fails() {
     local want="The secrets filter failed" wrong="awg show failed"
     ru "$1" && { want="Фильтр секретов не отработал"; wrong="Ошибка awg show"; }
+    rm -f "$BATS_TEST_TMPDIR/slow-finished"
     BROKEN_MASK=1 run _run_show "$1" slow
+    # Without SIGPIPE (ignored by a parent) awg show exits 0, and the 141 case this test
+    # exists for would not be exercised: fail loudly instead of passing vacuously.
+    [ ! -e "$BATS_TEST_TMPDIR/slow-finished" ] || { echo "precondition: awg show was not killed by SIGPIPE ($1)"; return 1; }
     [ "$status" -eq 1 ] || { echo "show passed with a failed secrets filter ($1): status $status $output"; return 1; }
     [[ "$output" == *"$want"* ]] || { echo "filter failure not named ($1), expected '$want': $output"; return 1; }
     [[ "$output" != *"$wrong"* ]] || { echo "a filter failure was reported as an awg show failure ($1): $output"; return 1; }
+    # The broken filter here prints nothing, so this only guards a future change of the stub.
     [[ "$output" != *"$SECRET"* ]] || { echo "the key leaked when the filter failed ($1): $output"; return 1; }
 }
 @test "show: a failed secrets filter is named as such, not as an awg show failure, both twins" {
@@ -240,6 +274,17 @@ s_filter_and_timeout() {
 }
 @test "show: a timeout is still named when the secrets filter failed too, both twins" {
     both s_filter_and_timeout
+}
+
+s_fail_empty() {
+    local want="awg show failed (code 1)."
+    ru "$1" && want="Ошибка awg show (код 1)."
+    run _run_show "$1" failempty
+    [ "$status" -eq 1 ] || { echo "a silent failing awg show did not fail show ($1): status $status"; return 1; }
+    [[ "$output" == *"$want"* ]] || { echo "show does not name the awg show status ($1), expected '$want': $output"; return 1; }
+}
+@test "show: a failed awg show is named by its code, like in check, both twins" {
+    both s_fail_empty
 }
 
 @test "show: the show command goes through show_awg_status in both manage twins" {
