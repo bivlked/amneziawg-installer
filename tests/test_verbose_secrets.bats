@@ -9,7 +9,7 @@
 #
 # Every case runs one library function in a fresh shell for both twins, first
 # without tracing (the reference: status and files), then under `exec 2>&1; set -x`,
-# and asserts: no secret value in the output, xtrace still on afterwards, the same
+# and asserts: no secret value in what tracing added to the output, xtrace still on afterwards, the same
 # status, the same files written and the same external calls. Stub binaries return fixed secret-shaped
 # values, so a leak is a plain substring match.
 

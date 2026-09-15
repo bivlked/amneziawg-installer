@@ -9,7 +9,7 @@
 # private keys, preshared keys or the header protection key into the trace.
 #
 # Same contract as tests/test_verbose_secrets.bats: a reference run without
-# tracing, a run under `exec 2>&1; set -x`, then no secret in the traced output,
+# tracing, a run under `exec 2>&1; set -x`, then no secret in what tracing added,
 # xtrace restored, the same status. Both manage twins.
 
 SRV_PRIV="SRVPRIVSECRETAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -170,7 +170,7 @@ m_diag() { check_manage "$1" diag 'diagnose_server'; }
 
 m_modify() {
     check_manage "$1" modify 'modify_client my_phone DNS 8.8.8.8' || return 1
-    [[ "$CHECK_REF_OUT" == *"RC=0"* ]] || { echo "modify failed without tracing ($1): $CHECK_REF_OUT"; return 1; }
+    [[ "$CHECK_REF_OUT" == *"RC=0"* ]] || { echo "modify failed in the untraced run ($1): $CHECK_REF_OUT"; return 1; }
     grep -q '^DNS = 8.8.8.8' "$CHECK_REF_DIR/my_phone.conf" || { echo "the untraced modify did not write the new DNS ($1)"; return 1; }
 }
 @test "verbose manage: modify keeps the client key and preshared key out of the trace, both twins" {
@@ -188,10 +188,10 @@ m_service_status() {
 @test "verbose manage: restore and restart print the service status through the guarded helper, both twins" {
     local f seen=0 body
     for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
-        # Any capture of systemctl status into any variable, not one variable name.
-        [ "$(grep -cE '=\$\(systemctl status' "$BATS_TEST_DIRNAME/../$f")" -eq 1 ] \
+        # Any command or process substitution of systemctl status, whatever consumes it.
+        [ "$(grep -cE '[$<]\(systemctl status' "$BATS_TEST_DIRNAME/../$f")" -eq 1 ] \
             || { echo "$f captures systemctl status into a variable outside the helper"; return 1; }
-        awk '/^_log_service_status\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$f" | grep -qE '=\$\(systemctl status' \
+        awk '/^_log_service_status\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$f" | grep -qE '[$<]\(systemctl status' \
             || { echo "$f: the only capture is not inside _log_service_status"; return 1; }
         body=$(awk '/^restore_backup\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$f")
         grep -q '_log_service_status' <<< "$body" || { echo "$f: restore_backup does not use _log_service_status"; return 1; }
