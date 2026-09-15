@@ -1270,20 +1270,26 @@ modify_client() {
 show_awg_status() {
     log "Статус AmneziaWG 2.0..."
     local -a _st
+    local _awg_err=""
     timeout 10 awg show 2>&1 | _mask_report_secrets
     _st=("${PIPESTATUS[@]}")
+    if [[ "${_st[0]}" -eq 124 ]]; then
+        _awg_err="awg show не ответил за 10 секунд - похоже на зацикленный дамп интерфейса, проверьте размер I1-I5."
+    elif [[ "${_st[0]}" -ne 0 ]]; then
+        _awg_err="Ошибка awg show."
+    fi
     # Сначала фильтр: если он упал первым, awg show получает SIGPIPE (141), и ошибка
-    # фильтра выглядела бы ошибкой awg show.
+    # фильтра выглядела бы ошибкой awg show. Любой другой код awg show (например,
+    # таймаут) называется второй строкой.
     if [[ "${_st[1]:-1}" -ne 0 ]]; then
         log_error "Фильтр секретов не отработал: вывод awg show показан не полностью."
+        if [[ -n "$_awg_err" && "${_st[0]}" -ne 141 ]]; then
+            log_error "$_awg_err"
+        fi
         return 1
     fi
-    if [[ "${_st[0]}" -ne 0 ]]; then
-        if [[ "${_st[0]}" -eq 124 ]]; then
-            log_error "awg show не ответил за 10 секунд - похоже на зацикленный дамп интерфейса, проверьте размер I1-I5."
-        else
-            log_error "Ошибка awg show."
-        fi
+    if [[ -n "$_awg_err" ]]; then
+        log_error "$_awg_err"
         return 1
     fi
     return 0
@@ -1411,7 +1417,7 @@ check_server() {
     # Раньше awg show вызывался через process substitution без проверки exit code,
     # из-за чего check мог отрапортовать "Состояние OK" даже когда awg упал.
     # Теперь захватываем вывод и проверяем exit code (audit).
-    local _awg_out _check_rc=0
+    local _awg_out _check_rc=0 _filter_ok=1
     # timeout: без него переросшие I1-I5 подвешивают check намертво
     # (amneziawg-linux-kernel-module#228). Отказ здесь и так громкий, границы
     # по времени не хватало.
@@ -1422,15 +1428,22 @@ check_server() {
     _awg_out=$(timeout 10 awg show awg0 2>&1) || _check_rc=$?
     if ! _awg_out=$(printf '%s\n' "$_awg_out" | _mask_report_secrets); then
         _awg_out=""
+        _filter_ok=0
         log_error " - Фильтр секретов не отработал: вывод awg show скрыт"
         ok=0
     fi
     if [[ "$_check_rc" -ne 0 ]]; then
         [[ "$_check_rc" -eq 124 ]] && _awg_out="awg show не ответил за 10 секунд - похоже на зацикленный дамп интерфейса, проверьте размер I1-I5"
-        log_error " - awg show awg0 завершился с ошибкой:"
-        while IFS= read -r _l; do log_error "  $_l"; done <<< "$_awg_out"
+        if [[ -n "$_awg_out" ]]; then
+            log_error " - awg show awg0 завершился с ошибкой:"
+            while IFS= read -r _l; do log_error "  $_l"; done <<< "$_awg_out"
+        else
+            log_error " - awg show awg0 завершился с ошибкой (код $_check_rc)"
+        fi
         ok=0
-    else
+    # Вывод, скрытый отказавшим фильтром, не оценивается: предупреждение про параметры
+    # обфускации было бы ложным. Код упавшего awg show в этом случае назван выше.
+    elif (( _filter_ok )); then
         while IFS= read -r _l; do log "  $_l"; done <<< "$_awg_out"
         if grep -q "jc:" <<< "$_awg_out"; then
             log " - AWG 2.0 параметры обфускации: активны"

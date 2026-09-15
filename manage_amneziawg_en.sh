@@ -1288,20 +1288,26 @@ modify_client() {
 show_awg_status() {
     log "AmneziaWG 2.0 status..."
     local -a _st
+    local _awg_err=""
     timeout 10 awg show 2>&1 | _mask_report_secrets
     _st=("${PIPESTATUS[@]}")
+    if [[ "${_st[0]}" -eq 124 ]]; then
+        _awg_err="awg show did not answer within 10 seconds - looks like a looping interface dump, check the size of I1-I5."
+    elif [[ "${_st[0]}" -ne 0 ]]; then
+        _awg_err="awg show failed."
+    fi
     # The filter first: when it dies first, awg show gets SIGPIPE (141), and a filter
-    # failure would look like an awg show failure.
+    # failure would look like an awg show failure. Any other awg show status (a
+    # timeout, say) is named on a second line.
     if [[ "${_st[1]:-1}" -ne 0 ]]; then
         log_error "The secrets filter failed: the awg show output was not shown in full."
+        if [[ -n "$_awg_err" && "${_st[0]}" -ne 141 ]]; then
+            log_error "$_awg_err"
+        fi
         return 1
     fi
-    if [[ "${_st[0]}" -ne 0 ]]; then
-        if [[ "${_st[0]}" -eq 124 ]]; then
-            log_error "awg show did not answer within 10 seconds - looks like a looping interface dump, check the size of I1-I5."
-        else
-            log_error "awg show failed."
-        fi
+    if [[ -n "$_awg_err" ]]; then
+        log_error "$_awg_err"
         return 1
     fi
     return 0
@@ -1429,7 +1435,7 @@ check_server() {
     # Previously awg show was called via process substitution without an exit
     # code check, so check could report "Status OK" even when awg crashed.
     # Now we capture the output and check the exit code (audit).
-    local _awg_out _check_rc=0
+    local _awg_out _check_rc=0 _filter_ok=1
     # timeout: without it oversized I1-I5 hang check outright
     # (amneziawg-linux-kernel-module#228). The failure here was already loud;
     # what was missing is a bound on time.
@@ -1440,15 +1446,22 @@ check_server() {
     _awg_out=$(timeout 10 awg show awg0 2>&1) || _check_rc=$?
     if ! _awg_out=$(printf '%s\n' "$_awg_out" | _mask_report_secrets); then
         _awg_out=""
+        _filter_ok=0
         log_error " - The secrets filter failed: the awg show output is hidden"
         ok=0
     fi
     if [[ "$_check_rc" -ne 0 ]]; then
         [[ "$_check_rc" -eq 124 ]] && _awg_out="awg show did not answer within 10 seconds - looks like a looping interface dump, check the size of I1-I5"
-        log_error " - awg show awg0 failed:"
-        while IFS= read -r _l; do log_error "  $_l"; done <<< "$_awg_out"
+        if [[ -n "$_awg_out" ]]; then
+            log_error " - awg show awg0 failed:"
+            while IFS= read -r _l; do log_error "  $_l"; done <<< "$_awg_out"
+        else
+            log_error " - awg show awg0 failed (code $_check_rc)"
+        fi
         ok=0
-    else
+    # An output hidden by a failed filter is not judged: a warning about obfuscation
+    # parameters would be false. A failed awg show is named by its code above.
+    elif (( _filter_ok )); then
         while IFS= read -r _l; do log "  $_l"; done <<< "$_awg_out"
         if grep -q "jc:" <<< "$_awg_out"; then
             log " - AWG 2.0 obfuscation parameters: active"

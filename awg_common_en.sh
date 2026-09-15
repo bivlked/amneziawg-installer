@@ -1574,8 +1574,9 @@ _awg_hpk_file_valid() {
 # through variables or argv. An existing file is left alone. The final name appears
 # through ln, which refuses when the file already exists: no window in which
 # someone else's key could be overwritten.
-# Refuses whenever a server config exists: a new key appears only on a first install,
-# before the config is written. Production code calls this through awg_hpk_ensure.
+# When no key file exists but a server config does, refuses: a new key appears only
+# on a first install, before the config is written. Production code does not call
+# this wrapper: awg_hpk_ensure calls _awg_generate_hpk_body inside its trace guard.
 awg_generate_hpk() {
     _awg_xtrace_guard _awg_generate_hpk_body
 }

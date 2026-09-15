@@ -285,7 +285,6 @@ s_empty_awg_dir() {
     run lib_run "$1" 'AWG_DIR=""; awg_hpk_ensure manage'
     [ "$status" -eq 1 ] || { echo "ensure with an empty AWG_DIR did not refuse ($1): $output"; return 1; }
     [[ "$output" == *"$want"* ]] || { echo "wrong reason ($1), expected '$want': $output"; return 1; }
-    [ ! -e /server_hpk.key ] || { echo "a key path at the filesystem root exists"; return 1; }
     run lib_run "$1" 'AWG_DIR=""; awg_generate_hpk'
     [ "$status" -eq 1 ] || { echo "generation with an empty AWG_DIR did not refuse ($1): $output"; return 1; }
     [[ "$output" == *"$want"* ]] || { echo "wrong generation reason ($1), expected '$want': $output"; return 1; }
@@ -307,10 +306,28 @@ s_marker_broken() {
     expect "$1" manage 1 "Маркер поколения" "generation marker" || return 1
     rm -f "$(dir_of "$1")/awg0.conf"
     conf "$1"; keyfile "$1" "$KEY_A"
+    expect "$1" manage 1 "Маркер поколения" "generation marker" || return 1
+    # A dangling link at the key path counts as a key file too.
+    rm -f "$(dir_of "$1")/server_hpk.key"; ln -s "$(dir_of "$1")/missing.key" "$(dir_of "$1")/server_hpk.key"
     expect "$1" manage 1 "Маркер поколения" "generation marker"
 }
 @test "ensure: a broken generation marker warns without a key and refuses with one, both twins" {
     both s_marker_broken
+}
+
+s_write_value_no_link_into_dir() {
+    # The state check runs before the write, so a directory at the key path is only
+    # reachable by a race; the writer itself must still refuse to link into it.
+    local d; d=$(dir_of "$1")
+    run lib_run "$1" 'declare -F _awg_hpk_write_value >/dev/null || { echo NO_FUNCTION; exit 7; }'
+    [ "$status" -eq 0 ] || { echo "_awg_hpk_write_value is not defined ($1): $output"; return 1; }
+    mkdir "$d/server_hpk.key"
+    run lib_run "$1" "_hs_val='$KEY_A'; _awg_hpk_write_value \"\$AWG_DIR/server_hpk.key\"; echo \"rc=\$?\""
+    [[ "$output" == *"rc=1"* ]] || { echo "the writer did not refuse a directory at the key path ($1): $output"; return 1; }
+    [ -z "$(ls -A "$d/server_hpk.key")" ] || { echo "the key was linked into the directory ($1): $(ls -A "$d/server_hpk.key")"; return 1; }
+}
+@test "ensure: the key writer does not link into a directory that took the key path, both twins" {
+    both s_write_value_no_link_into_dir
 }
 
 s_generate_refuses_conf_key() {

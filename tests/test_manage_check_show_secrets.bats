@@ -50,6 +50,16 @@ EOF
         timeout)
             printf '#!/usr/bin/env bash\nexit 124\n' > "$bin/awg"
             ;;
+        slow)
+            cat > "$bin/awg" <<EOF
+#!/usr/bin/env bash
+sleep 0.3
+echo "interface: awg0"
+echo "  header protection key: ${SECRET}"
+echo "  jc: 6"
+exit 0
+EOF
+            ;;
     esac
     chmod +x "$bin"/*
 }
@@ -71,7 +81,7 @@ _run_check() {
         log_error() { echo "ERR: $*"; }
         log_debug() { :; }
         source "$1" >/dev/null 2>&1 || true
-        if [[ "${BROKEN_MASK:-0}" == 1 ]]; then _mask_report_secrets() { cat >/dev/null; return 1; }; fi
+        if [[ "${BROKEN_MASK:-0}" == 1 ]]; then _mask_report_secrets() { cat; return 1; }; fi
         safe_load_config() { AWG_PORT=39743; return 0; }
         JSON_OUTPUT=0
         _JSON_EMITTED=0
@@ -133,9 +143,24 @@ c_filter_fails() {
     [ "$status" -eq 1 ] || { echo "check passed with a failed secrets filter ($1): status $status $output"; return 1; }
     [[ "$output" == *"$want"* ]] || { echo "filter failure not named ($1), expected '$want': $output"; return 1; }
     [[ "$output" != *"$SECRET"* ]] || { echo "the key leaked when the filter failed ($1): $output"; return 1; }
+    local noise="obfuscation parameters not detected"
+    ru "$1" && noise="параметры обфускации не обнаружены"
+    [[ "$output" != *"$noise"* ]] || { echo "a hidden output was judged as missing parameters ($1): $output"; return 1; }
 }
 @test "check: a failed secrets filter fails check and shows nothing unfiltered, both twins" {
     both c_filter_fails
+}
+
+c_filter_and_awg_fail() {
+    local want="awg show awg0 failed (code 1)"
+    ru "$1" && want="awg show awg0 завершился с ошибкой (код 1)"
+    BROKEN_MASK=1 run _run_check "$1" fail
+    [ "$status" -eq 1 ] || { echo "check passed with a failed filter and a failed awg show ($1): status $status"; return 1; }
+    [[ "$output" == *"$want"* ]] || { echo "the awg show status is not named when its output is hidden ($1), expected '$want': $output"; return 1; }
+    [[ "$output" != *"$SECRET"* ]] || { echo "the key leaked when both failed ($1): $output"; return 1; }
+}
+@test "check: with its output hidden a failed awg show is still reported by its code, both twins" {
+    both c_filter_and_awg_fail
 }
 
 # _run_show <manage script> <awg mode> : show_awg_status lifted from the manage script,
@@ -195,7 +220,7 @@ s_timeout() {
 s_filter_fails() {
     local want="The secrets filter failed" wrong="awg show failed"
     ru "$1" && { want="Фильтр секретов не отработал"; wrong="Ошибка awg show"; }
-    BROKEN_MASK=1 run _run_show "$1" ok
+    BROKEN_MASK=1 run _run_show "$1" slow
     [ "$status" -eq 1 ] || { echo "show passed with a failed secrets filter ($1): status $status $output"; return 1; }
     [[ "$output" == *"$want"* ]] || { echo "filter failure not named ($1), expected '$want': $output"; return 1; }
     [[ "$output" != *"$wrong"* ]] || { echo "a filter failure was reported as an awg show failure ($1): $output"; return 1; }
@@ -203,6 +228,18 @@ s_filter_fails() {
 }
 @test "show: a failed secrets filter is named as such, not as an awg show failure, both twins" {
     both s_filter_fails
+}
+
+s_filter_and_timeout() {
+    local want="The secrets filter failed" timed="did not answer within 10 seconds"
+    ru "$1" && { want="Фильтр секретов не отработал"; timed="не ответил за 10 секунд"; }
+    BROKEN_MASK=1 run _run_show "$1" timeout
+    [ "$status" -eq 1 ] || { echo "show passed with a failed filter and a timeout ($1): status $status"; return 1; }
+    [[ "$output" == *"$want"* ]] || { echo "filter failure not named ($1): $output"; return 1; }
+    [[ "$output" == *"$timed"* ]] || { echo "a timeout next to a failed filter is not named ($1): $output"; return 1; }
+}
+@test "show: a timeout is still named when the secrets filter failed too, both twins" {
+    both s_filter_and_timeout
 }
 
 @test "show: the show command goes through show_awg_status in both manage twins" {
