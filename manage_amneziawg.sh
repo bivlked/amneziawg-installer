@@ -417,6 +417,11 @@ check_dependencies() {
     # shellcheck source=/dev/null
     source "$COMMON_SCRIPT_PATH" || die "Ошибка загрузки $COMMON_SCRIPT_PATH"
     _check_common_compat
+    # Библиотека того же minor, но старше самозащиты от трассировки: без запасного
+    # варианта list, stats, check и вывод статуса службы падали бы под bash -x с
+    # "command not found". Запасной вариант повторяет библиотечный: без выключения
+    # трассировки строка самозащиты вызывала бы функцию снова и снова.
+    declare -F _awg_xtrace_guard >/dev/null || _awg_xtrace_guard() { local _xt=0 _rc=0; case $- in *x*) _xt=1; set +x ;; esac; "$@" || _rc=$?; if (( _xt )); then set -x; fi; return "$_rc"; }
 
     log "Зависимости OK."
 }

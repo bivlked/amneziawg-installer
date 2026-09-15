@@ -10,7 +10,7 @@
 # Every case runs one library function in a fresh shell for both twins, first
 # without tracing (the reference: status and files), then under `exec 2>&1; set -x`,
 # and asserts: no secret value in the output, xtrace still on afterwards, the same
-# status, and the same files written. Stub binaries return fixed secret-shaped
+# status, the same files written and the same external calls. Stub binaries return fixed secret-shaped
 # values, so a leak is a plain substring match.
 
 SRV_PRIV="SRVPRIVSECRETAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -143,9 +143,11 @@ check_fn() {
     [ "$ref_rc" = "$tr_rc" ] || { echo "$label ($lib): status differs under set -x: $ref_rc vs $tr_rc"; echo "$tr_out" | tail -20; return 1; }
     [[ "$tr_out" == *XTRACE_STILL_ON* ]] || { echo "$label ($lib): xtrace was not restored"; return 1; }
     # Only what tracing added counts: a line printed identically without tracing is the
-    # function's own output, not the trace (unmasked systemctl status is tracked apart).
+    # function's own output, not the trace. Lines are subtracted as a multiset, so a
+    # continuation line of a traced multi-line value still counts even when the
+    # function also prints the same line.
     local tr_only
-    tr_only=$(grep -vxF -f <(printf '%s\n' "$ref_out") <<< "$tr_out" || true)
+    tr_only=$(LC_ALL=C comm -13 <(printf '%s\n' "$ref_out" | LC_ALL=C sort) <(printf '%s\n' "$tr_out" | LC_ALL=C sort))
     for s in "$SRV_PRIV" "$CLI_PRIV" "$PSK_VAL" "$HPK_VAL" "$@"; do
         [ -n "$s" ] || continue
         if [[ "$tr_only" == *"$s"* ]]; then
@@ -171,7 +173,7 @@ both() {
 
 v_server_keys() {
     check_fn "$1" server_keys 'printf "%s\n" "'"$SRV_PRIV"'" > "$AWG_DIR/.next_genkey"' 'generate_server_keys' || return 1
-    [[ "$CHECK_REF_OUT" == *"RC=0"* ]] || { echo "server keys were not generated without tracing ($1): $CHECK_REF_OUT"; return 1; }
+    [[ "$CHECK_REF_OUT" == *"RC=0"* ]] || { echo "server keys were not generated in the untraced run ($1): $CHECK_REF_OUT"; return 1; }
 }
 @test "verbose: generate_server_keys keeps the server private key out of the trace, both twins" {
     both v_server_keys
@@ -179,7 +181,7 @@ v_server_keys() {
 
 v_keypair() {
     check_fn "$1" keypair ':' 'generate_keypair my_phone' || return 1
-    [[ "$CHECK_REF_OUT" == *"RC=0"* ]] || { echo "the keypair was not generated without tracing ($1): $CHECK_REF_OUT"; return 1; }
+    [[ "$CHECK_REF_OUT" == *"RC=0"* ]] || { echo "the keypair was not generated in the untraced run ($1): $CHECK_REF_OUT"; return 1; }
 }
 @test "verbose: generate_keypair keeps the client private key out of the trace, both twins" {
     both v_keypair
@@ -213,14 +215,26 @@ CLIENT_SETUP='_init "$AWG_DIR"; _server_conf "$AWG_DIR"; printf "%s\n" "$SRV_PRI
 client_setup() { printf '%s; SRV_PRIV=%q; PSK_VAL=%q; %s' "$(declare -f _init _server_conf)" "$SRV_PRIV" "$PSK_VAL" "$CLIENT_SETUP"; }
 
 v_generate_client() {
-    check_fn "$1" generate_client "$(client_setup)" 'CLIENT_PSK=auto generate_client my_phone 203.0.113.10' || return 1
-    [[ "$CHECK_REF_OUT" == *"RC=0"* ]] || { echo "the client was not generated without tracing ($1): $CHECK_REF_OUT"; return 1; }
+    check_fn "$1" generate_client "$(client_setup); export CLIENT_PSK=auto" 'generate_client my_phone 203.0.113.10' || return 1
+    [[ "$CHECK_REF_OUT" == *"RC=0"* ]] || { echo "the client was not generated in the untraced run ($1): $CHECK_REF_OUT"; return 1; }
     local uri; uri=$(cat "$CHECK_REF_DIR/my_phone.vpnuri" 2>/dev/null)
     [[ "$uri" == vpn://* ]] || { echo "the reference run wrote no vpn:// link ($1)"; return 1; }
-    check_fn "$1" generate_client "$(client_setup)" 'CLIENT_PSK=auto generate_client my_phone 203.0.113.10' "${uri:6:40}"
+    check_fn "$1" generate_client "$(client_setup); export CLIENT_PSK=auto" 'generate_client my_phone 203.0.113.10' "${uri:6:40}"
 }
 @test "verbose: generate_client keeps the client key, the preshared key and the vpn:// link out of the trace, both twins" {
     both v_generate_client
+}
+
+v_client_exists() {
+    # A refusal after the preshared key was generated: the status must match (1), and the
+    # error path must not print the key either.
+    local setup
+    setup="$(client_setup); export CLIENT_PSK=auto; generate_client my_phone 203.0.113.10 >/dev/null 2>&1; export CLIENT_PSK=auto"
+    check_fn "$1" client_exists "$setup" 'generate_client my_phone 203.0.113.10' || return 1
+    [[ "$CHECK_REF_OUT" == *"RC=1"* ]] || { echo "the existing client was not refused in the untraced run ($1): $CHECK_REF_OUT"; return 1; }
+}
+@test "verbose: generate_client that refuses an existing client keeps the preshared key out and returns the same status, both twins" {
+    both v_client_exists
 }
 
 v_vpn_uri() {
@@ -239,7 +253,7 @@ v_regen() {
     local setup
     setup="$(client_setup); CLIENT_PSK=auto generate_client my_phone 203.0.113.10 >/dev/null 2>&1"
     check_fn "$1" regen "$setup" 'regenerate_client my_phone 203.0.113.10' || return 1
-    [[ "$CHECK_REF_OUT" == *"RC=0"* ]] || { echo "the client was not regenerated without tracing ($1): $CHECK_REF_OUT"; return 1; }
+    [[ "$CHECK_REF_OUT" == *"RC=0"* ]] || { echo "the client was not regenerated in the untraced run ($1): $CHECK_REF_OUT"; return 1; }
 }
 @test "verbose: regenerate_client keeps the client key and the preshared key out of the trace, both twins" {
     both v_regen
@@ -251,7 +265,7 @@ v_regen_server_psk() {
     local setup
     setup="$(client_setup); CLIENT_PSK=auto generate_client my_phone 203.0.113.10 >/dev/null 2>&1; rm -f \"\$AWG_DIR/my_phone.conf\""
     check_fn "$1" regen_server_psk "$setup" 'regenerate_client my_phone 203.0.113.10' || return 1
-    [[ "$CHECK_REF_OUT" == *"RC=0"* ]] || { echo "the client was not regenerated without tracing ($1): $CHECK_REF_OUT"; return 1; }
+    [[ "$CHECK_REF_OUT" == *"RC=0"* ]] || { echo "the client was not regenerated in the untraced run ($1): $CHECK_REF_OUT"; return 1; }
     grep -qF "PresharedKey = $PSK_VAL" "$CHECK_REF_DIR/my_phone.conf" || { echo "the reference regen did not restore the key from the server config ($1)"; return 1; }
 }
 @test "verbose: regenerate_client keeps a preshared key read from the server config out of the trace, both twins" {
@@ -294,7 +308,7 @@ first_line() { awk -v h="$2() {" '$0 == h { getline; print; exit }' "$1"; }
             [ "$line" = "$want" ] || { echo "$f $fn: first line is '$line'"; return 1; }
             seen=$((seen + 1))
         done
-        # Its positional argument is the client private key, so the guard line itself would print it.
+        # Its third positional argument is the client private key, so the guard line itself would print it.
         line=$(first_line "$BATS_TEST_DIRNAME/../$f" render_client_config)
         [[ "$line" != *_awg_xtrace_guard* ]] || { echo "$f: render_client_config must not guard itself: '$line'"; return 1; }
     done

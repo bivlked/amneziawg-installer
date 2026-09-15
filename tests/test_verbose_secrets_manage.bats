@@ -39,7 +39,15 @@ case "\$*" in
 esac
 exit 0
 EOF
-    printf '#!/usr/bin/env bash\n[[ "$1" == status ]] && echo "awg-quick[1]: Line unrecognized: PrivateKey=%s"\nexit 0\n' "$SRV_PRIV" > "$bin/systemctl"
+    cat > "$bin/systemctl" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == status ]]; then
+    echo "awg-quick@awg0.service - AmneziaWG via awg-quick(8) for awg0"
+    echo "  awg-quick[1]: Line unrecognized: PrivateKey=$SRV_PRIV"
+    echo "  Active: failed (Result: exit-code)"
+fi
+exit 0
+EOF
     printf '#!/usr/bin/env bash\necho "5: awg0: <POINTOPOINT,UP> mtu 1280"\necho "    inet 10.9.9.1/24 scope global awg0"\n' > "$bin/ip"
     printf '#!/usr/bin/env bash\necho "UNCONN 0 0 0.0.0.0:39743 0.0.0.0:*"\n' > "$bin/ss"
     printf '#!/usr/bin/env bash\necho 1\n' > "$bin/sysctl"
@@ -83,7 +91,7 @@ mrun() {
         die() { echo "DIE: $*"; exit 1; }
         source "$1" >/dev/null 2>&1 || true
         JSON_OUTPUT=0; _JSON_EMITTED=0; _JSON_ERR=""; VERBOSE_LIST=0; NO_COLOR=1
-        for fn in _json_utf8_sanitize json_escape json_out format_bytes format_remaining escape_sed _log_service_status check_server list_clients stats_clients modify_client; do
+        for fn in _json_utf8_sanitize json_escape json_out format_bytes format_remaining escape_sed _log_service_status check_server list_clients stats_clients modify_client _diagnose_carrier_known _diagnose_carrier_list _diag_line _diag_cps_guard diagnose_server; do
             eval "$(awk "/^${fn}\\(\\) \\{/,/^\\}/" "$2")"
         done
         _check_common_compat() { return 0; }
@@ -115,9 +123,11 @@ check_manage() {
     [ "$ref_rc" = "$tr_rc" ] || { echo "$label ($src): status differs under set -x: $ref_rc vs $tr_rc"; echo "$tr_out" | tail -20; return 1; }
     [[ "$tr_out" == *XTRACE_STILL_ON* ]] || { echo "$label ($src): xtrace was not restored"; return 1; }
     # Only what tracing added counts: a line printed identically without tracing is the
-    # function's own output, not the trace (unmasked systemctl status is tracked apart).
+    # function's own output, not the trace. Lines are subtracted as a multiset, so a
+    # continuation line of a traced multi-line value still counts even when the
+    # function also prints the same line.
     local tr_only
-    tr_only=$(grep -vxF -f <(printf '%s\n' "$ref_out") <<< "$tr_out" || true)
+    tr_only=$(LC_ALL=C comm -13 <(printf '%s\n' "$ref_out" | LC_ALL=C sort) <(printf '%s\n' "$tr_out" | LC_ALL=C sort))
     for s in "$SRV_PRIV" "$CLI_PRIV" "$PSK_VAL" "$HPK_VAL"; do
         if [[ "$tr_only" == *"$s"* ]]; then
             echo "$label ($src): secret '${s:0:12}...' in the trace:"
@@ -126,6 +136,7 @@ check_manage() {
         fi
     done
     CHECK_REF_OUT="$ref_out"
+    CHECK_REF_DIR="$ref"
 }
 
 both() {
@@ -148,6 +159,11 @@ m_stats() { check_manage "$1" stats 'stats_clients'; }
 }
 
 m_check() { check_manage "$1" check 'check_server'; }
+
+m_diag() { check_manage "$1" diag 'diagnose_server'; }
+@test "verbose manage: diagnose keeps the header protection key out of the trace, both twins" {
+    both m_diag
+}
 @test "verbose manage: check keeps the header protection key out of the trace, both twins" {
     both m_check
 }
@@ -155,6 +171,7 @@ m_check() { check_manage "$1" check 'check_server'; }
 m_modify() {
     check_manage "$1" modify 'modify_client my_phone DNS 8.8.8.8' || return 1
     [[ "$CHECK_REF_OUT" == *"RC=0"* ]] || { echo "modify failed without tracing ($1): $CHECK_REF_OUT"; return 1; }
+    grep -q '^DNS = 8.8.8.8' "$CHECK_REF_DIR/my_phone.conf" || { echo "the untraced modify did not write the new DNS ($1)"; return 1; }
 }
 @test "verbose manage: modify keeps the client key and preshared key out of the trace, both twins" {
     both m_modify
@@ -171,14 +188,59 @@ m_service_status() {
 @test "verbose manage: restore and restart print the service status through the guarded helper, both twins" {
     local f seen=0 body
     for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
-        [ "$(grep -c 'status_out=$(systemctl status' "$BATS_TEST_DIRNAME/../$f")" -eq 1 ] \
+        # Any capture of systemctl status into any variable, not one variable name.
+        [ "$(grep -cE '=\$\(systemctl status' "$BATS_TEST_DIRNAME/../$f")" -eq 1 ] \
             || { echo "$f captures systemctl status into a variable outside the helper"; return 1; }
-        awk '/^_log_service_status\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$f" | grep -q 'status_out=$(systemctl status' \
+        awk '/^_log_service_status\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$f" | grep -qE '=\$\(systemctl status' \
             || { echo "$f: the only capture is not inside _log_service_status"; return 1; }
         body=$(awk '/^restore_backup\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$f")
         grep -q '_log_service_status' <<< "$body" || { echo "$f: restore_backup does not use _log_service_status"; return 1; }
         awk '/^    restart\)$/ { p = 1 } p && /;;/ { exit } p' "$BATS_TEST_DIRNAME/../$f" | grep -q '_log_service_status' \
             || { echo "$f: the restart branch does not use _log_service_status"; return 1; }
+        seen=$((seen + 1))
+    done
+    [ "$seen" -eq 2 ]
+}
+
+m_old_library() {
+    # manage next to a library of the same minor that has no _awg_xtrace_guard yet:
+    # the fallback from check_dependencies keeps list working under bash -x.
+    local src="$1" common old d out
+    common="${src/manage_amneziawg/awg_common}"
+    d="$BATS_TEST_TMPDIR/vm-old-$(basename "$src" .sh)"
+    rm -rf "$d"; _files "$d"; _stubs "$d/bin"
+    old="$d/old_common.sh"
+    awk '/^_awg_xtrace_guard\(\) \{/ { skip = 1 } !skip { print } skip && /^\}/ { skip = 0 }' "$common" > "$old"
+    ! grep -q '^_awg_xtrace_guard() {' "$old" || { echo "the old library copy still defines the guard"; return 1; }
+    out=$(PATH="$d/bin:$PATH" AWG_DIR="$d" timeout 60 bash -c '
+        export CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init" SERVER_CONF_FILE="$AWG_DIR/awg0.conf"
+        export KEYS_DIR="$AWG_DIR/keys" EXPIRY_DIR="$AWG_DIR/expiry"
+        log() { :; }; log_warn() { :; }; log_error() { :; }; log_debug() { :; }
+        source "$1" >/dev/null 2>&1 || true
+        JSON_OUTPUT=0; _JSON_EMITTED=0; VERBOSE_LIST=0; NO_COLOR=1
+        for fn in _json_utf8_sanitize json_escape json_out format_remaining list_clients; do
+            eval "$(awk "/^${fn}\\(\\) \\{/,/^\\}/" "$2")"
+        done
+        eval "$(grep -m1 "declare -F _awg_xtrace_guard" "$2")"
+        exec 2>&1
+        set -x
+        list_clients; rc=$?
+        set +x
+        echo "RC=$rc"
+    ' _ "$old" "$src")
+    [[ "$out" != *"command not found"* ]] || { echo "manage under bash -x broke next to an old library ($src): $(grep 'command not found' <<< "$out" | head -3)"; return 1; }
+    [[ "$out" == *"RC=0"* ]] || { echo "list failed under bash -x next to an old library ($src): $(tail -5 <<< "$out")"; return 1; }
+}
+@test "verbose manage: next to a same-minor library without the guard, list still works under bash -x, both twins" {
+    both m_old_library
+}
+
+@test "verbose manage: check_dependencies defines the guard fallback right after the compatibility check, both twins" {
+    local f body seen=0
+    for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
+        body=$(awk '/^check_dependencies\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$f")
+        grep -A6 '^    _check_common_compat$' <<< "$body" | grep -qxF '    declare -F _awg_xtrace_guard >/dev/null || _awg_xtrace_guard() { local _xt=0 _rc=0; case $- in *x*) _xt=1; set +x ;; esac; "$@" || _rc=$?; if (( _xt )); then set -x; fi; return "$_rc"; }' \
+            || { echo "$f: no guard fallback after _check_common_compat"; return 1; }
         seen=$((seen + 1))
     done
     [ "$seen" -eq 2 ]

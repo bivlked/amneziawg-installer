@@ -1547,12 +1547,13 @@ awg_hpk_path() {
 # arguments are traced BEFORE tracing goes off, so pass only non-secret ones; the
 # body does not exit or die, only return, or tracing stays off; the body does not
 # print the secret to stdout for a caller's $( ).
-# Functions that hold keys themselves (key generation, rendering, vpn://, apply,
+# Functions that hold keys themselves (key generation, server config rendering,
+# vpn://, apply,
 # manage commands) start with a self-guard line:
 #     case $- in *x*) _awg_xtrace_guard <own name> "$@"; return ;; esac
 # (without "$@" in a function that takes no arguments).
-# Under tracing the body runs again with tracing off; the function name and the
-# FUNCNAME of nested calls are kept. A function with a secret argument cannot do
+# Under tracing the function calls itself once more with tracing off, so the body
+# runs once; the function name and FUNCNAME[1] of nested calls are kept. A function with a secret argument cannot do
 # this: the self-guard line prints its arguments. Exception to the no-die rule:
 # modify_client ends the process through die on some refusals; tracing is not
 # restored there, but the process exits anyway.
