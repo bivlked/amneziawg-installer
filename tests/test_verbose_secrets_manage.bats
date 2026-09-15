@@ -193,10 +193,11 @@ STATUS_SECRET="SVCSTATUSSECRETAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 # The whole manage script under `bash -x`: systemctl start and restart fail,
 # and systemctl status and journalctl print a secret-shaped line.
 # BASH_XTRACEFD sends the trace to its own file, so no reference run is
-# needed. However that output is read (a substitution, a pipe, a temp file, a
-# wrapper), its text must reach the output and must not reach the trace file,
-# and the trace must reach the failing start or restart, so an empty trace
-# does not pass. The keys in the test config must not reach the trace file either.
+# needed. No matter how that output is read (a substitution, a pipe, a temp
+# file, a wrapper), its text must reach the output and must not reach the trace
+# file, and the trace must reach the failing start or restart, so an empty trace
+# does not pass. The keys in the test config must not reach the trace file
+# either.
 m_svc_fail() {
     local src="$1" cmd="$2" common d b rc s
     local -a args

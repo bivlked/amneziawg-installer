@@ -1549,7 +1549,7 @@ awg_hpk_path() {
 # print the secret to stdout for a caller's $( ).
 # Functions that hold keys themselves (key generation, server config rendering,
 # client creation and regeneration, add_peer_to_server, vpn://, apply_config
-# and the manage functions) start with a self-guard line:
+# and the manage functions that read keys) start with a self-guard line:
 #     case $- in *x*) _awg_xtrace_guard <own name> "$@"; return ;; esac
 # (without "$@" in a function that takes no arguments).
 # Under tracing the function calls itself once more with tracing off, so the
@@ -1558,9 +1558,11 @@ awg_hpk_path() {
 # its arguments. Exception to the no-die rule: modify_client ends the process
 # through die on some refusals; tracing is not restored there, but the process
 # exits anyway.
-# The body runs under `||`, so set -e and an ERR trap do not apply inside it
-# under tracing. The project's entry points turn neither on, and the installer
-# calls these functions under `||`; if set -e is ever added, revisit this.
+# The body runs under `||` (under tracing for functions with the self-guard
+# line, always for wrappers of the form `_awg_xtrace_guard _..._body`), so
+# set -e and an ERR trap do not apply inside it. The entry points that load
+# this library turn neither on, and the installer calls these functions under
+# `||`; if set -e is ever added, revisit this.
 _awg_xtrace_guard() {
     local _xt=0 _rc=0
     case $- in *x*) _xt=1; set +x ;; esac
