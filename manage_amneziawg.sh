@@ -1079,6 +1079,20 @@ modify_client() {
         return 1
     fi
 
+    # Ключ защиты заголовков - до первой записи: ниже modify удаляет QR и vpn:// и
+    # переписывает .conf, а load_awg_params увидит только generate_vpn_uri в конце.
+    command -v awg_hpk_ensure >/dev/null 2>&1 || {
+        log_error "awg_common.sh устарела: нет awg_hpk_ensure. Обновите обе половины под одну версию."
+        _JSON_ERR="awg_common.sh устарела: нет awg_hpk_ensure"
+        exec {modify_lock_fd}>&-
+        return 1
+    }
+    if ! awg_hpk_ensure manage; then
+        _JSON_ERR="ключ защиты заголовков не согласован"
+        exec {modify_lock_fd}>&-
+        return 1
+    fi
+
     if ! grep -qxF "#_Name = ${name}" "$SERVER_CONF_FILE"; then
         exec {modify_lock_fd}>&-
         die "Клиент '$name' не найден."
@@ -1249,6 +1263,30 @@ modify_client() {
 # Проверка состояния сервера
 # ==============================================================================
 
+# show_awg_status : команда show. Вывод awg show идёт потоком через фильтр секретов
+# (ключ защиты заголовков awg show печатает открытым текстом); stderr сливается в
+# тот же поток, иначе он обходил бы фильтр. Коды берутся из PIPESTATUS сразу после
+# конвейера: 124 - таймаут и называется отдельно, сбой самого фильтра - тоже отказ.
+show_awg_status() {
+    log "Статус AmneziaWG 2.0..."
+    local -a _st
+    timeout 10 awg show 2>&1 | _mask_report_secrets
+    _st=("${PIPESTATUS[@]}")
+    if [[ "${_st[0]}" -ne 0 ]]; then
+        if [[ "${_st[0]}" -eq 124 ]]; then
+            log_error "awg show не ответил за 10 секунд - похоже на зацикленный дамп интерфейса, проверьте размер I1-I5."
+        else
+            log_error "Ошибка awg show."
+        fi
+        return 1
+    fi
+    if [[ "${_st[1]:-1}" -ne 0 ]]; then
+        log_error "Фильтр секретов не отработал: вывод awg show показан не полностью."
+        return 1
+    fi
+    return 0
+}
+
 check_server() {
     log "Проверка состояния сервера AmneziaWG 2.0..."
     local ok=1
@@ -1375,8 +1413,13 @@ check_server() {
     # timeout: без него переросшие I1-I5 подвешивают check намертво
     # (amneziawg-linux-kernel-module#228). Отказ здесь и так громкий, границы
     # по времени не хватало.
-    if ! _awg_out=$(timeout 10 awg show awg0 2>&1); then
-        _check_rc=$?
+    # Код возврата берётся присваиванием: в форме `if ! out=$(...); then rc=$?` $? -
+    # это код отрицания, всегда 0, и ветка таймаута не срабатывала никогда. Вывод
+    # идёт через фильтр секретов: awg show печатает ключ защиты заголовков открытым
+    # текстом, а эти строки уходят на экран и в журнал.
+    _awg_out=$(timeout 10 awg show awg0 2>&1) || _check_rc=$?
+    _awg_out=$(printf '%s\n' "$_awg_out" | _mask_report_secrets)
+    if [[ "$_check_rc" -ne 0 ]]; then
         [[ "$_check_rc" -eq 124 ]] && _awg_out="awg show не ответил за 10 секунд - похоже на зацикленный дамп интерфейса, проверьте размер I1-I5"
         log_error " - awg show awg0 завершился с ошибкой:"
         while IFS= read -r _l; do log_error "  $_l"; done <<< "$_awg_out"
@@ -1684,7 +1727,9 @@ diagnose_server() {
                 fail=$((fail+1))
                 _cps_unsafe=1
             else
-                _diag_line WARN "awg show завершился с кодом $_show2_rc - параметры интерфейса не прочитаны${_awg_show:+: ${_awg_show%%$'\n'*}}"
+                # Первая строка ошибки идёт в отчёт, который публикуют в issue: через фильтр.
+                _awg_show=$(printf '%s\n' "${_awg_show%%$'\n'*}" | _mask_report_secrets)
+                _diag_line WARN "awg show завершился с кодом $_show2_rc - параметры интерфейса не прочитаны${_awg_show:+: ${_awg_show}}"
                 warn=$((warn+1))
             fi
             _awg_show=""
@@ -2672,16 +2717,7 @@ case $COMMAND in
         ;;
 
     show)
-        log "Статус AmneziaWG 2.0..."
-        if ! timeout 10 awg show; then
-            _show_cmd_rc=$?
-            if [[ "$_show_cmd_rc" -eq 124 ]]; then
-                log_error "awg show не ответил за 10 секунд - похоже на зацикленный дамп интерфейса, проверьте размер I1-I5."
-            else
-                log_error "Ошибка awg show."
-            fi
-            _cmd_rc=1
-        fi
+        show_awg_status || _cmd_rc=1
         ;;
 
     restart)

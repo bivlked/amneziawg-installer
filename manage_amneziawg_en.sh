@@ -1093,6 +1093,21 @@ modify_client() {
         return 1
     fi
 
+    # Header protection key - before the first write: below, modify deletes the QR and
+    # vpn:// and rewrites the .conf, and load_awg_params is reached only by
+    # generate_vpn_uri at the end.
+    command -v awg_hpk_ensure >/dev/null 2>&1 || {
+        log_error "awg_common.sh is outdated: awg_hpk_ensure is missing. Update both halves to one version."
+        _JSON_ERR="awg_common.sh is outdated: awg_hpk_ensure is missing"
+        exec {modify_lock_fd}>&-
+        return 1
+    }
+    if ! awg_hpk_ensure manage; then
+        _JSON_ERR="header protection key is inconsistent"
+        exec {modify_lock_fd}>&-
+        return 1
+    fi
+
     if ! grep -qxF "#_Name = ${name}" "$SERVER_CONF_FILE"; then
         exec {modify_lock_fd}>&-
         die "Client '$name' not found."
@@ -1265,6 +1280,31 @@ modify_client() {
 # Server status check
 # ==============================================================================
 
+# show_awg_status : the show command. The awg show output streams through the secrets
+# filter (awg show prints the header protection key in clear text); stderr is merged
+# into the same stream, or it would bypass the filter. The statuses come from
+# PIPESTATUS right after the pipeline: 124 is a timeout and is named separately, and
+# a failure of the filter itself is a failure too.
+show_awg_status() {
+    log "AmneziaWG 2.0 status..."
+    local -a _st
+    timeout 10 awg show 2>&1 | _mask_report_secrets
+    _st=("${PIPESTATUS[@]}")
+    if [[ "${_st[0]}" -ne 0 ]]; then
+        if [[ "${_st[0]}" -eq 124 ]]; then
+            log_error "awg show did not answer within 10 seconds - looks like a looping interface dump, check the size of I1-I5."
+        else
+            log_error "awg show failed."
+        fi
+        return 1
+    fi
+    if [[ "${_st[1]:-1}" -ne 0 ]]; then
+        log_error "The secrets filter failed: the awg show output was not shown in full."
+        return 1
+    fi
+    return 0
+}
+
 check_server() {
     log "Checking AmneziaWG 2.0 server status..."
     local ok=1
@@ -1391,8 +1431,13 @@ check_server() {
     # timeout: without it oversized I1-I5 hang check outright
     # (amneziawg-linux-kernel-module#228). The failure here was already loud;
     # what was missing is a bound on time.
-    if ! _awg_out=$(timeout 10 awg show awg0 2>&1); then
-        _check_rc=$?
+    # The exit status is taken by assignment: in the form `if ! out=$(...); then rc=$?`
+    # $? is the status of the negation, always 0, and the timeout branch never fired.
+    # The output goes through the secrets filter: awg show prints the header
+    # protection key in clear text, and these lines reach the screen and the log.
+    _awg_out=$(timeout 10 awg show awg0 2>&1) || _check_rc=$?
+    _awg_out=$(printf '%s\n' "$_awg_out" | _mask_report_secrets)
+    if [[ "$_check_rc" -ne 0 ]]; then
         [[ "$_check_rc" -eq 124 ]] && _awg_out="awg show did not answer within 10 seconds - looks like a looping interface dump, check the size of I1-I5"
         log_error " - awg show awg0 failed:"
         while IFS= read -r _l; do log_error "  $_l"; done <<< "$_awg_out"
@@ -1699,7 +1744,9 @@ diagnose_server() {
                 fail=$((fail+1))
                 _cps_unsafe=1
             else
-                _diag_line WARN "awg show exited with code $_show2_rc - interface parameters not read${_awg_show:+: ${_awg_show%%$'\n'*}}"
+                # The first error line goes into a report people paste into issues: filter it.
+                _awg_show=$(printf '%s\n' "${_awg_show%%$'\n'*}" | _mask_report_secrets)
+                _diag_line WARN "awg show exited with code $_show2_rc - interface parameters not read${_awg_show:+: ${_awg_show}}"
                 warn=$((warn+1))
             fi
             _awg_show=""
@@ -2696,16 +2743,7 @@ case $COMMAND in
         ;;
 
     show)
-        log "AmneziaWG 2.0 status..."
-        if ! timeout 10 awg show; then
-            _show_cmd_rc=$?
-            if [[ "$_show_cmd_rc" -eq 124 ]]; then
-                log_error "awg show did not answer within 10 seconds - looks like a looping interface dump, check the size of I1-I5."
-            else
-                log_error "awg show failed."
-            fi
-            _cmd_rc=1
-        fi
+        show_awg_status || _cmd_rc=1
         ;;
 
     restart)
