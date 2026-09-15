@@ -194,13 +194,16 @@ c_fail_empty() {
 
 # _run_show <manage script> <awg mode> : show_awg_status lifted from the manage script,
 # the library sourced for the masking filter, the same stubs as check.
+# SIGPIPE is set back to its default: a parent that ignores it (the GitHub runner does)
+# passes the ignore down, a shell cannot undo an ignore it inherited, and awg show
+# would then outlive a dead filter instead of dying of SIGPIPE as it does on a server.
 _run_show() {
     local src="$1" mode="$2" common
     common="${src/manage_amneziawg/awg_common}"
     local bin="$BATS_TEST_TMPDIR/bin-show-$mode"
     _make_stubs "$bin" "$mode"
     PATH="$bin:$PATH" AWG_DIR="$BATS_TEST_TMPDIR/awg" \
-    timeout 60 bash -c '
+    env --default-signal=PIPE timeout 60 bash -c '
         set -o pipefail
         log()       { echo "INFO: $*"; }
         log_warn()  { echo "WARN: $*"; }
