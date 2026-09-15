@@ -10,7 +10,9 @@
 #
 # Same contract as tests/test_verbose_secrets.bats: a reference run without
 # tracing, a run under `exec 2>&1; set -x`, then no secret in what tracing added,
-# xtrace restored, the same status. Both manage twins.
+# xtrace restored, the same status. Both manage twins. A failed restore and a
+# failed restart run the whole script under `bash -x` instead, with the trace in its
+# own file.
 
 SRV_PRIV="SRVPRIVSECRETAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 CLI_PRIV="CLIPRIVSECRETAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -185,21 +187,67 @@ m_service_status() {
     both m_service_status
 }
 
-@test "verbose manage: restore and restart print the service status through the guarded helper, both twins" {
-    local f seen=0 body
-    for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
-        # Any command or process substitution of systemctl status, whatever consumes it.
-        [ "$(grep -cE '[$<]\(systemctl status' "$BATS_TEST_DIRNAME/../$f")" -eq 1 ] \
-            || { echo "$f captures systemctl status into a variable outside the helper"; return 1; }
-        awk '/^_log_service_status\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$f" | grep -qE '[$<]\(systemctl status' \
-            || { echo "$f: the only capture is not inside _log_service_status"; return 1; }
-        body=$(awk '/^restore_backup\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$f")
-        grep -q '_log_service_status' <<< "$body" || { echo "$f: restore_backup does not use _log_service_status"; return 1; }
-        awk '/^    restart\)$/ { p = 1 } p && /;;/ { exit } p' "$BATS_TEST_DIRNAME/../$f" | grep -q '_log_service_status' \
-            || { echo "$f: the restart branch does not use _log_service_status"; return 1; }
-        seen=$((seen + 1))
-    done
-    [ "$seen" -eq 2 ]
+STATUS_SECRET="SVCSTATUSSECRETAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+# m_svc_fail <manage script> <restore|restart>
+# The whole manage script under `bash -x`: systemctl start and restart fail, and
+# systemctl status and journalctl print a secret-shaped line. BASH_XTRACEFD sends the
+# trace to its own file, so no reference run is needed: however the status is read (a
+# substitution, a pipe, a temp file, a wrapper, journalctl), its text must not reach
+# the trace file, and it must still reach the output.
+m_svc_fail() {
+    local src="$1" cmd="$2" common d b rc
+    local -a args
+    common="${src/manage_amneziawg/awg_common}"
+    d="$BATS_TEST_TMPDIR/vm-svc-$(basename "$src" .sh)-$cmd"
+    rm -rf "$d"; _files "$d"; _stubs "$d/bin"
+    cp "$common" "$d/awg_common.sh"
+    cat > "$d/bin/systemctl" <<EOF
+#!/usr/bin/env bash
+# The verb is the first word that is not an option: systemctl --no-pager status ...
+verb=""
+for a in "\$@"; do case "\$a" in -*) ;; *) verb="\$a"; break ;; esac; done
+case "\$verb" in
+    status)
+        echo "awg-quick@awg0.service - AmneziaWG via awg-quick(8) for awg0"
+        echo "  awg-quick[1]: Line unrecognized: PrivateKey=$STATUS_SECRET"
+        echo "  Active: failed (Result: exit-code)"
+        ;;
+    start|restart) exit 1 ;;
+esac
+exit 0
+EOF
+    printf '#!/usr/bin/env bash\necho "awg-quick[1]: Line unrecognized: PrivateKey=%s"\n' "$STATUS_SECRET" > "$d/bin/journalctl"
+    chmod +x "$d/bin/systemctl" "$d/bin/journalctl"
+    args=(--conf-dir="$d" --server-conf="$d/awg0.conf")
+    if [ "$cmd" = restore ]; then
+        PATH="$d/bin:$PATH" timeout 60 bash "$src" backup "${args[@]}" > "$d/backup.out" 2>&1 \
+            || { echo "backup failed ($src): $(tail -5 "$d/backup.out")"; return 1; }
+        b=$(find "$d/backups" -maxdepth 1 -name 'awg_backup_*.tar.gz' | head -1)
+        [ -n "$b" ] || { echo "no backup was written ($src)"; return 1; }
+        args=("$b" "${args[@]}")
+    fi
+    rc=0
+    PATH="$d/bin:$PATH" BASH_XTRACEFD=7 timeout 120 bash -x "$src" "$cmd" "${args[@]}" --yes \
+        7> "$d/trace" > "$d/out" 2>&1 || rc=$?
+    [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] || { echo "$cmd ($src): expected a failure, got rc=$rc: $(tail -5 "$d/out")"; return 1; }
+    grep -qF "PrivateKey=$STATUS_SECRET" "$d/out" \
+        || { echo "$cmd ($src): the service status did not reach the output: $(tail -5 "$d/out")"; return 1; }
+    grep -qE "systemctl (start|restart) awg-quick@awg0\$" "$d/trace" \
+        || { echo "$cmd ($src): the trace does not reach the failing systemctl start or restart"; return 1; }
+    if grep -qF "$STATUS_SECRET" "$d/trace"; then
+        echo "$cmd ($src): the service status is in the trace:"
+        grep -n -F "${STATUS_SECRET:0:15}" "$d/trace" | head -5
+        return 1
+    fi
+}
+m_svc_restore() { m_svc_fail "$1" restore; }
+m_svc_restart() { m_svc_fail "$1" restart; }
+@test "verbose manage: a failed restore prints the service status but keeps it out of the trace, both twins" {
+    both m_svc_restore
+}
+@test "verbose manage: a failed restart prints the service status but keeps it out of the trace, both twins" {
+    both m_svc_restart
 }
 
 m_old_library() {

@@ -422,9 +422,10 @@ check_dependencies() {
     source "$COMMON_SCRIPT_PATH" || die "Failed to load $COMMON_SCRIPT_PATH"
     _check_common_compat
     # A same-minor library older than the xtrace self-guard: without a fallback,
-    # every guarded manage function (list, stats, check, diagnose, modify, the service
-    # status) would fail under bash -x with "command not found". The fallback repeats the library one: without turning
-    # tracing off, the self-guard line would call the function again and again.
+    # every guarded manage function (list, stats, check, diagnose, modify, the
+    # service status) would fail under bash -x with "command not found". The
+    # fallback repeats the library one: without turning tracing off, the self-guard
+    # line would call the function again and again.
     declare -F _awg_xtrace_guard >/dev/null || _awg_xtrace_guard() { local _xt=0 _rc=0; case $- in *x*) _xt=1; set +x ;; esac; "$@" || _rc=$?; if (( _xt )); then set -x; fi; return "$_rc"; }
 
     log "Dependencies OK."
