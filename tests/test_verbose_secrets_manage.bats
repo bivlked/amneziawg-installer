@@ -11,8 +11,8 @@
 # Same contract as tests/test_verbose_secrets.bats: a reference run without
 # tracing, a run under `exec 2>&1; set -x`, then no secret in what tracing added,
 # xtrace restored, the same status. Both manage twins. A failed restore and a
-# failed restart run the whole script under `bash -x` instead, with the trace in its
-# own file.
+# failed restart run the whole script under `bash -x` instead, with the trace
+# in its own file.
 
 SRV_PRIV="SRVPRIVSECRETAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 CLI_PRIV="CLIPRIVSECRETAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -183,20 +183,22 @@ m_service_status() {
     check_manage "$1" service_status 'declare -F _log_service_status >/dev/null || exit 9; _log_service_status' || return 1
     [[ "$CHECK_REF_OUT" == *"RC=0"* ]] || { echo "_log_service_status is missing or failed ($1): $CHECK_REF_OUT"; return 1; }
 }
-@test "verbose manage: the service status printed on a failed restore or restart stays out of the trace, both twins" {
+@test "verbose manage: _log_service_status keeps the service status out of the trace, both twins" {
     both m_service_status
 }
 
 STATUS_SECRET="SVCSTATUSSECRETAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 # m_svc_fail <manage script> <restore|restart>
-# The whole manage script under `bash -x`: systemctl start and restart fail, and
-# systemctl status and journalctl print a secret-shaped line. BASH_XTRACEFD sends the
-# trace to its own file, so no reference run is needed: however the status is read (a
-# substitution, a pipe, a temp file, a wrapper, journalctl), its text must not reach
-# the trace file, and it must still reach the output.
+# The whole manage script under `bash -x`: systemctl start and restart fail,
+# and systemctl status and journalctl print a secret-shaped line.
+# BASH_XTRACEFD sends the trace to its own file, so no reference run is
+# needed. However that output is read (a substitution, a pipe, a temp file, a
+# wrapper), its text must reach the output and must not reach the trace file,
+# and the trace must reach the failing start or restart, so an empty trace
+# does not pass. The keys in the test config must not reach the trace file either.
 m_svc_fail() {
-    local src="$1" cmd="$2" common d b rc
+    local src="$1" cmd="$2" common d b rc s
     local -a args
     common="${src/manage_amneziawg/awg_common}"
     d="$BATS_TEST_TMPDIR/vm-svc-$(basename "$src" .sh)-$cmd"
@@ -204,17 +206,18 @@ m_svc_fail() {
     cp "$common" "$d/awg_common.sh"
     cat > "$d/bin/systemctl" <<EOF
 #!/usr/bin/env bash
-# The verb is the first word that is not an option: systemctl --no-pager status ...
-verb=""
-for a in "\$@"; do case "\$a" in -*) ;; *) verb="\$a"; break ;; esac; done
-case "\$verb" in
-    status)
-        echo "awg-quick@awg0.service - AmneziaWG via awg-quick(8) for awg0"
-        echo "  awg-quick[1]: Line unrecognized: PrivateKey=$STATUS_SECRET"
-        echo "  Active: failed (Result: exit-code)"
-        ;;
-    start|restart) exit 1 ;;
-esac
+# Any argument counts: systemctl --no-pager status, systemctl -n 50 status.
+for a in "\$@"; do
+    case "\$a" in
+        status)
+            echo "awg-quick@awg0.service - AmneziaWG via awg-quick(8) for awg0"
+            echo "  awg-quick[1]: Line unrecognized: PrivateKey=$STATUS_SECRET"
+            echo "  Active: failed (Result: exit-code)"
+            exit 0
+            ;;
+        start|restart) exit 1 ;;
+    esac
+done
 exit 0
 EOF
     printf '#!/usr/bin/env bash\necho "awg-quick[1]: Line unrecognized: PrivateKey=%s"\n' "$STATUS_SECRET" > "$d/bin/journalctl"
@@ -235,11 +238,13 @@ EOF
         || { echo "$cmd ($src): the service status did not reach the output: $(tail -5 "$d/out")"; return 1; }
     grep -qE "systemctl (start|restart) awg-quick@awg0\$" "$d/trace" \
         || { echo "$cmd ($src): the trace does not reach the failing systemctl start or restart"; return 1; }
-    if grep -qF "$STATUS_SECRET" "$d/trace"; then
-        echo "$cmd ($src): the service status is in the trace:"
-        grep -n -F "${STATUS_SECRET:0:15}" "$d/trace" | head -5
-        return 1
-    fi
+    for s in "$STATUS_SECRET" "$SRV_PRIV" "$CLI_PRIV" "$PSK_VAL" "$HPK_VAL"; do
+        if grep -qF "$s" "$d/trace"; then
+            echo "$cmd ($src): secret '${s:0:12}...' is in the trace:"
+            grep -n -F "${s:0:12}" "$d/trace" | head -5
+            return 1
+        fi
+    done
 }
 m_svc_restore() { m_svc_fail "$1" restore; }
 m_svc_restart() { m_svc_fail "$1" restart; }

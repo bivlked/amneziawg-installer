@@ -1548,15 +1548,19 @@ awg_hpk_path() {
 # body does not exit or die, only return, or tracing stays off; the body does not
 # print the secret to stdout for a caller's $( ).
 # Functions that hold keys themselves (key generation, server config rendering,
-# vpn://, apply,
-# manage commands) start with a self-guard line:
+# client creation and regeneration, add_peer_to_server, vpn://, apply_config
+# and the manage functions) start with a self-guard line:
 #     case $- in *x*) _awg_xtrace_guard <own name> "$@"; return ;; esac
 # (without "$@" in a function that takes no arguments).
-# Under tracing the function calls itself once more with tracing off, so the body
-# runs once; the function name and FUNCNAME[1] of nested calls are kept. A function with a secret argument cannot do
-# this: the self-guard line prints its arguments. Exception to the no-die rule:
-# modify_client ends the process through die on some refusals; tracing is not
-# restored there, but the process exits anyway.
+# Under tracing the function calls itself once more with tracing off, so the
+# body runs once; the function name and FUNCNAME[1] of nested calls are kept.
+# A function with a secret argument cannot do this: the self-guard line prints
+# its arguments. Exception to the no-die rule: modify_client ends the process
+# through die on some refusals; tracing is not restored there, but the process
+# exits anyway.
+# The body runs under `||`, so set -e and an ERR trap do not apply inside it
+# under tracing. The project's entry points turn neither on, and the installer
+# calls these functions under `||`; if set -e is ever added, revisit this.
 _awg_xtrace_guard() {
     local _xt=0 _rc=0
     case $- in *x*) _xt=1; set +x ;; esac
