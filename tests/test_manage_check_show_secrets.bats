@@ -197,8 +197,8 @@ c_fail_empty() {
 # SIGPIPE is set back to its default: a parent that ignores it (the GitHub runner does)
 # passes the ignore down, a shell cannot undo an ignore it inherited, and awg show
 # would then outlive a dead filter instead of dying of SIGPIPE as it does when manage is
-# run from an interactive shell. The inherited-ignore path (a systemd unit, a bot) is the
-# case of a filter failure with awg show exiting 0, covered by s_filter_fails_awg_ok.
+# run from an interactive shell. Under an inherited ignore (a systemd unit, whose
+# IgnoreSIGPIPE= defaults to yes) awg show exits 0 instead: s_filter_fails_awg_ok.
 _run_show() {
     local src="$1" mode="$2" common
     common="${src/manage_amneziawg/awg_common}"
@@ -272,8 +272,8 @@ s_filter_fails() {
 }
 
 s_filter_fails_awg_ok() {
-    # The filter reads everything and then fails, so awg show exits 0: the usual case on
-    # a server, where the output fits the pipe buffer, and the case under an inherited
+    # The filter reads everything and then fails, so awg show exits 0: what a filter that
+    # fails after reading its input produces, and what awg show returns under an inherited
     # SIGPIPE ignore. No signal is involved, so the test does not depend on the host.
     local want="The secrets filter failed" wrong="awg show failed"
     ru "$1" && { want="Фильтр секретов не отработал"; wrong="Ошибка awg show"; }
