@@ -95,11 +95,18 @@ first_line() {
     awk -v s="$2" -v from="${3:-1}" 'NR >= from && index($0, s) { print NR; found = 1; exit } END { if (!found) print 0 }' "$1"
 }
 
+# first_code_line <file> <exact line start> [after line] : like first_line, but the
+# line must START with the given text (indentation included), so a comment or a call
+# nested in a condition does not satisfy the pin.
+first_code_line() {
+    awk -v s="$2" -v from="${3:-1}" 'NR >= from && index($0, s) == 1 { print NR; found = 1; exit } END { if (!found) print 0 }' "$1"
+}
+
 h_modify_order() {
     local src="$1" start lock ensure write
     start=$(first_line "$src" "modify_client() {")
     lock=$(first_line "$src" 'flock -x -w 10 "$modify_lock_fd"' "$start")
-    ensure=$(first_line "$src" "awg_hpk_ensure manage" "$start")
+    ensure=$(first_code_line "$src" "    if ! awg_hpk_ensure manage; then" "$start")
     write=$(first_line "$src" 'sed -i "s#^${param}' "$start")
     [ "$start" -gt 0 ] && [ "$lock" -gt 0 ] && [ "$write" -gt 0 ] || { echo "anchors not found in $src: start=$start lock=$lock write=$write"; return 1; }
     [ "$ensure" -gt "$lock" ] || { echo "modify checks the key before taking its lock or not at all ($src): lock=$lock ensure=$ensure"; return 1; }
@@ -119,12 +126,65 @@ h_modify_order() {
 h_step6_order() {
     local src="$1" start ensure render
     start=$(first_line "$src" "step6_generate_configs() {")
-    ensure=$(first_line "$src" "awg_hpk_ensure install" "$start")
+    ensure=$(first_code_line "$src" "    awg_hpk_ensure install || die " "$start")
     render=$(first_line "$src" 'render_server_config "${s_bak:-}"' "$start")
     [ "$start" -gt 0 ] && [ "$render" -gt 0 ] || { echo "anchors not found in $src"; return 1; }
     [ "$ensure" -gt "$start" ] && [ "$ensure" -lt "$render" ] || { echo "step 6 does not check the key before rendering ($src): ensure=$ensure render=$render"; return 1; }
     sed -n "${ensure}p" "$src" | grep -q '|| die' || { echo "a refused key check does not stop step 6 ($src): $(sed -n "${ensure}p" "$src")"; return 1; }
 }
+# modify_run <manage script> : modify_client lifted from the manage script with the
+# library sourced, on a 2.0 install whose config holds a key. Prints the status,
+# _JSON_ERR and whether the config lock is free afterwards.
+modify_run() {
+    local src="$1" common d
+    common="${src/manage_amneziawg/awg_common}"
+    d="$BATS_TEST_TMPDIR/modify-$(basename "$src" .sh)"
+    rm -rf "$d"; mkdir -p "$d"
+    printf "export AWG_PORT=39743\nexport AWG_PROTOCOL='2.0'\n" > "$d/awgsetup_cfg.init"
+    {
+        printf '[Interface]\nPrivateKey = TESTKEY\nListenPort = 39743\nJc = 6\nJmin = 55\nJmax = 380\n'
+        printf 'S1 = 72\nS2 = 56\nS3 = 32\nS4 = 16\n'
+        printf 'H1 = 100000-800000\nH2 = 1000000-8000000\nH3 = 10000000-80000000\nH4 = 100000000-800000000\n'
+        printf 'HeaderProtectionKey = %s\n' "$KEY_A"
+        printf '\n[Peer]\n#_Name = my_phone\nPublicKey = PEERPUB\nAllowedIPs = 10.9.9.2/32\n'
+    } > "$d/awg0.conf"
+    printf '[Interface]\nPrivateKey = CLIENTKEY\nAddress = 10.9.9.2/32\nDNS = 1.1.1.1\n\n[Peer]\nPublicKey = SRV\nEndpoint = 1.2.3.4:39743\nAllowedIPs = 0.0.0.0/0\n' > "$d/my_phone.conf"
+    printf 'png' > "$d/my_phone.png"; printf 'vpn://x' > "$d/my_phone.vpnuri"
+    AWG_DIR="$d" CONFIG_FILE="$d/awgsetup_cfg.init" SERVER_CONF_FILE="$d/awg0.conf" timeout 60 bash -c '
+        log() { echo "INFO: $*"; }; log_warn() { echo "WARN: $*"; }
+        log_error() { echo "ERR: $*"; }; log_debug() { :; }
+        die() { echo "DIE: $*"; exit 1; }
+        source "$1" >/dev/null 2>&1 || true
+        _JSON_ERR=""
+        eval "$(awk "/^modify_client\\(\\) \\{/,/^\\}/" "$2")"
+        declare -F modify_client >/dev/null || { echo NO_MODIFY; exit 7; }
+        modify_client my_phone DNS 8.8.8.8
+        rc=$?
+        printf "JSON_ERR=%s\n" "$_JSON_ERR"
+        if flock -n "$AWG_DIR/.awg_config.lock" true; then echo LOCK_FREE; else echo LOCK_HELD; fi
+        exit $rc
+    ' _ "$common" "$src"
+}
+
+@test "hooks: modify on a 2.0 install with a key refuses before touching client files and releases its lock, both manage twins" {
+    local seen=0 src d want jerr
+    for src in "$BATS_TEST_DIRNAME/../manage_amneziawg.sh" "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"; do
+        want="but the installation is marked as generation 2.0"; jerr="JSON_ERR=header protection key is inconsistent"
+        ru "$src" && { want="а установка помечена поколением 2.0"; jerr="JSON_ERR=ключ защиты заголовков не согласован"; }
+        d="$BATS_TEST_TMPDIR/modify-$(basename "$src" .sh)"
+        run modify_run "$src"
+        [ "$status" -eq 1 ] || { echo "modify did not refuse ($src): status $status $output"; return 1; }
+        [[ "$output" == *"$want"* ]] || { echo "wrong reason ($src), expected '$want': $output"; return 1; }
+        [[ "$output" == *"$jerr"* ]] || { echo "_JSON_ERR not set ($src), expected '$jerr': $output"; return 1; }
+        [[ "$output" == *LOCK_FREE* ]] || { echo "modify left its lock held after refusing ($src): $output"; return 1; }
+        grep -qx 'DNS = 1.1.1.1' "$d/my_phone.conf" || { echo "the client .conf was changed ($src)"; return 1; }
+        [ -f "$d/my_phone.png" ] && [ -f "$d/my_phone.vpnuri" ] || { echo "derived files were deleted before the refusal ($src)"; return 1; }
+        [[ "$output" != *"$KEY_A"* ]] || { echo "key value printed ($src)"; return 1; }
+        seen=$((seen + 1))
+    done
+    [ "$seen" -eq 2 ]
+}
+
 @test "hooks: step 6 checks the key in install mode before rendering and dies on refusal, both installers" {
     local seen=0 src
     for src in "$BATS_TEST_DIRNAME/../install_amneziawg.sh" "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"; do

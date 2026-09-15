@@ -1272,16 +1272,18 @@ show_awg_status() {
     local -a _st
     timeout 10 awg show 2>&1 | _mask_report_secrets
     _st=("${PIPESTATUS[@]}")
+    # Сначала фильтр: если он упал первым, awg show получает SIGPIPE (141), и ошибка
+    # фильтра выглядела бы ошибкой awg show.
+    if [[ "${_st[1]:-1}" -ne 0 ]]; then
+        log_error "Фильтр секретов не отработал: вывод awg show показан не полностью."
+        return 1
+    fi
     if [[ "${_st[0]}" -ne 0 ]]; then
         if [[ "${_st[0]}" -eq 124 ]]; then
             log_error "awg show не ответил за 10 секунд - похоже на зацикленный дамп интерфейса, проверьте размер I1-I5."
         else
             log_error "Ошибка awg show."
         fi
-        return 1
-    fi
-    if [[ "${_st[1]:-1}" -ne 0 ]]; then
-        log_error "Фильтр секретов не отработал: вывод awg show показан не полностью."
         return 1
     fi
     return 0
@@ -1418,7 +1420,11 @@ check_server() {
     # идёт через фильтр секретов: awg show печатает ключ защиты заголовков открытым
     # текстом, а эти строки уходят на экран и в журнал.
     _awg_out=$(timeout 10 awg show awg0 2>&1) || _check_rc=$?
-    _awg_out=$(printf '%s\n' "$_awg_out" | _mask_report_secrets)
+    if ! _awg_out=$(printf '%s\n' "$_awg_out" | _mask_report_secrets); then
+        _awg_out=""
+        log_error " - Фильтр секретов не отработал: вывод awg show скрыт"
+        ok=0
+    fi
     if [[ "$_check_rc" -ne 0 ]]; then
         [[ "$_check_rc" -eq 124 ]] && _awg_out="awg show не ответил за 10 секунд - похоже на зацикленный дамп интерфейса, проверьте размер I1-I5"
         log_error " - awg show awg0 завершился с ошибкой:"
@@ -1728,7 +1734,7 @@ diagnose_server() {
                 _cps_unsafe=1
             else
                 # Первая строка ошибки идёт в отчёт, который публикуют в issue: через фильтр.
-                _awg_show=$(printf '%s\n' "${_awg_show%%$'\n'*}" | _mask_report_secrets)
+                _awg_show=$(printf '%s\n' "${_awg_show%%$'\n'*}" | _mask_report_secrets) || _awg_show="вывод скрыт: фильтр секретов не отработал"
                 _diag_line WARN "awg show завершился с кодом $_show2_rc - параметры интерфейса не прочитаны${_awg_show:+: ${_awg_show}}"
                 warn=$((warn+1))
             fi

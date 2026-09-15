@@ -1112,7 +1112,14 @@ awg_restore_generation_notice() {
 # Решает баг #38: regen использовал устаревшие значения из init-файла,
 # а не актуальные из awg0.conf после ручной правки.
 # shellcheck disable=SC2120  # Опциональный аргумент используется только в тестах
+# load_awg_params_from_server_conf [конфиг] : параметры обфускации из живого конфига.
+# Цикл разбора держит в переменных каждую строку [Interface], включая PrivateKey и
+# HeaderProtectionKey, поэтому тело идёт с выключенной трассировкой.
 load_awg_params_from_server_conf() {
+    _awg_xtrace_guard _load_awg_params_from_server_conf_body "$@"
+}
+
+_load_awg_params_from_server_conf_body() {
     local conf="${1:-$SERVER_CONF_FILE}"
     [[ -f "$conf" ]] || return 1
 
@@ -1500,6 +1507,7 @@ _mask_report_secrets() {
 # Одно место и только по текущему AWG_DIR: путь не хранится в init, иначе второй
 # источник пути пришлось бы сверять с этим при каждом переносе бэкапа.
 awg_hpk_path() {
+    [[ -n "${AWG_DIR:-}" ]] || return 1
     printf '%s\n' "$AWG_DIR/server_hpk.key"
 }
 
@@ -1521,14 +1529,17 @@ _awg_xtrace_guard() {
 # _awg_hpk_file_valid <файл> : файл ключа ровно из одной строки с LF, и эта
 # строка - ключ в форме key_from_base64 amneziawg-tools (44 символа, в конце '=',
 # последний значащий символ несёт нулевые младшие биты). CRLF, пустой файл,
-# вторая строка, каталог или символическая ссылка - не ключ. Значение не
-# попадает ни в argv, ни в переменные.
+# вторая строка, каталог или символическая ссылка - не ключ. Первая строка
+# читается во внутреннюю переменную (функцию зовут только тела под
+# _awg_xtrace_guard): read без завершающего LF отказывает, а размер ровно 45 байт
+# исключает хвост или вторую строку после ключа. Строка не попадает в argv.
 _awg_hpk_file_valid() {
-    local f="$1" n
+    local f="$1" n _hv_line
     [[ -f "$f" && ! -L "$f" && -r "$f" ]] || return 1
-    n=$(wc -l < "$f") || return 1
-    [[ "$n" -eq 1 ]] || return 1
-    grep -qxE '[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=' "$f"
+    IFS= read -r _hv_line < "$f" || return 1
+    [[ "$_hv_line" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]] || return 1
+    n=$(wc -c < "$f") || return 1
+    [[ "$n" -eq 45 ]]
 }
 
 # awg_generate_hpk : создать файл ключа, если его нет. Ключ - вывод `awg genkey`
@@ -1536,16 +1547,21 @@ _awg_hpk_file_valid() {
 # записанный СРАЗУ во временный файл: значение не проходит через переменные и
 # argv. Существующий файл не трогается. Итоговое имя появляется через ln, который
 # отказывает, если файл уже есть: без окна, в котором чужой ключ перезаписался бы.
+# Отказывает при любом существующем серверном конфиге: новый ключ появляется только на
+# первой установке, до записи конфига. Рабочий код зовёт это через awg_hpk_ensure.
 awg_generate_hpk() {
     _awg_xtrace_guard _awg_generate_hpk_body
 }
 
 _awg_generate_hpk_body() {
-    local key tmp
-    key=$(awg_hpk_path)
-    if [[ -e "$key" || -L "$key" ]]; then
-        return 0
-    fi
+    local key tmp state
+    key=$(awg_hpk_path) || { log_error "Ошибка: AWG_DIR не задан, ключ защиты заголовков не создаю"; return 1; }
+    state=$(_awg_hpk_file_state "$key")
+    case "$state" in
+        ok)     return 0 ;;
+        absent) ;;
+        *)      _awg_hpk_file_refuse "$key" "$state"; return 1 ;;
+    esac
     if [[ -f "$SERVER_CONF_FILE" ]]; then
         local _hs_any=0 _hs_if=0 _hs_out=0 _hs_val=""
         _awg_hpk_conf_scan "$SERVER_CONF_FILE" || { log_error "Ошибка: не удалось разобрать $SERVER_CONF_FILE, новый ключ защиты заголовков не создаю"; return 1; }
@@ -1553,6 +1569,8 @@ _awg_generate_hpk_body() {
             log_error "Ошибка: HeaderProtectionKey уже есть в $SERVER_CONF_FILE, новый ключ не создаю"
             return 1
         fi
+        log_error "Ошибка: $SERVER_CONF_FILE уже существует без HeaderProtectionKey, новый ключ поверх существующего конфига не создаю"
+        return 1
     fi
     mkdir -p "$AWG_DIR" || return 1
     tmp=$(awg_mktemp "$AWG_DIR") || {
@@ -1569,7 +1587,7 @@ _awg_generate_hpk_body() {
         log_error "Ошибка: awg genkey вернул значение не в форме ключа, файл ключа не записан"
         return 1
     fi
-    if ! chmod 600 "$tmp" || ! ln "$tmp" "$key" 2>/dev/null; then
+    if ! chmod 600 "$tmp" || ! ln -T "$tmp" "$key" 2>/dev/null; then
         rm -f "$tmp"
         log_error "Ошибка: не удалось сохранить ключ защиты заголовков в $key"
         return 1
@@ -1622,7 +1640,7 @@ _awg_hpk_write_value() {
     local key="$1" tmp
     tmp=$(awg_mktemp "$AWG_DIR") || return 1
     if ! printf '%s\n' "$_hs_val" > "$tmp" || ! _awg_hpk_file_valid "$tmp" \
-        || ! chmod 600 "$tmp" || ! ln "$tmp" "$key" 2>/dev/null; then
+        || ! chmod 600 "$tmp" || ! ln -T "$tmp" "$key" 2>/dev/null; then
         rm -f "$tmp"
         return 1
     fi
@@ -1662,13 +1680,21 @@ _awg_hpk_ensure_body() {
         install|manage) ;;
         *) log_error "awg_hpk_ensure: нужен режим install или manage"; return 1 ;;
     esac
-    key=$(awg_hpk_path)
-    gen=$(AWG_PROTOCOL=""; if [[ -f "$CONFIG_FILE" ]]; then safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; fi; awg_installed_protocol "$CONFIG_FILE") || {
-        log_error "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается (допустимы 2.0 и 3.1): ключ защиты заголовков не проверен"
-        return 1
-    }
+    key=$(awg_hpk_path) || { log_error "AWG_DIR не задан: ключ защиты заголовков не проверен"; return 1; }
+    gen=$(AWG_PROTOCOL=""; if [[ -f "$CONFIG_FILE" ]]; then safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; fi; awg_installed_protocol "$CONFIG_FILE") || gen=broken
     if [[ -f "$SERVER_CONF_FILE" ]]; then
         _awg_hpk_conf_scan "$SERVER_CONF_FILE" || { log_error "Не удалось разобрать $SERVER_CONF_FILE: ключ защиты заголовков не проверен"; return 1; }
+    fi
+
+    # Испорченный маркер важен только там, где ключ есть. Без ключа установка ведёт себя
+    # как 2.0 до появления маркера, и add или regen не должны отказать из-за правки init.
+    if [[ "$gen" == broken ]]; then
+        if (( _hs_any > 0 )) || [[ -e "$key" || -L "$key" ]]; then
+            log_error "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается (допустимы 2.0 и 3.1): ключ защиты заголовков не проверен"
+            return 1
+        fi
+        log_warn "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается (допустимы 2.0 и 3.1): ключ защиты заголовков не проверен"
+        return 0
     fi
 
     if [[ "$gen" != "3.1" ]]; then
@@ -4050,7 +4076,6 @@ regenerate_client() {
 # Валидация
 # ==============================================================================
 
-# Проверка AWG 2.0 конфигурации серверного конфига
 # validate_awg_config : проверка серверного конфига. Разбор держит значение ключа
 # защиты заголовков в переменных, поэтому тело идёт с выключенной трассировкой:
 # под --verbose установщика иначе ключ уехал бы в stderr.

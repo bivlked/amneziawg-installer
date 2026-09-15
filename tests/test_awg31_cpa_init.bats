@@ -43,11 +43,13 @@ live_conf() {
     } > "$(dir_of "$1")/awg0.conf"
 }
 
-@test "cpa: both installers write AWG_CPA into init right after the generation marker" {
+@test "cpa: both installers write AWG_CPA into init right before the generation marker block" {
+    # The marker stays the last line of the heredoc (test_protocol_marker.bats), so
+    # AWG_CPA goes just above its comment block.
     local seen=0 src line
     for src in "$BATS_TEST_DIRNAME/../install_amneziawg.sh" "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"; do
-        line=$(awk "/^export AWG_PROTOCOL='\\\$\\{AWG_PROTOCOL\\}'\$/ { getline; print; exit }" "$src")
-        [ "$line" = "export AWG_CPA='\${AWG_CPA:-}'" ] || { echo "line after the marker in $src: '$line'"; return 1; }
+        line=$(awk 'index($0, "export AWG_PROTOCOL=") == 1 { print prev; exit } !/^[[:space:]]*#/ { prev = $0 }' "$src")
+        [ "$line" = "export AWG_CPA='\${AWG_CPA:-}'" ] || { echo "line before the marker block in $src: '$line'"; return 1; }
         seen=$((seen + 1))
     done
     [ "$seen" -eq 2 ]

@@ -4041,10 +4041,10 @@ export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
 export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
 export IPV6_SUBNET='${IPV6_SUBNET}'
 export SERVER_HAS_NATIVE_IPV6=${SERVER_HAS_NATIVE_IPV6:-0}
+export AWG_CPA='${AWG_CPA:-}'
 # Protocol generation of this installation. Do not edit by hand: a different
 # generation requires reissuing every client profile. A missing field reads as 2.0.
 export AWG_PROTOCOL='${AWG_PROTOCOL}'
-export AWG_CPA='${AWG_CPA:-}'
 EOF
     # The pending delete of the old port's UFW rule must survive a reboot:
     # step 4 runs in a different process after 1-2 reboots, a process variable

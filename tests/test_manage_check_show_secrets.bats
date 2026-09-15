@@ -71,6 +71,7 @@ _run_check() {
         log_error() { echo "ERR: $*"; }
         log_debug() { :; }
         source "$1" >/dev/null 2>&1 || true
+        if [[ "${BROKEN_MASK:-0}" == 1 ]]; then _mask_report_secrets() { cat >/dev/null; return 1; }; fi
         safe_load_config() { AWG_PORT=39743; return 0; }
         JSON_OUTPUT=0
         _JSON_EMITTED=0
@@ -125,6 +126,18 @@ c_timeout_named() {
     both c_timeout_named
 }
 
+c_filter_fails() {
+    local want="The secrets filter failed"
+    ru "$1" && want="Фильтр секретов не отработал"
+    BROKEN_MASK=1 run _run_check "$1" ok
+    [ "$status" -eq 1 ] || { echo "check passed with a failed secrets filter ($1): status $status $output"; return 1; }
+    [[ "$output" == *"$want"* ]] || { echo "filter failure not named ($1), expected '$want': $output"; return 1; }
+    [[ "$output" != *"$SECRET"* ]] || { echo "the key leaked when the filter failed ($1): $output"; return 1; }
+}
+@test "check: a failed secrets filter fails check and shows nothing unfiltered, both twins" {
+    both c_filter_fails
+}
+
 # _run_show <manage script> <awg mode> : show_awg_status lifted from the manage script,
 # the library sourced for the masking filter, the same stubs as check.
 _run_show() {
@@ -140,6 +153,7 @@ _run_show() {
         log_error() { echo "ERR: $*"; }
         log_debug() { :; }
         source "$1" >/dev/null 2>&1 || true
+        if [[ "${BROKEN_MASK:-0}" == 1 ]]; then _mask_report_secrets() { exec 0<&-; return 3; }; fi
         eval "$(awk "/^show_awg_status\\(\\) \\{/,/^\\}/" "$2")"
         declare -F show_awg_status >/dev/null || { echo "NO_SHOW_FUNCTION"; exit 7; }
         show_awg_status
@@ -178,6 +192,19 @@ s_timeout() {
     both s_timeout
 }
 
+s_filter_fails() {
+    local want="The secrets filter failed" wrong="awg show failed"
+    ru "$1" && { want="Фильтр секретов не отработал"; wrong="Ошибка awg show"; }
+    BROKEN_MASK=1 run _run_show "$1" ok
+    [ "$status" -eq 1 ] || { echo "show passed with a failed secrets filter ($1): status $status $output"; return 1; }
+    [[ "$output" == *"$want"* ]] || { echo "filter failure not named ($1), expected '$want': $output"; return 1; }
+    [[ "$output" != *"$wrong"* ]] || { echo "a filter failure was reported as an awg show failure ($1): $output"; return 1; }
+    [[ "$output" != *"$SECRET"* ]] || { echo "the key leaked when the filter failed ($1): $output"; return 1; }
+}
+@test "show: a failed secrets filter is named as such, not as an awg show failure, both twins" {
+    both s_filter_fails
+}
+
 @test "show: the show command goes through show_awg_status in both manage twins" {
     local seen=0 src
     for src in "$BATS_TEST_DIRNAME/../manage_amneziawg.sh" "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"; do
@@ -188,13 +215,19 @@ s_timeout() {
     [ "$seen" -eq 2 ]
 }
 
-@test "diagnose: the first line of a failed awg show is not inserted unmasked, both manage twins" {
-    local seen=0 src
+@test "diagnose: the first line of a failed awg show is filtered right before it is reported, both manage twins" {
+    # Pinned inside the failure branch itself: between `_show2_rc=$?` and the WARN
+    # line that reports the code, the text must be reassigned through the filter.
+    # A file-wide grep would be satisfied by check_server and prove nothing.
+    local seen=0 src region
     for src in "$BATS_TEST_DIRNAME/../manage_amneziawg.sh" "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"; do
-        if grep -n '_diag_line' "$src" | grep -q '_awg_show%%'; then
-            echo "a _diag_line still embeds the raw awg show text ($src)"; return 1
+        region=$(awk '/_show2_rc=\$\?/ { f = 1 } f { print } f && /_diag_line WARN/ && /_show2_rc/ { exit }' "$src")
+        [ -n "$region" ] || { echo "the diagnose failure branch was not found ($src)"; return 1; }
+        grep -Eq '^[[:space:]]*_awg_show=\$\(.*_mask_report_secrets' <<< "$region" \
+            || { echo "the failure branch does not filter the line before reporting it ($src): $region"; return 1; }
+        if grep '_diag_line WARN' <<< "$region" | grep -q '_awg_show%%'; then
+            echo "the WARN line embeds the raw awg show text ($src)"; return 1
         fi
-        grep -q '_mask_report_secrets' "$src" || { echo "no masking in $src"; return 1; }
         seen=$((seen + 1))
     done
     [ "$seen" -eq 2 ]

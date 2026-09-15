@@ -1290,16 +1290,18 @@ show_awg_status() {
     local -a _st
     timeout 10 awg show 2>&1 | _mask_report_secrets
     _st=("${PIPESTATUS[@]}")
+    # The filter first: when it dies first, awg show gets SIGPIPE (141), and a filter
+    # failure would look like an awg show failure.
+    if [[ "${_st[1]:-1}" -ne 0 ]]; then
+        log_error "The secrets filter failed: the awg show output was not shown in full."
+        return 1
+    fi
     if [[ "${_st[0]}" -ne 0 ]]; then
         if [[ "${_st[0]}" -eq 124 ]]; then
             log_error "awg show did not answer within 10 seconds - looks like a looping interface dump, check the size of I1-I5."
         else
             log_error "awg show failed."
         fi
-        return 1
-    fi
-    if [[ "${_st[1]:-1}" -ne 0 ]]; then
-        log_error "The secrets filter failed: the awg show output was not shown in full."
         return 1
     fi
     return 0
@@ -1436,7 +1438,11 @@ check_server() {
     # The output goes through the secrets filter: awg show prints the header
     # protection key in clear text, and these lines reach the screen and the log.
     _awg_out=$(timeout 10 awg show awg0 2>&1) || _check_rc=$?
-    _awg_out=$(printf '%s\n' "$_awg_out" | _mask_report_secrets)
+    if ! _awg_out=$(printf '%s\n' "$_awg_out" | _mask_report_secrets); then
+        _awg_out=""
+        log_error " - The secrets filter failed: the awg show output is hidden"
+        ok=0
+    fi
     if [[ "$_check_rc" -ne 0 ]]; then
         [[ "$_check_rc" -eq 124 ]] && _awg_out="awg show did not answer within 10 seconds - looks like a looping interface dump, check the size of I1-I5"
         log_error " - awg show awg0 failed:"
@@ -1745,7 +1751,7 @@ diagnose_server() {
                 _cps_unsafe=1
             else
                 # The first error line goes into a report people paste into issues: filter it.
-                _awg_show=$(printf '%s\n' "${_awg_show%%$'\n'*}" | _mask_report_secrets)
+                _awg_show=$(printf '%s\n' "${_awg_show%%$'\n'*}" | _mask_report_secrets) || _awg_show="output hidden: the secrets filter failed"
                 _diag_line WARN "awg show exited with code $_show2_rc - interface parameters not read${_awg_show:+: ${_awg_show}}"
                 warn=$((warn+1))
             fi

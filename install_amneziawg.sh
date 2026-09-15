@@ -3970,10 +3970,10 @@ export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
 export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
 export IPV6_SUBNET='${IPV6_SUBNET}'
 export SERVER_HAS_NATIVE_IPV6=${SERVER_HAS_NATIVE_IPV6:-0}
+export AWG_CPA='${AWG_CPA:-}'
 # Поколение протокола этой установки. Не редактируйте вручную: другое поколение
 # требует перевыпуска всех клиентских профилей. Отсутствие поля читается как 2.0.
 export AWG_PROTOCOL='${AWG_PROTOCOL}'
-export AWG_CPA='${AWG_CPA:-}'
 EOF
     # Отложенное удаление UFW-правила старого порта обязано пережить reboot:
     # шаг 4 выполняется в другом процессе после 1-2 перезагрузок, переменная

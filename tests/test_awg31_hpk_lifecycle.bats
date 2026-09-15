@@ -25,6 +25,7 @@ lib_run() {
 case "$GENKEY_MODE" in
     ok)  echo "$KEY_OK" ;;
     bad) echo "not-a-key" ;;
+    tail) printf '%s\ntail-without-newline' "$KEY_OK" ;;
     *)   exit 1 ;;
 esac
 STUB
@@ -129,6 +130,19 @@ g_genkey_bad() {
     both g_genkey_bad
 }
 
+g_genkey_tail() {
+    local d want="awg genkey returned a value that is not a key"; d=$(dir_of "$1")
+    ru "$1" && want="awg genkey вернул значение не в форме ключа"
+    defined "$1" || return 1
+    run lib_run "$1" tail 'awg_generate_hpk'
+    [ "$status" -ne 0 ] || { echo "a key followed by an unterminated tail was accepted ($1): $output"; return 1; }
+    [[ "$output" == *"$want"* ]] || { echo "wrong reason ($1), expected '$want': $output"; return 1; }
+    [ ! -e "$d/server_hpk.key" ] || { echo "a key file with a tail was written ($1)"; return 1; }
+}
+@test "hpk: genkey output with an unterminated tail after the key is refused, both twins" {
+    both g_genkey_tail
+}
+
 g_xtrace() {
     local d; d=$(dir_of "$1")
     run lib_run "$1" ok 'exec 2>&1; set -x; awg_generate_hpk; rc=$?; case $- in *x*) echo XTRACE_STILL_ON ;; esac; set +x; exit $rc'
@@ -137,11 +151,10 @@ g_xtrace() {
     [ -f "$d/server_hpk.key" ] || { echo "no key file under set -x ($1)"; return 1; }
     [[ "$output" != *"$KEY_OK"* ]] || { echo "key value in the xtrace output ($1)"; return 1; }
 }
-# Honest scope, measured: this case stays green even with the xtrace guard removed,
-# because generation never holds the value in a shell variable (awg genkey writes
-# straight into the file, the form check greps the file). It guards against a
-# future change that reads the key into a variable; the guard itself is proven by
-# the restore case in test_awg31_hpk_ensure.bats, where the value does sit in one.
+# Measured with the xtrace guard disabled: this case fails, because the form check
+# reads the first line of the generated file into a variable, and the trace of that
+# comparison carries the key. (Before the check read the line, the value never sat
+# in a variable here and the case could not catch a missing guard.)
 @test "hpk: generation under set -x prints no key value and restores xtrace, both twins" {
     both g_xtrace
 }
@@ -161,4 +174,37 @@ g_validate_xtrace() {
 }
 @test "hpk: validate_awg_config under set -x keeps the key out of the trace, both twins" {
     both g_validate_xtrace
+}
+
+g_loader_xtrace() {
+    local d; d=$(dir_of "$1")
+    mkdir -p "$d"
+    {
+        printf '[Interface]\nPrivateKey = PRIVSECRETAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nListenPort = 39743\nJc = 6\nJmin = 55\nJmax = 380\n'
+        printf 'S1 = 72\nS2 = 56\nS3 = 32\nS4 = 16\nH1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\n'
+        printf 'HeaderProtectionKey = %s\n' "$KEY_OK"
+    } > "$d/awg0.conf"
+    run lib_run "$1" ok 'exec 2>&1; set -x; load_awg_params_from_server_conf "$SERVER_CONF_FILE"; rc=$?; case $- in *x*) echo XTRACE_STILL_ON ;; esac; set +x; echo "JC=$AWG_Jc"; exit $rc'
+    [ "$status" -eq 0 ] || { echo "the loader failed under set -x ($1): $output"; return 1; }
+    [[ "$output" == *XTRACE_STILL_ON* ]] || { echo "xtrace was not restored after the loader ($1)"; return 1; }
+    [[ "$output" == *"JC=6"* ]] || { echo "the loader no longer exports its values ($1): $output"; return 1; }
+    [[ "$output" != *"$KEY_OK"* ]] || { echo "the loader printed the header protection key into the trace ($1)"; return 1; }
+    [[ "$output" != *PRIVSECRET* ]] || { echo "the loader printed the private key into the trace ($1)"; return 1; }
+}
+@test "hpk: the live config loader under set -x keeps both keys out of the trace, both twins" {
+    both g_loader_xtrace
+}
+
+g_dir_at_key_path() {
+    local d want="is not a regular file"; d=$(dir_of "$1")
+    ru "$1" && want="не обычный файл"
+    defined "$1" || return 1
+    mkdir -p "$d/server_hpk.key"
+    run lib_run "$1" ok 'awg_generate_hpk'
+    [ "$status" -eq 1 ] || { echo "generation reported success with a directory at the key path ($1): $output"; return 1; }
+    [[ "$output" == *"$want"* ]] || { echo "wrong reason ($1), expected '$want': $output"; return 1; }
+    [ "$(find "$d/server_hpk.key" -mindepth 1 | wc -l)" -eq 0 ] || { echo "a key was written inside the directory ($1)"; return 1; }
+}
+@test "hpk: a directory at the key path is refused, not reported as an existing key, both twins" {
+    both g_dir_at_key_path
 }

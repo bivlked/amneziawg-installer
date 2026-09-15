@@ -233,28 +233,83 @@ s_31_file_damaged() {
     expect "$1" manage 1 "повреждён" "is damaged" || return 1
     printf '%s\n%s\n' "$KEY_A" "$KEY_A" > "$d/server_hpk.key"
     expect "$1" manage 1 "повреждён" "is damaged" || return 1
+    printf '%s\ntail-without-newline' "$KEY_A" > "$d/server_hpk.key"
+    expect "$1" manage 1 "повреждён" "is damaged" || return 1
+    printf '%s' "$KEY_A" > "$d/server_hpk.key"
+    expect "$1" manage 1 "повреждён" "is damaged" || return 1
+    printf '\n%s' "$KEY_A" > "$d/server_hpk.key"
+    expect "$1" manage 1 "повреждён" "is damaged" || return 1
     rm -f "$d/server_hpk.key"; printf '%s\n' "$KEY_A" > "$d/real.key"; ln -s "$d/real.key" "$d/server_hpk.key"
     expect "$1" manage 1 "не обычный файл" "is not a regular file" || return 1
     rm -f "$d/server_hpk.key" "$d/real.key"; mkdir "$d/server_hpk.key"
     expect "$1" manage 1 "не обычный файл" "is not a regular file" || return 1
     rmdir "$d/server_hpk.key"
-    if [[ "$(id -u)" -ne 0 ]]; then
-        keyfile "$1" "$KEY_A"; chmod 000 "$d/server_hpk.key"
-        expect "$1" manage 1 "не читается" "cannot be read" || return 1
-        chmod 600 "$d/server_hpk.key"
-    fi
 }
-@test "ensure: an empty, CRLF, two-line, symlinked, directory or unreadable key file is refused by reason, both twins" {
+@test "ensure: an empty, CRLF, two-line, tailed, symlinked or directory key file is refused by reason, both twins" {
     both s_31_file_damaged
+}
+
+s_31_file_unreadable() {
+    defined "$1" || return 1
+    local d; d=$(dir_of "$1")
+    marker "$1" 3.1; conf "$1" "HeaderProtectionKey = $KEY_A"
+    keyfile "$1" "$KEY_A"; chmod 000 "$d/server_hpk.key"
+    expect "$1" manage 1 "не читается" "cannot be read" || { chmod 600 "$d/server_hpk.key"; return 1; }
+    chmod 600 "$d/server_hpk.key"
+}
+@test "ensure: an unreadable key file is refused as unreadable, not as absent, both twins" {
+    # root reads a mode 000 file, so the state is unreachable there; CI runs as a
+    # regular user and exercises it.
+    [[ "$(id -u)" -ne 0 ]] || skip "root can read a mode 000 file"
+    both s_31_file_unreadable
+}
+
+s_20_fresh_install() {
+    defined "$1" || return 1
+    local d; d=$(dir_of "$1")
+    marker "$1" 2.0
+    expect "$1" install 0 "" "" || return 1
+    [ ! -e "$d/server_hpk.key" ] || { echo "a fresh 2.0 install generated a key ($1)"; return 1; }
+    rm -f "$d/awgsetup_cfg.init"
+    expect "$1" install 0 "" "" || return 1
+    [ ! -e "$d/server_hpk.key" ] || { echo "a fresh install without a marker generated a key ($1)"; return 1; }
+}
+@test "ensure: a fresh 2.0 install (no server config yet) passes in install mode and creates no key, both twins" {
+    both s_20_fresh_install
+}
+
+s_empty_awg_dir() {
+    defined "$1" || return 1
+    local want="AWG_DIR is not set"
+    ru "$1" && want="AWG_DIR не задан"
+    run lib_run "$1" 'AWG_DIR=""; awg_hpk_ensure manage'
+    [ "$status" -eq 1 ] || { echo "ensure with an empty AWG_DIR did not refuse ($1): $output"; return 1; }
+    [[ "$output" == *"$want"* ]] || { echo "wrong reason ($1), expected '$want': $output"; return 1; }
+    [ ! -e /server_hpk.key ] || { echo "a key path at the filesystem root exists"; return 1; }
+    run lib_run "$1" 'AWG_DIR=""; awg_generate_hpk'
+    [ "$status" -eq 1 ] || { echo "generation with an empty AWG_DIR did not refuse ($1): $output"; return 1; }
+    [[ "$output" == *"$want"* ]] || { echo "wrong generation reason ($1), expected '$want': $output"; return 1; }
+}
+@test "ensure: an empty AWG_DIR is refused instead of pointing the key at the filesystem root, both twins" {
+    both s_empty_awg_dir
 }
 
 s_marker_broken() {
     defined "$1" || return 1
     printf "export AWG_PROTOCOL='3.1'\nexport AWG_PROTOCOL='2.0'\n" > "$(dir_of "$1")/awgsetup_cfg.init"
+    # No key anywhere: the server keeps working as 2.0 did before the marker existed,
+    # and the broken marker is reported. A 2.0 user with a hand-mangled init must not
+    # lose add and regen over it.
     conf "$1"
+    expect "$1" manage 0 "Маркер поколения" "generation marker" || return 1
+    # A key in the config makes the generation matter: refuse.
+    conf "$1" "HeaderProtectionKey = $KEY_A"
+    expect "$1" manage 1 "Маркер поколения" "generation marker" || return 1
+    rm -f "$(dir_of "$1")/awg0.conf"
+    conf "$1"; keyfile "$1" "$KEY_A"
     expect "$1" manage 1 "Маркер поколения" "generation marker"
 }
-@test "ensure: an unreadable generation marker is refused, both twins" {
+@test "ensure: a broken generation marker warns without a key and refuses with one, both twins" {
     both s_marker_broken
 }
 
@@ -270,6 +325,20 @@ s_generate_refuses_conf_key() {
 }
 @test "ensure: awg_generate_hpk itself refuses when the config already holds a key, both twins" {
     both s_generate_refuses_conf_key
+}
+
+s_generate_refuses_any_conf() {
+    defined "$1" || return 1
+    local d want="already exists without HeaderProtectionKey"; d=$(dir_of "$1")
+    ru "$1" && want="уже существует без HeaderProtectionKey"
+    marker "$1" 3.1; conf "$1"
+    run lib_run "$1" 'awg_generate_hpk'
+    [ "$status" -eq 1 ] || { echo "generation over an existing config without a key did not refuse ($1): $output"; return 1; }
+    [[ "$output" == *"$want"* ]] || { echo "wrong reason ($1), expected '$want': $output"; return 1; }
+    [ ! -e "$d/server_hpk.key" ] || { echo "a new key was written next to an existing config ($1)"; return 1; }
+}
+@test "ensure: awg_generate_hpk refuses any existing server config, both twins" {
+    both s_generate_refuses_any_conf
 }
 
 s_xtrace() {
