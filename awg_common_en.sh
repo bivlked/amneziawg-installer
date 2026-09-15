@@ -1029,7 +1029,7 @@ safe_load_config() {
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
                 AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
-                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_SERVER_NAME)
+                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME)
                     export "$key=$value"
                     ;;
             esac
@@ -1129,7 +1129,14 @@ awg_restore_generation_notice() {
 # Fixes #38: regen used stale values from the init file instead of the
 # actual awg0.conf after manual edits.
 # shellcheck disable=SC2120  # Optional argument is only used in tests
+# load_awg_params_from_server_conf [config] : obfuscation parameters from the live config.
+# The parse loop holds every [Interface] line in variables, PrivateKey and
+# HeaderProtectionKey included, so the body runs with tracing off.
 load_awg_params_from_server_conf() {
+    _awg_xtrace_guard _load_awg_params_from_server_conf_body "$@"
+}
+
+_load_awg_params_from_server_conf_body() {
     local conf="${1:-$SERVER_CONF_FILE}"
     [[ -f "$conf" ]] || return 1
 
@@ -1137,7 +1144,7 @@ load_awg_params_from_server_conf() {
     local _Jc="" _Jmin="" _Jmax=""
     local _S1="" _S2="" _S3="" _S4=""
     local _H1="" _H2="" _H3="" _H4=""
-    local _I1="" _I2="" _I3="" _I4="" _I5="" _Port="" _MTU=""
+    local _I1="" _I2="" _I3="" _I4="" _I5="" _Port="" _MTU="" _CPA=""
 
     local in_iface=0 line key value
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -1155,6 +1162,10 @@ load_awg_params_from_server_conf() {
             # config and vpn://, and the I1-I5 check never sees it.
             value="${value%%#*}"
             value="${value%"${value##*[![:space:]]}"}"
+            # ContentPaddingAddition is optional and read case-insensitively, the way
+            # amneziawg-tools read it: otherwise a lowercase entry would apply on the
+            # server and never reach the client profiles.
+            [[ "${key,,}" == contentpaddingaddition ]] && _CPA="$value"
             case "$key" in
                 Jc)         _Jc="$value" ;;
                 Jmin)       _Jmin="$value" ;;
@@ -1192,6 +1203,7 @@ load_awg_params_from_server_conf() {
     [[ -n "$_I3"   ]] && export AWG_I3="$_I3"
     [[ -n "$_I4"   ]] && export AWG_I4="$_I4"
     [[ -n "$_I5"   ]] && export AWG_I5="$_I5"
+    [[ -n "$_CPA"  ]] && export AWG_CPA="$_CPA"
     [[ -n "$_Port" ]] && export AWG_PORT="$_Port"
     if _validate_mtu "${_MTU:-}"; then
         export AWG_MTU="$_MTU"
@@ -1243,7 +1255,7 @@ load_awg_params() {
         # No fallback to init: that would create split-brain.
         # Unset I1-I5 before parsing: they are optional, if absent from live conf
         # they must not leak stale values from init file.
-        unset AWG_I1 AWG_I2 AWG_I3 AWG_I4 AWG_I5
+        unset AWG_I1 AWG_I2 AWG_I3 AWG_I4 AWG_I5 AWG_CPA
         if ! load_awg_params_from_server_conf; then
             log_error "$SERVER_CONF_FILE is missing required AWG parameters"
             log_error "(Jc/Jmin/Jmax/S1-S4/H1-H4). Refusing to use stale values from"
@@ -1258,6 +1270,15 @@ load_awg_params() {
         # Bootstrap: server config does not exist yet (first install).
         # AWG_* must be in env via safe_load_config above.
         log_debug "$SERVER_CONF_FILE missing — using AWG params from $CONFIG_FILE (bootstrap)"
+    fi
+
+    # 2a. Header protection key - before any rendering. The check also runs on the
+    # CLI override branch, which does not read parameters from the live config: the
+    # key in it does not go away because of that. While there is no config yet (first
+    # install), step 6 of the installer checks in install mode, the only one allowed
+    # to create a key.
+    if [[ -f "$SERVER_CONF_FILE" ]]; then
+        awg_hpk_ensure manage || return 1
     fi
 
     # 3. Check required AWG 2.0 parameters
@@ -1316,7 +1337,7 @@ load_awg_params() {
 # step 6, where the init file is necessarily newer than an awg0.conf that has
 # not been rewritten yet, and the warning would surface mid-install.
 _AWG_DRIFT_KEYS=(AWG_Jc AWG_Jmin AWG_Jmax AWG_S1 AWG_S2 AWG_S3 AWG_S4 \
-                 AWG_H1 AWG_H2 AWG_H3 AWG_H4 AWG_I1 AWG_I2 AWG_I3 AWG_I4 AWG_I5)
+                 AWG_H1 AWG_H2 AWG_H3 AWG_H4 AWG_I1 AWG_I2 AWG_I3 AWG_I4 AWG_I5 AWG_CPA)
 
 # _awg_drift_dump <init|live> <file>: one line per key in the order of the array
 # above, so the dumps of the two sources compare line by line. Read in a subshell
@@ -1491,6 +1512,288 @@ _ensure_server_public_key() {
     chmod 600 "$AWG_DIR/server_public.key" 2>/dev/null || true
     log "server_public.key reconstructed from awg0.conf PrivateKey."
     return 0
+}
+
+# _mask_report_secrets : the secrets filter for everything that goes to the screen
+# or the log from awg show and configs. A copy of the installer's filter: there it
+# has to work without the downloaded library (--diagnostic), here it serves manage
+# check, show and diagnose. The body is the same in all four copies, and a parity
+# test checks that; the rules and the four upstream string literals are explained
+# in the installer's comment.
+_mask_report_secrets() {
+    sed -E \
+        -e 's/^([[:space:]]*#?[[:space:]]*(PrivateKey|PresharedKey|HeaderProtectionKey)[[:space:]]*=[[:space:]]*).*/\1[HIDDEN]/I' \
+        -e 's/^([[:space:]]*(private key|preshared key|header protection key)[[:space:]]*:[[:space:]]*).*/\1(hidden)/I' \
+        -e 's/(Line unrecognized:[[:space:]]*.?(PrivateKey|PresharedKey|HeaderProtectionKey)[[:space:]]*=[[:space:]]*).*/\1[HIDDEN]/I' \
+        -e 's/(Key is not the correct length or format:[[:space:]]*).*/\1[HIDDEN]/I'
+}
+
+# awg_hpk_path : path to the header protection key (HeaderProtectionKey) file.
+# One place, and only from the current AWG_DIR: the path is not stored in init,
+# or a second source of the path would have to be reconciled with this one every
+# time a backup moves.
+awg_hpk_path() {
+    [[ -n "${AWG_DIR:-}" ]] || return 1
+    printf '%s\n' "$AWG_DIR/server_hpk.key"
+}
+
+# _awg_xtrace_guard <function> [args] : call a function that holds a secret with
+# tracing off, then restore the previous state and return the function's status.
+# The installer turns set -x on for the whole run under --verbose, and any
+# assignment of the key value would land in stderr. Contract limits: the
+# arguments are traced BEFORE tracing goes off, so pass only non-secret ones; the
+# body does not exit or die, only return, or tracing stays off; the body does not
+# print the secret to stdout for a caller's $( ).
+_awg_xtrace_guard() {
+    local _xt=0 _rc=0
+    case $- in *x*) _xt=1; set +x ;; esac
+    "$@" || _rc=$?
+    if (( _xt )); then set -x; fi
+    return "$_rc"
+}
+
+# _awg_hpk_file_valid <file> : the key file is exactly one LF-terminated line, and
+# that line is a key in amneziawg-tools key_from_base64 form (44 characters, '=' at
+# the end, the last significant character carries zero low bits). CRLF, an empty
+# file, a second line, a directory or a symlink are not a key. The first line is
+# read into an internal variable (only bodies under _awg_xtrace_guard call this):
+# read fails without a terminating LF, and a size of exactly 45 bytes rules out a
+# tail or a second line after the key. The line never reaches argv.
+_awg_hpk_file_valid() {
+    local f="$1" n _hv_line
+    [[ -f "$f" && ! -L "$f" && -r "$f" ]] || return 1
+    IFS= read -r _hv_line < "$f" || return 1
+    [[ "$_hv_line" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]] || return 1
+    n=$(wc -c < "$f") || return 1
+    [[ "$n" -eq 45 ]]
+}
+
+# awg_generate_hpk : create the key file if it does not exist. The key is the output
+# of `awg genkey` (the Amnezia app generates this key the same way as a WireGuard
+# private key), written STRAIGHT into a temporary file: the value never passes
+# through variables or argv. An existing file is left alone. The final name appears
+# through ln, which refuses when the file already exists: no window in which
+# someone else's key could be overwritten.
+# When no key file exists but a server config does, refuses: a new key appears only
+# on a first install, before the config is written. Production code does not call
+# this wrapper: awg_hpk_ensure calls _awg_generate_hpk_body inside its trace guard.
+awg_generate_hpk() {
+    _awg_xtrace_guard _awg_generate_hpk_body
+}
+
+_awg_generate_hpk_body() {
+    local key tmp state
+    key=$(awg_hpk_path) || { log_error "Error: AWG_DIR is not set, not creating the header protection key"; return 1; }
+    state=$(_awg_hpk_file_state "$key")
+    case "$state" in
+        ok)     return 0 ;;
+        absent) ;;
+        *)      _awg_hpk_file_refuse "$key" "$state"; return 1 ;;
+    esac
+    if [[ -f "$SERVER_CONF_FILE" ]]; then
+        local _hs_any=0 _hs_if=0 _hs_out=0 _hs_val=""
+        _awg_hpk_conf_scan "$SERVER_CONF_FILE" || { log_error "Error: could not parse $SERVER_CONF_FILE, not creating a new header protection key"; return 1; }
+        if (( _hs_any > 0 )); then
+            log_error "Error: HeaderProtectionKey is already in $SERVER_CONF_FILE, not creating a new key"
+            return 1
+        fi
+        log_error "Error: $SERVER_CONF_FILE already exists without HeaderProtectionKey, not creating a new key over an existing config"
+        return 1
+    fi
+    mkdir -p "$AWG_DIR" || return 1
+    tmp=$(awg_mktemp "$AWG_DIR") || {
+        log_error "Error: could not generate the header protection key: no temporary file in $AWG_DIR"
+        return 1
+    }
+    if ! ( umask 077; awg genkey > "$tmp" ); then
+        rm -f "$tmp"
+        log_error "Error: could not generate the header protection key (awg genkey)"
+        return 1
+    fi
+    if ! _awg_hpk_file_valid "$tmp"; then
+        rm -f "$tmp"
+        log_error "Error: awg genkey returned a value that is not a key, the key file was not written"
+        return 1
+    fi
+    if ! chmod 600 "$tmp" || ! ln -T "$tmp" "$key" 2>/dev/null; then
+        rm -f "$tmp"
+        log_error "Error: could not save the header protection key to $key"
+        return 1
+    fi
+    rm -f "$tmp"
+    log "Header protection key created: $key"
+    return 0
+}
+
+# _awg_hpk_conf_scan <config> : the HeaderProtectionKey lines of a config, parsed the
+# same way the validator parses them (key and section case-insensitive, comment and
+# whitespace dropped). Prints no value: it sets variables declared local in the
+# caller - _hs_any (lines in any section), _hs_if (in [Interface]), _hs_out (outside
+# it, including lines before the first header), _hs_val (value of the last line in
+# [Interface]). A parse failure returns 1.
+_awg_hpk_conf_scan() {
+    local _pairs _sec _k _v
+    _hs_any=0; _hs_if=0; _hs_out=0; _hs_val=""
+    _pairs=$(_awg_conf_pairs "$1") || return 1
+    while IFS=$'\t' read -r _sec _k _v; do
+        [[ "$_k" == headerprotectionkey ]] || continue
+        _hs_any=$((_hs_any + 1))
+        if [[ "$_sec" == interface ]]; then
+            _hs_if=$((_hs_if + 1))
+            _hs_val="$_v"
+        else
+            _hs_out=$((_hs_out + 1))
+        fi
+    done <<< "$_pairs"
+    return 0
+}
+
+# _awg_hpk_file_state <file> : absent, notregular (a directory or a symlink),
+# unreadable, damaged or ok. "Cannot be read" and "absent" stay apart: a read error
+# must not turn into a quiet absence after which the file would be overwritten.
+_awg_hpk_file_state() {
+    local f="$1"
+    if [[ -L "$f" ]]; then echo notregular; return 0; fi
+    if [[ ! -e "$f" ]]; then echo absent; return 0; fi
+    if [[ ! -f "$f" ]]; then echo notregular; return 0; fi
+    if [[ ! -r "$f" ]]; then echo unreadable; return 0; fi
+    if _awg_hpk_file_valid "$f"; then echo ok; else echo damaged; fi
+    return 0
+}
+
+# _awg_hpk_write_value <file> : write the caller's _hs_val through a temporary file:
+# builtin printf (the value stays out of argv), form check, mode 600, ln onto the
+# final name without overwriting an existing one.
+_awg_hpk_write_value() {
+    local key="$1" tmp
+    tmp=$(awg_mktemp "$AWG_DIR") || return 1
+    if ! printf '%s\n' "$_hs_val" > "$tmp" || ! _awg_hpk_file_valid "$tmp" \
+        || ! chmod 600 "$tmp" || ! ln -T "$tmp" "$key" 2>/dev/null; then
+        rm -f "$tmp"
+        return 1
+    fi
+    rm -f "$tmp"
+    return 0
+}
+
+_awg_hpk_file_refuse() {
+    case "$2" in
+        notregular) log_error "The key file $1 is not a regular file (a directory or a symlink): the header protection key cannot be checked" ;;
+        unreadable) log_error "The key file $1 cannot be read" ;;
+        *)          log_error "The key file $1 is damaged: one line with the key is expected" ;;
+    esac
+}
+
+# awg_hpk_ensure <install|manage> : header protection key consistency before any
+# profile is rendered. awg0.conf is the source of truth, server_hpk.key its copy.
+#   - the marker is read from init afresh in a subshell: an AWG_PROTOCOL variable
+#     left in the environment by an earlier load must not decide;
+#   - a 2.0 installation with a key in the config (in any section) is refused:
+#     rendering would issue profiles without the key, which silently do not connect;
+#     a leftover key file is a warning;
+#   - 3.1: the config key is checked the validator's way (one line in [Interface],
+#     key form); a lost file is restored from the config and NEVER replaced by a new
+#     key; a differing file is refused and left alone;
+#   - a new key is created only in install mode and only while the server config does
+#     not exist yet (first install); never over an existing config.
+# Limits: the live interface is not checked (the key sticks to it), and manage
+# restore is not protected by this check.
+awg_hpk_ensure() {
+    _awg_xtrace_guard _awg_hpk_ensure_body "$@"
+}
+
+_awg_hpk_ensure_body() {
+    local mode="${1:-}" key gen state _line
+    local _hs_any=0 _hs_if=0 _hs_out=0 _hs_val=""
+    case "$mode" in
+        install|manage) ;;
+        *) log_error "awg_hpk_ensure: mode install or manage is required"; return 1 ;;
+    esac
+    key=$(awg_hpk_path) || { log_error "AWG_DIR is not set: the header protection key is not checked"; return 1; }
+    gen=$(AWG_PROTOCOL=""; if [[ -f "$CONFIG_FILE" ]]; then safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; fi; awg_installed_protocol "$CONFIG_FILE") || gen=broken
+    if [[ -f "$SERVER_CONF_FILE" ]]; then
+        _awg_hpk_conf_scan "$SERVER_CONF_FILE" || { log_error "Could not parse $SERVER_CONF_FILE: the header protection key is not checked"; return 1; }
+    fi
+
+    # A broken marker matters only where a key exists. Without a key the installation
+    # behaves as 2.0 did before the marker existed, and add or regen must not fail over an init edit.
+    if [[ "$gen" == broken ]]; then
+        if (( _hs_any > 0 )) || [[ -e "$key" || -L "$key" ]]; then
+            log_error "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read (allowed values are 2.0 and 3.1): the header protection key is not checked"
+            return 1
+        fi
+        log_warn "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read (allowed values are 2.0 and 3.1): the header protection key is not checked"
+        return 0
+    fi
+
+    if [[ "$gen" != "3.1" ]]; then
+        if (( _hs_any > 0 )); then
+            log_error "HeaderProtectionKey (third line) is set in $SERVER_CONF_FILE, but the installation is marked as generation 2.0: profiles without the key will not connect. Check the AWG_PROTOCOL marker in $CONFIG_FILE or remove the key from the config"
+            return 1
+        fi
+        if [[ -e "$key" || -L "$key" ]]; then
+            log_warn "$key is not used: the installation is marked as generation 2.0"
+        fi
+        return 0
+    fi
+
+    if [[ ! -f "$SERVER_CONF_FILE" ]]; then
+        if [[ "$mode" != install ]]; then
+            log_error "The installation is marked as generation 3.1, but the server config does not exist ($SERVER_CONF_FILE): the header protection key cannot be checked"
+            return 1
+        fi
+        state=$(_awg_hpk_file_state "$key")
+        case "$state" in
+            absent) _awg_generate_hpk_body; return ;;
+            ok)     return 0 ;;
+            *)      _awg_hpk_file_refuse "$key" "$state"; return 1 ;;
+        esac
+    fi
+
+    if (( _hs_out > 0 )); then
+        log_error "HeaderProtectionKey is set outside the [Interface] section in $SERVER_CONF_FILE"
+        return 1
+    fi
+    if (( _hs_if > 1 )); then
+        log_error "HeaderProtectionKey is set ${_hs_if} times in [Interface] in $SERVER_CONF_FILE: keep a single key"
+        return 1
+    fi
+    state=$(_awg_hpk_file_state "$key")
+    if (( _hs_if == 0 )); then
+        if [[ "$state" == absent ]]; then
+            log_error "The installation is marked as generation 3.1, but there is no HeaderProtectionKey in $SERVER_CONF_FILE or in $key: profiles cannot be issued"
+        else
+            log_error "HeaderProtectionKey was removed from $SERVER_CONF_FILE, but the key file $key exists: put the key back into the config or restore the config from a backup"
+        fi
+        return 1
+    fi
+    if ! [[ "$_hs_val" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]]; then
+        log_error "HeaderProtectionKey in $SERVER_CONF_FILE does not look like a key: it must be 32 bytes in base64, 44 characters"
+        return 1
+    fi
+    case "$state" in
+        absent)
+            if ! _awg_hpk_write_value "$key"; then
+                log_error "Error: could not restore the header protection key file $key"
+                return 1
+            fi
+            log "Header protection key file restored from $SERVER_CONF_FILE: $key"
+            return 0
+            ;;
+        ok)
+            if ! IFS= read -r _line < "$key"; then
+                log_error "The key file $key cannot be read"
+                return 1
+            fi
+            [[ "$_line" == "$_hs_val" ]] && return 0
+            log_error "The key in $key does not match HeaderProtectionKey in $SERVER_CONF_FILE: a manual edit or a failed restore. Decide by hand which one is right"
+            return 1
+            ;;
+        *)
+            _awg_hpk_file_refuse "$key" "$state"
+            return 1
+            ;;
+    esac
 }
 
 # ==============================================================================
@@ -3820,8 +4123,14 @@ regenerate_client() {
 # Validation
 # ==============================================================================
 
-# Validate AWG 2.0 server config
+# validate_awg_config : server config check. The parse holds the header protection
+# key value in variables, so the body runs with tracing off: under the installer's
+# --verbose the key would otherwise land in stderr.
 validate_awg_config() {
+    _awg_xtrace_guard _validate_awg_config_body "$@"
+}
+
+_validate_awg_config_body() {
     if [[ ! -f "$SERVER_CONF_FILE" ]]; then
         log_error "Server config not found: $SERVER_CONF_FILE"
         return 1

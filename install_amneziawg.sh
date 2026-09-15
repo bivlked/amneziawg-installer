@@ -1102,7 +1102,7 @@ safe_load_config() {
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
                 AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
-                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_SERVER_NAME)
+                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME)
                     export "$key=$value"
                     ;;
             esac
@@ -3970,6 +3970,7 @@ export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
 export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
 export IPV6_SUBNET='${IPV6_SUBNET}'
 export SERVER_HAS_NATIVE_IPV6=${SERVER_HAS_NATIVE_IPV6:-0}
+export AWG_CPA='${AWG_CPA:-}'
 # Поколение протокола этой установки. Не редактируйте вручную: другое поколение
 # требует перевыпуска всех клиентских профилей. Отсутствие поля читается как 2.0.
 export AWG_PROTOCOL='${AWG_PROTOCOL}'
@@ -5293,6 +5294,11 @@ step6_generate_configs() {
     else
         log "Серверные ключи уже существуют."
     fi
+
+    # Ключ защиты заголовков: на первой установке 3.1 создаётся, при потерянном файле
+    # восстанавливается из конфига, при расхождении установка останавливается ДО
+    # перезаписи серверного конфига. На 2.0 без ключа проверка ничего не делает.
+    awg_hpk_ensure install || die "Ключ защиты заголовков не согласован, серверный конфиг не перезаписан."
 
     # Бэкап существующего серверного конфига ДО перезаписи
     if [[ -f "$SERVER_CONF_FILE" ]]; then

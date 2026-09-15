@@ -1129,7 +1129,7 @@ safe_load_config() {
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
                 AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
-                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_SERVER_NAME)
+                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME)
                     export "$key=$value"
                     ;;
             esac
@@ -4041,6 +4041,7 @@ export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
 export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
 export IPV6_SUBNET='${IPV6_SUBNET}'
 export SERVER_HAS_NATIVE_IPV6=${SERVER_HAS_NATIVE_IPV6:-0}
+export AWG_CPA='${AWG_CPA:-}'
 # Protocol generation of this installation. Do not edit by hand: a different
 # generation requires reissuing every client profile. A missing field reads as 2.0.
 export AWG_PROTOCOL='${AWG_PROTOCOL}'
@@ -5384,6 +5385,11 @@ step6_generate_configs() {
     else
         log "Server keys already exist."
     fi
+
+    # Header protection key: created on a first 3.1 install, restored from the config
+    # when the file is lost, and on a mismatch the install stops BEFORE the server
+    # config is rewritten. On 2.0 without a key the check does nothing.
+    awg_hpk_ensure install || die "The header protection key is inconsistent, the server config was not rewritten."
 
     # Backup existing server config BEFORE overwriting
     if [[ -f "$SERVER_CONF_FILE" ]]; then

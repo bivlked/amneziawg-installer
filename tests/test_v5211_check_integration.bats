@@ -78,6 +78,9 @@ _run_check() {
     local port_value="$1" src="${2:-$BATS_TEST_DIRNAME/../manage_amneziawg.sh}"
     # v5.21.2: _sanitize_port lives in awg_common*.sh now; check_server and the
     # JSON helpers still come from the manage script under test.
+    # _mask_report_secrets too: check_server filters the awg show output through it
+    # (the header protection key is printed there in clear text), and without it the
+    # harness would print "command not found" into the JSON envelope.
     # Same reason for awg_module_version: check_server asks it for the module
     # version, and it lives in awg_common*.sh. Without injecting it the harness
     # printed "command not found" into stdout and the JSON envelope stopped
@@ -97,6 +100,7 @@ _run_check() {
         _JSON_EMITTED=0
         '"$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$common_src")"'
         '"$(awk '/^awg_module_version\(\) \{/,/^\}/' "$common_src")"'
+        '"$(awk '/^_mask_report_secrets\(\) \{/,/^\}/' "$common_src")"'
         '"$(awk '/^_json_utf8_sanitize\(\) \{/,/^\}/' "$src")"'
         '"$(awk '/^json_escape\(\) \{/,/^\}/' "$src")"'
         '"$(awk '/^json_out\(\) \{/,/^\}/' "$src")"'
@@ -163,6 +167,7 @@ _run_check() {
             _JSON_EMITTED=0
             '"$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../awg_common.sh")"'
             '"$(awk '/^awg_module_version\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../awg_common.sh")"'
+            '"$(awk '/^_mask_report_secrets\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../awg_common.sh")"'
             '"$(awk '/^_json_utf8_sanitize\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             '"$(awk '/^json_escape\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             '"$(awk '/^json_out\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
