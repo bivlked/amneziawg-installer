@@ -22,7 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **`manage check` and `manage show` no longer print the header protection key.** `awg show` prints it in clear text, and `check` carried that output to the screen and the log. The key line is now hidden the same way as in the diagnostic report, and the rest of the output is unchanged; if the filter itself fails, `check` hides the output, `show` reports that the output was not shown in full, and both commands exit with an error. In `diagnose` the first error line of `awg show` goes through the same filter.
 - **A hung `awg show` is now named as a timeout.** In `check` and `show` the exit status was lost ever since the timeout check was added, so a generic error was printed instead of "did not answer within 10 seconds".
-- **The installer with `--verbose` no longer prints the header protection key while reading and checking the server config.** Tracing is switched off for that time and turned back on afterwards.
+- **The installer with `--verbose` no longer prints keys.** The trace showed server and client private keys, `PresharedKey` values, the header protection key and `vpn://` links: while generating keys, rendering the server config, creating and regenerating clients, applying the config, and reading and checking the server config. Such functions now run entirely with tracing off, and tracing is turned back on after them. The same applies to `manage` run under `bash -x`: `list`, `stats`, `check`, `diagnose`, `modify`, `add`, `regen`, `remove` and the service status printed when `restore` or `restart` fails. A value passed directly on the command line is still shown by the trace before the function is entered.
 
 ### Documentation
 
