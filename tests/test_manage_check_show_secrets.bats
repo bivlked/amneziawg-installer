@@ -196,7 +196,9 @@ c_fail_empty() {
 # the library sourced for the masking filter, the same stubs as check.
 # SIGPIPE is set back to its default: a parent that ignores it (the GitHub runner does)
 # passes the ignore down, a shell cannot undo an ignore it inherited, and awg show
-# would then outlive a dead filter instead of dying of SIGPIPE as it does on a server.
+# would then outlive a dead filter instead of dying of SIGPIPE as it does when manage is
+# run from an interactive shell. The inherited-ignore path (a systemd unit, a bot) is the
+# case of a filter failure with awg show exiting 0, covered by s_filter_fails_awg_ok.
 _run_show() {
     local src="$1" mode="$2" common
     common="${src/manage_amneziawg/awg_common}"
@@ -211,6 +213,7 @@ _run_show() {
         log_debug() { :; }
         source "$1" >/dev/null 2>&1 || true
         if [[ "${BROKEN_MASK:-0}" == 1 ]]; then _mask_report_secrets() { exec 0<&-; return 3; }; fi
+        if [[ "${BROKEN_MASK:-0}" == 2 ]]; then _mask_report_secrets() { cat >/dev/null; return 3; }; fi
         eval "$(awk "/^show_awg_status\\(\\) \\{/,/^\\}/" "$2")"
         declare -F show_awg_status >/dev/null || { echo "NO_SHOW_FUNCTION"; exit 7; }
         show_awg_status
@@ -266,6 +269,22 @@ s_filter_fails() {
 }
 @test "show: a failed secrets filter is named as such, not as an awg show failure, both twins" {
     both s_filter_fails
+}
+
+s_filter_fails_awg_ok() {
+    # The filter reads everything and then fails, so awg show exits 0: the usual case on
+    # a server, where the output fits the pipe buffer, and the case under an inherited
+    # SIGPIPE ignore. No signal is involved, so the test does not depend on the host.
+    local want="The secrets filter failed" wrong="awg show failed"
+    ru "$1" && { want="Фильтр секретов не отработал"; wrong="Ошибка awg show"; }
+    BROKEN_MASK=2 run _run_show "$1" ok
+    [ "$status" -eq 1 ] || { echo "show passed with a failed filter after a successful awg show ($1): status $status $output"; return 1; }
+    [[ "$output" == *"$want"* ]] || { echo "filter failure not named ($1), expected '$want': $output"; return 1; }
+    [[ "$output" != *"$wrong"* ]] || { echo "a successful awg show was reported as failed ($1): $output"; return 1; }
+    [[ "$output" != *"$SECRET"* ]] || { echo "the key leaked when the filter failed ($1): $output"; return 1; }
+}
+@test "show: a failed secrets filter fails show even when awg show succeeded, both twins" {
+    both s_filter_fails_awg_ok
 }
 
 s_filter_and_timeout() {
