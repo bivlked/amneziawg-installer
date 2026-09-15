@@ -62,7 +62,7 @@ sleep 0.3
 echo "interface: awg0"
 echo "  header protection key: ${SECRET}"
 echo "  jc: 6"
-touch "${BATS_TEST_TMPDIR}/slow-finished"
+touch "${BATS_TEST_TMPDIR}/slow-finished" || exit 99
 exit 0
 EOF
             ;;
@@ -257,7 +257,8 @@ s_filter_fails() {
     [ "$status" -eq 1 ] || { echo "show passed with a failed secrets filter ($1): status $status $output"; return 1; }
     [[ "$output" == *"$want"* ]] || { echo "filter failure not named ($1), expected '$want': $output"; return 1; }
     [[ "$output" != *"$wrong"* ]] || { echo "a filter failure was reported as an awg show failure ($1): $output"; return 1; }
-    # The broken filter here prints nothing, so this only guards a future change of the stub.
+    # The broken filter here prints nothing, so this can only fail if that override or
+    # show_awg_status itself starts printing the awg show output unfiltered.
     [[ "$output" != *"$SECRET"* ]] || { echo "the key leaked when the filter failed ($1): $output"; return 1; }
 }
 @test "show: a failed secrets filter is named as such, not as an awg show failure, both twins" {
@@ -274,6 +275,18 @@ s_filter_and_timeout() {
 }
 @test "show: a timeout is still named when the secrets filter failed too, both twins" {
     both s_filter_and_timeout
+}
+
+s_filter_and_awg_fail() {
+    local want="The secrets filter failed" code="awg show failed (code 1)."
+    ru "$1" && { want="Фильтр секретов не отработал"; code="Ошибка awg show (код 1)."; }
+    BROKEN_MASK=1 run _run_show "$1" failempty
+    [ "$status" -eq 1 ] || { echo "show passed with a failed filter and a failed awg show ($1): status $status"; return 1; }
+    [[ "$output" == *"$want"* ]] || { echo "filter failure not named ($1): $output"; return 1; }
+    [[ "$output" == *"$code"* ]] || { echo "a failed awg show next to a failed filter is not named by its code ($1): $output"; return 1; }
+}
+@test "show: a failed awg show is still named by its code when the secrets filter failed too, both twins" {
+    both s_filter_and_awg_fail
 }
 
 s_fail_empty() {

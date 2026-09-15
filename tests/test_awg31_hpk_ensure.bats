@@ -72,6 +72,22 @@ conf() {
 
 keyfile() { printf '%s\n' "$2" > "$(dir_of "$1")/server_hpk.key"; chmod 600 "$(dir_of "$1")/server_hpk.key"; }
 
+# no_temp_left <dir> : every temporary file the library registered in <dir> is gone.
+# Read from the library's own registry, not guessed from a name pattern, and at least
+# one entry is required, so the check cannot pass because nothing was ever written.
+no_temp_left() {
+    local reg f n=0
+    for reg in "$1"/.awg_temp_registry.*; do
+        [ -f "$reg" ] || continue
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            n=$((n + 1))
+            [ ! -e "$f" ] || { echo "a temporary file was left: $f"; return 1; }
+        done < "$reg"
+    done
+    [ "$n" -gt 0 ] || { echo "no temporary file was registered in $1"; return 1; }
+}
+
 # expect <lib> <mode> <rc> <ru reason or ""> <en reason or "">
 expect() {
     local lib="$1" mode="$2" rc="$3" want="$5"
@@ -149,6 +165,7 @@ s_31_restore() {
     expect "$1" manage 0 "восстановлен из" "restored from" || return 1
     [ -f "$d/server_hpk.key" ] || { echo "the key file was not restored ($1)"; return 1; }
     [ "$(stat -c %a "$d/server_hpk.key")" = "600" ] || { echo "restored file mode is not 600 ($1)"; return 1; }
+    no_temp_left "$d" || { echo "after restoring the key file ($1)"; return 1; }
     [ "$(cat "$d/server_hpk.key")" = "$KEY_A" ] || { echo "restored key differs from the config ($1)"; return 1; }
     expect "$1" manage 0 "" ""
 }
@@ -215,6 +232,7 @@ s_31_bootstrap() {
     marker "$1" 3.1
     expect "$1" install 0 "" "" || return 1
     [ "$(cat "$d/server_hpk.key")" = "$KEY_GEN" ] || { echo "first install did not generate a key ($1)"; return 1; }
+    no_temp_left "$d" || { echo "after generating the key file ($1)"; return 1; }
     expect "$1" install 0 "" "" || return 1
     [ "$(cat "$d/server_hpk.key")" = "$KEY_GEN" ] || { echo "a second install call replaced the key ($1)"; return 1; }
     expect "$1" manage 1 "серверного конфига нет" "the server config does not exist"
@@ -325,7 +343,7 @@ s_write_value_no_link_into_dir() {
     run lib_run "$1" "_hs_val='$KEY_A'; _awg_hpk_write_value \"\$AWG_DIR/server_hpk.key\"; echo \"rc=\$?\""
     [[ "$output" == *"rc=1"* ]] || { echo "the writer did not refuse a directory at the key path ($1): $output"; return 1; }
     [ -z "$(ls -A "$d/server_hpk.key")" ] || { echo "the key was linked into the directory ($1): $(ls -A "$d/server_hpk.key")"; return 1; }
-    [ -z "$(find "$d" -maxdepth 1 -name 'tmp.*')" ] || { echo "the refused writer left its temporary key file ($1): $(find "$d" -maxdepth 1 -name 'tmp.*')"; return 1; }
+    no_temp_left "$d" || { echo "after the refused write ($1)"; return 1; }
 }
 @test "ensure: the key writer does not link into a directory that took the key path, both twins" {
     both s_write_value_no_link_into_dir
