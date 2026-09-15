@@ -1549,7 +1549,8 @@ awg_hpk_path() {
 # print the secret to stdout for a caller's $( ).
 # Functions that hold keys themselves (key generation, server config rendering,
 # client creation and regeneration, add_peer_to_server, vpn://, apply_config
-# and the manage functions that read keys) start with a self-guard line:
+# and the manage functions that read keys or the service status) start with a
+# self-guard line:
 #     case $- in *x*) _awg_xtrace_guard <own name> "$@"; return ;; esac
 # (without "$@" in a function that takes no arguments).
 # Under tracing the function calls itself once more with tracing off, so the
