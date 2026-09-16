@@ -6,13 +6,17 @@
 # tested one by one elsewhere, and the set check there runs against a set built
 # by hand with the parameters loaded beforehand. This file runs the chain as the
 # installer does, in one shell and without loading anything first: if the
-# renderers and the link ever wrote the profile in a form the check does not
-# accept, or the padding the check compares against were not the one the
-# renderers used, every first 3.1 install would undo itself, and only a server
-# would show it.
+# renderers ever wrote the profile in a form the check does not accept, every
+# first 3.1 install would undo itself, and only a server would show it.
+#
+# Two limits worth knowing. generate_client reloads the parameters from the
+# server config it has just rendered, so the padding the check compares against
+# is the rendered one; the check's own normalization is covered by
+# test_awg31_artifacts.bats. And the set check only looks at the start of the
+# link, so this file decodes the link itself to see the profile went into it.
 #
 # External tools are stubbed: awg (keys), qrencode (the QR file). perl is real,
-# because the link is what the check reads.
+# because it builds the link.
 
 KEY_OK="QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQA="
 
@@ -76,7 +80,7 @@ both() {
 }
 
 e_chain() {
-    local lib="$1" cpa out
+    local lib="$1" cpa out fields
     # The second padding carries a comment and spaces, the way a hand-edited init
     # may: the renderers write the checked form, and the check has to agree.
     for cpa in "32-128" "32 - 128 # set by hand"; do
@@ -86,9 +90,27 @@ e_chain() {
             awg_client_artifacts_check c1; echo "RC=$?"')
         [[ "$out" != *RENDER_FAILED* && "$out" != *CLIENT_FAILED* ]] || { echo "the chain broke before the check ($lib, '$cpa'): $out"; return 1; }
         [[ "$out" == *"RC=0"* ]] || { echo "a set made by the library was refused by its own check ($lib, '$cpa'): $out"; return 1; }
+        fields=$(link_fields "$BATS_TEST_TMPDIR/e-$(basename "$lib" .sh)/c1.vpnuri") || { echo "the link does not decode ($lib, '$cpa')"; return 1; }
+        grep -qxF "HeaderProtectionKey=$KEY_OK" <<< "$fields" || { echo "the link lost the key ($lib, '$cpa'): $fields"; return 1; }
+        grep -qxF "ContentPaddingAddition=32-128" <<< "$fields" || { echo "the link lost the padding ($lib, '$cpa'): $fields"; return 1; }
     done
+}
+
+# link_fields <uri file> : top-level keys of the inner config JSON, parsed.
+link_fields() {
+    python3 - "$1" <<'PY'
+import base64, json, sys, zlib
+uri = open(sys.argv[1], encoding="utf-8").read().strip().replace("vpn://", "")
+raw = base64.urlsafe_b64decode(uri + "=" * (-len(uri) % 4))
+outer = json.loads(zlib.decompress(raw[4:]))
+inner = json.loads(outer["containers"][0]["awg"]["last_config"])
+for k in sorted(inner):
+    v = inner[k]
+    print("%s=%s" % (k, v if isinstance(v, str) else json.dumps(v)))
+PY
 }
 @test "set 3.1: a client made by the real library passes the real set check, both twins" {
     require_perl_zlib
+    command -v python3 &>/dev/null || skip "python3 not available"
     both e_chain
 }

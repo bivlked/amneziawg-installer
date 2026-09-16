@@ -4,7 +4,7 @@
 # A 3.1 profile is only usable as a complete set - config, QR code, vpn:// link
 # and its QR code - and the link needs perl with Compress::Zlib and MIME::Base64,
 # while both QR codes need qrencode. On 2.0 a missing tool costs a convenience;
-# on 3.1 the link is the one simple way to get the profile into the application,
+# on 3.1 the link is the usual way to import the profile into the application,
 # and a half-set is not usable. So the tools are checked first, and the
 # installation stops with the missing one named instead of failing halfway.
 #
@@ -160,6 +160,7 @@ t_leftovers() {
         ln -s "$AWG_DIR/nowhere" "$AWG_DIR/my_phone.png"
         _awg31_refuse_client_leftovers my_phone my_laptop; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] && { echo "a dangling link was accepted ($lib): $out"; return 1; }
+    [[ "$out" == *"ERR:"*"'my_phone'"* ]] || { echo "a dangling link refused without naming the client ($lib): $out"; return 1; }
     return 0
 }
 @test "first install 3.1: any leftover file of a default client stops the install, both twins" {

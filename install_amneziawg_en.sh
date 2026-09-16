@@ -5363,31 +5363,41 @@ step5_download_scripts() {
 # STEP 6: Config generation (native, without awgcfg.py)
 # ==============================================================================
 
-# _step6_undo_31 <message> <server config backup or empty> <client>...
+# _step6_undo_31 <reason> <server config backup or empty> <client>...
 # A refusal of step 6 on a 3.1 install AFTER the server config was rewritten. A
 # 3.1 profile is only usable as a complete set, so nothing is left half done:
 # the files of the clients made by THIS attempt are removed, the server config
 # comes back from its backup, and on a first install (no backup) it is removed.
 # What stays is the server keys and server_hpk.key (including ones this attempt
 # created: a rerun of step 6 takes the same ones) and the backup file itself.
-# The config comes back through a temporary file and mv: a copy cut off halfway
-# would otherwise leave a fragment in place of the config.
+# The config comes back through a temporary file (awg_mktemp, a fresh name) and
+# mv: a copy cut off halfway would otherwise leave a fragment in place of it.
+# The final message says whether the undo worked: if any of its steps failed,
+# the folder is inconsistent, and a rerun without a manual check could quietly
+# accept clients that have no files.
 _step6_undo_31() {
-    local msg="$1" bak="$2" name tmp
+    local why="$1" bak="$2" name tmp failed=0
     shift 2
     for name in "$@"; do
-        _remove_client_files "$name" || log_error "The files of client '$name' were not all removed: check $AWG_DIR and $KEYS_DIR"
+        if ! _remove_client_files "$name"; then
+            log_error "The files of client '$name' were not all removed: check $AWG_DIR and $KEYS_DIR"
+            failed=1
+        fi
     done
     if [[ -n "$bak" ]]; then
-        tmp="${SERVER_CONF_FILE}.restore.$$"
-        if ! { cp -p "$bak" "$tmp" && mv -f "$tmp" "$SERVER_CONF_FILE"; }; then
-            rm -f "$tmp"
+        if ! { tmp=$(awg_mktemp "$(dirname "$SERVER_CONF_FILE")") && cp -p "$bak" "$tmp" && mv -f "$tmp" "$SERVER_CONF_FILE"; }; then
+            [[ -n "${tmp:-}" ]] && rm -f "$tmp"
             log_error "The server config was not restored from the backup $bak: restore it by hand"
+            failed=1
         fi
-    else
-        rm -f "$SERVER_CONF_FILE" || log_error "The server config $SERVER_CONF_FILE was not removed: remove it by hand"
+    elif ! rm -f "$SERVER_CONF_FILE"; then
+        log_error "The server config $SERVER_CONF_FILE was not removed: remove it by hand"
+        failed=1
     fi
-    die "$msg"
+    if (( failed )); then
+        die "${why}: the 3.1 install stopped, but the undo did NOT complete (errors above). Check $AWG_DIR and the server config by hand before running the install again."
+    fi
+    die "${why}: the 3.1 install was undone, the files of this attempt are removed, the server keys are kept for a rerun."
 }
 
 step6_generate_configs() {
@@ -5403,13 +5413,14 @@ step6_generate_configs() {
     source "$COMMON_SCRIPT_PATH"
 
     # 3.1 install: a profile is only usable as a complete set, so everything that
-    # could break it halfway is checked BEFORE the first change, including before
-    # the server keys are generated. Default clients already in the server config
-    # are carried over and not recreated, so their files are not leftovers; only
-    # the clients this attempt will create are checked. On 2.0 and with an
-    # unreadable marker the step takes its old path.
+    # could break it halfway and does not depend on the keys is checked BEFORE the
+    # first change, including before the server keys are generated (the header
+    # protection key and the config backup are checked below, after them). Default
+    # clients already in the server config are carried over and not recreated, so
+    # their files are not leftovers; only the clients this attempt will create are
+    # checked. On 2.0 and with an unreadable marker the step takes its old path.
     local gen31=0 client_name new_clients=() created=()
-    if [[ "$(_awg_generation_from_init "$CONFIG_FILE")" == "3.1" ]]; then
+    if [[ "$(_awg_generation_from_init "$CONFIG_FILE" 2>/dev/null)" == "3.1" ]]; then
         gen31=1
     fi
     for client_name in my_phone my_laptop; do
@@ -5478,10 +5489,10 @@ step6_generate_configs() {
                 # it over: creating that client would later have the undo remove
                 # files that existed before the attempt.
                 if [[ " ${new_clients[*]} " != *" $client_name "* ]]; then
-                    _step6_undo_31 "Client '$client_name' was in the old server config but was not carried into the new one: the 3.1 install was undone, the files of this attempt are removed, the server keys are kept for a rerun." "${s_bak:-}" "${created[@]}"
+                    _step6_undo_31 "Client '$client_name' was in the old server config but was not carried into the new one" "${s_bak:-}" "${created[@]}"
                 fi
                 created+=("$client_name")
-                generate_client "$client_name" || _step6_undo_31 "Client '$client_name' was not created: the 3.1 install was undone, the files of this attempt are removed, the server keys are kept for a rerun." "${s_bak:-}" "${created[@]}"
+                generate_client "$client_name" || _step6_undo_31 "Client '$client_name' was not created" "${s_bak:-}" "${created[@]}"
             else
                 generate_client "$client_name" || log_warn "Client creation error '$client_name'"
             fi
@@ -5492,13 +5503,13 @@ step6_generate_configs() {
     # error, so the set of every new client is checked as a whole.
     if (( gen31 )); then
         for client_name in "${created[@]}"; do
-            awg_client_artifacts_check "$client_name" || _step6_undo_31 "The set of client '$client_name' is incomplete: the 3.1 install was undone, the files of this attempt are removed, the server keys are kept for a rerun." "${s_bak:-}" "${created[@]}"
+            awg_client_artifacts_check "$client_name" || _step6_undo_31 "The set of client '$client_name' is incomplete" "${s_bak:-}" "${created[@]}"
         done
     fi
 
     # Config validation
     if (( gen31 )); then
-        validate_awg_config || _step6_undo_31 "The 3.1 config failed validation: the install was undone, the files of this attempt are removed, the server keys are kept for a rerun." "${s_bak:-}" "${created[@]}"
+        validate_awg_config || _step6_undo_31 "The 3.1 config failed validation" "${s_bak:-}" "${created[@]}"
     else
         validate_awg_config || log_warn "Config validation found issues."
     fi

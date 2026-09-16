@@ -230,3 +230,26 @@ u_31_missing_cpa_in_conf() {
     require_perl_zlib; require_python3
     both u_31_missing_cpa_in_conf
 }
+
+u_broken_marker_link() {
+    local lib="$1" d out fields
+    d=$(dir_of "$lib")
+    # An unreadable marker and no key file: add and regen go on over such an init,
+    # so the link has to be made as on 2.0, not refused as a 3.1 profile without
+    # a key. Third-line lines added to the client config by hand stay out of the
+    # link fields here too.
+    out=$(lib_run "$lib" yes '
+        sed -i "0,/^\[Peer\]/s//HeaderProtectionKey = '"$KEY_OK"'\nContentPaddingAddition = 32-128\n\n[Peer]/" "$AWG_DIR/c1.conf"
+        grep -q "^HeaderProtectionKey = " "$AWG_DIR/c1.conf" || { echo "SETUP_FAILED"; exit 0; }
+        generate_vpn_uri c1; echo "RC=$?"')
+    [[ "$out" != *SETUP_FAILED* && "$out" != *"RC=9"* ]] || { echo "could not prepare the install ($lib): $out"; return 1; }
+    [[ "$out" == *"RC=0"* ]] || { echo "no link over an unreadable marker without a key ($lib): $out"; return 1; }
+    fields=$(inner_fields "$d/c1.vpnuri") || { echo "the inner config is not valid JSON ($lib)"; return 1; }
+    grep -q '^HeaderProtectionKey=' <<< "$fields" && { echo "key field on a link over an unreadable marker ($lib)"; return 1; }
+    grep -q '^ContentPaddingAddition=' <<< "$fields" && { echo "padding field on a link over an unreadable marker ($lib)"; return 1; }
+    return 0
+}
+@test "vpn uri: an unreadable marker without a key makes the link as on 2.0, both twins" {
+    require_perl_zlib; require_python3
+    both u_broken_marker_link
+}

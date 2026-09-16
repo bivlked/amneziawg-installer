@@ -241,6 +241,12 @@ r_broken_marker_with_key() {
     [[ "$out" == *"$want"* ]] || { echo "the reason does not name the marker ($lib): $out"; return 1; }
     [ ! -f "$d/awg0.conf" ] || { echo "a config was written anyway ($lib)"; return 1; }
     leftovers_none "$d" "$lib" || return 1
+    # A dangling link in place of the key file counts as a key being there.
+    out=$(lib_run "$lib" yes 32-128 - '
+        ln -s "$AWG_DIR/nowhere" "$AWG_DIR/server_hpk.key"
+        render_server_config; echo "RC=$?"')
+    [[ "$out" == *"RC=0"* ]] && { echo "rendered over an unreadable marker with a dangling key link ($lib)"; return 1; }
+    [[ "$out" == *"$want"* ]] || { echo "the dangling link case refused for another reason ($lib): $out"; return 1; }
 }
 @test "render: an unreadable marker with a key file present refuses the render, both twins" {
     both r_broken_marker_with_key
@@ -277,7 +283,7 @@ r_server_31_with_peers() {
 r_cpa_normalized() {
     local lib="$1" d out f
     d=$(dir_of "$lib")
-    # A comment or spaces around the value pass the check, which reads the value
+    # A comment or spaces in or around the value pass the check, which reads the value
     # the way the tools do. What reaches the configs has to be that same value:
     # the comment would otherwise travel into the vpn:// link as part of it.
     out=$(lib_run "$lib" 3.1 "32 - 128 # set by hand" "$KEY_OK" '

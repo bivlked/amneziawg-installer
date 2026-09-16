@@ -3779,7 +3779,7 @@ _awg31_require_client_tools() {
 # are checked before the first change and the file is named. .png, .vpnuri and
 # .vpnuri.png count as leftovers too, although generate_client overwrites them:
 # if the new link failed, the old file would pass the set check as the real one.
-# On 2.0 the function does nothing.
+# On 2.0 the function does nothing; with an unreadable marker it refuses.
 _awg31_refuse_client_leftovers() {
     local gen name f
     gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
@@ -3813,8 +3813,8 @@ _awg31_refuse_client_leftovers() {
 # 🔴 The function is guarded: it compares the key value.
 # The expected padding comes from the ALREADY LOADED parameters ($AWG_CPA), in
 # the same normalized form the renderers write: the caller must have loaded the
-# parameters (load_awg_params), otherwise $AWG_CPA is empty and the check
-# refuses. The padding is read from the first ContentPaddingAddition line in the
+# parameters (load_awg_params), otherwise the comparison uses whatever is in the
+# environment, empty or stale. The padding is read from the first ContentPaddingAddition line in the
 # file; unlike the key, its section and uniqueness are not checked.
 awg_client_artifacts_check() {
     _awg_xtrace_guard _awg_client_artifacts_check_body "$@"

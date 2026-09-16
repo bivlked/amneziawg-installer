@@ -68,6 +68,7 @@ generate_client() {
 awg_client_artifacts_check() { _call "artifacts $1"; [[ "$1" != "${STUB_FAIL_ARTIFACTS:-}" ]]; }
 validate_awg_config() { _call validate; [[ -z "${STUB_FAIL_VALIDATE:-}" ]]; }
 secure_files() { _call secure; }
+awg_mktemp() { mktemp -p "$1"; }
 EOF
     # The real remover: the test must see what it actually deletes.
     awk '/^_remove_client_files\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../awg_common.sh" >> "$stub"
@@ -117,6 +118,10 @@ s6_first_install_rolled_back() {
     d=$(s6_dir "$src")
     [[ "$out" == *"DIE:"* ]] || { echo "the failure did not stop step 6 ($src): $out"; return 1; }
     [[ "$out" != *"RC=0"* ]] || { echo "step 6 finished after a failure ($src): $out"; return 1; }
+    # A complete undo says so, and does not claim the opposite.
+    local done_ok="ключи сервера оставлены" done_bad="НЕ полностью"
+    [[ "$src" == *_en.sh ]] && { done_ok="server keys are kept"; done_bad="did NOT complete"; }
+    [[ "$out" == *"$done_ok"* && "$out" != *"$done_bad"* ]] || { echo "the undo message does not match a complete undo ($src): $out"; return 1; }
     ! grep -qx 'state 7' "$(dirname "$d")/calls" || { echo "state 7 was written after a failure ($src)"; return 1; }
     ! grep -qx 'secure' "$(dirname "$d")/calls" || { echo "step 6 went on past the failure ($src): $(s6_calls "$src")"; return 1; }
     [ ! -e "$d/awg0.conf" ] || { echo "the server config of the failed first install was left ($src)"; return 1; }
@@ -276,6 +281,12 @@ t_31_stray_name_keeps_files() {
     out=$(STUB_GEN=3.1 step6_run "$src" "$S6_STRAY_NAME")
     d=$(s6_dir "$src")
     [[ "$out" == *"DIE:"* ]] || { echo "a client lost by the render did not stop a 3.1 install ($src): $out"; return 1; }
+    # For the right reason: after the render, and naming the lost client. A refusal
+    # before the render would also leave every file in place.
+    local want="не перенесён"
+    [[ "$src" == *_en.sh ]] && want="not carried"
+    [[ "$out" == *"$want"* ]] || { echo "the refusal does not name the lost client ($src): $out"; return 1; }
+    [[ "|$(s6_calls "$src")|" == *"|render|"* ]] || { echo "the refusal came before the render ($src): $(s6_calls "$src")"; return 1; }
     for f in conf png vpnuri vpnuri.png; do
         [ "$(cat "$d/my_phone.$f" 2>/dev/null)" = "old" ] || { echo "a file that existed before the attempt was removed: my_phone.$f ($src)"; return 1; }
     done
@@ -292,8 +303,12 @@ t_31_restore_failure_keeps_config() {
     d=$(s6_dir "$src")
     [[ "$out" == *"DIE:"* ]] || { echo "a failed rerun did not stop ($src): $out"; return 1; }
     [[ "$out" == *"ERR:"* ]] || { echo "a failed restore was not reported ($src): $out"; return 1; }
+    # The last line people read must not say the undo succeeded.
+    local done_bad="НЕ полностью"
+    [[ "$src" == *_en.sh ]] && done_bad="did NOT complete"
+    [[ "$(grep 'DIE:' <<< "$out")" == *"$done_bad"* ]] || { echo "the final message hides the failed undo ($src): $out"; return 1; }
     grep -q '^PrivateKey = NEW$' "$d/awg0.conf" || { echo "a failed restore damaged the server config ($src): $(cat "$d/awg0.conf" 2>&1)"; return 1; }
-    [ -z "$(find "$d" -maxdepth 1 -name 'awg0.conf.restore.*')" ] || { echo "a temporary restore file was left ($src)"; return 1; }
+    [ -z "$(find "$d" -maxdepth 1 -name 'tmp.*')" ] || { echo "a temporary restore file was left ($src)"; return 1; }
 }
 @test "step 6 on 3.1: a restore that fails midway does not damage the server config, both twins" {
     both t_31_restore_failure_keeps_config

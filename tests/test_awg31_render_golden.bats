@@ -12,8 +12,8 @@
 # The pin is on the KEY SEQUENCE, not on the whole file: PostUp/PostDown carry
 # NIC names, MSS values and isolation rules that legitimately change, and a
 # byte-for-byte golden file would fail on every unrelated routing edit while
-# saying nothing about the profile. Of the profile values, I1 is compared as a
-# value; Jc..H4 are pinned by the key sequence.
+# saying nothing about the profile. Of the profile values, I1 in the server
+# config is compared as a value; Jc..H4 are pinned by the key sequence.
 #
 # Both library twins run for real in a separate shell: the renderers lean on a
 # dozen neighbouring functions, so lifting one function out of the source would
