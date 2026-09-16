@@ -1076,6 +1076,28 @@ awg_installed_protocol() {
     esac
 }
 
+# _awg_generation_from_init <init> : поколение установки по файлу init.
+# Печатает 2.0 или 3.1; на испорченном маркере - отказ (код 1)
+# без вывода. Правила целиком в awg_installed_protocol, здесь только
+# чтение файла.
+# 🔴 Подоболочка обязательна, и не только из-за AWG_PROTOCOL:
+# safe_load_config ЭКСПОРТИРУЕТ всё, что разобрал, поэтому
+# вызывающий, спросивший всего лишь про поколение, иначе
+# молча получил бы ещё и порт с подсетью ИЗ ФАЙЛА.
+# Значение для нечитаемого маркера выбирает вызывающий: у
+# restore это «?» с предупреждением, у проверки ключа - broken
+# и отказ только там, где ключ есть.
+_awg_generation_from_init() {
+    local init="${1:-}"
+    (
+        AWG_PROTOCOL=""
+        if [[ -f "$init" ]]; then
+            safe_load_config "$init" >/dev/null 2>&1
+        fi
+        awg_installed_protocol "$init"
+    )
+}
+
 # awg_restore_generation_notice <init из бэкапа> <живой init>
 # restore - явное действие и возвращает согласованный набор «конфиг + init +
 # ключи», поэтому смену поколения он не запрещает, но и молчаливой она быть не
@@ -1089,12 +1111,12 @@ awg_installed_protocol() {
 # restore не прерывается, предупреждение остаётся в журнале.
 awg_restore_generation_notice() {
     local backup_init="$1" live_init="$2" backup_gen live_gen
-    live_gen=$(AWG_PROTOCOL=""; if [[ -f "$live_init" ]]; then safe_load_config "$live_init" >/dev/null 2>&1; fi; awg_installed_protocol "$live_init") || live_gen="?"
+    live_gen=$(_awg_generation_from_init "$live_init") || live_gen="?"
     if [[ ! -f "$backup_init" ]]; then
         log_warn "В бэкапе нет awgsetup_cfg.init: маркер поколения останется текущим (${live_gen}). После восстановления сверьте его с восстановленным серверным конфигом."
         return 0
     fi
-    backup_gen=$(AWG_PROTOCOL=""; safe_load_config "$backup_init" >/dev/null 2>&1; awg_installed_protocol "$backup_init") || backup_gen="?"
+    backup_gen=$(_awg_generation_from_init "$backup_init") || backup_gen="?"
     if [[ "$backup_gen" == "?" || "$live_gen" == "?" ]]; then
         log_warn "Маркер поколения AWG_PROTOCOL не читается (в бэкапе: ${backup_gen}, у текущей установки: ${live_gen}; допустимы 2.0 и 3.1). После восстановления проверьте ${live_init} вручную."
     elif [[ "$backup_gen" != "$live_gen" ]]; then
@@ -1702,7 +1724,7 @@ _awg_hpk_ensure_body() {
         *) log_error "awg_hpk_ensure: нужен режим install или manage"; return 1 ;;
     esac
     key=$(awg_hpk_path) || { log_error "AWG_DIR не задан: ключ защиты заголовков не проверен"; return 1; }
-    gen=$(AWG_PROTOCOL=""; if [[ -f "$CONFIG_FILE" ]]; then safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; fi; awg_installed_protocol "$CONFIG_FILE") || gen=broken
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || gen=broken
     if [[ -f "$SERVER_CONF_FILE" ]]; then
         _awg_hpk_conf_scan "$SERVER_CONF_FILE" || { log_error "Не удалось разобрать $SERVER_CONF_FILE: ключ защиты заголовков не проверен"; return 1; }
     fi
@@ -1804,6 +1826,70 @@ _derive_ipv6_server_addr() {
     else
         echo "$subnet"
     fi
+}
+
+# _awg31_append_profile_lines <файл> : дописать в [Interface] строки третьей
+# линии - HeaderProtectionKey и ContentPaddingAddition.
+# На установке 2.0 не делает ничего и возвращает 0: ветка 2.0 не меняется. При
+# нечитаемом маркере без файла ключа тоже ничего не пишет (правило awg_hpk_ensure).
+# 🔴 Значение ключа НЕ проходит через argv и не попадает в трассировку:
+# функция обёрнута защитой, а из файла читается перенаправлением. Клиентский
+# рендер сам не защищён (ключ клиента приходит аргументом; защищены его
+# вызывающие generate_client и regenerate_client), поэтому читать ключ прямо в нём
+# было бы утечкой под --verbose.
+# Значение берётся из файла ключа. Сверять его здесь с серверным конфигом НЕ
+# надо: при существующем awg0.conf оба рендера идут через load_awg_params, а тот
+# зовёт awg_hpk_ensure, который расхождение файла и конфига уже ловит и называет
+# причину. На первой установке конфига ещё нет, и согласованность обеспечивает
+# awg_hpk_ensure install в шаге 6. Вторая проверка тем же кодом была бы мёртвой и
+# создавала бы вид двойной защиты.
+_awg31_append_profile_lines() {
+    _awg_xtrace_guard _awg31_append_profile_lines_body "$@"
+}
+
+_awg31_append_profile_lines_body() {
+    local target="$1" gen keyfile key why cpa
+    # Нечитаемый маркер - то же правило, что в awg_hpk_ensure: без ключа это не
+    # повод отнимать add и regen из-за правки init, строки третьей линии просто
+    # не пишутся; с файлом ключа поколение не угадать, и это отказ.
+    if ! gen=$(_awg_generation_from_init "$CONFIG_FILE"); then
+        keyfile=$(awg_hpk_path) || { log_error "AWG_DIR не задан: ключ защиты заголовков не проверен"; return 1; }
+        if [[ -e "$keyfile" || -L "$keyfile" ]]; then
+            log_error "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается (допустимы 2.0 и 3.1), а файл ключа $keyfile есть: конфиг не записан"
+            return 1
+        fi
+        return 0
+    fi
+    [[ "$gen" == "3.1" ]] || return 0
+    keyfile=$(awg_hpk_path) || { log_error "AWG_DIR не задан: ключ защиты заголовков не прочитать"; return 1; }
+    if [[ ! -f "$keyfile" ]]; then
+        log_error "Установка помечена поколением 3.1, а файла ключа $keyfile нет: профиль без ключа не подключится, конфиг не записан"
+        return 1
+    fi
+    IFS= read -r key < "$keyfile" || { log_error "Файл ключа $keyfile не читается: конфиг не записан"; return 1; }
+    if ! [[ "$key" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]]; then
+        log_error "Файл ключа $keyfile не похож на ключ: нужны 32 байта в base64, 44 символа"
+        return 1
+    fi
+    # Пишем ровно то значение, которое проверили: комментарий и пробелы
+    # awg_cpa_check_safe отбрасывает так же, как tools, а в конфиге и дальше в
+    # ссылке vpn:// они стали бы частью значения.
+    cpa="${AWG_CPA:-}"
+    cpa="${cpa%%#*}"
+    cpa="${cpa//[[:space:]]/}"
+    why=$(awg_cpa_check_safe "$cpa") || {
+        log_error "ContentPaddingAddition: ${why}. Конфиг не записан"
+        return 1
+    }
+    printf 'HeaderProtectionKey = %s\n' "$key" >> "$target" || {
+        log_error "Ошибка записи ключа защиты заголовков в конфиг"
+        return 1
+    }
+    printf 'ContentPaddingAddition = %s\n' "$cpa" >> "$target" || {
+        log_error "Ошибка записи ContentPaddingAddition в конфиг"
+        return 1
+    }
+    return 0
 }
 
 # Рендер серверного конфига AWG 2.0
@@ -1977,6 +2063,7 @@ EOF
     [[ -n "${AWG_I3:-}" ]] && echo "I3 = ${AWG_I3}" >> "$tmpfile"
     [[ -n "${AWG_I4:-}" ]] && echo "I4 = ${AWG_I4}" >> "$tmpfile"
     [[ -n "${AWG_I5:-}" ]] && echo "I5 = ${AWG_I5}" >> "$tmpfile"
+    _awg31_append_profile_lines "$tmpfile" || { rm -f "$tmpfile"; return 1; }
 
     # Перенос [Peer]-блоков из peers_source в temp ДО mv (см. док-комментарий).
     # Буфер сбрасывается на каждом новом [Peer]: переносятся ВСЕ блоки.
@@ -2271,6 +2358,7 @@ EOF
     [[ -n "${AWG_I3:-}" ]] && echo "I3 = ${AWG_I3}" >> "$tmpfile"
     [[ -n "${AWG_I4:-}" ]] && echo "I4 = ${AWG_I4}" >> "$tmpfile"
     [[ -n "${AWG_I5:-}" ]] && echo "I5 = ${AWG_I5}" >> "$tmpfile"
+    _awg31_append_profile_lines "$tmpfile" || { rm -f "$tmpfile"; return 1; }
 
     cat >> "$tmpfile" << EOF
 
@@ -3381,6 +3469,29 @@ generate_vpn_uri() {
     # как полное отсутствие поля. Без psk_key в inner JSON AmneziaVPN импорт
     # vpn:// теряет PSK и handshake падает (issue #67, fix v5.11.4).
     client_psk=$(awk '/^[[:space:]]*PresharedKey[[:space:]]*=/{sub(/^[[:space:]]*PresharedKey[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf_file" 2>/dev/null)
+    # Третья линия: ключ и паддинг берём ИЗ КЛИЕНТСКОГО .conf - ссылка описывает
+    # именно его, и так же берётся PresharedKey. Поля пишутся только на установке
+    # 3.1, как и строки в рендерах: на 2.0 и при нечитаемом маркере ссылка та же,
+    # что была. На 3.1 отсутствие ключа или паддинга в профиле - отказ: такая
+    # ссылка выглядит рабочей и молча не подключается, а человек видит только
+    # «не работает».
+    local client_hpk client_cpa uri_gen
+    client_hpk=$(awk '/^[[:space:]]*HeaderProtectionKey[[:space:]]*=/{sub(/^[[:space:]]*HeaderProtectionKey[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf_file" 2>/dev/null)
+    client_cpa=$(awk '/^[[:space:]]*ContentPaddingAddition[[:space:]]*=/{sub(/^[[:space:]]*ContentPaddingAddition[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf_file" 2>/dev/null)
+    uri_gen=$(_awg_generation_from_init "$CONFIG_FILE") || uri_gen=broken
+    if [[ "$uri_gen" == "3.1" ]]; then
+        if [[ -z "$client_hpk" ]]; then
+            log_error "В конфиге клиента '$name' нет HeaderProtectionKey, а установка помечена поколением 3.1: ссылка vpn:// не создана, иначе она выглядела бы рабочей и не подключилась бы"
+            return 1
+        fi
+        if [[ -z "$client_cpa" ]]; then
+            log_error "В конфиге клиента '$name' нет ContentPaddingAddition, а установка помечена поколением 3.1: ссылка vpn:// не создана"
+            return 1
+        fi
+    else
+        client_hpk=""
+        client_cpa=""
+    fi
     local raw_endpoint
     raw_endpoint=$(grep -oP 'Endpoint\s*=\s*\K\S+' "$conf_file") || { log_warn "Endpoint не прочитан из '$conf_file' - vpn:// URI не создан для '$name'."; return 1; }
     if [[ "$raw_endpoint" == \[* ]]; then
@@ -3423,6 +3534,7 @@ generate_vpn_uri() {
     # на время работы perl. server_pubkey не секрет, но идёт той же группой.
     # shellcheck disable=SC2016
     vpn_uri=$(AWG_URI_CPK="$client_privkey" AWG_URI_PSK="$client_psk" AWG_URI_SPK="$server_pubkey" \
+      AWG_URI_HPK="$client_hpk" AWG_URI_CPA="$client_cpa" \
       perl -MCompress::Zlib -MMIME::Base64 -e '
         my ($conf_path, $h1,$h2,$h3,$h4, $jc,$jmin,$jmax,
             $s1,$s2,$s3,$s4, $i1,$i2,$i3,$i4,$i5, $port, $ep, $cip, $cipv6, $aips,
@@ -3430,6 +3542,8 @@ generate_vpn_uri() {
         my $cpk = $ENV{AWG_URI_CPK} // "";
         my $psk = $ENV{AWG_URI_PSK} // "";
         my $spk = $ENV{AWG_URI_SPK} // "";
+        my $hpk = $ENV{AWG_URI_HPK} // "";
+        my $cpa = $ENV{AWG_URI_CPA} // "";
 
         open my $fh, "<", $conf_path or die;
         local $/; my $raw = <$fh>; close $fh;
@@ -3450,6 +3564,14 @@ generate_vpn_uri() {
             my $ei1 = je($i1); my $ei2 = je($i2); my $ei3 = je($i3);
             my $ei4 = je($i4); my $ei5 = je($i5);
             $inner .= qq("I1":"$ei1","I2":"$ei2","I3":"$ei3","I4":"$ei4","I5":"$ei5",);
+        }
+        if ($hpk ne "") {
+            my $ehpk = je($hpk);
+            $inner .= qq("HeaderProtectionKey":"$ehpk",);
+        }
+        if ($cpa ne "") {
+            my $ecpa = je($cpa);
+            $inner .= qq("ContentPaddingAddition":"$ecpa",);
         }
         my $eraw = je($raw);
         my @ips = split(/,/, $aips);
@@ -3584,6 +3706,157 @@ generate_qr_vpnuri() {
 # до коммита пира в серверный конфиг.
 _rollback_client_artifacts() {
     rm -f "$KEYS_DIR/$1.private" "$KEYS_DIR/$1.public" "$AWG_DIR/$1.conf"
+}
+
+# _awg31_require_client_tools : инструменты, без которых профиль 3.1 неполон.
+# На 3.1 клиент получает комплект из четырёх файлов, и ссылка vpn:// для него не
+# удобство, а единственный простой способ внести профиль в приложение. Ссылку
+# делает perl с Compress::Zlib и MIME::Base64, оба QR - qrencode. Поэтому на 3.1
+# отсутствие инструмента - отказ ДО изменений, с именем того, чего не хватает,
+# а не сбой на середине установки. На 2.0 функция не делает ничего.
+_awg31_require_client_tools() {
+    local gen
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
+        log_error "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается: набор инструментов не проверен"
+        return 1
+    }
+    [[ "$gen" == "3.1" ]] || return 0
+    if ! command -v qrencode >/dev/null 2>&1; then
+        log_error "Для профиля 3.1 нужен qrencode: без него не будет ни QR конфига, ни QR ссылки. Установите qrencode и повторите"
+        return 1
+    fi
+    if ! command -v perl >/dev/null 2>&1; then
+        log_error "Для профиля 3.1 нужен perl: без него не собрать ссылку vpn://. Установите perl и повторите"
+        return 1
+    fi
+    if ! perl -MCompress::Zlib -MMIME::Base64 -e '1' 2>/dev/null; then
+        log_error "Для профиля 3.1 нужны модули perl Compress::Zlib и MIME::Base64: без них не собрать ссылку vpn://. Установите их и повторите"
+        return 1
+    fi
+    return 0
+}
+
+# _awg31_refuse_client_leftovers <имя> [<имя>...] : остатки файлов клиента.
+# generate_client отказывает клиенту, у которого уже есть ключи или .conf. На 2.0
+# шаг 6 пишет об этом предупреждение и идёт дальше; на 3.1 такой отказ случился бы
+# уже ПОСЛЕ перезаписи серверного конфига и означал бы откат, поэтому остатки
+# проверяются до первой правки и файл называется. .png, .vpnuri и .vpnuri.png
+# тоже остатки, хотя generate_client их перезаписывает: при сбое новой ссылки
+# старый файл прошёл бы проверку комплекта как настоящий. На 2.0 функция не
+# делает ничего, при нечитаемом маркере отказывает.
+_awg31_refuse_client_leftovers() {
+    local gen name f
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
+        log_error "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается: остатки файлов клиентов не проверены"
+        return 1
+    }
+    [[ "$gen" == "3.1" ]] || return 0
+    for name in "$@"; do
+        for f in "$AWG_DIR/${name}.conf" "$AWG_DIR/${name}.png" "$AWG_DIR/${name}.vpnuri" \
+                 "$AWG_DIR/${name}.vpnuri.png" "$KEYS_DIR/${name}.private" "$KEYS_DIR/${name}.public"; do
+            if [[ -e "$f" || -L "$f" ]]; then
+                log_error "Остался файл клиента '$name': $f. Установка 3.1 остановлена до первых изменений: уберите остатки прежнего клиента и повторите"
+                return 1
+            fi
+        done
+    done
+    return 0
+}
+
+# awg_client_artifacts_check <имя> : комплект файлов клиента как ЕДИНОЕ целое.
+# Клиенту выдают четыре файла - .conf, его QR, ссылку vpn:// и QR ссылки. Их
+# делают разные шаги, и сбой одного из них раньше был предупреждением: человек
+# получал папку, которая выглядит полной, и клиента, который не работает.
+# Проверяются существование, обычный файл (не ссылка) и непустота каждого, а
+# также что .vpnuri действительно начинается с vpn://.
+# На установке 3.1 дополнительно проверяется сам профиль: в [Interface] ровно
+# один HeaderProtectionKey, равный файлу ключа, и ContentPaddingAddition, равный
+# паддингу установки. Профиль с чужим ключом от рабочего не отличить, пока
+# туннель не откажется подниматься.
+# 🔴 Функция защищена от трассировки: она сравнивает значение ключа.
+# Ожидаемый паддинг берётся из УЖЕ ЗАГРУЖЕННЫХ параметров ($AWG_CPA), в той же
+# нормализованной форме, в какой его пишут рендеры: вызывающий обязан до этого
+# загрузить параметры (load_awg_params), иначе сравнение идёт с тем, что лежит в
+# окружении: пустым или устаревшим значением.
+# Паддинг ищется по первой строке ContentPaddingAddition в файле; секция и
+# единственность, в отличие от ключа, не проверяются.
+awg_client_artifacts_check() {
+    _awg_xtrace_guard _awg_client_artifacts_check_body "$@"
+}
+
+_awg_client_artifacts_check_body() {
+    local name="${1:-}" f gen keyfile key conf uri_first conf_cpa want_cpa
+    local _hs_any=0 _hs_if=0 _hs_out=0 _hs_val=""
+    if [[ -z "$name" ]]; then
+        log_error "awg_client_artifacts_check: не указано имя клиента"
+        return 1
+    fi
+    conf="$AWG_DIR/${name}.conf"
+    for f in "$conf" "$AWG_DIR/${name}.png" "$AWG_DIR/${name}.vpnuri" "$AWG_DIR/${name}.vpnuri.png"; do
+        if [[ -L "$f" ]]; then
+            log_error "Комплект клиента '$name' неполон: $f - символьная ссылка, а должен быть обычный файл"
+            return 1
+        fi
+        if [[ ! -f "$f" ]]; then
+            log_error "Комплект клиента '$name' неполон: нет файла $f"
+            return 1
+        fi
+        if [[ ! -s "$f" ]]; then
+            log_error "Комплект клиента '$name' неполон: файл $f пуст"
+            return 1
+        fi
+    done
+    if ! IFS= read -r uri_first < "$AWG_DIR/${name}.vpnuri"; then
+        log_error "Комплект клиента '$name': файл ссылки $AWG_DIR/${name}.vpnuri не читается"
+        return 1
+    fi
+    if [[ "$uri_first" != vpn://* ]]; then
+        log_error "Комплект клиента '$name': $AWG_DIR/${name}.vpnuri не начинается с vpn:// - такую ссылку клиент не импортирует"
+        return 1
+    fi
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
+        log_error "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается: комплект клиента '$name' не проверен"
+        return 1
+    }
+    [[ "$gen" == "3.1" ]] || return 0
+    keyfile=$(awg_hpk_path) || { log_error "AWG_DIR не задан: комплект клиента '$name' не проверен"; return 1; }
+    if [[ ! -f "$keyfile" ]]; then
+        log_error "Комплект клиента '$name': установка помечена поколением 3.1, а файла ключа $keyfile нет"
+        return 1
+    fi
+    if ! IFS= read -r key < "$keyfile"; then
+        log_error "Комплект клиента '$name': файл ключа $keyfile не читается"
+        return 1
+    fi
+    _awg_hpk_conf_scan "$conf" || {
+        log_error "Комплект клиента '$name': не удалось разобрать $conf"
+        return 1
+    }
+    if (( _hs_out > 0 )); then
+        log_error "Комплект клиента '$name': HeaderProtectionKey стоит вне секции [Interface] в $conf"
+        return 1
+    fi
+    if (( _hs_if != 1 )); then
+        log_error "Комплект клиента '$name': в [Interface] $conf должен быть ровно один HeaderProtectionKey, найдено ${_hs_if}"
+        return 1
+    fi
+    if [[ "$_hs_val" != "$key" ]]; then
+        log_error "Комплект клиента '$name': HeaderProtectionKey в $conf не совпадает с файлом ключа $keyfile - такой профиль не подключится"
+        return 1
+    fi
+    conf_cpa=$(awk '/^[[:space:]]*ContentPaddingAddition[[:space:]]*=/{sub(/^[[:space:]]*ContentPaddingAddition[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf" 2>/dev/null)
+    if [[ -z "$conf_cpa" ]]; then
+        log_error "Комплект клиента '$name': в $conf нет ContentPaddingAddition, а установка помечена поколением 3.1"
+        return 1
+    fi
+    want_cpa="${AWG_CPA:-}"
+    want_cpa="${want_cpa%%#*}"
+    want_cpa="${want_cpa//[[:space:]]/}"
+    if [[ "$conf_cpa" != "$want_cpa" ]]; then
+        log_error "Комплект клиента '$name': ContentPaddingAddition в $conf ('$conf_cpa') не совпадает с параметром установки ('$want_cpa')"
+        return 1
+    fi
+    return 0
 }
 
 # Полный набор клиентских артефактов (conf/png/vpnuri/vpnuri.png + ключи).

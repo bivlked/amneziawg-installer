@@ -1092,6 +1092,28 @@ awg_installed_protocol() {
     esac
 }
 
+# _awg_generation_from_init <init> : the installation generation from
+# the init file. Prints 2.0 or 3.1; a corrupt marker fails (status 1)
+# with no output. The rules live in awg_installed_protocol, this only
+# reads the file.
+# 🔴 The subshell is required, and not only because of AWG_PROTOCOL:
+# safe_load_config EXPORTS everything it parses, so a caller that
+# merely asked for the generation would silently receive the port and
+# the subnet FROM THE FILE too.
+# The value to use when the marker is unreadable belongs to the
+# caller: restore prints "?" and warns, the key check uses broken and
+# fails only where a key exists.
+_awg_generation_from_init() {
+    local init="${1:-}"
+    (
+        AWG_PROTOCOL=""
+        if [[ -f "$init" ]]; then
+            safe_load_config "$init" >/dev/null 2>&1
+        fi
+        awg_installed_protocol "$init"
+    )
+}
+
 # awg_restore_generation_notice <init from the backup> <live init>
 # restore is an explicit action and brings back a consistent set (config + init
 # + keys), so it does not forbid a generation change, but the change must not
@@ -1106,12 +1128,12 @@ awg_installed_protocol() {
 # the warning stays in the log.
 awg_restore_generation_notice() {
     local backup_init="$1" live_init="$2" backup_gen live_gen
-    live_gen=$(AWG_PROTOCOL=""; if [[ -f "$live_init" ]]; then safe_load_config "$live_init" >/dev/null 2>&1; fi; awg_installed_protocol "$live_init") || live_gen="?"
+    live_gen=$(_awg_generation_from_init "$live_init") || live_gen="?"
     if [[ ! -f "$backup_init" ]]; then
         log_warn "The backup has no awgsetup_cfg.init: the generation marker stays as it is (${live_gen}). After the restore compare it with the restored server config."
         return 0
     fi
-    backup_gen=$(AWG_PROTOCOL=""; safe_load_config "$backup_init" >/dev/null 2>&1; awg_installed_protocol "$backup_init") || backup_gen="?"
+    backup_gen=$(_awg_generation_from_init "$backup_init") || backup_gen="?"
     if [[ "$backup_gen" == "?" || "$live_gen" == "?" ]]; then
         log_warn "The generation marker AWG_PROTOCOL cannot be read (backup: ${backup_gen}, current installation: ${live_gen}; 2.0 and 3.1 are allowed). Check ${live_init} by hand after the restore."
     elif [[ "$backup_gen" != "$live_gen" ]]; then
@@ -1730,7 +1752,7 @@ _awg_hpk_ensure_body() {
         *) log_error "awg_hpk_ensure: mode install or manage is required"; return 1 ;;
     esac
     key=$(awg_hpk_path) || { log_error "AWG_DIR is not set: the header protection key is not checked"; return 1; }
-    gen=$(AWG_PROTOCOL=""; if [[ -f "$CONFIG_FILE" ]]; then safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; fi; awg_installed_protocol "$CONFIG_FILE") || gen=broken
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || gen=broken
     if [[ -f "$SERVER_CONF_FILE" ]]; then
         _awg_hpk_conf_scan "$SERVER_CONF_FILE" || { log_error "Could not parse $SERVER_CONF_FILE: the header protection key is not checked"; return 1; }
     fi
@@ -1832,6 +1854,72 @@ _derive_ipv6_server_addr() {
     else
         echo "$subnet"
     fi
+}
+
+# _awg31_append_profile_lines <file> : append the third-line profile lines -
+# HeaderProtectionKey and ContentPaddingAddition - to [Interface].
+# On a 2.0 installation it does nothing and returns 0: the 2.0 path is unchanged.
+# With an unreadable marker and no key file it writes nothing either (the rule
+# of awg_hpk_ensure).
+# 🔴 The key value never passes through argv and never reaches the trace: this
+# function is guarded, and the file is read through a redirect. The client
+# renderer itself is unguarded (the client key arrives as an argument; its
+# callers generate_client and regenerate_client are guarded), so reading the key
+# there would leak it under --verbose.
+# The value comes from the key file. It is NOT compared with the server config
+# here: with an existing awg0.conf both renderers go through load_awg_params,
+# which calls awg_hpk_ensure, and that already catches a file/config
+# disagreement and names it. On a first install there is no config yet, and
+# awg_hpk_ensure install in step 6 keeps them consistent. A second check of the
+# same thing would be dead code pretending to be a second guard.
+_awg31_append_profile_lines() {
+    _awg_xtrace_guard _awg31_append_profile_lines_body "$@"
+}
+
+_awg31_append_profile_lines_body() {
+    local target="$1" gen keyfile key why cpa
+    # An unreadable marker follows the rule of awg_hpk_ensure: without a key it is
+    # no reason to take add and regen away over an edit of the init, the third-line
+    # lines are simply not written; with a key file the generation cannot be
+    # guessed, and that is a refusal.
+    if ! gen=$(_awg_generation_from_init "$CONFIG_FILE"); then
+        keyfile=$(awg_hpk_path) || { log_error "AWG_DIR is not set: the header protection key was not checked"; return 1; }
+        if [[ -e "$keyfile" || -L "$keyfile" ]]; then
+            log_error "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read (2.0 and 3.1 are allowed) while the key file $keyfile exists: the config was not written"
+            return 1
+        fi
+        return 0
+    fi
+    [[ "$gen" == "3.1" ]] || return 0
+    keyfile=$(awg_hpk_path) || { log_error "AWG_DIR is not set: the header protection key cannot be read"; return 1; }
+    if [[ ! -f "$keyfile" ]]; then
+        log_error "The installation is marked generation 3.1 but the key file $keyfile is missing: a profile without the key would not connect, the config was not written"
+        return 1
+    fi
+    IFS= read -r key < "$keyfile" || { log_error "The key file $keyfile cannot be read: the config was not written"; return 1; }
+    if ! [[ "$key" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]]; then
+        log_error "The key file $keyfile does not look like a key: 32 bytes in base64, 44 characters are required"
+        return 1
+    fi
+    # Write exactly the value that was checked: awg_cpa_check_safe drops a comment
+    # and spaces the way the tools do, while in the config, and further in the
+    # vpn:// link, they would become part of the value.
+    cpa="${AWG_CPA:-}"
+    cpa="${cpa%%#*}"
+    cpa="${cpa//[[:space:]]/}"
+    why=$(awg_cpa_check_safe "$cpa") || {
+        log_error "ContentPaddingAddition: ${why}. The config was not written"
+        return 1
+    }
+    printf 'HeaderProtectionKey = %s\n' "$key" >> "$target" || {
+        log_error "Failed to write the header protection key into the config"
+        return 1
+    }
+    printf 'ContentPaddingAddition = %s\n' "$cpa" >> "$target" || {
+        log_error "Failed to write ContentPaddingAddition into the config"
+        return 1
+    }
+    return 0
 }
 
 # Render server config for AWG 2.0
@@ -2010,6 +2098,7 @@ EOF
     [[ -n "${AWG_I3:-}" ]] && echo "I3 = ${AWG_I3}" >> "$tmpfile"
     [[ -n "${AWG_I4:-}" ]] && echo "I4 = ${AWG_I4}" >> "$tmpfile"
     [[ -n "${AWG_I5:-}" ]] && echo "I5 = ${AWG_I5}" >> "$tmpfile"
+    _awg31_append_profile_lines "$tmpfile" || { rm -f "$tmpfile"; return 1; }
 
     # Carry [Peer] blocks from peers_source into the temp BEFORE mv (see doc comment).
     # The buffer is flushed on every new [Peer]: ALL blocks are carried over.
@@ -2307,6 +2396,7 @@ EOF
     [[ -n "${AWG_I3:-}" ]] && echo "I3 = ${AWG_I3}" >> "$tmpfile"
     [[ -n "${AWG_I4:-}" ]] && echo "I4 = ${AWG_I4}" >> "$tmpfile"
     [[ -n "${AWG_I5:-}" ]] && echo "I5 = ${AWG_I5}" >> "$tmpfile"
+    _awg31_append_profile_lines "$tmpfile" || { rm -f "$tmpfile"; return 1; }
 
     cat >> "$tmpfile" << EOF
 
@@ -3420,6 +3510,29 @@ generate_vpn_uri() {
     # import via vpn:// loses the PSK and the handshake fails (issue #67,
     # fix v5.11.4).
     client_psk=$(awk '/^[[:space:]]*PresharedKey[[:space:]]*=/{sub(/^[[:space:]]*PresharedKey[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf_file" 2>/dev/null)
+    # Third line: the key and the padding come from the CLIENT .conf - the link
+    # describes that file, and the preshared key is taken the same way. The fields
+    # are written only on a 3.1 installation, like the lines in the renderers: on
+    # 2.0 and with an unreadable marker the link stays what it was. On 3.1 a
+    # profile without the key or the padding is a refusal: such a link looks valid
+    # and silently fails to connect, leaving the person with "it does not work".
+    local client_hpk client_cpa uri_gen
+    client_hpk=$(awk '/^[[:space:]]*HeaderProtectionKey[[:space:]]*=/{sub(/^[[:space:]]*HeaderProtectionKey[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf_file" 2>/dev/null)
+    client_cpa=$(awk '/^[[:space:]]*ContentPaddingAddition[[:space:]]*=/{sub(/^[[:space:]]*ContentPaddingAddition[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf_file" 2>/dev/null)
+    uri_gen=$(_awg_generation_from_init "$CONFIG_FILE") || uri_gen=broken
+    if [[ "$uri_gen" == "3.1" ]]; then
+        if [[ -z "$client_hpk" ]]; then
+            log_error "The client config '$name' has no HeaderProtectionKey while the installation is marked generation 3.1: the vpn:// link was not created, it would look valid and would not connect"
+            return 1
+        fi
+        if [[ -z "$client_cpa" ]]; then
+            log_error "The client config '$name' has no ContentPaddingAddition while the installation is marked generation 3.1: the vpn:// link was not created"
+            return 1
+        fi
+    else
+        client_hpk=""
+        client_cpa=""
+    fi
     local raw_endpoint
     raw_endpoint=$(grep -oP 'Endpoint\s*=\s*\K\S+' "$conf_file") || { log_warn "Endpoint could not be read from '$conf_file' - vpn:// URI not created for '$name'."; return 1; }
     if [[ "$raw_endpoint" == \[* ]]; then
@@ -3462,6 +3575,7 @@ generate_vpn_uri() {
     # while perl runs. server_pubkey is not a secret but travels with the group.
     # shellcheck disable=SC2016
     vpn_uri=$(AWG_URI_CPK="$client_privkey" AWG_URI_PSK="$client_psk" AWG_URI_SPK="$server_pubkey" \
+      AWG_URI_HPK="$client_hpk" AWG_URI_CPA="$client_cpa" \
       perl -MCompress::Zlib -MMIME::Base64 -e '
         my ($conf_path, $h1,$h2,$h3,$h4, $jc,$jmin,$jmax,
             $s1,$s2,$s3,$s4, $i1,$i2,$i3,$i4,$i5, $port, $ep, $cip, $cipv6, $aips,
@@ -3469,6 +3583,8 @@ generate_vpn_uri() {
         my $cpk = $ENV{AWG_URI_CPK} // "";
         my $psk = $ENV{AWG_URI_PSK} // "";
         my $spk = $ENV{AWG_URI_SPK} // "";
+        my $hpk = $ENV{AWG_URI_HPK} // "";
+        my $cpa = $ENV{AWG_URI_CPA} // "";
 
         open my $fh, "<", $conf_path or die;
         local $/; my $raw = <$fh>; close $fh;
@@ -3489,6 +3605,14 @@ generate_vpn_uri() {
             my $ei1 = je($i1); my $ei2 = je($i2); my $ei3 = je($i3);
             my $ei4 = je($i4); my $ei5 = je($i5);
             $inner .= qq("I1":"$ei1","I2":"$ei2","I3":"$ei3","I4":"$ei4","I5":"$ei5",);
+        }
+        if ($hpk ne "") {
+            my $ehpk = je($hpk);
+            $inner .= qq("HeaderProtectionKey":"$ehpk",);
+        }
+        if ($cpa ne "") {
+            my $ecpa = je($cpa);
+            $inner .= qq("ContentPaddingAddition":"$ecpa",);
         }
         my $eraw = je($raw);
         my @ips = split(/,/, $aips);
@@ -3616,6 +3740,159 @@ generate_qr_vpnuri() {
         return 1
     fi
     log_debug "vpn:// QR for '$name' created: $png_file"
+    return 0
+}
+
+# _awg31_require_client_tools : the tools a 3.1 profile is incomplete without.
+# On 3.1 a client is handed a set of four files, and the vpn:// link is not a
+# convenience but the one simple way to get the profile into the application.
+# The link is built by perl with Compress::Zlib and MIME::Base64, both QR codes
+# by qrencode. So on 3.1 a missing tool is a refusal BEFORE anything changes,
+# naming what is missing, rather than a failure halfway through the install.
+# On 2.0 the function does nothing.
+_awg31_require_client_tools() {
+    local gen
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
+        log_error "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read: the toolset was not checked"
+        return 1
+    }
+    [[ "$gen" == "3.1" ]] || return 0
+    if ! command -v qrencode >/dev/null 2>&1; then
+        log_error "A 3.1 profile needs qrencode: without it there is neither the config QR nor the link QR. Install qrencode and run again"
+        return 1
+    fi
+    if ! command -v perl >/dev/null 2>&1; then
+        log_error "A 3.1 profile needs perl: without it the vpn:// link cannot be built. Install perl and run again"
+        return 1
+    fi
+    if ! perl -MCompress::Zlib -MMIME::Base64 -e '1' 2>/dev/null; then
+        log_error "A 3.1 profile needs the perl modules Compress::Zlib and MIME::Base64: without them the vpn:// link cannot be built. Install them and run again"
+        return 1
+    fi
+    return 0
+}
+
+# _awg31_refuse_client_leftovers <name> [<name>...] : leftover client files.
+# generate_client refuses a client whose keys or .conf already exist. On 2.0
+# step 6 logs a warning about it and goes on; on 3.1 that refusal would come
+# AFTER the server config was rewritten and would mean an undo, so the leftovers
+# are checked before the first change and the file is named. .png, .vpnuri and
+# .vpnuri.png count as leftovers too, although generate_client overwrites them:
+# if the new link failed, the old file would pass the set check as the real one.
+# On 2.0 the function does nothing; with an unreadable marker it refuses.
+_awg31_refuse_client_leftovers() {
+    local gen name f
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
+        log_error "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read: leftover client files were not checked"
+        return 1
+    }
+    [[ "$gen" == "3.1" ]] || return 0
+    for name in "$@"; do
+        for f in "$AWG_DIR/${name}.conf" "$AWG_DIR/${name}.png" "$AWG_DIR/${name}.vpnuri" \
+                 "$AWG_DIR/${name}.vpnuri.png" "$KEYS_DIR/${name}.private" "$KEYS_DIR/${name}.public"; do
+            if [[ -e "$f" || -L "$f" ]]; then
+                log_error "A leftover file of client '$name': $f. The 3.1 install stopped before its first change: remove the leftovers of the previous client and run again"
+                return 1
+            fi
+        done
+    done
+    return 0
+}
+
+# awg_client_artifacts_check <name> : the client's set of files, as a set.
+# A client is handed four files - the .conf, its QR code, the vpn:// link and
+# the link's QR code. Different steps produce them, and a failure in one used to
+# be a warning: the person then gets a folder that looks complete and a client
+# that does not work. Each file is checked for existence, for being a regular
+# file (not a symlink) and for not being empty, and the .vpnuri is checked to
+# actually start with vpn://.
+# On a 3.1 installation the profile itself is checked too: exactly one
+# HeaderProtectionKey in [Interface], equal to the key file, and a
+# ContentPaddingAddition equal to the installation's padding. A profile with the
+# wrong key looks exactly like a working one until the tunnel refuses to start.
+# 🔴 The function is guarded: it compares the key value.
+# The expected padding comes from the ALREADY LOADED parameters ($AWG_CPA), in
+# the same normalized form the renderers write: the caller must have loaded the
+# parameters (load_awg_params), otherwise the comparison uses whatever is in the
+# environment, empty or stale. The padding is read from the first
+# ContentPaddingAddition line in the file; unlike the key, its section and
+# uniqueness are not checked.
+awg_client_artifacts_check() {
+    _awg_xtrace_guard _awg_client_artifacts_check_body "$@"
+}
+
+_awg_client_artifacts_check_body() {
+    local name="${1:-}" f gen keyfile key conf uri_first conf_cpa want_cpa
+    local _hs_any=0 _hs_if=0 _hs_out=0 _hs_val=""
+    if [[ -z "$name" ]]; then
+        log_error "awg_client_artifacts_check: the client name is required"
+        return 1
+    fi
+    conf="$AWG_DIR/${name}.conf"
+    for f in "$conf" "$AWG_DIR/${name}.png" "$AWG_DIR/${name}.vpnuri" "$AWG_DIR/${name}.vpnuri.png"; do
+        if [[ -L "$f" ]]; then
+            log_error "The set of client '$name' is incomplete: $f is a symlink where a regular file is required"
+            return 1
+        fi
+        if [[ ! -f "$f" ]]; then
+            log_error "The set of client '$name' is incomplete: $f is missing"
+            return 1
+        fi
+        if [[ ! -s "$f" ]]; then
+            log_error "The set of client '$name' is incomplete: $f is empty"
+            return 1
+        fi
+    done
+    if ! IFS= read -r uri_first < "$AWG_DIR/${name}.vpnuri"; then
+        log_error "The set of client '$name': the link file $AWG_DIR/${name}.vpnuri cannot be read"
+        return 1
+    fi
+    if [[ "$uri_first" != vpn://* ]]; then
+        log_error "The set of client '$name': $AWG_DIR/${name}.vpnuri does not start with vpn:// - the client cannot import such a link"
+        return 1
+    fi
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
+        log_error "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read: the set of client '$name' was not checked"
+        return 1
+    }
+    [[ "$gen" == "3.1" ]] || return 0
+    keyfile=$(awg_hpk_path) || { log_error "AWG_DIR is not set: the set of client '$name' was not checked"; return 1; }
+    if [[ ! -f "$keyfile" ]]; then
+        log_error "The set of client '$name': the installation is marked generation 3.1 but the key file $keyfile is missing"
+        return 1
+    fi
+    if ! IFS= read -r key < "$keyfile"; then
+        log_error "The set of client '$name': the key file $keyfile cannot be read"
+        return 1
+    fi
+    _awg_hpk_conf_scan "$conf" || {
+        log_error "The set of client '$name': could not parse $conf"
+        return 1
+    }
+    if (( _hs_out > 0 )); then
+        log_error "The set of client '$name': HeaderProtectionKey sits outside [Interface] in $conf"
+        return 1
+    fi
+    if (( _hs_if != 1 )); then
+        log_error "The set of client '$name': [Interface] in $conf must carry exactly one HeaderProtectionKey, found ${_hs_if}"
+        return 1
+    fi
+    if [[ "$_hs_val" != "$key" ]]; then
+        log_error "The set of client '$name': HeaderProtectionKey in $conf does not match the key file $keyfile - such a profile will not connect"
+        return 1
+    fi
+    conf_cpa=$(awk '/^[[:space:]]*ContentPaddingAddition[[:space:]]*=/{sub(/^[[:space:]]*ContentPaddingAddition[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf" 2>/dev/null)
+    if [[ -z "$conf_cpa" ]]; then
+        log_error "The set of client '$name': $conf has no ContentPaddingAddition while the installation is marked generation 3.1"
+        return 1
+    fi
+    want_cpa="${AWG_CPA:-}"
+    want_cpa="${want_cpa%%#*}"
+    want_cpa="${want_cpa//[[:space:]]/}"
+    if [[ "$conf_cpa" != "$want_cpa" ]]; then
+        log_error "The set of client '$name': ContentPaddingAddition in $conf ('$conf_cpa') differs from the installation parameter ('$want_cpa')"
+        return 1
+    fi
     return 0
 }
 

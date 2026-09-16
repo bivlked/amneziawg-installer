@@ -5272,6 +5272,43 @@ step5_download_scripts() {
 # ШАГ 6: Генерация конфигураций (нативная, без awgcfg.py)
 # ==============================================================================
 
+# _step6_undo_31 <причина> <бэкап серверного конфига или пусто> <клиент>...
+# Отказ шага 6 на установке 3.1 ПОСЛЕ перезаписи серверного конфига. Профиль 3.1
+# годен только комплектом, поэтому половину не оставляем: файлы клиентов,
+# созданных ЭТОЙ попыткой, удаляются, серверный конфиг возвращается из бэкапа, а
+# на первой установке (бэкапа нет) удаляется. Остаются ключи сервера и
+# server_hpk.key (в том числе созданные этой попыткой: повторный запуск шага 6
+# возьмёт их же) и сам файл бэкапа.
+# Конфиг возвращается через временный файл (awg_mktemp, свежее имя) и mv: копия,
+# оборванная на середине, иначе оставила бы вместо конфига его обрывок.
+# Итоговое сообщение говорит, удался ли откат: если хоть один его шаг сорвался,
+# состояние папки не согласовано (например, конфиг не вернулся, а файлы клиентов
+# уже удалены), и повторять установку без ручной проверки нельзя.
+_step6_undo_31() {
+    local why="$1" bak="$2" name tmp failed=0
+    shift 2
+    for name in "$@"; do
+        if ! _remove_client_files "$name"; then
+            log_error "Файлы клиента '$name' удалены не полностью: проверьте $AWG_DIR и $KEYS_DIR"
+            failed=1
+        fi
+    done
+    if [[ -n "$bak" ]]; then
+        if ! { tmp=$(awg_mktemp "$(dirname "$SERVER_CONF_FILE")") && cp -p "$bak" "$tmp" && mv -f "$tmp" "$SERVER_CONF_FILE"; }; then
+            [[ -n "${tmp:-}" ]] && rm -f "$tmp"
+            log_error "Серверный конфиг не возвращён из бэкапа $bak: верните его вручную"
+            failed=1
+        fi
+    elif ! rm -f "$SERVER_CONF_FILE"; then
+        log_error "Серверный конфиг $SERVER_CONF_FILE не удалён: удалите его вручную"
+        failed=1
+    fi
+    if (( failed )); then
+        die "${why}: установка 3.1 остановлена, но откат выполнен НЕ полностью (ошибки выше). Проверьте $AWG_DIR и серверный конфиг вручную, прежде чем запускать установку снова."
+    fi
+    die "${why}: установка 3.1 отменена, файлы этой попытки убраны, ключи сервера оставлены для повторного запуска."
+}
+
 step6_generate_configs() {
     update_state 6
     log "### ШАГ 6: Генерация конфигураций AWG 2.0 ###"
@@ -5283,6 +5320,26 @@ step6_generate_configs() {
     fi
     # shellcheck source=/dev/null
     source "$COMMON_SCRIPT_PATH"
+
+    # Установка 3.1: профиль годен только комплектом. Инструменты для комплекта и
+    # остатки файлов клиентов проверяются ДО первого изменения, в том числе до
+    # генерации ключей сервера; ключ защиты заголовков, бэкап конфига и сам рендер
+    # проверяются ниже, уже после неё. Клиенты по умолчанию, которые уже есть в
+    # серверном конфиге, переносятся и не пересоздаются, значит их файлы - не
+    # остатки; на остатки проверяются только те, кого эта попытка создаст. На 2.0
+    # шаг идёт прежним путём, при нечитаемом маркере тоже (если ключа нет; с ключом
+    # шаг останавливается на проверке ключа).
+    local gen31=0 client_name new_clients=() created=()
+    if [[ "$(_awg_generation_from_init "$CONFIG_FILE" 2>/dev/null)" == "3.1" ]]; then
+        gen31=1
+    fi
+    for client_name in my_phone my_laptop; do
+        grep -qxF "#_Name = ${client_name}" "$SERVER_CONF_FILE" 2>/dev/null || new_clients+=("$client_name")
+    done
+    if (( gen31 )); then
+        _awg31_require_client_tools || die "Установка 3.1 остановлена до изменений: не хватает инструментов для комплекта клиента."
+        _awg31_refuse_client_leftovers "${new_clients[@]}" || die "Установка 3.1 остановлена до изменений: остались файлы прежних клиентов."
+    fi
 
     # Создаём директорию для ключей
     mkdir -p "$KEYS_DIR" || die "Ошибка создания $KEYS_DIR"
@@ -5304,7 +5361,11 @@ step6_generate_configs() {
     if [[ -f "$SERVER_CONF_FILE" ]]; then
         local s_bak
         s_bak="${SERVER_CONF_FILE}.bak-$(date +%F_%H%M%S)"
-        cp "$SERVER_CONF_FILE" "$s_bak" || log_warn "Ошибка бэкапа $s_bak"
+        if ! cp "$SERVER_CONF_FILE" "$s_bak"; then
+            # На 3.1 откат при отказе возвращает конфиг из этого бэкапа: без него не переписываем.
+            (( gen31 )) && die "Ошибка бэкапа $s_bak: на установке 3.1 серверный конфиг без бэкапа не перезаписывается."
+            log_warn "Ошибка бэкапа $s_bak"
+        fi
         log "Бэкап серверного конфига: $s_bak"
     fi
 
@@ -5327,18 +5388,50 @@ step6_generate_configs() {
 
     # Генерация клиентов по умолчанию
     log "Создание клиентов по умолчанию..."
-    local client_name
     for client_name in my_phone my_laptop; do
         if grep -qxF "#_Name = ${client_name}" "$SERVER_CONF_FILE" 2>/dev/null; then
             log "Клиент '$client_name' уже существует."
         else
             log "Создание клиента '$client_name'..."
-            generate_client "$client_name" || log_warn "Ошибка создания клиента '$client_name'"
+            if (( gen31 )); then
+                # Отсутствие файлов доказано проверкой остатков только для new_clients.
+                # Имя вне этого списка было в прежнем конфиге, но рендер его не
+                # перенёс: создавать такого клиента значило бы потом удалить при
+                # откате файлы, которые были до попытки.
+                if [[ " ${new_clients[*]} " != *" $client_name "* ]]; then
+                    _step6_undo_31 "Клиент '$client_name' был в прежнем серверном конфиге, но не перенесён в новый" "${s_bak:-}" "${created[@]}"
+                fi
+                created+=("$client_name")
+                generate_client "$client_name" || _step6_undo_31 "Клиент '$client_name' не создан" "${s_bak:-}" "${created[@]}"
+            else
+                generate_client "$client_name" || log_warn "Ошибка создания клиента '$client_name'"
+            fi
         fi
     done
 
+    # На 3.1 generate_client не считает ошибкой сбой QR и ссылки vpn://, поэтому
+    # комплект сверяется целиком у КАЖДОГО клиента по умолчанию в конфиге, а не
+    # только у созданных сейчас: после шага 6, прерванного сигналом или сбоем, в
+    # конфиге может оказаться клиент без файлов, и повтор принял бы его молча.
+    if (( gen31 )); then
+        for client_name in my_phone my_laptop; do
+            grep -qxF "#_Name = ${client_name}" "$SERVER_CONF_FILE" 2>/dev/null || continue
+            awg_client_artifacts_check "$client_name" && continue
+            # Перенесённого клиента шаг 6 не пересоздаёт, поэтому повтор сам его не
+            # исправит: сообщение называет выход.
+            if [[ " ${created[*]} " == *" $client_name "* ]]; then
+                _step6_undo_31 "Комплект клиента '$client_name' неполон" "${s_bak:-}" "${created[@]}"
+            fi
+            _step6_undo_31 "Комплект уже существующего клиента '$client_name' неполон, повторный запуск его не исправит: перевыпустите клиента (sudo bash $MANAGE_SCRIPT_PATH regen $client_name) или удалите его (sudo bash $MANAGE_SCRIPT_PATH remove $client_name)" "${s_bak:-}" "${created[@]}"
+        done
+    fi
+
     # Валидация конфига
-    validate_awg_config || log_warn "Валидация конфига выявила проблемы."
+    if (( gen31 )); then
+        validate_awg_config || _step6_undo_31 "Валидация конфига не пройдена" "${s_bak:-}" "${created[@]}"
+    else
+        validate_awg_config || log_warn "Валидация конфига выявила проблемы."
+    fi
 
     # Установка прав доступа
     secure_files
