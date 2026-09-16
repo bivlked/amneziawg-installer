@@ -5422,7 +5422,7 @@ step6_generate_configs() {
             if [[ " ${created[*]} " == *" $client_name "* ]]; then
                 _step6_undo_31 "Комплект клиента '$client_name' неполон" "${s_bak:-}" "${created[@]}"
             fi
-            _step6_undo_31 "Комплект уже существующего клиента '$client_name' неполон, повторный запуск его не исправит: перевыпустите клиента (manage regen $client_name) или удалите его (manage remove $client_name)" "${s_bak:-}" "${created[@]}"
+            _step6_undo_31 "Комплект уже существующего клиента '$client_name' неполон, повторный запуск его не исправит: перевыпустите клиента (sudo bash $MANAGE_SCRIPT_PATH regen $client_name) или удалите его (sudo bash $MANAGE_SCRIPT_PATH remove $client_name)" "${s_bak:-}" "${created[@]}"
         done
     fi
 

@@ -5515,7 +5515,7 @@ step6_generate_configs() {
             if [[ " ${created[*]} " == *" $client_name "* ]]; then
                 _step6_undo_31 "The set of client '$client_name' is incomplete" "${s_bak:-}" "${created[@]}"
             fi
-            _step6_undo_31 "The set of the existing client '$client_name' is incomplete, and a rerun will not fix it: regenerate the client (manage regen $client_name) or remove it (manage remove $client_name)" "${s_bak:-}" "${created[@]}"
+            _step6_undo_31 "The set of the existing client '$client_name' is incomplete, and a rerun will not fix it: regenerate the client (sudo bash $MANAGE_SCRIPT_PATH regen $client_name) or remove it (sudo bash $MANAGE_SCRIPT_PATH remove $client_name)" "${s_bak:-}" "${created[@]}"
         done
     fi
 

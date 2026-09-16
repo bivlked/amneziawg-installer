@@ -80,6 +80,7 @@ EOF
     AWG_DIR="$d/awg" eval "$setup"
     AWG_DIR="$d/awg" KEYS_DIR="$d/awg/keys" SERVER_CONF_FILE="$d/awg/awg0.conf" \
     CONFIG_FILE="$d/awg/awgsetup_cfg.init" COMMON_SCRIPT_PATH="$stub" CALLS="$d/calls" \
+    MANAGE_SCRIPT_PATH="$d/awg/manage_amneziawg.sh" \
     LOG_FILE="$d/log" timeout 60 bash -c '
         : > "$CALLS"
         log() { :; }; log_warn() { echo "WARN: $*"; }; log_error() { echo "ERR: $*"; }; log_debug() { :; }
@@ -127,7 +128,7 @@ s6_first_install_rolled_back() {
     [[ "$src" == *_en.sh ]] && { done_ok="server keys are kept"; done_bad="did NOT complete"; }
     [[ "$out" == *"$done_ok"* && "$out" != *"$done_bad"* ]] || { echo "the undo message does not match a complete undo ($src): $out"; return 1; }
     # A client of this attempt is not sent to manage: a rerun does fix it.
-    [[ "$out" != *"manage regen"* ]] || { echo "a client of this attempt got the advice for an existing one ($src): $out"; return 1; }
+    [[ "$out" != *"manage_amneziawg.sh"* ]] || { echo "a client of this attempt got the advice for an existing one ($src): $out"; return 1; }
     ! grep -qx 'state 7' "$(dirname "$d")/calls" || { echo "state 7 was written after a failure ($src)"; return 1; }
     ! grep -qx 'secure' "$(dirname "$d")/calls" || { echo "step 6 went on past the failure ($src): $(s6_calls "$src")"; return 1; }
     [ ! -e "$d/awg0.conf" ] || { echo "the server config of the failed first install was left ($src)"; return 1; }
@@ -334,7 +335,7 @@ t_31_carried_client_incomplete() {
     d=$(s6_dir "$src")
     [[ "$out" == *"DIE:"*"'my_phone'"* ]] || { echo "an incomplete carried-over client did not stop a 3.1 rerun ($src): $out"; return 1; }
     # A rerun alone never fixes this client, so the message has to name the way out.
-    [[ "$(grep 'DIE:' <<< "$out")" == *"manage regen my_phone"*"manage remove my_phone"* ]] || { echo "the refusal does not name the way out ($src): $out"; return 1; }
+    [[ "$(grep 'DIE:' <<< "$out")" == *"sudo bash "*"/manage_amneziawg.sh regen my_phone"*"sudo bash "*"/manage_amneziawg.sh remove my_phone"* ]] || { echo "the refusal does not name the way out ($src): $out"; return 1; }
     [[ "|$(s6_calls "$src")|" == *"|client my_laptop|artifacts my_phone|"* ]] || { echo "the refusal did not come from the set check ($src): $(s6_calls "$src")"; return 1; }
     [ ! -e "$d/keys/my_laptop.private" ] && [ ! -e "$d/keys/my_laptop.public" ] || { echo "the keys of the failed attempt were left ($src)"; return 1; }
     for f in conf png vpnuri vpnuri.png; do
