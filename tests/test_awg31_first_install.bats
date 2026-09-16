@@ -4,14 +4,14 @@
 # A 3.1 profile is only usable as a complete set - config, QR code, vpn:// link
 # and its QR code - and the link needs perl with Compress::Zlib and MIME::Base64,
 # while both QR codes need qrencode. On 2.0 a missing tool costs a convenience;
-# on 3.1 it means the person is handed a half-set for a server they cannot reach
-# any other way. So the tools are checked first, and the installation stops with
-# the missing one named instead of failing halfway through.
+# on 3.1 the link is the one simple way to get the profile into the application,
+# and a half-set is not usable. So the tools are checked first, and the
+# installation stops with the missing one named instead of failing halfway.
 #
-# The second check is about leftovers: generate_client refuses to overwrite an
-# existing client, so a rerun that finds my_phone or my_laptop files would abort
-# in the middle, after the server config has already been rewritten. On 3.1 that
-# is caught before the first change.
+# The second check is about leftovers: generate_client refuses a client whose
+# keys or .conf exist, and on 3.1 that refusal would come after the server config
+# was rewritten. Old QR and link files count too: the set check would take them
+# for new ones. On 3.1 all of it is caught before the first change.
 #
 # On 2.0 both checks do nothing at all: that path is not touched by this work.
 
@@ -142,15 +142,25 @@ t_clean() {
 
 t_leftovers() {
     local lib="$1" out f
-    for f in my_phone.conf my_phone.png my_phone.vpnuri my_phone.vpnuri.png keys/my_phone.private; do
+    local who
+    for f in my_phone.conf my_phone.png my_phone.vpnuri my_phone.vpnuri.png keys/my_phone.private keys/my_phone.public my_laptop.conf; do
         out=$(lib_run "$lib" 3.1 "stub_all $lib" "
             mkdir -p \"\$AWG_DIR/keys\"
             printf 'x\\n' > \"\$AWG_DIR/$f\"
             _awg31_refuse_client_leftovers my_phone my_laptop; echo \"RC=\$?\"")
         [[ "$out" == *"RC=0"* ]] && { echo "a leftover $f was accepted ($lib): $out"; return 1; }
         [[ "$out" == *"ERR:"* ]] || { echo "a leftover $f refused without a reason ($lib): $out"; return 1; }
-        [[ "$out" == *"my_phone"* ]] || { echo "the reason does not name the client ($lib): $out"; return 1; }
+        # The second name has to be checked too, and named as itself.
+        who=my_phone
+        [[ "$f" == my_laptop.* ]] && who=my_laptop
+        [[ "$out" == *"'$who'"* ]] || { echo "the reason does not name $who ($lib): $out"; return 1; }
     done
+    # A dangling link is a leftover as well: -e alone does not see it.
+    out=$(lib_run "$lib" 3.1 "stub_all $lib" '
+        ln -s "$AWG_DIR/nowhere" "$AWG_DIR/my_phone.png"
+        _awg31_refuse_client_leftovers my_phone my_laptop; echo "RC=$?"')
+    [[ "$out" == *"RC=0"* ]] && { echo "a dangling link was accepted ($lib): $out"; return 1; }
+    return 0
 }
 @test "first install 3.1: any leftover file of a default client stops the install, both twins" {
     both t_leftovers

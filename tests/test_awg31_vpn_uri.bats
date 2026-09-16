@@ -162,3 +162,71 @@ u_no_trace() {
     require_perl_zlib; require_python3
     both u_no_trace
 }
+
+# inner_fields <uri file> : the top-level keys of the inner config JSON, parsed
+# as JSON. A substring search would pass a link whose JSON is broken, which the
+# client silently refuses to import.
+inner_fields() {
+    python3 - "$1" <<'PY'
+import base64, json, struct, sys, zlib
+uri = open(sys.argv[1], encoding="utf-8").read().strip().replace("vpn://", "")
+raw = base64.urlsafe_b64decode(uri + "=" * (-len(uri) % 4))
+outer = json.loads(zlib.decompress(raw[4:]))
+inner = json.loads(outer["containers"][0]["awg"]["last_config"])
+for k in sorted(inner):
+    v = inner[k]
+    print("%s=%s" % (k, v if isinstance(v, str) else json.dumps(v)))
+PY
+}
+
+u_31_fields_parsed() {
+    local lib="$1" d out fields
+    d=$(dir_of "$lib")
+    out=$(lib_run "$lib" 3.1 'generate_vpn_uri c1; echo "RC=$?"')
+    [[ "$out" == *"RC=0"* ]] || { echo "uri not created ($lib): $out"; return 1; }
+    fields=$(inner_fields "$d/c1.vpnuri") || { echo "the inner config is not valid JSON ($lib)"; return 1; }
+    grep -qxF "HeaderProtectionKey=$KEY_OK" <<< "$fields" || { echo "key field wrong ($lib): $fields"; return 1; }
+    grep -qxF "ContentPaddingAddition=$CPA_OK" <<< "$fields" || { echo "padding field wrong ($lib): $fields"; return 1; }
+}
+@test "vpn uri 3.1: the inner config parses as JSON and carries the exact values, both twins" {
+    require_perl_zlib; require_python3
+    both u_31_fields_parsed
+}
+
+u_20_hand_added_fields() {
+    local lib="$1" d out fields
+    d=$(dir_of "$lib")
+    # A 2.0 client config with third-line lines added by hand. The renderers write
+    # these lines only on 3.1, and the link follows the same rule: on 2.0 its
+    # fields stay exactly as they were.
+    out=$(lib_run "$lib" 2.0 '
+        sed -i "0,/^\[Peer\]/s//HeaderProtectionKey = '"$KEY_OK"'\nContentPaddingAddition = 32-128\n\n[Peer]/" "$AWG_DIR/c1.conf"
+        grep -q "^HeaderProtectionKey = " "$AWG_DIR/c1.conf" || { echo "SETUP_FAILED"; exit 0; }
+        generate_vpn_uri c1; echo "RC=$?"')
+    [[ "$out" != *SETUP_FAILED* ]] || { echo "could not prepare the config ($lib)"; return 1; }
+    [[ "$out" == *"RC=0"* ]] || { echo "uri not created ($lib): $out"; return 1; }
+    fields=$(inner_fields "$d/c1.vpnuri") || { echo "the inner config is not valid JSON ($lib)"; return 1; }
+    grep -q '^HeaderProtectionKey=' <<< "$fields" && { echo "key field on a 2.0 link ($lib)"; return 1; }
+    grep -q '^ContentPaddingAddition=' <<< "$fields" && { echo "padding field on a 2.0 link ($lib)"; return 1; }
+    return 0
+}
+@test "vpn uri 2.0: third-line lines added by hand do not become link fields, both twins" {
+    require_perl_zlib; require_python3
+    both u_20_hand_added_fields
+}
+
+u_31_missing_cpa_in_conf() {
+    local lib="$1" d out want
+    d=$(dir_of "$lib")
+    out=$(lib_run "$lib" 3.1 '
+        sed -i "/^ContentPaddingAddition = /d" "$AWG_DIR/c1.conf"
+        generate_vpn_uri c1; echo "RC=$?"')
+    [[ "$out" == *"RC=0"* ]] && { echo "a link was made from a 3.1 config without the padding ($lib)"; return 1; }
+    [ ! -f "$d/c1.vpnuri" ] || { echo "a link file was written anyway ($lib)"; return 1; }
+    want="ContentPaddingAddition"
+    [[ "$out" == *"$want"* ]] || { echo "the reason does not name the padding ($lib): $out"; return 1; }
+}
+@test "vpn uri 3.1: a client config without the padding produces no link, both twins" {
+    require_perl_zlib; require_python3
+    both u_31_missing_cpa_in_conf
+}

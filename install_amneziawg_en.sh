@@ -5365,22 +5365,27 @@ step5_download_scripts() {
 
 # _step6_undo_31 <message> <server config backup or empty> <client>...
 # A refusal of step 6 on a 3.1 install AFTER the server config was rewritten. A
-# 3.1 profile is only usable as a complete set, so the folder goes back to what
-# it was before the attempt instead of being left half done: the files of the
-# clients made by THIS attempt are removed, the server config comes back from
-# its backup, and on a first install (no backup) it is removed. The server keys
-# and server_hpk.key are not touched: a rerun of step 6 uses the same ones, and
-# profiles issued earlier agree with them.
+# 3.1 profile is only usable as a complete set, so nothing is left half done:
+# the files of the clients made by THIS attempt are removed, the server config
+# comes back from its backup, and on a first install (no backup) it is removed.
+# What stays is the server keys and server_hpk.key (including ones this attempt
+# created: a rerun of step 6 takes the same ones) and the backup file itself.
+# The config comes back through a temporary file and mv: a copy cut off halfway
+# would otherwise leave a fragment in place of the config.
 _step6_undo_31() {
-    local msg="$1" bak="$2" name
+    local msg="$1" bak="$2" name tmp
     shift 2
     for name in "$@"; do
-        _remove_client_files "$name"
+        _remove_client_files "$name" || log_error "The files of client '$name' were not all removed: check $AWG_DIR and $KEYS_DIR"
     done
     if [[ -n "$bak" ]]; then
-        cp -p "$bak" "$SERVER_CONF_FILE" || log_error "The server config was not restored from the backup $bak: restore it by hand"
+        tmp="${SERVER_CONF_FILE}.restore.$$"
+        if ! { cp -p "$bak" "$tmp" && mv -f "$tmp" "$SERVER_CONF_FILE"; }; then
+            rm -f "$tmp"
+            log_error "The server config was not restored from the backup $bak: restore it by hand"
+        fi
     else
-        rm -f "$SERVER_CONF_FILE"
+        rm -f "$SERVER_CONF_FILE" || log_error "The server config $SERVER_CONF_FILE was not removed: remove it by hand"
     fi
     die "$msg"
 }
@@ -5397,6 +5402,24 @@ step6_generate_configs() {
     # shellcheck source=/dev/null
     source "$COMMON_SCRIPT_PATH"
 
+    # 3.1 install: a profile is only usable as a complete set, so everything that
+    # could break it halfway is checked BEFORE the first change, including before
+    # the server keys are generated. Default clients already in the server config
+    # are carried over and not recreated, so their files are not leftovers; only
+    # the clients this attempt will create are checked. On 2.0 and with an
+    # unreadable marker the step takes its old path.
+    local gen31=0 client_name new_clients=() created=()
+    if [[ "$(_awg_generation_from_init "$CONFIG_FILE")" == "3.1" ]]; then
+        gen31=1
+    fi
+    for client_name in my_phone my_laptop; do
+        grep -qxF "#_Name = ${client_name}" "$SERVER_CONF_FILE" 2>/dev/null || new_clients+=("$client_name")
+    done
+    if (( gen31 )); then
+        _awg31_require_client_tools || die "The 3.1 install stopped before any change: tools for the client set are missing."
+        _awg31_refuse_client_leftovers "${new_clients[@]}" || die "The 3.1 install stopped before any change: files of earlier clients are left."
+    fi
+
     # Create key directory
     mkdir -p "$KEYS_DIR" || die "Error creating $KEYS_DIR"
 
@@ -5406,23 +5429,6 @@ step6_generate_configs() {
         generate_server_keys || die "Server key generation error."
     else
         log "Server keys already exist."
-    fi
-
-    # 3.1 install: a profile is only usable as a complete set, so everything that
-    # could break it halfway is checked BEFORE the first change. Default clients
-    # already in the server config are carried over and not recreated, so their
-    # files are not leftovers; only the clients this attempt will create are
-    # checked. On 2.0 and with an unreadable marker the step takes its old path.
-    local gen31=0 client_name new_clients=() created=()
-    if [[ "$(_awg_generation_from_init "$CONFIG_FILE" 2>/dev/null)" == "3.1" ]]; then
-        gen31=1
-    fi
-    for client_name in my_phone my_laptop; do
-        grep -qxF "#_Name = ${client_name}" "$SERVER_CONF_FILE" 2>/dev/null || new_clients+=("$client_name")
-    done
-    if (( gen31 )); then
-        _awg31_require_client_tools || die "The 3.1 install stopped before any change: tools for the client set are missing."
-        _awg31_refuse_client_leftovers "${new_clients[@]}" || die "The 3.1 install stopped before any change: files of earlier clients are left."
     fi
 
     # Header protection key: created on a first 3.1 install, restored from the config
@@ -5467,6 +5473,13 @@ step6_generate_configs() {
         else
             log "Creating client '$client_name'..."
             if (( gen31 )); then
+                # The leftovers check proved absent files only for new_clients. A name
+                # outside that list was in the old config but the render did not carry
+                # it over: creating that client would later have the undo remove
+                # files that existed before the attempt.
+                if [[ " ${new_clients[*]} " != *" $client_name "* ]]; then
+                    _step6_undo_31 "Client '$client_name' was in the old server config but was not carried into the new one: the 3.1 install was undone, the files of this attempt are removed, the server keys are kept for a rerun." "${s_bak:-}" "${created[@]}"
+                fi
                 created+=("$client_name")
                 generate_client "$client_name" || _step6_undo_31 "Client '$client_name' was not created: the 3.1 install was undone, the files of this attempt are removed, the server keys are kept for a rerun." "${s_bak:-}" "${created[@]}"
             else

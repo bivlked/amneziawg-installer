@@ -8,7 +8,7 @@
 #
 # On a 3.1 installation the set is also checked for the profile itself: the
 # config has to carry exactly one HeaderProtectionKey in [Interface], equal to
-# the key file, and the padding of the server. A profile with the wrong key is
+# the key file, and the installation's padding (AWG_CPA). A profile with the wrong key is
 # indistinguishable from a working one until the tunnel refuses to come up.
 
 KEY_OK="QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQA="
@@ -125,7 +125,9 @@ a_empty() {
 }
 
 a_symlink() {
-    expect_fail "$1" 3.1 'rm -f "$AWG_DIR/c1.png"; ln -s /etc/hostname "$AWG_DIR/c1.png"' "a symlink in place of a file"
+    # The link points at a real, non-empty file inside the folder: a dangling
+    # link would also fail the existence check and pass for the wrong reason.
+    expect_fail "$1" 3.1 'mv "$AWG_DIR/c1.png" "$AWG_DIR/real.png"; ln -s "$AWG_DIR/real.png" "$AWG_DIR/c1.png"' "a symlink in place of a file" "символьная ссылка" "is a symlink"
 }
 @test "artifacts: a symlink in place of a file is refused, both twins" {
     both a_symlink
@@ -188,4 +190,28 @@ a_no_trace() {
 }
 @test "artifacts 3.1: the key does not reach the xtrace output, both twins" {
     both a_no_trace
+}
+
+a_scan_vars_local() {
+    local lib="$1" out
+    # The check compares the key value through _awg_hpk_conf_scan, whose results
+    # belong to the caller's locals. Declared anywhere else, the key would stay
+    # in a global of the installer shell for the rest of the run.
+    out=$(lib_run "$lib" 3.1 'awg_client_artifacts_check c1; echo "RC=$?"; declare -p _hs_val _hs_if _hs_any _hs_out 2>/dev/null | wc -l')
+    [[ "$out" == *"RC=0"* ]] || { echo "a complete 3.1 set was refused ($lib): $out"; return 1; }
+    [ "$(tail -1 <<< "$out")" -eq 0 ] || { echo "scan variables left in the caller shell ($lib): $out"; return 1; }
+}
+@test "artifacts 3.1: the key value does not stay in a global of the calling shell, both twins" {
+    both a_scan_vars_local
+}
+
+a_cpa_with_comment() {
+    local lib="$1" out
+    # The renderers write the padding in the checked form; the installation value
+    # may carry a comment or spaces. The set check compares the same checked form.
+    out=$(lib_run "$lib" 3.1 'AWG_CPA="32 - 128 # set by hand"; awg_client_artifacts_check c1; echo "RC=$?"')
+    [[ "$out" == *"RC=0"* ]] || { echo "a set written in the checked form was refused ($lib): $out"; return 1; }
+}
+@test "artifacts 3.1: the padding is compared in its checked form, both twins" {
+    both a_cpa_with_comment
 }

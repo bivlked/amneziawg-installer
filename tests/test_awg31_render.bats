@@ -206,3 +206,89 @@ r_no_trace() {
 @test "render 3.1: the key does not reach the xtrace output, both twins" {
     both r_no_trace
 }
+
+# ---------- an unreadable generation marker ----------
+#
+# awg_hpk_ensure lets add and regen go on over a hand-mangled init as long as no
+# key exists anywhere: the person must not lose client management over a typo.
+# The renderers have to follow the same rule, or that promise is broken one call
+# later. With a key file present the generation cannot be guessed safely, so the
+# render refuses and names the marker.
+
+r_broken_marker_no_key() {
+    local lib="$1" d out f n
+    d=$(dir_of "$lib")
+    out=$(lib_run "$lib" yes "" - '
+        render_server_config || exit 1
+        render_client_config c1 10.9.9.2 CLIENTPRIV SERVERPUB 203.0.113.10 39743 || exit 1
+        echo "RC=0"')
+    [[ "$out" == *"RC=0"* ]] || { echo "an unreadable marker without a key stopped the render ($lib): $out"; return 1; }
+    for f in "$d/awg0.conf" "$d/c1.conf"; do
+        n=$(grep -ciE '^(HeaderProtectionKey|ContentPaddingAddition) = ' "$f") || true
+        [ "$n" -eq 0 ] || { echo "third-line key written with an unreadable marker in $f ($lib)"; return 1; }
+    done
+}
+@test "render: an unreadable marker without a key renders as before, both twins" {
+    both r_broken_marker_no_key
+}
+
+r_broken_marker_with_key() {
+    local lib="$1" d out want
+    d=$(dir_of "$lib")
+    out=$(lib_run "$lib" yes 32-128 "$KEY_OK" 'render_server_config; echo "RC=$?"')
+    [[ "$out" == *"RC=0"* ]] && { echo "rendered over an unreadable marker with a key file present ($lib)"; return 1; }
+    want="AWG_PROTOCOL"
+    [[ "$out" == *"$want"* ]] || { echo "the reason does not name the marker ($lib): $out"; return 1; }
+    [ ! -f "$d/awg0.conf" ] || { echo "a config was written anyway ($lib)"; return 1; }
+    leftovers_none "$d" "$lib" || return 1
+}
+@test "render: an unreadable marker with a key file present refuses the render, both twins" {
+    both r_broken_marker_with_key
+}
+
+# ---------- a rerun over live peers ----------
+
+r_server_31_with_peers() {
+    local lib="$1" d out first_peer hpk_line cpa_line
+    d=$(dir_of "$lib")
+    out=$(lib_run "$lib" 3.1 32-128 "$KEY_OK" '
+        render_server_config || exit 1
+        printf "\n[Peer]\n#_Name = a\nPublicKey = PA\nAllowedIPs = 10.9.9.2/32\n" >> "$SERVER_CONF_FILE"
+        printf "\n[Peer]\n#_Name = b\nPublicKey = PB\nAllowedIPs = 10.9.9.3/32\n" >> "$SERVER_CONF_FILE"
+        cp "$SERVER_CONF_FILE" "$AWG_DIR/bak"
+        render_server_config "$AWG_DIR/bak" || exit 1
+        echo "RC=0"')
+    [[ "$out" == *"RC=0"* ]] || { echo "a rerun over live peers failed ($lib): $out"; return 1; }
+    [ "$(grep -c '^HeaderProtectionKey = ' "$d/awg0.conf")" -eq 1 ] || { echo "the key line is not there exactly once ($lib)"; cat "$d/awg0.conf"; return 1; }
+    [ "$(grep -c '^ContentPaddingAddition = ' "$d/awg0.conf")" -eq 1 ] || { echo "the padding line is not there exactly once ($lib)"; return 1; }
+    [ "$(grep -c '^\[Peer\]$' "$d/awg0.conf")" -eq 2 ] || { echo "the peers were not carried over ($lib)"; return 1; }
+    first_peer=$(grep -n '^\[Peer\]$' "$d/awg0.conf" | head -1 | cut -d: -f1)
+    hpk_line=$(grep -n '^HeaderProtectionKey = ' "$d/awg0.conf" | cut -d: -f1)
+    cpa_line=$(grep -n '^ContentPaddingAddition = ' "$d/awg0.conf" | cut -d: -f1)
+    [ "$hpk_line" -lt "$first_peer" ] && [ "$cpa_line" -lt "$first_peer" ] \
+        || { echo "third-line lines landed in a peer block ($lib): key=$hpk_line padding=$cpa_line peer=$first_peer"; return 1; }
+}
+@test "render 3.1: a rerun over live peers keeps the key and padding in [Interface], once, both twins" {
+    both r_server_31_with_peers
+}
+
+# ---------- the padding is written as checked ----------
+
+r_cpa_normalized() {
+    local lib="$1" d out f
+    d=$(dir_of "$lib")
+    # A comment or spaces around the value pass the check, which reads the value
+    # the way the tools do. What reaches the configs has to be that same value:
+    # the comment would otherwise travel into the vpn:// link as part of it.
+    out=$(lib_run "$lib" 3.1 "32 - 128 # set by hand" "$KEY_OK" '
+        render_server_config || exit 1
+        render_client_config c1 10.9.9.2 CLIENTPRIV SERVERPUB 203.0.113.10 39743 || exit 1
+        echo "RC=0"')
+    [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
+    for f in "$d/awg0.conf" "$d/c1.conf"; do
+        grep -qxF "ContentPaddingAddition = 32-128" "$f" || { echo "the padding was not written as checked in $f ($lib): $(grep ContentPadding "$f")"; return 1; }
+    done
+}
+@test "render 3.1: the padding is written in the form that was checked, both twins" {
+    both r_cpa_normalized
+}

@@ -1856,37 +1856,40 @@ _derive_ipv6_server_addr() {
     fi
 }
 
-# Render server config for AWG 2.0
-# render_server_config [peers_source_file]
-# Uses global variables from load_awg_params()
-# peers_source_file (optional): a file whose [Peer] blocks are carried over
-# into the new config BEFORE the atomic mv (usually a backup of the live
-# awg0.conf). Thanks to this the live config is never left peer-less even for
-# an instant - a failure between render and a separate append would leave a
-# peer-less file, and the next run of step 6 would back up that already
-# peer-less file (losing all peers on --force reinstall).
-# shellcheck disable=SC2154  # AWG_* vars loaded via load_awg_params -> source
 # _awg31_append_profile_lines <file> : append the third-line profile lines -
 # HeaderProtectionKey and ContentPaddingAddition - to [Interface].
 # On a 2.0 installation it does nothing and returns 0: the 2.0 path is unchanged.
+# With an unreadable marker and no key file it writes nothing either (the rule
+# of awg_hpk_ensure).
 # 🔴 The key value never passes through argv and never reaches the trace: this
 # function is guarded, and the file is read through a redirect. The client
-# renderer is deliberately unguarded (the client key arrives as an argument), so
-# reading the key there would leak it under --verbose.
+# renderer itself is unguarded (the client key arrives as an argument; its
+# callers generate_client and regenerate_client are guarded), so reading the key
+# there would leak it under --verbose.
 # The value comes from the key file. It is NOT compared with the server config
-# here: both renderers go through load_awg_params, which calls awg_hpk_ensure,
-# and that already catches a file/config disagreement and names it. A second
-# check of the same thing would be dead code pretending to be a second guard.
+# here: with an existing awg0.conf both renderers go through load_awg_params,
+# which calls awg_hpk_ensure, and that already catches a file/config
+# disagreement and names it. On a first install there is no config yet, and
+# awg_hpk_ensure install in step 6 keeps them consistent. A second check of the
+# same thing would be dead code pretending to be a second guard.
 _awg31_append_profile_lines() {
     _awg_xtrace_guard _awg31_append_profile_lines_body "$@"
 }
 
 _awg31_append_profile_lines_body() {
-    local target="$1" gen keyfile key why
-    gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
-        log_error "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read (2.0 and 3.1 are allowed): the config was not written"
-        return 1
-    }
+    local target="$1" gen keyfile key why cpa
+    # An unreadable marker follows the rule of awg_hpk_ensure: without a key it is
+    # no reason to take add and regen away over an edit of the init, the third-line
+    # lines are simply not written; with a key file the generation cannot be
+    # guessed, and that is a refusal.
+    if ! gen=$(_awg_generation_from_init "$CONFIG_FILE"); then
+        keyfile=$(awg_hpk_path) || { log_error "AWG_DIR is not set: the header protection key was not checked"; return 1; }
+        if [[ -e "$keyfile" || -L "$keyfile" ]]; then
+            log_error "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read (2.0 and 3.1 are allowed) while the key file $keyfile exists: the config was not written"
+            return 1
+        fi
+        return 0
+    fi
     [[ "$gen" == "3.1" ]] || return 0
     keyfile=$(awg_hpk_path) || { log_error "AWG_DIR is not set: the header protection key cannot be read"; return 1; }
     if [[ ! -f "$keyfile" ]]; then
@@ -1898,7 +1901,13 @@ _awg31_append_profile_lines_body() {
         log_error "The key file $keyfile does not look like a key: 32 bytes in base64, 44 characters are required"
         return 1
     fi
-    why=$(awg_cpa_check_safe "${AWG_CPA:-}") || {
+    # Write exactly the value that was checked: awg_cpa_check_safe drops a comment
+    # and spaces the way the tools do, while in the config, and further in the
+    # vpn:// link, they would become part of the value.
+    cpa="${AWG_CPA:-}"
+    cpa="${cpa%%#*}"
+    cpa="${cpa//[[:space:]]/}"
+    why=$(awg_cpa_check_safe "$cpa") || {
         log_error "ContentPaddingAddition: ${why}. The config was not written"
         return 1
     }
@@ -1906,13 +1915,23 @@ _awg31_append_profile_lines_body() {
         log_error "Failed to write the header protection key into the config"
         return 1
     }
-    printf 'ContentPaddingAddition = %s\n' "${AWG_CPA}" >> "$target" || {
+    printf 'ContentPaddingAddition = %s\n' "$cpa" >> "$target" || {
         log_error "Failed to write ContentPaddingAddition into the config"
         return 1
     }
     return 0
 }
 
+# Render server config for AWG 2.0
+# render_server_config [peers_source_file]
+# Uses global variables from load_awg_params()
+# peers_source_file (optional): a file whose [Peer] blocks are carried over
+# into the new config BEFORE the atomic mv (usually a backup of the live
+# awg0.conf). Thanks to this the live config is never left peer-less even for
+# an instant - a failure between render and a separate append would leave a
+# peer-less file, and the next run of step 6 would back up that already
+# peer-less file (losing all peers on --force reinstall).
+# shellcheck disable=SC2154  # AWG_* vars loaded via load_awg_params -> source
 render_server_config() {
     case $- in *x*) _awg_xtrace_guard render_server_config "$@"; return ;; esac
     local peers_source="${1:-}"
@@ -3492,16 +3511,27 @@ generate_vpn_uri() {
     # fix v5.11.4).
     client_psk=$(awk '/^[[:space:]]*PresharedKey[[:space:]]*=/{sub(/^[[:space:]]*PresharedKey[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf_file" 2>/dev/null)
     # Third line: the key and the padding come from the CLIENT .conf - the link
-    # describes that file, and the preshared key is taken the same way. On a 3.1
-    # installation a profile without the key is a refusal: such a link looks
-    # valid and silently fails to connect, leaving the person with "it does not work".
+    # describes that file, and the preshared key is taken the same way. The fields
+    # are written only on a 3.1 installation, like the lines in the renderers: on
+    # 2.0 and with an unreadable marker the link stays what it was. On 3.1 a
+    # profile without the key or the padding is a refusal: such a link looks valid
+    # and silently fails to connect, leaving the person with "it does not work".
     local client_hpk client_cpa uri_gen
     client_hpk=$(awk '/^[[:space:]]*HeaderProtectionKey[[:space:]]*=/{sub(/^[[:space:]]*HeaderProtectionKey[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf_file" 2>/dev/null)
     client_cpa=$(awk '/^[[:space:]]*ContentPaddingAddition[[:space:]]*=/{sub(/^[[:space:]]*ContentPaddingAddition[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf_file" 2>/dev/null)
     uri_gen=$(_awg_generation_from_init "$CONFIG_FILE") || uri_gen=broken
-    if [[ "$uri_gen" == "3.1" && -z "$client_hpk" ]]; then
-        log_error "The client config '$name' has no HeaderProtectionKey while the installation is marked generation 3.1: the vpn:// link was not created, it would look valid and would not connect"
-        return 1
+    if [[ "$uri_gen" == "3.1" ]]; then
+        if [[ -z "$client_hpk" ]]; then
+            log_error "The client config '$name' has no HeaderProtectionKey while the installation is marked generation 3.1: the vpn:// link was not created, it would look valid and would not connect"
+            return 1
+        fi
+        if [[ -z "$client_cpa" ]]; then
+            log_error "The client config '$name' has no ContentPaddingAddition while the installation is marked generation 3.1: the vpn:// link was not created"
+            return 1
+        fi
+    else
+        client_hpk=""
+        client_cpa=""
     fi
     local raw_endpoint
     raw_endpoint=$(grep -oP 'Endpoint\s*=\s*\K\S+' "$conf_file") || { log_warn "Endpoint could not be read from '$conf_file' - vpn:// URI not created for '$name'."; return 1; }
@@ -3743,10 +3773,13 @@ _awg31_require_client_tools() {
 }
 
 # _awg31_refuse_client_leftovers <name> [<name>...] : leftover client files.
-# generate_client refuses to overwrite an existing client, so a rerun that meets
-# leftovers of my_phone or my_laptop would abort AFTER the server config has been
-# rewritten. On 3.1 this is checked before the first change and the file is
-# named; on 2.0 the behaviour is unchanged (step 6 skips such names in its loop).
+# generate_client refuses a client whose keys or .conf already exist. On 2.0
+# step 6 logs a warning about it and goes on; on 3.1 that refusal would come
+# AFTER the server config was rewritten and would mean an undo, so the leftovers
+# are checked before the first change and the file is named. .png, .vpnuri and
+# .vpnuri.png count as leftovers too, although generate_client overwrites them:
+# if the new link failed, the old file would pass the set check as the real one.
+# On 2.0 the function does nothing.
 _awg31_refuse_client_leftovers() {
     local gen name f
     gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
@@ -3778,15 +3811,18 @@ _awg31_refuse_client_leftovers() {
 # ContentPaddingAddition equal to the installation's padding. A profile with the
 # wrong key looks exactly like a working one until the tunnel refuses to start.
 # 🔴 The function is guarded: it compares the key value.
-# The expected padding comes from the ALREADY LOADED parameters ($AWG_CPA);
-# reading the init again would add a second reader of the marker behind
-# _awg_generation_from_init.
+# The expected padding comes from the ALREADY LOADED parameters ($AWG_CPA), in
+# the same normalized form the renderers write: the caller must have loaded the
+# parameters (load_awg_params), otherwise $AWG_CPA is empty and the check
+# refuses. The padding is read from the first ContentPaddingAddition line in the
+# file; unlike the key, its section and uniqueness are not checked.
 awg_client_artifacts_check() {
     _awg_xtrace_guard _awg_client_artifacts_check_body "$@"
 }
 
 _awg_client_artifacts_check_body() {
-    local name="${1:-}" f gen keyfile key conf uri_first conf_cpa
+    local name="${1:-}" f gen keyfile key conf uri_first conf_cpa want_cpa
+    local _hs_any=0 _hs_if=0 _hs_out=0 _hs_val=""
     if [[ -z "$name" ]]; then
         log_error "awg_client_artifacts_check: the client name is required"
         return 1
@@ -3849,8 +3885,11 @@ _awg_client_artifacts_check_body() {
         log_error "The set of client '$name': $conf has no ContentPaddingAddition while the installation is marked generation 3.1"
         return 1
     fi
-    if [[ "$conf_cpa" != "${AWG_CPA:-}" ]]; then
-        log_error "The set of client '$name': ContentPaddingAddition in $conf ('$conf_cpa') differs from the installation parameter ('${AWG_CPA:-}')"
+    want_cpa="${AWG_CPA:-}"
+    want_cpa="${want_cpa%%#*}"
+    want_cpa="${want_cpa//[[:space:]]/}"
+    if [[ "$conf_cpa" != "$want_cpa" ]]; then
+        log_error "The set of client '$name': ContentPaddingAddition in $conf ('$conf_cpa') differs from the installation parameter ('$want_cpa')"
         return 1
     fi
     return 0

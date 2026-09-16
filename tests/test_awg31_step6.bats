@@ -14,7 +14,9 @@
 #   install), the server keys and the header protection key stay;
 # - a default client that already exists in the server config is neither
 #   refused as a leftover nor recreated;
-# - on 2.0, and with an unreadable marker, the step behaves exactly as before.
+# - on 2.0, and with an unreadable marker, the step 6 wiring is the old one
+#   (what the real renderers do with such a marker is tested in
+#   test_awg31_render.bats).
 
 # step6_run <installer> <setup snippet> ; env STUB_* chooses the failures.
 step6_run() {
@@ -24,7 +26,13 @@ step6_run() {
     stub="$d/stub_common.sh"
     cat > "$stub" <<'EOF'
 _call() { printf '%s\n' "$*" >> "$CALLS"; }
+# Answers STUB_GEN only for the init file: a call pointed at any other file
+# would read no marker and the real function would answer 2.0.
 _awg_generation_from_init() {
+    if [[ "${1:-}" != "$CONFIG_FILE" ]]; then
+        printf '2.0\n'
+        return 0
+    fi
     [[ "$STUB_GEN" == broken ]] && return 1
     printf '%s\n' "$STUB_GEN"
 }
@@ -44,6 +52,10 @@ render_server_config() {
 generate_client() {
     local n="$1"
     _call "client $n"
+    # C6 of the real function: an existing client is refused, nothing touched.
+    if [[ -e "$KEYS_DIR/$n.private" || -e "$KEYS_DIR/$n.public" || -e "$AWG_DIR/$n.conf" ]]; then
+        return 1
+    fi
     : > "$KEYS_DIR/$n.private"
     if [[ "$n" == "${STUB_FAIL_CLIENT:-}" ]]; then
         return 1
@@ -73,6 +85,11 @@ EOF
         die() { echo "DIE: $*"; exit 1; }
         update_state() { printf "state %s\n" "$1" >> "$CALLS"; }
         if [[ -n "${STUB_FAIL_CP:-}" ]]; then cp() { return 1; }; fi
+        # Fails only the restore copy of the undo, which is the one made with -p,
+        # after writing part of the destination, as an I/O error would.
+        if [[ -n "${STUB_FAIL_RESTORE:-}" ]]; then
+            cp() { if [[ "$1" == -p ]]; then printf "partial" > "${!#}"; return 1; fi; command cp "$@"; }
+        fi
         eval "$(awk "/^_step6_undo_31\\(\\) \\{/,/^\\}/" "$1")"
         eval "$(awk "/^step6_generate_configs\\(\\) \\{/,/^\\}/" "$1")"
         declare -F step6_generate_configs >/dev/null || { echo NO_STEP6; exit 7; }
@@ -225,4 +242,59 @@ t_31_backup_failure() {
 }
 @test "step 6 on 3.1: without a backup of the server config nothing is rewritten, both twins" {
     both t_31_backup_failure
+}
+
+t_31_checks_before_server_keys() {
+    local src="$1" out calls var
+    for var in STUB_FAIL_TOOLS STUB_FAIL_LEFT; do
+        out=$(export STUB_GEN=3.1 "$var=1"; step6_run "$src" 'rm -f "$AWG_DIR/server_private.key"')
+        [[ "$out" == *"DIE:"* ]] || { echo "$var did not stop step 6 ($src): $out"; return 1; }
+        calls=$(s6_calls "$src")
+        [[ "$calls" != *serverkeys* ]] || { echo "$var: server keys were generated before the refusal ($src): $calls"; return 1; }
+    done
+    out=$(STUB_GEN=3.1 step6_run "$src" 'rm -f "$AWG_DIR/server_private.key"')
+    [[ "$out" == *"RC=0"* ]] || { echo "a first 3.1 install without server keys failed ($src): $out"; return 1; }
+    [[ "$(s6_calls "$src")" == "tools|leftovers my_phone my_laptop|serverkeys|ensure install|"* ]] \
+        || { echo "the checks do not precede the server keys ($src): $(s6_calls "$src")"; return 1; }
+}
+@test "step 6 on 3.1: the checks run before the server keys are generated, both twins" {
+    both t_31_checks_before_server_keys
+}
+
+# A name comment outside any peer block: the old config seems to carry my_phone,
+# the render does not keep it. Files of my_phone that existed before the attempt
+# must survive whatever happens next.
+S6_STRAY_NAME='
+    printf "[Interface]\nPrivateKey = OLD\n#_Name = my_phone\n" > "$AWG_DIR/awg0.conf"
+    cp "$AWG_DIR/awg0.conf" "$AWG_DIR/awg0.conf.orig"
+    : > "$AWG_DIR/keys/my_phone.private"; : > "$AWG_DIR/keys/my_phone.public"
+    for f in conf png vpnuri vpnuri.png; do printf "old" > "$AWG_DIR/my_phone.$f"; done
+'
+
+t_31_stray_name_keeps_files() {
+    local src="$1" out d f
+    out=$(STUB_GEN=3.1 step6_run "$src" "$S6_STRAY_NAME")
+    d=$(s6_dir "$src")
+    [[ "$out" == *"DIE:"* ]] || { echo "a client lost by the render did not stop a 3.1 install ($src): $out"; return 1; }
+    for f in conf png vpnuri vpnuri.png; do
+        [ "$(cat "$d/my_phone.$f" 2>/dev/null)" = "old" ] || { echo "a file that existed before the attempt was removed: my_phone.$f ($src)"; return 1; }
+    done
+    [ -e "$d/keys/my_phone.private" ] && [ -e "$d/keys/my_phone.public" ] || { echo "the keys of my_phone were removed ($src)"; return 1; }
+    cmp -s "$d/awg0.conf" "$d/awg0.conf.orig" || { echo "the server config was not restored ($src)"; return 1; }
+}
+@test "step 6 on 3.1: files that existed before the attempt are never removed by the undo, both twins" {
+    both t_31_stray_name_keeps_files
+}
+
+t_31_restore_failure_keeps_config() {
+    local src="$1" out d
+    out=$(STUB_GEN=3.1 STUB_FAIL_VALIDATE=1 STUB_FAIL_RESTORE=1 step6_run "$src" "$S6_EXISTING")
+    d=$(s6_dir "$src")
+    [[ "$out" == *"DIE:"* ]] || { echo "a failed rerun did not stop ($src): $out"; return 1; }
+    [[ "$out" == *"ERR:"* ]] || { echo "a failed restore was not reported ($src): $out"; return 1; }
+    grep -q '^PrivateKey = NEW$' "$d/awg0.conf" || { echo "a failed restore damaged the server config ($src): $(cat "$d/awg0.conf" 2>&1)"; return 1; }
+    [ -z "$(find "$d" -maxdepth 1 -name 'awg0.conf.restore.*')" ] || { echo "a temporary restore file was left ($src)"; return 1; }
+}
+@test "step 6 on 3.1: a restore that fails midway does not damage the server config, both twins" {
+    both t_31_restore_failure_keeps_config
 }
