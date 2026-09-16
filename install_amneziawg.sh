@@ -5416,7 +5416,13 @@ step6_generate_configs() {
     if (( gen31 )); then
         for client_name in my_phone my_laptop; do
             grep -qxF "#_Name = ${client_name}" "$SERVER_CONF_FILE" 2>/dev/null || continue
-            awg_client_artifacts_check "$client_name" || _step6_undo_31 "Комплект клиента '$client_name' неполон" "${s_bak:-}" "${created[@]}"
+            awg_client_artifacts_check "$client_name" && continue
+            # Перенесённого клиента шаг 6 не пересоздаёт, поэтому повтор сам его не
+            # исправит: сообщение называет выход.
+            if [[ " ${created[*]} " == *" $client_name "* ]]; then
+                _step6_undo_31 "Комплект клиента '$client_name' неполон" "${s_bak:-}" "${created[@]}"
+            fi
+            _step6_undo_31 "Комплект уже существующего клиента '$client_name' неполон, повторный запуск его не исправит: перевыпустите клиента (manage regen $client_name) или удалите его (manage remove $client_name)" "${s_bak:-}" "${created[@]}"
         done
     fi
 

@@ -13,7 +13,7 @@
 #   server config comes back from its backup (or is removed on a first
 #   install), the server keys and the header protection key stay;
 # - a default client that already exists in the server config is neither
-#   refused as a leftover nor recreated;
+#   refused as a leftover nor recreated, but its set is checked;
 # - on 2.0, and with an unreadable marker, the step 6 wiring is the old one
 #   (what the real renderers do with such a marker is tested in
 #   test_awg31_render.bats).
@@ -126,6 +126,8 @@ s6_first_install_rolled_back() {
     local done_ok="ключи сервера оставлены" done_bad="НЕ полностью"
     [[ "$src" == *_en.sh ]] && { done_ok="server keys are kept"; done_bad="did NOT complete"; }
     [[ "$out" == *"$done_ok"* && "$out" != *"$done_bad"* ]] || { echo "the undo message does not match a complete undo ($src): $out"; return 1; }
+    # A client of this attempt is not sent to manage: a rerun does fix it.
+    [[ "$out" != *"manage regen"* ]] || { echo "a client of this attempt got the advice for an existing one ($src): $out"; return 1; }
     ! grep -qx 'state 7' "$(dirname "$d")/calls" || { echo "state 7 was written after a failure ($src)"; return 1; }
     ! grep -qx 'secure' "$(dirname "$d")/calls" || { echo "step 6 went on past the failure ($src): $(s6_calls "$src")"; return 1; }
     [ ! -e "$d/awg0.conf" ] || { echo "the server config of the failed first install was left ($src)"; return 1; }
@@ -331,6 +333,10 @@ t_31_carried_client_incomplete() {
     out=$(STUB_GEN=3.1 STUB_FAIL_ARTIFACTS=my_phone step6_run "$src" "$S6_EXISTING")
     d=$(s6_dir "$src")
     [[ "$out" == *"DIE:"*"'my_phone'"* ]] || { echo "an incomplete carried-over client did not stop a 3.1 rerun ($src): $out"; return 1; }
+    # A rerun alone never fixes this client, so the message has to name the way out.
+    [[ "$(grep 'DIE:' <<< "$out")" == *"manage regen my_phone"*"manage remove my_phone"* ]] || { echo "the refusal does not name the way out ($src): $out"; return 1; }
+    [[ "|$(s6_calls "$src")|" == *"|client my_laptop|artifacts my_phone|"* ]] || { echo "the refusal did not come from the set check ($src): $(s6_calls "$src")"; return 1; }
+    [ ! -e "$d/keys/my_laptop.private" ] && [ ! -e "$d/keys/my_laptop.public" ] || { echo "the keys of the failed attempt were left ($src)"; return 1; }
     for f in conf png vpnuri vpnuri.png; do
         [ "$(cat "$d/my_phone.$f" 2>/dev/null)" = "old" ] || { echo "the undo removed my_phone.$f, which existed before the attempt ($src)"; return 1; }
     done
@@ -346,7 +352,9 @@ t_31_rm_failure_reported() {
     out=$(STUB_GEN=3.1 STUB_FAIL_VALIDATE=1 STUB_FAIL_RM_CONF=1 step6_run "$src" ':')
     done_bad="НЕ полностью"
     [[ "$src" == *_en.sh ]] && done_bad="did NOT complete"
-    [[ "$out" == *"ERR:"* ]] || { echo "a failed removal of the config was not reported ($src): $out"; return 1; }
+    local not_removed="не удалён"
+    [[ "$src" == *_en.sh ]] && not_removed="was not removed"
+    [[ "$out" == *"ERR:"*"$not_removed"* ]] || { echo "a failed removal of the config was not reported ($src): $out"; return 1; }
     [[ "$(grep 'DIE:' <<< "$out")" == *"$done_bad"* ]] || { echo "the final message hides a failed removal of the config ($src): $out"; return 1; }
     [ -e "$(s6_dir "$src")/awg0.conf" ] || { echo "the stub did not make the removal fail ($src)"; return 1; }
 }

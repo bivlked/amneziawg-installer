@@ -244,7 +244,9 @@ r_broken_marker_with_key() {
     # A dangling link in place of the key file counts as a key being there.
     out=$(lib_run "$lib" yes 32-128 - '
         ln -s "$AWG_DIR/nowhere" "$AWG_DIR/server_hpk.key"
+        [ -L "$AWG_DIR/server_hpk.key" ] || { echo "NO_LINK"; exit 0; }
         render_server_config; echo "RC=$?"')
+    [[ "$out" != *NO_LINK* ]] || { echo "could not create the dangling link on this system ($lib)"; return 1; }
     [[ "$out" == *"RC=0"* ]] && { echo "rendered over an unreadable marker with a dangling key link ($lib)"; return 1; }
     [[ "$out" == *"$want"* ]] || { echo "the dangling link case refused for another reason ($lib): $out"; return 1; }
     [ ! -f "$d/awg0.conf" ] || { echo "a config was written anyway with a dangling key link ($lib)"; return 1; }

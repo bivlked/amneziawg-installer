@@ -5509,7 +5509,13 @@ step6_generate_configs() {
     if (( gen31 )); then
         for client_name in my_phone my_laptop; do
             grep -qxF "#_Name = ${client_name}" "$SERVER_CONF_FILE" 2>/dev/null || continue
-            awg_client_artifacts_check "$client_name" || _step6_undo_31 "The set of client '$client_name' is incomplete" "${s_bak:-}" "${created[@]}"
+            awg_client_artifacts_check "$client_name" && continue
+            # Step 6 does not recreate a carried-over client, so a rerun alone will not
+            # fix it: the message names the way out.
+            if [[ " ${created[*]} " == *" $client_name "* ]]; then
+                _step6_undo_31 "The set of client '$client_name' is incomplete" "${s_bak:-}" "${created[@]}"
+            fi
+            _step6_undo_31 "The set of the existing client '$client_name' is incomplete, and a rerun will not fix it: regenerate the client (manage regen $client_name) or remove it (manage remove $client_name)" "${s_bak:-}" "${created[@]}"
         done
     fi
 
