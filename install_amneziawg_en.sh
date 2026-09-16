@@ -5363,6 +5363,28 @@ step5_download_scripts() {
 # STEP 6: Config generation (native, without awgcfg.py)
 # ==============================================================================
 
+# _step6_undo_31 <message> <server config backup or empty> <client>...
+# A refusal of step 6 on a 3.1 install AFTER the server config was rewritten. A
+# 3.1 profile is only usable as a complete set, so the folder goes back to what
+# it was before the attempt instead of being left half done: the files of the
+# clients made by THIS attempt are removed, the server config comes back from
+# its backup, and on a first install (no backup) it is removed. The server keys
+# and server_hpk.key are not touched: a rerun of step 6 uses the same ones, and
+# profiles issued earlier agree with them.
+_step6_undo_31() {
+    local msg="$1" bak="$2" name
+    shift 2
+    for name in "$@"; do
+        _remove_client_files "$name"
+    done
+    if [[ -n "$bak" ]]; then
+        cp -p "$bak" "$SERVER_CONF_FILE" || log_error "The server config was not restored from the backup $bak: restore it by hand"
+    else
+        rm -f "$SERVER_CONF_FILE"
+    fi
+    die "$msg"
+}
+
 step6_generate_configs() {
     update_state 6
     log "### STEP 6: AWG 2.0 config generation ###"
@@ -5386,6 +5408,23 @@ step6_generate_configs() {
         log "Server keys already exist."
     fi
 
+    # 3.1 install: a profile is only usable as a complete set, so everything that
+    # could break it halfway is checked BEFORE the first change. Default clients
+    # already in the server config are carried over and not recreated, so their
+    # files are not leftovers; only the clients this attempt will create are
+    # checked. On 2.0 and with an unreadable marker the step takes its old path.
+    local gen31=0 client_name new_clients=() created=()
+    if [[ "$(_awg_generation_from_init "$CONFIG_FILE" 2>/dev/null)" == "3.1" ]]; then
+        gen31=1
+    fi
+    for client_name in my_phone my_laptop; do
+        grep -qxF "#_Name = ${client_name}" "$SERVER_CONF_FILE" 2>/dev/null || new_clients+=("$client_name")
+    done
+    if (( gen31 )); then
+        _awg31_require_client_tools || die "The 3.1 install stopped before any change: tools for the client set are missing."
+        _awg31_refuse_client_leftovers "${new_clients[@]}" || die "The 3.1 install stopped before any change: files of earlier clients are left."
+    fi
+
     # Header protection key: created on a first 3.1 install, restored from the config
     # when the file is lost, and on a mismatch the install stops BEFORE the server
     # config is rewritten. On 2.0 without a key the check does nothing.
@@ -5395,7 +5434,11 @@ step6_generate_configs() {
     if [[ -f "$SERVER_CONF_FILE" ]]; then
         local s_bak
         s_bak="${SERVER_CONF_FILE}.bak-$(date +%F_%H%M%S)"
-        cp "$SERVER_CONF_FILE" "$s_bak" || log_warn "Backup error $s_bak"
+        if ! cp "$SERVER_CONF_FILE" "$s_bak"; then
+            # On 3.1 the undo restores the config from this backup: no backup, no rewrite.
+            (( gen31 )) && die "Backup error $s_bak: on a 3.1 install the server config is not rewritten without a backup."
+            log_warn "Backup error $s_bak"
+        fi
         log "Server config backup: $s_bak"
     fi
 
@@ -5418,18 +5461,34 @@ step6_generate_configs() {
 
     # Generate default clients
     log "Creating default clients..."
-    local client_name
     for client_name in my_phone my_laptop; do
         if grep -qxF "#_Name = ${client_name}" "$SERVER_CONF_FILE" 2>/dev/null; then
             log "Client '$client_name' already exists."
         else
             log "Creating client '$client_name'..."
-            generate_client "$client_name" || log_warn "Client creation error '$client_name'"
+            if (( gen31 )); then
+                created+=("$client_name")
+                generate_client "$client_name" || _step6_undo_31 "Client '$client_name' was not created: the 3.1 install was undone, the files of this attempt are removed, the server keys are kept for a rerun." "${s_bak:-}" "${created[@]}"
+            else
+                generate_client "$client_name" || log_warn "Client creation error '$client_name'"
+            fi
         fi
     done
 
+    # On 3.1 generate_client does not treat a failed QR code or vpn:// link as an
+    # error, so the set of every new client is checked as a whole.
+    if (( gen31 )); then
+        for client_name in "${created[@]}"; do
+            awg_client_artifacts_check "$client_name" || _step6_undo_31 "The set of client '$client_name' is incomplete: the 3.1 install was undone, the files of this attempt are removed, the server keys are kept for a rerun." "${s_bak:-}" "${created[@]}"
+        done
+    fi
+
     # Config validation
-    validate_awg_config || log_warn "Config validation found issues."
+    if (( gen31 )); then
+        validate_awg_config || _step6_undo_31 "The 3.1 config failed validation: the install was undone, the files of this attempt are removed, the server keys are kept for a rerun." "${s_bak:-}" "${created[@]}"
+    else
+        validate_awg_config || log_warn "Config validation found issues."
+    fi
 
     # Set file permissions
     secure_files
