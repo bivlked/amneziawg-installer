@@ -421,6 +421,12 @@ check_dependencies() {
     # shellcheck source=/dev/null
     source "$COMMON_SCRIPT_PATH" || die "Failed to load $COMMON_SCRIPT_PATH"
     _check_common_compat
+    # A same-minor library older than the xtrace self-guard: without a fallback,
+    # every guarded manage function (list, stats, check, diagnose, modify, the
+    # service status) would fail under bash -x with "command not found". The
+    # fallback repeats the library one: without turning tracing off, the self-guard
+    # line would call the function again and again.
+    declare -F _awg_xtrace_guard >/dev/null || _awg_xtrace_guard() { local _xt=0 _rc=0; case $- in *x*) _xt=1; set +x ;; esac; "$@" || _rc=$?; if (( _xt )); then set -x; fi; return "$_rc"; }
 
     log "Dependencies OK."
 }
@@ -977,9 +983,7 @@ restore_backup() {
     log "Starting service..."
     if ! systemctl start awg-quick@awg0; then
         log_error "Service start error — triggering rollback."
-        local status_out
-        status_out=$(systemctl status awg-quick@awg0 --no-pager 2>&1) || true
-        while IFS= read -r line; do log_error "  $line"; done <<< "$status_out"
+        _log_service_status
         return 1
     fi
 
@@ -998,6 +1002,7 @@ restore_backup() {
 # ==============================================================================
 
 modify_client() {
+    case $- in *x*) _awg_xtrace_guard modify_client "$@"; return ;; esac
     local name="$1" param="$2" value="$3"
 
     if [[ -z "$name" || -z "$param" || -z "$value" ]]; then
@@ -1280,6 +1285,16 @@ modify_client() {
 # Server status check
 # ==============================================================================
 
+# _log_service_status : print `systemctl status awg-quick@awg0` through log_error.
+# The output sits in a variable, and a service journal can carry config lines with
+# keys, so under tracing (bash -x) the body runs with tracing off.
+_log_service_status() {
+    case $- in *x*) _awg_xtrace_guard _log_service_status; return ;; esac
+    local status_out line
+    status_out=$(systemctl status awg-quick@awg0 --no-pager 2>&1) || true
+    while IFS= read -r line; do log_error "  $line"; done <<< "$status_out"
+}
+
 # show_awg_status : the show command. The awg show output streams through the secrets
 # filter (awg show prints the header protection key in clear text); stderr is merged
 # into the same stream, or it would bypass the filter. The statuses come from
@@ -1314,6 +1329,7 @@ show_awg_status() {
 }
 
 check_server() {
+    case $- in *x*) _awg_xtrace_guard check_server; return ;; esac
     log "Checking AmneziaWG 2.0 server status..."
     local ok=1
     # Snapshot for the JSON envelope (v5.21.0): collected along the human
@@ -1589,6 +1605,7 @@ _diag_cps_guard() {
 }
 
 diagnose_server() {
+    case $- in *x*) _awg_xtrace_guard diagnose_server; return ;; esac
     local carrier="${CLI_CARRIER}"
     local ok=0 warn=0 fail=0
 
@@ -1896,6 +1913,7 @@ diagnose_server() {
 # ==============================================================================
 
 list_clients() {
+    case $- in *x*) _awg_xtrace_guard list_clients; return ;; esac
     log "Getting client list..."
     local clients
     clients=$(grep '^#_Name = ' "$SERVER_CONF_FILE" | sed 's/^#_Name = //' | sort) || clients=""
@@ -2164,6 +2182,7 @@ format_bytes() {
 }
 
 stats_clients() {
+    case $- in *x*) _awg_xtrace_guard stats_clients; return ;; esac
     local clients
     clients=$(grep '^#_Name = ' "$SERVER_CONF_FILE" | sed 's/^#_Name = //' | sort) || clients=""
     if [[ -z "$clients" ]]; then
@@ -2780,8 +2799,7 @@ case $COMMAND in
         if ! systemctl restart awg-quick@awg0; then
             _JSON_ERR="service restart failed"
             log_error "Restart error."
-            status_out=$(systemctl status awg-quick@awg0 --no-pager 2>&1) || true
-            while IFS= read -r line; do log_error "  $line"; done <<< "$status_out"
+            _log_service_status
             exit 1
         else
             # The interface has been recreated, so the device-parameter snapshot

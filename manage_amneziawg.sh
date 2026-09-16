@@ -417,6 +417,12 @@ check_dependencies() {
     # shellcheck source=/dev/null
     source "$COMMON_SCRIPT_PATH" || die "Ошибка загрузки $COMMON_SCRIPT_PATH"
     _check_common_compat
+    # Библиотека того же minor, но старше самозащиты от трассировки: без запасного
+    # варианта каждая защищённая функция manage (list, stats, check, diagnose,
+    # modify, вывод статуса службы) падала бы под bash -x с "command not found".
+    # Запасной вариант повторяет библиотечный: без выключения трассировки строка
+    # самозащиты вызывала бы функцию снова и снова.
+    declare -F _awg_xtrace_guard >/dev/null || _awg_xtrace_guard() { local _xt=0 _rc=0; case $- in *x*) _xt=1; set +x ;; esac; "$@" || _rc=$?; if (( _xt )); then set -x; fi; return "$_rc"; }
 
     log "Зависимости OK."
 }
@@ -963,9 +969,7 @@ restore_backup() {
     log "Запуск сервиса..."
     if ! systemctl start awg-quick@awg0; then
         log_error "Ошибка запуска сервиса — запуск отката."
-        local status_out
-        status_out=$(systemctl status awg-quick@awg0 --no-pager 2>&1) || true
-        while IFS= read -r line; do log_error "  $line"; done <<< "$status_out"
+        _log_service_status
         return 1
     fi
 
@@ -984,6 +988,7 @@ restore_backup() {
 # ==============================================================================
 
 modify_client() {
+    case $- in *x*) _awg_xtrace_guard modify_client "$@"; return ;; esac
     local name="$1" param="$2" value="$3"
 
     if [[ -z "$name" || -z "$param" || -z "$value" ]]; then
@@ -1263,6 +1268,16 @@ modify_client() {
 # Проверка состояния сервера
 # ==============================================================================
 
+# _log_service_status : вывести `systemctl status awg-quick@awg0` через log_error.
+# Вывод лежит в переменной, а в журнале службы бывают строки конфига с ключами,
+# поэтому под трассировкой (bash -x) тело выполняется без неё.
+_log_service_status() {
+    case $- in *x*) _awg_xtrace_guard _log_service_status; return ;; esac
+    local status_out line
+    status_out=$(systemctl status awg-quick@awg0 --no-pager 2>&1) || true
+    while IFS= read -r line; do log_error "  $line"; done <<< "$status_out"
+}
+
 # show_awg_status : команда show. Вывод awg show идёт потоком через фильтр секретов
 # (ключ защиты заголовков awg show печатает открытым текстом); stderr сливается в
 # тот же поток, иначе он обходил бы фильтр. Коды берутся из PIPESTATUS сразу после
@@ -1296,6 +1311,7 @@ show_awg_status() {
 }
 
 check_server() {
+    case $- in *x*) _awg_xtrace_guard check_server; return ;; esac
     log "Проверка состояния сервера AmneziaWG 2.0..."
     local ok=1
     # Снимок для JSON-конверта (v5.21.0): собирается по ходу человеческих
@@ -1571,6 +1587,7 @@ _diag_cps_guard() {
 }
 
 diagnose_server() {
+    case $- in *x*) _awg_xtrace_guard diagnose_server; return ;; esac
     local carrier="${CLI_CARRIER}"
     local ok=0 warn=0 fail=0
 
@@ -1879,6 +1896,7 @@ diagnose_server() {
 # ==============================================================================
 
 list_clients() {
+    case $- in *x*) _awg_xtrace_guard list_clients; return ;; esac
     log "Получение списка клиентов..."
     local clients
     clients=$(grep '^#_Name = ' "$SERVER_CONF_FILE" | sed 's/^#_Name = //' | sort) || clients=""
@@ -2141,6 +2159,7 @@ format_bytes() {
 }
 
 stats_clients() {
+    case $- in *x*) _awg_xtrace_guard stats_clients; return ;; esac
     local clients
     clients=$(grep '^#_Name = ' "$SERVER_CONF_FILE" | sed 's/^#_Name = //' | sort) || clients=""
     if [[ -z "$clients" ]]; then
@@ -2753,8 +2772,7 @@ case $COMMAND in
         if ! systemctl restart awg-quick@awg0; then
             _JSON_ERR="service restart failed"
             log_error "Ошибка перезапуска."
-            status_out=$(systemctl status awg-quick@awg0 --no-pager 2>&1) || true
-            while IFS= read -r line; do log_error "  $line"; done <<< "$status_out"
+            _log_service_status
             exit 1
         else
             # Интерфейс пересоздан - снимок набора device-параметров обязан
