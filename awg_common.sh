@@ -1076,6 +1076,28 @@ awg_installed_protocol() {
     esac
 }
 
+# _awg_generation_from_init <init> : поколение установки по файлу init.
+# Печатает 2.0 или 3.1; на испорченном маркере - отказ (код 1)
+# без вывода. Правила целиком в awg_installed_protocol, здесь только
+# чтение файла.
+# 🔴 Подоболочка обязательна, и не только из-за AWG_PROTOCOL:
+# safe_load_config ЭКСПОРТИРУЕТ всё, что разобрал, поэтому
+# вызывающий, спросивший всего лишь про поколение, иначе
+# молча получил бы ещё и порт с подсетью ИЗ ФАЙЛА.
+# Значение для нечитаемого маркера выбирает вызывающий: у
+# restore это «?» с предупреждением, у проверки ключа - broken
+# и отказ только там, где ключ есть.
+_awg_generation_from_init() {
+    local init="${1:-}"
+    (
+        AWG_PROTOCOL=""
+        if [[ -f "$init" ]]; then
+            safe_load_config "$init" >/dev/null 2>&1
+        fi
+        awg_installed_protocol "$init"
+    )
+}
+
 # awg_restore_generation_notice <init из бэкапа> <живой init>
 # restore - явное действие и возвращает согласованный набор «конфиг + init +
 # ключи», поэтому смену поколения он не запрещает, но и молчаливой она быть не
@@ -1089,12 +1111,12 @@ awg_installed_protocol() {
 # restore не прерывается, предупреждение остаётся в журнале.
 awg_restore_generation_notice() {
     local backup_init="$1" live_init="$2" backup_gen live_gen
-    live_gen=$(AWG_PROTOCOL=""; if [[ -f "$live_init" ]]; then safe_load_config "$live_init" >/dev/null 2>&1; fi; awg_installed_protocol "$live_init") || live_gen="?"
+    live_gen=$(_awg_generation_from_init "$live_init") || live_gen="?"
     if [[ ! -f "$backup_init" ]]; then
         log_warn "В бэкапе нет awgsetup_cfg.init: маркер поколения останется текущим (${live_gen}). После восстановления сверьте его с восстановленным серверным конфигом."
         return 0
     fi
-    backup_gen=$(AWG_PROTOCOL=""; safe_load_config "$backup_init" >/dev/null 2>&1; awg_installed_protocol "$backup_init") || backup_gen="?"
+    backup_gen=$(_awg_generation_from_init "$backup_init") || backup_gen="?"
     if [[ "$backup_gen" == "?" || "$live_gen" == "?" ]]; then
         log_warn "Маркер поколения AWG_PROTOCOL не читается (в бэкапе: ${backup_gen}, у текущей установки: ${live_gen}; допустимы 2.0 и 3.1). После восстановления проверьте ${live_init} вручную."
     elif [[ "$backup_gen" != "$live_gen" ]]; then
@@ -1702,7 +1724,7 @@ _awg_hpk_ensure_body() {
         *) log_error "awg_hpk_ensure: нужен режим install или manage"; return 1 ;;
     esac
     key=$(awg_hpk_path) || { log_error "AWG_DIR не задан: ключ защиты заголовков не проверен"; return 1; }
-    gen=$(AWG_PROTOCOL=""; if [[ -f "$CONFIG_FILE" ]]; then safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; fi; awg_installed_protocol "$CONFIG_FILE") || gen=broken
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || gen=broken
     if [[ -f "$SERVER_CONF_FILE" ]]; then
         _awg_hpk_conf_scan "$SERVER_CONF_FILE" || { log_error "Не удалось разобрать $SERVER_CONF_FILE: ключ защиты заголовков не проверен"; return 1; }
     fi

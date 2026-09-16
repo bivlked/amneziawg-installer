@@ -1092,6 +1092,28 @@ awg_installed_protocol() {
     esac
 }
 
+# _awg_generation_from_init <init> : the installation generation from
+# the init file. Prints 2.0 or 3.1; a corrupt marker fails (status 1)
+# with no output. The rules live in awg_installed_protocol, this only
+# reads the file.
+# 🔴 The subshell is required, and not only because of AWG_PROTOCOL:
+# safe_load_config EXPORTS everything it parses, so a caller that
+# merely asked for the generation would silently receive the port and
+# the subnet FROM THE FILE too.
+# The value to use when the marker is unreadable belongs to the
+# caller: restore prints "?" and warns, the key check uses broken and
+# fails only where a key exists.
+_awg_generation_from_init() {
+    local init="${1:-}"
+    (
+        AWG_PROTOCOL=""
+        if [[ -f "$init" ]]; then
+            safe_load_config "$init" >/dev/null 2>&1
+        fi
+        awg_installed_protocol "$init"
+    )
+}
+
 # awg_restore_generation_notice <init from the backup> <live init>
 # restore is an explicit action and brings back a consistent set (config + init
 # + keys), so it does not forbid a generation change, but the change must not
@@ -1106,12 +1128,12 @@ awg_installed_protocol() {
 # the warning stays in the log.
 awg_restore_generation_notice() {
     local backup_init="$1" live_init="$2" backup_gen live_gen
-    live_gen=$(AWG_PROTOCOL=""; if [[ -f "$live_init" ]]; then safe_load_config "$live_init" >/dev/null 2>&1; fi; awg_installed_protocol "$live_init") || live_gen="?"
+    live_gen=$(_awg_generation_from_init "$live_init") || live_gen="?"
     if [[ ! -f "$backup_init" ]]; then
         log_warn "The backup has no awgsetup_cfg.init: the generation marker stays as it is (${live_gen}). After the restore compare it with the restored server config."
         return 0
     fi
-    backup_gen=$(AWG_PROTOCOL=""; safe_load_config "$backup_init" >/dev/null 2>&1; awg_installed_protocol "$backup_init") || backup_gen="?"
+    backup_gen=$(_awg_generation_from_init "$backup_init") || backup_gen="?"
     if [[ "$backup_gen" == "?" || "$live_gen" == "?" ]]; then
         log_warn "The generation marker AWG_PROTOCOL cannot be read (backup: ${backup_gen}, current installation: ${live_gen}; 2.0 and 3.1 are allowed). Check ${live_init} by hand after the restore."
     elif [[ "$backup_gen" != "$live_gen" ]]; then
@@ -1730,7 +1752,7 @@ _awg_hpk_ensure_body() {
         *) log_error "awg_hpk_ensure: mode install or manage is required"; return 1 ;;
     esac
     key=$(awg_hpk_path) || { log_error "AWG_DIR is not set: the header protection key is not checked"; return 1; }
-    gen=$(AWG_PROTOCOL=""; if [[ -f "$CONFIG_FILE" ]]; then safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; fi; awg_installed_protocol "$CONFIG_FILE") || gen=broken
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || gen=broken
     if [[ -f "$SERVER_CONF_FILE" ]]; then
         _awg_hpk_conf_scan "$SERVER_CONF_FILE" || { log_error "Could not parse $SERVER_CONF_FILE: the header protection key is not checked"; return 1; }
     fi

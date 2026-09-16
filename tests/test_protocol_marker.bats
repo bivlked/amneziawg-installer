@@ -643,3 +643,86 @@ initialize_setup_body() {
         [ "$last" = "export AWG_PROTOCOL='\${AWG_PROTOCOL}'" ] || { echo "$f last heredoc line: $last"; false; }
     done
 }
+
+# ---------- 4. one reader of the marker FILE ----------
+#
+# awg_installed_protocol() answers from the environment, so every caller has to
+# load the init first, and in a subshell: safe_load_config exports what it reads,
+# and a caller that only wanted the generation would silently get the file's port
+# and subnet as well. That subshell was copy-pasted in three places in the
+# library, and the third line adds more callers. _awg_generation_from_init() is
+# the one place that knows the sequence; the value used when the marker is
+# unreadable stays with the caller, because the same marker is fatal in one place
+# and a warning in another.
+
+@test "generation reader: an absent init and an absent field both mean 2.0" {
+    rm -f "$CONFIG_FILE"
+    [ "$(_awg_generation_from_init "$CONFIG_FILE")" = "2.0" ]
+    echo "export AWG_PORT=39743" > "$CONFIG_FILE"
+    [ "$(_awg_generation_from_init "$CONFIG_FILE")" = "2.0" ]
+}
+
+@test "generation reader: a valid marker is returned as it is" {
+    echo "export AWG_PROTOCOL='3.1'" > "$CONFIG_FILE"
+    [ "$(_awg_generation_from_init "$CONFIG_FILE")" = "3.1" ]
+    echo "export AWG_PROTOCOL='2.0'" > "$CONFIG_FILE"
+    [ "$(_awg_generation_from_init "$CONFIG_FILE")" = "2.0" ]
+}
+
+@test "generation reader: a corrupt marker fails with no output, no quiet default" {
+    echo "export AWG_PROTOCOL='yes'" > "$CONFIG_FILE"
+    run _awg_generation_from_init "$CONFIG_FILE"
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+}
+
+@test "generation reader: the init does not leak into the caller (that is what the subshell is for)" {
+    # Not only AWG_PROTOCOL: safe_load_config exports every whitelisted key, so a
+    # reader without a subshell would hand the caller the file's port and subnet.
+    unset AWG_PROTOCOL
+    AWG_PORT=39743
+    AWG_TUNNEL_SUBNET='10.9.9.1/24'
+    printf "export AWG_PROTOCOL='3.1'\nexport AWG_PORT=51820\nexport AWG_TUNNEL_SUBNET='10.8.8.1/24'\n" > "$CONFIG_FILE"
+    [ "$(_awg_generation_from_init "$CONFIG_FILE")" = "3.1" ]
+    [ -z "${AWG_PROTOCOL:-}" ] || { echo "marker leaked: ${AWG_PROTOCOL}"; false; }
+    [ "$AWG_PORT" = "39743" ] || { echo "port leaked: $AWG_PORT"; false; }
+    [ "$AWG_TUNNEL_SUBNET" = "10.9.9.1/24" ] || { echo "subnet leaked: $AWG_TUNNEL_SUBNET"; false; }
+}
+
+@test "generation reader (EN body, executed): same answers" {
+    eval "$(func_from "$COMMON_EN" _awg_generation_from_init)"
+    echo "export AWG_PROTOCOL='3.1'" > "$CONFIG_FILE"
+    [ "$(_awg_generation_from_init "$CONFIG_FILE")" = "3.1" ]
+    echo "export AWG_PROTOCOL='yes'" > "$CONFIG_FILE"
+    run _awg_generation_from_init "$CONFIG_FILE"
+    [ "$status" -ne 0 ]
+}
+
+@test "generation reader: RU/EN bodies are identical" {
+    # Emptiness is checked first: func_from prints nothing for a function that is
+    # not there, and two empty bodies compare equal, so without this the case
+    # passes on a library that has no reader at all.
+    local ru en
+    ru=$(func_from "$COMMON_RU" _awg_generation_from_init | tr -d '\r')
+    en=$(func_from "$COMMON_EN" _awg_generation_from_init | tr -d '\r')
+    [ -n "$ru" ] || { echo "missing in $COMMON_RU"; false; }
+    [ -n "$en" ] || { echo "missing in $COMMON_EN"; false; }
+    diff <(echo "$ru") <(echo "$en")
+}
+
+@test "generation reader: the library reads the marker file through it and nowhere else" {
+    # The hard reset of AWG_PROTOCOL belongs to the reader now. Anywhere else in
+    # the library it would mean a second copy of the sequence, which is how the
+    # three copies appeared in the first place.
+    local f n
+    for f in "$COMMON_RU" "$COMMON_EN"; do
+        n=$(grep -c 'AWG_PROTOCOL=""' "$f")
+        [ "$n" -eq 1 ] || { echo "$f: $n hard resets, expected 1 (inside _awg_generation_from_init)"; false; }
+        func_from "$f" _awg_generation_from_init | grep -q 'AWG_PROTOCOL=""' \
+            || { echo "$f: the hard reset is not inside the reader"; false; }
+        func_from "$f" awg_restore_generation_notice | grep -q '_awg_generation_from_init' \
+            || { echo "$f: the restore notice does not use the reader"; false; }
+        func_from "$f" _awg_hpk_ensure_body | grep -q '_awg_generation_from_init' \
+            || { echo "$f: the key check does not use the reader"; false; }
+    done
+}
