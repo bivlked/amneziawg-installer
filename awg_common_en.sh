@@ -3713,6 +3713,96 @@ generate_qr_vpnuri() {
     return 0
 }
 
+# awg_client_artifacts_check <name> : the client's set of files, as a set.
+# A client is handed four files - the .conf, its QR code, the vpn:// link and
+# the link's QR code. Different steps produce them, and a failure in one used to
+# be a warning: the person then gets a folder that looks complete and a client
+# that does not work. Each file is checked for existence, for being a regular
+# file (not a symlink) and for not being empty, and the .vpnuri is checked to
+# actually start with vpn://.
+# On a 3.1 installation the profile itself is checked too: exactly one
+# HeaderProtectionKey in [Interface], equal to the key file, and a
+# ContentPaddingAddition equal to the installation's padding. A profile with the
+# wrong key looks exactly like a working one until the tunnel refuses to start.
+# 🔴 The function is guarded: it compares the key value.
+# The expected padding comes from the ALREADY LOADED parameters ($AWG_CPA);
+# reading the init again would add a second reader of the marker behind
+# _awg_generation_from_init.
+awg_client_artifacts_check() {
+    _awg_xtrace_guard _awg_client_artifacts_check_body "$@"
+}
+
+_awg_client_artifacts_check_body() {
+    local name="${1:-}" f gen keyfile key conf uri_first conf_cpa
+    if [[ -z "$name" ]]; then
+        log_error "awg_client_artifacts_check: the client name is required"
+        return 1
+    fi
+    conf="$AWG_DIR/${name}.conf"
+    for f in "$conf" "$AWG_DIR/${name}.png" "$AWG_DIR/${name}.vpnuri" "$AWG_DIR/${name}.vpnuri.png"; do
+        if [[ -L "$f" ]]; then
+            log_error "The set of client '$name' is incomplete: $f is a symlink where a regular file is required"
+            return 1
+        fi
+        if [[ ! -f "$f" ]]; then
+            log_error "The set of client '$name' is incomplete: $f is missing"
+            return 1
+        fi
+        if [[ ! -s "$f" ]]; then
+            log_error "The set of client '$name' is incomplete: $f is empty"
+            return 1
+        fi
+    done
+    if ! IFS= read -r uri_first < "$AWG_DIR/${name}.vpnuri"; then
+        log_error "The set of client '$name': the link file $AWG_DIR/${name}.vpnuri cannot be read"
+        return 1
+    fi
+    if [[ "$uri_first" != vpn://* ]]; then
+        log_error "The set of client '$name': $AWG_DIR/${name}.vpnuri does not start with vpn:// - the client cannot import such a link"
+        return 1
+    fi
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
+        log_error "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read: the set of client '$name' was not checked"
+        return 1
+    }
+    [[ "$gen" == "3.1" ]] || return 0
+    keyfile=$(awg_hpk_path) || { log_error "AWG_DIR is not set: the set of client '$name' was not checked"; return 1; }
+    if [[ ! -f "$keyfile" ]]; then
+        log_error "The set of client '$name': the installation is marked generation 3.1 but the key file $keyfile is missing"
+        return 1
+    fi
+    if ! IFS= read -r key < "$keyfile"; then
+        log_error "The set of client '$name': the key file $keyfile cannot be read"
+        return 1
+    fi
+    _awg_hpk_conf_scan "$conf" || {
+        log_error "The set of client '$name': could not parse $conf"
+        return 1
+    }
+    if (( _hs_out > 0 )); then
+        log_error "The set of client '$name': HeaderProtectionKey sits outside [Interface] in $conf"
+        return 1
+    fi
+    if (( _hs_if != 1 )); then
+        log_error "The set of client '$name': [Interface] in $conf must carry exactly one HeaderProtectionKey, found ${_hs_if}"
+        return 1
+    fi
+    if [[ "$_hs_val" != "$key" ]]; then
+        log_error "The set of client '$name': HeaderProtectionKey in $conf does not match the key file $keyfile - such a profile will not connect"
+        return 1
+    fi
+    conf_cpa=$(awk '/^[[:space:]]*ContentPaddingAddition[[:space:]]*=/{sub(/^[[:space:]]*ContentPaddingAddition[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf" 2>/dev/null)
+    if [[ -z "$conf_cpa" ]]; then
+        log_error "The set of client '$name': $conf has no ContentPaddingAddition while the installation is marked generation 3.1"
+        return 1
+    fi
+    if [[ "$conf_cpa" != "${AWG_CPA:-}" ]]; then
+        log_error "The set of client '$name': ContentPaddingAddition in $conf ('$conf_cpa') differs from the installation parameter ('${AWG_CPA:-}')"
+        return 1
+    fi
+    return 0
+}
+
 # Removes partially created client artifacts (keys + .conf). Used by the
 # early-error paths of generate_client - C10: do not leave orphan keys when a
 # step fails before the peer is committed to the server config.

@@ -3680,6 +3680,95 @@ _rollback_client_artifacts() {
     rm -f "$KEYS_DIR/$1.private" "$KEYS_DIR/$1.public" "$AWG_DIR/$1.conf"
 }
 
+# awg_client_artifacts_check <имя> : комплект файлов клиента как ЕДИНОЕ целое.
+# Клиенту выдают четыре файла - .conf, его QR, ссылку vpn:// и QR ссылки. Их
+# делают разные шаги, и сбой одного из них раньше был предупреждением: человек
+# получал папку, которая выглядит полной, и клиента, который не работает.
+# Проверяются существование, обычный файл (не ссылка) и непустота каждого, а
+# также что .vpnuri действительно начинается с vpn://.
+# На установке 3.1 дополнительно проверяется сам профиль: в [Interface] ровно
+# один HeaderProtectionKey, равный файлу ключа, и ContentPaddingAddition, равный
+# паддингу установки. Профиль с чужим ключом от рабочего не отличить, пока
+# туннель не откажется подниматься.
+# 🔴 Функция защищена от трассировки: она сравнивает значение ключа.
+# Ожидаемый паддинг берётся из УЖЕ ЗАГРУЖЕННЫХ параметров ($AWG_CPA): читать
+# init заново значило бы завести второго читателя маркера мимо
+# _awg_generation_from_init.
+awg_client_artifacts_check() {
+    _awg_xtrace_guard _awg_client_artifacts_check_body "$@"
+}
+
+_awg_client_artifacts_check_body() {
+    local name="${1:-}" f gen keyfile key conf uri_first conf_cpa
+    if [[ -z "$name" ]]; then
+        log_error "awg_client_artifacts_check: не указано имя клиента"
+        return 1
+    fi
+    conf="$AWG_DIR/${name}.conf"
+    for f in "$conf" "$AWG_DIR/${name}.png" "$AWG_DIR/${name}.vpnuri" "$AWG_DIR/${name}.vpnuri.png"; do
+        if [[ -L "$f" ]]; then
+            log_error "Комплект клиента '$name' неполон: $f - символьная ссылка, а должен быть обычный файл"
+            return 1
+        fi
+        if [[ ! -f "$f" ]]; then
+            log_error "Комплект клиента '$name' неполон: нет файла $f"
+            return 1
+        fi
+        if [[ ! -s "$f" ]]; then
+            log_error "Комплект клиента '$name' неполон: файл $f пуст"
+            return 1
+        fi
+    done
+    if ! IFS= read -r uri_first < "$AWG_DIR/${name}.vpnuri"; then
+        log_error "Комплект клиента '$name': файл ссылки $AWG_DIR/${name}.vpnuri не читается"
+        return 1
+    fi
+    if [[ "$uri_first" != vpn://* ]]; then
+        log_error "Комплект клиента '$name': $AWG_DIR/${name}.vpnuri не начинается с vpn:// - такую ссылку клиент не импортирует"
+        return 1
+    fi
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
+        log_error "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается: комплект клиента '$name' не проверен"
+        return 1
+    }
+    [[ "$gen" == "3.1" ]] || return 0
+    keyfile=$(awg_hpk_path) || { log_error "AWG_DIR не задан: комплект клиента '$name' не проверен"; return 1; }
+    if [[ ! -f "$keyfile" ]]; then
+        log_error "Комплект клиента '$name': установка помечена поколением 3.1, а файла ключа $keyfile нет"
+        return 1
+    fi
+    if ! IFS= read -r key < "$keyfile"; then
+        log_error "Комплект клиента '$name': файл ключа $keyfile не читается"
+        return 1
+    fi
+    _awg_hpk_conf_scan "$conf" || {
+        log_error "Комплект клиента '$name': не удалось разобрать $conf"
+        return 1
+    }
+    if (( _hs_out > 0 )); then
+        log_error "Комплект клиента '$name': HeaderProtectionKey стоит вне секции [Interface] в $conf"
+        return 1
+    fi
+    if (( _hs_if != 1 )); then
+        log_error "Комплект клиента '$name': в [Interface] $conf должен быть ровно один HeaderProtectionKey, найдено ${_hs_if}"
+        return 1
+    fi
+    if [[ "$_hs_val" != "$key" ]]; then
+        log_error "Комплект клиента '$name': HeaderProtectionKey в $conf не совпадает с файлом ключа $keyfile - такой профиль не подключится"
+        return 1
+    fi
+    conf_cpa=$(awk '/^[[:space:]]*ContentPaddingAddition[[:space:]]*=/{sub(/^[[:space:]]*ContentPaddingAddition[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf" 2>/dev/null)
+    if [[ -z "$conf_cpa" ]]; then
+        log_error "Комплект клиента '$name': в $conf нет ContentPaddingAddition, а установка помечена поколением 3.1"
+        return 1
+    fi
+    if [[ "$conf_cpa" != "${AWG_CPA:-}" ]]; then
+        log_error "Комплект клиента '$name': ContentPaddingAddition в $conf ('$conf_cpa') не совпадает с параметром установки ('${AWG_CPA:-}')"
+        return 1
+    fi
+    return 0
+}
+
 # Полный набор клиентских артефактов (conf/png/vpnuri/vpnuri.png + ключи).
 # Единый список для `manage remove` и автоудаления истёкших, чтобы пути не
 # расходились (раньше expiry-cleanup забывал .vpnuri.png). НЕ трогает expiry-метку
