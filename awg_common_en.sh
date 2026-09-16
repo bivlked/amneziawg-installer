@@ -1866,6 +1866,53 @@ _derive_ipv6_server_addr() {
 # peer-less file, and the next run of step 6 would back up that already
 # peer-less file (losing all peers on --force reinstall).
 # shellcheck disable=SC2154  # AWG_* vars loaded via load_awg_params -> source
+# _awg31_append_profile_lines <file> : append the third-line profile lines -
+# HeaderProtectionKey and ContentPaddingAddition - to [Interface].
+# On a 2.0 installation it does nothing and returns 0: the 2.0 path is unchanged.
+# 🔴 The key value never passes through argv and never reaches the trace: this
+# function is guarded, and the file is read through a redirect. The client
+# renderer is deliberately unguarded (the client key arrives as an argument), so
+# reading the key there would leak it under --verbose.
+# The value comes from the key file. It is NOT compared with the server config
+# here: both renderers go through load_awg_params, which calls awg_hpk_ensure,
+# and that already catches a file/config disagreement and names it. A second
+# check of the same thing would be dead code pretending to be a second guard.
+_awg31_append_profile_lines() {
+    _awg_xtrace_guard _awg31_append_profile_lines_body "$@"
+}
+
+_awg31_append_profile_lines_body() {
+    local target="$1" gen keyfile key why
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
+        log_error "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read (2.0 and 3.1 are allowed): the config was not written"
+        return 1
+    }
+    [[ "$gen" == "3.1" ]] || return 0
+    keyfile=$(awg_hpk_path) || { log_error "AWG_DIR is not set: the header protection key cannot be read"; return 1; }
+    if [[ ! -f "$keyfile" ]]; then
+        log_error "The installation is marked generation 3.1 but the key file $keyfile is missing: a profile without the key would not connect, the config was not written"
+        return 1
+    fi
+    IFS= read -r key < "$keyfile" || { log_error "The key file $keyfile cannot be read: the config was not written"; return 1; }
+    if ! [[ "$key" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]]; then
+        log_error "The key file $keyfile does not look like a key: 32 bytes in base64, 44 characters are required"
+        return 1
+    fi
+    why=$(awg_cpa_check_safe "${AWG_CPA:-}") || {
+        log_error "ContentPaddingAddition: ${why}. The config was not written"
+        return 1
+    }
+    printf 'HeaderProtectionKey = %s\n' "$key" >> "$target" || {
+        log_error "Failed to write the header protection key into the config"
+        return 1
+    }
+    printf 'ContentPaddingAddition = %s\n' "${AWG_CPA}" >> "$target" || {
+        log_error "Failed to write ContentPaddingAddition into the config"
+        return 1
+    }
+    return 0
+}
+
 render_server_config() {
     case $- in *x*) _awg_xtrace_guard render_server_config "$@"; return ;; esac
     local peers_source="${1:-}"
@@ -2032,6 +2079,7 @@ EOF
     [[ -n "${AWG_I3:-}" ]] && echo "I3 = ${AWG_I3}" >> "$tmpfile"
     [[ -n "${AWG_I4:-}" ]] && echo "I4 = ${AWG_I4}" >> "$tmpfile"
     [[ -n "${AWG_I5:-}" ]] && echo "I5 = ${AWG_I5}" >> "$tmpfile"
+    _awg31_append_profile_lines "$tmpfile" || { rm -f "$tmpfile"; return 1; }
 
     # Carry [Peer] blocks from peers_source into the temp BEFORE mv (see doc comment).
     # The buffer is flushed on every new [Peer]: ALL blocks are carried over.
@@ -2329,6 +2377,7 @@ EOF
     [[ -n "${AWG_I3:-}" ]] && echo "I3 = ${AWG_I3}" >> "$tmpfile"
     [[ -n "${AWG_I4:-}" ]] && echo "I4 = ${AWG_I4}" >> "$tmpfile"
     [[ -n "${AWG_I5:-}" ]] && echo "I5 = ${AWG_I5}" >> "$tmpfile"
+    _awg31_append_profile_lines "$tmpfile" || { rm -f "$tmpfile"; return 1; }
 
     cat >> "$tmpfile" << EOF
 

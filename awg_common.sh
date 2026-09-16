@@ -1837,6 +1837,53 @@ _derive_ipv6_server_addr() {
 # render и отдельным append оставлял бы безпировый файл, а повторный запуск
 # шага 6 уже бэкапил бы его (потеря всех пиров при --force reinstall).
 # shellcheck disable=SC2154  # AWG_* vars loaded via load_awg_params -> source
+# _awg31_append_profile_lines <файл> : дописать в [Interface] строки третьей
+# линии - HeaderProtectionKey и ContentPaddingAddition.
+# На установке 2.0 не делает ничего и возвращает 0: ветка 2.0 не меняется.
+# 🔴 Значение ключа НЕ проходит через argv и не попадает в трассировку:
+# функция обёрнута защитой, а из файла читается перенаправлением. Клиентский
+# рендер сам не защищён (ключ клиента приходит аргументом), поэтому читать ключ
+# прямо в нём было бы утечкой под --verbose.
+# Значение берётся из файла ключа. Сверять его здесь с серверным конфигом НЕ
+# надо: оба рендера идут через load_awg_params, а тот зовёт awg_hpk_ensure,
+# который расхождение файла и конфига уже ловит и называет причину. Вторая
+# проверка тем же кодом была бы мёртвой и создавала бы вид двойной защиты.
+_awg31_append_profile_lines() {
+    _awg_xtrace_guard _awg31_append_profile_lines_body "$@"
+}
+
+_awg31_append_profile_lines_body() {
+    local target="$1" gen keyfile key why
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
+        log_error "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается (допустимы 2.0 и 3.1): конфиг не записан"
+        return 1
+    }
+    [[ "$gen" == "3.1" ]] || return 0
+    keyfile=$(awg_hpk_path) || { log_error "AWG_DIR не задан: ключ защиты заголовков не прочитать"; return 1; }
+    if [[ ! -f "$keyfile" ]]; then
+        log_error "Установка помечена поколением 3.1, а файла ключа $keyfile нет: профиль без ключа не подключится, конфиг не записан"
+        return 1
+    fi
+    IFS= read -r key < "$keyfile" || { log_error "Файл ключа $keyfile не читается: конфиг не записан"; return 1; }
+    if ! [[ "$key" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]]; then
+        log_error "Файл ключа $keyfile не похож на ключ: нужны 32 байта в base64, 44 символа"
+        return 1
+    fi
+    why=$(awg_cpa_check_safe "${AWG_CPA:-}") || {
+        log_error "ContentPaddingAddition: ${why}. Конфиг не записан"
+        return 1
+    }
+    printf 'HeaderProtectionKey = %s\n' "$key" >> "$target" || {
+        log_error "Ошибка записи ключа защиты заголовков в конфиг"
+        return 1
+    }
+    printf 'ContentPaddingAddition = %s\n' "${AWG_CPA}" >> "$target" || {
+        log_error "Ошибка записи ContentPaddingAddition в конфиг"
+        return 1
+    }
+    return 0
+}
+
 render_server_config() {
     case $- in *x*) _awg_xtrace_guard render_server_config "$@"; return ;; esac
     local peers_source="${1:-}"
@@ -1999,6 +2046,7 @@ EOF
     [[ -n "${AWG_I3:-}" ]] && echo "I3 = ${AWG_I3}" >> "$tmpfile"
     [[ -n "${AWG_I4:-}" ]] && echo "I4 = ${AWG_I4}" >> "$tmpfile"
     [[ -n "${AWG_I5:-}" ]] && echo "I5 = ${AWG_I5}" >> "$tmpfile"
+    _awg31_append_profile_lines "$tmpfile" || { rm -f "$tmpfile"; return 1; }
 
     # Перенос [Peer]-блоков из peers_source в temp ДО mv (см. док-комментарий).
     # Буфер сбрасывается на каждом новом [Peer]: переносятся ВСЕ блоки.
@@ -2293,6 +2341,7 @@ EOF
     [[ -n "${AWG_I3:-}" ]] && echo "I3 = ${AWG_I3}" >> "$tmpfile"
     [[ -n "${AWG_I4:-}" ]] && echo "I4 = ${AWG_I4}" >> "$tmpfile"
     [[ -n "${AWG_I5:-}" ]] && echo "I5 = ${AWG_I5}" >> "$tmpfile"
+    _awg31_append_profile_lines "$tmpfile" || { rm -f "$tmpfile"; return 1; }
 
     cat >> "$tmpfile" << EOF
 
