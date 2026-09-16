@@ -5373,8 +5373,9 @@ step5_download_scripts() {
 # The config comes back through a temporary file (awg_mktemp, a fresh name) and
 # mv: a copy cut off halfway would otherwise leave a fragment in place of it.
 # The final message says whether the undo worked: if any of its steps failed,
-# the folder is inconsistent, and a rerun without a manual check could quietly
-# accept clients that have no files.
+# the folder is inconsistent (for example, the config was not restored while the
+# client files are already gone), and the install must not be rerun without a
+# manual check.
 _step6_undo_31() {
     local why="$1" bak="$2" name tmp failed=0
     shift 2
@@ -5412,13 +5413,14 @@ step6_generate_configs() {
     # shellcheck source=/dev/null
     source "$COMMON_SCRIPT_PATH"
 
-    # 3.1 install: a profile is only usable as a complete set, so everything that
-    # could break it halfway and does not depend on the keys is checked BEFORE the
-    # first change, including before the server keys are generated (the header
-    # protection key and the config backup are checked below, after them). Default
-    # clients already in the server config are carried over and not recreated, so
-    # their files are not leftovers; only the clients this attempt will create are
-    # checked. On 2.0 and with an unreadable marker the step takes its old path.
+    # 3.1 install: a profile is only usable as a complete set. The tools for the
+    # set and client leftovers are checked BEFORE the first change, including
+    # before the server keys are generated; the header protection key, the config
+    # backup and the render itself are checked below, after that. Default clients
+    # already in the server config are carried over and not recreated, so their
+    # files are not leftovers; only the clients this attempt will create are
+    # checked for leftovers. On 2.0 the step takes its old path, and so it does
+    # with an unreadable marker (without a key; with one, it stops at the key check).
     local gen31=0 client_name new_clients=() created=()
     if [[ "$(_awg_generation_from_init "$CONFIG_FILE" 2>/dev/null)" == "3.1" ]]; then
         gen31=1
@@ -5500,16 +5502,20 @@ step6_generate_configs() {
     done
 
     # On 3.1 generate_client does not treat a failed QR code or vpn:// link as an
-    # error, so the set of every new client is checked as a whole.
+    # error, so the set is checked as a whole for EVERY default client in the
+    # config, not only the ones created now: after a step 6 cut off by a signal or
+    # a crash the config may carry a client without files, and a rerun would
+    # accept it quietly.
     if (( gen31 )); then
-        for client_name in "${created[@]}"; do
+        for client_name in my_phone my_laptop; do
+            grep -qxF "#_Name = ${client_name}" "$SERVER_CONF_FILE" 2>/dev/null || continue
             awg_client_artifacts_check "$client_name" || _step6_undo_31 "The set of client '$client_name' is incomplete" "${s_bak:-}" "${created[@]}"
         done
     fi
 
     # Config validation
     if (( gen31 )); then
-        validate_awg_config || _step6_undo_31 "The 3.1 config failed validation" "${s_bak:-}" "${created[@]}"
+        validate_awg_config || _step6_undo_31 "The config failed validation" "${s_bak:-}" "${created[@]}"
     else
         validate_awg_config || log_warn "Config validation found issues."
     fi

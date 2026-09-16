@@ -16,7 +16,7 @@
 # link, so this file decodes the link itself to see the profile went into it.
 #
 # External tools are stubbed: awg (keys), qrencode (the QR file). perl is real,
-# because it builds the link.
+# because it builds the link, and python3 decodes the link for the check.
 
 KEY_OK="QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQA="
 

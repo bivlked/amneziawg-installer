@@ -247,6 +247,8 @@ r_broken_marker_with_key() {
         render_server_config; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] && { echo "rendered over an unreadable marker with a dangling key link ($lib)"; return 1; }
     [[ "$out" == *"$want"* ]] || { echo "the dangling link case refused for another reason ($lib): $out"; return 1; }
+    [ ! -f "$d/awg0.conf" ] || { echo "a config was written anyway with a dangling key link ($lib)"; return 1; }
+    leftovers_none "$d" "$lib" || return 1
 }
 @test "render: an unreadable marker with a key file present refuses the render, both twins" {
     both r_broken_marker_with_key

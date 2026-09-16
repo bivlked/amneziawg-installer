@@ -3814,8 +3814,9 @@ _awg31_refuse_client_leftovers() {
 # The expected padding comes from the ALREADY LOADED parameters ($AWG_CPA), in
 # the same normalized form the renderers write: the caller must have loaded the
 # parameters (load_awg_params), otherwise the comparison uses whatever is in the
-# environment, empty or stale. The padding is read from the first ContentPaddingAddition line in the
-# file; unlike the key, its section and uniqueness are not checked.
+# environment, empty or stale. The padding is read from the first
+# ContentPaddingAddition line in the file; unlike the key, its section and
+# uniqueness are not checked.
 awg_client_artifacts_check() {
     _awg_xtrace_guard _awg_client_artifacts_check_body "$@"
 }

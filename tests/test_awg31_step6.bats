@@ -91,6 +91,10 @@ EOF
         if [[ -n "${STUB_FAIL_RESTORE:-}" ]]; then
             cp() { if [[ "$1" == -p ]]; then printf "partial" > "${!#}"; return 1; fi; command cp "$@"; }
         fi
+        # Fails only the removal of the server config on a first-install undo.
+        if [[ -n "${STUB_FAIL_RM_CONF:-}" ]]; then
+            rm() { [[ "${!#}" == "$SERVER_CONF_FILE" ]] && return 1; command rm "$@"; }
+        fi
         eval "$(awk "/^_step6_undo_31\\(\\) \\{/,/^\\}/" "$1")"
         eval "$(awk "/^step6_generate_configs\\(\\) \\{/,/^\\}/" "$1")"
         declare -F step6_generate_configs >/dev/null || { echo NO_STEP6; exit 7; }
@@ -212,7 +216,9 @@ t_31_rerun_existing_client() {
     local src="$1" out want
     out=$(STUB_GEN=3.1 step6_run "$src" "$S6_EXISTING")
     [[ "$out" == *"RC=0"* ]] || { echo "a rerun with an existing default client was refused ($src): $out"; return 1; }
-    want="tools|leftovers my_laptop|ensure install|render|client my_laptop|artifacts my_laptop|validate|secure|state 7"
+    # The carried-over client's set is checked too: after an interrupted step 6 it
+    # may be the one without files.
+    want="tools|leftovers my_laptop|ensure install|render|client my_laptop|artifacts my_phone|artifacts my_laptop|validate|secure|state 7"
     [ "$(s6_calls "$src")" = "$want" ] || { echo "rerun order ($src):"; echo " got  $(s6_calls "$src")"; echo " want $want"; return 1; }
 }
 @test "step 6 on 3.1: a default client already in the config is not a leftover and is not recreated, both twins" {
@@ -224,6 +230,9 @@ t_31_rerun_failure_restores() {
     out=$(STUB_GEN=3.1 STUB_FAIL_VALIDATE=1 step6_run "$src" "$S6_EXISTING")
     d=$(s6_dir "$src")
     [[ "$out" == *"DIE:"* ]] || { echo "a failed rerun did not stop ($src): $out"; return 1; }
+    local done_ok="ключи сервера оставлены" done_bad="НЕ полностью"
+    [[ "$src" == *_en.sh ]] && { done_ok="server keys are kept"; done_bad="did NOT complete"; }
+    [[ "$out" == *"$done_ok"* && "$out" != *"$done_bad"* ]] || { echo "a complete undo with a restore is not reported as complete ($src): $out"; return 1; }
     cmp -s "$d/awg0.conf" "$d/awg0.conf.orig" || { echo "the server config was not restored from its backup ($src): $(cat "$d/awg0.conf" 2>&1)"; return 1; }
     for f in conf png vpnuri vpnuri.png; do
         [ "$(cat "$d/my_phone.$f")" = "old" ] || { echo "the existing client lost my_phone.$f ($src)"; return 1; }
@@ -285,7 +294,7 @@ t_31_stray_name_keeps_files() {
     # before the render would also leave every file in place.
     local want="не перенесён"
     [[ "$src" == *_en.sh ]] && want="not carried"
-    [[ "$out" == *"$want"* ]] || { echo "the refusal does not name the lost client ($src): $out"; return 1; }
+    [[ "$(grep 'DIE:' <<< "$out")" == *"'my_phone'"*"$want"* ]] || { echo "the refusal does not name the lost client ($src): $out"; return 1; }
     [[ "|$(s6_calls "$src")|" == *"|render|"* ]] || { echo "the refusal came before the render ($src): $(s6_calls "$src")"; return 1; }
     for f in conf png vpnuri vpnuri.png; do
         [ "$(cat "$d/my_phone.$f" 2>/dev/null)" = "old" ] || { echo "a file that existed before the attempt was removed: my_phone.$f ($src)"; return 1; }
@@ -312,4 +321,35 @@ t_31_restore_failure_keeps_config() {
 }
 @test "step 6 on 3.1: a restore that fails midway does not damage the server config, both twins" {
     both t_31_restore_failure_keeps_config
+}
+
+# After an interrupted step 6 the config may already carry a default client
+# whose files were never finished. A rerun carries that client over, and its set
+# has to be checked like a new one, or it is accepted without files.
+t_31_carried_client_incomplete() {
+    local src="$1" out d f
+    out=$(STUB_GEN=3.1 STUB_FAIL_ARTIFACTS=my_phone step6_run "$src" "$S6_EXISTING")
+    d=$(s6_dir "$src")
+    [[ "$out" == *"DIE:"*"'my_phone'"* ]] || { echo "an incomplete carried-over client did not stop a 3.1 rerun ($src): $out"; return 1; }
+    for f in conf png vpnuri vpnuri.png; do
+        [ "$(cat "$d/my_phone.$f" 2>/dev/null)" = "old" ] || { echo "the undo removed my_phone.$f, which existed before the attempt ($src)"; return 1; }
+    done
+    cmp -s "$d/awg0.conf" "$d/awg0.conf.orig" || { echo "the server config was not restored ($src)"; return 1; }
+    [ ! -e "$d/my_laptop.conf" ] || { echo "the client of the failed attempt was left ($src)"; return 1; }
+}
+@test "step 6 on 3.1: a carried-over default client with an incomplete set stops the rerun, both twins" {
+    both t_31_carried_client_incomplete
+}
+
+t_31_rm_failure_reported() {
+    local src="$1" out done_bad
+    out=$(STUB_GEN=3.1 STUB_FAIL_VALIDATE=1 STUB_FAIL_RM_CONF=1 step6_run "$src" ':')
+    done_bad="НЕ полностью"
+    [[ "$src" == *_en.sh ]] && done_bad="did NOT complete"
+    [[ "$out" == *"ERR:"* ]] || { echo "a failed removal of the config was not reported ($src): $out"; return 1; }
+    [[ "$(grep 'DIE:' <<< "$out")" == *"$done_bad"* ]] || { echo "the final message hides a failed removal of the config ($src): $out"; return 1; }
+    [ -e "$(s6_dir "$src")/awg0.conf" ] || { echo "the stub did not make the removal fail ($src)"; return 1; }
+}
+@test "step 6 on 3.1: a config that could not be removed on a first-install undo is reported as an incomplete undo, both twins" {
+    both t_31_rm_failure_reported
 }
