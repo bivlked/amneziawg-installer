@@ -134,7 +134,9 @@ listing() {
 # check_fn <lib> <label> <setup> <call> [extra secret...]
 check_fn() {
     local lib="$1" label="$2" setup="$3" call="$4"; shift 4
-    local ref="$(dir_of "$lib" "$label")-ref" tr="$(dir_of "$lib" "$label")-tr" ref_out tr_out ref_rc tr_rc s
+    local ref tr ref_out tr_out ref_rc tr_rc s
+    ref="$(dir_of "$lib" "$label")-ref"
+    tr="$(dir_of "$lib" "$label")-tr"
     rm -rf "$ref" "$tr"; mkdir -p "$ref" "$tr"
     ref_out=$(lib_run "$lib" "$ref" "$setup" "$call" 0)
     tr_out=$(lib_run "$lib" "$tr" "$setup" "$call" 1)
