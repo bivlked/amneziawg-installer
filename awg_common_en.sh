@@ -3713,6 +3713,59 @@ generate_qr_vpnuri() {
     return 0
 }
 
+# _awg31_require_client_tools : the tools a 3.1 profile is incomplete without.
+# On 3.1 a client is handed a set of four files, and the vpn:// link is not a
+# convenience but the one simple way to get the profile into the application.
+# The link is built by perl with Compress::Zlib and MIME::Base64, both QR codes
+# by qrencode. So on 3.1 a missing tool is a refusal BEFORE anything changes,
+# naming what is missing, rather than a failure halfway through the install.
+# On 2.0 the function does nothing.
+_awg31_require_client_tools() {
+    local gen
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
+        log_error "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read: the toolset was not checked"
+        return 1
+    }
+    [[ "$gen" == "3.1" ]] || return 0
+    if ! command -v qrencode >/dev/null 2>&1; then
+        log_error "A 3.1 profile needs qrencode: without it there is neither the config QR nor the link QR. Install qrencode and run again"
+        return 1
+    fi
+    if ! command -v perl >/dev/null 2>&1; then
+        log_error "A 3.1 profile needs perl: without it the vpn:// link cannot be built. Install perl and run again"
+        return 1
+    fi
+    if ! perl -MCompress::Zlib -MMIME::Base64 -e '1' 2>/dev/null; then
+        log_error "A 3.1 profile needs the perl modules Compress::Zlib and MIME::Base64: without them the vpn:// link cannot be built. Install them and run again"
+        return 1
+    fi
+    return 0
+}
+
+# _awg31_refuse_client_leftovers <name> [<name>...] : leftover client files.
+# generate_client refuses to overwrite an existing client, so a rerun that meets
+# leftovers of my_phone or my_laptop would abort AFTER the server config has been
+# rewritten. On 3.1 this is checked before the first change and the file is
+# named; on 2.0 the behaviour is unchanged (step 6 skips such names in its loop).
+_awg31_refuse_client_leftovers() {
+    local gen name f
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
+        log_error "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read: leftover client files were not checked"
+        return 1
+    }
+    [[ "$gen" == "3.1" ]] || return 0
+    for name in "$@"; do
+        for f in "$AWG_DIR/${name}.conf" "$AWG_DIR/${name}.png" "$AWG_DIR/${name}.vpnuri" \
+                 "$AWG_DIR/${name}.vpnuri.png" "$KEYS_DIR/${name}.private" "$KEYS_DIR/${name}.public"; do
+            if [[ -e "$f" || -L "$f" ]]; then
+                log_error "A leftover file of client '$name': $f. The 3.1 install stopped before its first change: remove the leftovers of the previous client and run again"
+                return 1
+            fi
+        done
+    done
+    return 0
+}
+
 # awg_client_artifacts_check <name> : the client's set of files, as a set.
 # A client is handed four files - the .conf, its QR code, the vpn:// link and
 # the link's QR code. Different steps produce them, and a failure in one used to

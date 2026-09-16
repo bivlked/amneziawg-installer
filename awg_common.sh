@@ -3680,6 +3680,58 @@ _rollback_client_artifacts() {
     rm -f "$KEYS_DIR/$1.private" "$KEYS_DIR/$1.public" "$AWG_DIR/$1.conf"
 }
 
+# _awg31_require_client_tools : инструменты, без которых профиль 3.1 неполон.
+# На 3.1 клиент получает комплект из четырёх файлов, и ссылка vpn:// для него не
+# удобство, а единственный простой способ внести профиль в приложение. Ссылку
+# делает perl с Compress::Zlib и MIME::Base64, оба QR - qrencode. Поэтому на 3.1
+# отсутствие инструмента - отказ ДО изменений, с именем того, чего не хватает,
+# а не сбой на середине установки. На 2.0 функция не делает ничего.
+_awg31_require_client_tools() {
+    local gen
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
+        log_error "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается: набор инструментов не проверен"
+        return 1
+    }
+    [[ "$gen" == "3.1" ]] || return 0
+    if ! command -v qrencode >/dev/null 2>&1; then
+        log_error "Для профиля 3.1 нужен qrencode: без него не будет ни QR конфига, ни QR ссылки. Установите qrencode и повторите"
+        return 1
+    fi
+    if ! command -v perl >/dev/null 2>&1; then
+        log_error "Для профиля 3.1 нужен perl: без него не собрать ссылку vpn://. Установите perl и повторите"
+        return 1
+    fi
+    if ! perl -MCompress::Zlib -MMIME::Base64 -e '1' 2>/dev/null; then
+        log_error "Для профиля 3.1 нужны модули perl Compress::Zlib и MIME::Base64: без них не собрать ссылку vpn://. Установите их и повторите"
+        return 1
+    fi
+    return 0
+}
+
+# _awg31_refuse_client_leftovers <имя> [<имя>...] : остатки файлов клиента.
+# generate_client отказывается перезаписывать существующего клиента, поэтому
+# повторный запуск, наткнувшийся на остатки my_phone или my_laptop, прервался бы
+# уже ПОСЛЕ перезаписи серверного конфига. На 3.1 проверяем до первой правки и
+# называем файл; на 2.0 поведение прежнее (цикл шага 6 такие имена пропускает).
+_awg31_refuse_client_leftovers() {
+    local gen name f
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || {
+        log_error "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается: остатки файлов клиентов не проверены"
+        return 1
+    }
+    [[ "$gen" == "3.1" ]] || return 0
+    for name in "$@"; do
+        for f in "$AWG_DIR/${name}.conf" "$AWG_DIR/${name}.png" "$AWG_DIR/${name}.vpnuri" \
+                 "$AWG_DIR/${name}.vpnuri.png" "$KEYS_DIR/${name}.private" "$KEYS_DIR/${name}.public"; do
+            if [[ -e "$f" || -L "$f" ]]; then
+                log_error "Остался файл клиента '$name': $f. Установка 3.1 остановлена до первых изменений: уберите остатки прежнего клиента и повторите"
+                return 1
+            fi
+        done
+    done
+    return 0
+}
+
 # awg_client_artifacts_check <имя> : комплект файлов клиента как ЕДИНОЕ целое.
 # Клиенту выдают четыре файла - .conf, его QR, ссылку vpn:// и QR ссылки. Их
 # делают разные шаги, и сбой одного из них раньше был предупреждением: человек
