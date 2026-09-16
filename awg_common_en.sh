@@ -3491,6 +3491,18 @@ generate_vpn_uri() {
     # import via vpn:// loses the PSK and the handshake fails (issue #67,
     # fix v5.11.4).
     client_psk=$(awk '/^[[:space:]]*PresharedKey[[:space:]]*=/{sub(/^[[:space:]]*PresharedKey[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf_file" 2>/dev/null)
+    # Third line: the key and the padding come from the CLIENT .conf - the link
+    # describes that file, and the preshared key is taken the same way. On a 3.1
+    # installation a profile without the key is a refusal: such a link looks
+    # valid and silently fails to connect, leaving the person with "it does not work".
+    local client_hpk client_cpa uri_gen
+    client_hpk=$(awk '/^[[:space:]]*HeaderProtectionKey[[:space:]]*=/{sub(/^[[:space:]]*HeaderProtectionKey[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf_file" 2>/dev/null)
+    client_cpa=$(awk '/^[[:space:]]*ContentPaddingAddition[[:space:]]*=/{sub(/^[[:space:]]*ContentPaddingAddition[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); sub(/[ \t]+$/, ""); print; exit}' "$conf_file" 2>/dev/null)
+    uri_gen=$(_awg_generation_from_init "$CONFIG_FILE") || uri_gen=broken
+    if [[ "$uri_gen" == "3.1" && -z "$client_hpk" ]]; then
+        log_error "The client config '$name' has no HeaderProtectionKey while the installation is marked generation 3.1: the vpn:// link was not created, it would look valid and would not connect"
+        return 1
+    fi
     local raw_endpoint
     raw_endpoint=$(grep -oP 'Endpoint\s*=\s*\K\S+' "$conf_file") || { log_warn "Endpoint could not be read from '$conf_file' - vpn:// URI not created for '$name'."; return 1; }
     if [[ "$raw_endpoint" == \[* ]]; then
@@ -3533,6 +3545,7 @@ generate_vpn_uri() {
     # while perl runs. server_pubkey is not a secret but travels with the group.
     # shellcheck disable=SC2016
     vpn_uri=$(AWG_URI_CPK="$client_privkey" AWG_URI_PSK="$client_psk" AWG_URI_SPK="$server_pubkey" \
+      AWG_URI_HPK="$client_hpk" AWG_URI_CPA="$client_cpa" \
       perl -MCompress::Zlib -MMIME::Base64 -e '
         my ($conf_path, $h1,$h2,$h3,$h4, $jc,$jmin,$jmax,
             $s1,$s2,$s3,$s4, $i1,$i2,$i3,$i4,$i5, $port, $ep, $cip, $cipv6, $aips,
@@ -3540,6 +3553,8 @@ generate_vpn_uri() {
         my $cpk = $ENV{AWG_URI_CPK} // "";
         my $psk = $ENV{AWG_URI_PSK} // "";
         my $spk = $ENV{AWG_URI_SPK} // "";
+        my $hpk = $ENV{AWG_URI_HPK} // "";
+        my $cpa = $ENV{AWG_URI_CPA} // "";
 
         open my $fh, "<", $conf_path or die;
         local $/; my $raw = <$fh>; close $fh;
@@ -3560,6 +3575,14 @@ generate_vpn_uri() {
             my $ei1 = je($i1); my $ei2 = je($i2); my $ei3 = je($i3);
             my $ei4 = je($i4); my $ei5 = je($i5);
             $inner .= qq("I1":"$ei1","I2":"$ei2","I3":"$ei3","I4":"$ei4","I5":"$ei5",);
+        }
+        if ($hpk ne "") {
+            my $ehpk = je($hpk);
+            $inner .= qq("HeaderProtectionKey":"$ehpk",);
+        }
+        if ($cpa ne "") {
+            my $ecpa = je($cpa);
+            $inner .= qq("ContentPaddingAddition":"$ecpa",);
         }
         my $eraw = je($raw);
         my @ips = split(/,/, $aips);
