@@ -227,7 +227,7 @@ l_broken_filter() {
     # ("check: systemctl status ...") do not.
     local f n bad
     for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
-        bad=$(grep -nE '(^|[;&|(!]|then|else|do)[[:space:]]*systemctl[[:space:]]+status' "$BATS_TEST_DIRNAME/../$f" \
+        bad=$(grep -nE '(^|[;&|(!]|(^|[[:space:]])(then|else|do|if|elif|while|until|time|exec|command))[[:space:]]*!?[[:space:]]*systemctl[[:space:]]+status' "$BATS_TEST_DIRNAME/../$f" \
             | grep -vE '^[0-9]+:[[:space:]]*#' \
             | grep -vE '=\$\(systemctl status awg-quick@awg0 --no-pager( 2>&1)?\)' || true)
         [ -z "$bad" ] || { echo "$f runs systemctl status without capture: $bad"; return 1; }
@@ -247,6 +247,22 @@ filter_all() {
     done
 }
 
+@test "guard: the uncaptured-call pattern catches command positions and skips messages" {
+    local re='(^|[;&|(!]|(^|[[:space:]])(then|else|do|if|elif|while|until|time|exec|command))[[:space:]]*!?[[:space:]]*systemctl[[:space:]]+status'
+    local line
+    for line in 'systemctl status awg-quick@awg0 --no-pager' \
+        '    if systemctl status awg-quick@awg0 --no-pager; then' \
+        '    elif ! systemctl status awg-quick@awg0; then' \
+        '    time systemctl status awg-quick@awg0' \
+        '    x=$(systemctl status awg-quick@awg0 | head)'; do
+        grep -qE "$re" <<< "$line" || { echo "missed a command position: $line"; return 1; }
+    done
+    for line in '    log_error "check: systemctl status awg-quick@awg0"' \
+        '    echo "run sudo systemctl status awg-quick@awg0"'; do
+        ! grep -qE "$re" <<< "$line" || { echo "a message counted as a call: $line"; return 1; }
+    done
+}
+
 @test "filter: hand-edit forms of a key in tools messages are masked in all four copies" {
     local line out seen=0
     for line in \
@@ -255,14 +271,27 @@ filter_all() {
         "Line unrecognized: \`PrivateKey:${COLON}'" \
         "Line unrecognized: \`${HALF}'" \
         "Sep 17 12:00:00 h awg-quick[1]: Unable to parse Jc: \`${FIELD}'" \
-        "Sep 17 12:00:00 h awg-quick[1]: AllowedIP is not in the correct format: \`${FIELD}'"; do
+        "Sep 17 12:00:00 h awg-quick[1]: Unable to parse IP address: \`LEAK+FIELD'" \
+        "Sep 17 12:00:00 h awg-quick[1]: Unable to parse IP address: \`LEAKSHORT'"; do
         out=$(filter_all "$line")
         [[ "$out" != *NO_FILTER* ]] || { echo "a copy lost the filter: $out"; return 1; }
         [[ "$out" != *LEAK* ]] || { echo "leaked through: $out"; return 1; }
         [[ "$out" == *"[HIDDEN]"* ]] || { echo "nothing marked as hidden: $out"; return 1; }
         seen=$((seen + 1))
     done
-    [ "$seen" -eq 6 ]
+    [ "$seen" -eq 7 ]
+}
+
+@test "filter: a known parameter name stays visible in an unrecognized line, its value does not" {
+    # AllowedIPs with a key pasted in prints the part before the first "/", which is
+    # what the IP-address cases above feed. Here: a parameter outside its section.
+    local name out
+    for name in RandomTrailers ListenPort I1 AllowedIPs PresharedKey; do
+        out=$(filter_all "Line unrecognized: \`${name}=LEAKVALUE'")
+        [[ "$out" != *LEAK* ]] || { echo "value leaked for $name: $out"; return 1; }
+        [ "$(grep -cF "Line unrecognized: \`${name}=[HIDDEN]" <<< "$out")" -eq 4 ] \
+            || { echo "the name $name is not kept in all four copies: $out"; return 1; }
+    done
 }
 
 @test "filter: values that are not keys stay visible in all four copies" {
@@ -272,6 +301,8 @@ filter_all() {
         "Name or service not known: \`vpn.example.com:51820'" \
         "AllowedIP is not in the correct format: \`10.9.9.2/33'" \
         "Unable to parse Jc: \`abc'" \
+        "Unable to parse IP address: \`10.9.9.300'" \
+        "Unable to parse IP address: \`fd00::zz'" \
         "Fwmark is neither 0/off nor 0-0xffffffff: \`0x1234'"; do
         out=$(filter_all "$line")
         [[ "$out" != *"[HIDDEN]"* ]] || { echo "a non-secret value was hidden: $out"; return 1; }
