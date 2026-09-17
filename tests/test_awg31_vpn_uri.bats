@@ -253,3 +253,95 @@ u_broken_marker_link() {
     require_perl_zlib; require_python3
     both u_broken_marker_link
 }
+
+# ------------------------------------------------ the vpn:// budget on 3.1
+
+# The link travels as one QR code in byte mode at level L, version 40: 2953
+# bytes. A 3.1 client carries more than a 2.0 one (the header protection key and
+# the padding range, each twice: as a field and inside the embedded config), so
+# the worst case the generator can produce is measured here on the real
+# generator, and the ceiling itself is pinned with the real qrencode.
+
+u_31_worst_case() {
+    local lib="$1" d out len aips i1
+    d=$(dir_of "$lib")
+    # Longest routes the installer writes itself: the mode-2 list.
+    aips=$(grep -oP 'ALLOWED_IPS="\K1\.0\.0\.0/8[^"]*' "$BATS_TEST_DIRNAME/../install_amneziawg.sh" | head -1)
+    [ -n "$aips" ] || { echo "mode-2 list not found in the installer"; return 1; }
+    # Longest I1 the generator can emit: every random range at its top.
+    i1=$(bash -c '
+        eval "$(sed -n "/^generate_cps_i1()/,/^}/p" "$1")"
+        rand_range() { echo "$2"; }
+        generate_cps_i1
+    ' _ "$BATS_TEST_DIRNAME/../install_amneziawg.sh")
+    [ -n "$i1" ] || { echo "I1 generator produced nothing"; return 1; }
+    # Values reach the snippet through the environment: they carry angle
+    # brackets, spaces and commas, and nesting them into quoted code breaks.
+    # They go into the init, because generate_vpn_uri reloads it.
+    out=$(WC_AIPS="$aips" WC_I1="$i1" lib_run "$lib" 3.1 '
+        sed -i "/^export AWG_I1=/d; /^export AWG_CPA=/d; /^export ALLOWED_IPS/d; /^export DISABLE_IPV6=/d" "$CONFIG_FILE"
+        {
+            printf "export ALLOWED_IPS_MODE=2\nexport ALLOWED_IPS=\"%s\"\n" "$WC_AIPS"
+            printf "export DISABLE_IPV6=0\nexport ALLOW_IPV6_TUNNEL=1\nexport IPV6_SUBNET=fddd:2c4:2c4:2c4::/64\n"
+            printf "export AWG_I1=\"%s\"\nexport AWG_CPA=10000-65535\n" "$WC_I1"
+        } >> "$CONFIG_FILE"
+        # The live server config is the source of the obfuscation values, so it
+        # is rendered again from the rewritten init.
+        rm -f "$SERVER_CONF_FILE"
+        safe_load_config "$CONFIG_FILE" >/dev/null 2>&1 || { echo "RC=93"; exit 0; }
+        render_server_config || { echo "RC=94"; exit 0; }
+        export CLIENT_PSK="QwErTyUiOpAsDfGhJkLzXcVbNm1234567890qwertyu="
+        render_client_config c1 10.9.9.254 CLIENTPRIVKEYPLACEHOLDERAAAAAAAAAAAAAAAAAAA= \
+            SRVPUBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= 203.0.113.100 65535 fddd:2c4:2c4:2c4::fffe \
+            || { echo "RC=92"; exit 0; }
+        generate_vpn_uri c1; echo "RC=$?"')
+    [[ "$out" == *"RC=0"* ]] || { echo "worst-case uri not created ($lib): $out"; return 1; }
+    grep -q 'HeaderProtectionKey' "$d/c1.conf" || { echo "the worst case is not a 3.1 config ($lib)"; return 1; }
+    grep -q 'PresharedKey' "$d/c1.conf" || { echo "the worst case lost its PSK ($lib)"; return 1; }
+    grep -q 'fddd:2c4:2c4:2c4::fffe' "$d/c1.conf" || { echo "the worst case lost its IPv6 address ($lib)"; return 1; }
+    grep -qF "$i1" "$d/c1.conf" || { echo "the worst case lost its I1 ($lib)"; return 1; }
+    grep -q '32.0.0.0/3' "$d/c1.conf" || { echo "the worst case lost the mode-2 routes ($lib)"; return 1; }
+    len=$(wc -c < "$d/c1.vpnuri")
+    echo "worst-case 3.1 vpn:// is $len bytes, cap 2953, headroom $((2953 - len)) ($lib)"
+    [ "$len" -le 2953 ] || { echo "worst-case 3.1 link exceeds one QR code ($lib): $len"; return 1; }
+}
+@test "vpn uri 3.1: the worst case the generator can produce fits one QR code, both twins" {
+    require_perl_zlib
+    both u_31_worst_case
+}
+
+@test "qrencode: the flags the installer uses take 2953 bytes and refuse 2954" {
+    # Pins the ceiling the budget above is measured against. With other flags the
+    # capacity is different, and the budget test would compare against a number
+    # that is no longer true.
+    command -v qrencode &>/dev/null || skip "qrencode not available"
+    local d="$BATS_TEST_TMPDIR/qr" lib
+    mkdir -p "$d"
+    echo "# $(qrencode --version 2>&1 | head -1)" >&3
+    head -c 2953 /dev/zero | tr '\0' 'A' > "$d/ok.txt"
+    head -c 2954 /dev/zero | tr '\0' 'A' > "$d/over.txt"
+    run qrencode -8 -t png -l L -s 6 -m 4 -o "$d/ok.png" < "$d/ok.txt"
+    [ "$status" -eq 0 ]
+    run qrencode -8 -t png -l L -s 6 -m 4 -o "$d/over.png" < "$d/over.txt"
+    [ "$status" -ne 0 ]
+    # And the libraries really use these flags.
+    for lib in awg_common.sh awg_common_en.sh; do
+        grep -qF 'qrencode -8 -t png -l L -s 6 -m 4 -o "$tmp_png" < "$uri_file"' "$BATS_TEST_DIRNAME/../$lib"
+    done
+}
+
+u_qr_refusal_advice() {
+    local lib="$1" d bin out
+    d=$(dir_of "$lib")
+    bin="$BATS_TEST_TMPDIR/qrfail"
+    mkdir -p "$bin"
+    printf '#!/usr/bin/env bash\necho "Failed to encode the input data: Input data too large" >&2\nexit 1\n' > "$bin/qrencode"
+    chmod +x "$bin/qrencode"
+    out=$(PATH="$bin:$PATH" lib_run "$lib" 3.1 'printf "vpn://x\n" > "$AWG_DIR/c1.vpnuri"; generate_qr_vpnuri c1; echo "RC=$?"')
+    [[ "$out" == *"RC=1"* ]] || { echo "a refused QR did not fail ($lib): $out"; return 1; }
+    [[ "$out" == *"c1.vpnuri"* ]] || { echo "no advice to import the .vpnuri file ($lib): $out"; return 1; }
+    [ ! -e "$d/c1.vpnuri.png" ] || { echo "a partial PNG was left ($lib)"; return 1; }
+}
+@test "qr vpn uri: a refused QR fails and points at the .vpnuri file, both twins" {
+    both u_qr_refusal_advice
+}

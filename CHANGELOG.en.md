@@ -12,6 +12,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`manage check`, `show` and `diagnose` show the protocol generation of the installation, and `check --json` returns it in the `protocol` field.** The generation comes from the `AWG_PROTOCOL` marker, not from the module version: a third-line module runs a second-line configuration as a matter of course, and an "AmneziaWG 2.0" header next to a module version 3.1 confused people. Command headers no longer name a generation; it has a line of its own. A broken marker never turns into "2.0": `check` treats it as a problem (`ok=false`, `protocol_error: "unreadable"`), `show` and `diagnose` say the marker cannot be read.
+- **`diagnose` warns about `Jmin` greater than `Jmax` on the live interface.** The kernel module does not compare the two and with such a pair writes past a buffer end ([amneziawg-linux-kernel-module#225](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/225)). The installer never produces this pair; it only appears after a hand edit of `awg0.conf`.
+
+### Changed
+
+- **Removing `RandomTrailers` or `DisableCookies` from `awg0.conf` gives the same warning as the other interface parameters.** `awg syncconf` does not clear them, so the script points at a service restart.
+
 ### Fixed
 
 - **The service status text in `manage check`, and on a failed `restore` or `restart`, no longer shows keys.** `systemctl status` ends with the unit's journal lines, and with a malformed key in `awg0.conf` (a character lost in a hand edit, `PrivateKey` inside `[Peer]`) those carried the `amneziawg-tools` message with the key value: `Line unrecognized: ...` or `Key is not the correct length or format: ...`. This text used to go to the screen, to the `manage` log and into reports people post in issues. It now goes through the same secrets filter as the installer's diagnostic report; if the filter itself fails, `check` hides the status text and exits with an error, while `restore` and `restart` say the status is hidden and name the command to see it. With `--json` this text still goes to stderr, and in the plain mode `systemctl`'s own warnings stay on stderr too.

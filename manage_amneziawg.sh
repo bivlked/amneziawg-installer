@@ -1291,9 +1291,14 @@ _log_service_status() {
 # тот же поток, иначе он обходил бы фильтр. Коды берутся из PIPESTATUS сразу после
 # конвейера: 124 - таймаут и называется отдельно, сбой самого фильтра - тоже отказ.
 show_awg_status() {
-    log "Статус AmneziaWG 2.0..."
+    log "Статус AmneziaWG..."
     local -a _st
-    local _awg_err=""
+    local _awg_err="" _gen=""
+    if _gen=$(_awg_generation_from_init "$CONFIG_FILE"); then
+        log "Поколение протокола установки: $_gen (по маркеру AWG_PROTOCOL)"
+    else
+        log_error "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается: поколение установки неизвестно"
+    fi
     timeout 10 awg show 2>&1 | _mask_report_secrets
     _st=("${PIPESTATUS[@]}")
     if [[ "${_st[0]}" -eq 124 ]]; then
@@ -1320,8 +1325,21 @@ show_awg_status() {
 
 check_server() {
     case $- in *x*) _awg_xtrace_guard check_server; return ;; esac
-    log "Проверка состояния сервера AmneziaWG 2.0..."
+    log "Проверка состояния сервера AmneziaWG..."
     local ok=1
+    # Поколение протокола установки - по маркеру AWG_PROTOCOL, а не по версии
+    # модуля: модуль третьей линии спокойно работает с конфигурацией второй.
+    # Нечитаемый маркер - провал проверки (решение 17 sep 2026), а не тихое
+    # «2.0»: иначе check подтвердил бы поколение, которого никто не знает.
+    local _c_proto="" _c_proto_json=null _c_proto_err=null
+    if _c_proto=$(_awg_generation_from_init "$CONFIG_FILE"); then
+        _c_proto_json="\"$_c_proto\""
+        log " - Поколение протокола установки: $_c_proto (по маркеру AWG_PROTOCOL)"
+    else
+        _c_proto_err='"unreadable"'
+        log_error " - Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается: поколение установки неизвестно"
+        ok=0
+    fi
     # Снимок для JSON-конверта (v5.21.0): собирается по ходу человеческих
     # проверок, чтобы данные и вердикт шли из одного прогона.
     local _c_svc_active=false _c_present=false _c_mtu=null _c_addrs=""
@@ -1452,7 +1470,7 @@ check_server() {
         log_warn " - UFW не установлен."
     fi
 
-    log "Статус AmneziaWG 2.0:"
+    log "Статус AmneziaWG:"
     # Раньше awg show вызывался через process substitution без проверки exit code,
     # из-за чего check мог отрапортовать "Состояние OK" даже когда awg упал.
     # Теперь захватываем вывод и проверяем exit code (audit).
@@ -1486,9 +1504,9 @@ check_server() {
     elif (( _filter_ok )); then
         while IFS= read -r _l; do log "  $_l"; done <<< "$_awg_out"
         if grep -q "jc:" <<< "$_awg_out"; then
-            log " - AWG 2.0 параметры обфускации: активны"
+            log " - Параметры обфускации: активны"
         else
-            log_warn " - AWG 2.0 параметры обфускации не обнаружены"
+            log_warn " - Параметры обфускации не обнаружены"
         fi
     fi
 
@@ -1496,7 +1514,7 @@ check_server() {
         local _c_clients _jok=false
         _c_clients=$(grep -c '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null) || _c_clients=0
         [[ "$ok" -eq 1 ]] && _jok=true
-        json_out "{\"command\":\"check\",\"ok\":$_jok,\"service\":{\"unit\":\"awg-quick@awg0\",\"active\":$_c_svc_active},\"interface\":{\"name\":\"awg0\",\"present\":$_c_present,\"mtu\":$_c_mtu,\"addresses\":[$_c_addrs]},\"port\":{\"number\":$port,\"proto\":\"udp\",\"listening\":$_c_listen},\"module\":{\"loaded\":$_c_mod,\"version\":$([[ -n "$_c_mod_ver" ]] && printf '"%s"' "$(json_escape "$_c_mod_ver")" || printf 'null')},\"clients\":{\"total\":$_c_clients},\"firewall\":{\"ufw_active\":$_c_ufw_active,\"port_allowed\":$_c_allowed}}"
+        json_out "{\"command\":\"check\",\"ok\":$_jok,\"service\":{\"unit\":\"awg-quick@awg0\",\"active\":$_c_svc_active},\"interface\":{\"name\":\"awg0\",\"present\":$_c_present,\"mtu\":$_c_mtu,\"addresses\":[$_c_addrs]},\"port\":{\"number\":$port,\"proto\":\"udp\",\"listening\":$_c_listen},\"module\":{\"loaded\":$_c_mod,\"version\":$([[ -n "$_c_mod_ver" ]] && printf '"%s"' "$(json_escape "$_c_mod_ver")" || printf 'null')},\"clients\":{\"total\":$_c_clients},\"firewall\":{\"ufw_active\":$_c_ufw_active,\"port_allowed\":$_c_allowed},\"protocol\":$_c_proto_json,\"protocol_error\":$_c_proto_err}"
     fi
 
     if [[ "$ok" -eq 1 ]]; then
@@ -1614,7 +1632,7 @@ diagnose_server() {
     local carrier="${CLI_CARRIER}"
     local ok=0 warn=0 fail=0
 
-    log "Диагностика AmneziaWG 2.0 сервера..."
+    log "Диагностика сервера AmneziaWG..."
     if [[ -n "$carrier" ]] && ! _diagnose_carrier_known "$carrier" >/dev/null; then
         log_error "Неизвестный оператор: '$carrier'"
         log_error "Поддерживаемые: $(_diagnose_carrier_list)"
@@ -1650,6 +1668,17 @@ diagnose_server() {
     else
         _diag_line FAIL "Модуль ядра amneziawg НЕ загружен"
         echo "        Fix: sudo bash $0 repair-module"
+        fail=$((fail+1))
+    fi
+
+    # 1a. Поколение конфигурации - по маркеру установки. Строка стоит рядом с
+    # версией модуля намеренно: модуль третьей линии и конфигурация второй -
+    # штатное сочетание, и без пояснения их легко принять за расхождение.
+    local _d_gen=""
+    if _d_gen=$(_awg_generation_from_init "$CONFIG_FILE"); then
+        _diag_line INFO "Поколение конфигурации: $_d_gen (по маркеру установки; версия модуля поколение не определяет)"
+    else
+        _diag_line FAIL "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается: поколение конфигурации неизвестно"
         fail=$((fail+1))
     fi
 
@@ -1801,6 +1830,15 @@ diagnose_server() {
         jmax=$(awk '/^[[:space:]]*jmax:/ {print $2; exit}' <<< "$_awg_show")
         i1=$(awk -F': ' '/^[[:space:]]*i1:/ {print $2; exit}' <<< "$_awg_show")
         _diag_line INFO "AWG params: Jc=${jc:-?} Jmin=${jmin:-?} Jmax=${jmax:-?} I1=${i1:-absent}"
+        # Модуль ядра пару Jmin/Jmax между собой не сравнивает, и при Jmin больше
+        # Jmax пишет мусорный пакет за границу буфера размера Jmax
+        # (amneziawg-linux-kernel-module#225). Наш генератор такую пару не
+        # выдаёт; она появляется только ручной правкой awg0.conf.
+        if [[ "$jmin" =~ ^[0-9]+$ && "$jmax" =~ ^[0-9]+$ && "$jmin" -gt "$jmax" ]]; then
+            _diag_line FAIL "Jmin ($jmin) больше Jmax ($jmax): модуль ядра с такой парой пишет за границу буфера (amneziawg-linux-kernel-module#225)"
+            echo "        Fix: в awg0.conf сделать Jmax не меньше Jmin, затем sudo systemctl restart awg-quick@awg0"
+            fail=$((fail+1))
+        fi
     else
         _diag_line INFO "AWG params: интерфейс не прочитан, значения не проверялись"
     fi
@@ -2309,7 +2347,7 @@ usage() {
     fi
     [[ "$_rc" -ne 0 ]] && exec >&2
     echo ""
-    echo "Скрипт управления AmneziaWG 2.0 (v${SCRIPT_VERSION})"
+    echo "Скрипт управления AmneziaWG (v${SCRIPT_VERSION})"
     echo "=============================================="
     echo "Использование: $0 [ОПЦИИ] <КОМАНДА> [АРГУМЕНТЫ]"
     echo ""

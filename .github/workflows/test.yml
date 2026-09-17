@@ -29,8 +29,10 @@ jobs:
           # degrade to a comparison that would mean nothing.
           fetch-depth: 0
 
-      - name: Install bats
-        run: sudo apt-get update && sudo apt-get install -y bats
+      # qrencode: the vpn:// QR ceiling test runs the real binary with the
+      # installer flags; without it the test skips and pins nothing.
+      - name: Install bats and qrencode
+        run: sudo apt-get update && sudo apt-get install -y bats qrencode
 
       - name: Run unit tests
         run: bats tests/*.bats
