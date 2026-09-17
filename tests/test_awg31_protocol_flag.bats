@@ -232,29 +232,33 @@ run_argparse() {
     done
 }
 
-@test "no refusal tells the reader what the installer carries inside" {
+@test "no refusal claims the installer lacks a 3.1 generator, or promises a later release" {
     # The arm, arch_unsupported and not_implemented_yet texts used to say that
     # this installer version carries no 3.1 generator. That stopped being true
-    # when the generator, the header protection key and the render landed, while
-    # the path stayed closed on purpose. A refusal has to say what the reader
-    # gets (no 3.1 profile from this version) and why, not describe internal
-    # parts: those change from release to release, and the sentence silently
-    # turns false the day one of them lands.
-    # The facts the architecture texts must keep are asserted next to it, so a
-    # rewrite that drops them does not pass either.
-    local script code
+    # when the generator landed while the path stayed closed on purpose, and the
+    # sentence silently turned false. A refusal says what the reader gets: no
+    # 3.1 profile from this version.
+    # It also must not hint that a release is on its way ("yet", "пока"): the
+    # refusal is a statement about this version, not a roadmap.
+    # This checks those two regressions by name, not the general property that
+    # a refusal describes no internal parts. The architecture facts are pinned
+    # in the neighbouring tests.
+    local script code lower
     for script in "$INSTALL_RU" "$INSTALL_EN"; do
         build_harness "$script"
         for code in kernel arm arch_unsupported arch_unknown tools_old not_implemented_yet internal_error; do
             run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message '$code'"
             [ "$status" -eq 0 ]
             [ -n "$output" ]
-            [[ "$output" != *"енератор"* ]]   || { echo "$code talks about the generator ($script): $output"; return 1; }
-            [[ "$output" != *"generator"* ]] || { echo "$code talks about the generator ($script): $output"; return 1; }
+            lower="${output,,}"
+            [[ "$lower" != *"генератор"* ]] || { echo "$code talks about the generator ($script): $output"; return 1; }
+            [[ "$lower" != *"generator"* ]] || { echo "$code talks about the generator ($script): $output"; return 1; }
         done
         run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message not_implemented_yet"
+        lower="${output,,}"
         [[ "$output" == *"--protocol=2.0"* ]] || { echo "not_implemented_yet lost the way out ($script): $output"; return 1; }
         [[ "$output" == *"3.1"* ]] || { echo "not_implemented_yet no longer names the profile ($script): $output"; return 1; }
+        [[ "$lower" != *"пока"* && "$lower" != *" yet"* ]] || { echo "not_implemented_yet promises a later release ($script): $output"; return 1; }
     done
 }
 

@@ -827,7 +827,7 @@ _awg31_blocker_message() {
             printf '%s' "The installed awg tools do not understand third-line parameters. This is the ONLY reason on the list that an upgrade fixes: apt-get update && apt-get install --only-upgrade amneziawg-tools, then run the installer again. Or install with --protocol=2.0."
             ;;
         not_implemented_yet)
-            printf '%s' "This installer version (v${SCRIPT_VERSION}) does not issue the AmneziaWG 3.1 profile yet: your environment fits, and it is not your machine. Way out for now: --protocol=2.0."
+            printf '%s' "This installer version (v${SCRIPT_VERSION}) does not issue the AmneziaWG 3.1 profile: your environment fits, and it is not your machine. Way out: --protocol=2.0."
             ;;
         internal_error)
             printf '%s' "Internal error in the environment gate: the gate itself got invalid input. This is our defect, not a problem with your machine. Install with --protocol=2.0 and report it with the installer output attached."
@@ -3761,7 +3761,7 @@ initialize_setup() {
     # generations a 3.1 install would be left with no way back. Refuse until the
     # path opens (phase 5).
     if [[ "$AWG_PROTOCOL" == "3.1" ]]; then
-        die "This installation is marked as AmneziaWG 3.1 (AWG_PROTOCOL in $CONFIG_FILE), and this installer version only supports 2.0. Use an installer version that supports 3.1, or do not run this one on top of a third-line server."
+        die "This installation is marked as AmneziaWG 3.1 (AWG_PROTOCOL in $CONFIG_FILE), and this installer version only supports 2.0. Do not run it on top of a server marked as third line."
     fi
 
     # The installation generation and, when the third line is requested, the
