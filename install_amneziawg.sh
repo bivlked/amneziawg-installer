@@ -3275,7 +3275,7 @@ check_service_status() {
 # этим не страдает: journalctl вызывается там с --output=cat, то есть без префикса.
 # Регистронезависимость (флаг I) - разбор конфига тоже регистронезависим (strncasecmp).
 #
-# ЧЕТЫРЕ СТРОКОВЫХ ЛИТЕРАЛА UPSTREAM, на которых всё держится: "private key:",
+# ПЯТЬ СТРОКОВЫХ ЛИТЕРАЛОВ UPSTREAM, на которых всё держится: "private key:",
 # "header protection key:", "Line unrecognized:", "Key is not the correct length or
 # format:", "Unable to parse IP address:", плюс форма `значение' у повторённых
 # значений (правило 5), и список имён параметров правила 3. Сверены с

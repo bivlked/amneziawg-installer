@@ -25,6 +25,12 @@ COLON="LEAKCOLONCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC="
 HALF="LEAKHALFDDDDDDDDDDDDDD="
 FIELD="LEAK+FIELD/EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE="
 
+# A systemctl status call in command position: after the line start, a separator
+# or a shell keyword, optionally behind a wrapper (timeout N, sudo, env, nice,
+# command). One pattern for the guard below and for the test that pins the
+# pattern itself.
+GUARD_RE='(^|[;&|({!]|(^|[[:space:]])(then|else|do|if|elif|while|until|time|exec|command))[[:space:]]*!?[[:space:]]*((timeout([[:space:]]+-[A-Za-z0-9]+)*[[:space:]]+[0-9]+[smhd]?|sudo|env|nice|command)[[:space:]]+)*systemctl[[:space:]]+status'
+
 # _make_stubs <dir> <systemctl exit code>
 _make_stubs() {
     local bin="$1" rc="$2"
@@ -227,7 +233,7 @@ l_broken_filter() {
     # ("check: systemctl status ...") do not.
     local f n bad
     for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
-        bad=$(grep -nE '(^|[;&|(!]|(^|[[:space:]])(then|else|do|if|elif|while|until|time|exec|command))[[:space:]]*!?[[:space:]]*systemctl[[:space:]]+status' "$BATS_TEST_DIRNAME/../$f" \
+        bad=$(grep -nE "$GUARD_RE" "$BATS_TEST_DIRNAME/../$f" \
             | grep -vE '^[0-9]+:[[:space:]]*#' \
             | grep -vE '=\$\(systemctl status awg-quick@awg0 --no-pager( 2>&1)?\)' || true)
         [ -z "$bad" ] || { echo "$f runs systemctl status without capture: $bad"; return 1; }
@@ -248,12 +254,15 @@ filter_all() {
 }
 
 @test "guard: the uncaptured-call pattern catches command positions and skips messages" {
-    local re='(^|[;&|(!]|(^|[[:space:]])(then|else|do|if|elif|while|until|time|exec|command))[[:space:]]*!?[[:space:]]*systemctl[[:space:]]+status'
+    local re="$GUARD_RE"
     local line
     for line in 'systemctl status awg-quick@awg0 --no-pager' \
         '    if systemctl status awg-quick@awg0 --no-pager; then' \
         '    elif ! systemctl status awg-quick@awg0; then' \
         '    time systemctl status awg-quick@awg0' \
+        '    timeout 10 systemctl status awg-quick@awg0 --no-pager' \
+        '    sudo systemctl status awg-quick@awg0' \
+        '    { systemctl status awg-quick@awg0; } >&2' \
         '    x=$(systemctl status awg-quick@awg0 | head)'; do
         grep -qE "$re" <<< "$line" || { echo "missed a command position: $line"; return 1; }
     done

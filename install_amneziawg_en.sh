@@ -3332,7 +3332,7 @@ check_service_status() {
 # Case insensitivity (flag I) because config parsing is case insensitive too
 # (strncasecmp).
 #
-# FOUR UPSTREAM STRING LITERALS carry the whole thing: "private key:",
+# FIVE UPSTREAM STRING LITERALS carry the whole thing: "private key:",
 # "header protection key:", "Line unrecognized:", "Key is not the correct length or
 # format:", "Unable to parse IP address:", plus the `value' form of repeated
 # values (rule 5) and the parameter name list of rule 3. Checked against

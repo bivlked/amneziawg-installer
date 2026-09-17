@@ -1543,7 +1543,7 @@ _ensure_server_public_key() {
 # or the log from awg show and configs. A copy of the installer's filter: there it
 # has to work without the downloaded library (--diagnostic), here it serves manage
 # check, show, diagnose and the service status text on a failed restore or restart. The body is the same in all four copies, and a parity
-# test checks that; the rules and the four upstream string literals are explained
+# test checks that; the rules and the five upstream string literals are explained
 # in the installer's comment.
 _mask_report_secrets() {
     sed -E \

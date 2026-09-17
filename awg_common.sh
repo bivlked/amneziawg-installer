@@ -1520,7 +1520,7 @@ _ensure_server_public_key() {
 # скачанной библиотеки (--diagnostic), здесь - для manage check, show, diagnose и
 # текста состояния службы при отказе restore и restart.
 # Тело во всех четырёх копиях одно и то же, тест паритета это проверяет; правила
-# и четыре строковых литерала апстрима разобраны в комментарии установщика.
+# и пять строковых литералов апстрима разобраны в комментарии установщика.
 _mask_report_secrets() {
     sed -E \
         -e 's/^([[:space:]]*#?[[:space:]]*(PrivateKey|PresharedKey|HeaderProtectionKey)[[:space:]]*=[[:space:]]*).*/\1[HIDDEN]/I' \
