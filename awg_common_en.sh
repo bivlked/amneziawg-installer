@@ -2924,12 +2924,13 @@ awg_cps_refuse_unsafe() {
 }
 
 
-# _awg_device_param_names : names of the AWG device parameters (2.0 and 3.0)
+# _awg_device_param_names : names of the AWG device parameters (2.0, 3.0 and 3.1)
 # that live in the [Interface] section and that syncconf does NOT clear.
 _awg_device_param_names() {
     printf '%s\n' Jc Jmin Jmax S1 S2 S3 S4 H1 H2 H3 H4 I1 I2 I3 I4 I5 \
         ContentPaddingAddition HeaderProtectionKey MaxHandshakeAttempts \
-        KeepaliveTimeout RejectAfterTime RekeyAfterTime RekeyTimeout
+        KeepaliveTimeout RejectAfterTime RekeyAfterTime RekeyTimeout \
+        RandomTrailers DisableCookies
 }
 
 # _awg_device_params_fingerprint [config] : sorted list of device parameter

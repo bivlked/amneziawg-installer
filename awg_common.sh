@@ -2878,12 +2878,13 @@ awg_cps_refuse_unsafe() {
 }
 
 
-# _awg_device_param_names : имена device-параметров AWG (2.0 и 3.0), которые
+# _awg_device_param_names : имена device-параметров AWG (2.0, 3.0 и 3.1), которые
 # живут в секции [Interface] и которые syncconf НЕ снимает.
 _awg_device_param_names() {
     printf '%s\n' Jc Jmin Jmax S1 S2 S3 S4 H1 H2 H3 H4 I1 I2 I3 I4 I5 \
         ContentPaddingAddition HeaderProtectionKey MaxHandshakeAttempts \
-        KeepaliveTimeout RejectAfterTime RekeyAfterTime RekeyTimeout
+        KeepaliveTimeout RejectAfterTime RekeyAfterTime RekeyTimeout \
+        RandomTrailers DisableCookies
 }
 
 # _awg_device_params_fingerprint [конфиг] : отсортированный список ИМЁН
