@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.35.0] - 2026-09-17
+
+**v5.35.0** - keys stay out of traces and status output, steadier install on Debian 12.
+
 ### Changed
 
 - **The server config check understands the header protection key.** `restore` runs it before starting the service and rolls back on a refusal, and the installer runs it too, as a warning. When `HeaderProtectionKey` is set in `[Interface]`, the check accepts `H1`-`H4` as a single number, requires `S1`-`S4` to be at least 12, as the kernel module and `amneziawg-go` require, and refuses a repeated key, a key of the wrong form and a key outside `[Interface]`. With such a key `Jc`, `Jmin`, `Jmax`, `S1`-`S4` and `H1`-`H4` are read the way `amneziawg-tools` read them: section and key case-insensitive, the last value applies, and a value above 4294967295 is refused before any comparison. `ContentPaddingAddition` is checked in any config: a value above 65535 is now refused, because `amneziawg-tools` silently wrap it modulo 65536, and a reversed range is refused before the service starts. `H1`-`H4` are now read in base 10, as `amneziawg-tools` read them, so a value with a leading zero is checked correctly, and a value above 4294967295 is refused at once rather than when the service starts. Configs without `HeaderProtectionKey` and `ContentPaddingAddition` and with ordinary `H1`-`H4` ranges are checked as before.
@@ -1944,7 +1948,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.34.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.35.0...HEAD
+[5.35.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.34.1...v5.35.0
 [5.34.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.34.0...v5.34.1
 [5.34.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.33.0...v5.34.0
 [5.33.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.32.0...v5.33.0
