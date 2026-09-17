@@ -2094,10 +2094,15 @@ _awg_pkg_held() {
 # _awg_hold_refusal_log <вывод apt-mark hold> : перед отказом показать, что
 # ответили apt-mark и dpkg. Без этого причина (блокировка, пакет без кандидата,
 # испорченная база dpkg) оставалась в /dev/null, а совет в тексте отказа мог
-# указывать не туда.
+# указывать не туда. Оба ответа сворачиваются в одну строку и обрезаются с
+# начала, как ответы apt в других местах: журнал ставит метку времени только
+# первой строке, а причина у apt обычно в конце.
 _awg_hold_refusal_log() {
-    log_error "Ответ apt-mark hold: ${1:-<пусто>}"
-    log_error "Статус amneziawg-dkms в dpkg: $(dpkg-query -W -f='${Status}' amneziawg-dkms 2>&1)"
+    local mark dpkg
+    mark=$(printf '%s' "${1:-}" | tr '\n' ' ' | tail -c 300)
+    dpkg=$(dpkg-query -W -f='${Status}' amneziawg-dkms 2>&1 | tr '\n' ' ' | tail -c 300)
+    log_error "Ответ apt-mark hold: ${mark:-<пусто>}"
+    log_error "Статус amneziawg-dkms в dpkg: ${dpkg:-<пусто>}"
 }
 
 # _pkg_installed_ok : 0 только если пакет полностью установлен И настроен.

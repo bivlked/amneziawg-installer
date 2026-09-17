@@ -204,6 +204,25 @@ both_rc() {
         run env PATH="$BIN:$PATH" timeout 30 bash -c 'log_error() { echo "ERR: $*"; }; eval "$1"; _awg_hold_refusal_log ""' _ "$body"
         [ "$status" -eq 0 ]
         [[ "$output" == *"no packages found matching amneziawg-dkms"* ]] || { echo "$f hid the dpkg error: $output"; return 1; }
+        # An empty apt-mark answer is named, not left as a blank.
+        [[ "$output" == *"<пусто>"* || "$output" == *"<empty>"* ]] || { echo "$f left the empty answer blank: $output"; return 1; }
+    done
+}
+
+@test "hold check: a multi-line answer stays on one log line and is cut to its end" {
+    # log_msg stamps only the first line of a message, so a raw multi-line apt
+    # answer would leave unstamped lines in the log. The reason apt gives is
+    # usually at the end, so a long answer keeps its tail.
+    local f body long
+    stub_dpkg_query "install ok not-installed"
+    long="$(printf 'W: noise %.0s\n' $(seq 60))E: Could not get lock /var/lib/dpkg/lock-frontend"
+    for f in "${INSTALLERS[@]}"; do
+        body=$(awk '/^_awg_hold_refusal_log\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$f")
+        run env PATH="$BIN:$PATH" timeout 30 bash -c 'log_error() { echo "ERR: $*"; }; eval "$1"; _awg_hold_refusal_log "$2"' _ "$body" "$long"
+        [ "$status" -eq 0 ]
+        [ "${#lines[@]}" -eq 2 ] || { echo "$f: expected 2 log lines, got ${#lines[@]}: $output"; return 1; }
+        [[ "${lines[0]}" == *"E: Could not get lock /var/lib/dpkg/lock-frontend" ]] || { echo "$f lost the tail: ${lines[0]}"; return 1; }
+        [ "${#lines[0]}" -lt 400 ] || { echo "$f did not cut a long answer: ${#lines[0]} chars"; return 1; }
     done
 }
 

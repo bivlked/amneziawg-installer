@@ -2138,10 +2138,15 @@ _awg_pkg_held() {
 # _awg_hold_refusal_log <apt-mark hold output> : before refusing, show what
 # apt-mark and dpkg answered. Without it the reason (a lock, a package with no
 # candidate, a damaged dpkg database) stayed in /dev/null, and the hint in the
-# refusal text could point the wrong way.
+# refusal text could point the wrong way. Both answers are folded into one line
+# and cut from the start, like apt answers elsewhere: the log stamps only the
+# first line, and apt usually puts the reason at the end.
 _awg_hold_refusal_log() {
-    log_error "apt-mark hold said: ${1:-<empty>}"
-    log_error "amneziawg-dkms status in dpkg: $(dpkg-query -W -f='${Status}' amneziawg-dkms 2>&1)"
+    local mark dpkg
+    mark=$(printf '%s' "${1:-}" | tr '\n' ' ' | tail -c 300)
+    dpkg=$(dpkg-query -W -f='${Status}' amneziawg-dkms 2>&1 | tr '\n' ' ' | tail -c 300)
+    log_error "apt-mark hold said: ${mark:-<empty>}"
+    log_error "amneziawg-dkms status in dpkg: ${dpkg:-<empty>}"
 }
 
 # _pkg_installed_ok : 0 only if the package is fully installed AND configured.
