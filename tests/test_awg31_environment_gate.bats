@@ -288,47 +288,54 @@ break_arch_detection() {
     [ ! -e "$TEST_DIR/awg.argv" ]
 }
 
-@test "post: a fully suitable environment still reports not_implemented_yet" {
+# gate_case <installer> <awg variant> <module mode> <expected code> : the gate
+# answer of ONE twin. Every module case runs both, because a verdict that only
+# holds in one language is half a gate - measured: mutations of the EN file
+# survived while these cases ran the RU installer only.
+gate_case() {
+    local script="$1" awg="$2" mod="$3" want="$4"
+    rm -f "$TEST_DIR/ip.argv" "$TEST_DIR/awg.argv"
+    load_gate "$script"
+    make_awg_stub "$awg"
+    make_module_stub "$mod"
+    run awg31_environment_blocker post "amd64" "6.14.0-generic"
+    [ "$status" -eq 0 ] || { echo "status $status ($script)"; return 1; }
+    [ "$output" = "$want" ] || { echo "expected $want, got $output ($script)"; return 1; }
+}
+
+@test "post: a fully suitable environment still reports not_implemented_yet, both twins" {
     # The second half of the tripwire. If post ever answers empty before the
     # path opens, the installer would be told to write a 3.1 profile that has no
     # downgrade and no lifecycle behind it.
-    load_gate
-    make_awg_stub 31
-    make_module_stub ok
-    run awg31_environment_blocker post "amd64" "6.14.0-generic"
-    [ "$status" -eq 0 ]
-    [ "$output" = "not_implemented_yet" ]
+    gate_case "$INSTALL_RU" 31 ok not_implemented_yet
+    gate_case "$INSTALL_EN" 31 ok not_implemented_yet
 }
 
-@test "post: a second-line module is refused with its own code" {
+@test "post: a second-line module is refused with its own code, both twins" {
     # Capable tools, suitable machine, old module: the reason must name the
     # module, because the way out is an update rather than another machine.
-    load_gate
-    make_awg_stub 31
-    make_module_stub line2
-    run awg31_environment_blocker post "amd64" "6.14.0-generic"
-    [ "$status" -eq 0 ]
-    [ "$output" = "module_line2" ]
+    gate_case "$INSTALL_RU" 31 line2 module_line2
+    gate_case "$INSTALL_EN" 31 line2 module_line2
 }
 
-@test "post: a probe that cannot check says so instead of guessing" {
-    load_gate
-    make_awg_stub 31
-    make_module_stub broken
-    run awg31_environment_blocker post "amd64" "6.14.0-generic"
-    [ "$status" -eq 0 ]
-    [ "$output" = "module_probe_failed" ]
+@test "post: a probe that cannot check says so instead of guessing, both twins" {
+    gate_case "$INSTALL_RU" 31 broken module_probe_failed
+    gate_case "$INSTALL_EN" 31 broken module_probe_failed
 }
 
-@test "post: the module probe runs only after the tools probe" {
+@test "post: the module probe runs only after the tools probe, both twins" {
     # With old tools the module is never touched: its refusal would be about
     # them, and the person would be sent to rebuild a module instead of apt.
-    load_gate
-    make_awg_stub 20
-    make_module_stub line2
-    run awg31_environment_blocker post "amd64" "6.14.0-generic"
-    [ "$output" = "tools_old" ]
-    [ ! -e "$TEST_DIR/ip.argv" ]
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        rm -f "$TEST_DIR/ip.argv" "$TEST_DIR/awg.argv"
+        load_gate "$script"
+        make_awg_stub 20
+        make_module_stub line2
+        run awg31_environment_blocker post "amd64" "6.14.0-generic"
+        [ "$output" = "tools_old" ] || { echo "expected tools_old, got $output ($script)"; return 1; }
+        [ ! -e "$TEST_DIR/ip.argv" ] || { echo "the module was probed with old tools ($script)"; return 1; }
+    done
 }
 
 @test "post: tools without the 3.1 usage are refused with tools_old" {
