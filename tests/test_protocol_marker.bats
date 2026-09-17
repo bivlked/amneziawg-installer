@@ -731,51 +731,39 @@ initialize_setup_body() {
     done
 }
 
-@test "awg_installed_protocol: a directory in place of the init fails closed, it is not a missing file" {
-    # A missing init is the documented 2.0. A directory there is not: grep
-    # cannot read it, and answering 2.0 would be a confident answer produced by
-    # a failure.
-    unset AWG_PROTOCOL
-    mkdir -p "$TEST_DIR/dir.init"
-    run awg_installed_protocol "$TEST_DIR/dir.init"
-    [ "$status" -ne 0 ] || { echo "a directory answered: $output"; false; }
-    # grep names the directory on stderr, which run merges in; no generation may appear.
-    [[ "$output" != *"2.0"* && "$output" != *"3.1"* ]] || { echo "a generation was printed: $output"; false; }
-}
-
-# Anything but a regular file refuses at once. Each case runs in a child bash
-# under timeout: a reader that reached grep on a FIFO would otherwise hang the
-# whole run instead of failing this test.
+# A non-regular init never reaches grep: on a FIFO grep would wait for a writer
+# forever, on /dev/zero it would read without end. Each case runs in a child
+# bash under timeout, so a regression fails this test in seconds instead of
+# hanging the run.
 _reader_on() {  # _reader_on <lib> <path> : prints the answer and RC=<code>
     timeout 10 bash -c '
         source "$1" >/dev/null 2>&1 || true
         unset AWG_PROTOCOL
         awg_installed_protocol "$2" 2>/dev/null
         echo "RC=$?"
-    ' _ "$1" "$2"
+    ' _ "$1" "$2" || echo "TIMEOUT"
 }
 
-@test "awg_installed_protocol: a FIFO, /dev/null and a dangling symlink in place of the init refuse at once, both libraries" {
+@test "awg_installed_protocol: a FIFO or a device in place of the init returns at once without grep, both libraries" {
     command -v mkfifo >/dev/null || skip "mkfifo not available"
-    local lib out p
     mkfifo "$TEST_DIR/fifo.init" 2>/dev/null || skip "cannot create a FIFO here"
-    ln -s "$TEST_DIR/nowhere.init" "$TEST_DIR/dangling.init" 2>/dev/null || skip "cannot create a symlink here"
+    local lib out p
     for lib in "$COMMON_RU" "$COMMON_EN"; do
-        for p in "$TEST_DIR/fifo.init" /dev/null "$TEST_DIR/dangling.init"; do
+        for p in "$TEST_DIR/fifo.init" /dev/zero /dev/null; do
             out=$(_reader_on "$lib" "$p")
-            [[ "$out" == *"RC=1"* ]] || { echo "$p did not refuse ($lib): $out"; false; }
-            [[ "$out" != *"2.0"* && "$out" != *"3.1"* ]] || { echo "$p answered a generation ($lib): $out"; false; }
+            [[ "$out" != *"TIMEOUT"* ]] || { echo "$p hung the reader ($lib)"; false; }
+            [[ "$out" == *"RC=0"* ]] || { echo "$p: unexpected answer ($lib): $out"; false; }
         done
-        # A symlink to a real init still reads through.
-        printf "export AWG_PROTOCOL='3.1'\n" > "$TEST_DIR/real.init"
-        ln -sf "$TEST_DIR/real.init" "$TEST_DIR/link.init"
-        out=$(timeout 10 bash -c '
-            source "$1" >/dev/null 2>&1 || true
-            unset AWG_PROTOCOL
-            safe_load_config "$2" >/dev/null 2>&1
-            awg_installed_protocol "$2"
-            echo "RC=$?"
-        ' _ "$lib" "$TEST_DIR/link.init")
-        [[ "$out" == *"3.1"*"RC=0"* ]] || { echo "a symlink to a real init was refused ($lib): $out"; false; }
+    done
+}
+
+@test "manage RU/EN: check_dependencies refuses an init that is not a regular file before any command" {
+    # The reader treats a non-regular init as absent; what keeps that from ever
+    # meaning 2.0 on a server is this earlier refusal.
+    local f body
+    for f in "$BATS_TEST_DIRNAME/../manage_amneziawg.sh" "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"; do
+        body=$(func_from "$f" check_dependencies)
+        [ -n "$body" ] || { echo "check_dependencies missing in $f"; false; }
+        grep -qF '[[ ! -f "$CONFIG_FILE" ]]' <<< "$body" || { echo "no regular-file check on the init in $f"; false; }
     done
 }

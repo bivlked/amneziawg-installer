@@ -19,6 +19,13 @@
 
 bats_require_minimum_version 1.5.0
 
+# CI installs jq; a missing jq there is a broken runner, not a reason to skip.
+require_jq() {
+    command -v jq &>/dev/null && return 0
+    [[ -z "${CI:-}" ]] || { echo "jq is missing in CI"; return 1; }
+    skip "jq not available"
+}
+
 _make_stubs() {
     local bin="$1" jmin="${2:-40}" jmax="${3:-70}"
     mkdir -p "$bin"
@@ -149,8 +156,21 @@ c_json_31() {
         || { echo "bad envelope ($1): $output"; return 1; }
 }
 @test "check --json: protocol is the marker value and protocol_error is null, both twins" {
-    command -v jq &>/dev/null || skip "jq not available"
+    require_jq
     both c_json_31
+}
+
+# shellcheck disable=SC2154  # $stderr is provided by bats `run --separate-stderr`
+c_json_absent() {
+    _write_init ""
+    run --separate-stderr _run "$1" check_server 1
+    [ "$status" -eq 0 ] || { echo "rc $status ($1): $output / $stderr"; return 1; }
+    printf '%s' "$output" | jq -e '.ok == true and .protocol == "2.0" and .protocol_error == null' >/dev/null \
+        || { echo "bad envelope ($1): $output"; return 1; }
+}
+@test "check --json: an installation without the marker reports protocol 2.0, both twins" {
+    require_jq
+    both c_json_absent
 }
 
 # shellcheck disable=SC2154  # $stderr is provided by bats `run --separate-stderr`
@@ -163,7 +183,7 @@ c_json_broken() {
     [[ "$stderr" == *"AWG_PROTOCOL"* ]] || { echo "the reason did not reach stderr ($1): $stderr"; return 1; }
 }
 @test "check --json: an unreadable marker gives protocol null, protocol_error unreadable, ok false, both twins" {
-    command -v jq &>/dev/null || skip "jq not available"
+    require_jq
     both c_json_broken
 }
 

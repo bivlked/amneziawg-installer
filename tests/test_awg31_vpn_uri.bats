@@ -319,12 +319,22 @@ u_31_worst_case() {
     grep -qF "$k_hpk" "$d/c1.conf" || { echo "the worst case lost its random key ($lib)"; return 1; }
     grep -qF "$fqdn" "$d/c1.conf" || { echo "the worst case lost its endpoint ($lib)"; return 1; }
     grep -q '^Jc = 128' "$d/c1.conf" || { echo "the worst case lost its junk sizes ($lib)"; return 1; }
+    # The long inputs must reach the link itself, not only the .conf: a name
+    # dropped from the link would understate the size.
+    python3 - "$d/c1.vpnuri" "$name" "$fqdn" <<'PY' || { echo "the link lost the long name or endpoint ($lib)"; return 1; }
+import base64, json, sys, zlib
+uri = open(sys.argv[1], encoding="utf-8").read().strip().replace("vpn://", "")
+raw = base64.urlsafe_b64decode(uri + "=" * (-len(uri) % 4))
+outer = json.loads(zlib.decompress(raw[4:]))
+sys.exit(0 if outer.get("description") == sys.argv[2] and outer.get("hostName") == sys.argv[3] else 1)
+PY
     len=$(wc -c < "$d/c1.vpnuri")
     echo "worst-case 3.1 vpn:// is $len bytes, cap 2953, headroom $((2953 - len)) ($lib)"
     [ "$len" -le 2953 ] || { echo "worst-case 3.1 link exceeds one QR code ($lib): $len"; return 1; }
 }
 @test "vpn uri 3.1: the worst case the generator can produce fits one QR code, both twins" {
     require_perl_zlib
+    require_python3
     both u_31_worst_case
 }
 
