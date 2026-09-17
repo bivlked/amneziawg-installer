@@ -199,14 +199,19 @@ t_leftovers_20() {
     # and lib_run honours it. The marker is asserted directly, because on a
     # machine without the tool the probe passes either way; the probe goes
     # through lib_run, because that is where the marker turns into a PATH.
-    local lib d out
+    local lib d out stub tool
     for lib in awg_common.sh awg_common_en.sh; do
         d=$(dir_of "$lib")
-        out=$(lib_run "$lib" 3.1 "stub_no_qrencode $lib" 'command -v qrencode || echo NOTFOUND')
-        [ -e "$d/bin/.isolated" ] || { echo "stub_no_qrencode does not isolate the path ($lib)"; false; }
-        [[ "$out" == *NOTFOUND* ]] || { echo "qrencode still visible to the library ($lib): $out"; false; }
-        out=$(lib_run "$lib" 3.1 "stub_no_perl $lib" 'command -v perl || echo NOTFOUND')
-        [ -e "$d/bin/.isolated" ] || { echo "stub_no_perl does not isolate the path ($lib)"; false; }
-        [[ "$out" == *NOTFOUND* ]] || { echo "perl still visible to the library ($lib): $out"; false; }
+        for stub in stub_no_qrencode stub_no_perl; do
+            tool=qrencode
+            [[ "$stub" == stub_no_perl ]] && tool=perl
+            # The built PATH is compared, not only a tool lookup: a lookup says
+            # NOTFOUND on a runner that simply lacks the tool, and would pass
+            # while lib_run quietly kept /usr/bin on the path.
+            out=$(lib_run "$lib" 3.1 "$stub $lib" 'echo "PATH=[$PATH]"; command -v '"$tool"' || echo NOTFOUND')
+            [ -e "$d/bin/.isolated" ] || { echo "$stub does not isolate the path ($lib)"; false; }
+            [[ "$out" == *"PATH=[$d/bin]"* ]] || { echo "$stub: lib_run did not cut the path ($lib): $out"; false; }
+            [[ "$out" == *NOTFOUND* ]] || { echo "$stub: $tool still visible to the library ($lib): $out"; false; }
+        done
     done
 }
