@@ -1048,9 +1048,15 @@ safe_load_config() {
 # подмена, против которой он и написан. По той же причине не совпадала вторая
 # строка при BOM у первой, и дубль проходил как одиночный маркер.
 # 🔴 Код возврата grep различается: 1 - совпадений нет (норма), 2 и выше - отказ
-# самого grep (файл нечитаем, вместо файла каталог). Прежняя форма
+# самого grep (обычный файл не читается). Прежняя форма
 # «|| n=0» уравнивала их и превращала отказ в «маркера нет», то есть в
 # уверенное «2.0». Ошибка чтения теперь тоже отказ.
+# 🔴 grep получает только обычный файл (-f): на FIFO он ждал бы писателя вечно,
+# на /dev/zero читал бы бесконечно. Отсутствующий путь и необычный файл на месте
+# init до grep не доходят и читаются как «маркера нет», поэтому -f убирать нельзя.
+# В manage такой init до функции не доходит: check_dependencies отказывает раньше.
+# Установщик на шаге 0 считает его отсутствующим и вызывает функцию с тем же
+# путём; ответ «2.0» без зависания даёт ему именно проверка -f.
 awg_installed_protocol() {
     local cfg="${1:-}" n=0 _rc=0 _bom=$'\xef\xbb\xbf'
     if [[ -n "$cfg" && -f "$cfg" ]]; then
@@ -2878,12 +2884,13 @@ awg_cps_refuse_unsafe() {
 }
 
 
-# _awg_device_param_names : имена device-параметров AWG (2.0 и 3.0), которые
+# _awg_device_param_names : имена device-параметров AWG (2.0, 3.0 и 3.1), которые
 # живут в секции [Interface] и которые syncconf НЕ снимает.
 _awg_device_param_names() {
     printf '%s\n' Jc Jmin Jmax S1 S2 S3 S4 H1 H2 H3 H4 I1 I2 I3 I4 I5 \
         ContentPaddingAddition HeaderProtectionKey MaxHandshakeAttempts \
-        KeepaliveTimeout RejectAfterTime RekeyAfterTime RekeyTimeout
+        KeepaliveTimeout RejectAfterTime RekeyAfterTime RekeyTimeout \
+        RandomTrailers DisableCookies
 }
 
 # _awg_device_params_fingerprint [конфиг] : отсортированный список ИМЁН

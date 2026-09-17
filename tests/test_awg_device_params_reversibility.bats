@@ -1084,3 +1084,36 @@ H1 = 7"
         [ "$output" = "1" ]
     done
 }
+
+# ------------------------------------------------------- third-line 3.1 names
+
+@test "_awg_device_params_fingerprint: RandomTrailers and DisableCookies are device parameters" {
+    # Both sit in [Interface] and syncconf cannot clear them either, so a removal
+    # has to be seen. A value of "off" still counts: a present line is a present
+    # parameter.
+    write_conf "Jc = 4
+RandomTrailers = off
+DisableCookies = on"
+    run _awg_device_params_fingerprint
+    [ "$status" -eq 0 ]
+    [ "$output" = "DisableCookies Jc RandomTrailers" ]
+}
+
+@test "apply_config: a removed RandomTrailers or DisableCookies is reported" {
+    require_flock
+    export AWG_SKIP_APPLY=0
+    export AWG_APPLY_MODE=syncconf
+
+    write_conf "Jc = 4
+RandomTrailers = on
+DisableCookies = on"
+    run apply_config
+    [ "$status" -eq 0 ]
+
+    log_warn() { echo "$*" >> "$AWG_DIR/.warns"; }
+    write_conf "Jc = 4"
+    run apply_config
+    [ "$status" -eq 0 ]
+    grep -q "RandomTrailers" "$AWG_DIR/.warns"
+    grep -q "DisableCookies" "$AWG_DIR/.warns"
+}

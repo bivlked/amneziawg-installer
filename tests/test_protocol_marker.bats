@@ -730,3 +730,40 @@ initialize_setup_body() {
             || { echo "$f: the key check does not use the reader"; false; }
     done
 }
+
+# A non-regular init never reaches grep: on a FIFO grep would wait for a writer
+# forever, on /dev/zero it would read without end. Each case runs in a child
+# bash under timeout, so a regression fails this test in seconds instead of
+# hanging the run.
+_reader_on() {  # _reader_on <lib> <path> : prints the answer and RC=<code>
+    timeout 10 bash -c '
+        source "$1" >/dev/null 2>&1 || true
+        unset AWG_PROTOCOL
+        awg_installed_protocol "$2" 2>/dev/null
+        echo "RC=$?"
+    ' _ "$1" "$2" || echo "TIMEOUT"
+}
+
+@test "awg_installed_protocol: a FIFO or a device in place of the init returns at once without grep, both libraries" {
+    command -v mkfifo >/dev/null || skip "mkfifo not available"
+    mkfifo "$TEST_DIR/fifo.init" 2>/dev/null || skip "cannot create a FIFO here"
+    local lib out p
+    for lib in "$COMMON_RU" "$COMMON_EN"; do
+        for p in "$TEST_DIR/fifo.init" /dev/zero /dev/null; do
+            out=$(_reader_on "$lib" "$p")
+            [[ "$out" != *"TIMEOUT"* ]] || { echo "$p hung the reader ($lib)"; false; }
+            [[ "$out" == *"RC=0"* ]] || { echo "$p: unexpected answer ($lib): $out"; false; }
+        done
+    done
+}
+
+@test "manage RU/EN: check_dependencies refuses an init that is not a regular file before any command" {
+    # The reader treats a non-regular init as absent; what keeps that from ever
+    # meaning 2.0 on a server is this earlier refusal.
+    local f body
+    for f in "$BATS_TEST_DIRNAME/../manage_amneziawg.sh" "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"; do
+        body=$(func_from "$f" check_dependencies)
+        [ -n "$body" ] || { echo "check_dependencies missing in $f"; false; }
+        grep -qF '[[ ! -f "$CONFIG_FILE" ]]' <<< "$body" || { echo "no regular-file check on the init in $f"; false; }
+    done
+}

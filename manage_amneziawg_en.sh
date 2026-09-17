@@ -17,6 +17,14 @@ fi
 # shellcheck disable=SC2034
 SCRIPT_VERSION="5.35.0"
 set -o pipefail
+# awg show colours its labels when WG_COLOR_MODE=always is in the environment,
+# even into a pipe. The secrets filter then does not recognise "header
+# protection key" and lets the key through in show and check, check falsely
+# reports "Obfuscation parameters not detected", and diagnose finds no
+# jc/jmin/jmax lines, so the Jmin > Jmax check sees 0 and 0 and silently
+# passes. Nothing here needs colour from the tools, so it is off for the whole
+# script.
+export WG_COLOR_MODE=never
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -1310,9 +1318,18 @@ _log_service_status() {
 # PIPESTATUS right after the pipeline: 124 is a timeout and is named separately, and
 # a failure of the filter itself is a failure too.
 show_awg_status() {
-    log "AmneziaWG 2.0 status..."
+    log "AmneziaWG status..."
     local -a _st
-    local _awg_err=""
+    # An unreadable marker does not hide the awg show output, but the command
+    # fails: otherwise automation reading the exit code would see success for an
+    # unknown generation, while check and diagnose fail in the same case.
+    local _awg_err="" _gen="" _gen_rc=0
+    if _gen=$(_awg_generation_from_init "$CONFIG_FILE"); then
+        log "Installation protocol generation: $_gen (from the AWG_PROTOCOL marker)"
+    else
+        log_error "The AWG_PROTOCOL generation marker in $CONFIG_FILE cannot be read: the installation generation is unknown"
+        _gen_rc=1
+    fi
     timeout 10 awg show 2>&1 | _mask_report_secrets
     _st=("${PIPESTATUS[@]}")
     if [[ "${_st[0]}" -eq 124 ]]; then
@@ -1334,13 +1351,27 @@ show_awg_status() {
         log_error "$_awg_err"
         return 1
     fi
-    return 0
+    return "$_gen_rc"
 }
 
 check_server() {
     case $- in *x*) _awg_xtrace_guard check_server; return ;; esac
-    log "Checking AmneziaWG 2.0 server status..."
+    log "Checking AmneziaWG server status..."
     local ok=1
+    # The protocol generation of the installation comes from the AWG_PROTOCOL
+    # marker, not from the module version: a third-line module runs a
+    # second-line configuration just fine. An unreadable marker fails the check
+    # instead of turning into a quiet "2.0": otherwise
+    # check would confirm a generation nobody knows.
+    local _c_proto="" _c_proto_json=null _c_proto_err=null
+    if _c_proto=$(_awg_generation_from_init "$CONFIG_FILE"); then
+        _c_proto_json="\"$_c_proto\""
+        log " - Installation protocol generation: $_c_proto (from the AWG_PROTOCOL marker)"
+    else
+        _c_proto_err='"unreadable"'
+        log_error " - The AWG_PROTOCOL generation marker in $CONFIG_FILE cannot be read: the installation generation is unknown"
+        ok=0
+    fi
     # Snapshot for the JSON envelope (v5.21.0): collected along the human
     # checks so the data and the verdict come from the same pass.
     local _c_svc_active=false _c_present=false _c_mtu=null _c_addrs=""
@@ -1471,7 +1502,7 @@ check_server() {
         log_warn " - UFW is not installed."
     fi
 
-    log "AmneziaWG 2.0 status:"
+    log "AmneziaWG status:"
     # Previously awg show was called via process substitution without an exit
     # code check, so check could report "Status OK" even when awg crashed.
     # Now we capture the output and check the exit code (audit).
@@ -1505,9 +1536,9 @@ check_server() {
     elif (( _filter_ok )); then
         while IFS= read -r _l; do log "  $_l"; done <<< "$_awg_out"
         if grep -q "jc:" <<< "$_awg_out"; then
-            log " - AWG 2.0 obfuscation parameters: active"
+            log " - Obfuscation parameters: active"
         else
-            log_warn " - AWG 2.0 obfuscation parameters not detected"
+            log_warn " - Obfuscation parameters not detected"
         fi
     fi
 
@@ -1515,7 +1546,7 @@ check_server() {
         local _c_clients _jok=false
         _c_clients=$(grep -c '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null) || _c_clients=0
         [[ "$ok" -eq 1 ]] && _jok=true
-        json_out "{\"command\":\"check\",\"ok\":$_jok,\"service\":{\"unit\":\"awg-quick@awg0\",\"active\":$_c_svc_active},\"interface\":{\"name\":\"awg0\",\"present\":$_c_present,\"mtu\":$_c_mtu,\"addresses\":[$_c_addrs]},\"port\":{\"number\":$port,\"proto\":\"udp\",\"listening\":$_c_listen},\"module\":{\"loaded\":$_c_mod,\"version\":$([[ -n "$_c_mod_ver" ]] && printf '"%s"' "$(json_escape "$_c_mod_ver")" || printf 'null')},\"clients\":{\"total\":$_c_clients},\"firewall\":{\"ufw_active\":$_c_ufw_active,\"port_allowed\":$_c_allowed}}"
+        json_out "{\"command\":\"check\",\"ok\":$_jok,\"service\":{\"unit\":\"awg-quick@awg0\",\"active\":$_c_svc_active},\"interface\":{\"name\":\"awg0\",\"present\":$_c_present,\"mtu\":$_c_mtu,\"addresses\":[$_c_addrs]},\"port\":{\"number\":$port,\"proto\":\"udp\",\"listening\":$_c_listen},\"module\":{\"loaded\":$_c_mod,\"version\":$([[ -n "$_c_mod_ver" ]] && printf '"%s"' "$(json_escape "$_c_mod_ver")" || printf 'null')},\"clients\":{\"total\":$_c_clients},\"firewall\":{\"ufw_active\":$_c_ufw_active,\"port_allowed\":$_c_allowed},\"protocol\":$_c_proto_json,\"protocol_error\":$_c_proto_err}"
     fi
 
     if [[ "$ok" -eq 1 ]]; then
@@ -1633,7 +1664,7 @@ diagnose_server() {
     local carrier="${CLI_CARRIER}"
     local ok=0 warn=0 fail=0
 
-    log "AmneziaWG 2.0 server diagnostics..."
+    log "AmneziaWG server diagnostics..."
     if [[ -n "$carrier" ]] && ! _diagnose_carrier_known "$carrier" >/dev/null; then
         log_error "Unknown carrier: '$carrier'"
         log_error "Supported: $(_diagnose_carrier_list)"
@@ -1669,6 +1700,17 @@ diagnose_server() {
     else
         _diag_line FAIL "Kernel module amneziawg NOT loaded"
         echo "        Fix: sudo bash $0 repair-module"
+        fail=$((fail+1))
+    fi
+
+    # 1a. Configuration generation, from the installation marker. It sits next
+    # to the module version on purpose: a third-line module with a second-line
+    # configuration is a normal combination and easy to mistake for a mismatch.
+    local _d_gen=""
+    if _d_gen=$(_awg_generation_from_init "$CONFIG_FILE"); then
+        _diag_line INFO "Configuration generation: $_d_gen (from the installation marker; the module version does not decide it)"
+    else
+        _diag_line FAIL "The AWG_PROTOCOL generation marker in $CONFIG_FILE cannot be read: the configuration generation is unknown"
         fail=$((fail+1))
     fi
 
@@ -1819,6 +1861,18 @@ diagnose_server() {
         jmax=$(awk '/^[[:space:]]*jmax:/ {print $2; exit}' <<< "$_awg_show")
         i1=$(awk -F': ' '/^[[:space:]]*i1:/ {print $2; exit}' <<< "$_awg_show")
         _diag_line INFO "AWG params: Jc=${jc:-?} Jmin=${jmin:-?} Jmax=${jmax:-?} I1=${i1:-absent}"
+        # The kernel module does not compare Jmin with Jmax, and with Jmin above
+        # Jmax it writes a junk packet past the end of a buffer sized Jmax
+        # (amneziawg-linux-kernel-module#225). Our generator never produces such
+        # a pair; it only appears after a hand edit of awg0.conf.
+        # awg show prints jmin and jmax only when non-zero, so a missing line
+        # means 0: Jmin without Jmax (or Jmax = 0) is the same invalid pair.
+        local _jmin_n="${jmin:-0}" _jmax_n="${jmax:-0}"
+        if [[ "$_jmin_n" =~ ^[0-9]+$ && "$_jmax_n" =~ ^[0-9]+$ && "$_jmin_n" -gt "$_jmax_n" ]]; then
+            _diag_line FAIL "Jmin ($_jmin_n) is greater than Jmax ($_jmax_n): the pair is invalid, and the kernel module writes past a buffer end with it (amneziawg-linux-kernel-module#225)"
+            echo "        Fix: in awg0.conf make Jmax no less than Jmin, then sudo systemctl restart awg-quick@awg0"
+            fail=$((fail+1))
+        fi
     else
         _diag_line INFO "AWG params: interface not read, values not checked"
     fi
@@ -2334,7 +2388,7 @@ usage() {
     fi
     [[ "$_rc" -ne 0 ]] && exec >&2
     echo ""
-    echo "AmneziaWG 2.0 management script (v${SCRIPT_VERSION})"
+    echo "AmneziaWG management script (v${SCRIPT_VERSION})"
     echo "=============================================="
     echo "Usage: $0 [OPTIONS] <COMMAND> [ARGUMENTS]"
     echo ""

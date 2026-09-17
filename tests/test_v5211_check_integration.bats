@@ -85,6 +85,9 @@ _run_check() {
     # version, and it lives in awg_common*.sh. Without injecting it the harness
     # printed "command not found" into stdout and the JSON envelope stopped
     # parsing - the failure looked like a JSON bug rather than a missing stub.
+    # The generation readers too: check_server prints the installation generation
+    # and fails on an unreadable marker. With the stubbed safe_load_config and no
+    # init file they answer 2.0, so the port stays the only input under test.
     local common_src="${src/manage_amneziawg/awg_common}"
     PATH="$STUB_BIN:$PATH" \
     AWG_DIR="$AWG_DIR" CONFIG_FILE="$CONFIG_FILE" SERVER_CONF_FILE="$SERVER_CONF_FILE" \
@@ -100,6 +103,8 @@ _run_check() {
         _JSON_EMITTED=0
         '"$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$common_src")"'
         '"$(awk '/^awg_module_version\(\) \{/,/^\}/' "$common_src")"'
+        '"$(awk '/^awg_installed_protocol\(\) \{/,/^\}/' "$common_src")"'
+        '"$(awk '/^_awg_generation_from_init\(\) \{/,/^\}/' "$common_src")"'
         '"$(awk '/^_mask_report_secrets\(\) \{/,/^\}/' "$common_src")"'
         '"$(awk '/^_json_utf8_sanitize\(\) \{/,/^\}/' "$src")"'
         '"$(awk '/^json_escape\(\) \{/,/^\}/' "$src")"'
@@ -167,6 +172,8 @@ _run_check() {
             _JSON_EMITTED=0
             '"$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../awg_common.sh")"'
             '"$(awk '/^awg_module_version\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../awg_common.sh")"'
+            '"$(awk '/^awg_installed_protocol\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../awg_common.sh")"'
+            '"$(awk '/^_awg_generation_from_init\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../awg_common.sh")"'
             '"$(awk '/^_mask_report_secrets\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../awg_common.sh")"'
             '"$(awk '/^_json_utf8_sanitize\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             '"$(awk '/^json_escape\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'

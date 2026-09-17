@@ -15,6 +15,14 @@ fi
 
 # --- Safe mode and Constants ---
 set -o pipefail
+# awg show colours its labels when WG_COLOR_MODE=always is in the environment,
+# even into a pipe. The secrets filter then does not recognise "header
+# protection key" and lets the key into the diagnostic report, and the step 7
+# service check finds no "interface: awg0" and fails falsely (and warns falsely
+# on "jc:"). Nothing here needs colour from the tools, so it is off for the whole
+# script.
+export WG_COLOR_MODE=never
+
 SCRIPT_VERSION="5.35.0"
 
 AWG_DIR="/root/awg"
@@ -1195,9 +1203,16 @@ safe_read_config_key() {
 # did not match when the first carried a BOM, so a duplicate passed as a single
 # marker.
 # 🔴 grep's exit codes are not interchangeable: 1 means no match (normal), 2 and
-# above mean grep itself failed (unreadable file, a directory in place of a
-# file). The former '|| n=0' form equated them and turned a failure into "no
+# above mean grep itself failed (a regular file that cannot be read). The
+# former '|| n=0' form equated them and turned a failure into "no
 # marker", that is, into a confident 2.0. A read error now refuses as well.
+# 🔴 grep only ever gets a regular file (-f): on a FIFO it would wait for a
+# writer forever, on /dev/zero it would read without end. A missing path and a
+# non-regular file in place of the init never reach grep and read as "no
+# marker", so the -f check must stay. In manage such an init never reaches the
+# function: check_dependencies refuses it earlier. The installer treats it as
+# absent at step 0 and calls the function with the same path; the -f check is
+# what gives it 2.0 instead of a hang.
 awg_installed_protocol() {
     local cfg="${1:-}" n=0 _rc=0 _bom=$'\xef\xbb\xbf'
     if [[ -n "$cfg" && -f "$cfg" ]]; then

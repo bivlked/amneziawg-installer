@@ -149,8 +149,9 @@ c_filter_fails() {
     [ "$status" -eq 1 ] || { echo "check passed with a failed secrets filter ($1): status $status $output"; return 1; }
     [[ "$output" == *"$want"* ]] || { echo "filter failure not named ($1), expected '$want': $output"; return 1; }
     [[ "$output" != *"$SECRET"* ]] || { echo "the key leaked when the filter failed ($1): $output"; return 1; }
-    local noise="obfuscation parameters not detected"
-    ru "$1" && noise="параметры обфускации не обнаружены"
+    # No leading capital: the phrase must match however the line starts.
+    local noise="bfuscation parameters not detected"
+    ru "$1" && noise="араметры обфускации не обнаружены"
     [[ "$output" != *"$noise"* ]] || { echo "a hidden output was judged as missing parameters ($1): $output"; return 1; }
 }
 @test "check: a failed secrets filter fails check and shows nothing unfiltered, both twins" {
@@ -363,4 +364,72 @@ s_fail_empty() {
         seen=$((seen + 1))
     done
     [ "$seen" -eq 4 ]
+}
+
+# ---------------------------------------------------------------- colour mode
+
+# awg show colours its labels when WG_COLOR_MODE=always, even into a pipe. The
+# filter matches the plain label, so a coloured "header protection key" line went
+# through with the key. The stub colours exactly like the tool: only when the
+# variable says always.
+_make_colour_awg() {
+    local bin="$1"
+    mkdir -p "$bin"
+    cat > "$bin/awg" <<EOF
+#!/usr/bin/env bash
+b=""; r=""
+if [[ "\${WG_COLOR_MODE:-}" == always ]]; then b=\$'\e[1m'; r=\$'\e[0m'; fi
+printf '%sinterface%s: awg0\n' "\$b" "\$r"
+printf '  %sheader protection key%s: %s\n' "\$b" "\$r" "${SECRET}"
+printf '  %sjc%s: 6\n' "\$b" "\$r"
+exit 0
+EOF
+    chmod +x "$bin/awg"
+}
+
+# _run_show_colour <manage script> <with the script's own colour setting 0|1>
+_run_show_colour() {
+    local src="$1" apply="$2" common bin dir
+    common="${src/manage_amneziawg/awg_common}"
+    bin="$BATS_TEST_TMPDIR/bin-colour"
+    dir="$BATS_TEST_TMPDIR/awg-colour"
+    _make_colour_awg "$bin"
+    mkdir -p "$dir"
+    PATH="$bin:$PATH" AWG_DIR="$dir" CONFIG_FILE="$dir/awgsetup_cfg.init" WG_COLOR_MODE=always _APPLY="$apply" \
+    timeout 60 bash -c '
+        set -o pipefail
+        log()       { echo "INFO: $*"; }
+        log_warn()  { echo "WARN: $*"; }
+        log_error() { echo "ERR: $*"; }
+        log_debug() { :; }
+        source "$1" >/dev/null 2>&1 || true
+        if [[ "$_APPLY" == 1 ]]; then
+            eval "$(grep -m1 "^export WG_COLOR_MODE=" "$2")"
+        fi
+        eval "$(awk "/^show_awg_status\\(\\) \\{/,/^\\}/" "$2")"
+        show_awg_status
+    ' _ "$common" "$src"
+}
+
+c_colour() {
+    # Control first: without the setting the stub really leaks, so the second
+    # half cannot pass by accident.
+    run _run_show_colour "$1" 0
+    [[ "$output" == *"$SECRET"* ]] || { echo "the control did not leak, the stub is not colouring ($1): $output"; return 1; }
+    run _run_show_colour "$1" 1
+    [[ "$output" != *"$SECRET"* ]] || { echo "the key leaked through coloured output ($1): $output"; return 1; }
+    [[ "$output" == *"jc: 6"* ]] || { echo "the dump is gone ($1): $output"; return 1; }
+}
+@test "show: WG_COLOR_MODE=always in the environment does not let the key through, both twins" {
+    both c_colour
+}
+
+@test "colour mode: all four entry scripts switch tool colour off at top level" {
+    local f n_set n_color
+    for f in manage_amneziawg.sh manage_amneziawg_en.sh install_amneziawg.sh install_amneziawg_en.sh; do
+        n_set=$(grep -n '^set -o pipefail$' "$BATS_TEST_DIRNAME/../$f" | head -1 | cut -d: -f1)
+        n_color=$(grep -n '^export WG_COLOR_MODE=never$' "$BATS_TEST_DIRNAME/../$f" | head -1 | cut -d: -f1)
+        [ -n "$n_color" ] || { echo "no top-level WG_COLOR_MODE=never in $f"; return 1; }
+        [ "$n_color" -gt "$n_set" ] && [ "$((n_color - n_set))" -lt 10 ] || { echo "WG_COLOR_MODE=never is not at the top of $f"; return 1; }
+    done
 }
