@@ -730,3 +730,15 @@ initialize_setup_body() {
             || { echo "$f: the key check does not use the reader"; false; }
     done
 }
+
+@test "awg_installed_protocol: a directory in place of the init fails closed, it is not a missing file" {
+    # A missing init is the documented 2.0. A directory there is not: grep
+    # cannot read it, and answering 2.0 would be a confident answer produced by
+    # a failure.
+    unset AWG_PROTOCOL
+    mkdir -p "$TEST_DIR/dir.init"
+    run awg_installed_protocol "$TEST_DIR/dir.init"
+    [ "$status" -ne 0 ] || { echo "a directory answered: $output"; false; }
+    # grep names the directory on stderr, which run merges in; no generation may appear.
+    [[ "$output" != *"2.0"* && "$output" != *"3.1"* ]] || { echo "a generation was printed: $output"; false; }
+}

@@ -30,9 +30,10 @@ jobs:
           fetch-depth: 0
 
       # qrencode: the vpn:// QR ceiling test runs the real binary with the
-      # installer flags; without it the test skips and pins nothing.
-      - name: Install bats and qrencode
-        run: sudo apt-get update && sudo apt-get install -y bats qrencode
+      # installer flags and fails in CI without it. jq: the --json tests skip
+      # without it, so it is installed explicitly rather than assumed.
+      - name: Install bats, qrencode and jq
+        run: sudo apt-get update && sudo apt-get install -y bats qrencode jq
 
       - name: Run unit tests
         run: bats tests/*.bats

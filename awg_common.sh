@@ -1053,7 +1053,7 @@ safe_load_config() {
 # уверенное «2.0». Ошибка чтения теперь тоже отказ.
 awg_installed_protocol() {
     local cfg="${1:-}" n=0 _rc=0 _bom=$'\xef\xbb\xbf'
-    if [[ -n "$cfg" && -f "$cfg" ]]; then
+    if [[ -n "$cfg" && -e "$cfg" ]]; then
         n=$(grep -ciE "^(${_bom})?[[:space:]]*(export[[:space:]]+)?AWG_PROTOCOL[[:space:]]*=" "$cfg")
         _rc=$?
         if [[ "$_rc" -ge 2 ]]; then

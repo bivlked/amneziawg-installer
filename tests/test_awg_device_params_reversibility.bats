@@ -1085,7 +1085,7 @@ H1 = 7"
     done
 }
 
-# ------------------------------------------ third-line 3.1 names (F4 slice B)
+# ------------------------------------------------------- third-line 3.1 names
 
 @test "_awg_device_params_fingerprint: RandomTrailers and DisableCookies are device parameters" {
     # Both sit in [Interface] and syncconf cannot clear them either, so a removal

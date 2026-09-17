@@ -1293,11 +1293,15 @@ _log_service_status() {
 show_awg_status() {
     log "Статус AmneziaWG..."
     local -a _st
-    local _awg_err="" _gen=""
+    # Нечитаемый маркер не прячет вывод awg show, но команда завершается с ошибкой:
+    # иначе автоматика, смотрящая на код возврата, видела бы успех при неизвестном
+    # поколении, тогда как check и diagnose в том же случае отказывают.
+    local _awg_err="" _gen="" _gen_rc=0
     if _gen=$(_awg_generation_from_init "$CONFIG_FILE"); then
         log "Поколение протокола установки: $_gen (по маркеру AWG_PROTOCOL)"
     else
         log_error "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается: поколение установки неизвестно"
+        _gen_rc=1
     fi
     timeout 10 awg show 2>&1 | _mask_report_secrets
     _st=("${PIPESTATUS[@]}")
@@ -1320,7 +1324,7 @@ show_awg_status() {
         log_error "$_awg_err"
         return 1
     fi
-    return 0
+    return "$_gen_rc"
 }
 
 check_server() {
@@ -1834,8 +1838,11 @@ diagnose_server() {
         # Jmax пишет мусорный пакет за границу буфера размера Jmax
         # (amneziawg-linux-kernel-module#225). Наш генератор такую пару не
         # выдаёт; она появляется только ручной правкой awg0.conf.
-        if [[ "$jmin" =~ ^[0-9]+$ && "$jmax" =~ ^[0-9]+$ && "$jmin" -gt "$jmax" ]]; then
-            _diag_line FAIL "Jmin ($jmin) больше Jmax ($jmax): модуль ядра с такой парой пишет за границу буфера (amneziawg-linux-kernel-module#225)"
+        # awg show печатает jmin и jmax только ненулевыми, поэтому отсутствующая
+        # строка значит 0: Jmin без Jmax (или Jmax = 0) - та же недопустимая пара.
+        local _jmin_n="${jmin:-0}" _jmax_n="${jmax:-0}"
+        if [[ "$_jmin_n" =~ ^[0-9]+$ && "$_jmax_n" =~ ^[0-9]+$ && "$_jmin_n" -gt "$_jmax_n" ]]; then
+            _diag_line FAIL "Jmin ($_jmin_n) больше Jmax ($_jmax_n): пара недопустима, модуль ядра с ней пишет за границу буфера (amneziawg-linux-kernel-module#225)"
             echo "        Fix: в awg0.conf сделать Jmax не меньше Jmin, затем sudo systemctl restart awg-quick@awg0"
             fail=$((fail+1))
         fi

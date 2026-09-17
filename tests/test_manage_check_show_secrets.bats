@@ -149,8 +149,9 @@ c_filter_fails() {
     [ "$status" -eq 1 ] || { echo "check passed with a failed secrets filter ($1): status $status $output"; return 1; }
     [[ "$output" == *"$want"* ]] || { echo "filter failure not named ($1), expected '$want': $output"; return 1; }
     [[ "$output" != *"$SECRET"* ]] || { echo "the key leaked when the filter failed ($1): $output"; return 1; }
-    local noise="obfuscation parameters not detected"
-    ru "$1" && noise="параметры обфускации не обнаружены"
+    # No leading capital: the phrase must match however the line starts.
+    local noise="bfuscation parameters not detected"
+    ru "$1" && noise="араметры обфускации не обнаружены"
     [[ "$output" != *"$noise"* ]] || { echo "a hidden output was judged as missing parameters ($1): $output"; return 1; }
 }
 @test "check: a failed secrets filter fails check and shows nothing unfiltered, both twins" {

@@ -13,7 +13,8 @@
 #
 # Harness: the whole awg_common.sh is sourced (the real safe_load_config and the
 # real marker reader, so the init file is what decides), the manage functions are
-# lifted out of the script, and every system command is a stub in front of PATH.
+# lifted out of the script, and every service and network command is a stub in
+# front of PATH.
 # Each case runs both twins.
 
 bats_require_minimum_version 1.5.0
@@ -27,13 +28,17 @@ _make_stubs() {
     printf '#!/usr/bin/env bash\necho 1\n' > "$bin/sysctl"
     printf '#!/usr/bin/env bash\necho "amneziawg 155648 0"\n' > "$bin/lsmod"
     printf '#!/usr/bin/env bash\necho "Status: active"\necho "39743/udp ALLOW Anywhere"\n' > "$bin/ufw"
+    # "-" leaves the line out, the way awg show omits a zero value.
+    local jmin_line="echo \"  jmin: ${jmin}\"" jmax_line="echo \"  jmax: ${jmax}\""
+    [[ "$jmin" == "-" ]] && jmin_line=":"
+    [[ "$jmax" == "-" ]] && jmax_line=":"
     cat > "$bin/awg" <<EOF
 #!/usr/bin/env bash
 echo "interface: awg0"
 echo "  public key: PUBLICKEYKEEPAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 echo "  jc: 4"
-echo "  jmin: ${jmin}"
-echo "  jmax: ${jmax}"
+${jmin_line}
+${jmax_line}
 exit 0
 EOF
     chmod +x "$bin"/*
@@ -170,6 +175,8 @@ s_31() {
     [ "$status" -eq 0 ] || { echo "show failed ($1): $output"; return 1; }
     [[ "$output" == *"$(gen_line "$1"): 3.1"* ]] || { echo "no generation line in show ($1): $output"; return 1; }
     [[ "$output" == *"jc: 4"* ]] || { echo "awg show output missing ($1): $output"; return 1; }
+    local head="${output%%jc: 4*}"
+    [[ "$head" == *"$(gen_line "$1"): 3.1"* ]] || { echo "the generation came after the dump ($1): $output"; return 1; }
 }
 @test "show: prints the generation before the interface dump, both twins" {
     both s_31
@@ -178,10 +185,12 @@ s_31() {
 s_broken() {
     _write_init "export AWG_PROTOCOL='9.9'"
     run _run "$1" show_awg_status 0
+    [ "$status" -eq 1 ] || { echo "show succeeded with an unreadable marker ($1): status $status"; return 1; }
+    [[ "$output" == *"jc: 4"* ]] || { echo "the dump was hidden by the marker error ($1): $output"; return 1; }
     [[ "$output" == *"ERR: "*"AWG_PROTOCOL"*"$(unreadable_text "$1")"* ]] || { echo "no unreadable-marker error in show ($1): $output"; return 1; }
     [[ "$output" != *"$(gen_line "$1"): 2.0"* ]] || { echo "a broken marker was shown as 2.0 ($1): $output"; return 1; }
 }
-@test "show: an unreadable marker is reported, never shown as 2.0, both twins" {
+@test "show: an unreadable marker is reported, fails the command, never shown as 2.0, both twins" {
     both s_broken
 }
 
@@ -192,6 +201,8 @@ d_31() {
     run _run "$1" diagnose_server 0
     local want
     if ru "$1"; then want="Поколение конфигурации: 3.1"; else want="Configuration generation: 3.1"; fi
+    [ "$status" -eq 0 ] || { echo "diagnose failed on a healthy stub ($1): $output"; return 1; }
+    [[ "$output" == *"FAIL=0"* ]] || { echo "a FAIL counted on a healthy stub ($1): $output"; return 1; }
     [[ "$output" == *"[INFO] $want"* ]] || { echo "no generation line in diagnose ($1): $output"; return 1; }
 }
 @test "diagnose: prints the configuration generation as INFO, both twins" {
@@ -202,6 +213,8 @@ d_broken() {
     _write_init "export AWG_PROTOCOL='9.9'"
     run _run "$1" diagnose_server 0
     [[ "$output" == *"[FAIL] "*"AWG_PROTOCOL"*"$(unreadable_text "$1")"* ]] || { echo "no FAIL for the unreadable marker ($1): $output"; return 1; }
+    [ "$status" -eq 1 ] || { echo "diagnose passed with an unreadable marker ($1)"; return 1; }
+    [[ "$output" == *"FAIL=1"* ]] || { echo "the FAIL was not counted ($1): $output"; return 1; }
 }
 @test "diagnose: an unreadable marker is a FAIL line, both twins" {
     both d_broken
@@ -212,6 +225,8 @@ d_jmin_gt_jmax() {
     run _run "$1" diagnose_server 0 90 50
     [[ "$output" == *"[FAIL] "*"Jmin"*"90"*"Jmax"*"50"* ]] || { echo "Jmin > Jmax not reported ($1): $output"; return 1; }
     [[ "$output" == *"#225"* ]] || { echo "the upstream reference is missing ($1): $output"; return 1; }
+    [ "$status" -eq 1 ] || { echo "diagnose passed with Jmin > Jmax ($1)"; return 1; }
+    [[ "$output" == *"FAIL=1"* ]] || { echo "the FAIL was not counted ($1): $output"; return 1; }
 }
 @test "diagnose: live Jmin greater than Jmax is a FAIL line, both twins" {
     both d_jmin_gt_jmax
@@ -222,9 +237,43 @@ d_jmin_le_jmax() {
     run _run "$1" diagnose_server 0 50 50
     [[ "$output" != *"#225"* ]] || { echo "equal Jmin and Jmax reported as a defect ($1): $output"; return 1; }
     [[ "$output" == *"Jmin=50 Jmax=50"* ]] || { echo "interface was not read ($1): $output"; return 1; }
+    [ "$status" -eq 0 ] || { echo "diagnose failed on Jmin = Jmax ($1): $output"; return 1; }
 }
 @test "diagnose: Jmin equal to Jmax is not reported, both twins" {
     both d_jmin_le_jmax
+}
+
+d_jmax_missing() {
+    # awg show omits a zero jmax. Jmin without Jmax is the same invalid pair,
+    # and the likeliest result of a hand edit.
+    _write_init ""
+    run _run "$1" diagnose_server 0 90 -
+    [[ "$output" == *"[FAIL] "*"Jmin"*"90"*"Jmax"*"0"*"#225"* ]] || { echo "Jmin without Jmax not reported ($1): $output"; return 1; }
+    [ "$status" -eq 1 ] || { echo "diagnose passed with Jmin and no Jmax ($1)"; return 1; }
+}
+@test "diagnose: Jmin without a Jmax line is the same FAIL, both twins" {
+    both d_jmax_missing
+}
+
+d_both_missing() {
+    _write_init ""
+    run _run "$1" diagnose_server 0 - -
+    [[ "$output" != *"#225"* ]] || { echo "no junk sizes reported as a defect ($1): $output"; return 1; }
+    [ "$status" -eq 0 ] || { echo "diagnose failed without junk sizes ($1): $output"; return 1; }
+}
+@test "diagnose: no Jmin and no Jmax lines is not a defect, both twins" {
+    both d_both_missing
+}
+
+d_jmin_nonnumeric() {
+    _write_init ""
+    run _run "$1" diagnose_server 0 12x 50
+    [[ "$output" != *"#225"* ]] || { echo "a non-numeric Jmin produced a verdict ($1): $output"; return 1; }
+    [[ "$output" != *"syntax error"* && "$output" != *"value too great"* ]] || { echo "arithmetic on a non-number ($1): $output"; return 1; }
+    [ "$status" -eq 0 ] || { echo "diagnose failed on a non-numeric Jmin ($1): $output"; return 1; }
+}
+@test "diagnose: a non-numeric Jmin is neither compared nor an error, both twins" {
+    both d_jmin_nonnumeric
 }
 
 # ------------------------------------------------------------------ headers
@@ -235,7 +284,7 @@ d_jmin_le_jmax() {
         for fn in check_server show_awg_status diagnose_server usage; do
             body=$(awk "/^${fn}\\(\\) \\{/,/^\\}/" "$BATS_TEST_DIRNAME/../$f")
             [ -n "$body" ] || { echo "$fn not found in $f"; return 1; }
-            if grep -nE '(log|log_warn|echo)[^#]*(AmneziaWG|AWG) 2\.0' <<< "$body"; then
+            if grep -vE '^[[:space:]]*#' <<< "$body" | grep -nE '(AmneziaWG|AWG) 2\.0'; then
                 echo "generation literal left in $fn ($f)"
                 return 1
             fi
@@ -243,11 +292,13 @@ d_jmin_le_jmax() {
     done
 }
 
-@test "render: no generated config writes RandomTrailers" {
-    # RandomTrailers cuts off 3.0 clients; it must never appear by default.
+@test "render: no source line writes RandomTrailers or DisableCookies" {
+    # Either one in a config cuts off 3.0 clients, even with the value off; the
+    # rendered configs are checked in test_awg31_vpn_uri.bats.
     local f
     for f in awg_common.sh awg_common_en.sh install_amneziawg.sh install_amneziawg_en.sh; do
-        run grep -nE '^[[:space:]]*(echo[[:space:]]+"|printf[^"]*")?RandomTrailers[[:space:]]*=' "$BATS_TEST_DIRNAME/../$f"
+        # Any form: a bare heredoc line, echo "...", printf '...'. Comment lines aside.
+        run grep -nE '^[^#]*(RandomTrailers|DisableCookies)[[:space:]]*=' "$BATS_TEST_DIRNAME/../$f"
         [ "$status" -eq 1 ] || { echo "RandomTrailers written by $f: $output"; return 1; }
     done
 }

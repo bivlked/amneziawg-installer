@@ -1312,11 +1312,15 @@ _log_service_status() {
 show_awg_status() {
     log "AmneziaWG status..."
     local -a _st
-    local _awg_err="" _gen=""
+    # An unreadable marker does not hide the awg show output, but the command
+    # fails: otherwise automation reading the exit code would see success for an
+    # unknown generation, while check and diagnose fail in the same case.
+    local _awg_err="" _gen="" _gen_rc=0
     if _gen=$(_awg_generation_from_init "$CONFIG_FILE"); then
         log "Installation protocol generation: $_gen (from the AWG_PROTOCOL marker)"
     else
         log_error "The AWG_PROTOCOL generation marker in $CONFIG_FILE cannot be read: the installation generation is unknown"
+        _gen_rc=1
     fi
     timeout 10 awg show 2>&1 | _mask_report_secrets
     _st=("${PIPESTATUS[@]}")
@@ -1339,7 +1343,7 @@ show_awg_status() {
         log_error "$_awg_err"
         return 1
     fi
-    return 0
+    return "$_gen_rc"
 }
 
 check_server() {
@@ -1853,8 +1857,11 @@ diagnose_server() {
         # Jmax it writes a junk packet past the end of a buffer sized Jmax
         # (amneziawg-linux-kernel-module#225). Our generator never produces such
         # a pair; it only appears after a hand edit of awg0.conf.
-        if [[ "$jmin" =~ ^[0-9]+$ && "$jmax" =~ ^[0-9]+$ && "$jmin" -gt "$jmax" ]]; then
-            _diag_line FAIL "Jmin ($jmin) is greater than Jmax ($jmax): with this pair the kernel module writes past a buffer end (amneziawg-linux-kernel-module#225)"
+        # awg show prints jmin and jmax only when non-zero, so a missing line
+        # means 0: Jmin without Jmax (or Jmax = 0) is the same invalid pair.
+        local _jmin_n="${jmin:-0}" _jmax_n="${jmax:-0}"
+        if [[ "$_jmin_n" =~ ^[0-9]+$ && "$_jmax_n" =~ ^[0-9]+$ && "$_jmin_n" -gt "$_jmax_n" ]]; then
+            _diag_line FAIL "Jmin ($_jmin_n) is greater than Jmax ($_jmax_n): the pair is invalid, and the kernel module writes past a buffer end with it (amneziawg-linux-kernel-module#225)"
             echo "        Fix: in awg0.conf make Jmax no less than Jmin, then sudo systemctl restart awg-quick@awg0"
             fail=$((fail+1))
         fi

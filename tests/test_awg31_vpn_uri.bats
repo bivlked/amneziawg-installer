@@ -278,21 +278,36 @@ u_31_worst_case() {
     # Values reach the snippet through the environment: they carry angle
     # brackets, spaces and commas, and nesting them into quoted code breaks.
     # They go into the init, because generate_vpn_uri reloads it.
-    out=$(WC_AIPS="$aips" WC_I1="$i1" lib_run "$lib" 3.1 '
-        sed -i "/^export AWG_I1=/d; /^export AWG_CPA=/d; /^export ALLOWED_IPS/d; /^export DISABLE_IPV6=/d" "$CONFIG_FILE"
+    # Keys are random: placeholder keys compress well and understated the size
+    # by about 250 bytes. The endpoint is a 253-character name, the DNS maximum,
+    # and the server name takes the 128 bytes the installer allows.
+    local k_srv k_cli k_hpk k_psk fqdn name label
+    k_srv=$(head -c 32 /dev/urandom | base64); k_cli=$(head -c 32 /dev/urandom | base64)
+    k_hpk=$(head -c 32 /dev/urandom | base64); k_psk=$(head -c 32 /dev/urandom | base64)
+    label() { head -c 400 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c "$1"; }
+    fqdn="$(label 63).$(label 63).$(label 63).$(label 61)"
+    name=$(head -c 400 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 128)
+    [ "${#fqdn}" -eq 253 ] && [ "${#name}" -eq 128 ] || { echo "random inputs came out short"; return 1; }
+    out=$(WC_AIPS="$aips" WC_I1="$i1" WC_SRV="$k_srv" WC_CLI="$k_cli" WC_HPK="$k_hpk" WC_PSK="$k_psk" \
+          WC_FQDN="$fqdn" WC_NAME="$name" lib_run "$lib" 3.1 '
+        sed -i "/^export AWG_I1=/d; /^export AWG_CPA=/d; /^export ALLOWED_IPS/d; /^export DISABLE_IPV6=/d; /^export AWG_J/d; /^export AWG_S[1-4]=/d" "$CONFIG_FILE"
         {
             printf "export ALLOWED_IPS_MODE=2\nexport ALLOWED_IPS=\"%s\"\n" "$WC_AIPS"
             printf "export DISABLE_IPV6=0\nexport ALLOW_IPV6_TUNNEL=1\nexport IPV6_SUBNET=fddd:2c4:2c4:2c4::/64\n"
             printf "export AWG_I1=\"%s\"\nexport AWG_CPA=10000-65535\n" "$WC_I1"
+            printf "export AWG_Jc=128\nexport AWG_Jmin=1280\nexport AWG_Jmax=1280\n"
+            printf "export AWG_S1=150\nexport AWG_S2=149\nexport AWG_S3=64\nexport AWG_S4=32\n"
+            printf "export AWG_SERVER_NAME=\"%s\"\n" "$WC_NAME"
         } >> "$CONFIG_FILE"
+        printf "%s\n" "$WC_SRV" > "$AWG_DIR/server_public.key"
+        printf "%s\n" "$WC_HPK" > "$AWG_DIR/server_hpk.key"
         # The live server config is the source of the obfuscation values, so it
         # is rendered again from the rewritten init.
         rm -f "$SERVER_CONF_FILE"
         safe_load_config "$CONFIG_FILE" >/dev/null 2>&1 || { echo "RC=93"; exit 0; }
         render_server_config || { echo "RC=94"; exit 0; }
-        export CLIENT_PSK="QwErTyUiOpAsDfGhJkLzXcVbNm1234567890qwertyu="
-        render_client_config c1 10.9.9.254 CLIENTPRIVKEYPLACEHOLDERAAAAAAAAAAAAAAAAAAA= \
-            SRVPUBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= 203.0.113.100 65535 fddd:2c4:2c4:2c4::fffe \
+        export CLIENT_PSK="$WC_PSK"
+        render_client_config c1 10.9.9.254 "$WC_CLI" "$WC_SRV" "$WC_FQDN" 65535 fddd:2c4:2c4:2c4::fffe \
             || { echo "RC=92"; exit 0; }
         generate_vpn_uri c1; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "worst-case uri not created ($lib): $out"; return 1; }
@@ -301,6 +316,9 @@ u_31_worst_case() {
     grep -q 'fddd:2c4:2c4:2c4::fffe' "$d/c1.conf" || { echo "the worst case lost its IPv6 address ($lib)"; return 1; }
     grep -qF "$i1" "$d/c1.conf" || { echo "the worst case lost its I1 ($lib)"; return 1; }
     grep -q '32.0.0.0/3' "$d/c1.conf" || { echo "the worst case lost the mode-2 routes ($lib)"; return 1; }
+    grep -qF "$k_hpk" "$d/c1.conf" || { echo "the worst case lost its random key ($lib)"; return 1; }
+    grep -qF "$fqdn" "$d/c1.conf" || { echo "the worst case lost its endpoint ($lib)"; return 1; }
+    grep -q '^Jc = 128' "$d/c1.conf" || { echo "the worst case lost its junk sizes ($lib)"; return 1; }
     len=$(wc -c < "$d/c1.vpnuri")
     echo "worst-case 3.1 vpn:// is $len bytes, cap 2953, headroom $((2953 - len)) ($lib)"
     [ "$len" -le 2953 ] || { echo "worst-case 3.1 link exceeds one QR code ($lib): $len"; return 1; }
@@ -314,8 +332,17 @@ u_31_worst_case() {
     # Pins the ceiling the budget above is measured against. With other flags the
     # capacity is different, and the budget test would compare against a number
     # that is no longer true.
-    command -v qrencode &>/dev/null || skip "qrencode not available"
     local d="$BATS_TEST_TMPDIR/qr" lib
+    # The libraries really use these flags; this part needs no qrencode.
+    for lib in awg_common.sh awg_common_en.sh; do
+        grep -qF 'qrencode -8 -t png -l L -s 6 -m 4 -o "$tmp_png" < "$uri_file"' "$BATS_TEST_DIRNAME/../$lib"
+    done
+    if ! command -v qrencode &>/dev/null; then
+        # CI installs qrencode, so a missing binary there is a broken runner,
+        # not a reason to pass without measuring.
+        [[ -z "${CI:-}" ]] || { echo "qrencode is missing in CI"; return 1; }
+        skip "qrencode not available"
+    fi
     mkdir -p "$d"
     echo "# $(qrencode --version 2>&1 | head -1)" >&3
     head -c 2953 /dev/zero | tr '\0' 'A' > "$d/ok.txt"
@@ -324,10 +351,6 @@ u_31_worst_case() {
     [ "$status" -eq 0 ]
     run qrencode -8 -t png -l L -s 6 -m 4 -o "$d/over.png" < "$d/over.txt"
     [ "$status" -ne 0 ]
-    # And the libraries really use these flags.
-    for lib in awg_common.sh awg_common_en.sh; do
-        grep -qF 'qrencode -8 -t png -l L -s 6 -m 4 -o "$tmp_png" < "$uri_file"' "$BATS_TEST_DIRNAME/../$lib"
-    done
 }
 
 u_qr_refusal_advice() {
@@ -344,4 +367,21 @@ u_qr_refusal_advice() {
 }
 @test "qr vpn uri: a refused QR fails and points at the .vpnuri file, both twins" {
     both u_qr_refusal_advice
+}
+
+u_render_no_trailers() {
+    local lib="$1" d out
+    d=$(dir_of "$lib")
+    out=$(lib_run "$lib" 3.1 'echo "RC=0"')
+    [[ "$out" == *"RC=0"* ]] || { echo "3.1 render failed ($lib): $out"; return 1; }
+    grep -q 'HeaderProtectionKey' "$d/awg0.conf" && grep -q 'HeaderProtectionKey' "$d/c1.conf" \
+        || { echo "not a 3.1 render, the check below would mean nothing ($lib)"; return 1; }
+    if grep -nE '^[[:space:]]*(RandomTrailers|DisableCookies)[[:space:]]*=' "$d/awg0.conf" "$d/c1.conf"; then
+        echo "a rendered 3.1 config carries RandomTrailers or DisableCookies ($lib)"
+        return 1
+    fi
+}
+@test "render 3.1: neither the server nor the client config carries RandomTrailers or DisableCookies, both twins" {
+    # Either line, even with the value off, cuts off every 3.0 client.
+    both u_render_no_trailers
 }
