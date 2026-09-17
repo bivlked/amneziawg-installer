@@ -139,7 +139,7 @@ break_arch_detection() {
 
 @test "ARM wins over an old kernel - the reason given is the permanent one" {
     # A modern kernel on ARM passes the kernel check, so without the arm branch
-    # the answer would be not_implemented_yet today and empty after phase 3 -
+    # the answer would be not_implemented_yet today and empty after phase 5 -
     # that is, it would ship on ARM. And on an old kernel the arm code must still
     # win, because upgrading the kernel would not make ARM shippable.
     load_gate
@@ -159,7 +159,7 @@ break_arch_detection() {
 
 @test "an architecture we never measured blocks, rather than falling through" {
     # The allow list is the point. The PPA builds the dkms package for these
-    # too, so a deny list would hand them a 3.1 profile after phase 3.
+    # too, so a deny list would hand them a 3.1 profile once the path opens.
     load_gate
     for arch in riscv64 ppc64el s390x i386 loong64; do
         run awg31_environment_blocker pre "$arch" "6.14.0-generic"
@@ -198,10 +198,12 @@ break_arch_detection() {
     [ "$output" = "arch_unknown" ]
 }
 
-@test "a suitable environment reports not_implemented_yet until phase 3" {
-    # The tripwire for the phase 3 change. When the 3.1 generator lands, this
-    # assertion MUST be rewritten to expect an empty string; if it is not, the
-    # suite goes red and nobody ships a half-wired default.
+@test "a suitable environment reports not_implemented_yet until phase 5" {
+    # The tripwire for the phase 5 change. The 3.1 generator, key and render
+    # already exist; the path stays closed until downgrade and the lifecycle of
+    # both generations are in. When it opens, this assertion MUST be rewritten to
+    # expect an empty string; if it is not, the suite goes red and nobody ships a
+    # half-wired default.
     load_gate
     run awg31_environment_blocker pre "amd64" "6.14.0-generic"
     [ "$status" -eq 0 ]
@@ -240,8 +242,8 @@ break_arch_detection() {
 
 @test "post: a fully suitable environment still reports not_implemented_yet" {
     # The second half of the tripwire. If post ever answers empty before the
-    # generator exists, the installer would be told to write a 3.1 profile it
-    # cannot produce.
+    # path opens, the installer would be told to write a 3.1 profile that has no
+    # downgrade and no lifecycle behind it.
     load_gate
     make_awg_stub 31
     run awg31_environment_blocker post "amd64" "6.14.0-generic"

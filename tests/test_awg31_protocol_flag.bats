@@ -232,6 +232,52 @@ run_argparse() {
     done
 }
 
+@test "no refusal claims the installer lacks a 3.1 generator, or promises a later release" {
+    # The arm, arch_unsupported and not_implemented_yet texts used to say that
+    # this installer version carries no 3.1 generator. That stopped being true
+    # when the generator landed while the path stayed closed on purpose, and the
+    # sentence silently turned false. A refusal says what the reader gets: no
+    # 3.1 profile from this version.
+    # No refusal may hint that a release is on its way either ("yet", "пока",
+    # "an installer version that can already emit it"): a refusal is a statement
+    # about this version, not a roadmap.
+    # This checks those regressions by name, not the general property that a
+    # refusal describes no internal parts. The architecture facts are pinned in
+    # the neighbouring tests. The Cyrillic stems are matched without case
+    # folding: ${x,,} leaves Cyrillic alone in the C locale.
+    local script code lower
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        for code in kernel arm arch_unsupported arch_unknown tools_old not_implemented_yet internal_error; do
+            run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message '$code'"
+            [ "$status" -eq 0 ]
+            [ -n "$output" ]
+            lower="${output,,}"
+            [[ "$output" != *"енератор"* ]] || { echo "$code talks about the generator ($script): $output"; return 1; }
+            [[ "$lower" != *"generator"* ]] || { echo "$code talks about the generator ($script): $output"; return 1; }
+            [[ "$output" != *"пока"* && "$output" != *"Пока"* && "$lower" != *" yet"* && "$lower" != "yet"* ]] \
+                || { echo "$code promises a later release ($script): $output"; return 1; }
+            [[ "$output" != *"уже умеет"* && "$lower" != *"can already"* ]] \
+                || { echo "$code points to a version that already does 3.1 ($script): $output"; return 1; }
+        done
+        run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message not_implemented_yet"
+        [[ "$output" == *"--protocol=2.0"* ]] || { echo "not_implemented_yet lost the way out ($script): $output"; return 1; }
+        [[ "$output" == *"3.1"* ]] || { echo "not_implemented_yet no longer names the profile ($script): $output"; return 1; }
+    done
+}
+
+@test "the --help line about 3.1 promises no later release" {
+    # The help text said the version does not emit 3.1 "yet" ("ещё"), the same
+    # hint the refusals used to carry.
+    local script out line
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        out=$(HELP_EXIT_RC=0 bash -c "$(func_from "$script" show_help); show_help" 2>&1)
+        line=$(grep -i "3\.1" <<< "$out" | grep -iv "protocol=2.0|3.1\|--protocol 3.1")
+        [ -n "$line" ] || { echo "no help line about 3.1 in $script"; return 1; }
+        [[ "$line" != *"ещё"* && "$line" != *"пока"* && "${line,,}" != *" yet"* ]] || { echo "help promises a later release ($script): $line"; return 1; }
+    done
+}
+
 @test "an unknown reason code refuses and repeats the code" {
     build_harness
     run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message future_code"
@@ -446,7 +492,7 @@ run_argparse() {
 
 # ------------------------------------------------------- the step 3 call site
 
-# 🔴 This is the branch that comes alive in phase 3. Today a 3.1 marker never
+# 🔴 This is the branch that comes alive in phase 5. Today a 3.1 marker never
 # reaches step 3, so nothing but this test proves the call site exists and is
 # guarded by the marker. Deleting the call makes the first test red; removing
 # the guard makes the second one red.

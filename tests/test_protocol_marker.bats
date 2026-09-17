@@ -296,7 +296,7 @@ render_init() {
     [ "$output" = "2.0" ]
 }
 
-@test "installer RU/EN: a 3.1 marker is refused until the 3.1 generator exists (no 2.0 config under a 3.1 label)" {
+@test "installer RU/EN: a 3.1 marker is refused while the 3.1 path is closed" {
     local f body assign_line guard_line
     for f in "$INSTALL_RU" "$INSTALL_EN"; do
         body=$(initialize_setup_body "$f")
@@ -305,6 +305,10 @@ render_init() {
         [ -n "$guard_line" ] || { echo "$f: no 3.1 refusal"; false; }
         [ "$guard_line" -gt "$assign_line" ] || { echo "$f: refusal before the assignment"; false; }
         echo "$body" | sed -n "$((guard_line+1))p" | grep -q '^[[:space:]]*die "' || { echo "$f: refusal does not die"; false; }
+        # The refusal speaks about this version only and does not send the
+        # reader to a version "that supports 3.1", which it cannot promise.
+        echo "$body" | sed -n "$((guard_line+1))p" | grep -q '2\.0' || { echo "$f: refusal does not say this version does 2.0"; false; }
+        ! echo "$body" | sed -n "$((guard_line+1))p" | grep -qiE 'поддерживает 3\.1|supports 3\.1' || { echo "$f: refusal points to a version that supports 3.1"; false; }
     done
 }
 

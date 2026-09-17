@@ -69,10 +69,11 @@ CLI_PROTOCOL=""
 # our own test missed it because it passed a space, not an empty string.
 CLI_PROTOCOL_SET=0
 # 🔴 The default of this PHASE, not of the final release. eng.md describes
-# v6.0.0, where the default is 3.1; the switch is a separate, later phase,
-# after the third-line generator works. Until then the default
-# is 2.0, and that is not a forgotten edit: a 3.1 marker without a 3.1
-# generator would produce a second-line config under a third-line label.
+# v6.0.0, where the default is 3.1; the switch is a separate, later phase
+# (phase 5), after the third-line path is ready as a whole, with downgrade and
+# the lifecycle of both generations. Until then the default is 2.0, and that
+# is not a forgotten edit: the 3.1 generator and render already exist, but a
+# profile with no way back must not be handed out.
 PROTOCOL_DEFAULT="2.0"
 
 # --- Auto-cleanup of temporary files ---
@@ -359,7 +360,7 @@ Options:
                         of a running install changes only by reinstalling and
                         reissuing every client profile. A matching one is
                         accepted quietly.
-                        This version does not emit 3.1 yet - it refuses and
+                        This version does not emit 3.1 - it refuses and
                         names the reason
   -y, --yes             Auto-confirm (reboots, UFW, etc.)
   -f, --force           Force reinstall on top of an already-running AmneziaWG
@@ -752,23 +753,26 @@ awg31_environment_blocker() {
         # a temporary interface and stand time, while deriving the line from the
         # module version string is FORBIDDEN by the 30 aug 2026 measurement: the
         # very same string 3.1.20260812 was observed on two different builds.
-        # The module_line2 code arrives together with the real probe in phase 3.
+        # The probe is feasible (a temporary interface of type amneziawg can be
+        # created, checked on the stand 7 sep 2026) but not written yet; until
+        # then there is no module_line2 code.
         :
     fi
 
-    # PHASE 3: the 3.1 profile generator exists, but the key and writing the
-    # profile into the config do not yet, so the environment may be as suitable
-    # as it likes - there is nothing to hand out. This check
-    # is LAST on purpose: that way an operator on an unsuitable platform gets the
-    # durable reason, the one that stays true after phase 3, instead of a
-    # temporary one. This line goes away in the same change that adds the key
-    # and writing the profile into the config, and removing it must turn red the
-    # test that watches for it.
+    # UNTIL PHASE 5: the 3.1 profile generator, the header protection key and
+    # writing the profile into the configs already exist, but it is too early to
+    # hand the third line to people - there is no downgrade and no lifecycle of
+    # both generations (phase 4). So the environment may be as suitable as it
+    # likes and the installer still refuses. This check is LAST on purpose: that
+    # way an operator on an unsuitable platform gets the durable reason, the one
+    # that stays true after the path opens, instead of a temporary one. This line
+    # goes away in phase 5, and removing it must turn red the test that watches
+    # for it.
     printf 'not_implemented_yet'
     return 0
 
     # 🔴 The explicit "environment fits" terminal: empty output, status 0.
-    # Unreachable today, and here for phase 3: delete the TWO lines above
+    # Unreachable today, and here for phase 5: delete the TWO lines above
     # without leaving this one and the function's last command becomes the
     # stage check, which is false on pre - the function would return 1 with
     # empty output. The refusal would be safe, but the third line would be
@@ -794,7 +798,7 @@ _awg31_blocker_message() {
     local code="${1-}"
     case "$code" in
         kernel)
-            printf '%s' "The AmneziaWG 3.1 profile will not run on this server: kernel $(uname -r) is older than 6.7. On such kernels the installer deliberately builds the proven second-line module, and the third line will not work here. Way out: install with --protocol=2.0, which is a working and supported path. If you need the third line on this very machine, it takes a system with kernel 6.7 or newer AND an installer version that can already emit it."
+            printf '%s' "The AmneziaWG 3.1 profile will not run on this server: kernel $(uname -r) is older than 6.7. On such kernels the installer deliberately builds the proven second-line module, and the third line will not work here. Way out: install with --protocol=2.0, which is a working and supported path. If you need the third line on this very machine, it takes a system with kernel 6.7 or newer; note that this installer version emits no 3.1 profile on any machine."
             ;;
         arm)
             # 🔴 The text makes NO claim about which module gets installed here,
@@ -806,7 +810,7 @@ _awg31_blocker_message() {
             # module arrives from the PPA. A refusal must explain the REASON FOR THE
             # REFUSAL, not describe someone else's machine from memory. The precise
             # wording about prebuilts lives in the README.
-            printf '%s' "An AmneziaWG 3.1 profile is not issued on ARM: this architecture has not been measured for the third line, and the decision is deliberate until a separate measurement. Upgrading packages changes nothing. Separately, so you do not look for the way out in the wrong place: this installer version carries no 3.1 generator, so no architecture gets the third line right now. Way out: --protocol=2.0."
+            printf '%s' "An AmneziaWG 3.1 profile is not issued on ARM: this architecture has not been measured for the third line, and the decision is deliberate until a separate measurement. Upgrading packages changes nothing. Separately, so you do not look for the way out in the wrong place: no architecture gets a 3.1 profile from this installer version. Way out: --protocol=2.0."
             ;;
         arch_unsupported)
             # 🔴 "REQUIRES x86_64", not "ships for x86_64 only": today the 3.1
@@ -814,7 +818,7 @@ _awg31_blocker_message() {
             # not_implemented_yet. The check order is such that the owner of an ARM
             # or exotic box sees THIS text and never sees not_implemented_yet, so
             # they would leave believing x86_64 already gets the third line.
-            printf '%s' "The AmneziaWG 3.1 profile requires x86_64, and this machine is '$(_awg31_host_arch)'. We have not measured it and will not emit the third line there. Separately, so you do not change machines for nothing: this installer version carries no 3.1 generator, so no architecture gets the third line right now. Way out: --protocol=2.0."
+            printf '%s' "The AmneziaWG 3.1 profile requires x86_64, and this machine is '$(_awg31_host_arch)'. We have not measured it and will not emit the third line there. Separately, so you do not change machines for nothing: no architecture gets a 3.1 profile from this installer version. Way out: --protocol=2.0."
             ;;
         arch_unknown)
             printf '%s' "The machine architecture could not be determined, and not knowing it is not the same as knowing it fits. Way out: --protocol=2.0. If you believe this is wrong, send the output of 'dpkg --print-architecture' and 'uname -m'."
@@ -823,7 +827,7 @@ _awg31_blocker_message() {
             printf '%s' "The installed awg tools do not understand third-line parameters. This is the ONLY reason on the list that an upgrade fixes: apt-get update && apt-get install --only-upgrade amneziawg-tools, then run the installer again. Or install with --protocol=2.0."
             ;;
         not_implemented_yet)
-            printf '%s' "This installer version (v${SCRIPT_VERSION}) does not carry the AmneziaWG 3.1 generator yet: your environment fits, we are the ones with nothing to emit. It is not your machine. Way out for now: --protocol=2.0."
+            printf '%s' "This installer version (v${SCRIPT_VERSION}) does not issue the AmneziaWG 3.1 profile: your environment fits, and it is not your machine. Way out: --protocol=2.0."
             ;;
         internal_error)
             printf '%s' "Internal error in the environment gate: the gate itself got invalid input. This is our defect, not a problem with your machine. Install with --protocol=2.0 and report it with the installer output attached."
@@ -3752,12 +3756,12 @@ initialize_setup() {
     # check.
     local _proto_raw="${AWG_PROTOCOL:-}"
     AWG_PROTOCOL=$(awg_installed_protocol "$CONFIG_FILE") || die "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read (value '${_proto_raw}'; 2.0 and 3.1 are allowed, the line must look like export AWG_PROTOCOL='2.0'; found: $(grep -niE '^[[:space:]]*(export[[:space:]]+)?AWG_PROTOCOL' "$CONFIG_FILE" 2>/dev/null | head -3 | tr '\n' ' ')). Fix the file by hand, stating the generation the server actually runs."
-    # The third-line profile is not implemented in this installer version yet: a
-    # 3.1 marker without a 3.1 generator would produce "a 2.0 config under a 3.1
-    # label" - the same silent substitution the marker guards against. Refuse
-    # until the generator exists.
+    # The third-line path is closed in this installer version: the 3.1 generator
+    # and render already exist, but without downgrade and the lifecycle of both
+    # generations a 3.1 install would be left with no way back. Refuse until the
+    # path opens (phase 5).
     if [[ "$AWG_PROTOCOL" == "3.1" ]]; then
-        die "This installation is marked as AmneziaWG 3.1 (AWG_PROTOCOL in $CONFIG_FILE), and this installer version only supports 2.0. Use an installer version that supports 3.1, or do not run this one on top of a third-line server."
+        die "This installation is marked as AmneziaWG 3.1 (AWG_PROTOCOL in $CONFIG_FILE), and this installer version only supports 2.0. Do not run it on top of a server marked as third line."
     fi
 
     # The installation generation and, when the third line is requested, the
@@ -5230,10 +5234,10 @@ step3_check_module() {
     # and 3, so the generation comes from the marker read afresh from disk, not
     # from the memory of an earlier run.
     #
-    # ⚠️ THE BRANCH COMES ALIVE IN PHASE 3, together with the profile generator.
+    # ⚠️ THE BRANCH COMES ALIVE IN PHASE 5, when the 3.1 path opens to people.
     # Today a 3.1 marker never reaches here: the flag is refused by stage pre at
     # step 0, and a config carrying a 3.1 marker is refused there too. It stands
-    # here in advance for one reason: forgetting it in phase 3 would mean
+    # here in advance for one reason: forgetting it in phase 5 would mean
     # shipping the third line on tools that cannot parse it, and hearing about it
     # from a user whose handshake silently never happens. A test calls it
     # directly with the marker injected, so the branch cannot rot unnoticed.
