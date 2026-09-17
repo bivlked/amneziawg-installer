@@ -2067,20 +2067,37 @@ _installed_boot_critical() {
 # Первый источник - выбор (selection) пакета в dpkg, то есть первое слово
 # Status: apt сам берёт удержание оттуда, и `hold ok not-installed` (метка на
 # ещё не установленном пакете) тоже удержание. Второй - список
-# `apt-mark showhold`, прочитанный в переменную целиком.
+# `apt-mark showhold`, прочитанный в переменную целиком, как запасной вариант:
+# он строится по тому же выбору, только через кэш apt.
 # 🔴 Список НЕ пропускается через конвейер в grep. Issue #285: на Debian 12
 # проверка `apt-mark showhold | grep -qx` отказывала при стоящем hold.
-# Причина не доказана, но один механизм воспроизводится: apt-mark пишет по
-# строке, grep -q выходит на первом совпадении, следующая запись получает
-# SIGPIPE, и под pipefail конвейер считается неуспешным, хотя строка найдена.
+# Причина у автора не доказана, но механизм воспроизводится и настоящим
+# apt-mark на длинном списке удержаний: он пишет по строке, grep -q выходит на
+# первом совпадении, и если в отсортированном списке после пакета есть ещё
+# удержанные, следующая запись получает SIGPIPE; под pipefail конвейер тогда
+# считается неуспешным, хотя строка найдена.
 # Упавший showhold за список не считается, даже если что-то напечатал:
 # без удержания в dpkg это остаётся отказом, а не догадкой в пользу hold.
+# Пустое имя - отказ: иначе пустая строка, которую добавляет <<<, совпала бы
+# с ним точно. Имя передаётся буквально (dpkg-query понимает его как маску, так
+# что без * ? [) и рассчитано на пакет одной архитектуры: для пакета в
+# нескольких архитектурах dpkg-query склеивает статусы без разделителя.
 _awg_pkg_held() {
-    local pkg="$1" status holds
+    local pkg="${1:-}" status holds
+    [[ -n "$pkg" ]] || return 1
     status=$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null) || status=""
     [[ "${status%% *}" == "hold" ]] && return 0
     holds=$(apt-mark showhold 2>/dev/null) || return 1
     grep -qxF -- "$pkg" <<< "$holds"
+}
+
+# _awg_hold_refusal_log <вывод apt-mark hold> : перед отказом показать, что
+# ответили apt-mark и dpkg. Без этого причина (блокировка, пакет без кандидата,
+# испорченная база dpkg) оставалась в /dev/null, а совет в тексте отказа мог
+# указывать не туда.
+_awg_hold_refusal_log() {
+    log_error "Ответ apt-mark hold: ${1:-<пусто>}"
+    log_error "Статус amneziawg-dkms в dpkg: $(dpkg-query -W -f='${Status}' amneziawg-dkms 2>&1)"
 }
 
 # _pkg_installed_ok : 0 только если пакет полностью установлен И настроен.
@@ -4632,12 +4649,14 @@ PPASRC
         # пути) притащила бы 3.0-dkms, и в системе оказались бы ДВА DKMS-дерева с
         # одним именем модуля amneziawg - пиновое 2.0 и пакетное 3.0. Это защитный
         # механизм, поэтому провал фатален (проверяем, что hold реально встал).
-        apt-mark hold amneziawg-dkms amneziawg >/dev/null 2>&1 || true
+        local _hold_out=""
+        _hold_out=$(apt-mark hold amneziawg-dkms amneziawg 2>&1) || true
         # Проверяем именно amneziawg-dkms - это несущий пакет: его РЕКОМЕНДУЕТ
         # amneziawg-tools и он несёт 3.0-модуль. Метапакет amneziawg держать не
         # обязательно (его Depends: amneziawg-dkms всё равно held), поэтому его
         # отдельно не верифицируем.
         if ! _awg_pkg_held amneziawg-dkms; then
+            _awg_hold_refusal_log "$_hold_out"
             die "Не удалось зафиксировать amneziawg-dkms в hold. Без этого установка amneziawg-tools подтянет из PPA модуль AmneziaWG 3.0 в обход выбранного пути. Прервано (проверьте apt/dpkg lock)."
         fi
     else
@@ -4677,8 +4696,10 @@ PPASRC
             # Два дерева с модулем ОДНОГО имени - ровно то, от чего hold нужен.
             # Достижимо: target-ы пребилдов ubuntu-2510-arm64 и
             # debian-trixie-arm64 - это ядра 6.7+.
-            apt-mark hold amneziawg-dkms amneziawg >/dev/null 2>&1 || true
+            local _hold_out=""
+            _hold_out=$(apt-mark hold amneziawg-dkms amneziawg 2>&1) || true
             if ! _awg_pkg_held amneziawg-dkms; then
+                _awg_hold_refusal_log "$_hold_out"
                 die "Не удалось зафиксировать amneziawg-dkms в hold перед установкой amneziawg-tools. Без этого рядом с предсобранным модулем встал бы модуль из PPA - два дерева с именем amneziawg. Проверьте apt/dpkg lock и запустите скрипт снова: предсобранный пакет уже установлен, шаг выполнится заново."
             fi
             install_packages "amneziawg-tools" "wireguard-tools" "qrencode"
