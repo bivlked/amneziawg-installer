@@ -2063,6 +2063,26 @@ _installed_boot_critical() {
     done
 }
 
+# _awg_pkg_held <пакет> : 0, если у пакета стоит удержание (hold), иначе 1.
+# Первый источник - выбор (selection) пакета в dpkg, то есть первое слово
+# Status: apt сам берёт удержание оттуда, и `hold ok not-installed` (метка на
+# ещё не установленном пакете) тоже удержание. Второй - список
+# `apt-mark showhold`, прочитанный в переменную целиком.
+# 🔴 Список НЕ пропускается через конвейер в grep. Issue #285: на Debian 12
+# проверка `apt-mark showhold | grep -qx` отказывала при стоящем hold.
+# Причина не доказана, но один механизм воспроизводится: apt-mark пишет по
+# строке, grep -q выходит на первом совпадении, следующая запись получает
+# SIGPIPE, и под pipefail конвейер считается неуспешным, хотя строка найдена.
+# Упавший showhold за список не считается, даже если что-то напечатал:
+# без удержания в dpkg это остаётся отказом, а не догадкой в пользу hold.
+_awg_pkg_held() {
+    local pkg="$1" status holds
+    status=$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null) || status=""
+    [[ "${status%% *}" == "hold" ]] && return 0
+    holds=$(apt-mark showhold 2>/dev/null) || return 1
+    grep -qxF -- "$pkg" <<< "$holds"
+}
+
 # _pkg_installed_ok : 0 только если пакет полностью установлен И настроен.
 # Отличие от _pkg_present намеренное, и оно несимметрично по риску. Для СНИМКА
 # "распакован, но не настроен" - это присутствие: пакет есть, его надо
@@ -4617,7 +4637,7 @@ PPASRC
         # amneziawg-tools и он несёт 3.0-модуль. Метапакет amneziawg держать не
         # обязательно (его Depends: amneziawg-dkms всё равно held), поэтому его
         # отдельно не верифицируем.
-        if ! apt-mark showhold 2>/dev/null | grep -qx "amneziawg-dkms"; then
+        if ! _awg_pkg_held amneziawg-dkms; then
             die "Не удалось зафиксировать amneziawg-dkms в hold. Без этого установка amneziawg-tools подтянет из PPA модуль AmneziaWG 3.0 в обход выбранного пути. Прервано (проверьте apt/dpkg lock)."
         fi
     else
@@ -4658,7 +4678,7 @@ PPASRC
             # Достижимо: target-ы пребилдов ubuntu-2510-arm64 и
             # debian-trixie-arm64 - это ядра 6.7+.
             apt-mark hold amneziawg-dkms amneziawg >/dev/null 2>&1 || true
-            if ! apt-mark showhold 2>/dev/null | grep -qx "amneziawg-dkms"; then
+            if ! _awg_pkg_held amneziawg-dkms; then
                 die "Не удалось зафиксировать amneziawg-dkms в hold перед установкой amneziawg-tools. Без этого рядом с предсобранным модулем встал бы модуль из PPA - два дерева с именем amneziawg. Проверьте apt/dpkg lock и запустите скрипт снова: предсобранный пакет уже установлен, шаг выполнится заново."
             fi
             install_packages "amneziawg-tools" "wireguard-tools" "qrencode"

@@ -2107,6 +2107,26 @@ _installed_boot_critical() {
     done
 }
 
+# _awg_pkg_held <package> : 0 if the package is on hold, 1 otherwise.
+# The first source is the package selection in dpkg, the first word of Status:
+# apt takes the hold from there itself, and `hold ok not-installed` (the mark on
+# a package not installed yet) is a hold too. The second is the
+# `apt-mark showhold` list, read into a variable in full.
+# 🔴 The list is NOT piped into grep. Issue #285: on Debian 12 the check
+# `apt-mark showhold | grep -qx` refused while the hold was in place. The cause
+# is not proven, but one mechanism reproduces: apt-mark writes line by line,
+# grep -q quits at the first match, the next write gets SIGPIPE, and under
+# pipefail the pipeline counts as failed although the line was found.
+# A failing showhold does not count as a list even if it printed something:
+# without the hold in dpkg that stays a refusal, not a guess in favour of a hold.
+_awg_pkg_held() {
+    local pkg="$1" status holds
+    status=$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null) || status=""
+    [[ "${status%% *}" == "hold" ]] && return 0
+    holds=$(apt-mark showhold 2>/dev/null) || return 1
+    grep -qxF -- "$pkg" <<< "$holds"
+}
+
 # _pkg_installed_ok : 0 only if the package is fully installed AND configured.
 # The difference from _pkg_present is deliberate and the risk is asymmetric. For
 # the SNAPSHOT, "unpacked but not configured" counts as present: the package is
@@ -4704,7 +4724,7 @@ PPASRC
         # is what amneziawg-tools Recommends and what carries the 3.0 module. The
         # metapackage amneziawg need not be held (its Depends: amneziawg-dkms is held
         # anyway), so we do not verify it separately.
-        if ! apt-mark showhold 2>/dev/null | grep -qx "amneziawg-dkms"; then
+        if ! _awg_pkg_held amneziawg-dkms; then
             die "Failed to hold amneziawg-dkms. Without it, installing amneziawg-tools would pull the AmneziaWG 3.0 module from the PPA, bypassing the chosen path. Aborted (check for an apt/dpkg lock)."
         fi
     else
@@ -4745,7 +4765,7 @@ PPASRC
             # the hold exists to prevent. Reachable: the ubuntu-2510-arm64 and
             # debian-trixie-arm64 prebuilt targets ship kernels 6.7+.
             apt-mark hold amneziawg-dkms amneziawg >/dev/null 2>&1 || true
-            if ! apt-mark showhold 2>/dev/null | grep -qx "amneziawg-dkms"; then
+            if ! _awg_pkg_held amneziawg-dkms; then
                 die "Failed to put amneziawg-dkms on hold before installing amneziawg-tools. Without it the PPA module would land next to the prebuilt one - two trees named amneziawg. Check the apt/dpkg lock and run the script again: the prebuilt package is already installed, this step will simply repeat."
             fi
             install_packages "amneziawg-tools" "wireguard-tools" "qrencode"
