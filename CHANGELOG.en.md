@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The service status text in `manage check`, and on a failed `restore` or `restart`, no longer shows keys.** `systemctl status` ends with the unit's journal lines, and with a malformed key in `awg0.conf` (a character lost in a hand edit, `PrivateKey` inside `[Peer]`) those carried the `amneziawg-tools` message with the key value: `Line unrecognized: ...` or `Key is not the correct length or format: ...`. This text used to go to the screen, to the `manage` log and into reports people post in issues. It now goes through the same secrets filter as the installer's diagnostic report; if the filter itself fails, `check` hides the status text and exits with an error, while `restore` and `restart` say the status is hidden and name the command to see it. With `--json` this text still goes to stderr.
+
 ## [5.35.0] - 2026-09-17
 
 **v5.35.0** - keys stay out of traces and check and show output, steadier install on Debian 12.

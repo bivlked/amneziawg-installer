@@ -1286,12 +1286,21 @@ modify_client() {
 # ==============================================================================
 
 # _log_service_status : print `systemctl status awg-quick@awg0` through log_error.
-# The output sits in a variable, and a service journal can carry config lines with
-# keys, so under tracing (bash -x) the body runs with tracing off.
+# The status ends with the unit's journal lines, and those carry the stderr of
+# `awg setconf`: with a malformed key in awg0.conf that is `Line unrecognized:
+# `PrivateKey=<value>'` or `Key is not the correct length or format: `<value>'`,
+# that is, an almost real key. So the text goes through the secrets filter (its
+# unanchored rules are written for exactly this journal-prefixed form), and when the
+# filter fails it is not printed at all. Under tracing (bash -x) the body runs with
+# tracing off.
 _log_service_status() {
     case $- in *x*) _awg_xtrace_guard _log_service_status; return ;; esac
     local status_out line
     status_out=$(systemctl status awg-quick@awg0 --no-pager 2>&1) || true
+    if ! status_out=$(printf '%s\n' "$status_out" | _mask_report_secrets); then
+        log_error "  The secrets filter failed: the service status is hidden. See: systemctl status awg-quick@awg0"
+        return 0
+    fi
     while IFS= read -r line; do log_error "  $line"; done <<< "$status_out"
 }
 
@@ -1339,11 +1348,24 @@ check_server() {
     local _c_mod_ver=""
 
     log "Service status:"
-    # With --json the raw systemctl output goes to stderr: stdout is contract-only.
-    if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
-        if ! systemctl status awg-quick@awg0 --no-pager >&2; then ok=0; fi
-    else
-        if ! systemctl status awg-quick@awg0 --no-pager; then ok=0; fi
+    # The status text goes through the secrets filter: the unit's journal lines can
+    # carry a key from a malformed awg0.conf (details at _log_service_status). The
+    # systemctl exit code is taken by assignment, before the filter. With --json the
+    # text goes to stderr: stdout is contract-only.
+    local _svc_out _svc_rc=0
+    _svc_out=$(systemctl status awg-quick@awg0 --no-pager 2>&1) || _svc_rc=$?
+    if ! _svc_out=$(printf '%s\n' "$_svc_out" | _mask_report_secrets); then
+        _svc_out=""
+        log_error " - The secrets filter failed: the systemctl status output is hidden"
+        ok=0
+    fi
+    (( _svc_rc == 0 )) || ok=0
+    if [[ -n "$_svc_out" ]]; then
+        if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
+            printf '%s\n' "$_svc_out" >&2
+        else
+            printf '%s\n' "$_svc_out"
+        fi
     fi
     systemctl is-active --quiet awg-quick@awg0 2>/dev/null && _c_svc_active=true
 
