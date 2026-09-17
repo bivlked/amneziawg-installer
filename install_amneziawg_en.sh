@@ -360,7 +360,7 @@ Options:
                         of a running install changes only by reinstalling and
                         reissuing every client profile. A matching one is
                         accepted quietly.
-                        This version does not emit 3.1 yet - it refuses and
+                        This version does not emit 3.1 - it refuses and
                         names the reason
   -y, --yes             Auto-confirm (reboots, UFW, etc.)
   -f, --force           Force reinstall on top of an already-running AmneziaWG
@@ -798,7 +798,7 @@ _awg31_blocker_message() {
     local code="${1-}"
     case "$code" in
         kernel)
-            printf '%s' "The AmneziaWG 3.1 profile will not run on this server: kernel $(uname -r) is older than 6.7. On such kernels the installer deliberately builds the proven second-line module, and the third line will not work here. Way out: install with --protocol=2.0, which is a working and supported path. If you need the third line on this very machine, it takes a system with kernel 6.7 or newer AND an installer version that can already emit it."
+            printf '%s' "The AmneziaWG 3.1 profile will not run on this server: kernel $(uname -r) is older than 6.7. On such kernels the installer deliberately builds the proven second-line module, and the third line will not work here. Way out: install with --protocol=2.0, which is a working and supported path. If you need the third line on this very machine, it takes a system with kernel 6.7 or newer; note that this installer version emits no 3.1 profile on any machine."
             ;;
         arm)
             # 🔴 The text makes NO claim about which module gets installed here,

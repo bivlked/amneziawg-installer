@@ -751,7 +751,7 @@ Options:
                         ends the install: the generation of a running install changes only by
                         reinstalling and reissuing every client profile. One matching the
                         installed generation is accepted quietly
-                        3.1 is not something this installer version emits yet: it refuses and
+                        3.1 is not something this installer version emits: it refuses and
                         names the reason
   --preset=TYPE         Obfuscation parameter preset: default, mobile
                         mobile: Jc=3, narrow Jmax — for mobile carriers (Tele2, Yota, Megafon)
