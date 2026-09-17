@@ -57,12 +57,13 @@ make_ip() {
 
 # make_awg <mode> : ok - accepts and reads back; silent - accepts and reads back
 # nothing of the sort; refuse - refuses the third-line set, control passes;
-# dead - refuses everything; empty - showconf prints nothing; hang - set hangs;
+# dead - refuses everything at once; empty - showconf prints nothing; hang - set hangs;
 # cpaonly - takes the key but refuses the padding range;
 # ctlhang - refuses the full set, passes control step 1 and hangs on step 2;
 # showfail - takes the set and then refuses showconf;
 # showhang - takes the set and never answers showconf;
-# nokey - genkey prints nothing.
+# nokey - genkey prints nothing;
+# hangrefuse - the full set hangs, and a later set carrying the key refuses.
 make_awg() {
     local mode="$1"
     {
@@ -89,6 +90,10 @@ make_awg() {
                 echo '    exit 1 ;;' ;;
             hang)
                 echo '    if [[ "$*" == *header-protection-key* ]]; then sleep 30; fi; exit 0 ;;' ;;
+            hangrefuse)
+                echo '    if [[ "$*" == *content-padding-addition* ]]; then sleep 30; fi'
+                echo '    if [[ "$*" == *header-protection-key* ]]; then exit 1; fi'
+                echo '    exit 0 ;;' ;;
             showfail|showhang|nokey)
                 echo '    shift 2; printf "%s\n" "$*" > "'"$TEST_DIR"'/set.args"; exit 0 ;;' ;;
         esac
@@ -178,9 +183,9 @@ p_empty() {
 p_refuse() {
     make_ip add; make_awg refuse
     local out; out=$(probe "$1")
-    [ "$out" = "line2" ] || { echo "a refusal with a working control was not second line ($1): $out"; return 1; }
+    [ "$out" = "line2" ] || { echo "a refused key on control step 2 was not second line ($1): $out"; return 1; }
 }
-@test "probe: a refused set with a passing control is second line, both twins" {
+@test "probe: a key refused on control step 2 is second line, both twins" {
     both p_refuse
 }
 
@@ -189,7 +194,7 @@ p_dead() {
     local out; out=$(probe "$1")
     [ "$out" = "failed" ] || { echo "a device that refuses everything was judged ($1): $out"; return 1; }
 }
-@test "probe: a device that refuses the control too is not judged, both twins" {
+@test "probe: a device that refuses control step 1 as well is not judged, both twins" {
     both p_dead
 }
 
@@ -583,4 +588,22 @@ p_no_key() {
 }
 @test "probe: an empty key stops the probe instead of judging, both twins" {
     both p_no_key
+}
+
+p_main_hang_then_refuse() {
+    # The main set never answers, and the control steps would then describe a
+    # different command: step 1 passes, step 2 refuses, and without the timeout
+    # bail that pair reads as a second-line verdict. A hang is not evidence, so
+    # the answer has to stay "could not check". Without this case the bail could
+    # be deleted and every test would still pass.
+    make_ip add; make_awg hangrefuse
+    local out start end
+    start=$(date +%s)
+    out=$(probe "$1")
+    end=$(date +%s)
+    [ "$out" = "failed" ] || { echo "a hang followed by a refusal was judged ($1): $out"; return 1; }
+    [ "$((end - start))" -lt 25 ] || { echo "the probe waited for the hanging set ($1)"; return 1; }
+}
+@test "probe: a hanging set is not rescued into a verdict by the control steps, both twins" {
+    both p_main_hang_then_refuse
 }

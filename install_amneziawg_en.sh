@@ -699,7 +699,7 @@ awg31_tools_support() {
 #
 # The key is one-shot and lives only inside the probe; it never goes into argv
 # (the module gets a file path), the file is created under umask 077 and is
-# always removed.
+# removed on every ordinary exit, a signal included.
 awg31_module_support() {
     local verdict=""
     verdict=$(_awg31_module_probe)
@@ -769,8 +769,9 @@ _awg31_module_probe() (
     if (( rc != 0 )); then
         # A timeout is not a verdict about the module: no answer came back. 124
         # is timeout firing, 125 is timeout itself failing, 137 is the KILL that
-        # -k sends. The control command would only confuse things here: it would
-        # pass, and a hang would turn into a confident "second line".
+        # -k sends. The control steps cannot help here: they say WHAT was
+        # rejected, and after a hang nothing was rejected at all, so their answer
+        # would describe another command rather than the one that never replied.
         if (( rc == 124 || rc == 125 || rc == 137 )); then printf 'failed'; exit 0; fi
         # The control takes TWO steps, because the refused command carried two
         # different third-line parameters at once.
@@ -989,10 +990,10 @@ _awg31_blocker_message() {
             printf '%s' "The installed awg tools do not understand third-line parameters. This is the ONLY reason on the list that an upgrade fixes: apt-get update && apt-get install --only-upgrade amneziawg-tools, then run the installer again. Or install with --protocol=2.0."
             ;;
         module_line2)
-            printf '%s' "The loaded amneziawg kernel module does not understand the third-line parameters: it takes the header protection key without a word and does not give it back. A 3.1 profile would be written on such a module and the connection would never come up. This one is fixed by updating the module: apt-get update && apt-get install --only-upgrade amneziawg-dkms, then a reboot (the module is rebuilt for your kernel) and another run of the installer. Or install with --protocol=2.0."
+            printf '%s' "The loaded amneziawg kernel module does not understand the third-line parameters: it either refuses the header protection key or takes it without a word and does not give it back. A 3.1 profile would be written on such a module and the connection would never come up. This one is fixed by updating the module: apt-get update && apt-get install --only-upgrade amneziawg-dkms, then a reboot (the module is rebuilt for your kernel) and another run of the installer. Or install with --protocol=2.0."
             ;;
         module_probe_failed)
-            printf '%s' "Whether the loaded module understands the third-line parameters could not be checked: the probe could not create a temporary interface or get an answer. The reasons differ - permissions, the state of netlink, the network namespace of a container. We do not know whether the module fits, and guessing is not an option here. Way out: install with --protocol=2.0. If you think this is wrong, send the output of three commands: 'ip link add awgprobe type amneziawg', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12' and 'ip link del awgprobe' (the third one takes the temporary interface away again)."
+            printf '%s' "Whether the loaded module understands the third-line parameters could not be checked: the probe could not create a temporary interface or get an answer. The reasons differ - permissions, the state of netlink, the network namespace of a container. We do not know whether the module fits, and guessing is not an option here. Way out: install with --protocol=2.0. If you think this is wrong, send the output of three commands: 'ip link add awgprobe type amneziawg', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <a file with a 32-byte key in base64>' and 'ip link del awgprobe' (the last one takes the temporary interface away again)."
             ;;
         not_implemented_yet)
             printf '%s' "This installer version (v${SCRIPT_VERSION}) does not issue the AmneziaWG 3.1 profile: your environment fits, and it is not your machine. Way out: --protocol=2.0."

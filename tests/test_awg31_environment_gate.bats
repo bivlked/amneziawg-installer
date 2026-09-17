@@ -109,8 +109,8 @@ make_awg_stub() {
 
 # make_module_stub <ok|line2|broken> : how the LOADED module answers the probe.
 # ok     - takes the third-line parameters and reads them back
-# line2  - refuses them loudly, the control command passes (measured on a stand
-#          against a module built from tag v1.0.20260725)
+# line2  - refuses them loudly, so control step 1 passes and step 2 refuses
+#          (measured on a stand against a module built from tag v1.0.20260725)
 # broken - no interface can be created at all
 #
 # The awg stub above answers the tools usage; this one extends it, because the
