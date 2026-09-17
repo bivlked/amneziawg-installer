@@ -57,17 +57,31 @@ stub_no_qrencode() {
     local d; d=$(dir_of "$1")
     printf '#!/usr/bin/env bash\nexit 0\n' > "$d/bin/perl"
     chmod +x "$d/bin/perl"
+    # Isolated as well: a runner with qrencode installed would answer otherwise.
+    _isolate "$d"
 }
-stub_no_perl() {
-    local d u; d=$(dir_of "$1")
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$d/bin/qrencode"
-    chmod +x "$d/bin/qrencode"
-    # No perl anywhere on the path, but the library still needs its own tools.
+# _isolate <stub dir> : cut the stub directory off /usr/bin and /bin and link
+# back the handful of utilities the library itself needs. Without this the real
+# tool on the runner answers and the case tests nothing: the qrencode case
+# passed on a runner that simply had no qrencode installed, and started failing
+# the day CI installed one.
+_isolate() {
+    local d="$1" u
     : > "$d/bin/.isolated"
     for u in grep sed awk cat mktemp rm find head tr; do
         [ -x "/usr/bin/$u" ] && ln -sf "/usr/bin/$u" "$d/bin/$u"
         [ -x "/bin/$u" ] && [ ! -e "$d/bin/$u" ] && ln -sf "/bin/$u" "$d/bin/$u"
     done
+    # The loop ends on a failed test when the last utility is only in /usr/bin;
+    # without this the helper would return non-zero under errexit.
+    return 0
+}
+stub_no_perl() {
+    local d; d=$(dir_of "$1")
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$d/bin/qrencode"
+    chmod +x "$d/bin/qrencode"
+    # No perl anywhere on the path, but the library still needs its own tools.
+    _isolate "$d"
 }
 stub_perl_without_modules() {
     local d; d=$(dir_of "$1")
@@ -176,4 +190,27 @@ t_leftovers_20() {
 }
 @test "first install 2.0: the leftovers check does nothing, both twins" {
     both t_leftovers_20
+}
+
+@test "first install 3.1: the missing-tool stubs really hide the tool from the library" {
+    # The qrencode case silently tested nothing while the runner had no qrencode
+    # of its own. Each stub directory must answer "not found" for the tool it
+    # claims is missing, whatever is installed on the machine.
+    local lib d out
+    for lib in awg_common.sh awg_common_en.sh; do
+        d=$(dir_of "$lib")
+        rm -rf "$d"; mkdir -p "$d/keys" "$d/bin"
+        stub_no_qrencode "$lib"
+        # The marker is what makes lib_run cut /usr/bin off the path. On a machine
+        # without qrencode the command check below passes either way, so the
+        # marker is asserted directly.
+        [ -e "$d/bin/.isolated" ] || { echo "stub_no_qrencode does not isolate the path ($lib)"; false; }
+        out=$(timeout 20 env PATH="$d/bin" /bin/sh -c 'command -v qrencode || echo NOTFOUND')
+        [[ "$out" == *NOTFOUND* ]] || { echo "qrencode still visible through the stub PATH ($lib): $out"; false; }
+        rm -rf "$d"; mkdir -p "$d/keys" "$d/bin"
+        stub_no_perl "$lib"
+        [ -e "$d/bin/.isolated" ] || { echo "stub_no_perl does not isolate the path ($lib)"; false; }
+        out=$(timeout 20 env PATH="$d/bin" /bin/sh -c 'command -v perl || echo NOTFOUND')
+        [[ "$out" == *NOTFOUND* ]] || { echo "perl still visible through the stub PATH ($lib): $out"; false; }
+    done
 }
