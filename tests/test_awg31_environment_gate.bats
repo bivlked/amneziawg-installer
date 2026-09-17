@@ -62,6 +62,8 @@ load_gate() {
     eval "$(func_from "$script" _kernel_supports_awg3)"
     eval "$(func_from "$script" _awg31_host_arch)"
     eval "$(func_from "$script" awg31_tools_support)"
+    eval "$(sed -n "/^_awg31_module_probe() (/,/^)\$/p" "$script")"
+    eval "$(func_from "$script" awg31_module_support)"
     eval "$(func_from "$script" awg31_environment_blocker)"
 }
 
@@ -103,6 +105,52 @@ make_awg_stub() {
     chmod +x "$path"
     PATH="$TEST_DIR/bin:$PATH"
     export PATH
+}
+
+# make_module_stub <ok|line2|broken> : how the LOADED module answers the probe.
+# ok     - takes the third-line parameters and reads them back
+# line2  - refuses them loudly, the control command passes (measured on a stand
+#          against a module built from tag v1.0.20260725)
+# broken - no interface can be created at all
+#
+# The awg stub above answers the tools usage; this one extends it, because the
+# probe drives the same binary.
+make_module_stub() {
+    local mode="$1" awg="$TEST_DIR/bin/awg" ip="$TEST_DIR/bin/ip"
+    mkdir -p "$TEST_DIR/bin"
+    {
+        echo '#!/usr/bin/env bash'
+        echo "echo \"\$*\" >> \"$TEST_DIR/ip.argv\""
+        case "$mode" in
+            broken) echo 'case "$2" in add) exit 2 ;; *) exit 1 ;; esac' ;;
+            *)      echo 'case "$2" in show) exit 1 ;; *) exit 0 ;; esac' ;;
+        esac
+    } > "$ip"
+    chmod +x "$ip"
+    # The usage probe keeps working: the tools branch is untouched, the module
+    # verbs are added in front of it.
+    local usage_body
+    usage_body=$(cat "$awg")
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'case "$1" in'
+        echo '  genkey) echo "GATEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; exit 0 ;;'
+        case "$mode" in
+            ok)    echo '  showconf) echo "HeaderProtectionKey = GATEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
+            line2) echo '  showconf) exit 1 ;;' ;;
+            *)     echo '  showconf) exit 1 ;;' ;;
+        esac
+        case "$mode" in
+            line2) echo '  set) if [[ "$*" == *header-protection-key* ]]; then echo "Unable to modify interface: Invalid argument" >&2; exit 1; fi'
+                   echo '       if [[ "$2" == awgp* ]]; then exit 0; fi' ;;
+            *)     echo '  set) if [[ "$2" == awgp* ]]; then exit 0; fi' ;;
+        esac
+        echo '       ;;'
+        echo 'esac'
+        printf '%s\n' "${usage_body#*bash}" | tail -n +1
+    } > "$awg.new"
+    mv "$awg.new" "$awg"
+    chmod +x "$awg"
 }
 
 # Make architecture detection answer with a fixed value, exercising the path
@@ -246,9 +294,41 @@ break_arch_detection() {
     # downgrade and no lifecycle behind it.
     load_gate
     make_awg_stub 31
+    make_module_stub ok
     run awg31_environment_blocker post "amd64" "6.14.0-generic"
     [ "$status" -eq 0 ]
     [ "$output" = "not_implemented_yet" ]
+}
+
+@test "post: a second-line module is refused with its own code" {
+    # Capable tools, suitable machine, old module: the reason must name the
+    # module, because the way out is an update rather than another machine.
+    load_gate
+    make_awg_stub 31
+    make_module_stub line2
+    run awg31_environment_blocker post "amd64" "6.14.0-generic"
+    [ "$status" -eq 0 ]
+    [ "$output" = "module_line2" ]
+}
+
+@test "post: a probe that cannot check says so instead of guessing" {
+    load_gate
+    make_awg_stub 31
+    make_module_stub broken
+    run awg31_environment_blocker post "amd64" "6.14.0-generic"
+    [ "$status" -eq 0 ]
+    [ "$output" = "module_probe_failed" ]
+}
+
+@test "post: the module probe runs only after the tools probe" {
+    # With old tools the module is never touched: its refusal would be about
+    # them, and the person would be sent to rebuild a module instead of apt.
+    load_gate
+    make_awg_stub 20
+    make_module_stub line2
+    run awg31_environment_blocker post "amd64" "6.14.0-generic"
+    [ "$output" = "tools_old" ]
+    [ ! -e "$TEST_DIR/ip.argv" ]
 }
 
 @test "post: tools without the 3.1 usage are refused with tools_old" {
