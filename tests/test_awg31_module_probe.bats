@@ -38,6 +38,9 @@ teardown() {
 # already exists; hang - never answers to add; hangshow - never answers to show.
 make_ip() {
     local mode="$1"
+    # The argv logs are truncated here: both twins run inside one @test, and a
+    # cumulative file lets the first twin satisfy an assertion about the second.
+    rm -f "$TEST_DIR/ip.argv" "$TEST_DIR/awg.argv" "$TEST_DIR/set.args"
     {
         echo '#!/usr/bin/env bash'
         echo "echo \"\$*\" >> \"$TEST_DIR/ip.argv\""
@@ -55,7 +58,8 @@ make_ip() {
 
 # make_awg <mode> : ok - accepts and reads back; silent - accepts and reads back
 # nothing of the sort; refuse - refuses the third-line set, control passes;
-# dead - refuses everything; empty - showconf prints nothing; hang - set hangs.
+# dead - refuses everything; empty - showconf prints nothing; hang - set hangs;
+# cpaonly - takes the key but refuses the padding range.
 make_awg() {
     local mode="$1"
     {
@@ -69,6 +73,8 @@ make_awg() {
                 echo '    shift 2; printf "%s\n" "$*" > "'"$TEST_DIR"'/set.args"; exit 0 ;;' ;;
             refuse)
                 echo '    if [[ "$*" == *header-protection-key* ]]; then exit 1; fi; exit 0 ;;' ;;
+            cpaonly)
+                echo '    if [[ "$*" == *content-padding-addition* ]]; then exit 1; fi; exit 0 ;;' ;;
             dead)
                 echo '    exit 1 ;;' ;;
             hang)
@@ -400,21 +406,40 @@ STUB
 }
 
 p_control_shape() {
-    # The control command carries the same padding sizes as the refused one: a
-    # refusal caused by the sizes themselves must not read as a refusal over the
-    # third-line parameters.
+    # Two control steps, each dropping one thing at a time: first the padding
+    # sizes alone, then the sizes plus the key. Dropping both third-line
+    # parameters in one step cannot tell "the module does not know the key" from
+    # "the module does not like this padding range".
     make_ip add; make_awg refuse
     probe "$1" >/dev/null
-    local ctl
-    ctl=$(grep "^set " "$TEST_DIR/awg.argv" | tail -1)
+    local step1 step2
+    step1=$(grep "^set " "$TEST_DIR/awg.argv" | sed -n 2p)
+    step2=$(grep "^set " "$TEST_DIR/awg.argv" | sed -n 3p)
+    [ -n "$step1" ] && [ -n "$step2" ] || { echo "the two control steps did not run ($1): $(cat "$TEST_DIR/awg.argv")"; return 1; }
+    local token
     for token in "s1 15" "s2 15" "s3 12" "s4 12"; do
-        [[ "$ctl" == *"$token"* ]] || { echo "the control lost $token ($1): $ctl"; return 1; }
+        [[ "$step1" == *"$token"* ]] || { echo "control step 1 lost $token ($1): $step1"; return 1; }
+        [[ "$step2" == *"$token"* ]] || { echo "control step 2 lost $token ($1): $step2"; return 1; }
     done
-    [[ "$ctl" != *header-protection-key* ]] || { echo "the control still carries the key ($1): $ctl"; return 1; }
-    [[ "$ctl" != *content-padding-addition* ]] || { echo "the control still carries the padding ($1): $ctl"; return 1; }
+    [[ "$step1" != *header-protection-key* ]] || { echo "control step 1 still carries the key ($1): $step1"; return 1; }
+    [[ "$step1" != *content-padding-addition* ]] || { echo "control step 1 still carries the padding ($1): $step1"; return 1; }
+    [[ "$step2" == *header-protection-key* ]] || { echo "control step 2 lost the key ($1): $step2"; return 1; }
+    [[ "$step2" != *content-padding-addition* ]] || { echo "control step 2 still carries the padding ($1): $step2"; return 1; }
 }
-@test "probe: the control command keeps the sizes and drops only the third-line parameters, both twins" {
+@test "probe: the two control steps drop one thing at a time, both twins" {
     both p_control_shape
+}
+
+p_key_ok_padding_not() {
+    # A module that takes the key and refuses the padding range is not a
+    # second-line module, and telling its owner to rebuild the module would be
+    # wrong. The honest answer is that the check could not be made.
+    make_ip add; make_awg cpaonly
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "a module that took the key was judged ($1): $out"; return 1; }
+}
+@test "probe: the key taken and the padding refused is not a second-line verdict, both twins" {
+    both p_key_ok_padding_not
 }
 
 @test "probe: the refusal text for a failed probe tells the reader to remove the interface" {
@@ -425,4 +450,29 @@ p_control_shape() {
         [[ "$body" == *"ip link add awgprobe"* ]] || { echo "no reproduction command in $f"; return 1; }
         [[ "$body" == *"ip link del awgprobe"* ]] || { echo "the text leaves the interface behind in $f"; return 1; }
     done
+}
+
+c_cleanup_bounded() {
+    # The EXIT trap runs on every exit of every run, --help included. A wedged
+    # netlink is exactly the state the probe refuses over, so an unbounded ip
+    # here would turn that refusal into a silent hang of the installer.
+    local src="$1" start end out
+    start=$(date +%s)
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/slowbin"
+        printf "#!/usr/bin/env bash\nsleep 30\n" > "$2/slowbin/ip"
+        chmod +x "$2/slowbin/ip"
+        export PATH="$2/slowbin:$PATH"
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        echo done
+    ' _ "$src" "$TEST_DIR")
+    end=$(date +%s)
+    [ "$out" = "done" ] || { echo "the cleanup did not finish ($src): $out"; return 1; }
+    [ "$((end - start))" -lt 20 ] || { echo "the cleanup waited for a hanging ip ($src): $((end - start))s"; return 1; }
+}
+@test "cleanup: a hanging ip does not block the exit trap, both twins" {
+    both c_cleanup_bounded
 }

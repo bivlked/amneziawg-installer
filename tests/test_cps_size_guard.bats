@@ -419,11 +419,13 @@ step8() {  # step8 <manage> <cps_unsafe>
     #
     # Флаги timeout допускаются: `timeout -k 1 5` - это та же граница плюс KILL
     # для команды, игнорирующей TERM, то есть форма СТРОЖЕ. Прежний образец
-    # принимал только `timeout N` и краснел на более строгом вызове.
+    # принимал только `timeout N` и краснел на более строгом вызове. Но число
+    # перед командой обязательно: форма без длительности (`timeout -k 1 awg show`)
+    # границы не ставит, и образец её не принимает.
     for f in "$MANAGE" "$MANAGE_EN"              "${BATS_TEST_DIRNAME}/../install_amneziawg.sh"              "${BATS_TEST_DIRNAME}/../install_amneziawg_en.sh"; do
         run bash -c 'strip() { sed "s/\"[^\"]*\"//g" "$1" | grep -vE "^[[:space:]]*#"; }
             calls=$(strip "$1" | grep -cE "(^|[^_[:alnum:]-])awg show") || true
-            bounded=$(strip "$1" | grep -E "(^|[^_[:alnum:]-])awg show" | grep -cE "timeout( +-[A-Za-z0-9]+)*( +[0-9]+)+ +awg show") || true
+            bounded=$(strip "$1" | grep -E "(^|[^_[:alnum:]-])awg show" | grep -cE "timeout( +(-[A-Za-z0-9]+|[0-9]+))* +[0-9]+ +awg show") || true
             echo "$calls $bounded"' _ "$f"
         # Печатаются оба числа нарочно: равенство при нуле означало бы, что
         # вызовов не нашли вовсе, то есть проверка сломалась, а не прошла.

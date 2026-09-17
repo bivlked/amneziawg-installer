@@ -98,8 +98,12 @@ _install_cleanup() {
     # on an ordinary exit, but on a signal the subshell may not get there, so the
     # cleanup is repeated here, where the exit is guaranteed. The pattern is tied
     # to OUR pid, so it cannot touch anyone else's interface.
-    for f in $(ip -br link show 2>/dev/null | awk -v p="awgp$$x" 'index($1, p) == 1 {print $1}'); do
-        ip link del "$f" >/dev/null 2>&1
+    # 🔴 Both commands are bounded. The EXIT trap runs on EVERY exit of the
+    # installer, --help and the path after a reboot included, and a wedged
+    # netlink is exactly the state the probe refuses over. Without a bound the
+    # refusal of the probe would turn into a silent hang of the whole installer.
+    for f in $(timeout -k 1 5 ip -br link show 2>/dev/null | awk -v p="awgp$$x" 'index($1, p) == 1 {print $1}'); do
+        timeout -k 1 5 ip link del "$f" >/dev/null 2>&1
     done
     # Clean up temporary files from awg_common.sh (if already sourced)
     type _awg_cleanup &>/dev/null && _awg_cleanup
@@ -765,17 +769,26 @@ _awg31_module_probe() (
         # -k sends. The control command would only confuse things here: it would
         # pass, and a hang would turn into a confident "second line".
         if (( rc == 124 || rc == 125 || rc == 137 )); then printf 'failed'; exit 0; fi
-        # Control: the same device and the same padding sizes, without the
-        # third-line parameters. The same sizes on purpose: otherwise a refusal
-        # caused by the S values themselves would look like a refusal over the
-        # key, and a "second line" verdict would send a person to rebuild a
-        # module for nothing.
+        # The control takes TWO steps, because the refused command carried two
+        # different third-line parameters at once.
+        # Step 1: the same padding sizes without the third-line parameters. A
+        # refusal here means they are not the reason, and the module cannot be
+        # judged.
         timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 </dev/null >/dev/null 2>&1
         ctl=$?
+        if (( ctl != 0 )); then printf 'failed'; exit 0; fi
+        # Step 2: the same plus the header protection key ALONE. A refusal here
+        # is a module that does not understand the third line. If the key was
+        # taken and the refusal was about the padding, the line cannot be named
+        # from that refusal: "update the module" would be wrong advice, so saying
+        # the check could not be made is the honest answer.
+        timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 \
+            header-protection-key "$kf" </dev/null >/dev/null 2>&1
+        ctl=$?
         if (( ctl == 0 )); then
-            printf 'line2'
-        else
             printf 'failed'
+        else
+            printf 'line2'
         fi
         exit 0
     fi
@@ -785,7 +798,7 @@ _awg31_module_probe() (
     # A silent acceptance without a read back is a second-line module: it passes
     # unknown netlink attributes over without a word, so there is no refusal to
     # see.
-    if grep -qF "HeaderProtectionKey = $key" <<< "$out" \
+    if grep -qE "^[[:space:]]*HeaderProtectionKey[[:space:]]*=[[:space:]]*$(printf '%s' "$key" | sed 's/[^A-Za-z0-9]/\\&/g')[[:space:]]*\$" <<< "$out" \
         && grep -qE '^[[:space:]]*ContentPaddingAddition[[:space:]]*=[[:space:]]*32-128[[:space:]]*$' <<< "$out"; then
         printf 'ok'
     else
@@ -971,7 +984,7 @@ _awg31_blocker_message() {
             printf '%s' "The loaded amneziawg kernel module does not understand the third-line parameters: it takes the header protection key without a word and does not give it back. A 3.1 profile would be written on such a module and the connection would never come up. This one is fixed by updating the module: apt-get update && apt-get install --only-upgrade amneziawg-dkms, then a reboot (the module is rebuilt for your kernel) and another run of the installer. Or install with --protocol=2.0."
             ;;
         module_probe_failed)
-            printf '%s' "Whether the loaded module understands the third-line parameters could not be checked: the probe could not create a temporary interface or get an answer. The reasons differ - permissions, the state of netlink, the network namespace of a container. We do not know whether the module fits, and guessing is not an option here. Way out: install with --protocol=2.0. If you think this is wrong, send the output of three commands: 'ip link add awgprobe type amneziawg', 'awg set awgprobe s1 15' and 'ip link del awgprobe' (the third one takes the temporary interface away again)."
+            printf '%s' "Whether the loaded module understands the third-line parameters could not be checked: the probe could not create a temporary interface or get an answer. The reasons differ - permissions, the state of netlink, the network namespace of a container. We do not know whether the module fits, and guessing is not an option here. Way out: install with --protocol=2.0. If you think this is wrong, send the output of three commands: 'ip link add awgprobe type amneziawg', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12' and 'ip link del awgprobe' (the third one takes the temporary interface away again)."
             ;;
         not_implemented_yet)
             printf '%s' "This installer version (v${SCRIPT_VERSION}) does not issue the AmneziaWG 3.1 profile: your environment fits, and it is not your machine. Way out: --protocol=2.0."
