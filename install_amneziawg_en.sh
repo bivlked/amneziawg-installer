@@ -689,10 +689,13 @@ awg31_tools_support() {
 #
 # 🔴 A refusal from `awg set` is not a verdict on its own: it looks the same for
 # a second-line module and for an environment problem (permissions, netlink, a
-# namespace). So a refusal is followed by a control command WITHOUT the
-# third-line parameters: if that one passes, the path to the interface works and
-# the parameters are the problem (second line); if it fails too, the probe could
-# not check.
+# namespace). So a refusal is followed by TWO control steps, each taking one
+# thing away. Step 1 is the same padding sizes without the third-line
+# parameters: if it fails, they are not the reason and the module cannot be
+# judged. Step 2 is the same plus the header protection key alone: a REAL
+# refusal (code 1) there is the second line. If the key was taken, the refusal
+# was about the padding and the line cannot be named from it; any other code (a
+# timeout, a missing binary) is not a verdict either.
 #
 # The key is one-shot and lives only inside the probe; it never goes into argv
 # (the module gets a file path), the file is created under umask 077 and is

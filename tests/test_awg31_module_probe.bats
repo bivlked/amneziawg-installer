@@ -11,7 +11,8 @@
 #
 # A refusal from `awg set` is deliberately NOT a verdict on its own: it looks the
 # same for a second-line module and for an environment problem. The probe then
-# runs a control command without the third-line parameters and decides by that.
+# runs two control steps, each taking one thing away, and only a real refusal of
+# the key itself is a second-line verdict.
 #
 # Harness: `ip` and `awg` are stubs in front of PATH, the two functions are
 # lifted out of the installer, and both twins run every case.
@@ -20,8 +21,6 @@ bats_require_minimum_version 1.5.0
 
 INSTALL_RU="$BATS_TEST_DIRNAME/../install_amneziawg.sh"
 INSTALL_EN="$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"
-
-func_from() { sed -n "/^$2()/,/^)$/p; /^$2() {/,/^}/p" "$1"; }
 
 setup() {
     TEST_DIR=$(mktemp -d)
@@ -60,14 +59,20 @@ make_ip() {
 # nothing of the sort; refuse - refuses the third-line set, control passes;
 # dead - refuses everything; empty - showconf prints nothing; hang - set hangs;
 # cpaonly - takes the key but refuses the padding range;
-# ctlhang - refuses the full set, passes control step 1 and hangs on step 2.
+# ctlhang - refuses the full set, passes control step 1 and hangs on step 2;
+# showfail - takes the set and then refuses showconf;
+# showhang - takes the set and never answers showconf;
+# nokey - genkey prints nothing.
 make_awg() {
     local mode="$1"
     {
         echo '#!/usr/bin/env bash'
         echo "echo \"\$*\" >> \"$TEST_DIR/awg.argv\""
         echo 'case "$1" in'
-        echo '  genkey) echo "PROBEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;'
+        case "$mode" in
+            nokey) echo '  genkey) exit 0 ;;' ;;
+            *)     echo '  genkey) echo "PROBEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
+        esac
         echo '  set)'
         case "$mode" in
             ok|silent|empty)
@@ -84,6 +89,8 @@ make_awg() {
                 echo '    exit 1 ;;' ;;
             hang)
                 echo '    if [[ "$*" == *header-protection-key* ]]; then sleep 30; fi; exit 0 ;;' ;;
+            showfail|showhang|nokey)
+                echo '    shift 2; printf "%s\n" "$*" > "'"$TEST_DIR"'/set.args"; exit 0 ;;' ;;
         esac
         echo '  showconf)'
         case "$mode" in
@@ -94,6 +101,12 @@ make_awg() {
             silent)
                 echo '    echo "[Interface]"; echo "ListenPort = 51820"; exit 0 ;;' ;;
             empty)
+                echo '    exit 0 ;;' ;;
+            showfail)
+                echo '    exit 1 ;;' ;;
+            showhang)
+                echo '    sleep 30 ;;' ;;
+            nokey)
                 echo '    exit 0 ;;' ;;
             *)
                 echo '    exit 1 ;;' ;;
@@ -533,4 +546,41 @@ c_cleanup_bounded_list() {
 }
 @test "cleanup: a hanging interface listing does not block the exit trap either, both twins" {
     both c_cleanup_bounded_list
+}
+
+p_showconf_fails() {
+    # The set was taken, the read back never happened. That is not evidence
+    # about the module: judging it second line would tell the owner of a healthy
+    # module to rebuild it. The neighbouring case, an empty showconf with a zero
+    # code, IS a verdict, and these two live one line apart in the code.
+    make_ip add; make_awg showfail
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "a refused showconf was judged ($1): $out"; return 1; }
+}
+@test "probe: a refused read back is not a second-line verdict, both twins" {
+    both p_showconf_fails
+}
+
+p_showconf_hangs() {
+    make_ip add; make_awg showhang
+    local out start end
+    start=$(date +%s)
+    out=$(probe "$1")
+    end=$(date +%s)
+    [ "$out" = "failed" ] || { echo "a hanging showconf was judged ($1): $out"; return 1; }
+    [ "$((end - start))" -lt 25 ] || { echo "the probe waited for a hanging showconf ($1)"; return 1; }
+}
+@test "probe: a hanging read back is bounded and not judged, both twins" {
+    both p_showconf_hangs
+}
+
+p_no_key() {
+    # No key, no probe: running the set without one would test nothing and the
+    # read back would compare against an empty string.
+    make_ip add; make_awg nokey
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "an empty key did not stop the probe ($1): $out"; return 1; }
+}
+@test "probe: an empty key stops the probe instead of judging, both twins" {
+    both p_no_key
 }

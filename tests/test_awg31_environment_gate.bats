@@ -137,7 +137,6 @@ make_module_stub() {
         echo '  genkey) echo "GATEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; exit 0 ;;'
         case "$mode" in
             ok)    echo '  showconf) echo "HeaderProtectionKey = GATEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
-            line2) echo '  showconf) exit 1 ;;' ;;
             *)     echo '  showconf) exit 1 ;;' ;;
         esac
         case "$mode" in
@@ -147,7 +146,7 @@ make_module_stub() {
         esac
         echo '       ;;'
         echo 'esac'
-        printf '%s\n' "${usage_body#*bash}" | tail -n +1
+        printf '%s\n' "${usage_body#*bash}"
     } > "$awg.new"
     mv "$awg.new" "$awg"
     chmod +x "$awg"
