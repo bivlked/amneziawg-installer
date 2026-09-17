@@ -509,3 +509,28 @@ p_control_timeout() {
 @test "probe: a hanging second control step is not a second-line verdict, both twins" {
     both p_control_timeout
 }
+
+c_cleanup_bounded_list() {
+    # The sibling case hangs on the delete; this one hangs on the listing. Both
+    # commands need their own case: a stub that hangs on one leaves the other
+    # free to lose its bound, which a mutation run showed.
+    local src="$1" start end out
+    start=$(date +%s)
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/slowlist"
+        printf "#!/usr/bin/env bash\nsleep 30\n" > "$2/slowlist/ip"
+        chmod +x "$2/slowlist/ip"
+        export PATH="$2/slowlist:$PATH"
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        echo done
+    ' _ "$src" "$TEST_DIR")
+    end=$(date +%s)
+    [ "$out" = "done" ] || { echo "the cleanup did not finish ($src): $out"; return 1; }
+    [ "$((end - start))" -lt 20 ] || { echo "the cleanup waited for a hanging listing ($src): $((end - start))s"; return 1; }
+}
+@test "cleanup: a hanging interface listing does not block the exit trap either, both twins" {
+    both c_cleanup_bounded_list
+}
