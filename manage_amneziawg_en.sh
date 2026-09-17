@@ -19,9 +19,10 @@ SCRIPT_VERSION="5.35.0"
 set -o pipefail
 # awg show colours its labels when WG_COLOR_MODE=always is in the environment,
 # even into a pipe. The secrets filter then does not recognise "header
-# protection key" and lets the key through, and the jc/jmin/jmax parsing in
-# diagnose finds no lines. Nothing here needs colour from the tools, so it is
-# off for the whole script.
+# protection key" and lets the key through in show and check, check falsely
+# reports "Obfuscation parameters not detected", and diagnose finds no
+# jc/jmin/jmax lines and silently skips the Jmin > Jmax check. Nothing here
+# needs colour from the tools, so it is off for the whole script.
 export WG_COLOR_MODE=never
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"

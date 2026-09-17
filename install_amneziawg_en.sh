@@ -17,9 +17,9 @@ fi
 set -o pipefail
 # awg show colours its labels when WG_COLOR_MODE=always is in the environment,
 # even into a pipe. The secrets filter then does not recognise "header
-# protection key" and lets the key through, and the jc/jmin/jmax parsing in
-# diagnose finds no lines. Nothing here needs colour from the tools, so it is
-# off for the whole script.
+# protection key" and lets the key into the diagnostic report, and the step 7
+# service check finds neither "interface: awg0" nor "jc:" and fails falsely.
+# Nothing here needs colour from the tools, so it is off for the whole script.
 export WG_COLOR_MODE=never
 SCRIPT_VERSION="5.35.0"
 
@@ -1207,8 +1207,10 @@ safe_read_config_key() {
 # 🔴 grep only ever gets a regular file (-f): on a FIFO it would wait for a
 # writer forever, on /dev/zero it would read without end. A missing path and a
 # non-regular file in place of the init never reach grep and read as "no
-# marker". Such an init does not get this far: manage refuses it earlier in
-# check_dependencies, and the installer treats it as absent at step 0.
+# marker", so the -f check must stay. In manage such an init never reaches the
+# function: check_dependencies refuses it earlier. The installer treats it as
+# absent at step 0 and calls the function with the same path; the -f check is
+# what gives it 2.0 instead of a hang.
 awg_installed_protocol() {
     local cfg="${1:-}" n=0 _rc=0 _bom=$'\xef\xbb\xbf'
     if [[ -n "$cfg" && -f "$cfg" ]]; then

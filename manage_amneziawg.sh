@@ -19,8 +19,10 @@ SCRIPT_VERSION="5.35.0"
 set -o pipefail
 # awg show раскрашивает подписи, если в окружении WG_COLOR_MODE=always, даже при
 # выводе в канал. Тогда фильтр секретов не узнаёт «header protection key» и
-# пропускает ключ, а разбор jc/jmin/jmax в diagnose не находит строк. Цвет
-# инструментам здесь не нужен нигде, поэтому он выключен для всего скрипта.
+# пропускает ключ в show и check, check ложно пишет «Параметры обфускации не
+# обнаружены», а diagnose не находит jc/jmin/jmax и молча пропускает проверку
+# Jmin > Jmax. Цвет инструментам здесь не нужен, поэтому он выключен для всего
+# скрипта.
 export WG_COLOR_MODE=never
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"

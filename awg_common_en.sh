@@ -1070,8 +1070,10 @@ safe_load_config() {
 # 🔴 grep only ever gets a regular file (-f): on a FIFO it would wait for a
 # writer forever, on /dev/zero it would read without end. A missing path and a
 # non-regular file in place of the init never reach grep and read as "no
-# marker". Such an init does not get this far: manage refuses it earlier in
-# check_dependencies, and the installer treats it as absent at step 0.
+# marker", so the -f check must stay. In manage such an init never reaches the
+# function: check_dependencies refuses it earlier. The installer treats it as
+# absent at step 0 and calls the function with the same path; the -f check is
+# what gives it 2.0 instead of a hang.
 awg_installed_protocol() {
     local cfg="${1:-}" n=0 _rc=0 _bom=$'\xef\xbb\xbf'
     if [[ -n "$cfg" && -f "$cfg" ]]; then
