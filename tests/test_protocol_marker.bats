@@ -742,3 +742,40 @@ initialize_setup_body() {
     # grep names the directory on stderr, which run merges in; no generation may appear.
     [[ "$output" != *"2.0"* && "$output" != *"3.1"* ]] || { echo "a generation was printed: $output"; false; }
 }
+
+# Anything but a regular file refuses at once. Each case runs in a child bash
+# under timeout: a reader that reached grep on a FIFO would otherwise hang the
+# whole run instead of failing this test.
+_reader_on() {  # _reader_on <lib> <path> : prints the answer and RC=<code>
+    timeout 10 bash -c '
+        source "$1" >/dev/null 2>&1 || true
+        unset AWG_PROTOCOL
+        awg_installed_protocol "$2" 2>/dev/null
+        echo "RC=$?"
+    ' _ "$1" "$2"
+}
+
+@test "awg_installed_protocol: a FIFO, /dev/null and a dangling symlink in place of the init refuse at once, both libraries" {
+    command -v mkfifo >/dev/null || skip "mkfifo not available"
+    local lib out p
+    mkfifo "$TEST_DIR/fifo.init" 2>/dev/null || skip "cannot create a FIFO here"
+    ln -s "$TEST_DIR/nowhere.init" "$TEST_DIR/dangling.init" 2>/dev/null || skip "cannot create a symlink here"
+    for lib in "$COMMON_RU" "$COMMON_EN"; do
+        for p in "$TEST_DIR/fifo.init" /dev/null "$TEST_DIR/dangling.init"; do
+            out=$(_reader_on "$lib" "$p")
+            [[ "$out" == *"RC=1"* ]] || { echo "$p did not refuse ($lib): $out"; false; }
+            [[ "$out" != *"2.0"* && "$out" != *"3.1"* ]] || { echo "$p answered a generation ($lib): $out"; false; }
+        done
+        # A symlink to a real init still reads through.
+        printf "export AWG_PROTOCOL='3.1'\n" > "$TEST_DIR/real.init"
+        ln -sf "$TEST_DIR/real.init" "$TEST_DIR/link.init"
+        out=$(timeout 10 bash -c '
+            source "$1" >/dev/null 2>&1 || true
+            unset AWG_PROTOCOL
+            safe_load_config "$2" >/dev/null 2>&1
+            awg_installed_protocol "$2"
+            echo "RC=$?"
+        ' _ "$lib" "$TEST_DIR/link.init")
+        [[ "$out" == *"3.1"*"RC=0"* ]] || { echo "a symlink to a real init was refused ($lib): $out"; false; }
+    done
+}

@@ -1198,9 +1198,17 @@ safe_read_config_key() {
 # above mean grep itself failed (unreadable file, a directory in place of a
 # file). The former '|| n=0' form equated them and turned a failure into "no
 # marker", that is, into a confident 2.0. A read error now refuses as well.
+# 🔴 grep only ever gets a regular file. A missing path is 2.0 by the rule
+# above; anything else in place of the init (a directory, a dangling symlink,
+# a FIFO, a device) refuses AT ONCE, without grep: on a FIFO it would wait for
+# a writer forever, on /dev/zero it would read without end, and /dev/null would
+# quietly give 2.0.
 awg_installed_protocol() {
     local cfg="${1:-}" n=0 _rc=0 _bom=$'\xef\xbb\xbf'
-    if [[ -n "$cfg" && -e "$cfg" ]]; then
+    if [[ -n "$cfg" ]] && { [[ -L "$cfg" && ! -e "$cfg" ]] || [[ -e "$cfg" && ! -f "$cfg" ]]; }; then
+        return 1
+    fi
+    if [[ -n "$cfg" && -f "$cfg" ]]; then
         n=$(grep -ciE "^(${_bom})?[[:space:]]*(export[[:space:]]+)?AWG_PROTOCOL[[:space:]]*=" "$cfg")
         _rc=$?
         if [[ "$_rc" -ge 2 ]]; then
