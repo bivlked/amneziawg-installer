@@ -59,7 +59,8 @@ make_ip() {
 # make_awg <mode> : ok - accepts and reads back; silent - accepts and reads back
 # nothing of the sort; refuse - refuses the third-line set, control passes;
 # dead - refuses everything; empty - showconf prints nothing; hang - set hangs;
-# cpaonly - takes the key but refuses the padding range.
+# cpaonly - takes the key but refuses the padding range;
+# ctlhang - refuses the full set, passes control step 1 and hangs on step 2.
 make_awg() {
     local mode="$1"
     {
@@ -75,6 +76,10 @@ make_awg() {
                 echo '    if [[ "$*" == *header-protection-key* ]]; then exit 1; fi; exit 0 ;;' ;;
             cpaonly)
                 echo '    if [[ "$*" == *content-padding-addition* ]]; then exit 1; fi; exit 0 ;;' ;;
+            ctlhang)
+                echo '    if [[ "$*" == *content-padding-addition* ]]; then exit 1; fi'
+                echo '    if [[ "$*" == *header-protection-key* ]]; then sleep 30; fi'
+                echo '    exit 0 ;;' ;;
             dead)
                 echo '    exit 1 ;;' ;;
             hang)
@@ -458,10 +463,21 @@ c_cleanup_bounded() {
     # here would turn that refusal into a silent hang of the installer.
     local src="$1" start end out
     start=$(date +%s)
+    # The stub answers the listing at once and blocks on the delete: with a
+    # stub that hangs on both, the list comes back empty and the second call is
+    # never reached, so its bound would be free to disappear.
     out=$(timeout 60 bash -c '
         mkdir -p "$2/slowbin"
-        printf "#!/usr/bin/env bash\nsleep 30\n" > "$2/slowbin/ip"
+        cat > "$2/slowbin/ip" <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = "-br" ]; then
+    echo "\$FAKE_IF UNKNOWN"
+    exit 0
+fi
+sleep 30
+STUB
         chmod +x "$2/slowbin/ip"
+        export FAKE_IF="awgp${$}x1"
         export PATH="$2/slowbin:$PATH"
         _install_temp_files=()
         _install_cleaned=0
@@ -475,4 +491,21 @@ c_cleanup_bounded() {
 }
 @test "cleanup: a hanging ip does not block the exit trap, both twins" {
     both c_cleanup_bounded
+}
+
+p_control_timeout() {
+    # The main set refuses, control step 1 passes, control step 2 never answers.
+    # A hung command is not evidence about the module: judging it "second line"
+    # would send the owner of a healthy module to rebuild it, which is the very
+    # advice the two-step control exists to avoid.
+    make_ip add; make_awg ctlhang
+    local out start end
+    start=$(date +%s)
+    out=$(probe "$1")
+    end=$(date +%s)
+    [ "$out" = "failed" ] || { echo "a hanging control step was judged ($1): $out"; return 1; }
+    [ "$((end - start))" -lt 25 ] || { echo "the probe waited for a hanging control ($1)"; return 1; }
+}
+@test "probe: a hanging second control step is not a second-line verdict, both twins" {
+    both p_control_timeout
 }

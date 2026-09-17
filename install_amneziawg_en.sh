@@ -785,10 +785,15 @@ _awg31_module_probe() (
         timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 \
             header-protection-key "$kf" </dev/null >/dev/null 2>&1
         ctl=$?
-        if (( ctl == 0 )); then
-            printf 'failed'
-        else
+        # Only a REAL refusal from the tool (code 1) is a verdict about the
+        # module. A timeout, a missing binary or any other code cannot be: a hung
+        # command would otherwise declare a healthy module second line and send a
+        # person to rebuild it for nothing - the same thing the timeout check on
+        # the main command guards against.
+        if (( ctl == 1 )); then
             printf 'line2'
+        else
+            printf 'failed'
         fi
         exit 0
     fi
