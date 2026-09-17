@@ -35,7 +35,7 @@ teardown() {
 }
 
 # make_ip <mode> : add - creates; fail - refuses to create; busy - every name
-# already exists; hang - never answers.
+# already exists; hang - never answers to add; hangshow - never answers to show.
 make_ip() {
     local mode="$1"
     {
@@ -47,6 +47,7 @@ make_ip() {
             fail) echo 'case "$2" in show) exit 1 ;; add) exit 2 ;; del) exit 0 ;; esac; exit 0' ;;
             busy) echo 'case "$2" in show) exit 0 ;; add) exit 2 ;; del) exit 0 ;; esac; exit 0' ;;
             hang) echo 'case "$2" in show) exit 1 ;; add) sleep 30 ;; del) exit 0 ;; esac; exit 0' ;;
+            hangshow) echo 'case "$2" in show) sleep 30 ;; add) exit 0 ;; del) exit 0 ;; esac; exit 0' ;;
         esac
     } > "$BIN/ip"
     chmod +x "$BIN/ip"
@@ -315,4 +316,113 @@ s_codes() {
     en=$(sed -n '/^_awg31_module_probe() (/,/^)$/p' "$INSTALL_EN" | grep -vE '^\s*#' | tr -d '\r')
     [ -n "$ru" ]
     [ "$ru" = "$en" ]
+}
+
+p_busy() {
+    # Every candidate name is taken: the probe must give up rather than write
+    # into a device that belongs to someone else.
+    make_ip busy; make_awg ok
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "a taken name did not stop the probe ($1): $out"; return 1; }
+    grep -q "^link add " "$TEST_DIR/ip.argv" && { echo "the probe wrote into an existing interface ($1)"; return 1; }
+    return 0
+}
+@test "probe: when every candidate name is taken nothing is created, both twins" {
+    both p_busy
+}
+
+p_hang_show() {
+    # The name check is an external call like any other: on a stuck netlink it
+    # would hang the install step with no message at all.
+    make_ip hangshow; make_awg ok
+    local out start end
+    start=$(date +%s)
+    out=$(probe "$1")
+    end=$(date +%s)
+    [ "$out" = "failed" ] || { echo "a hanging name check was judged ($1): $out"; return 1; }
+    [ "$((end - start))" -lt 25 ] || { echo "the probe waited for a hanging ip link show ($1)"; return 1; }
+}
+@test "probe: a hanging name check is bounded too, both twins" {
+    both p_hang_show
+}
+
+@test "cleanup: the installer removes a probe interface left by a signal, both twins" {
+    # The trap inside the probe covers an ordinary exit. A signal can cut the
+    # subshell before it runs, and that is measurable: bash does not always give
+    # the subshell its turn. So the installer cleanup, which is guaranteed to
+    # run, removes anything the probe may have left. The pattern carries the
+    # installer pid, so it can only match interfaces of this very run.
+    local f body
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        body=$(sed -n '/^_install_cleanup() {/,/^}/p' "$BATS_TEST_DIRNAME/../$f")
+        [ -n "$body" ] || { echo "no _install_cleanup in $f"; return 1; }
+        grep -q 'awgp\$\$x' <<< "$body" || { echo "the cleanup does not remove probe interfaces in $f"; return 1; }
+        grep -q 'ip link del' <<< "$body" || { echo "the cleanup does not delete anything in $f"; return 1; }
+    done
+}
+
+c_cleanup_runs() {
+    # The same cleanup, executed: a stub ip reports one interface of this run,
+    # one of another run and the working awg0, and only ours may be deleted.
+    # The name of "ours" is passed in a variable rather than derived inside the
+    # stub: the stub runs in a pipeline, so its parent is a subshell and its own
+    # idea of the pid would not be the one the cleanup uses.
+    local src="$1" out
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin"
+        cat > "$2/bin/ip" <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = "-br" ]; then
+    echo "\$FAKE_IF UNKNOWN"
+    echo "awgp999999x1 UNKNOWN"
+    echo "awg0 UNKNOWN"
+    exit 0
+fi
+echo "\$*" >> "$2/deleted"
+exit 0
+STUB
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export FAKE_IF="awgp${$}x1"
+        rm -f "$2/deleted"
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        cat "$2/deleted" 2>/dev/null
+    ' _ "$src" "$TEST_DIR")
+    [[ "$out" == *"link del awgp"* ]] || { echo "nothing was deleted ($src): [$out]"; return 1; }
+    [[ "$out" != *"awgp999999x1"* ]] || { echo "an interface of another run was deleted ($src): $out"; return 1; }
+    [[ "$out" != *"awg0"* ]] || { echo "the working interface was deleted ($src): $out"; return 1; }
+}
+@test "cleanup: only the probe interfaces of this run are removed, both twins" {
+    both c_cleanup_runs
+}
+
+p_control_shape() {
+    # The control command carries the same padding sizes as the refused one: a
+    # refusal caused by the sizes themselves must not read as a refusal over the
+    # third-line parameters.
+    make_ip add; make_awg refuse
+    probe "$1" >/dev/null
+    local ctl
+    ctl=$(grep "^set " "$TEST_DIR/awg.argv" | tail -1)
+    for token in "s1 15" "s2 15" "s3 12" "s4 12"; do
+        [[ "$ctl" == *"$token"* ]] || { echo "the control lost $token ($1): $ctl"; return 1; }
+    done
+    [[ "$ctl" != *header-protection-key* ]] || { echo "the control still carries the key ($1): $ctl"; return 1; }
+    [[ "$ctl" != *content-padding-addition* ]] || { echo "the control still carries the padding ($1): $ctl"; return 1; }
+}
+@test "probe: the control command keeps the sizes and drops only the third-line parameters, both twins" {
+    both p_control_shape
+}
+
+@test "probe: the refusal text for a failed probe tells the reader to remove the interface" {
+    local f body
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        body=$(sed -n '/^_awg31_blocker_message() {/,/^}/p' "$BATS_TEST_DIRNAME/../$f")
+        body=$(awk '/module_probe_failed\)/{f=1;next} f&&/;;/{exit} f' <<< "$body")
+        [[ "$body" == *"ip link add awgprobe"* ]] || { echo "no reproduction command in $f"; return 1; }
+        [[ "$body" == *"ip link del awgprobe"* ]] || { echo "the text leaves the interface behind in $f"; return 1; }
+    done
 }

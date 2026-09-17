@@ -90,6 +90,13 @@ _install_cleanup() {
     _install_cleaned=1
     local f
     for f in "${_install_temp_files[@]}"; do [[ -f "$f" ]] && rm -f "$f"; done
+    # Остатки пробы модуля. Ловушка внутри самой пробы убирает за собой при
+    # обычном выходе, но на сигнале подоболочка может не успеть, поэтому уборка
+    # продублирована здесь, где выход гарантирован. Образец привязан к НАШЕМУ
+    # pid, поэтому чужого интерфейса он коснуться не может.
+    for f in $(ip -br link show 2>/dev/null | awk -v p="awgp$$x" 'index($1, p) == 1 {print $1}'); do
+        ip link del "$f" >/dev/null 2>&1
+    done
     # Очистка временных файлов из awg_common.sh (если уже подключён через source)
     type _awg_cleanup &>/dev/null && _awg_cleanup
 }
@@ -688,7 +695,16 @@ _awg31_module_probe() (
     kf=$(mktemp "${TMPDIR:-/tmp}/awg31probe.XXXXXX" 2>/dev/null) || { printf 'failed'; exit 0; }
     # Уборка обязана пережить и обычный выход, и сигнал: без интерфейса на
     # машине не должно остаться следа пробы.
-    trap 'rm -f "$kf" 2>/dev/null; if [[ "$made" -eq 1 ]]; then timeout -k 1 5 ip link del "$ifn" >/dev/null 2>&1; fi' EXIT INT TERM HUP
+    _probe_cleanup() {
+        rm -f "$kf" 2>/dev/null
+        if [[ "$made" -eq 1 ]]; then timeout -k 1 5 ip link del "$ifn" >/dev/null 2>&1; fi
+    }
+    # 🔴 На сигнале нужен ЯВНЫЙ выход, а не только уборка. Без него тело пробы
+    # продолжает выполняться после прерванной команды - шлёт awg set и showconf
+    # по интерфейсу, который ловушка только что удалила, - и уборка идёт второй
+    # раз уже на EXIT. Тот же класс, что исправлен для самого установщика выше.
+    trap '_probe_cleanup' EXIT
+    trap '_probe_cleanup; printf "failed"; exit 0' INT TERM HUP
 
     timeout -k 1 5 awg genkey </dev/null > "$kf" 2>/dev/null || { printf 'failed'; exit 0; }
     key=$(tr -d '\r\n' < "$kf")
@@ -699,14 +715,19 @@ _awg31_module_probe() (
     for i in 1 2 3 4 5; do
         ifn="awgp$$x$i"
         [[ "$ifn" == awg0 ]] && continue
-        ip link show "$ifn" >/dev/null 2>&1 && continue
+        # Зависший ip - это «не знаю», а не «имя свободно»: пойти дальше и создать
+        # интерфейс на непрочитанном имени значило бы писать вслепую.
+        timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1
+        rc=$?
+        (( rc == 0 )) && continue
+        if (( rc == 124 || rc == 125 || rc == 137 )); then printf 'failed'; exit 0; fi
         if timeout -k 1 5 ip link add "$ifn" type amneziawg >/dev/null 2>&1; then
             made=1
             break
         fi
         # Имя появилось между проверкой и созданием - пробуем следующее;
         # любая другая причина повторится и на нём.
-        ip link show "$ifn" >/dev/null 2>&1 || { printf 'failed'; exit 0; }
+        timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1 || { printf 'failed'; exit 0; }
     done
     [[ "$made" -eq 1 ]] || { printf 'failed'; exit 0; }
 
@@ -719,8 +740,11 @@ _awg31_module_probe() (
         # команда здесь только запутала бы: она бы прошла, и зависание
         # превратилось бы в уверенное «вторая линия».
         if (( rc == 124 || rc == 125 || rc == 137 )); then printf 'failed'; exit 0; fi
-        # Контроль: то же устройство, но без параметров третьей линии.
-        timeout -k 1 5 awg set "$ifn" s1 15 </dev/null >/dev/null 2>&1
+        # Контроль: то же устройство и те же размеры паддинга, но без параметров
+        # третьей линии. Именно те же: иначе отказ, вызванный самими S-значениями,
+        # выглядел бы как отказ из-за ключа, и вердикт «вторая линия» отправил бы
+        # человека пересобирать модуль впустую.
+        timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 </dev/null >/dev/null 2>&1
         ctl=$?
         if (( ctl == 0 )); then
             printf 'line2'
@@ -913,7 +937,7 @@ _awg31_blocker_message() {
             printf '%s' "Загруженный модуль ядра amneziawg не понимает параметры третьей линии: ключ защиты заголовков он принимает молча, а обратно не отдаёт. Профиль 3.1 на таком модуле собрался бы, а соединение бы не поднялось. Это лечится обновлением модуля: apt-get update && apt-get install --only-upgrade amneziawg-dkms, затем перезагрузка (модуль пересобирается под ваше ядро) и повторный запуск установщика. Либо поставьте с --protocol=2.0."
             ;;
         module_probe_failed)
-            printf '%s' "Не удалось проверить, понимает ли загруженный модуль параметры третьей линии: проба не смогла создать временный интерфейс или получить ответ. Причины бывают разные - права, состояние netlink, сетевое пространство имён контейнера. Мы не знаем, подходит ли модуль, а гадать здесь нельзя. Выход: поставьте с --protocol=2.0. Если считаете это ошибкой, пришлите вывод 'ip link add awgprobe type amneziawg' и 'awg set awgprobe s1 15'."
+            printf '%s' "Не удалось проверить, понимает ли загруженный модуль параметры третьей линии: проба не смогла создать временный интерфейс или получить ответ. Причины бывают разные - права, состояние netlink, сетевое пространство имён контейнера. Мы не знаем, подходит ли модуль, а гадать здесь нельзя. Выход: поставьте с --protocol=2.0. Если считаете это ошибкой, пришлите вывод трёх команд: 'ip link add awgprobe type amneziawg', 'awg set awgprobe s1 15' и 'ip link del awgprobe' (третья убирает временный интерфейс за собой)."
             ;;
         not_implemented_yet)
             printf '%s' "Эта версия установщика (v${SCRIPT_VERSION}) профиль AmneziaWG 3.1 не выдаёт: окружение у вас подходит, дело не в вашей машине. Выход: --protocol=2.0."

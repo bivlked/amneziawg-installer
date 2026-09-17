@@ -94,6 +94,13 @@ _install_cleanup() {
     _install_cleaned=1
     local f
     for f in "${_install_temp_files[@]}"; do [[ -f "$f" ]] && rm -f "$f"; done
+    # Leftovers of the module probe. The trap inside the probe itself cleans up
+    # on an ordinary exit, but on a signal the subshell may not get there, so the
+    # cleanup is repeated here, where the exit is guaranteed. The pattern is tied
+    # to OUR pid, so it cannot touch anyone else's interface.
+    for f in $(ip -br link show 2>/dev/null | awk -v p="awgp$$x" 'index($1, p) == 1 {print $1}'); do
+        ip link del "$f" >/dev/null 2>&1
+    done
     # Clean up temporary files from awg_common.sh (if already sourced)
     type _awg_cleanup &>/dev/null && _awg_cleanup
 }
@@ -711,7 +718,17 @@ _awg31_module_probe() (
     kf=$(mktemp "${TMPDIR:-/tmp}/awg31probe.XXXXXX" 2>/dev/null) || { printf 'failed'; exit 0; }
     # The cleanup has to survive both an ordinary exit and a signal: the machine
     # must not keep an interface of ours after the probe.
-    trap 'rm -f "$kf" 2>/dev/null; if [[ "$made" -eq 1 ]]; then timeout -k 1 5 ip link del "$ifn" >/dev/null 2>&1; fi' EXIT INT TERM HUP
+    _probe_cleanup() {
+        rm -f "$kf" 2>/dev/null
+        if [[ "$made" -eq 1 ]]; then timeout -k 1 5 ip link del "$ifn" >/dev/null 2>&1; fi
+    }
+    # 🔴 A signal needs an EXPLICIT exit, not just the cleanup. Without it the
+    # body carries on after the interrupted command - sending awg set and
+    # showconf to an interface the trap has just removed - and the cleanup runs
+    # a second time on EXIT. The same class that is already fixed for the
+    # installer itself above.
+    trap '_probe_cleanup' EXIT
+    trap '_probe_cleanup; printf "failed"; exit 0' INT TERM HUP
 
     timeout -k 1 5 awg genkey </dev/null > "$kf" 2>/dev/null || { printf 'failed'; exit 0; }
     key=$(tr -d '\r\n' < "$kf")
@@ -723,14 +740,19 @@ _awg31_module_probe() (
     for i in 1 2 3 4 5; do
         ifn="awgp$$x$i"
         [[ "$ifn" == awg0 ]] && continue
-        ip link show "$ifn" >/dev/null 2>&1 && continue
+        # A hanging ip is "do not know", not "the name is free": going on and
+        # creating an interface under an unread name would be writing blind.
+        timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1
+        rc=$?
+        (( rc == 0 )) && continue
+        if (( rc == 124 || rc == 125 || rc == 137 )); then printf 'failed'; exit 0; fi
         if timeout -k 1 5 ip link add "$ifn" type amneziawg >/dev/null 2>&1; then
             made=1
             break
         fi
         # The name appeared between the check and the creation - try the next
         # one; any other reason would repeat on it as well.
-        ip link show "$ifn" >/dev/null 2>&1 || { printf 'failed'; exit 0; }
+        timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1 || { printf 'failed'; exit 0; }
     done
     [[ "$made" -eq 1 ]] || { printf 'failed'; exit 0; }
 
@@ -743,8 +765,12 @@ _awg31_module_probe() (
         # -k sends. The control command would only confuse things here: it would
         # pass, and a hang would turn into a confident "second line".
         if (( rc == 124 || rc == 125 || rc == 137 )); then printf 'failed'; exit 0; fi
-        # Control: the same device, without the third-line parameters.
-        timeout -k 1 5 awg set "$ifn" s1 15 </dev/null >/dev/null 2>&1
+        # Control: the same device and the same padding sizes, without the
+        # third-line parameters. The same sizes on purpose: otherwise a refusal
+        # caused by the S values themselves would look like a refusal over the
+        # key, and a "second line" verdict would send a person to rebuild a
+        # module for nothing.
+        timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 </dev/null >/dev/null 2>&1
         ctl=$?
         if (( ctl == 0 )); then
             printf 'line2'
@@ -945,7 +971,7 @@ _awg31_blocker_message() {
             printf '%s' "The loaded amneziawg kernel module does not understand the third-line parameters: it takes the header protection key without a word and does not give it back. A 3.1 profile would be written on such a module and the connection would never come up. This one is fixed by updating the module: apt-get update && apt-get install --only-upgrade amneziawg-dkms, then a reboot (the module is rebuilt for your kernel) and another run of the installer. Or install with --protocol=2.0."
             ;;
         module_probe_failed)
-            printf '%s' "Whether the loaded module understands the third-line parameters could not be checked: the probe could not create a temporary interface or get an answer. The reasons differ - permissions, the state of netlink, the network namespace of a container. We do not know whether the module fits, and guessing is not an option here. Way out: install with --protocol=2.0. If you think this is wrong, send the output of 'ip link add awgprobe type amneziawg' and 'awg set awgprobe s1 15'."
+            printf '%s' "Whether the loaded module understands the third-line parameters could not be checked: the probe could not create a temporary interface or get an answer. The reasons differ - permissions, the state of netlink, the network namespace of a container. We do not know whether the module fits, and guessing is not an option here. Way out: install with --protocol=2.0. If you think this is wrong, send the output of three commands: 'ip link add awgprobe type amneziawg', 'awg set awgprobe s1 15' and 'ip link del awgprobe' (the third one takes the temporary interface away again)."
             ;;
         not_implemented_yet)
             printf '%s' "This installer version (v${SCRIPT_VERSION}) does not issue the AmneziaWG 3.1 profile: your environment fits, and it is not your machine. Way out: --protocol=2.0."
