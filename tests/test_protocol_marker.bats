@@ -296,7 +296,7 @@ render_init() {
     [ "$output" = "2.0" ]
 }
 
-@test "installer RU/EN: a 3.1 marker is refused until the 3.1 generator exists (no 2.0 config under a 3.1 label)" {
+@test "installer RU/EN: a 3.1 marker is refused while the 3.1 path is closed" {
     local f body assign_line guard_line
     for f in "$INSTALL_RU" "$INSTALL_EN"; do
         body=$(initialize_setup_body "$f")

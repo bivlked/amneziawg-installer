@@ -232,6 +232,32 @@ run_argparse() {
     done
 }
 
+@test "no refusal tells the reader what the installer carries inside" {
+    # The arm, arch_unsupported and not_implemented_yet texts used to say that
+    # this installer version carries no 3.1 generator. That stopped being true
+    # when the generator, the header protection key and the render landed, while
+    # the path stayed closed on purpose. A refusal has to say what the reader
+    # gets (no 3.1 profile from this version) and why, not describe internal
+    # parts: those change from release to release, and the sentence silently
+    # turns false the day one of them lands.
+    # The facts the architecture texts must keep are asserted next to it, so a
+    # rewrite that drops them does not pass either.
+    local script code
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        for code in kernel arm arch_unsupported arch_unknown tools_old not_implemented_yet internal_error; do
+            run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message '$code'"
+            [ "$status" -eq 0 ]
+            [ -n "$output" ]
+            [[ "$output" != *"енератор"* ]]   || { echo "$code talks about the generator ($script): $output"; return 1; }
+            [[ "$output" != *"generator"* ]] || { echo "$code talks about the generator ($script): $output"; return 1; }
+        done
+        run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message not_implemented_yet"
+        [[ "$output" == *"--protocol=2.0"* ]] || { echo "not_implemented_yet lost the way out ($script): $output"; return 1; }
+        [[ "$output" == *"3.1"* ]] || { echo "not_implemented_yet no longer names the profile ($script): $output"; return 1; }
+    done
+}
+
 @test "an unknown reason code refuses and repeats the code" {
     build_harness
     run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message future_code"
@@ -446,7 +472,7 @@ run_argparse() {
 
 # ------------------------------------------------------- the step 3 call site
 
-# 🔴 This is the branch that comes alive in phase 3. Today a 3.1 marker never
+# 🔴 This is the branch that comes alive in phase 5. Today a 3.1 marker never
 # reaches step 3, so nothing but this test proves the call site exists and is
 # guarded by the marker. Deleting the call makes the first test red; removing
 # the guard makes the second one red.
