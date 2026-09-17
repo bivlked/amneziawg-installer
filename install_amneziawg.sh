@@ -3246,24 +3246,52 @@ check_service_status() {
 #      ключ не в своей секции (PrivateKey внутри [Peer] уедет в stderr целиком),
 #      ключ чужой реализации. Дописанный руками параметр третьей линии - лишь один
 #      из случаев, а не единственный.
+#      Имя берётся из полного списка параметров, которые разбирает awg (key_match
+#      в src/config.c), а не только из трёх ключей: имя параметра не в своей
+#      секции (RandomTrailers в [Peer], ListenPort у старых tools) нужно в разборе,
+#      а значение скрывается всегда, потому что в неопознанной строке может
+#      оказаться что угодно.
+#   3б. "Line unrecognized: ...", которую не замаскировало правило 3, скрывается
+#      целиком. awg выбрасывает из строки пробелы, поэтому обычные ошибки ручной
+#      правки дают строку без известного имени и знака равенства перед значением:
+#      пропущенный "=" (`PrivateKeyЗНАЧЕНИЕ'), опечатка в имени (`PrivatKey=...'),
+#      двоеточие вместо "=", хвост ключа, перенесённый редактором на следующую
+#      строку. Эвристику «буквы, потом =» для имени здесь применять нельзя: хвост
+#      ключа base64 сам кончается на "=" и сошёл бы за имя.
 #   4. "Key is not the correct length or format: ..." - то же место, но имени ключа
 #      в сообщении НЕТ вовсе, поэтому по имени его не поймать.
+#   4б. "Unable to parse IP address: `...'" - для значения без точки и двоеточия,
+#      то есть заведомо не адреса. Так awg отвечает на AllowedIPs, в которое попал
+#      ключ: печатается часть ДО первой "/", и она бывает короче 20 символов, так
+#      что правило 5 её не достаёт.
+#   5. значение в обратном апострофе и кавычке, целиком похожее на ключ (символы
+#      base64, не короче 20). Так amneziawg-tools повторяют значение в десятке
+#      сообщений (`Unable to parse %s: `%s'', адреса, endpoint, fwmark), и ключ,
+#      попавший в чужое поле, иначе ушёл бы открытым текстом. Адреса, порты,
+#      endpoint и числа содержат точки или двоеточия либо короче, поэтому остаются
+#      видны и полезны в разборе.
 # ВАЖНО: якоря у 1 и 2 означают, что эти формы НЕ ловятся в секции Service Status,
 # где systemctl status добавляет свой префикс со штампом времени. Журнальная секция
 # этим не страдает: journalctl вызывается там с --output=cat, то есть без префикса.
 # Регистронезависимость (флаг I) - разбор конфига тоже регистронезависим (strncasecmp).
 #
-# ЧЕТЫРЕ СТРОКОВЫХ ЛИТЕРАЛА UPSTREAM, на которых всё держится: "private key:",
+# ПЯТЬ СТРОКОВЫХ ЛИТЕРАЛОВ UPSTREAM, на которых всё держится: "private key:",
 # "header protection key:", "Line unrecognized:", "Key is not the correct length or
-# format:". Сверены с amneziawg-tools ee0f0a9 (src/config.c, src/show.c) 25 aug 2026.
+# format:", "Unable to parse IP address:", плюс форма `значение' у повторённых
+# значений (правило 5), и список имён параметров правила 3. Сверены с
+# amneziawg-tools ee0f0a9 (src/config.c, src/show.c) 25 aug 2026, форма значений -
+# с тегом v3.1.20260812 17 sep 2026.
 # Переформулируют любой - фильтр молча перестанет совпадать, а тесты останутся
 # зелёными, потому что зашивают те же строки. ПЕРЕСВЕРЯТЬ при обновлении tools.
 _mask_report_secrets() {
     sed -E \
         -e 's/^([[:space:]]*#?[[:space:]]*(PrivateKey|PresharedKey|HeaderProtectionKey)[[:space:]]*=[[:space:]]*).*/\1[HIDDEN]/I' \
         -e 's/^([[:space:]]*(private key|preshared key|header protection key)[[:space:]]*:[[:space:]]*).*/\1(hidden)/I' \
-        -e 's/(Line unrecognized:[[:space:]]*.?(PrivateKey|PresharedKey|HeaderProtectionKey)[[:space:]]*=[[:space:]]*).*/\1[HIDDEN]/I' \
-        -e 's/(Key is not the correct length or format:[[:space:]]*).*/\1[HIDDEN]/I'
+        -e 's/(Line unrecognized:[[:space:]]*.?(PrivateKey|PresharedKey|HeaderProtectionKey|PublicKey|ListenPort|FwMark|Jc|Jmin|Jmax|S[1-4]|H[1-4]|I[1-5]|ContentPaddingAddition|RekeyAfterTime|RekeyTimeout|RejectAfterTime|KeepaliveTimeout|MaxHandshakeAttempts|RandomTrailers|DisableCookies|Endpoint|AllowedIPs|PersistentKeepalive|AdvancedSecurity)[[:space:]]*=[[:space:]]*).*/\1[HIDDEN]/I' \
+        -e '/\[HIDDEN\]/!s/(Line unrecognized:[[:space:]]*).*/\1[HIDDEN]/I' \
+        -e 's/(Key is not the correct length or format:[[:space:]]*).*/\1[HIDDEN]/I' \
+        -e "s|(Unable to parse IP address:[[:space:]]*\`)[^.:']*'|\1[HIDDEN]'|I" \
+        -e "s|\`[A-Za-z0-9+/]{20,}={0,2}'|\`[HIDDEN]'|g"
 }
 
 create_diagnostic_report() {

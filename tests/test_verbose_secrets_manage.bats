@@ -195,7 +195,7 @@ STATUS_SECRET="SVCSTATUSSECRETAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 # BASH_XTRACEFD sends the trace to its own file, so no reference run is
 # needed. No matter how the systemctl status and journalctl output is read (a
 # substitution, a pipe, a temp file, a wrapper), its text must reach the output
-# and must not reach the trace file, and the trace must reach the failing start
+# with the key masked and must not reach the trace file, and the trace must reach the failing start
 # or restart, so an empty trace does not pass. The keys in the test config must
 # not reach the trace file either.
 m_svc_fail() {
@@ -235,8 +235,14 @@ EOF
     PATH="$d/bin:$PATH" BASH_XTRACEFD=7 timeout 120 bash -x "$src" "$cmd" "${args[@]}" --yes \
         7> "$d/trace" > "$d/out" 2>&1 || rc=$?
     [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] || { echo "$cmd ($src): expected a failure, got rc=$rc: $(tail -5 "$d/out")"; return 1; }
-    grep -qF "PrivateKey=$STATUS_SECRET" "$d/out" \
+    # The status text reaches the output, and since the status is masked the key
+    # inside it does not (this used to be pinned as printed in clear text).
+    grep -qF "Active: failed (Result: exit-code)" "$d/out" \
         || { echo "$cmd ($src): the service status did not reach the output: $(tail -5 "$d/out")"; return 1; }
+    grep -qF "Line unrecognized: PrivateKey=[HIDDEN]" "$d/out" \
+        || { echo "$cmd ($src): the journal line of the status is not shown masked: $(tail -5 "$d/out")"; return 1; }
+    ! grep -qF "$STATUS_SECRET" "$d/out" \
+        || { echo "$cmd ($src): the service status printed the key: $(grep -F "${STATUS_SECRET:0:12}" "$d/out" | head -3)"; return 1; }
     grep -qE "systemctl (start|restart) awg-quick@awg0\$" "$d/trace" \
         || { echo "$cmd ($src): the trace does not reach the failing systemctl start or restart"; return 1; }
     for s in "$STATUS_SECRET" "$SRV_PRIV" "$CLI_PRIV" "$PSK_VAL" "$HPK_VAL"; do

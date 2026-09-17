@@ -1269,12 +1269,20 @@ modify_client() {
 # ==============================================================================
 
 # _log_service_status : вывести `systemctl status awg-quick@awg0` через log_error.
-# Вывод лежит в переменной, а в журнале службы бывают строки конфига с ключами,
-# поэтому под трассировкой (bash -x) тело выполняется без неё.
+# В хвосте статуса идут строки журнала службы, а туда попадает stderr `awg setconf`:
+# при испорченном ключе в awg0.conf это `Line unrecognized: `PrivateKey=<значение>'`
+# или `Key is not the correct length or format: `<значение>'`, то есть почти
+# настоящий ключ. Поэтому текст идёт через фильтр секретов (его правила без якоря
+# написаны ровно под эту форму с префиксом журнала), а при отказе фильтра не
+# выводится вовсе. Под трассировкой (bash -x) тело выполняется без неё.
 _log_service_status() {
     case $- in *x*) _awg_xtrace_guard _log_service_status; return ;; esac
     local status_out line
     status_out=$(systemctl status awg-quick@awg0 --no-pager 2>&1) || true
+    if ! status_out=$(printf '%s\n' "$status_out" | _mask_report_secrets); then
+        log_error "  Фильтр секретов не отработал: состояние службы скрыто. Смотрите: systemctl status awg-quick@awg0"
+        return 0
+    fi
     while IFS= read -r line; do log_error "  $line"; done <<< "$status_out"
 }
 
@@ -1321,11 +1329,26 @@ check_server() {
     local _c_mod_ver=""
 
     log "Статус сервиса:"
-    # В --json сырой вывод systemctl уходит в stderr: stdout занят контрактом.
-    if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
-        if ! systemctl status awg-quick@awg0 --no-pager >&2; then ok=0; fi
-    else
-        if ! systemctl status awg-quick@awg0 --no-pager; then ok=0; fi
+    # Текст статуса идёт через фильтр секретов: в строках журнала службы бывает
+    # ключ из испорченного awg0.conf (подробно у _log_service_status). Код
+    # systemctl берётся присваиванием, до фильтра. Перехватывается только stdout:
+    # статус и строки журнала идут туда, а собственный stderr systemctl ключей не
+    # несёт и остаётся в stderr, как раньше. В --json текст уходит в stderr:
+    # stdout занят контрактом.
+    local _svc_out _svc_rc=0
+    _svc_out=$(systemctl status awg-quick@awg0 --no-pager) || _svc_rc=$?
+    if ! _svc_out=$(printf '%s\n' "$_svc_out" | _mask_report_secrets); then
+        _svc_out=""
+        log_error " - Фильтр секретов не отработал: вывод systemctl status скрыт"
+        ok=0
+    fi
+    (( _svc_rc == 0 )) || ok=0
+    if [[ -n "$_svc_out" ]]; then
+        if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
+            printf '%s\n' "$_svc_out" >&2
+        else
+            printf '%s\n' "$_svc_out"
+        fi
     fi
     systemctl is-active --quiet awg-quick@awg0 2>/dev/null && _c_svc_active=true
 
