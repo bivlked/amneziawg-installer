@@ -68,12 +68,13 @@ stub_no_qrencode() {
 _isolate() {
     local d="$1" u
     : > "$d/bin/.isolated"
-    for u in grep sed awk cat mktemp rm find head tr; do
+    for u in grep sed awk cat mktemp rm find head tr mkdir ln; do
         [ -x "/usr/bin/$u" ] && ln -sf "/usr/bin/$u" "$d/bin/$u"
         [ -x "/bin/$u" ] && [ ! -e "$d/bin/$u" ] && ln -sf "/bin/$u" "$d/bin/$u"
     done
-    # The loop ends on a failed test when the last utility is only in /usr/bin;
-    # without this the helper would return non-zero under errexit.
+    # The last iteration ends on a failed test: the -e check runs after the first
+    # ln has already created the link. Without this the helper would return
+    # non-zero under errexit.
     return 0
 }
 stub_no_perl() {
@@ -192,25 +193,20 @@ t_leftovers_20() {
     both t_leftovers_20
 }
 
-@test "first install 3.1: the missing-tool stubs really hide the tool from the library" {
+@test "first install 3.1: the missing-tool stubs really hide the tool, marker and path both" {
     # The qrencode case silently tested nothing while the runner had no qrencode
-    # of its own. Each stub directory must answer "not found" for the tool it
-    # claims is missing, whatever is installed on the machine.
+    # of its own. Two halves have to hold: the stub sets the isolation marker,
+    # and lib_run honours it. The marker is asserted directly, because on a
+    # machine without the tool the probe passes either way; the probe goes
+    # through lib_run, because that is where the marker turns into a PATH.
     local lib d out
     for lib in awg_common.sh awg_common_en.sh; do
         d=$(dir_of "$lib")
-        rm -rf "$d"; mkdir -p "$d/keys" "$d/bin"
-        stub_no_qrencode "$lib"
-        # The marker is what makes lib_run cut /usr/bin off the path. On a machine
-        # without qrencode the command check below passes either way, so the
-        # marker is asserted directly.
+        out=$(lib_run "$lib" 3.1 "stub_no_qrencode $lib" 'command -v qrencode || echo NOTFOUND')
         [ -e "$d/bin/.isolated" ] || { echo "stub_no_qrencode does not isolate the path ($lib)"; false; }
-        out=$(timeout 20 env PATH="$d/bin" /bin/sh -c 'command -v qrencode || echo NOTFOUND')
-        [[ "$out" == *NOTFOUND* ]] || { echo "qrencode still visible through the stub PATH ($lib): $out"; false; }
-        rm -rf "$d"; mkdir -p "$d/keys" "$d/bin"
-        stub_no_perl "$lib"
+        [[ "$out" == *NOTFOUND* ]] || { echo "qrencode still visible to the library ($lib): $out"; false; }
+        out=$(lib_run "$lib" 3.1 "stub_no_perl $lib" 'command -v perl || echo NOTFOUND')
         [ -e "$d/bin/.isolated" ] || { echo "stub_no_perl does not isolate the path ($lib)"; false; }
-        out=$(timeout 20 env PATH="$d/bin" /bin/sh -c 'command -v perl || echo NOTFOUND')
-        [[ "$out" == *NOTFOUND* ]] || { echo "perl still visible through the stub PATH ($lib): $out"; false; }
+        [[ "$out" == *NOTFOUND* ]] || { echo "perl still visible to the library ($lib): $out"; false; }
     done
 }
