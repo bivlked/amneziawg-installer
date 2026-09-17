@@ -16,6 +16,8 @@
 # lifted out of the script, and every system command is a stub in front of PATH.
 # Each case runs both twins.
 
+bats_require_minimum_version 1.5.0
+
 _make_stubs() {
     local bin="$1" jmin="${2:-40}" jmax="${3:-70}"
     mkdir -p "$bin"
@@ -133,6 +135,7 @@ c_text_broken() {
     both c_text_broken
 }
 
+# shellcheck disable=SC2154  # $stderr is provided by bats `run --separate-stderr`
 c_json_31() {
     _write_init "export AWG_PROTOCOL='3.1'"
     run --separate-stderr _run "$1" check_server 1
@@ -145,6 +148,7 @@ c_json_31() {
     both c_json_31
 }
 
+# shellcheck disable=SC2154  # $stderr is provided by bats `run --separate-stderr`
 c_json_broken() {
     _write_init "export AWG_PROTOCOL='9.9'"
     run --separate-stderr _run "$1" check_server 1
