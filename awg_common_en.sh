@@ -1542,7 +1542,7 @@ _ensure_server_public_key() {
 # _mask_report_secrets : the secrets filter for everything that goes to the screen
 # or the log from awg show and configs. A copy of the installer's filter: there it
 # has to work without the downloaded library (--diagnostic), here it serves manage
-# check, show and diagnose. The body is the same in all four copies, and a parity
+# check, show, diagnose and the service status text on a failed restore or restart. The body is the same in all four copies, and a parity
 # test checks that; the rules and the four upstream string literals are explained
 # in the installer's comment.
 _mask_report_secrets() {
@@ -1550,7 +1550,9 @@ _mask_report_secrets() {
         -e 's/^([[:space:]]*#?[[:space:]]*(PrivateKey|PresharedKey|HeaderProtectionKey)[[:space:]]*=[[:space:]]*).*/\1[HIDDEN]/I' \
         -e 's/^([[:space:]]*(private key|preshared key|header protection key)[[:space:]]*:[[:space:]]*).*/\1(hidden)/I' \
         -e 's/(Line unrecognized:[[:space:]]*.?(PrivateKey|PresharedKey|HeaderProtectionKey)[[:space:]]*=[[:space:]]*).*/\1[HIDDEN]/I' \
-        -e 's/(Key is not the correct length or format:[[:space:]]*).*/\1[HIDDEN]/I'
+        -e '/\[HIDDEN\]/!s/(Line unrecognized:[[:space:]]*).*/\1[HIDDEN]/I' \
+        -e 's/(Key is not the correct length or format:[[:space:]]*).*/\1[HIDDEN]/I' \
+        -e "s|\`[A-Za-z0-9+/]{20,}={0,2}'|\`[HIDDEN]'|g"
 }
 
 # awg_hpk_path : path to the header protection key (HeaderProtectionKey) file.

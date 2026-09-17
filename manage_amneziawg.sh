@@ -1331,10 +1331,12 @@ check_server() {
     log "Статус сервиса:"
     # Текст статуса идёт через фильтр секретов: в строках журнала службы бывает
     # ключ из испорченного awg0.conf (подробно у _log_service_status). Код
-    # systemctl берётся присваиванием, до фильтра. В --json текст уходит в stderr:
+    # systemctl берётся присваиванием, до фильтра. Перехватывается только stdout:
+    # статус и строки журнала идут туда, а собственный stderr systemctl ключей не
+    # несёт и остаётся в stderr, как раньше. В --json текст уходит в stderr:
     # stdout занят контрактом.
     local _svc_out _svc_rc=0
-    _svc_out=$(systemctl status awg-quick@awg0 --no-pager 2>&1) || _svc_rc=$?
+    _svc_out=$(systemctl status awg-quick@awg0 --no-pager) || _svc_rc=$?
     if ! _svc_out=$(printf '%s\n' "$_svc_out" | _mask_report_secrets); then
         _svc_out=""
         log_error " - Фильтр секретов не отработал: вывод systemctl status скрыт"

@@ -1350,10 +1350,12 @@ check_server() {
     log "Service status:"
     # The status text goes through the secrets filter: the unit's journal lines can
     # carry a key from a malformed awg0.conf (details at _log_service_status). The
-    # systemctl exit code is taken by assignment, before the filter. With --json the
-    # text goes to stderr: stdout is contract-only.
+    # systemctl exit code is taken by assignment, before the filter. Only stdout is
+    # captured: the status and the journal lines go there, while systemctl's own
+    # stderr carries no keys and stays on stderr, as before. With --json the text
+    # goes to stderr: stdout is contract-only.
     local _svc_out _svc_rc=0
-    _svc_out=$(systemctl status awg-quick@awg0 --no-pager 2>&1) || _svc_rc=$?
+    _svc_out=$(systemctl status awg-quick@awg0 --no-pager) || _svc_rc=$?
     if ! _svc_out=$(printf '%s\n' "$_svc_out" | _mask_report_secrets); then
         _svc_out=""
         log_error " - The secrets filter failed: the systemctl status output is hidden"

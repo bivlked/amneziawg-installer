@@ -17,6 +17,13 @@
 
 PRIV="SECRETPRIVKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 BAD="SECRETBADLENGTHKEYBBBBBBBBBBBBBBBBBBBBBBBBB"
+# Every secret below carries the marker LEAK, so a partial disclosure (a cut value,
+# half of a key on its own line) is caught too, not only a whole token.
+NOEQ="LEAKNOEQUALSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+TYPO="LEAKTYPOBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+COLON="LEAKCOLONCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC="
+HALF="LEAKHALFDDDDDDDDDDDDDD="
+FIELD="LEAK+FIELD/EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE="
 
 # _make_stubs <dir> <systemctl exit code>
 _make_stubs() {
@@ -30,7 +37,14 @@ if [ "\$1" = status ]; then
     echo "Sep 17 12:00:00 host awg-quick[1234]: [#] awg setconf awg0 /dev/fd/63"
     echo "Sep 17 12:00:00 host awg-quick[1234]: Line unrecognized: \\\`PrivateKey=${PRIV}'"
     echo "Sep 17 12:00:00 host awg-quick[1234]: Key is not the correct length or format: \\\`${BAD}'"
+    echo "Sep 17 12:00:00 host awg-quick[1234]: Line unrecognized: \\\`PrivateKey${NOEQ}'"
+    echo "Sep 17 12:00:00 host awg-quick[1234]: Line unrecognized: \\\`PrivatKey=${TYPO}'"
+    echo "Sep 17 12:00:00 host awg-quick[1234]: Line unrecognized: \\\`PrivateKey:${COLON}'"
+    echo "Sep 17 12:00:00 host awg-quick[1234]: Line unrecognized: \\\`${HALF}'"
+    echo "Sep 17 12:00:00 host awg-quick[1234]: Unable to parse Jc: \\\`${FIELD}'"
+    echo "Sep 17 12:00:00 host awg-quick[1234]: Unable to find port of endpoint: \\\`203.0.113.10'"
     echo "Sep 17 12:00:00 host awg-quick[1234]: Configuration parsing error"
+    echo "Warning: The unit file of awg-quick@awg0.service changed on disk" >&2
     exit ${rc}
 fi
 exit 0
@@ -123,7 +137,7 @@ both() {
 }
 
 no_secret() {
-    [[ "$1" != *"$PRIV"* && "$1" != *"$BAD"* ]]
+    [[ "$1" != *"$PRIV"* && "$1" != *"$BAD"* && "$1" != *LEAK* ]]
 }
 
 c_text() {
@@ -135,6 +149,11 @@ c_text() {
     [[ "$output" == *"Configuration parsing error"* ]] || { echo "the journal lines are gone ($1): $output"; return 1; }
     [[ "$output" == *"[HIDDEN]"* ]] || { echo "nothing was masked ($1): $output"; return 1; }
     no_secret "$output$err" || { echo "check printed a key from the service status ($1): $output $err"; return 1; }
+    # What is not a key stays visible: it is what a person needs to fix the config.
+    [[ "$output" == *"Unable to find port of endpoint: \`203.0.113.10'"* ]] || { echo "a non-secret diagnostic was hidden ($1): $output"; return 1; }
+    [[ "$output" == *"Line unrecognized: \`PrivateKey=[HIDDEN]"* ]] || { echo "the key name of a known key is gone ($1): $output"; return 1; }
+    # systemctl's own stderr stays on stderr, as it did before the status was captured.
+    [[ "$err" == *"changed on disk"* && "$output" != *"changed on disk"* ]] || { echo "systemctl stderr moved to stdout ($1): out=$output err=$err"; return 1; }
 }
 @test "check: keys in the service status journal lines are masked, the rest is shown, both twins" {
     both c_text
@@ -203,13 +222,59 @@ l_broken_filter() {
 
 @test "manage: every systemctl status call is captured, none prints straight to the terminal" {
     # A later edit that prints the status directly again would bypass the filter
-    # silently; the behaviour tests above would not see a new call site.
+    # silently; the behaviour tests above would not see a new call site. Any
+    # command-position call counts, whatever its flags; mentions inside messages
+    # ("check: systemctl status ...") do not.
     local f n bad
     for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
-        bad=$(grep -nE 'systemctl status awg-quick@awg0 --no-pager' "$BATS_TEST_DIRNAME/../$f" \
-            | grep -vE '^[0-9]+:[[:space:]]*#' | grep -vE '=\$\(systemctl status awg-quick@awg0 --no-pager 2>&1\)' || true)
-        [ -z "$bad" ] || { echo "$f prints systemctl status without capture: $bad"; return 1; }
-        n=$(grep -cE '=\$\(systemctl status awg-quick@awg0 --no-pager 2>&1\)' "$BATS_TEST_DIRNAME/../$f")
+        bad=$(grep -nE '(^|[;&|(!]|then|else|do)[[:space:]]*systemctl[[:space:]]+status' "$BATS_TEST_DIRNAME/../$f" \
+            | grep -vE '^[0-9]+:[[:space:]]*#' \
+            | grep -vE '=\$\(systemctl status awg-quick@awg0 --no-pager( 2>&1)?\)' || true)
+        [ -z "$bad" ] || { echo "$f runs systemctl status without capture: $bad"; return 1; }
+        n=$(grep -cE '=\$\(systemctl status awg-quick@awg0 --no-pager( 2>&1)?\)' "$BATS_TEST_DIRNAME/../$f")
         [ "$n" -eq 2 ] || { echo "$f: expected 2 captured calls (check, _log_service_status), found $n"; return 1; }
+    done
+}
+
+# filter_all <input> : runs every copy of _mask_report_secrets on the input and
+# prints "<file>|<output>" per copy.
+filter_all() {
+    local f body
+    for f in awg_common.sh awg_common_en.sh install_amneziawg.sh install_amneziawg_en.sh; do
+        body=$(awk '/^_mask_report_secrets\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$f")
+        [ -n "$body" ] || { echo "$f|NO_FILTER"; continue; }
+        printf '%s|%s\n' "$f" "$(printf '%s\n' "$1" | bash -c 'eval "$1"; _mask_report_secrets' _ "$body")"
+    done
+}
+
+@test "filter: hand-edit forms of a key in tools messages are masked in all four copies" {
+    local line out seen=0
+    for line in \
+        "Line unrecognized: \`PrivateKey${NOEQ}'" \
+        "Line unrecognized: \`PrivatKey=${TYPO}'" \
+        "Line unrecognized: \`PrivateKey:${COLON}'" \
+        "Line unrecognized: \`${HALF}'" \
+        "Sep 17 12:00:00 h awg-quick[1]: Unable to parse Jc: \`${FIELD}'" \
+        "Sep 17 12:00:00 h awg-quick[1]: AllowedIP is not in the correct format: \`${FIELD}'"; do
+        out=$(filter_all "$line")
+        [[ "$out" != *NO_FILTER* ]] || { echo "a copy lost the filter: $out"; return 1; }
+        [[ "$out" != *LEAK* ]] || { echo "leaked through: $out"; return 1; }
+        [[ "$out" == *"[HIDDEN]"* ]] || { echo "nothing marked as hidden: $out"; return 1; }
+        seen=$((seen + 1))
+    done
+    [ "$seen" -eq 6 ]
+}
+
+@test "filter: values that are not keys stay visible in all four copies" {
+    local line out
+    for line in \
+        "Unable to find port of endpoint: \`203.0.113.10'" \
+        "Name or service not known: \`vpn.example.com:51820'" \
+        "AllowedIP is not in the correct format: \`10.9.9.2/33'" \
+        "Unable to parse Jc: \`abc'" \
+        "Fwmark is neither 0/off nor 0-0xffffffff: \`0x1234'"; do
+        out=$(filter_all "$line")
+        [[ "$out" != *"[HIDDEN]"* ]] || { echo "a non-secret value was hidden: $out"; return 1; }
+        [ "$(grep -cF "$line" <<< "$out")" -eq 4 ] || { echo "not kept verbatim in all four copies: $out"; return 1; }
     done
 }

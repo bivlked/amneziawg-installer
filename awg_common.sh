@@ -1517,7 +1517,8 @@ _ensure_server_public_key() {
 
 # _mask_report_secrets : фильтр секретов для всего, что уходит на экран или в
 # журнал из awg show и конфигов. Копия фильтра установщика: там он нужен и без
-# скачанной библиотеки (--diagnostic), здесь - для manage check, show и diagnose.
+# скачанной библиотеки (--diagnostic), здесь - для manage check, show, diagnose и
+# текста состояния службы при отказе restore и restart.
 # Тело во всех четырёх копиях одно и то же, тест паритета это проверяет; правила
 # и четыре строковых литерала апстрима разобраны в комментарии установщика.
 _mask_report_secrets() {
@@ -1525,7 +1526,9 @@ _mask_report_secrets() {
         -e 's/^([[:space:]]*#?[[:space:]]*(PrivateKey|PresharedKey|HeaderProtectionKey)[[:space:]]*=[[:space:]]*).*/\1[HIDDEN]/I' \
         -e 's/^([[:space:]]*(private key|preshared key|header protection key)[[:space:]]*:[[:space:]]*).*/\1(hidden)/I' \
         -e 's/(Line unrecognized:[[:space:]]*.?(PrivateKey|PresharedKey|HeaderProtectionKey)[[:space:]]*=[[:space:]]*).*/\1[HIDDEN]/I' \
-        -e 's/(Key is not the correct length or format:[[:space:]]*).*/\1[HIDDEN]/I'
+        -e '/\[HIDDEN\]/!s/(Line unrecognized:[[:space:]]*).*/\1[HIDDEN]/I' \
+        -e 's/(Key is not the correct length or format:[[:space:]]*).*/\1[HIDDEN]/I' \
+        -e "s|\`[A-Za-z0-9+/]{20,}={0,2}'|\`[HIDDEN]'|g"
 }
 
 # awg_hpk_path : путь к файлу ключа защиты заголовков (HeaderProtectionKey).
