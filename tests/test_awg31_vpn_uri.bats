@@ -281,11 +281,11 @@ u_31_worst_case() {
     # Keys are random: placeholder keys compress well and understated the size
     # by about 250 bytes. The endpoint is a 253-character name, the DNS maximum,
     # and the server name takes the 128 bytes the installer allows.
-    local k_srv k_cli k_hpk k_psk fqdn name label
+    local k_srv k_cli k_hpk k_psk fqdn name
     k_srv=$(head -c 32 /dev/urandom | base64); k_cli=$(head -c 32 /dev/urandom | base64)
     k_hpk=$(head -c 32 /dev/urandom | base64); k_psk=$(head -c 32 /dev/urandom | base64)
-    label() { head -c 400 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c "$1"; }
-    fqdn="$(label 63).$(label 63).$(label 63).$(label 61)"
+    _rand_label() { head -c 400 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c "$1"; }
+    fqdn="$(_rand_label 63).$(_rand_label 63).$(_rand_label 63).$(_rand_label 61)"
     name=$(head -c 400 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 128)
     [ "${#fqdn}" -eq 253 ] && [ "${#name}" -eq 128 ] || { echo "random inputs came out short"; return 1; }
     out=$(WC_AIPS="$aips" WC_I1="$i1" WC_SRV="$k_srv" WC_CLI="$k_cli" WC_HPK="$k_hpk" WC_PSK="$k_psk" \
