@@ -9,7 +9,7 @@
 # it in the "protocol" field.
 #
 # An unreadable marker is an error, never a quiet "2.0": check turns ok=false with
-# rc 1 (owner decision 17 sep 2026), show and diagnose say the marker is unreadable.
+# rc 1, show prints the dump and exits 1, diagnose counts a FAIL.
 #
 # Harness: the whole awg_common.sh is sourced (the real safe_load_config and the
 # real marker reader, so the init file is what decides), the manage functions are
@@ -319,6 +319,6 @@ d_jmin_nonnumeric() {
     for f in awg_common.sh awg_common_en.sh install_amneziawg.sh install_amneziawg_en.sh; do
         # Any form: a bare heredoc line, echo "...", printf '...'. Comment lines aside.
         run grep -nE '^[^#]*(RandomTrailers|DisableCookies)[[:space:]]*=' "$BATS_TEST_DIRNAME/../$f"
-        [ "$status" -eq 1 ] || { echo "RandomTrailers written by $f: $output"; return 1; }
+        [ "$status" -eq 1 ] || { echo "RandomTrailers or DisableCookies written by $f: $output"; return 1; }
     done
 }

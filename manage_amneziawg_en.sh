@@ -21,8 +21,9 @@ set -o pipefail
 # even into a pipe. The secrets filter then does not recognise "header
 # protection key" and lets the key through in show and check, check falsely
 # reports "Obfuscation parameters not detected", and diagnose finds no
-# jc/jmin/jmax lines and silently skips the Jmin > Jmax check. Nothing here
-# needs colour from the tools, so it is off for the whole script.
+# jc/jmin/jmax lines, so the Jmin > Jmax check sees 0 and 0 and silently
+# passes. Nothing here needs colour from the tools, so it is off for the whole
+# script.
 export WG_COLOR_MODE=never
 AWG_DIR="/root/awg"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -1360,7 +1361,7 @@ check_server() {
     # The protocol generation of the installation comes from the AWG_PROTOCOL
     # marker, not from the module version: a third-line module runs a
     # second-line configuration just fine. An unreadable marker fails the check
-    # (decision of 17 sep 2026) instead of turning into a quiet "2.0": otherwise
+    # instead of turning into a quiet "2.0": otherwise
     # check would confirm a generation nobody knows.
     local _c_proto="" _c_proto_json=null _c_proto_err=null
     if _c_proto=$(_awg_generation_from_init "$CONFIG_FILE"); then

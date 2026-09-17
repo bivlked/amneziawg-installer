@@ -18,9 +18,11 @@ set -o pipefail
 # awg show colours its labels when WG_COLOR_MODE=always is in the environment,
 # even into a pipe. The secrets filter then does not recognise "header
 # protection key" and lets the key into the diagnostic report, and the step 7
-# service check finds neither "interface: awg0" nor "jc:" and fails falsely.
-# Nothing here needs colour from the tools, so it is off for the whole script.
+# service check finds no "interface: awg0" and fails falsely (and warns falsely
+# on "jc:"). Nothing here needs colour from the tools, so it is off for the whole
+# script.
 export WG_COLOR_MODE=never
+
 SCRIPT_VERSION="5.35.0"
 
 AWG_DIR="/root/awg"
