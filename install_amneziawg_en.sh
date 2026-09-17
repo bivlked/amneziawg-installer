@@ -662,10 +662,116 @@ awg31_tools_support() {
     [[ "$usage" == *header-protection-key* ]]
 }
 
+# awg31_module_support : does the LOADED module understand the third-line
+# parameters. Returns 0 - it does; 1 - second line; 2 - could not check.
+#
+# 🔴 The line cannot be derived from the module version string: a measurement on
+# 30 aug 2026 saw the same 3.1.20260812 string on two different builds. So the
+# CAPABILITY is probed, the way the tools are: a header protection key and a
+# padding range are set on a temporary interface and read back. A match means a
+# third-line module.
+#
+# 🔴 The key and the padding go in ONE command together with S1..S4: with a key
+# set the module requires S1..S4 of at least 12, a fresh interface has zeros,
+# and a probe carrying only the key would be refused by a healthy third-line
+# module.
+#
+# 🔴 A refusal from `awg set` is not a verdict on its own: it looks the same for
+# a second-line module and for an environment problem (permissions, netlink, a
+# namespace). So a refusal is followed by a control command WITHOUT the
+# third-line parameters: if that one passes, the path to the interface works and
+# the parameters are the problem (second line); if it fails too, the probe could
+# not check.
+#
+# The key is one-shot and lives only inside the probe; it never goes into argv
+# (the module gets a file path), the file is created under umask 077 and is
+# always removed.
+awg31_module_support() {
+    local verdict=""
+    verdict=$(_awg31_module_probe)
+    case "$verdict" in
+        ok)    return 0 ;;
+        line2) return 1 ;;
+        *)     return 2 ;;
+    esac
+}
+
+# _awg31_module_probe : prints ok | line2 | failed. The body is a subshell
+# (round brackets instead of braces) on purpose: the cleanup trap then leaves
+# the caller's traps alone, and the interface and the key file are removed on
+# every exit, a signal included. The showconf output never reaches the log: it
+# carries both the interface private key and the header protection key in clear.
+_awg31_module_probe() (
+    case $- in *x*) set +x ;; esac
+    umask 077
+    local ifn="" kf="" key="" out="" ctl="" rc=0 i=0 made=0
+    command -v ip >/dev/null 2>&1  || { printf 'failed'; exit 0; }
+    command -v awg >/dev/null 2>&1 || { printf 'failed'; exit 0; }
+
+    kf=$(mktemp "${TMPDIR:-/tmp}/awg31probe.XXXXXX" 2>/dev/null) || { printf 'failed'; exit 0; }
+    # The cleanup has to survive both an ordinary exit and a signal: the machine
+    # must not keep an interface of ours after the probe.
+    trap 'rm -f "$kf" 2>/dev/null; if [[ "$made" -eq 1 ]]; then timeout -k 1 5 ip link del "$ifn" >/dev/null 2>&1; fi' EXIT INT TERM HUP
+
+    timeout -k 1 5 awg genkey </dev/null > "$kf" 2>/dev/null || { printf 'failed'; exit 0; }
+    key=$(tr -d '\r\n' < "$kf")
+    [[ -n "$key" ]] || { printf 'failed'; exit 0; }
+
+    # A name shorter than 15 characters and never awg0: the probe has no
+    # business touching the working interface. A taken name means the next one,
+    # never a write into someone else's device.
+    for i in 1 2 3 4 5; do
+        ifn="awgp$$x$i"
+        [[ "$ifn" == awg0 ]] && continue
+        ip link show "$ifn" >/dev/null 2>&1 && continue
+        if timeout -k 1 5 ip link add "$ifn" type amneziawg >/dev/null 2>&1; then
+            made=1
+            break
+        fi
+        # The name appeared between the check and the creation - try the next
+        # one; any other reason would repeat on it as well.
+        ip link show "$ifn" >/dev/null 2>&1 || { printf 'failed'; exit 0; }
+    done
+    [[ "$made" -eq 1 ]] || { printf 'failed'; exit 0; }
+
+    timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 \
+        header-protection-key "$kf" content-padding-addition 32-128 </dev/null >/dev/null 2>&1
+    rc=$?
+    if (( rc != 0 )); then
+        # A timeout is not a verdict about the module: no answer came back. 124
+        # is timeout firing, 125 is timeout itself failing, 137 is the KILL that
+        # -k sends. The control command would only confuse things here: it would
+        # pass, and a hang would turn into a confident "second line".
+        if (( rc == 124 || rc == 125 || rc == 137 )); then printf 'failed'; exit 0; fi
+        # Control: the same device, without the third-line parameters.
+        timeout -k 1 5 awg set "$ifn" s1 15 </dev/null >/dev/null 2>&1
+        ctl=$?
+        if (( ctl == 0 )); then
+            printf 'line2'
+        else
+            printf 'failed'
+        fi
+        exit 0
+    fi
+
+    out=$(timeout -k 1 5 awg showconf "$ifn" </dev/null 2>/dev/null) || { printf 'failed'; exit 0; }
+    [[ -n "$out" ]] || { printf 'line2'; exit 0; }
+    # A silent acceptance without a read back is a second-line module: it passes
+    # unknown netlink attributes over without a word, so there is no refusal to
+    # see.
+    if grep -qF "HeaderProtectionKey = $key" <<< "$out" \
+        && grep -qE '^[[:space:]]*ContentPaddingAddition[[:space:]]*=[[:space:]]*32-128[[:space:]]*$' <<< "$out"; then
+        printf 'ok'
+    else
+        printf 'line2'
+    fi
+    exit 0
+)
+
 # awg31_environment_blocker : empty when the 3.1 profile is available on this
 # environment, otherwise the reason CODE.
 # Codes: arch_unknown | arch_unsupported | arm | kernel | tools_old |
-#        not_implemented_yet | internal_error.
+#        module_line2 | module_probe_failed | not_implemented_yet | internal_error.
 # Arg $1: stage, REQUIRED: 'pre' or 'post'.
 # Arg $2: architecture (for tests; defaults to _awg31_host_arch).
 # Arg $3: kernel release (for tests; defaults to uname -r).
@@ -756,15 +862,16 @@ awg31_environment_blocker() {
 
     if [[ "$stage" == "post" ]]; then
         awg31_tools_support || { printf 'tools_old'; return 0; }
-        # The line of the LOADED module is not checked here, and that is a
-        # boundary of this change rather than an omission. An honest probe needs
-        # a temporary interface and stand time, while deriving the line from the
-        # module version string is FORBIDDEN by the 30 aug 2026 measurement: the
-        # very same string 3.1.20260812 was observed on two different builds.
-        # The probe is feasible (a temporary interface of type amneziawg can be
-        # created, checked on the stand 7 sep 2026) but not written yet; until
-        # then there is no module_line2 code.
-        :
+        # The line of the LOADED module is checked AFTER the tools: the probe
+        # runs through those same tools, and with an old awg its refusal would
+        # be about them rather than about the module. A person would be told
+        # "second-line module" where apt is all it takes.
+        awg31_module_support
+        case $? in
+            0) : ;;
+            1) printf 'module_line2'; return 0 ;;
+            *) printf 'module_probe_failed'; return 0 ;;
+        esac
     fi
 
     # UNTIL PHASE 5: the 3.1 profile generator, the header protection key and
@@ -833,6 +940,12 @@ _awg31_blocker_message() {
             ;;
         tools_old)
             printf '%s' "The installed awg tools do not understand third-line parameters. This is the ONLY reason on the list that an upgrade fixes: apt-get update && apt-get install --only-upgrade amneziawg-tools, then run the installer again. Or install with --protocol=2.0."
+            ;;
+        module_line2)
+            printf '%s' "The loaded amneziawg kernel module does not understand the third-line parameters: it takes the header protection key without a word and does not give it back. A 3.1 profile would be written on such a module and the connection would never come up. This one is fixed by updating the module: apt-get update && apt-get install --only-upgrade amneziawg-dkms, then a reboot (the module is rebuilt for your kernel) and another run of the installer. Or install with --protocol=2.0."
+            ;;
+        module_probe_failed)
+            printf '%s' "Whether the loaded module understands the third-line parameters could not be checked: the probe could not create a temporary interface or get an answer. The reasons differ - permissions, the state of netlink, the network namespace of a container. We do not know whether the module fits, and guessing is not an option here. Way out: install with --protocol=2.0. If you think this is wrong, send the output of 'ip link add awgprobe type amneziawg' and 'awg set awgprobe s1 15'."
             ;;
         not_implemented_yet)
             printf '%s' "This installer version (v${SCRIPT_VERSION}) does not issue the AmneziaWG 3.1 profile: your environment fits, and it is not your machine. Way out: --protocol=2.0."
