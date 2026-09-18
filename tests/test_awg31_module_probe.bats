@@ -483,17 +483,20 @@ p_key_ok_padding_not() {
         # The recipe has to reproduce the command that actually failed, not only
         # the controls, and the count word has to match what is listed.
         [[ "$body" == *"content-padding-addition 32-128"* ]] || { echo "the recipe cannot reproduce the failing command in $f"; return 1; }
-        local listed
-        listed=$(grep -o "awg set awgprobe\|ip link add awgprobe\|ip link del awgprobe" <<< "$body" | wc -l)
+        local listed keys
+        listed=$(grep -o "awg set awgprobe\|awg showconf awgprobe\|ip link add awgprobe\|ip link del awgprobe" <<< "$body" | wc -l)
         if [[ "$f" == *_en.sh ]]; then
-            [[ "$body" == *"five commands"* ]] || { echo "the count word does not say five in $f"; return 1; }
+            [[ "$body" == *"six commands"* ]] || { echo "the count word does not say six in $f"; return 1; }
         else
-            [[ "$body" == *"пяти команд"* ]] || { echo "the count word does not say five in $f"; return 1; }
+            [[ "$body" == *"шести команд"* ]] || { echo "the count word does not say six in $f"; return 1; }
         fi
-        [ "$listed" -eq 5 ] || { echo "the recipe lists $listed commands, not five, in $f"; return 1; }
-        # Control step 2 is pinned separately: without this, replacing it with a
-        # copy of step 1 keeps the count at five and the check stays green.
-        [[ "$body" == *"s4 12 header-protection-key <"* ]] || { echo "the recipe lost control step 2 in $f"; return 1; }
+        [ "$listed" -eq 6 ] || { echo "the recipe lists $listed commands, not six, in $f"; return 1; }
+        [[ "$body" == *"awg showconf awgprobe"* ]] || { echo "the recipe cannot reproduce the read back in $f"; return 1; }
+        # Control step 2 is pinned by COUNTING the key, not by a substring: the
+        # main command carries the same words, so a substring check was satisfied
+        # by it alone and step 2 was pinned by nothing.
+        keys=$(grep -o "header-protection-key" <<< "$body" | wc -l)
+        [ "$keys" -eq 2 ] || { echo "the recipe carries the key $keys times, not twice, in $f"; return 1; }
     done
 }
 
