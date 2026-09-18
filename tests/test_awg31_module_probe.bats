@@ -56,8 +56,10 @@ make_ip() {
 }
 
 # make_awg <mode> : ok - accepts and reads back; silent - accepts and reads back
-# nothing of the sort; refuse - refuses the third-line set, control passes;
-# dead - refuses every set, control step 1 included; empty - showconf prints nothing; hang - set hangs;
+# nothing of the sort; refuse - refuses any set carrying the key, so control
+#          step 1 passes and step 2 refuses, which is what produces the verdict;
+# dead - refuses every set, control step 1 included; empty - showconf prints
+#        nothing; hang - set hangs;
 # cpaonly - takes the key but refuses the padding range;
 # ctlhang - refuses the full set, passes control step 1 and hangs on step 2;
 # showfail - takes the set and then refuses showconf;
@@ -79,7 +81,10 @@ make_awg() {
             ok|silent|empty)
                 echo '    shift 2; printf "%s\n" "$*" > "'"$TEST_DIR"'/set.args"; exit 0 ;;' ;;
             refuse)
-                echo '    if [[ "$*" == *header-protection-key* ]]; then exit 1; fi; exit 0 ;;' ;;
+                # The wording is the one a module built from tag v1.0.20260725
+                # printed on the stand, so the stub refuses the way the real one
+                # does: on stderr, with exit code 1.
+                echo '    if [[ "$*" == *header-protection-key* ]]; then echo "Unable to modify interface: Invalid argument" >&2; exit 1; fi; exit 0 ;;' ;;
             cpaonly)
                 echo '    if [[ "$*" == *content-padding-addition* ]]; then exit 1; fi; exit 0 ;;' ;;
             ctlhang)
@@ -92,7 +97,7 @@ make_awg() {
                 echo '    if [[ "$*" == *header-protection-key* ]]; then sleep 30; fi; exit 0 ;;' ;;
             hangrefuse)
                 echo '    if [[ "$*" == *content-padding-addition* ]]; then sleep 30; fi'
-                echo '    if [[ "$*" == *header-protection-key* ]]; then exit 1; fi'
+                echo '    if [[ "$*" == *header-protection-key* ]]; then echo "Unable to modify interface: Invalid argument" >&2; exit 1; fi'
                 echo '    exit 0 ;;' ;;
             showfail|showhang|nokey)
                 echo '    shift 2; printf "%s\n" "$*" > "'"$TEST_DIR"'/set.args"; exit 0 ;;' ;;
@@ -192,7 +197,7 @@ p_refuse() {
 p_dead() {
     make_ip add; make_awg dead
     local out; out=$(probe "$1")
-    [ "$out" = "failed" ] || { echo "a device that refuses everything was judged ($1): $out"; return 1; }
+    [ "$out" = "failed" ] || { echo "a device that refuses control step 1 as well was judged ($1): $out"; return 1; }
 }
 @test "probe: a device that refuses control step 1 as well is not judged, both twins" {
     both p_dead
@@ -286,9 +291,12 @@ p_key_not_in_argv() {
 p_one_command() {
     make_ip add; make_awg ok
     probe "$1" >/dev/null
-    local args
+    local args token
     args=$(cat "$TEST_DIR/set.args")
-    for token in s1 s2 s3 s4 header-protection-key content-padding-addition; do
+    # Values, not just names: with the key set the module demands S1..S4 of at
+    # least 12, so a padding size that silently changed would make the probe
+    # refuse on a healthy module.
+    for token in "s1 15" "s2 15" "s3 12" "s4 12" "content-padding-addition 32-128" "header-protection-key"; do
         [[ "$args" == *"$token"* ]] || { echo "$token is missing from the single set command ($1): $args"; return 1; }
     done
 }
@@ -465,7 +473,7 @@ p_key_ok_padding_not() {
     both p_key_ok_padding_not
 }
 
-@test "probe: the refusal text for a failed probe tells the reader to remove the interface" {
+@test "probe: the refusal text reproduces the probe and cleans up after itself" {
     local f body
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         body=$(sed -n '/^_awg31_blocker_message() {/,/^}/p' "$BATS_TEST_DIRNAME/../$f")
@@ -483,6 +491,9 @@ p_key_ok_padding_not() {
             [[ "$body" == *"пяти команд"* ]] || { echo "the count word does not say five in $f"; return 1; }
         fi
         [ "$listed" -eq 5 ] || { echo "the recipe lists $listed commands, not five, in $f"; return 1; }
+        # Control step 2 is pinned separately: without this, replacing it with a
+        # copy of step 1 keeps the count at five and the check stays green.
+        [[ "$body" == *"s4 12 header-protection-key <"* ]] || { echo "the recipe lost control step 2 in $f"; return 1; }
     done
 }
 
