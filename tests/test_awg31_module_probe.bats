@@ -57,7 +57,7 @@ make_ip() {
 
 # make_awg <mode> : ok - accepts and reads back; silent - accepts and reads back
 # nothing of the sort; refuse - refuses the third-line set, control passes;
-# dead - refuses everything at once; empty - showconf prints nothing; hang - set hangs;
+# dead - refuses every set, control step 1 included; empty - showconf prints nothing; hang - set hangs;
 # cpaonly - takes the key but refuses the padding range;
 # ctlhang - refuses the full set, passes control step 1 and hangs on step 2;
 # showfail - takes the set and then refuses showconf;
@@ -472,6 +472,17 @@ p_key_ok_padding_not() {
         body=$(awk '/module_probe_failed\)/{f=1;next} f&&/;;/{exit} f' <<< "$body")
         [[ "$body" == *"ip link add awgprobe"* ]] || { echo "no reproduction command in $f"; return 1; }
         [[ "$body" == *"ip link del awgprobe"* ]] || { echo "the text leaves the interface behind in $f"; return 1; }
+        # The recipe has to reproduce the command that actually failed, not only
+        # the controls, and the count word has to match what is listed.
+        [[ "$body" == *"content-padding-addition 32-128"* ]] || { echo "the recipe cannot reproduce the failing command in $f"; return 1; }
+        local listed
+        listed=$(grep -o "awg set awgprobe\|ip link add awgprobe\|ip link del awgprobe" <<< "$body" | wc -l)
+        if [[ "$f" == *_en.sh ]]; then
+            [[ "$body" == *"five commands"* ]] || { echo "the count word does not say five in $f"; return 1; }
+        else
+            [[ "$body" == *"пяти команд"* ]] || { echo "the count word does not say five in $f"; return 1; }
+        fi
+        [ "$listed" -eq 5 ] || { echo "the recipe lists $listed commands, not five, in $f"; return 1; }
     done
 }
 
