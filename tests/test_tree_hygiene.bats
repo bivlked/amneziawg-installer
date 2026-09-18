@@ -44,7 +44,11 @@ setup() {
     }
 }
 
-@test "tree: no tracked file lives at the root outside the known list" {
+# Markdown at the root is deliberately open: the project adds documents there
+# (README, ADVANCED, CASCADE, WARP-RU, INSTALL_VPS and so on), and pinning them
+# by name would mean churn on every new document. The shapes this guard exists
+# for - scratch shell scripts and files without an extension - are covered.
+@test "tree: no tracked file lives at the root outside the known list, markdown aside" {
     command -v git >/dev/null || skip "git not available"
     git rev-parse --git-dir >/dev/null 2>&1 || skip "not a git checkout"
 

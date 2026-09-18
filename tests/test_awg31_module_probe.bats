@@ -492,6 +492,15 @@ p_key_ok_padding_not() {
         fi
         [ "$listed" -eq 6 ] || { echo "the recipe lists $listed commands, not six, in $f"; return 1; }
         [[ "$body" == *"awg showconf awgprobe"* ]] || { echo "the recipe cannot reproduce the read back in $f"; return 1; }
+        # The opening clause has to admit the path where everything answered and
+        # the answer still does not name the generation: the key taken, the
+        # padding range refused. Without this the old, untrue wording could come
+        # back and no test would notice.
+        if [[ "$f" == *_en.sh ]]; then
+            [[ "$body" == *"does not name the generation"* ]] || { echo "the text does not admit the answered-but-unnameable path in $f"; return 1; }
+        else
+            [[ "$body" == *"по которому поколение назвать нельзя"* ]] || { echo "the text does not admit the answered-but-unnameable path in $f"; return 1; }
+        fi
         # Control step 2 is pinned by COUNTING the key, not by a substring: the
         # main command carries the same words, so a substring check was satisfied
         # by it alone and step 2 was pinned by nothing.
