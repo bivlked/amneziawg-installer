@@ -480,9 +480,9 @@ p_key_ok_padding_not() {
         body=$(awk '/module_probe_failed\)/{f=1;next} f&&/;;/{exit} f' <<< "$body")
         [[ "$body" == *"ip link add awgprobe"* ]] || { echo "no reproduction command in $f"; return 1; }
         [[ "$body" == *"ip link del awgprobe"* ]] || { echo "the text leaves the interface behind in $f"; return 1; }
-        # The recipe has to reproduce the command that actually failed, not only
-        # the controls, and the count word has to match what is listed.
-        [[ "$body" == *"content-padding-addition 32-128"* ]] || { echo "the recipe cannot reproduce the failing command in $f"; return 1; }
+        # The recipe has to reproduce the main command of the probe and the read
+        # back, not only the controls, and the count word has to match the list.
+        [[ "$body" == *"content-padding-addition 32-128"* ]] || { echo "the recipe cannot reproduce the main command in $f"; return 1; }
         local listed keys
         listed=$(grep -o "awg set awgprobe\|awg showconf awgprobe\|ip link add awgprobe\|ip link del awgprobe" <<< "$body" | wc -l)
         if [[ "$f" == *_en.sh ]]; then
