@@ -87,12 +87,16 @@ PROTOCOL_DEFAULT="2.0"
 # --- Auto-cleanup of temporary files ---
 _install_temp_files=()
 _install_cleaned=0
+# Set BEFORE the module probe runs and read by the cleanup on exit. Without it
+# every run of the installer, --help included, would pay two ip calls looking
+# for leftovers of interfaces nobody ever created.
+_awg31_probe_ran=0
 _install_cleanup() {
     # Idempotent: on INT/TERM it is called from the signal handler, then again on
     # EXIT - the second call must be a no-op.
     [[ "$_install_cleaned" -eq 1 ]] && return 0
     _install_cleaned=1
-    local f
+    local f _sweep_raw="" _sweep_rc=0
     for f in "${_install_temp_files[@]}"; do [[ -f "$f" ]] && rm -f "$f"; done
     # Leftovers of the module probe. The trap inside the probe itself cleans up
     # on an ordinary exit, but on a signal the subshell may not get there, so the
@@ -102,9 +106,25 @@ _install_cleanup() {
     # installer, --help and the path after a reboot included, and a wedged
     # netlink is exactly the state the probe refuses over. Without a bound the
     # refusal of the probe would turn into a silent hang of the whole installer.
-    for f in $(timeout -k 1 5 ip -br link show 2>/dev/null | awk -v p="awgp$$x" 'index($1, p) == 1 {print $1}'); do
-        timeout -k 1 5 ip link del "$f" >/dev/null 2>&1
-    done
+    # 🔴 And only when the probe actually ran, see _awg31_probe_ran.
+    if [[ "$_awg31_probe_ran" -eq 1 ]]; then
+        _sweep_raw=$(timeout -k 1 5 ip -br link show 2>/dev/null)
+        _sweep_rc=$?
+        if (( _sweep_rc != 0 )); then
+            # "Could not look" and "looked, nothing there" are different things,
+            # and staying quiet about the first would let a leftover of the probe
+            # outlive the installer unnoticed.
+            log_warn "The leftovers of the module probe could not be checked: ip returned $_sweep_rc. If an interface like awgp$$x1 is still around, remove it: ip link del <name>."
+        else
+            # sub() strips a name@parent tail: amneziawg interfaces have no
+            # parent, but with the tail attached the delete would quietly find
+            # no such device.
+            for f in $(printf '%s\n' "$_sweep_raw" | awk -v p="awgp$$x" '{sub(/@.*/, "", $1)} index($1, p) == 1 {print $1}'); do
+                timeout -k 1 5 ip link del "$f" >/dev/null 2>&1 \
+                    || log_warn "A leftover of the module probe could not be removed: $f. Take it away by hand: ip link del $f."
+            done
+        fi
+    fi
     # Clean up temporary files from awg_common.sh (if already sourced)
     type _awg_cleanup &>/dev/null && _awg_cleanup
 }
@@ -670,7 +690,14 @@ awg31_tools_support() {
     # pipe.
     usage=$(timeout -k 1 5 awg set </dev/null 2>&1); rc=$?
     (( rc == 1 )) || return 1
-    [[ "$usage" == *header-protection-key* ]]
+    # 🔴 BOTH names, not one. The probe sends the header protection key and the
+    # padding range in a single command. A tools build that knows only the first
+    # would pass this gate and then run into the probe, whose text talks about
+    # permissions and netlink - while the cure is a tools upgrade, for which
+    # tools_old already carries the right advice. Measured 19 sep 2026: the
+    # usage of real 3.1 tools (ee0f0a9, tag v3.1.20260812) prints both names
+    # next to each other, so this does not turn away a healthy build.
+    [[ "$usage" == *header-protection-key* && "$usage" == *content-padding-addition* ]]
 }
 
 # awg31_module_support : does the LOADED module understand the third-line
@@ -702,6 +729,7 @@ awg31_tools_support() {
 # removed on every ordinary exit, a signal included.
 awg31_module_support() {
     local verdict=""
+    _awg31_probe_ran=1
     verdict=$(_awg31_module_probe)
     case "$verdict" in
         ok)    return 0 ;;
@@ -714,11 +742,13 @@ awg31_module_support() {
 # (round brackets instead of braces) on purpose: the cleanup trap then leaves
 # the caller's traps alone, and the interface and the key file are removed on
 # every exit, a signal included. The showconf output never reaches the log: it
-# carries both the interface private key and the header protection key in clear.
+# carries the header protection key in clear. There is no private key in it -
+# the probe never sets one, and a fresh amneziawg interface does not carry one
+# (measured on a stand, 19 sep 2026).
 _awg31_module_probe() (
     case $- in *x*) set +x ;; esac
     umask 077
-    local ifn="" kf="" key="" out="" ctl="" rc=0 i=0 made=0
+    local ifn="" kf="" key="" out="" ctl="" rc=0 i=0 made=0 cleaned=0
     command -v ip >/dev/null 2>&1  || { printf 'failed'; exit 0; }
     command -v awg >/dev/null 2>&1 || { printf 'failed'; exit 0; }
 
@@ -726,6 +756,13 @@ _awg31_module_probe() (
     # The cleanup has to survive both an ordinary exit and a signal: the machine
     # must not keep an interface of ours after the probe.
     _probe_cleanup() {
+        # Idempotent, following _install_cleanup: on a signal the cleanup runs
+        # from the handler and then once more on EXIT, and the second call has
+        # to be a no-op. Otherwise Ctrl-C costs another `ip link del` against an
+        # interface that is already gone - up to five more seconds of silence in
+        # exactly the wedged-netlink state the probe exists to refuse over.
+        [[ "$cleaned" -eq 1 ]] && return 0
+        cleaned=1
         rm -f "$kf" 2>/dev/null
         if [[ "$made" -eq 1 ]]; then timeout -k 1 5 ip link del "$ifn" >/dev/null 2>&1; fi
     }
@@ -739,14 +776,21 @@ _awg31_module_probe() (
 
     timeout -k 1 5 awg genkey </dev/null > "$kf" 2>/dev/null || { printf 'failed'; exit 0; }
     key=$(tr -d '\r\n' < "$kf")
-    [[ -n "$key" ]] || { printf 'failed'; exit 0; }
+    # The key shape is judged by the same measure the library uses
+    # (_awg_hpk_file_valid): 44 base64 characters. "Not empty" is not enough - a
+    # genkey that exits zero and prints rubbish would pass it, control step 2
+    # would then refuse over the KEY FILE, and we would call a healthy module
+    # second line and send its owner to rebuild it for nothing.
+    [[ "$key" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]] || { printf 'failed'; exit 0; }
 
     # A name shorter than 15 characters and never awg0: the probe has no
-    # business touching the working interface. A taken name means the next one,
-    # never a write into someone else's device.
+    # business touching the working interface. The protection here is the SHAPE
+    # of the name (`awgp<pid>x<n>` cannot equal awg0), and a test pins it; there
+    # is deliberately no separate awg0 check, which would be an unreachable line
+    # reading like a live guard. A taken name means the next one, never a write
+    # into someone else's device.
     for i in 1 2 3 4 5; do
         ifn="awgp$$x$i"
-        [[ "$ifn" == awg0 ]] && continue
         # A hanging ip is "do not know", not "the name is free": going on and
         # creating an interface under an unread name would be writing blind.
         timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1
@@ -803,10 +847,18 @@ _awg31_module_probe() (
     fi
 
     out=$(timeout -k 1 5 awg showconf "$ifn" </dev/null 2>/dev/null) || { printf 'failed'; exit 0; }
-    [[ -n "$out" ]] || { printf 'line2'; exit 0; }
+    # 🔴 The answer has to be a config. `awg showconf` on an interface that
+    # exists always prints at least the [Interface] line (measured on a stand,
+    # 19 sep 2026), so a zero exit code with empty or unrecognisable output
+    # speaks about the environment, not about the generation of the module: a
+    # substituted binary, a truncated pipe, a device that vanished. Reading a
+    # second line out of that answer would mean telling someone to rebuild their
+    # module and reboot when nothing at all is known about it.
+    grep -qE '^[[:space:]]*\[Interface\][[:space:]]*$' <<< "$out" || { printf 'failed'; exit 0; }
     # A silent acceptance without a read back is a second-line module: it passes
     # unknown netlink attributes over without a word, so there is no refusal to
-    # see.
+    # see. Only a REAL config without our values reaches this point, not any
+    # output at all.
     if grep -qE "^[[:space:]]*HeaderProtectionKey[[:space:]]*=[[:space:]]*$(printf '%s' "$key" | sed 's/[^A-Za-z0-9]/\\&/g')[[:space:]]*\$" <<< "$out" \
         && grep -qE '^[[:space:]]*ContentPaddingAddition[[:space:]]*=[[:space:]]*32-128[[:space:]]*$' <<< "$out"; then
         printf 'ok'
@@ -993,7 +1045,7 @@ _awg31_blocker_message() {
             printf '%s' "The loaded amneziawg kernel module does not understand the third-line parameters: it either refuses the header protection key or takes it without a word and does not give it back. A 3.1 profile would be written on such a module and the connection would never come up. This one is fixed by updating the module: apt-get update && apt-get install --only-upgrade amneziawg-dkms, then a reboot (the module is rebuilt for your kernel) and another run of the installer. Or install with --protocol=2.0."
             ;;
         module_probe_failed)
-            printf '%s' "Whether the loaded module understands the third-line parameters could not be checked: the probe either could not create a temporary interface and get an answer, or got an answer that does not name the generation. The reasons differ - permissions, the state of netlink, the network namespace of a container. We do not know whether the module fits, and guessing is not an option here. Way out: install with --protocol=2.0. If you think this is wrong, send the output of six commands: 'ip link add awgprobe type amneziawg', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <a file with a 32-byte key in base64> content-padding-addition 32-128' (the main command of the probe; the probe can stop here too), 'awg set awgprobe s1 15 s2 15 s3 12 s4 12', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <the same file>', 'awg showconf awgprobe' (the read back; the probe can stop here too) and 'ip link del awgprobe' (the last one takes the temporary interface away again)."
+            printf '%s' "Whether the loaded module understands the third-line parameters could not be checked: the probe either could not create a temporary interface and get an answer, or got an answer that does not name the generation. The reasons differ - permissions, the state of netlink, the network namespace of a container. We do not know whether the module fits, and guessing is not an option here. Way out: install with --protocol=2.0. If you think this is wrong, send the output of six commands: 'ip link add awgprobe type amneziawg', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <a file with a 32-byte key in base64> content-padding-addition 32-128' (the main command of the probe; the probe can stop here too), 'awg set awgprobe s1 15 s2 15 s3 12 s4 12', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <the same file>', 'awg showconf awgprobe' (the read back; the probe can stop here too) and 'ip link del awgprobe' (the last one takes the temporary interface away again). The key file is made like this: 'awg genkey > /tmp/probekey'. The probe also stops before any of these commands - if it cannot create a temporary file, or if 'awg genkey' does not give a key of the right shape - and on the third command, the first control step."
             ;;
         not_implemented_yet)
             printf '%s' "This installer version (v${SCRIPT_VERSION}) does not issue the AmneziaWG 3.1 profile: your environment fits, and it is not your machine. Way out: --protocol=2.0."

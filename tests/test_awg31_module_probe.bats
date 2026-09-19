@@ -65,6 +65,9 @@ make_ip() {
 # showfail - takes the set and then refuses showconf;
 # showhang - takes the set and never answers showconf;
 # nokey - genkey prints nothing;
+# badkey - genkey exits zero but prints a key of the wrong shape;
+# notconf - the set is taken, but showconf answers with something that is not a
+#           config at all;
 # hangrefuse - the full set hangs, and a later set carrying the key refuses.
 make_awg() {
     local mode="$1"
@@ -73,8 +76,9 @@ make_awg() {
         echo "echo \"\$*\" >> \"$TEST_DIR/awg.argv\""
         echo 'case "$1" in'
         case "$mode" in
-            nokey) echo '  genkey) exit 0 ;;' ;;
-            *)     echo '  genkey) echo "PROBEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
+            nokey)  echo '  genkey) exit 0 ;;' ;;
+            badkey) echo '  genkey) echo "SHORTKEY=" ;;' ;;
+            *)      echo '  genkey) echo "PROBEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
         esac
         echo '  set)'
         case "$mode" in
@@ -99,19 +103,21 @@ make_awg() {
                 echo '    if [[ "$*" == *content-padding-addition* ]]; then sleep 30; fi'
                 echo '    if [[ "$*" == *header-protection-key* ]]; then echo "Unable to modify interface: Invalid argument" >&2; exit 1; fi'
                 echo '    exit 0 ;;' ;;
-            showfail|showhang|nokey)
+            showfail|showhang|nokey|badkey|notconf)
                 echo '    shift 2; printf "%s\n" "$*" > "'"$TEST_DIR"'/set.args"; exit 0 ;;' ;;
         esac
         echo '  showconf)'
         case "$mode" in
             ok)
                 echo '    echo "[Interface]"; echo "ListenPort = 51820"'
-                echo '    echo "HeaderProtectionKey = PROBEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="'
+                echo '    echo "HeaderProtectionKey = PROBEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="'
                 echo '    echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
             silent)
                 echo '    echo "[Interface]"; echo "ListenPort = 51820"; exit 0 ;;' ;;
             empty)
                 echo '    exit 0 ;;' ;;
+            notconf)
+                echo '    echo "awg: command not found"; exit 0 ;;' ;;
             showfail)
                 echo '    exit 1 ;;' ;;
             showhang)
@@ -176,13 +182,42 @@ p_silent() {
     both p_silent
 }
 
+# An interface that exists always makes `awg showconf` print at least the
+# [Interface] line (measured on a stand, 19 sep 2026). So a zero exit with no
+# output at all is the environment talking, not the module: a substituted
+# binary, a truncated pipe, a device that went away. Calling that second line
+# would tell someone to rebuild a module nothing is known about.
 p_empty() {
     make_ip add; make_awg empty
     local out; out=$(probe "$1")
-    [ "$out" = "line2" ] || { echo "an empty showconf was not caught ($1): $out"; return 1; }
+    [ "$out" = "failed" ] || { echo "an empty showconf was judged instead of refused ($1): $out"; return 1; }
 }
-@test "probe: an empty showconf is second line, both twins" {
+@test "probe: an empty showconf names no generation, both twins" {
     both p_empty
+}
+
+# Same rule one step further out: output that is not a config at all.
+p_notconf() {
+    make_ip add; make_awg notconf
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "an answer that is not a config was judged ($1): $out"; return 1; }
+}
+@test "probe: an answer that is not a config names no generation, both twins" {
+    both p_notconf
+}
+
+# A genkey that exits zero and prints rubbish must not reach the module. If it
+# did, control step 2 would refuse over the KEY FILE and we would call a healthy
+# module second line, sending its owner to rebuild it for nothing.
+p_badkey() {
+    make_ip add; make_awg badkey
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "a malformed key was used as if it were one ($1): $out"; return 1; }
+    grep -q 'set ' "$TEST_DIR/awg.argv" && { echo "the probe sent a set with a malformed key ($1)"; return 1; }
+    return 0
+}
+@test "probe: a key of the wrong shape stops the probe, both twins" {
+    both p_badkey
 }
 
 p_refuse() {
@@ -424,6 +459,7 @@ STUB
         rm -f "$2/deleted"
         _install_temp_files=()
         _install_cleaned=0
+        _awg31_probe_ran=1
         eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
         _install_cleanup
         cat "$2/deleted" 2>/dev/null
@@ -434,6 +470,63 @@ STUB
 }
 @test "cleanup: only the probe interfaces of this run are removed, both twins" {
     both c_cleanup_runs
+}
+
+c_cleanup_skipped() {
+    # No probe in this run means nothing to sweep. Without this the EXIT trap
+    # would spend two ip calls on every single run of the installer, --help
+    # included, looking for interfaces nobody created.
+    local src="$1" out
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin"
+        cat > "$2/bin/ip" <<STUB
+#!/usr/bin/env bash
+echo "\$*" >> "$2/called"
+exit 0
+STUB
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        rm -f "$2/called"
+        _install_temp_files=()
+        _install_cleaned=0
+        _awg31_probe_ran=0
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        cat "$2/called" 2>/dev/null
+    ' _ "$src" "$TEST_DIR")
+    [ -z "$out" ] || { echo "the cleanup called ip although no probe ran ($src): [$out]"; return 1; }
+}
+@test "cleanup: nothing is swept when the probe never ran, both twins" {
+    both c_cleanup_skipped
+}
+
+c_cleanup_speaks() {
+    # This sweep is the last line of defence after a SIGKILL, so its silence
+    # would be the last signal going quiet: a leftover that cannot be removed
+    # has to be named, and "could not look" must not read like "looked, clean".
+    local src="$1" out
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin"
+        cat > "$2/bin/ip" <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = "-br" ]; then echo "\$FAKE_IF UNKNOWN"; exit 0; fi
+exit 1
+STUB
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export FAKE_IF="awgp${$}x1"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        _awg31_probe_ran=1
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+    ' _ "$src" "$TEST_DIR")
+    [[ "$out" == *WARNED* ]] || { echo "a leftover that could not be removed was passed over in silence ($src): [$out]"; return 1; }
+    [[ "$out" == *awgp* ]] || { echo "the warning does not name the leftover ($src): [$out]"; return 1; }
+}
+@test "cleanup: a leftover that cannot be removed is named, both twins" {
+    both c_cleanup_speaks
 }
 
 p_control_shape() {

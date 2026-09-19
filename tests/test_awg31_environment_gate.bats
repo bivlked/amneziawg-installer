@@ -78,19 +78,24 @@ load_gate() {
 #   zero     key, but exit 0                             -> refused
 #   t124     key, but exit 124 (what timeout returns)    -> refused
 #   verclaim no key in usage, but --version claims 3.1   -> refused
+#   hpkonly  the key in usage but not the padding range    -> not supported
 # Every invocation appends its full argv to $TEST_DIR/awg.argv.
 make_awg_stub() {
     local variant="$1" path="$TEST_DIR/bin/awg" usage stream="2" code="1"
     local version="awg-tools v1.0.20210914"
+    # Real 3.1 tools print both third-line options in one usage line (measured
+    # on a stand, 19 sep 2026), and the probe sends both, so the gate wants both.
+    local third="[header-protection-key <key>] [content-padding-addition <range>]"
     mkdir -p "$TEST_DIR/bin"
     usage="Usage: awg set <interface> [listen-port <port>] [jc <n>] [s1 <n>]"
     case "$variant" in
         20)       : ;;
         verclaim) version="awg-tools v3.1.20260812" ;;
-        stdout)   usage="$usage [header-protection-key <key>]"; stream="1" ;;
-        zero)     usage="$usage [header-protection-key <key>]"; code="0" ;;
-        t124)     usage="$usage [header-protection-key <key>]"; code="124" ;;
-        *)        usage="$usage [header-protection-key <key>]" ;;
+        stdout)   usage="$usage $third"; stream="1" ;;
+        zero)     usage="$usage $third"; code="0" ;;
+        t124)     usage="$usage $third"; code="124" ;;
+        hpkonly)  usage="$usage [header-protection-key <key>]" ;;
+        *)        usage="$usage $third" ;;
     esac
     {
         echo "#!/usr/bin/env bash"
@@ -134,9 +139,9 @@ make_module_stub() {
     {
         echo '#!/usr/bin/env bash'
         echo 'case "$1" in'
-        echo '  genkey) echo "GATEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; exit 0 ;;'
+        echo '  genkey) echo "GATEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; exit 0 ;;'
         case "$mode" in
-            ok)    echo '  showconf) echo "HeaderProtectionKey = GATEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
+            ok)    echo '  showconf) echo "[Interface]"; echo "HeaderProtectionKey = GATEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
             *)     echo '  showconf) exit 1 ;;' ;;
         esac
         case "$mode" in
@@ -376,6 +381,19 @@ gate_case() {
     make_awg_stub verclaim
     run awg --version
     [[ "$output" == *"3.1"* ]]
+    run awg31_tools_support
+    [ "$status" -ne 0 ]
+    run awg31_environment_blocker post "amd64" "6.14.0-generic"
+    [ "$output" = "tools_old" ]
+}
+
+@test "tools that name the key but not the padding range are not enough" {
+    # The probe sends both third-line options in one command. Tools that know
+    # only the key would pass this gate, fail the probe, and the person would
+    # read about permissions and netlink while the cure is a tools upgrade -
+    # which tools_old already says in plain words.
+    load_gate
+    make_awg_stub hpkonly
     run awg31_tools_support
     [ "$status" -ne 0 ]
     run awg31_environment_blocker post "amd64" "6.14.0-generic"
