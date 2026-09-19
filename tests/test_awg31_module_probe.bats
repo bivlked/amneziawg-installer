@@ -86,6 +86,10 @@ make_ip() {
 # wrongkey - a well formed but DIFFERENT key comes back, which is what a module
 #           that masks the value would look like;
 # keyhang - awg genkey never answers;
+# spaced - both parameters come back, correct, with an extra space after the
+#          equals sign: the module understood everything, the parser does not
+#          recognise the shape;
+# bothwrong - both parameter NAMES come back carrying values that are not ours;
 # notconf - the set is taken, but showconf answers with something that is not a
 #           config at all;
 # hangrefuse - the full set hangs, and a later set carrying the key refuses.
@@ -103,7 +107,7 @@ make_awg() {
         esac
         echo '  set)'
         case "$mode" in
-            ok|silent|empty|hpkshow|cpashow|wrongkey|keyhang)
+            ok|silent|empty|hpkshow|cpashow|wrongkey|keyhang|spaced|bothwrong)
                 echo '    shift 2; printf "%s\n" "$*" > "'"$TEST_DIR"'/set.args"; exit 0 ;;' ;;
             refuse)
                 # The wording is the one a module built from tag v1.0.20260725
@@ -148,6 +152,12 @@ make_awg() {
                 echo '    echo "[Interface]"; echo "HeaderProtectionKey = PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; exit 0 ;;' ;;
             cpashow)
                 echo '    echo "[Interface]"; echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
+            spaced)
+                echo '    echo "[Interface]"; echo "HeaderProtectionKey =  PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="'
+                echo '    echo "ContentPaddingAddition =  32-128"; exit 0 ;;' ;;
+            bothwrong)
+                echo '    echo "[Interface]"; echo "HeaderProtectionKey = OTHER+KEY/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="'
+                echo '    echo "ContentPaddingAddition = 64-256"; exit 0 ;;' ;;
             wrongkey)
                 echo '    echo "[Interface]"; echo "HeaderProtectionKey = OTHER+KEY/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="'
                 echo '    echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
@@ -282,6 +292,30 @@ p_cpa_only_back() {
 # A module or tool that masks the value would echo a well formed key that is not
 # ours. Matching the field name alone would read that as a third-line module;
 # this installer masks header protection keys elsewhere for exactly that reason.
+# 🔴 The module took everything and gave everything back, only in a shape the
+# parser does not match. Reading a second line out of that would tell its owner
+# to rebuild a healthy kernel module and reboot. The output shape rests on a
+# single bench measurement, so a drift in it has to end as "could not check".
+p_spaced_back() {
+    make_ip add; make_awg spaced
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "an answer in an unrecognised shape was judged ($1): $out"; return 1; }
+}
+@test "probe: both values back in a shape we do not recognise names no generation, both twins" {
+    both p_spaced_back
+}
+
+# Both names present, neither value ours. Not silence, and not a generation we
+# can name either.
+p_both_wrong_back() {
+    make_ip add; make_awg bothwrong
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "two values that are not ours were judged ($1): $out"; return 1; }
+}
+@test "probe: both names back with values that are not ours names no generation, both twins" {
+    both p_both_wrong_back
+}
+
 p_wrong_key_back() {
     make_ip add; make_awg wrongkey
     local out; out=$(probe "$1")
@@ -415,7 +449,12 @@ p_name() {
 p_key_not_in_argv() {
     make_ip add; make_awg ok
     probe "$1" >/dev/null
-    grep -q "PROBEKEYAAAA" "$TEST_DIR/awg.argv" && { echo "the key went into argv ($1)"; return 1; }
+    # 🔴 The pattern must be a substring of the key the stub actually prints.
+    # It used to read PROBEKEYAAAA while the stub printed PROBE+KEY/AAAA, so it
+    # matched nothing this suite can produce and the assertion could never fail:
+    # a mutant that passed the key inline in argv kept the whole file green.
+    # The promise it guards is published in both changelogs.
+    grep -qF 'PROBE+KEY/' "$TEST_DIR/awg.argv" && { echo "the key went into argv ($1)"; return 1; }
     grep -q "header-protection-key" "$TEST_DIR/awg.argv" || { echo "the key was never set ($1)"; return 1; }
     return 0
 }
@@ -603,29 +642,135 @@ STUB
 }
 
 c_cleanup_wiring() {
-    # End to end, through the shape the installer really uses: the probe runs in
-    # a subshell, and what it leaves behind has to reach the cleanup.
-    # 🔴 This is the test that would have caught a marker kept in a VARIABLE.
-    # Every other cleanup test lays the marker down by hand, so all of them
-    # stayed green while the sweep was dead code on every real run.
-    local src="$1" left
-    # The probe cannot remove its own interface here, so it must keep the record
-    # for the installer cleanup rather than dropping it.
+    # End to end, in ONE shell, through the shape the installer really uses: the
+    # probe runs inside $( ), and the cleanup afterwards has to find what it left
+    # and actually delete it.
+    # 🔴 Counting "a file matching awg31probe.*.iface exists" is not enough, and
+    # that is measured, not supposed: a mutant naming the record by $BASHPID
+    # instead of $$, and a mutant writing the record EMPTY, both kept every test
+    # green. The pid in the name and the name inside the file are exactly what
+    # makes the sweep able to act, so both are asserted here by running the
+    # consumer rather than by looking at the directory.
+    local src="$1" out added after
     make_ip delfail; make_awg ok
-    probe "$src" >/dev/null
-    left=$(ls "$TEST_DIR"/awg31probe.*.iface 2>/dev/null | wc -l)
-    [ "$left" -eq 1 ] || { echo "a delete that failed left no record for the cleanup ($src): $left"; return 1; }
+    out=$(PATH="$BIN:$PATH" TMPDIR="$TEST_DIR" timeout 90 bash -c '
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_awg31_module_probe() (/,/^)$/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        _verdict=$(_awg31_module_probe)
+        echo "MARKER" >> "$2/ip.argv"
+        _install_cleanup
+    ' _ "$src" "$TEST_DIR")
+    added=$(grep -m1 "^link add " "$TEST_DIR/ip.argv" | awk "{print \$3}")
+    [ -n "$added" ] || { echo "the probe created no interface ($src)"; return 1; }
+    after=$(sed -n "/^MARKER$/,\$p" "$TEST_DIR/ip.argv")
+    [[ "$after" == *"link del $added"* ]] || { echo "the cleanup did not delete what the probe created ($src): [$after]"; return 1; }
+    [[ "$out" == *WARNED* ]] || { echo "a leftover that could not be removed was not named ($src): [$out]"; return 1; }
 
-    # And on the ordinary path, where the probe does remove its interface, the
-    # record has to be gone: otherwise the cleanup would chase a device that is
-    # no longer there and warn about it. The record of the run above is taken
-    # away first, or this half would count that one and pass on it.
+    # And on the ordinary path, where the probe removes its own interface, the
+    # cleanup must find no record and touch nothing.
     rm -f "$TEST_DIR"/awg31probe.*
     make_ip add; make_awg ok
-    probe "$src" >/dev/null
-    left=$(ls "$TEST_DIR"/awg31probe.*.iface 2>/dev/null | wc -l)
-    [ "$left" -eq 0 ] || { echo "the record outlived a successful delete ($src): $left"; return 1; }
+    out=$(PATH="$BIN:$PATH" TMPDIR="$TEST_DIR" timeout 90 bash -c '
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_awg31_module_probe() (/,/^)$/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        _verdict=$(_awg31_module_probe)
+        echo "MARKER" >> "$2/ip.argv"
+        _install_cleanup
+    ' _ "$src" "$TEST_DIR")
+    after=$(sed -n "/^MARKER$/,\$p" "$TEST_DIR/ip.argv")
+    [[ "$after" != *"link del"* ]] || { echo "the cleanup chased an interface the probe had already removed ($src): [$after]"; return 1; }
+    [[ "$out" != *WARNED* ]] || { echo "the cleanup warned with nothing to warn about ($src): [$out]"; return 1; }
 }
+c_cleanup_foreign_name() {
+    # 🔴 This block runs as root on EVERY exit of the installer, and the record
+    # path is predictable in a world-writable directory. A planted name like
+    # eth0 must not reach `ip link del`, and the refusal must be audible: "there
+    # is a record I did not understand" is not the same as "there was no probe".
+    local src="$1" out
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\necho \"\$*\" >> \"$2/called\"\nexit 0\n" > "$2/bin/ip"
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
+        rm -f "$2/called" "$TMPDIR"/awg31probe.*
+        printf "%s\n" "eth0" > "$TMPDIR/awg31probe.$$.iface"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        cat "$2/called" 2>/dev/null
+    ' _ "$src" "$TEST_DIR")
+    [[ "$out" != *"link del eth0"* ]] || { echo "a planted name reached ip link del ($src): [$out]"; return 1; }
+    [[ "$out" == *WARNED* ]] || { echo "a record that made no sense was passed over in silence ($src): [$out]"; return 1; }
+}
+@test "cleanup: a record naming something the probe could not have made is refused out loud, both twins" {
+    both c_cleanup_foreign_name
+}
+
+c_cleanup_not_a_file() {
+    # 🔴 A FIFO, not a directory. The first version of this test used a
+    # directory, and a mutant that dropped the guard entirely SURVIVED it: a
+    # directory yields an empty read either way, so the test could not tell the
+    # guarded code from the unguarded one. A FIFO can: without the guard the
+    # read blocks forever, inside a trap that runs on every exit of the
+    # installer, and the cleanup never finishes.
+    command -v mkfifo >/dev/null 2>&1 || skip "mkfifo not available"
+    local src="$1" out
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\necho \"\$*\" >> \"$2/called\"\nexit 0\n" > "$2/bin/ip"
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
+        rm -f "$2/called"; rm -rf "$TMPDIR"/awg31probe.*
+        mkfifo "$TMPDIR/awg31probe.$$.iface"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        echo "finished"
+        cat "$2/called" 2>/dev/null
+    ' _ "$src" "$TEST_DIR")
+    [[ "$out" == *finished* ]] || { echo "the cleanup hung or died on a record that is not a regular file ($src): [$out]"; return 1; }
+    [[ "$out" != *"link del"* ]] || { echo "something was deleted from a record that is not a regular file ($src): [$out]"; return 1; }
+}
+@test "cleanup: a record that is not a regular file is ignored, both twins" {
+    both c_cleanup_not_a_file
+}
+
+p_record_unwritable() {
+    # If the record cannot be written, NOTHING may be created: an interface with
+    # no record is a leak nobody would ever hear about. A directory in the record
+    # path makes the write fail without touching anything else.
+    local src="$1" out
+    out=$(PATH="$BIN:$PATH" TMPDIR="$TEST_DIR" timeout 60 bash -c '
+        rm -rf "$TMPDIR"/awg31probe.*
+        mkdir -p "$TMPDIR/awg31probe.$$.iface"
+        eval "$(sed -n "/^_awg31_module_probe() (/,/^)$/p" "$1")"
+        _awg31_module_probe
+    ' _ "$src")
+    [ "$out" = "failed" ] || { echo "a record that could not be written was not a refusal ($src): $out"; return 1; }
+    grep -q "^link add " "$TEST_DIR/ip.argv" && { echo "an interface was created with no record ($src)"; return 1; }
+    return 0
+}
+@test "probe: nothing is created when the record cannot be written, both twins" {
+    make_ip add; make_awg ok
+    both p_record_unwritable
+}
+
 @test "cleanup: the probe leaves a record the cleanup can act on, both twins" {
     both c_cleanup_wiring
 }
@@ -637,14 +782,19 @@ c_cleanup_speaks() {
     local src="$1" out
     out=$(timeout 60 bash -c '
         mkdir -p "$2/bin" "$2/tmp"
-        printf "#!/usr/bin/env bash\nexit 1\n" > "$2/bin/ip"
+        # The delete fails and the interface is STILL THERE: that is the one
+        # state worth a warning. A delete that failed because the device is
+        # already gone is not, and the code now tells the two apart.
+        printf "#!/usr/bin/env bash\ncase \"\$2\" in show) exit 0 ;; *) exit 1 ;; esac\n" > "$2/bin/ip"
         chmod +x "$2/bin/ip"
         export PATH="$2/bin:$PATH"
         export TMPDIR="$2/tmp"
+        rm -f "$TMPDIR"/awg31probe.*
         printf "%s\n" "awgp${$}x1" > "$TMPDIR/awg31probe.$$.iface"
         log_warn() { echo "WARNED $*"; }
         _install_temp_files=()
         _install_cleaned=0
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
         eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
         _install_cleanup
     ' _ "$src" "$TEST_DIR")
@@ -653,6 +803,82 @@ c_cleanup_speaks() {
 }
 @test "cleanup: a leftover that cannot be removed is named, both twins" {
     both c_cleanup_speaks
+}
+
+c_cleanup_quiet_when_gone() {
+    # On Ctrl-C the whole process group is signalled and the probe subshell can
+    # remove the interface first, so the parent's delete fails against a device
+    # that is already gone. Warning then points the reader at a non-problem.
+    local src="$1" out
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\nexit 1\n" > "$2/bin/ip"
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
+        rm -f "$TMPDIR"/awg31probe.*
+        printf "%s\n" "awgp${$}x1" > "$TMPDIR/awg31probe.$$.iface"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        echo finished
+    ' _ "$src" "$TEST_DIR")
+    [[ "$out" == *finished* ]] || { echo "the cleanup did not finish ($src): [$out]"; return 1; }
+    [[ "$out" != *WARNED* ]] || { echo "warned about an interface that was already gone ($src): [$out]"; return 1; }
+}
+@test "cleanup: nothing is said when the interface is already gone, both twins" {
+    both c_cleanup_quiet_when_gone
+}
+
+c_cleanup_short_record() {
+    # 🔴 `read` returns 1 on a file with no trailing newline HAVING ALREADY
+    # assigned the value. Throwing that value away, as `|| _probe_if=""` did,
+    # means a record truncated by a full disk silently loses the interface it
+    # names. Measured here rather than argued: the record is written without a
+    # newline and the interface still has to be removed.
+    local src="$1" out
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\necho \"\$*\" >> \"$2/called\"\nexit 0\n" > "$2/bin/ip"
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
+        rm -f "$2/called"; rm -f "$TMPDIR"/awg31probe.*
+        printf "%s" "awgp${$}x1" > "$TMPDIR/awg31probe.$$.iface"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        cat "$2/called" 2>/dev/null
+    ' _ "$src" "$TEST_DIR")
+    [[ "$out" == *"link del awgp"* ]] || { echo "a record without a trailing newline lost the interface ($src): [$out]"; return 1; }
+}
+@test "cleanup: a record without a trailing newline still names its interface, both twins" {
+    both c_cleanup_short_record
+}
+
+c_record_write_is_guarded() {
+    # Structural, and said so plainly: a symlink planted at the record path is
+    # already defeated by the `rm -f` in front of the write, and `set -C`
+    # (O_EXCL) closes the race where something re-plants it in between. Neither
+    # can be driven portably from a test on this host, so what is pinned here is
+    # that both are present and in that order.
+    local f body
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        body=$(sed -n '/^_awg31_module_probe() (/,/^)$/p' "$BATS_TEST_DIRNAME/../$f")
+        [ -n "$body" ] || { echo "no probe body in $f"; return 1; }
+        grep -q 'rm -f "$rec"' <<< "$body" || { echo "the record write is not preceded by rm -f in $f"; return 1; }
+        grep -q 'set -C; printf' <<< "$body" || { echo "the record write does not use set -C in $f"; return 1; }
+    done
+    return 0
+}
+@test "probe: the record is written with O_EXCL over a cleared path, both twins" {
+    c_record_write_is_guarded
 }
 
 c_probe_cleanup_idempotent() {

@@ -87,6 +87,16 @@ PROTOCOL_DEFAULT="2.0"
 # --- Auto-cleanup of temporary files ---
 _install_temp_files=()
 _install_cleaned=0
+# A warning from a trap that can fire BEFORE the logger is defined: on a signal
+# during argument parsing log_warn does not exist yet, and the error message
+# itself would die with "command not found".
+_probe_warn() {
+    if type log_warn >/dev/null 2>&1; then
+        log_warn "$1"
+    else
+        printf '%s\n' "$1" >&2
+    fi
+}
 _install_cleanup() {
     # Idempotent: on INT/TERM it is called from the signal handler, then again on
     # EXIT - the second call must be a no-op.
@@ -96,29 +106,47 @@ _install_cleanup() {
     for f in "${_install_temp_files[@]}"; do [[ -f "$f" ]] && rm -f "$f"; done
     # Leftovers of the module probe. The trap inside the probe itself cleans up
     # on an ordinary exit, but on a signal the subshell may not get there, so the
-    # cleanup is repeated here, where the exit is guaranteed. The pattern is tied
-    # to OUR pid, so it cannot touch anyone else's interface.
-    # 🔴 Both commands are bounded. The EXIT trap runs on EVERY exit of the
-    # installer, --help and the path after a reboot included, and a wedged
-    # netlink is exactly the state the probe refuses over. Without a bound the
-    # refusal of the probe would turn into a silent hang of the whole installer.
+    # cleanup is repeated here, where the exit is guaranteed.
     # 🔴 What marks a probe as having happened is a FILE on disk, not a
     # variable. The probe is called through $( ), so nothing it assigns reaches
     # this far: a flag in a variable made this cleanup dead code on every real
     # run.
-    # 🔴 What is removed is EXACTLY the interface the probe recorded. Matching a
-    # name pattern would take someone else's too: the probe deliberately steps
-    # over a taken name and never writes into a device it did not create, and
-    # the cleanup behind it has to be no less careful. The names carry our pid,
-    # so the pattern cannot touch another run's file. When no probe happened,
-    # not one external command runs: compgen is a builtin.
+    # 🔴 This block runs on EVERY exit of the installer, --help included, and it
+    # runs as root - so it trusts not one byte of what it reads. The path is
+    # predictable (/tmp plus our pid, and the pid is visible in /proc) and the
+    # directory is world writable. Hence three checks in a row:
+    #   - a regular file and not a symlink: a FIFO planted at that path would
+    #     block the read forever;
+    #   - the name has to be one the probe of THIS run could have created, or a
+    #     planted string like eth0 would take the machine off the network;
+    #   - the delete is bounded, because a wedged netlink is exactly the state
+    #     the probe refuses over.
+    # When no probe happened, not one external command runs at all: compgen is
+    # a builtin.
     if compgen -G "${TMPDIR:-/tmp}/awg31probe.$$.*" >/dev/null 2>&1; then
         _probe_rec="${TMPDIR:-/tmp}/awg31probe.$$.iface"
-        if [[ -r "$_probe_rec" ]]; then
-            IFS= read -r _probe_if < "$_probe_rec" 2>/dev/null || _probe_if=""
-            if [[ -n "$_probe_if" ]]; then
-                timeout -k 1 5 ip link del "$_probe_if" >/dev/null 2>&1 \
-                    || log_warn "A leftover of the module probe could not be removed: $_probe_if. Take it away by hand: ip link del $_probe_if."
+        if [[ -f "$_probe_rec" && ! -L "$_probe_rec" ]]; then
+            # 🔴 `|| _probe_if=""` was a mistake here: on a file with no
+            # trailing newline read returns 1 having ALREADY assigned the value,
+            # and that value was thrown away, so a truncated record silently lost
+            # the interface. The order of redirections matters too: 2>/dev/null
+            # BEFORE < file, or the missing-file message goes around the log.
+            IFS= read -r _probe_if 2>/dev/null < "$_probe_rec" || :
+            if [[ "$_probe_if" =~ ^awgp$$x[1-5]$ ]]; then
+                # The delete may have failed simply because the interface is
+                # already gone: on Ctrl-C the whole process group is signalled,
+                # and the probe subshell can remove it first. Warning then would
+                # send a person looking for nothing.
+                if ! timeout -k 1 5 ip link del "$_probe_if" >/dev/null 2>&1 \
+                   && timeout -k 1 5 ip link show "$_probe_if" >/dev/null 2>&1; then
+                    _probe_warn "A leftover of the module probe could not be removed: $_probe_if. Take it away by hand: ip link del $_probe_if."
+                fi
+            elif [[ -n "$_probe_if" ]]; then
+                # 🔴 Staying quiet here is not allowed. "There is a record and I
+                # did not understand it" is not the same as "there was no probe",
+                # and the difference only shows if it is said out loud. The name
+                # itself is not removed: it is not one this run could have made.
+                _probe_warn "The module probe record carries a name the probe of this run could not have created: $_probe_if. Nothing is removed, please check the temporary directory."
             fi
         fi
         rm -f "${TMPDIR:-/tmp}/awg31probe.$$."* 2>/dev/null
@@ -746,7 +774,7 @@ _awg31_module_probe() (
     case $- in *x*) set +x ;; esac
     umask 077
     local ifn="" kf="" rec="" key="" out="" line="" ctl="" rc=0 i=0 made=0 cleaned=0
-    local seen=0 hpk=0 cpa=0
+    local seen=0 hpk=0 cpa=0 hpk_name=0 cpa_name=0
     command -v ip >/dev/null 2>&1  || { printf 'failed'; exit 0; }
     command -v awg >/dev/null 2>&1 || { printf 'failed'; exit 0; }
 
@@ -769,9 +797,10 @@ _awg31_module_probe() (
         cleaned=1
         rm -f "$kf" 2>/dev/null
         if [[ "$made" -eq 1 ]]; then
-            # Запись снимается ТОЛЬКО после успешного удаления. Не вышло - она
-            # остаётся, и уборка установщика доберёт интерфейс и скажет об этом
-            # вслух. Отсюда сказать нельзя: stdout занят вердиктом.
+            # The record is dropped ONLY after a delete that worked. If it
+            # did not, the record stays, the installer cleanup picks the
+            # interface up and says so out loud. Saying it from here is not
+            # possible: stdout carries the verdict.
             if timeout -k 1 5 ip link del "$ifn" >/dev/null 2>&1; then
                 rm -f "$rec" 2>/dev/null
             fi
@@ -786,7 +815,10 @@ _awg31_module_probe() (
     trap '_probe_cleanup; printf "failed"; exit 0' INT TERM HUP
 
     timeout -k 1 5 awg genkey </dev/null > "$kf" 2>/dev/null || { printf 'failed'; exit 0; }
-    key=$(tr -d '\r\n' < "$kf")
+    # read instead of tr: no external command is left in the key path at all,
+    # which makes the claim below about "no external command" true throughout.
+    IFS= read -r key < "$kf" || :
+    key="${key%$'\r'}"
     # The key shape is judged by the same measure the library uses
     # (_awg_hpk_file_valid): 44 base64 characters. "Not empty" is not enough - a
     # genkey that exits zero and prints rubbish would pass it, control step 2
@@ -808,11 +840,21 @@ _awg31_module_probe() (
         rc=$?
         (( rc == 0 )) && continue
         if (( rc == 124 || rc == 125 || rc == 137 )); then printf 'failed'; exit 0; fi
+        # 🔴 The record is laid down BEFORE anything is created, not after. A
+        # signal fits between a successful `ip link add` and the write, and then
+        # the interface is on the machine with nothing to find it by - exactly
+        # the silent loss this record exists to prevent. If the write fails,
+        # NOTHING is created: an honest refusal beats a trace nobody knows of.
+        # 🔴 set -C (O_EXCL) is required: the path is predictable, the installer
+        # runs as root, and a plain `>` would follow a symlink planted there and
+        # overwrite somebody else's file.
+        rm -f "$rec" 2>/dev/null
+        ( set -C; printf '%s\n' "$ifn" > "$rec" ) 2>/dev/null || { printf 'failed'; exit 0; }
         if timeout -k 1 5 ip link add "$ifn" type amneziawg >/dev/null 2>&1; then
             made=1
-            printf '%s\n' "$ifn" > "$rec" 2>/dev/null
             break
         fi
+        rm -f "$rec" 2>/dev/null
         # The name appeared between the check and the creation - try the next
         # one; any other reason would repeat on it as well.
         timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1 || { printf 'failed'; exit 0; }
@@ -897,8 +939,10 @@ _awg31_module_probe() (
         line="${line%"${line##*[![:space:]]}"}"
         case "$line" in
             "[Interface]")                     seen=1 ;;
-            "HeaderProtectionKey = $key")      hpk=1 ;;
-            "ContentPaddingAddition = 32-128") cpa=1 ;;
+            "HeaderProtectionKey = $key")      hpk=1; hpk_name=1 ;;
+            "ContentPaddingAddition = 32-128") cpa=1; cpa_name=1 ;;
+            "HeaderProtectionKey"*)            hpk_name=1 ;;
+            "ContentPaddingAddition"*)         cpa_name=1 ;;
         esac
     done <<< "$out"
     # The answer has to be a config. `awg showconf` on an interface that exists
@@ -909,17 +953,25 @@ _awg31_module_probe() (
     (( seen == 1 )) || { printf 'failed'; exit 0; }
     if (( hpk == 1 && cpa == 1 )); then
         printf 'ok'
-    elif (( hpk == 0 && cpa == 0 )); then
-        # NEITHER value came back - that is a silent acceptance: an older module
-        # passes unknown netlink attributes over without a word, so there is no
-        # refusal to see.
+    elif (( hpk_name == 0 && cpa_name == 0 )); then
+        # 🔴 A silent acceptance is when the answer carries NOT EVEN THE NAMES of
+        # the two parameters: an older module passes unknown netlink attributes
+        # over without a word. What is compared here is the presence of the NAME,
+        # not a matching value. Otherwise an answer where the module took
+        # everything and gave everything back, only in another shape - an extra
+        # space, a masked value, a differently written range - would land in
+        # "second line" and its owner would be told to rebuild a healthy module.
+        # The output shape rests on a single bench measurement, and a drift in it
+        # has to lead to "could not check", never to a confident verdict.
         printf 'line2'
     else
-        # 🔴 One of the two came back. That is not the second line: upstream
-        # shipped the third-line parameters at different times, and an
-        # intermediate build knows the key but not the padding. The second-line
-        # text would be false in both of its clauses here, and its advice to
-        # rebuild the module would be a guess.
+        # 🔴 Everything else lands here: one of the two came back, or the names
+        # are there and the values are not ours. Neither is the second line.
+        # Upstream shipped the third-line parameters at different times, so an
+        # intermediate build knows the key but not the padding; and a value that
+        # does not match means we simply did not understand the answer. The
+        # second-line text would be false in both of its clauses, and its advice
+        # to rebuild the module would be a guess.
         printf 'failed'
     fi
     exit 0

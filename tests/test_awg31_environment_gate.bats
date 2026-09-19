@@ -410,6 +410,26 @@ gate_case() {
     done
 }
 
+@test "the usage probe demands exactly exit 1, on both twins" {
+    # A wrapper that prints a plausible usage and then times out, or succeeds,
+    # is not awg answering. Measured: weakening this to "any non-zero" in the EN
+    # file alone went unnoticed, because the surrounding contract was pinned on
+    # the RU file only.
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        load_gate "$script"
+        make_awg_stub zero
+        run awg31_tools_support
+        [ "$status" -ne 0 ] || { echo "a zero exit was accepted as a usage answer ($script)"; return 1; }
+        make_awg_stub t124
+        run awg31_tools_support
+        [ "$status" -ne 0 ] || { echo "a timeout was accepted as a usage answer ($script)"; return 1; }
+        make_awg_stub 31
+        run awg31_tools_support
+        [ "$status" -eq 0 ] || { echo "a real usage answer was refused ($script)"; return 1; }
+    done
+}
+
 @test "the probe accepts usage printed on stdout as well as on stderr" {
     # Which stream the usage goes to is not part of any contract we control, so
     # the probe merges them. This pins that down.
@@ -570,7 +590,7 @@ gate_case() {
     local body
     for f in "$INSTALL_RU" "$INSTALL_EN"; do
         body=$(func_from "$f" awg31_environment_blocker)
-        for code in arch_unknown arch_unsupported arm kernel tools_old not_implemented_yet internal_error; do
+        for code in arch_unknown arch_unsupported arm kernel tools_old module_line2 module_probe_failed not_implemented_yet internal_error; do
             [[ "$body" == *"printf '$code'"* ]]
         done
     done
