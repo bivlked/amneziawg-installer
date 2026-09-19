@@ -128,7 +128,10 @@ make_module_stub() {
         echo "echo \"\$*\" >> \"$TEST_DIR/ip.argv\""
         case "$mode" in
             broken) echo 'case "$2" in add) exit 2 ;; *) exit 1 ;; esac' ;;
-            *)      echo 'case "$2" in show) exit 1 ;; *) exit 0 ;; esac' ;;
+            # Remembers what it created, so that `show` answers about a device
+            # that exists: the probe asks again after a refusal to tell "the
+            # module said no" from "the device went away".
+            *)      echo 'D="'"$TEST_DIR"'/ifaces"; case "$2" in show) [ -e "$D/$3" ] && exit 0 || exit 1 ;; add) mkdir -p "$D"; : > "$D/$3"; exit 0 ;; del) rm -f "$D/$3"; exit 0 ;; *) exit 0 ;; esac' ;;
         esac
     } > "$ip"
     chmod +x "$ip"
@@ -392,12 +395,19 @@ gate_case() {
     # only the key would pass this gate, fail the probe, and the person would
     # read about permissions and netlink while the cure is a tools upgrade -
     # which tools_old already says in plain words.
-    load_gate
-    make_awg_stub hpkonly
-    run awg31_tools_support
-    [ "$status" -ne 0 ]
-    run awg31_environment_blocker post "amd64" "6.14.0-generic"
-    [ "$output" = "tools_old" ]
+    # Both twins. A regression planted in the EN file alone was measured to go
+    # unnoticed here, because this was the one new gate rule running on the RU
+    # file only, and an EN user would have read about permissions and netlink
+    # while the cure was a tools upgrade.
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        load_gate "$script"
+        make_awg_stub hpkonly
+        run awg31_tools_support
+        [ "$status" -ne 0 ] || { echo "tools without the padding range were accepted ($script)"; return 1; }
+        run awg31_environment_blocker post "amd64" "6.14.0-generic"
+        [ "$output" = "tools_old" ] || { echo "expected tools_old, got $output ($script)"; return 1; }
+    done
 }
 
 @test "the probe accepts usage printed on stdout as well as on stderr" {

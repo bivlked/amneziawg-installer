@@ -34,22 +34,35 @@ teardown() {
 }
 
 # make_ip <mode> : add - creates; fail - refuses to create; busy - every name
-# already exists; hang - never answers to add; hangshow - never answers to show.
+# already exists; hang - never answers to add; hangshow - never answers to show;
+# delfail - creates, but refuses to delete;
+# vanish - creates, but never admits the device exists afterwards, which is what
+#          an interface that went away in mid probe looks like.
+#
+# 🔴 The creating modes keep a directory of the names they made, so that `show`
+# answers about a device that exists. A stub that says "no such interface" right
+# after creating it is not a model of ip: the probe asks again after a refusal,
+# to tell "the module said no" from "the device went away", and against the old
+# stub that question always answered "gone".
 make_ip() {
     local mode="$1"
     # The argv logs are truncated here: both twins run inside one @test, and a
     # cumulative file lets the first twin satisfy an assertion about the second.
     rm -f "$TEST_DIR/ip.argv" "$TEST_DIR/awg.argv" "$TEST_DIR/set.args"
+    rm -rf "$TEST_DIR/ifaces"
     {
         echo '#!/usr/bin/env bash'
         echo "echo \"\$*\" >> \"$TEST_DIR/ip.argv\""
         # The verb is the SECOND word: the calls are `ip link show|add|del`.
         case "$mode" in
-            add)  echo 'case "$2" in show) exit 1 ;; add) exit 0 ;; del) exit 0 ;; esac; exit 0' ;;
+            add)  echo 'D="'"$TEST_DIR"'/ifaces"; case "$2" in show) [ -e "$D/$3" ] && exit 0 || exit 1 ;; add) mkdir -p "$D"; : > "$D/$3"; exit 0 ;; del) rm -f "$D/$3"; exit 0 ;; esac; exit 0' ;;
+            delfail) echo 'D="'"$TEST_DIR"'/ifaces"; case "$2" in show) [ -e "$D/$3" ] && exit 0 || exit 1 ;; add) mkdir -p "$D"; : > "$D/$3"; exit 0 ;; del) exit 1 ;; esac; exit 0' ;;
+            vanish) echo 'case "$2" in show) exit 1 ;; add) exit 0 ;; del) exit 0 ;; esac; exit 0' ;;
             fail) echo 'case "$2" in show) exit 1 ;; add) exit 2 ;; del) exit 0 ;; esac; exit 0' ;;
             busy) echo 'case "$2" in show) exit 0 ;; add) exit 2 ;; del) exit 0 ;; esac; exit 0' ;;
             hang) echo 'case "$2" in show) exit 1 ;; add) sleep 30 ;; del) exit 0 ;; esac; exit 0' ;;
             hangshow) echo 'case "$2" in show) sleep 30 ;; add) exit 0 ;; del) exit 0 ;; esac; exit 0' ;;
+            delhang) echo 'D="'"$TEST_DIR"'/ifaces"; case "$2" in show) [ -e "$D/$3" ] && exit 0 || exit 1 ;; add) mkdir -p "$D"; : > "$D/$3"; exit 0 ;; del) sleep 30 ;; esac; exit 0' ;;
         esac
     } > "$BIN/ip"
     chmod +x "$BIN/ip"
@@ -68,6 +81,11 @@ make_ip() {
 # badkey - genkey exits zero but prints a key of the wrong shape;
 # keygone - the main set refuses AND takes the key file away, so control step 2
 #           would refuse over the file rather than over the module;
+# hpkshow - the key comes back but the padding range does not;
+# cpashow - the padding range comes back but the key does not;
+# wrongkey - a well formed but DIFFERENT key comes back, which is what a module
+#           that masks the value would look like;
+# keyhang - awg genkey never answers;
 # notconf - the set is taken, but showconf answers with something that is not a
 #           config at all;
 # hangrefuse - the full set hangs, and a later set carrying the key refuses.
@@ -79,12 +97,13 @@ make_awg() {
         echo 'case "$1" in'
         case "$mode" in
             nokey)  echo '  genkey) exit 0 ;;' ;;
-            badkey) echo '  genkey) echo "SHORTKEY=" ;;' ;;
-            *)      echo '  genkey) echo "PROBEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
+            badkey)  echo '  genkey) echo "SHORTKEY=" ;;' ;;
+            keyhang) echo '  genkey) sleep 30 ;;' ;;
+            *)       echo '  genkey) echo "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
         esac
         echo '  set)'
         case "$mode" in
-            ok|silent|empty)
+            ok|silent|empty|hpkshow|cpashow|wrongkey|keyhang)
                 echo '    shift 2; printf "%s\n" "$*" > "'"$TEST_DIR"'/set.args"; exit 0 ;;' ;;
             refuse)
                 # The wording is the one a module built from tag v1.0.20260725
@@ -121,10 +140,17 @@ make_awg() {
         case "$mode" in
             ok)
                 echo '    echo "[Interface]"; echo "ListenPort = 51820"'
-                echo '    echo "HeaderProtectionKey = PROBEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="'
+                echo '    echo "HeaderProtectionKey = PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="'
                 echo '    echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
             silent)
                 echo '    echo "[Interface]"; echo "ListenPort = 51820"; exit 0 ;;' ;;
+            hpkshow)
+                echo '    echo "[Interface]"; echo "HeaderProtectionKey = PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; exit 0 ;;' ;;
+            cpashow)
+                echo '    echo "[Interface]"; echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
+            wrongkey)
+                echo '    echo "[Interface]"; echo "HeaderProtectionKey = OTHER+KEY/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="'
+                echo '    echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
             empty)
                 echo '    exit 0 ;;' ;;
             notconf)
@@ -231,6 +257,55 @@ p_badkey() {
     both p_badkey
 }
 
+# 🔴 Half an answer is not a verdict. Upstream shipped the third-line
+# parameters at different times, so a build that knows the key and not the
+# padding exists. Calling it second line would be false in both clauses of that
+# message, and its advice to rebuild the module would be a guess.
+p_hpk_only_back() {
+    make_ip add; make_awg hpkshow
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "a key back without the padding was judged ($1): $out"; return 1; }
+}
+@test "probe: the key back without the padding names no generation, both twins" {
+    both p_hpk_only_back
+}
+
+p_cpa_only_back() {
+    make_ip add; make_awg cpashow
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "the padding back without the key was judged ($1): $out"; return 1; }
+}
+@test "probe: the padding back without the key names no generation, both twins" {
+    both p_cpa_only_back
+}
+
+# A module or tool that masks the value would echo a well formed key that is not
+# ours. Matching the field name alone would read that as a third-line module;
+# this installer masks header protection keys elsewhere for exactly that reason.
+p_wrong_key_back() {
+    make_ip add; make_awg wrongkey
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "a key we never set was accepted as ours ($1): $out"; return 1; }
+}
+@test "probe: a key that is not the one we set is not a third-line verdict, both twins" {
+    both p_wrong_key_back
+}
+
+# Every other external call of the probe has a hang case. This one is the first
+# thing it runs, so without a bound the whole install step stops with no message.
+p_genkey_hangs() {
+    make_ip add; make_awg keyhang
+    local start end out
+    start=$(date +%s)
+    out=$(probe "$1")
+    end=$(date +%s)
+    [ "$out" = "failed" ] || { echo "a hanging genkey was judged ($1): $out"; return 1; }
+    [ $((end - start)) -lt 20 ] || { echo "the probe waited for a hanging genkey ($1): $((end - start))s"; return 1; }
+}
+@test "probe: a hanging key generation is bounded and not judged, both twins" {
+    both p_genkey_hangs
+}
+
 p_refuse() {
     make_ip add; make_awg refuse
     local out; out=$(probe "$1")
@@ -238,6 +313,20 @@ p_refuse() {
 }
 @test "probe: a key refused on control step 2 is second line, both twins" {
     both p_refuse
+}
+
+# 🔴 A one from `awg set` means "any error", not "the module said no". An
+# interface that went away in mid probe returns the same one, and reading a
+# second line out of that would send its owner to rebuild a healthy module. The
+# device is checked, not the wording of the error: tool messages change between
+# versions, the presence of a device does not.
+p_refuse_but_gone() {
+    make_ip vanish; make_awg refuse
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "a refusal with the device gone was read as a verdict ($1): $out"; return 1; }
+}
+@test "probe: a refusal with the interface gone names no generation, both twins" {
+    both p_refuse_but_gone
 }
 
 p_dead() {
@@ -435,61 +524,63 @@ p_hang_show() {
     # the subshell its turn. So the installer cleanup, which is guaranteed to
     # run, removes anything the probe may have left. The pattern carries the
     # installer pid, so it can only match interfaces of this very run.
+    # 🔴 The marker is a FILE, not a variable. The probe is called through
+    # $( ), so anything it assigns dies with the subshell; a flag in a variable
+    # turned this whole block into dead code once already, and the tests did not
+    # see it because they set the flag by hand.
     local f body
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         body=$(sed -n '/^_install_cleanup() {/,/^}/p' "$BATS_TEST_DIRNAME/../$f")
         [ -n "$body" ] || { echo "no _install_cleanup in $f"; return 1; }
-        grep -q 'awgp\$\$x' <<< "$body" || { echo "the cleanup does not remove probe interfaces in $f"; return 1; }
+        grep -q 'awg31probe' <<< "$body" || { echo "the cleanup does not look for the probe record in $f"; return 1; }
         grep -q 'ip link del' <<< "$body" || { echo "the cleanup does not delete anything in $f"; return 1; }
+        if grep -q '_awg31_probe_ran' <<< "$body"; then
+            echo "the cleanup keys off a variable a subshell cannot set in $f"
+            return 1
+        fi
     done
+    return 0
 }
 
 c_cleanup_runs() {
-    # The same cleanup, executed: a stub ip reports one interface of this run,
-    # one of another run and the working awg0, and only ours may be deleted.
-    # The name of "ours" is passed in a variable rather than derived inside the
-    # stub: the stub runs in a pipeline, so its parent is a subshell and its own
-    # idea of the pid would not be the one the cleanup uses.
+    # The same cleanup, executed. The probe records the name it created; the
+    # cleanup removes exactly that one. A name the probe stepped over, because
+    # it was already taken, must survive: the probe refuses to write into a
+    # device it did not create, and the cleanup has to be no less careful.
     local src="$1" out
     out=$(timeout 60 bash -c '
-        mkdir -p "$2/bin"
+        mkdir -p "$2/bin" "$2/tmp"
         cat > "$2/bin/ip" <<STUB
 #!/usr/bin/env bash
-if [ "\$1" = "-br" ]; then
-    echo "\$FAKE_IF UNKNOWN"
-    echo "awgp999999x1 UNKNOWN"
-    echo "awg0 UNKNOWN"
-    exit 0
-fi
 echo "\$*" >> "$2/deleted"
 exit 0
 STUB
         chmod +x "$2/bin/ip"
         export PATH="$2/bin:$PATH"
-        export FAKE_IF="awgp${$}x1"
+        export TMPDIR="$2/tmp"
         rm -f "$2/deleted"
+        printf "%s\n" "awgp${$}x2" > "$TMPDIR/awg31probe.$$.iface"
         _install_temp_files=()
         _install_cleaned=0
-        _awg31_probe_ran=1
         eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
         _install_cleanup
         cat "$2/deleted" 2>/dev/null
     ' _ "$src" "$TEST_DIR")
-    [[ "$out" == *"link del awgp"* ]] || { echo "nothing was deleted ($src): [$out]"; return 1; }
-    [[ "$out" != *"awgp999999x1"* ]] || { echo "an interface of another run was deleted ($src): $out"; return 1; }
+    [[ "$out" == *"link del awgp"*"x2"* ]] || { echo "the recorded interface was not deleted ($src): [$out]"; return 1; }
+    [[ "$out" != *"x1"* ]] || { echo "an interface the probe stepped over was deleted ($src): $out"; return 1; }
     [[ "$out" != *"awg0"* ]] || { echo "the working interface was deleted ($src): $out"; return 1; }
 }
-@test "cleanup: only the probe interfaces of this run are removed, both twins" {
+@test "cleanup: exactly the recorded interface is removed, both twins" {
     both c_cleanup_runs
 }
 
 c_cleanup_skipped() {
-    # No probe in this run means nothing to sweep. Without this the EXIT trap
-    # would spend two ip calls on every single run of the installer, --help
-    # included, looking for interfaces nobody created.
+    # No probe in this run means no record, and then not one external command
+    # may run: the EXIT trap fires on every exit of the installer, --help
+    # included.
     local src="$1" out
     out=$(timeout 60 bash -c '
-        mkdir -p "$2/bin"
+        mkdir -p "$2/bin" "$2/tmp"
         cat > "$2/bin/ip" <<STUB
 #!/usr/bin/env bash
 echo "\$*" >> "$2/called"
@@ -497,39 +588,63 @@ exit 0
 STUB
         chmod +x "$2/bin/ip"
         export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
         rm -f "$2/called"
         _install_temp_files=()
         _install_cleaned=0
-        _awg31_probe_ran=0
         eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
         _install_cleanup
         cat "$2/called" 2>/dev/null
     ' _ "$src" "$TEST_DIR")
     [ -z "$out" ] || { echo "the cleanup called ip although no probe ran ($src): [$out]"; return 1; }
 }
-@test "cleanup: nothing is swept when the probe never ran, both twins" {
+@test "cleanup: nothing is swept when the probe left no record, both twins" {
     both c_cleanup_skipped
+}
+
+c_cleanup_wiring() {
+    # End to end, through the shape the installer really uses: the probe runs in
+    # a subshell, and what it leaves behind has to reach the cleanup.
+    # 🔴 This is the test that would have caught a marker kept in a VARIABLE.
+    # Every other cleanup test lays the marker down by hand, so all of them
+    # stayed green while the sweep was dead code on every real run.
+    local src="$1" left
+    # The probe cannot remove its own interface here, so it must keep the record
+    # for the installer cleanup rather than dropping it.
+    make_ip delfail; make_awg ok
+    probe "$src" >/dev/null
+    left=$(ls "$TEST_DIR"/awg31probe.*.iface 2>/dev/null | wc -l)
+    [ "$left" -eq 1 ] || { echo "a delete that failed left no record for the cleanup ($src): $left"; return 1; }
+
+    # And on the ordinary path, where the probe does remove its interface, the
+    # record has to be gone: otherwise the cleanup would chase a device that is
+    # no longer there and warn about it. The record of the run above is taken
+    # away first, or this half would count that one and pass on it.
+    rm -f "$TEST_DIR"/awg31probe.*
+    make_ip add; make_awg ok
+    probe "$src" >/dev/null
+    left=$(ls "$TEST_DIR"/awg31probe.*.iface 2>/dev/null | wc -l)
+    [ "$left" -eq 0 ] || { echo "the record outlived a successful delete ($src): $left"; return 1; }
+}
+@test "cleanup: the probe leaves a record the cleanup can act on, both twins" {
+    both c_cleanup_wiring
 }
 
 c_cleanup_speaks() {
     # This sweep is the last line of defence after a SIGKILL, so its silence
     # would be the last signal going quiet: a leftover that cannot be removed
-    # has to be named, and "could not look" must not read like "looked, clean".
+    # has to be named.
     local src="$1" out
     out=$(timeout 60 bash -c '
-        mkdir -p "$2/bin"
-        cat > "$2/bin/ip" <<STUB
-#!/usr/bin/env bash
-if [ "\$1" = "-br" ]; then echo "\$FAKE_IF UNKNOWN"; exit 0; fi
-exit 1
-STUB
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\nexit 1\n" > "$2/bin/ip"
         chmod +x "$2/bin/ip"
         export PATH="$2/bin:$PATH"
-        export FAKE_IF="awgp${$}x1"
+        export TMPDIR="$2/tmp"
+        printf "%s\n" "awgp${$}x1" > "$TMPDIR/awg31probe.$$.iface"
         log_warn() { echo "WARNED $*"; }
         _install_temp_files=()
         _install_cleaned=0
-        _awg31_probe_ran=1
         eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
         _install_cleanup
     ' _ "$src" "$TEST_DIR")
@@ -538,38 +653,6 @@ STUB
 }
 @test "cleanup: a leftover that cannot be removed is named, both twins" {
     both c_cleanup_speaks
-}
-
-c_cleanup_strips_parent() {
-    # ip -br link show prints name@parent for a device that has a link parent.
-    # amneziawg devices have none, so this should never fire - but with the tail
-    # attached the delete would name a device that does not exist and quietly do
-    # nothing, which is the silent half of a cleanup failing.
-    local src="$1" out
-    out=$(timeout 60 bash -c '
-        mkdir -p "$2/bin"
-        cat > "$2/bin/ip" <<STUB
-#!/usr/bin/env bash
-if [ "\$1" = "-br" ]; then echo "\$FAKE_IF@NONE UNKNOWN"; exit 0; fi
-echo "\$*" >> "$2/deleted"
-exit 0
-STUB
-        chmod +x "$2/bin/ip"
-        export PATH="$2/bin:$PATH"
-        export FAKE_IF="awgp${$}x1"
-        rm -f "$2/deleted"
-        _install_temp_files=()
-        _install_cleaned=0
-        _awg31_probe_ran=1
-        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
-        _install_cleanup
-        cat "$2/deleted" 2>/dev/null
-    ' _ "$src" "$TEST_DIR")
-    [[ "$out" == *"link del awgp"* ]] || { echo "nothing was deleted ($src): [$out]"; return 1; }
-    [[ "$out" != *"@"* ]] || { echo "the delete carried the parent suffix ($src): $out"; return 1; }
-}
-@test "cleanup: a name printed with a parent suffix is still deleted, both twins" {
-    both c_cleanup_strips_parent
 }
 
 c_probe_cleanup_idempotent() {
@@ -584,7 +667,9 @@ c_probe_cleanup_idempotent() {
         body=$(sed -n '/^_awg31_module_probe() (/,/^)$/p' "$BATS_TEST_DIRNAME/../$f")
         [ -n "$body" ] || { echo "no probe body in $f"; return 1; }
         grep -q 'cleaned=1' <<< "$body" || { echo "the probe cleanup does not mark itself done in $f"; return 1; }
-        grep -q 'cleaned" -eq 1 ]] && return 0' <<< "$body" || { echo "the probe cleanup does not return early on a second run in $f"; return 1; }
+        # Matched loosely on purpose: the point is that the flag guards an early
+        # return, not the exact shape of the condition.
+        grep -qE 'cleaned"? -eq 1 \]\].*return 0' <<< "$body" || { echo "the probe cleanup does not return early on a second run in $f"; return 1; }
     done
 }
 @test "cleanup: the probe cleanup does nothing on a second run, both twins" {
@@ -605,41 +690,6 @@ p_key_gone_before_control() {
     both p_key_gone_before_control
 }
 
-c_cleanup_exact_names() {
-    # The probe only ever creates awgp<pid>x1..x5. A name like awgp<pid>x10
-    # therefore cannot be ours, and a prefix match would have deleted it.
-    local src="$1" out
-    out=$(timeout 60 bash -c '
-        mkdir -p "$2/bin"
-        cat > "$2/bin/ip" <<STUB
-#!/usr/bin/env bash
-if [ "\$1" = "-br" ]; then
-    echo "\$FAKE_IF UNKNOWN"
-    echo "\${FAKE_IF}0 UNKNOWN"
-    exit 0
-fi
-echo "\$*" >> "$2/deleted"
-exit 0
-STUB
-        chmod +x "$2/bin/ip"
-        export PATH="$2/bin:$PATH"
-        export FAKE_IF="awgp${$}x1"
-        rm -f "$2/deleted"
-        _install_temp_files=()
-        _install_cleaned=0
-        _awg31_probe_ran=1
-        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
-        _install_cleanup
-        cat "$2/deleted" 2>/dev/null
-    ' _ "$src" "$TEST_DIR")
-    [[ "$out" == *"link del awgp"* ]] || { echo "nothing was deleted ($src): [$out]"; return 1; }
-    grep -qE 'x[0-9]{2}' <<< "$out" && { echo "a name outside the probe range was deleted ($src): $out"; return 1; }
-    return 0
-}
-@test "cleanup: a name the probe could never create is left alone, both twins" {
-    both c_cleanup_exact_names
-}
-
 c_cleanup_temp_files() {
     # The key file outlives a SIGKILL, because the subshell trap never runs.
     # Its name carries our pid, which is what lets the sweep find it without
@@ -651,11 +701,11 @@ c_cleanup_temp_files() {
         chmod +x "$2/bin/ip"
         export PATH="$2/bin:$PATH"
         export TMPDIR="$2/tmp"
+        rm -f "$TMPDIR"/awg31probe.*
         : > "$TMPDIR/awg31probe.$$.left"
         : > "$TMPDIR/awg31probe.999999.other"
         _install_temp_files=()
         _install_cleaned=0
-        _awg31_probe_ran=1
         eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
         _install_cleanup
         ls "$TMPDIR" 2>/dev/null
@@ -744,24 +794,20 @@ c_cleanup_bounded() {
     # The EXIT trap runs on every exit of every run, --help included. A wedged
     # netlink is exactly the state the probe refuses over, so an unbounded ip
     # here would turn that refusal into a silent hang of the installer.
+    # 🔴 The record has to be laid down, or the block under test is skipped and
+    # this measures nothing. That is not hypothetical: a guard added for speed
+    # made these two tests vacuous once, and they stayed green while the bound
+    # they exist for was gone.
     local src="$1" start end out
     start=$(date +%s)
-    # The stub answers the listing at once and blocks on the delete: with a
-    # stub that hangs on both, the list comes back empty and the second call is
-    # never reached, so its bound would be free to disappear.
     out=$(timeout 60 bash -c '
-        mkdir -p "$2/slowbin"
-        cat > "$2/slowbin/ip" <<STUB
-#!/usr/bin/env bash
-if [ "\$1" = "-br" ]; then
-    echo "\$FAKE_IF UNKNOWN"
-    exit 0
-fi
-sleep 30
-STUB
+        mkdir -p "$2/slowbin" "$2/tmp"
+        printf "#!/usr/bin/env bash\nsleep 30\n" > "$2/slowbin/ip"
         chmod +x "$2/slowbin/ip"
-        export FAKE_IF="awgp${$}x1"
         export PATH="$2/slowbin:$PATH"
+        export TMPDIR="$2/tmp"
+        printf "%s\n" "awgp${$}x1" > "$TMPDIR/awg31probe.$$.iface"
+        log_warn() { :; }
         _install_temp_files=()
         _install_cleaned=0
         eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
@@ -791,31 +837,6 @@ p_control_timeout() {
 }
 @test "probe: a hanging second control step is not a second-line verdict, both twins" {
     both p_control_timeout
-}
-
-c_cleanup_bounded_list() {
-    # The sibling case hangs on the delete; this one hangs on the listing. Both
-    # commands need their own case: a stub that hangs on one leaves the other
-    # free to lose its bound, which a mutation run showed.
-    local src="$1" start end out
-    start=$(date +%s)
-    out=$(timeout 60 bash -c '
-        mkdir -p "$2/slowlist"
-        printf "#!/usr/bin/env bash\nsleep 30\n" > "$2/slowlist/ip"
-        chmod +x "$2/slowlist/ip"
-        export PATH="$2/slowlist:$PATH"
-        _install_temp_files=()
-        _install_cleaned=0
-        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
-        _install_cleanup
-        echo done
-    ' _ "$src" "$TEST_DIR")
-    end=$(date +%s)
-    [ "$out" = "done" ] || { echo "the cleanup did not finish ($src): $out"; return 1; }
-    [ "$((end - start))" -lt 20 ] || { echo "the cleanup waited for a hanging listing ($src): $((end - start))s"; return 1; }
-}
-@test "cleanup: a hanging interface listing does not block the exit trap either, both twins" {
-    both c_cleanup_bounded_list
 }
 
 p_showconf_fails() {
