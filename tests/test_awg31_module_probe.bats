@@ -66,6 +66,8 @@ make_ip() {
 # showhang - takes the set and never answers showconf;
 # nokey - genkey prints nothing;
 # badkey - genkey exits zero but prints a key of the wrong shape;
+# keygone - the main set refuses AND takes the key file away, so control step 2
+#           would refuse over the file rather than over the module;
 # notconf - the set is taken, but showconf answers with something that is not a
 #           config at all;
 # hangrefuse - the full set hangs, and a later set carrying the key refuses.
@@ -102,6 +104,15 @@ make_awg() {
             hangrefuse)
                 echo '    if [[ "$*" == *content-padding-addition* ]]; then sleep 30; fi'
                 echo '    if [[ "$*" == *header-protection-key* ]]; then echo "Unable to modify interface: Invalid argument" >&2; exit 1; fi'
+                echo '    exit 0 ;;' ;;
+            keygone)
+                # The path travels in argv right after header-protection-key.
+                # It is picked out by walking the arguments: ${*#pattern} would
+                # strip the prefix from EACH argument separately rather than
+                # from the joined string, which silently yields the wrong path.
+                echo '    p=""; prev=""; for a in "$@"; do [ "$prev" = "header-protection-key" ] && p="$a"; prev="$a"; done'
+                echo '    if [[ "$*" == *content-padding-addition* ]]; then rm -f "$p"; exit 1; fi'
+                echo '    if [[ "$*" == *header-protection-key* ]]; then [ -s "$p" ] || exit 1; exit 0; fi'
                 echo '    exit 0 ;;' ;;
             showfail|showhang|nokey|badkey|notconf)
                 echo '    shift 2; printf "%s\n" "$*" > "'"$TEST_DIR"'/set.args"; exit 0 ;;' ;;
@@ -527,6 +538,133 @@ STUB
 }
 @test "cleanup: a leftover that cannot be removed is named, both twins" {
     both c_cleanup_speaks
+}
+
+c_cleanup_strips_parent() {
+    # ip -br link show prints name@parent for a device that has a link parent.
+    # amneziawg devices have none, so this should never fire - but with the tail
+    # attached the delete would name a device that does not exist and quietly do
+    # nothing, which is the silent half of a cleanup failing.
+    local src="$1" out
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin"
+        cat > "$2/bin/ip" <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = "-br" ]; then echo "\$FAKE_IF@NONE UNKNOWN"; exit 0; fi
+echo "\$*" >> "$2/deleted"
+exit 0
+STUB
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export FAKE_IF="awgp${$}x1"
+        rm -f "$2/deleted"
+        _install_temp_files=()
+        _install_cleaned=0
+        _awg31_probe_ran=1
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        cat "$2/deleted" 2>/dev/null
+    ' _ "$src" "$TEST_DIR")
+    [[ "$out" == *"link del awgp"* ]] || { echo "nothing was deleted ($src): [$out]"; return 1; }
+    [[ "$out" != *"@"* ]] || { echo "the delete carried the parent suffix ($src): $out"; return 1; }
+}
+@test "cleanup: a name printed with a parent suffix is still deleted, both twins" {
+    both c_cleanup_strips_parent
+}
+
+c_probe_cleanup_idempotent() {
+    # On a signal the probe cleanup runs from the handler and then again on
+    # EXIT. Without a guard the second run spends another bounded delete on an
+    # interface that is already gone: up to five more seconds of silence on
+    # Ctrl-C, in exactly the wedged netlink state the probe exists to refuse
+    # over. The installer cleanup has carried this guard for a long time; the
+    # probe one was written without it.
+    local f body
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        body=$(sed -n '/^_awg31_module_probe() (/,/^)$/p' "$BATS_TEST_DIRNAME/../$f")
+        [ -n "$body" ] || { echo "no probe body in $f"; return 1; }
+        grep -q 'cleaned=1' <<< "$body" || { echo "the probe cleanup does not mark itself done in $f"; return 1; }
+        grep -q 'cleaned" -eq 1 ]] && return 0' <<< "$body" || { echo "the probe cleanup does not return early on a second run in $f"; return 1; }
+    done
+}
+@test "cleanup: the probe cleanup does nothing on a second run, both twins" {
+    c_probe_cleanup_idempotent
+}
+
+p_key_gone_before_control() {
+    # Control step 2 judges by exit code 1, and awg set returns one on any
+    # error, a key file it cannot read included. If the file goes away between
+    # the shape check and that step, the refusal is about the FILE, and reading
+    # a second-line module out of it would send its owner to rebuild a healthy
+    # one.
+    make_ip add; make_awg keygone
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "a refusal over the key file was read as a verdict ($1): $out"; return 1; }
+}
+@test "probe: a key file that goes missing is not a second-line verdict, both twins" {
+    both p_key_gone_before_control
+}
+
+c_cleanup_exact_names() {
+    # The probe only ever creates awgp<pid>x1..x5. A name like awgp<pid>x10
+    # therefore cannot be ours, and a prefix match would have deleted it.
+    local src="$1" out
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin"
+        cat > "$2/bin/ip" <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = "-br" ]; then
+    echo "\$FAKE_IF UNKNOWN"
+    echo "\${FAKE_IF}0 UNKNOWN"
+    exit 0
+fi
+echo "\$*" >> "$2/deleted"
+exit 0
+STUB
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export FAKE_IF="awgp${$}x1"
+        rm -f "$2/deleted"
+        _install_temp_files=()
+        _install_cleaned=0
+        _awg31_probe_ran=1
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        cat "$2/deleted" 2>/dev/null
+    ' _ "$src" "$TEST_DIR")
+    [[ "$out" == *"link del awgp"* ]] || { echo "nothing was deleted ($src): [$out]"; return 1; }
+    grep -qE 'x[0-9]{2}' <<< "$out" && { echo "a name outside the probe range was deleted ($src): $out"; return 1; }
+    return 0
+}
+@test "cleanup: a name the probe could never create is left alone, both twins" {
+    both c_cleanup_exact_names
+}
+
+c_cleanup_temp_files() {
+    # The key file outlives a SIGKILL, because the subshell trap never runs.
+    # Its name carries our pid, which is what lets the sweep find it without
+    # touching anyone else's.
+    local src="$1" out
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\nexit 0\n" > "$2/bin/ip"
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
+        : > "$TMPDIR/awg31probe.$$.left"
+        : > "$TMPDIR/awg31probe.999999.other"
+        _install_temp_files=()
+        _install_cleaned=0
+        _awg31_probe_ran=1
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        ls "$TMPDIR" 2>/dev/null
+    ' _ "$src" "$TEST_DIR")
+    [[ "$out" != *".left"* ]] || { echo "the probe key file survived the cleanup ($src): [$out]"; return 1; }
+    [[ "$out" == *".other"* ]] || { echo "the cleanup removed a file of another run ($src): [$out]"; return 1; }
+}
+@test "cleanup: the probe temp files of this run are removed and others are not, both twins" {
+    both c_cleanup_temp_files
 }
 
 p_control_shape() {

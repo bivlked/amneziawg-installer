@@ -119,11 +119,18 @@ _install_cleanup() {
             # sub() strips a name@parent tail: amneziawg interfaces have no
             # parent, but with the tail attached the delete would quietly find
             # no such device.
-            for f in $(printf '%s\n' "$_sweep_raw" | awk -v p="awgp$$x" '{sub(/@.*/, "", $1)} index($1, p) == 1 {print $1}'); do
+            # 🔴 The match is EXACT, not a name prefix. The probe walks exactly
+            # awgp$$x1..awgp$$x5 (the `for i in 1 2 3 4 5` loop below), so a name
+            # like awgp$$x10 cannot be ours, and removing it is not our business.
+            for f in $(printf '%s\n' "$_sweep_raw" | awk -v p="^awgp$$x[1-5]$" '{sub(/@.*/, "", $1)} $1 ~ p {print $1}'); do
                 timeout -k 1 5 ip link del "$f" >/dev/null 2>&1 \
                     || log_warn "A leftover of the module probe could not be removed: $f. Take it away by hand: ip link del $f."
             done
         fi
+        # The probe key file outlives a SIGKILL: the subshell trap never gets
+        # there. The name carries our pid, so the pattern cannot touch anyone
+        # else's file.
+        rm -f "${TMPDIR:-/tmp}/awg31probe.$$."* 2>/dev/null
     fi
     # Clean up temporary files from awg_common.sh (if already sourced)
     type _awg_cleanup &>/dev/null && _awg_cleanup
@@ -752,7 +759,7 @@ _awg31_module_probe() (
     command -v ip >/dev/null 2>&1  || { printf 'failed'; exit 0; }
     command -v awg >/dev/null 2>&1 || { printf 'failed'; exit 0; }
 
-    kf=$(mktemp "${TMPDIR:-/tmp}/awg31probe.XXXXXX" 2>/dev/null) || { printf 'failed'; exit 0; }
+    kf=$(mktemp "${TMPDIR:-/tmp}/awg31probe.$$.XXXXXX" 2>/dev/null) || { printf 'failed'; exit 0; }
     # The cleanup has to survive both an ordinary exit and a signal: the machine
     # must not keep an interface of ours after the probe.
     _probe_cleanup() {
@@ -830,6 +837,11 @@ _awg31_module_probe() (
         # taken and the refusal was about the padding, the line cannot be named
         # from that refusal: "update the module" would be wrong advice, so saying
         # the check could not be made is the honest answer.
+        # 🔴 Step 2 judges by exit code 1, and `awg set` returns one on ANY
+        # error, a key file it cannot read included. If the file went away
+        # between the shape check and this step, the refusal would be about the
+        # FILE, and we would call a healthy module second line.
+        [[ -s "$kf" ]] || { printf 'failed'; exit 0; }
         timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 \
             header-protection-key "$kf" </dev/null >/dev/null 2>&1
         ctl=$?
@@ -1045,7 +1057,7 @@ _awg31_blocker_message() {
             printf '%s' "The loaded amneziawg kernel module does not understand the third-line parameters: it either refuses the header protection key or takes it without a word and does not give it back. A 3.1 profile would be written on such a module and the connection would never come up. This one is fixed by updating the module: apt-get update && apt-get install --only-upgrade amneziawg-dkms, then a reboot (the module is rebuilt for your kernel) and another run of the installer. Or install with --protocol=2.0."
             ;;
         module_probe_failed)
-            printf '%s' "Whether the loaded module understands the third-line parameters could not be checked: the probe either could not create a temporary interface and get an answer, or got an answer that does not name the generation. The reasons differ - permissions, the state of netlink, the network namespace of a container. We do not know whether the module fits, and guessing is not an option here. Way out: install with --protocol=2.0. If you think this is wrong, send the output of six commands: 'ip link add awgprobe type amneziawg', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <a file with a 32-byte key in base64> content-padding-addition 32-128' (the main command of the probe; the probe can stop here too), 'awg set awgprobe s1 15 s2 15 s3 12 s4 12', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <the same file>', 'awg showconf awgprobe' (the read back; the probe can stop here too) and 'ip link del awgprobe' (the last one takes the temporary interface away again). The key file is made like this: 'awg genkey > /tmp/probekey'. The probe also stops before any of these commands - if it cannot create a temporary file, or if 'awg genkey' does not give a key of the right shape - and on the third command, the first control step."
+            printf '%s' "Whether the loaded module understands the third-line parameters could not be checked: the probe either could not create a temporary interface and get an answer, or got an answer that does not name the generation. The reasons differ - permissions, the state of netlink, the network namespace of a container. We do not know whether the module fits, and guessing is not an option here. Way out: install with --protocol=2.0. If you think this is wrong, send the output of six commands: 'ip link add awgprobe type amneziawg', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <a file with a 32-byte key in base64> content-padding-addition 32-128' (the main command of the probe; the probe can stop here too), 'awg set awgprobe s1 15 s2 15 s3 12 s4 12', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <the same file>', 'awg showconf awgprobe' (the read back; the probe can stop here too) and 'ip link del awgprobe' (the last one takes the temporary interface away again). The key file is made like this: 'umask 077; awg genkey > /tmp/probekey', and take it away afterwards: 'rm -f /tmp/probekey'. The probe also stops before any of these commands - if it cannot create a temporary file, or if 'awg genkey' does not give a key of the right shape - and on the third command, the first control step."
             ;;
         not_implemented_yet)
             printf '%s' "This installer version (v${SCRIPT_VERSION}) does not issue the AmneziaWG 3.1 profile: your environment fits, and it is not your machine. Way out: --protocol=2.0."
