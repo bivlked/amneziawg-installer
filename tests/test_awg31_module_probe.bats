@@ -37,7 +37,10 @@ teardown() {
 # already exists; hang - never answers to add; hangshow - never answers to show;
 # delfail - creates, but refuses to delete;
 # vanish - creates, but never admits the device exists afterwards, which is what
-#          an interface that went away in mid probe looks like.
+#          an interface that went away in mid probe looks like;
+# addhang - creates the device and THEN hangs, which is what a delayed netlink
+#          acknowledgement looks like: timeout kills the command after the
+#          kernel has already made the interface.
 #
 # 🔴 The creating modes keep a directory of the names they made, so that `show`
 # answers about a device that exists. A stub that says "no such interface" right
@@ -58,6 +61,7 @@ make_ip() {
             add)  echo 'D="'"$TEST_DIR"'/ifaces"; case "$2" in show) [ -e "$D/$3" ] && exit 0 || exit 1 ;; add) mkdir -p "$D"; : > "$D/$3"; exit 0 ;; del) rm -f "$D/$3"; exit 0 ;; esac; exit 0' ;;
             delfail) echo 'D="'"$TEST_DIR"'/ifaces"; case "$2" in show) [ -e "$D/$3" ] && exit 0 || exit 1 ;; add) mkdir -p "$D"; : > "$D/$3"; exit 0 ;; del) exit 1 ;; esac; exit 0' ;;
             vanish) echo 'case "$2" in show) exit 1 ;; add) exit 0 ;; del) exit 0 ;; esac; exit 0' ;;
+            addhang) echo 'D="'"$TEST_DIR"'/ifaces"; case "$2" in show) [ -e "$D/$3" ] && exit 0 || exit 1 ;; add) mkdir -p "$D"; : > "$D/$3"; sleep 30 ;; del) rm -f "$D/$3"; exit 0 ;; esac; exit 0' ;;
             fail) echo 'case "$2" in show) exit 1 ;; add) exit 2 ;; del) exit 0 ;; esac; exit 0' ;;
             busy) echo 'case "$2" in show) exit 0 ;; add) exit 2 ;; del) exit 0 ;; esac; exit 0' ;;
             hang) echo 'case "$2" in show) exit 1 ;; add) sleep 30 ;; del) exit 0 ;; esac; exit 0' ;;
@@ -86,6 +90,9 @@ make_ip() {
 # wrongkey - a well formed but DIFFERENT key comes back, which is what a module
 #           that masks the value would look like;
 # keyhang - awg genkey never answers;
+# twoline - awg genkey prints a valid key and then a second line;
+# cpawrong - the key comes back verbatim, the padding range comes back changed;
+# indented - both values come back correct but with leading whitespace;
 # spaced - both parameters come back, correct, with an extra space after the
 #          equals sign: the module understood everything, the parser does not
 #          recognise the shape;
@@ -103,11 +110,12 @@ make_awg() {
             nokey)  echo '  genkey) exit 0 ;;' ;;
             badkey)  echo '  genkey) echo "SHORTKEY=" ;;' ;;
             keyhang) echo '  genkey) sleep 30 ;;' ;;
+            twoline) echo '  genkey) echo "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; echo "trailing junk" ;;' ;;
             *)       echo '  genkey) echo "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
         esac
         echo '  set)'
         case "$mode" in
-            ok|silent|empty|hpkshow|cpashow|wrongkey|keyhang|spaced|bothwrong)
+            ok|silent|empty|hpkshow|cpashow|wrongkey|keyhang|spaced|bothwrong|twoline|cpawrong|indented)
                 echo '    shift 2; printf "%s\n" "$*" > "'"$TEST_DIR"'/set.args"; exit 0 ;;' ;;
             refuse)
                 # The wording is the one a module built from tag v1.0.20260725
@@ -142,7 +150,7 @@ make_awg() {
         esac
         echo '  showconf)'
         case "$mode" in
-            ok)
+            ok|twoline)
                 echo '    echo "[Interface]"; echo "ListenPort = 51820"'
                 echo '    echo "HeaderProtectionKey = PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="'
                 echo '    echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
@@ -158,6 +166,12 @@ make_awg() {
             bothwrong)
                 echo '    echo "[Interface]"; echo "HeaderProtectionKey = OTHER+KEY/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="'
                 echo '    echo "ContentPaddingAddition = 64-256"; exit 0 ;;' ;;
+            cpawrong)
+                echo '    echo "[Interface]"; echo "HeaderProtectionKey = PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="'
+                echo '    echo "ContentPaddingAddition = 32-127"; exit 0 ;;' ;;
+            indented)
+                echo '    echo "[Interface]"; printf "\t%s\n" "HeaderProtectionKey = PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="'
+                echo '    printf "  %s  \n" "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
             wrongkey)
                 echo '    echo "[Interface]"; echo "HeaderProtectionKey = OTHER+KEY/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="'
                 echo '    echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
@@ -314,6 +328,32 @@ p_both_wrong_back() {
 }
 @test "probe: both names back with values that are not ours names no generation, both twins" {
     both p_both_wrong_back
+}
+
+# 🔴 The mirror of p_wrong_key_back, and the one that matters more. A mutant
+# matching ContentPaddingAddition by NAME alone survived the whole suite: with
+# the key echoed verbatim and the range changed, the verdict became `ok` and the
+# installer would write a 3.1 profile against a module whose padding behaviour
+# was never confirmed. That is the one direction where a wrong verdict is not
+# "rebuild for nothing" but "the profile builds and the tunnel never comes up".
+p_cpa_wrong_back() {
+    make_ip add; make_awg cpawrong
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "a padding range we never asked for was accepted as ours ($1): $out"; return 1; }
+}
+@test "probe: a padding range that is not the one we set is not a third-line verdict, both twins" {
+    both p_cpa_wrong_back
+}
+
+# The trimming in the parser had no case at all: every stub emitted flush-left
+# lines, so it could be deleted with the suite green.
+p_indented_back() {
+    make_ip add; make_awg indented
+    local out; out=$(probe "$1")
+    [ "$out" = "ok" ] || { echo "an indented but correct answer was not recognised ($1): $out"; return 1; }
+}
+@test "probe: leading and trailing whitespace in the answer does not hide it, both twins" {
+    both p_indented_back
 }
 
 p_wrong_key_back() {
@@ -521,12 +561,61 @@ s_codes() {
     done
 }
 
-@test "probe: the body is identical in RU and EN except the comments" {
+# Comments are stripped, and so is the TEXT of the diagnostic messages, because
+# those are translated on purpose. Everything else stays byte for byte: the
+# normalisation touches only the quoted argument of _probe_say and log_debug and
+# a single-quoted literal on a line that also redirects to stderr. The verdict
+# lines (printf 'failed', printf 'line2') carry no such marker and are compared
+# as they are, which is the point - they are behaviour, not wording.
+strip_twin() {
+    sed -n "/^$2/,/^$3/p" "$1" \
+        | grep -vE '^\s*#' \
+        | sed -E 's/_probe_say "[^"]*"/_probe_say "<msg>"/g; s/_probe_warn "[^"]*"/_probe_warn "<msg>"/g; s/log_debug "[^"]*"/log_debug "<msg>"/g' \
+        | sed -E '/>&2/ s/'"'"'[^'"'"']*'"'"'/<msg>/g' \
+        | tr -d '\r'
+}
+
+@test "probe: the body is identical in RU and EN except the comments and the translations" {
     local ru en
-    ru=$(sed -n '/^_awg31_module_probe() (/,/^)$/p' "$INSTALL_RU" | grep -vE '^\s*#' | tr -d '\r')
-    en=$(sed -n '/^_awg31_module_probe() (/,/^)$/p' "$INSTALL_EN" | grep -vE '^\s*#' | tr -d '\r')
-    [ -n "$ru" ]
-    [ "$ru" = "$en" ]
+    ru=$(strip_twin "$INSTALL_RU" '_awg31_module_probe() (' ')$')
+    en=$(strip_twin "$INSTALL_EN" '_awg31_module_probe() (' ')$')
+    [ -n "$ru" ] || { echo "no probe body found"; return 1; }
+    [ "$ru" = "$en" ] || { echo "the probe bodies differ:"; diff <(printf '%s\n' "$ru") <(printf '%s\n' "$en") || true; return 1; }
+    # 🔴 The normalisation collapses any single-quoted literal on a line that
+    # also redirects to stderr. Today that is one diagnostic line and no verdict
+    # line, but a future `printf 'failed'` sharing a line with >&2 would be
+    # collapsed too, and this comparison would quietly stop seeing verdicts.
+    local nru nen
+    nru=$(grep -cE "printf '(failed|line2|ok)'" <<< "$ru")
+    nen=$(grep -cE "printf '(failed|line2|ok)'" <<< "$en")
+    [ "$nru" -gt 0 ] || { echo "the normalisation swallowed the verdicts"; return 1; }
+    [ "$nru" = "$nen" ] || { echo "the twins carry a different number of verdicts: $nru vs $nen"; return 1; }
+}
+
+@test "cleanup: the installer cleanup is identical in RU and EN except the comments and the translations" {
+    # The probe had this guard from the start; the cleanup did not, and the
+    # cleanup is where the two twins drifted in practice.
+    local ru en
+    ru=$(strip_twin "$INSTALL_RU" '_install_cleanup() {' '}$')
+    en=$(strip_twin "$INSTALL_EN" '_install_cleanup() {' '}$')
+    [ -n "$ru" ] || { echo "no cleanup body found"; return 1; }
+    [ "$ru" = "$en" ] || { echo "the cleanup bodies differ:"; diff <(printf '%s\n' "$ru") <(printf '%s\n' "$en") || true; return 1; }
+}
+
+@test "the English installer carries no Russian comment" {
+    # 🔴 An untranslated Russian comment block did reach the English twin once,
+    # carried there by a helper that applied one text to both files. The body
+    # comparison above cannot see it, because it strips comments before
+    # comparing - which is exactly the blind spot this test fills.
+    # 🔴 LC_ALL=C.UTF-8 is not decoration. LC_ALL and LANG are empty in Git Bash,
+    # so `grep -P` runs in the C locale, where the codepoint syntax \x{...} does
+    # not work at all: the command finds nothing and the check passes on any
+    # input. Measured: without the locale this very test stayed green against a
+    # planted Russian comment. The project has this recorded and I walked into
+    # it anyway, which is why the locale is spelled out here rather than assumed.
+    local bad
+    bad=$(grep -nE '^[[:space:]]*#' "$INSTALL_EN" | LC_ALL=C.UTF-8 grep -P '[\x{0400}-\x{04FF}]' || true)
+    [ -z "$bad" ] || { echo "Russian comments in the English installer:"; printf '%s\n' "$bad"; return 1; }
 }
 
 p_busy() {
@@ -713,6 +802,29 @@ c_cleanup_foreign_name() {
     ' _ "$src" "$TEST_DIR")
     [[ "$out" != *"link del eth0"* ]] || { echo "a planted name reached ip link del ($src): [$out]"; return 1; }
     [[ "$out" == *WARNED* ]] || { echo "a record that made no sense was passed over in silence ($src): [$out]"; return 1; }
+
+    # 🔴 And the half that actually carries the weight: a name of exactly the
+    # right SHAPE but from another pid. `eth0` is refused by any shape check, so
+    # it never tested the pid binding - a mutant dropping `$$` from the pattern
+    # survived the whole suite. This is what makes a planted record harmless.
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\necho \"\$*\" >> \"$2/called\"\nexit 0\n" > "$2/bin/ip"
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
+        rm -f "$2/called"; rm -f "$TMPDIR"/awg31probe.*
+        printf "%s\n" "awgp999999x1" > "$TMPDIR/awg31probe.$$.iface"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        cat "$2/called" 2>/dev/null
+    ' _ "$src" "$TEST_DIR")
+    [[ "$out" != *"link del"* ]] || { echo "a well shaped name from another run reached ip link del ($src): [$out]"; return 1; }
+    [[ "$out" == *WARNED* ]] || { echo "a record from another run was passed over in silence ($src): [$out]"; return 1; }
 }
 @test "cleanup: a record naming something the probe could not have made is refused out loud, both twins" {
     both c_cleanup_foreign_name
@@ -746,9 +858,184 @@ c_cleanup_not_a_file() {
     ' _ "$src" "$TEST_DIR")
     [[ "$out" == *finished* ]] || { echo "the cleanup hung or died on a record that is not a regular file ($src): [$out]"; return 1; }
     [[ "$out" != *"link del"* ]] || { echo "something was deleted from a record that is not a regular file ($src): [$out]"; return 1; }
+    [[ "$out" == *WARNED* ]] || { echo "a record that could not be read was passed over in silence ($src): [$out]"; return 1; }
 }
 @test "cleanup: a record that is not a regular file is ignored, both twins" {
     both c_cleanup_not_a_file
+}
+
+c_cleanup_show_unknown() {
+    # 🔴 `del` failed and `show` could not answer. Only exit code 1 means "no
+    # such device"; a timeout is "do not know", and the interface may well still
+    # be there. Measured before the fix: total silence, and the record erased.
+    local src="$1" out
+    out=$(timeout 90 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\ncase \"\$2\" in show) sleep 30 ;; *) exit 1 ;; esac\n" > "$2/bin/ip"
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
+        rm -f "$TMPDIR"/awg31probe.*
+        printf "%s\n" "awgp${$}x1" > "$TMPDIR/awg31probe.$$.iface"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        echo finished
+    ' _ "$src" "$TEST_DIR")
+    [[ "$out" == *finished* ]] || { echo "the cleanup did not finish ($src): [$out]"; return 1; }
+    [[ "$out" == *WARNED* ]] || { echo "a device check that could not answer was taken for gone ($src): [$out]"; return 1; }
+}
+@test "cleanup: a device check that cannot answer is not taken for gone, both twins" {
+    both c_cleanup_show_unknown
+}
+
+c_cleanup_keeps_evidence() {
+    # 🔴 The message tells the operator to go and look at the record. Deleting
+    # it two lines later made that advice impossible to follow, which is what
+    # the sweep used to do.
+    local src="$1" out
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\nexit 0\n" > "$2/bin/ip"
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
+        rm -f "$TMPDIR"/awg31probe.*
+        printf "%s\n" "eth0" > "$TMPDIR/awg31probe.$$.iface"
+        : > "$TMPDIR/awg31probe.$$.keyfile"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        ls "$TMPDIR"
+    ' _ "$src" "$TEST_DIR")
+    [[ "$out" == *WARNED* ]] || { echo "an unusable record was passed over in silence ($src): [$out]"; return 1; }
+    [[ "$out" == *".iface"* ]] || { echo "the record the message points at was destroyed ($src): [$out]"; return 1; }
+    [[ "$out" != *".keyfile"* ]] || { echo "the other probe files were not swept ($src): [$out]"; return 1; }
+}
+@test "cleanup: a record it could not understand is kept for the operator, both twins" {
+    both c_cleanup_keeps_evidence
+}
+
+c_cleanup_empty_record() {
+    # An empty record is a state nobody can act on, and it used to pass in
+    # total silence.
+    local src="$1" out
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\nexit 0\n" > "$2/bin/ip"
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
+        rm -f "$TMPDIR"/awg31probe.*
+        : > "$TMPDIR/awg31probe.$$.iface"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+    ' _ "$src" "$TEST_DIR")
+    [[ "$out" == *WARNED* ]] || { echo "an empty record was passed over in silence ($src): [$out]"; return 1; }
+}
+@test "cleanup: an empty record is said out loud, both twins" {
+    both c_cleanup_empty_record
+}
+
+c_cleanup_sanitises() {
+    # The record comes from a world writable directory, so its contents must not
+    # be able to drive a root terminal.
+    local src="$1" out
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\nexit 0\n" > "$2/bin/ip"
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
+        rm -f "$TMPDIR"/awg31probe.*
+        printf "eth0\033[31mRED\n" > "$TMPDIR/awg31probe.$$.iface"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+    ' _ "$src" "$TEST_DIR" | cat -v)
+    [[ "$out" == *WARNED* ]] || { echo "a planted record was passed over in silence ($src): [$out]"; return 1; }
+    [[ "$out" != *"^["* ]] || { echo "an escape sequence from the record reached the output ($src): [$out]"; return 1; }
+}
+@test "cleanup: control bytes in a record never reach the output, both twins" {
+    both c_cleanup_sanitises
+}
+
+p_add_bounded_out_keeps_the_record() {
+    # 🔴 timeout can kill `ip link add` AFTER the kernel has created the device.
+    # Measured on a stub before the fix: the probe erased the record, walked to
+    # the next name, and left FIVE root-created interfaces on the machine with
+    # nothing naming any of them and not a word printed. The record has to stay
+    # and the walk has to stop.
+    local src="$1" out adds
+    make_ip addhang; make_awg ok
+    rm -f "$TEST_DIR"/awg31probe.*
+    out=$(probe "$src")
+    [ "$out" = "failed" ] || { echo "a bounded-out creation was judged ($src): $out"; return 1; }
+    adds=$(grep -c "^link add " "$TEST_DIR/ip.argv" 2>/dev/null || echo 0)
+    [ "$adds" -eq 1 ] || { echo "the probe kept creating interfaces after a bounded-out add ($src): $adds"; return 1; }
+    [ -s "$TEST_DIR/awg31probe.$(cat "$TEST_DIR/probe.pid" 2>/dev/null).iface" ] 2>/dev/null || true
+    ls "$TEST_DIR"/awg31probe.*.iface >/dev/null 2>&1 || { echo "the record was erased after a bounded-out add ($src)"; return 1; }
+}
+@test "probe: a bounded-out creation keeps its record and stops, both twins" {
+    both p_add_bounded_out_keeps_the_record
+}
+
+p_says_why() {
+    # The probe can refuse for thirteen reasons and used to name none of them.
+    # stdout carries the verdict, so the explanation goes to stderr.
+    # 🔴 BOTH branches of the helper are exercised. With no logger it falls back
+    # to stderr; with one it must go through it, and that branch had no coverage
+    # at all - a mutant gutting it survived every test.
+    local src="$1" err viaLog
+    make_ip fail; make_awg ok
+    err=$(PATH="$BIN:$PATH" TMPDIR="$TEST_DIR" timeout 60 bash -c '
+        eval "$(sed -n "/^_awg31_module_probe() (/,/^)$/p" "$1")"
+        _awg31_module_probe >/dev/null
+    ' _ "$src" 2>&1)
+    [ -n "$err" ] || { echo "the probe refused without saying why ($src)"; return 1; }
+
+    viaLog=$(PATH="$BIN:$PATH" TMPDIR="$TEST_DIR" timeout 60 bash -c '
+        # To stderr, like the real log_debug: the probe stdout is the verdict
+        # and is redirected away, so a stub echoing to stdout would measure
+        # nothing at all.
+        log_debug() { echo "LOGGED $*" >&2; }
+        eval "$(sed -n "/^_awg31_module_probe() (/,/^)$/p" "$1")"
+        _awg31_module_probe >/dev/null
+    ' _ "$src" 2>&1)
+    [[ "$viaLog" == *LOGGED* ]] || { echo "the explanation did not go through the logger when there was one ($src): [$viaLog]"; return 1; }
+}
+@test "probe: a refusal says on stderr what stopped it, both twins" {
+    both p_says_why
+}
+
+p_key_two_lines() {
+    # `read` takes only the first line while the module is handed the whole
+    # file, so a valid first line with junk behind it used to pass the shape
+    # check and the refusal that followed was read as a second-line module.
+    # 🔴 The stub answers showconf the way the `ok` stub does, ON PURPOSE.
+    # Without that it refused the read back, the verdict was `failed` whether the
+    # guard was there or not, and this test passed while measuring nothing -
+    # caught by the mutation run, not by reading it.
+    local src="$1" out
+    make_ip add; make_awg twoline
+    out=$(probe "$src")
+    [ "$out" = "failed" ] || { echo "a key file of two lines was accepted ($src): $out"; return 1; }
+}
+@test "probe: a key file longer than one line stops the probe, both twins" {
+    both p_key_two_lines
 }
 
 p_record_unwritable() {
@@ -800,6 +1087,11 @@ c_cleanup_speaks() {
     ' _ "$src" "$TEST_DIR")
     [[ "$out" == *WARNED* ]] || { echo "a leftover that could not be removed was passed over in silence ($src): [$out]"; return 1; }
     [[ "$out" == *awgp* ]] || { echo "the warning does not name the leftover ($src): [$out]"; return 1; }
+    # 🔴 Assert the BRANCH, not just that something was said. Measured: with the
+    # cleanup regex broken in one twin, four tests went red and this one stayed
+    # green, because "warned" and "names awgp" are equally true of the
+    # foreign-name branch next door. A delete has to have been attempted.
+    [[ "$out" == *"ip link del"* ]] || { echo "the warning did not come from the delete branch ($src): [$out]"; return 1; }
 }
 @test "cleanup: a leftover that cannot be removed is named, both twins" {
     both c_cleanup_speaks
@@ -881,25 +1173,59 @@ c_record_write_is_guarded() {
     c_record_write_is_guarded
 }
 
-c_probe_cleanup_idempotent() {
-    # On a signal the probe cleanup runs from the handler and then again on
-    # EXIT. Without a guard the second run spends another bounded delete on an
-    # interface that is already gone: up to five more seconds of silence on
-    # Ctrl-C, in exactly the wedged netlink state the probe exists to refuse
-    # over. The installer cleanup has carried this guard for a long time; the
-    # probe one was written without it.
+c_record_read_is_bounded() {
+    # Structural, and honest about why. The regular-file test rejects a FIFO
+    # before the read, so an unbounded read never hangs in any case a test can
+    # set up: what the bound protects against is the RACE, a swap between the
+    # test and the open, and a race cannot be driven from a test without
+    # injecting one. Measured: a mutant replacing the bounded read with a plain
+    # one survives the whole behavioural suite, which is exactly why this is
+    # pinned by shape instead of pretending the coverage exists.
+    # The bound matters because this runs inside a trap that fires on EVERY exit
+    # of the installer, so a hang here hangs the installer for good.
     local f body
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
-        body=$(sed -n '/^_awg31_module_probe() (/,/^)$/p' "$BATS_TEST_DIRNAME/../$f")
-        [ -n "$body" ] || { echo "no probe body in $f"; return 1; }
-        grep -q 'cleaned=1' <<< "$body" || { echo "the probe cleanup does not mark itself done in $f"; return 1; }
-        # Matched loosely on purpose: the point is that the flag guards an early
-        # return, not the exact shape of the condition.
-        grep -qE 'cleaned"? -eq 1 \]\].*return 0' <<< "$body" || { echo "the probe cleanup does not return early on a second run in $f"; return 1; }
+        body=$(sed -n '/^_install_cleanup() {/,/^}/p' "$BATS_TEST_DIRNAME/../$f")
+        [ -n "$body" ] || { echo "no cleanup body in $f"; return 1; }
+        grep -q 'timeout -k 1 5 head -n 1 "$_probe_rec"' <<< "$body" \
+            || { echo "the record read is not bounded by a separate process in $f"; return 1; }
     done
+    return 0
+}
+@test "cleanup: the record is read under a bound, both twins" {
+    c_record_read_is_bounded
+}
+
+c_probe_cleanup_idempotent() {
+    # 🔴 Behavioural, not a grep over the source. On a signal the cleanup runs
+    # from the handler and again on EXIT; without the guard the second run
+    # spends another bounded `ip link del` on an interface that is already gone,
+    # which is up to five more seconds of silence in exactly the wedged netlink
+    # state the probe exists to refuse over. The previous version pinned the
+    # SHAPE of the flag, so it would have passed a rewrite that sets the flag and
+    # still spends the delete - and it broke on a harmless reformat.
+    local src="$1" out
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\necho \"\$*\" >> \"$2/dels\"\nexit 0\n" > "$2/bin/ip"
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        rm -f "$2/dels"
+        # The nested function is lifted the same way everything else here is.
+        eval "$(sed -n "/^    _probe_cleanup() {/,/^    }/p" "$1")"
+        cleaned=0
+        made=1
+        ifn="awgpXx1"
+        kf="$2/tmp/keyfile"; : > "$kf"
+        rec="$2/tmp/record";  : > "$rec"
+        _probe_cleanup
+        _probe_cleanup
+        grep -c "^link del " "$2/dels" 2>/dev/null || echo 0
+    ' _ "$src" "$TEST_DIR")
+    [ "$out" = "1" ] || { echo "the probe cleanup spent $out deletes over two runs, expected 1 ($src)"; return 1; }
 }
 @test "cleanup: the probe cleanup does nothing on a second run, both twins" {
-    c_probe_cleanup_idempotent
+    both c_probe_cleanup_idempotent
 }
 
 p_key_gone_before_control() {

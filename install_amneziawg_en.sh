@@ -102,7 +102,7 @@ _install_cleanup() {
     # EXIT - the second call must be a no-op.
     [[ "$_install_cleaned" -eq 1 ]] && return 0
     _install_cleaned=1
-    local f _probe_rec="" _probe_if=""
+    local f _probe_rec="" _probe_if="" _probe_safe="" _probe_f="" _probe_rc=0 _probe_keep=0
     for f in "${_install_temp_files[@]}"; do [[ -f "$f" ]] && rm -f "$f"; done
     # Leftovers of the module probe. The trap inside the probe itself cleans up
     # on an ordinary exit, but on a signal the subshell may not get there, so the
@@ -126,30 +126,53 @@ _install_cleanup() {
     if compgen -G "${TMPDIR:-/tmp}/awg31probe.$$.*" >/dev/null 2>&1; then
         _probe_rec="${TMPDIR:-/tmp}/awg31probe.$$.iface"
         if [[ -f "$_probe_rec" && ! -L "$_probe_rec" ]]; then
-            # 🔴 `|| _probe_if=""` was a mistake here: on a file with no
-            # trailing newline read returns 1 having ALREADY assigned the value,
-            # and that value was thrown away, so a truncated record silently lost
-            # the interface. The order of redirections matters too: 2>/dev/null
-            # BEFORE < file, or the missing-file message goes around the log.
-            IFS= read -r _probe_if 2>/dev/null < "$_probe_rec" || :
+            # 🔴 The read is bounded by a SEPARATE process, not by `read -t`.
+            # The regular-file test and the open are two operations, and between
+            # them the file can be swapped for a FIFO. Measured: `read -t` never
+            # reaches the open and hangs for good, while a bound around the
+            # process does fire.
+            _probe_if=$(timeout -k 1 5 head -n 1 "$_probe_rec" 2>/dev/null)
+            _probe_if="${_probe_if%$'\r'}"
+            # The contents of a file in a world writable directory must not be
+            # able to draw on a root console: only printable characters go out.
+            _probe_safe="${_probe_if//[^[:print:]]/?}"
             if [[ "$_probe_if" =~ ^awgp$$x[1-5]$ ]]; then
-                # The delete may have failed simply because the interface is
-                # already gone: on Ctrl-C the whole process group is signalled,
-                # and the probe subshell can remove it first. Warning then would
-                # send a person looking for nothing.
-                if ! timeout -k 1 5 ip link del "$_probe_if" >/dev/null 2>&1 \
-                   && timeout -k 1 5 ip link show "$_probe_if" >/dev/null 2>&1; then
-                    _probe_warn "A leftover of the module probe could not be removed: $_probe_if. Take it away by hand: ip link del $_probe_if."
+                if ! timeout -k 1 5 ip link del "$_probe_if" >/dev/null 2>&1; then
+                    timeout -k 1 5 ip link show "$_probe_if" >/dev/null 2>&1
+                    _probe_rc=$?
+                    # 🔴 Quiet ONLY on code 1, that is "no such device". On
+                    # Ctrl-C the probe subshell can remove the interface first,
+                    # and warning then would send a person looking for nothing.
+                    # But a timeout and a missing binary are "do not know", not
+                    # "taken away": the interface may still be there, and being
+                    # quiet about that is not allowed.
+                    if (( _probe_rc != 1 )); then
+                        _probe_keep=1
+                        _probe_warn "A leftover of the module probe could not be removed: $_probe_safe (checking the device returned $_probe_rc). Take it away by hand: ip link del $_probe_safe."
+                    fi
                 fi
             elif [[ -n "$_probe_if" ]]; then
                 # 🔴 Staying quiet here is not allowed. "There is a record and I
                 # did not understand it" is not the same as "there was no probe",
-                # and the difference only shows if it is said out loud. The name
-                # itself is not removed: it is not one this run could have made.
-                _probe_warn "The module probe record carries a name the probe of this run could not have created: $_probe_if. Nothing is removed, please check the temporary directory."
+                # and the difference only shows if it is said out loud. The
+                # interface is left alone: the name is not one this run could
+                # have made.
+                _probe_keep=1
+                _probe_warn "The module probe record carries a name the probe of this run could not have created: $_probe_safe. The interface is left alone and the record itself is kept in the temporary directory."
+            else
+                _probe_keep=1
+                _probe_warn "The module probe record is empty or unreadable. The interface is left alone and the record itself is kept in the temporary directory."
             fi
+        else
+            _probe_keep=1
+            _probe_warn "The module probe record is not a regular file, so it is neither read nor removed. Please look at the temporary directory."
         fi
-        rm -f "${TMPDIR:-/tmp}/awg31probe.$$."* 2>/dev/null
+        # 🔴 The evidence we have just spoken about is not destroyed along with
+        # the rest: "go and look at the record" has to stay a usable instruction.
+        for _probe_f in "${TMPDIR:-/tmp}/awg31probe.$$."*; do
+            [[ "$_probe_keep" -eq 1 && "$_probe_f" == "$_probe_rec" ]] && continue
+            rm -f "$_probe_f" 2>/dev/null
+        done
     fi
     # Clean up temporary files from awg_common.sh (if already sourced)
     type _awg_cleanup &>/dev/null && _awg_cleanup
@@ -773,7 +796,20 @@ awg31_module_support() {
 _awg31_module_probe() (
     case $- in *x*) set +x ;; esac
     umask 077
-    local ifn="" kf="" rec="" key="" out="" line="" ctl="" rc=0 i=0 made=0 cleaned=0
+    # 🔴 The probe can refuse for thirteen different reasons, and until this was
+    # added a person learned none of them: the verdict goes to stdout and
+    # everything else was thrown away. stdout is taken, but stderr is free and
+    # is not captured. The key never reaches it: the module is handed a PATH to
+    # a file, and the showconf output does not go into diagnostics at all.
+    # Through log_debug when it exists, to respect --verbose and the log format.
+    _probe_say() {
+        if type log_debug >/dev/null 2>&1; then
+            log_debug "module probe: $1"
+        else
+            printf 'module probe: %s\n' "$1" >&2
+        fi
+    }
+    local ifn="" kf="" rec="" key="" extra="" out="" line="" ctl="" rc=0 i=0 made=0 cleaned=0
     local seen=0 hpk=0 cpa=0 hpk_name=0 cpa_name=0
     command -v ip >/dev/null 2>&1  || { printf 'failed'; exit 0; }
     command -v awg >/dev/null 2>&1 || { printf 'failed'; exit 0; }
@@ -817,8 +853,19 @@ _awg31_module_probe() (
     timeout -k 1 5 awg genkey </dev/null > "$kf" 2>/dev/null || { printf 'failed'; exit 0; }
     # read instead of tr: no external command is left in the key path at all,
     # which makes the claim below about "no external command" true throughout.
-    IFS= read -r key < "$kf" || :
+    # 🔴 But BOTH lines have to be read. `read` takes only the first, while the
+    # module is handed the WHOLE file: a file with a correct first line and junk
+    # behind it would pass the shape check, the tool would refuse it, and the
+    # refusal at control step 2 would call a healthy module second line - exactly
+    # the defect this probe exists to prevent. The old `tr` joined the whole file
+    # and caught such a tail; the library (_awg_hpk_file_valid) also checks the
+    # size of the file.
+    {
+        IFS= read -r key || :
+        IFS= read -r extra || :
+    } < "$kf"
     key="${key%$'\r'}"
+    [[ -z "$extra" ]] || { _probe_say "the key file is longer than one line"; printf 'failed'; exit 0; }
     # The key shape is judged by the same measure the library uses
     # (_awg_hpk_file_valid): 44 base64 characters. "Not empty" is not enough - a
     # genkey that exits zero and prints rubbish would pass it, control step 2
@@ -849,15 +896,24 @@ _awg31_module_probe() (
         # runs as root, and a plain `>` would follow a symlink planted there and
         # overwrite somebody else's file.
         rm -f "$rec" 2>/dev/null
-        ( set -C; printf '%s\n' "$ifn" > "$rec" ) 2>/dev/null || { printf 'failed'; exit 0; }
-        if timeout -k 1 5 ip link add "$ifn" type amneziawg >/dev/null 2>&1; then
-            made=1
-            break
+        ( set -C; printf '%s\n' "$ifn" > "$rec" ) 2>/dev/null || { _probe_say "the interface name could not be written to $rec"; printf 'failed'; exit 0; }
+        timeout -k 1 5 ip link add "$ifn" type amneziawg >/dev/null 2>&1
+        rc=$?
+        if (( rc == 0 )); then made=1; break; fi
+        # 🔴 The command may have been killed by timeout AFTER the kernel had
+        # already created the device: a delayed netlink acknowledgement is
+        # exactly the state this probe was written for. So neither the record
+        # may be dropped here nor the next name taken: otherwise up to five
+        # interfaces stay on the machine with nobody knowing about them, and the
+        # record that exists to find them erases itself.
+        if (( rc == 124 || rc == 125 || rc == 137 )); then
+            _probe_say "creating the interface $ifn did not answer within the bound (code $rc); the record is left for the cleanup"
+            printf 'failed'; exit 0
         fi
         rm -f "$rec" 2>/dev/null
         # The name appeared between the check and the creation - try the next
         # one; any other reason would repeat on it as well.
-        timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1 || { printf 'failed'; exit 0; }
+        timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1 || { _probe_say "the interface $ifn was not created and the reason does not repeat"; printf 'failed'; exit 0; }
     done
     [[ "$made" -eq 1 ]] || { printf 'failed'; exit 0; }
 
@@ -912,13 +968,6 @@ _awg31_module_probe() (
     fi
 
     out=$(timeout -k 1 5 awg showconf "$ifn" </dev/null 2>/dev/null) || { printf 'failed'; exit 0; }
-    # 🔴 The answer has to be a config. `awg showconf` on an interface that
-    # exists always prints at least the [Interface] line (measured on a stand,
-    # 19 sep 2026), so a zero exit code with empty or unrecognisable output
-    # speaks about the environment, not about the generation of the module: a
-    # substituted binary, a truncated pipe, a device that vanished. Reading a
-    # second line out of that answer would mean telling someone to rebuild their
-    # module and reboot when nothing at all is known about it.
     # 🔴 The parsing uses no external command, and that is not a matter of
     # style but of three reasons.
     # 1. The key must not reach the argv of ANY command: argv is visible to
@@ -1154,7 +1203,7 @@ _awg31_blocker_message() {
             printf '%s' "The loaded amneziawg kernel module does not understand the third-line parameters: it either refuses the header protection key or takes it without a word and does not give it back. A 3.1 profile would be written on such a module and the connection would never come up. This one is fixed by updating the module: apt-get update && apt-get install --only-upgrade amneziawg-dkms, then a reboot (the module is rebuilt for your kernel) and another run of the installer. Or install with --protocol=2.0."
             ;;
         module_probe_failed)
-            printf '%s' "Whether the loaded module understands the third-line parameters could not be checked: the probe either could not create a temporary interface and get an answer, or got an answer that does not name the generation. The reasons differ - permissions, the state of netlink, the network namespace of a container. We do not know whether the module fits, and guessing is not an option here. Way out: install with --protocol=2.0. If you think this is wrong, send the output of six commands: 'ip link add awgprobe type amneziawg', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <a file with a 32-byte key in base64> content-padding-addition 32-128' (the main command of the probe; the probe can stop here too), 'awg set awgprobe s1 15 s2 15 s3 12 s4 12', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <the same file>', 'awg showconf awgprobe' (the read back; the probe can stop here too) and 'ip link del awgprobe' (the last one takes the temporary interface away again). The key file is made like this: 'umask 077; awg genkey > /tmp/probekey', and take it away afterwards: 'rm -f /tmp/probekey'. The probe also stops before any of these commands - if it cannot create a temporary file, or if 'awg genkey' does not give a key of the right shape - and on the third and fourth commands, that is on either control step."
+            printf '%s' "Whether the loaded module understands the third-line parameters could not be checked: the probe either could not create a temporary interface and get an answer, or got an answer that does not name the generation. The reasons differ - permissions, the state of netlink, the network namespace of a container. We do not know whether the module fits, and guessing is not an option here. Way out: install with --protocol=2.0. If you think this is wrong, send the output of six commands: 'ip link add awgprobe type amneziawg', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <a file with a 32-byte key in base64> content-padding-addition 32-128' (the main command of the probe; the probe can stop here too), 'awg set awgprobe s1 15 s2 15 s3 12 s4 12', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <the same file>', 'awg showconf awgprobe' (the read back; the probe can stop here too) and 'ip link del awgprobe' (the last one takes the temporary interface away again). The key file is made like this: 'umask 077; awg genkey > /tmp/probekey', and take it away afterwards: 'rm -f /tmp/probekey'. The probe also stops before any of these commands - if it cannot create a temporary file, or if 'awg genkey' does not give a key of the right shape - and on the third and fourth commands, that is on either control step. The first command is a stopping point too, and the most common one: if the module is not loaded, the amneziawg link type is not registered and the interface is not created, even though the awg tool itself is present. Quicker than running the commands by hand: start the installer with --verbose and the probe writes to the log where exactly it stopped."
             ;;
         not_implemented_yet)
             printf '%s' "This installer version (v${SCRIPT_VERSION}) does not issue the AmneziaWG 3.1 profile: your environment fits, and it is not your machine. Way out: --protocol=2.0."
