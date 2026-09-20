@@ -131,6 +131,11 @@ _install_cleanup() {
             # them the file can be swapped for a FIFO. Measured: `read -t` never
             # reaches the open and hangs for good, while a bound around the
             # process does fire.
+            # The cost of this form is stated plainly: it brings in a
+            # dependency on head. With no head or no timeout the output is empty,
+            # the cleanup takes the "empty or unreadable" branch, the record is
+            # kept and the warning is heard, but a real leftover is not removed.
+            # That is still better than an installer that hangs for good.
             _probe_if=$(timeout -k 1 5 head -n 1 "$_probe_rec" 2>/dev/null)
             _probe_if="${_probe_if%$'\r'}"
             # The contents of a file in a world writable directory must not be
@@ -163,10 +168,16 @@ _install_cleanup() {
                 _probe_keep=1
                 _probe_warn "The module probe record is empty or unreadable. The interface is left alone and the record itself is kept in the temporary directory."
             fi
-        else
+        elif [[ -e "$_probe_rec" ]]; then
             _probe_keep=1
             _probe_warn "The module probe record is not a regular file, so it is neither read nor removed. Please look at the temporary directory."
         fi
+        # 🔴 No record at all means there is nothing to say. This branch used to
+        # fire on a missing record too: the operator was told it "cannot be read"
+        # while the sweep behind it removed the one file that was there, because
+        # the guard protected a path that did not exist. The same "says it out
+        # loud, then destroys the evidence" class, inside the branch written to
+        # close it.
         # 🔴 The evidence we have just spoken about is not destroyed along with
         # the rest: "go and look at the record" has to stay a usable instruction.
         for _probe_f in "${TMPDIR:-/tmp}/awg31probe.$$."*; do
@@ -809,12 +820,13 @@ _awg31_module_probe() (
             printf 'module probe: %s\n' "$1" >&2
         fi
     }
-    local ifn="" kf="" rec="" key="" extra="" out="" line="" ctl="" rc=0 i=0 made=0 cleaned=0
+    local ifn="" kf="" rec="" key="" out="" line="" ctl="" rc=0 i=0 made=0 cleaned=0
+    local klines=()
     local seen=0 hpk=0 cpa=0 hpk_name=0 cpa_name=0
-    command -v ip >/dev/null 2>&1  || { printf 'failed'; exit 0; }
-    command -v awg >/dev/null 2>&1 || { printf 'failed'; exit 0; }
+    command -v ip >/dev/null 2>&1  || { _probe_say "the ip command was not found"; printf 'failed'; exit 0; }
+    command -v awg >/dev/null 2>&1 || { _probe_say "the awg command was not found"; printf 'failed'; exit 0; }
 
-    kf=$(mktemp "${TMPDIR:-/tmp}/awg31probe.$$.XXXXXX" 2>/dev/null) || { printf 'failed'; exit 0; }
+    kf=$(mktemp "${TMPDIR:-/tmp}/awg31probe.$$.XXXXXX" 2>/dev/null) || { _probe_say "a temporary file could not be created in ${TMPDIR:-/tmp}"; printf 'failed'; exit 0; }
     # 🔴 The name of the interface goes into a FILE, not into a variable. The
     # installer cleanup lives in the parent shell, the probe is called through
     # $( ), and anything assigned inside is lost with the subshell. A file
@@ -850,7 +862,7 @@ _awg31_module_probe() (
     trap '_probe_cleanup' EXIT
     trap '_probe_cleanup; printf "failed"; exit 0' INT TERM HUP
 
-    timeout -k 1 5 awg genkey </dev/null > "$kf" 2>/dev/null || { printf 'failed'; exit 0; }
+    timeout -k 1 5 awg genkey </dev/null > "$kf" 2>/dev/null || { _probe_say "awg genkey did not produce a key"; printf 'failed'; exit 0; }
     # read instead of tr: no external command is left in the key path at all,
     # which makes the claim below about "no external command" true throughout.
     # 🔴 But BOTH lines have to be read. `read` takes only the first, while the
@@ -860,18 +872,21 @@ _awg31_module_probe() (
     # the defect this probe exists to prevent. The old `tr` joined the whole file
     # and caught such a tail; the library (_awg_hpk_file_valid) also checks the
     # size of the file.
-    {
-        IFS= read -r key || :
-        IFS= read -r extra || :
-    } < "$kf"
-    key="${key%$'\r'}"
-    [[ -z "$extra" ]] || { _probe_say "the key file is longer than one line"; printf 'failed'; exit 0; }
+    # 🔴 The lines are COUNTED, not peeked at. The previous form read the first
+    # and the second and called the file one line long when the second was
+    # empty: `KEY`, a blank line, junk went through. The module is handed the
+    # WHOLE file, the tool refuses it, and the refusal at control step 2 calls a
+    # healthy module second line. mapfile is a builtin, so the key path still
+    # has no external command in it.
+    mapfile -t klines < "$kf" 2>/dev/null || :
+    (( ${#klines[@]} == 1 )) || { _probe_say "the key file is not exactly one line (lines: ${#klines[@]})"; printf 'failed'; exit 0; }
+    key="${klines[0]%$'\r'}"
     # The key shape is judged by the same measure the library uses
     # (_awg_hpk_file_valid): 44 base64 characters. "Not empty" is not enough - a
     # genkey that exits zero and prints rubbish would pass it, control step 2
     # would then refuse over the KEY FILE, and we would call a healthy module
     # second line and send its owner to rebuild it for nothing.
-    [[ "$key" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]] || { printf 'failed'; exit 0; }
+    [[ "$key" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]] || { _probe_say "the key is not of the shape the library requires"; printf 'failed'; exit 0; }
 
     # A name shorter than 15 characters and never awg0: the probe has no
     # business touching the working interface. The protection here is the SHAPE
@@ -886,7 +901,7 @@ _awg31_module_probe() (
         timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1
         rc=$?
         (( rc == 0 )) && continue
-        if (( rc == 124 || rc == 125 || rc == 137 )); then printf 'failed'; exit 0; fi
+        if (( rc == 124 || rc == 125 || rc == 137 )); then _probe_say "checking the name $ifn did not answer within the bound (code $rc)"; printf 'failed'; exit 0; fi
         # 🔴 The record is laid down BEFORE anything is created, not after. A
         # signal fits between a successful `ip link add` and the write, and then
         # the interface is on the machine with nothing to find it by - exactly
@@ -915,7 +930,7 @@ _awg31_module_probe() (
         # one; any other reason would repeat on it as well.
         timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1 || { _probe_say "the interface $ifn was not created and the reason does not repeat"; printf 'failed'; exit 0; }
     done
-    [[ "$made" -eq 1 ]] || { printf 'failed'; exit 0; }
+    [[ "$made" -eq 1 ]] || { _probe_say "all five temporary names are taken"; printf 'failed'; exit 0; }
 
     timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 \
         header-protection-key "$kf" content-padding-addition 32-128 </dev/null >/dev/null 2>&1
@@ -926,7 +941,7 @@ _awg31_module_probe() (
         # -k sends. The control steps cannot help here: they say WHAT was
         # rejected, and after a hang nothing was rejected at all, so their answer
         # would describe another command rather than the one that never replied.
-        if (( rc == 124 || rc == 125 || rc == 137 )); then printf 'failed'; exit 0; fi
+        if (( rc == 124 || rc == 125 || rc == 137 )); then _probe_say "the main awg set did not answer within the bound (code $rc)"; printf 'failed'; exit 0; fi
         # The control takes TWO steps, because the refused command carried two
         # different third-line parameters at once.
         # Step 1: the same padding sizes without the third-line parameters. A
@@ -934,7 +949,7 @@ _awg31_module_probe() (
         # judged.
         timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 </dev/null >/dev/null 2>&1
         ctl=$?
-        if (( ctl != 0 )); then printf 'failed'; exit 0; fi
+        if (( ctl != 0 )); then _probe_say "control step 1 refused (code $ctl): the third-line parameters are not the reason"; printf 'failed'; exit 0; fi
         # Step 2: the same plus the header protection key ALONE. A refusal here
         # is a module that does not understand the third line. If the key was
         # taken and the refusal was about the padding, the line cannot be named
@@ -944,7 +959,7 @@ _awg31_module_probe() (
         # error, a key file it cannot read included. If the file went away
         # between the shape check and this step, the refusal would be about the
         # FILE, and we would call a healthy module second line.
-        [[ -s "$kf" ]] || { printf 'failed'; exit 0; }
+        [[ -s "$kf" ]] || { _probe_say "the key file went away before control step 2"; printf 'failed'; exit 0; }
         timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 \
             header-protection-key "$kf" </dev/null >/dev/null 2>&1
         ctl=$?
@@ -959,15 +974,16 @@ _awg31_module_probe() (
             # the same one. What is checked is the device itself, not the text
             # of the error: the wording of a tool changes between versions, the
             # presence of a device does not.
-            timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1 || { printf 'failed'; exit 0; }
+            timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1 || { _probe_say "the refusal on step 2 came from a vanished interface, not from the module"; printf 'failed'; exit 0; }
             printf 'line2'
         else
+            _probe_say "step 2 returned code $ctl, and only 1 counts as a verdict about the module"
             printf 'failed'
         fi
         exit 0
     fi
 
-    out=$(timeout -k 1 5 awg showconf "$ifn" </dev/null 2>/dev/null) || { printf 'failed'; exit 0; }
+    out=$(timeout -k 1 5 awg showconf "$ifn" </dev/null 2>/dev/null) || { _probe_say "awg showconf refused"; printf 'failed'; exit 0; }
     # 🔴 The parsing uses no external command, and that is not a matter of
     # style but of three reasons.
     # 1. The key must not reach the argv of ANY command: argv is visible to
@@ -999,7 +1015,7 @@ _awg31_module_probe() (
     # exit with empty or unrecognisable output speaks about the environment and
     # not about the generation: a substituted binary, a truncated pipe, a device
     # that vanished.
-    (( seen == 1 )) || { printf 'failed'; exit 0; }
+    (( seen == 1 )) || { _probe_say "the awg showconf answer does not look like a config"; printf 'failed'; exit 0; }
     if (( hpk == 1 && cpa == 1 )); then
         printf 'ok'
     elif (( hpk_name == 0 && cpa_name == 0 )); then
@@ -1021,6 +1037,7 @@ _awg31_module_probe() (
         # does not match means we simply did not understand the answer. The
         # second-line text would be false in both of its clauses, and its advice
         # to rebuild the module would be a guess.
+        _probe_say "only part of the values came back (key: $hpk, padding: $cpa), the generation cannot be named"
         printf 'failed'
     fi
     exit 0

@@ -91,6 +91,9 @@ make_ip() {
 #           that masks the value would look like;
 # keyhang - awg genkey never answers;
 # twoline - awg genkey prints a valid key and then a second line;
+# blankline - awg genkey prints a valid key, a BLANK line, and then junk: the
+#          shape that slipped past a guard which only looked at lines one and
+#          two and called the file one line long when the second was empty;
 # cpawrong - the key comes back verbatim, the padding range comes back changed;
 # indented - both values come back correct but with leading whitespace;
 # spaced - both parameters come back, correct, with an extra space after the
@@ -111,11 +114,12 @@ make_awg() {
             badkey)  echo '  genkey) echo "SHORTKEY=" ;;' ;;
             keyhang) echo '  genkey) sleep 30 ;;' ;;
             twoline) echo '  genkey) echo "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; echo "trailing junk" ;;' ;;
+            blankline) echo '  genkey) echo "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; echo ""; echo "trailing junk" ;;' ;;
             *)       echo '  genkey) echo "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
         esac
         echo '  set)'
         case "$mode" in
-            ok|silent|empty|hpkshow|cpashow|wrongkey|keyhang|spaced|bothwrong|twoline|cpawrong|indented)
+            ok|silent|empty|hpkshow|cpashow|wrongkey|keyhang|spaced|bothwrong|twoline|blankline|cpawrong|indented)
                 echo '    shift 2; printf "%s\n" "$*" > "'"$TEST_DIR"'/set.args"; exit 0 ;;' ;;
             refuse)
                 # The wording is the one a module built from tag v1.0.20260725
@@ -150,7 +154,7 @@ make_awg() {
         esac
         echo '  showconf)'
         case "$mode" in
-            ok|twoline)
+            ok|twoline|blankline)
                 echo '    echo "[Interface]"; echo "ListenPort = 51820"'
                 echo '    echo "HeaderProtectionKey = PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="'
                 echo '    echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
@@ -1036,6 +1040,83 @@ p_key_two_lines() {
 }
 @test "probe: a key file longer than one line stops the probe, both twins" {
     both p_key_two_lines
+}
+
+p_key_blank_second_line() {
+    # 🔴 The guard used to read lines one and two and call the file one line
+    # long when the second was empty. Measured on the real function: a key, a
+    # blank line and junk passed, the module was handed the whole file, the tool
+    # refused it, and control step 2 turned that into `line2` - a healthy
+    # third-line module told to rebuild and reboot, which is the single thing
+    # this slice exists to prevent.
+    make_ip add; make_awg blankline
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "a key file with a blank second line was accepted ($1): $out"; return 1; }
+}
+@test "probe: a key file with a blank line and junk stops the probe, both twins" {
+    both p_key_blank_second_line
+}
+
+c_probe_explains_every_bail() {
+    # 🔴 The refusal text tells the operator to re-run with --verbose and says
+    # the probe will name what stopped it. That promise was made while only four
+    # of nineteen bail points said anything at all: a person would have followed
+    # the advice, seen nothing, and concluded the option was broken. Structural
+    # on purpose - driving all nineteen from a test is not within reach, and the
+    # invariant is what matters: no silent exit.
+    local f body line prev bad
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        body=$(sed -n '/^_awg31_module_probe() (/,/^)$/p' "$BATS_TEST_DIRNAME/../$f")
+        [ -n "$body" ] || { echo "no probe body in $f"; return 1; }
+        prev=""
+        bad=0
+        while IFS= read -r line; do
+            case "$line" in
+                *"printf 'failed'"*)
+                    case "$line$prev" in
+                        *_probe_say*) : ;;
+                        *) echo "a silent refusal in $f: $line"; bad=1 ;;
+                    esac
+                    ;;
+            esac
+            prev="$line"
+        done <<< "$body"
+        [ "$bad" -eq 0 ] || return 1
+    done
+    return 0
+}
+@test "probe: every refusal says what stopped it, both twins" {
+    c_probe_explains_every_bail
+}
+
+c_cleanup_key_file_without_record() {
+    # 🔴 A key file with no record at all is not "a record that cannot be read".
+    # The branch written to report an unreadable record fired on a MISSING one
+    # too: the operator was told to inspect a record that does not exist, and
+    # the sweep removed the one file that did. Nothing to keep, nothing to say.
+    local src="$1" out
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\necho \"\$*\" >> \"$2/called\"\nexit 0\n" > "$2/bin/ip"
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
+        rm -f "$2/called"; rm -f "$TMPDIR"/awg31probe.*
+        : > "$TMPDIR/awg31probe.$$.keyonly"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        echo "left: $(ls "$TMPDIR" 2>/dev/null | tr "\n" " ")"
+    ' _ "$src" "$TEST_DIR")
+    [[ "$out" != *WARNED* ]] || { echo "a missing record was reported as unreadable ($src): [$out]"; return 1; }
+    [[ "$out" == *"left: "* ]] || { echo "the cleanup did not finish ($src): [$out]"; return 1; }
+    [[ "$out" != *keyonly* ]] || { echo "the leftover key file was not swept ($src): [$out]"; return 1; }
+}
+@test "cleanup: a key file with no record is swept without a word, both twins" {
+    both c_cleanup_key_file_without_record
 }
 
 p_record_unwritable() {
