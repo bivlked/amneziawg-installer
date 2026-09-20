@@ -168,7 +168,7 @@ _install_cleanup() {
                 _probe_keep=1
                 _probe_warn "The module probe record is empty or unreadable. The interface is left alone and the record itself is kept in the temporary directory."
             fi
-        elif [[ -e "$_probe_rec" ]]; then
+        elif [[ -e "$_probe_rec" || -L "$_probe_rec" ]]; then
             _probe_keep=1
             _probe_warn "The module probe record is not a regular file, so it is neither read nor removed. Please look at the temporary directory."
         fi
@@ -807,7 +807,7 @@ awg31_module_support() {
 _awg31_module_probe() (
     case $- in *x*) set +x ;; esac
     umask 077
-    # 🔴 The probe can refuse for thirteen different reasons, and until this was
+    # 🔴 The probe can refuse for nineteen different reasons, and until this was
     # added a person learned none of them: the verdict goes to stdout and
     # everything else was thrown away. stdout is taken, but stderr is free and
     # is not captured. The key never reaches it: the module is handed a PATH to
@@ -820,8 +820,8 @@ _awg31_module_probe() (
             printf 'module probe: %s\n' "$1" >&2
         fi
     }
-    local ifn="" kf="" rec="" key="" out="" line="" ctl="" rc=0 i=0 made=0 cleaned=0
-    local klines=()
+    local ifn="" kf="" rec="" key="" out="" line="" ctl="" rc=0 arc=0 i=0 made=0 cleaned=0
+    local klines=() kraw=""
     local seen=0 hpk=0 cpa=0 hpk_name=0 cpa_name=0
     command -v ip >/dev/null 2>&1  || { _probe_say "the ip command was not found"; printf 'failed'; exit 0; }
     command -v awg >/dev/null 2>&1 || { _probe_say "the awg command was not found"; printf 'failed'; exit 0; }
@@ -863,8 +863,6 @@ _awg31_module_probe() (
     trap '_probe_cleanup; printf "failed"; exit 0' INT TERM HUP
 
     timeout -k 1 5 awg genkey </dev/null > "$kf" 2>/dev/null || { _probe_say "awg genkey did not produce a key"; printf 'failed'; exit 0; }
-    # read instead of tr: no external command is left in the key path at all,
-    # which makes the claim below about "no external command" true throughout.
     # 🔴 But BOTH lines have to be read. `read` takes only the first, while the
     # module is handed the WHOLE file: a file with a correct first line and junk
     # behind it would pass the shape check, the tool would refuse it, and the
@@ -872,15 +870,24 @@ _awg31_module_probe() (
     # the defect this probe exists to prevent. The old `tr` joined the whole file
     # and caught such a tail; the library (_awg_hpk_file_valid) also checks the
     # size of the file.
-    # 🔴 The lines are COUNTED, not peeked at. The previous form read the first
-    # and the second and called the file one line long when the second was
-    # empty: `KEY`, a blank line, junk went through. The module is handed the
-    # WHOLE file, the tool refuses it, and the refusal at control step 2 calls a
-    # healthy module second line. mapfile is a builtin, so the key path still
-    # has no external command in it.
-    mapfile -t klines < "$kf" 2>/dev/null || :
+    # 🔴 The FILE itself is validated, not a cleaned copy of it. This is the
+    # third visit to this one place, and the root was the same all three times:
+    # I compared what I had read and tidied, while the module is handed the file
+    # AS IT IS. The carriage return was stripped from the variable, so a CRLF
+    # file passed the check, the tool refused it, and the refusal at control
+    # step 2 called a healthy module second line. The library
+    # (_awg_hpk_file_valid) demands exactly 45 bytes for a reason.
+    # Three checks catch three different corruptions, one each (measured 20 sep
+    # 2026):
+    #   not one line          -> two lines, junk behind;
+    #   file is not line + \n -> no trailing newline, extra bytes;
+    #   shape is wrong        -> a carriage return, junk inside the line.
+    # All builtins: the key path still has no external command in it.
+    mapfile -t klines 2>/dev/null < "$kf" || :
     (( ${#klines[@]} == 1 )) || { _probe_say "the key file is not exactly one line (lines: ${#klines[@]})"; printf 'failed'; exit 0; }
-    key="${klines[0]%$'\r'}"
+    key="${klines[0]}"
+    IFS= read -r -N 46 kraw < "$kf" 2>/dev/null || :
+    [[ "$kraw" == "$key"$'\n' ]] || { _probe_say "the key file is not exactly one line plus a newline"; printf 'failed'; exit 0; }
     # The key shape is judged by the same measure the library uses
     # (_awg_hpk_file_valid): 44 base64 characters. "Not empty" is not enough - a
     # genkey that exits zero and prints rubbish would pass it, control step 2
@@ -915,20 +922,25 @@ _awg31_module_probe() (
         timeout -k 1 5 ip link add "$ifn" type amneziawg >/dev/null 2>&1
         rc=$?
         if (( rc == 0 )); then made=1; break; fi
-        # 🔴 The command may have been killed by timeout AFTER the kernel had
-        # already created the device: a delayed netlink acknowledgement is
-        # exactly the state this probe was written for. So neither the record
-        # may be dropped here nor the next name taken: otherwise up to five
-        # interfaces stay on the machine with nobody knowing about them, and the
-        # record that exists to find them erases itself.
-        if (( rc == 124 || rc == 125 || rc == 137 )); then
-            _probe_say "creating the interface $ifn did not answer within the bound (code $rc); the record is left for the cleanup"
+        # 🔴 The PRESENCE OF THE DEVICE decides, not the exit code. The command
+        # may have been cut short after the kernel had already created the
+        # interface: a timeout, a signal from outside, a delayed netlink
+        # acknowledgement. The previous form caught only the three timeout codes
+        # and, on any other, dropped the record and took the next name - measured
+        # at five interfaces on the machine and not one record naming them. The
+        # name is built from OUR pid, so it cannot be anyone else's: a device
+        # found here is ours, and the record of it has to stay.
+        timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1
+        arc=$?
+        if (( arc != 1 )); then
+            _probe_say "creating the interface $ifn was not confirmed (code $rc), but the device is there or could not be checked (code $arc); the record is left for the cleanup"
             printf 'failed'; exit 0
         fi
+        # No device: the creation really did fail, and the same reason will
+        # repeat on the other names, so there is nothing to walk to.
         rm -f "$rec" 2>/dev/null
-        # The name appeared between the check and the creation - try the next
-        # one; any other reason would repeat on it as well.
-        timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1 || { _probe_say "the interface $ifn was not created and the reason does not repeat"; printf 'failed'; exit 0; }
+        _probe_say "the interface $ifn was not created (code $rc), and the reason will repeat on the other names"
+        printf 'failed'; exit 0
     done
     [[ "$made" -eq 1 ]] || { _probe_say "all five temporary names are taken"; printf 'failed'; exit 0; }
 
