@@ -71,6 +71,7 @@ make_ip() {
             hang) echo 'case "$2" in show) exit 1 ;; add) sleep 30 ;; del) exit 0 ;; esac; exit 0' ;;
             hangshow) echo 'case "$2" in show) sleep 30 ;; add) exit 0 ;; del) exit 0 ;; esac; exit 0' ;;
             delhang) echo 'D="'"$TEST_DIR"'/ifaces"; case "$2" in show) [ -e "$D/$3" ] && exit 0 || exit 1 ;; add) mkdir -p "$D"; : > "$D/$3"; exit 0 ;; del) sleep 30 ;; esac; exit 0' ;;
+            addunknown) echo 'D="'"$TEST_DIR"'/ifaces"; M="'"$TEST_DIR"'/addtried"; case "$2" in show) [ -e "$M" ] && sleep 30; exit 1 ;; add) : > "$M"; exit 2 ;; del) exit 0 ;; esac; exit 0' ;;
         esac
     } > "$BIN/ip"
     chmod +x "$BIN/ip"
@@ -124,11 +125,12 @@ make_awg() {
             blankline) echo '  genkey) echo "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; echo ""; echo "trailing junk" ;;' ;;
             crlfkey)   echo '  genkey) printf "%s\r\n" "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
             nonlkey)   echo '  genkey) printf "%s" "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
+            nulkey)    echo '  genkey) printf "%s\\0\\n" "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
             *)       echo '  genkey) echo "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
         esac
         echo '  set)'
         case "$mode" in
-            ok|silent|empty|hpkshow|cpashow|wrongkey|keyhang|spaced|bothwrong|twoline|blankline|cpawrong|indented|crlfkey|nonlkey)
+            ok|silent|empty|hpkshow|cpashow|wrongkey|keyhang|spaced|bothwrong|twoline|blankline|cpawrong|indented|crlfkey|nonlkey|nulkey)
                 echo '    shift 2; printf "%s\n" "$*" > "'"$TEST_DIR"'/set.args"; exit 0 ;;' ;;
             refuse)
                 # The wording is the one a module built from tag v1.0.20260725
@@ -145,6 +147,15 @@ make_awg() {
                 echo '    exit 1 ;;' ;;
             hang)
                 echo '    if [[ "$*" == *header-protection-key* ]]; then sleep 30; fi; exit 0 ;;' ;;
+            keygrow)
+                # Refuses anything carrying the key AND makes the file one byte
+                # longer each time, which models a key file replaced between the
+                # validation and control step 2.
+                echo '    if [[ "$*" == *header-protection-key* ]]; then'
+                echo '      for a in "$@"; do [[ -f "$a" && "$a" == *awg31probe* ]] && printf "X" >> "$a"; done'
+                echo '      exit 1'
+                echo '    fi'
+                echo '    exit 0 ;;' ;;
             hangrefuse)
                 echo '    if [[ "$*" == *content-padding-addition* ]]; then sleep 30; fi'
                 echo '    if [[ "$*" == *header-protection-key* ]]; then echo "Unable to modify interface: Invalid argument" >&2; exit 1; fi'
@@ -163,7 +174,7 @@ make_awg() {
         esac
         echo '  showconf)'
         case "$mode" in
-            ok|twoline|blankline|crlfkey|nonlkey)
+            ok|twoline|blankline|crlfkey|nonlkey|nulkey|keygrow)
                 echo '    echo "[Interface]"; echo "ListenPort = 51820"'
                 echo '    echo "HeaderProtectionKey = PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="'
                 echo '    echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
@@ -606,7 +617,8 @@ s_codes() {
 
 # Comments are stripped, and so is the TEXT of the diagnostic messages, because
 # those are translated on purpose. Everything else stays byte for byte: the
-# normalisation touches only the quoted argument of _probe_say and log_debug and
+# normalisation touches only the quoted argument of _probe_say, _probe_warn and
+# log_debug, and
 # a single-quoted literal on a line that also redirects to stderr. The verdict
 # lines (printf 'failed', printf 'line2') carry no such marker and are compared
 # as they are, which is the point - they are behaviour, not wording.
@@ -1097,12 +1109,42 @@ p_add_made_but_failed_keeps_the_record() {
     [ "$adds" -eq 1 ] || { echo "the probe walked on to another name after making a device ($src): $adds"; return 1; }
     ls "$TEST_DIR"/awg31probe.*.iface >/dev/null 2>&1 || { echo "the record was erased although the device exists ($src)"; return 1; }
 }
+p_add_device_check_cannot_answer() {
+    # 🔴 The THIRD arm of the device check, and it arrived without a case of its
+    # own: the fix that made the DEVICE decide instead of the exit code says, in
+    # its own message, "the device is there OR could not be checked". The first
+    # half had two cases, the second had none, and a mutant narrowing
+    # `(( arc != 1 ))` to `(( arc == 0 ))` survived the whole suite. Under that
+    # mutant a device check that cannot answer erases the record and refuses -
+    # the exact silent loss the record file exists to prevent.
+    #
+    # The stub answers the availability check normally, then stops answering
+    # once a creation has been attempted: that is what a netlink socket which
+    # stops responding looks like from here.
+    local src="$1" out adds started elapsed
+    make_ip addunknown; make_awg ok
+    rm -f "$TEST_DIR"/awg31probe.* "$TEST_DIR/addtried"
+    started=$SECONDS
+    out=$(probe "$src")
+    elapsed=$((SECONDS - started))
+    [ "$out" = "failed" ] || { echo "a device check that cannot answer was judged ($src): $out"; return 1; }
+    [ "$elapsed" -lt 25 ] || { echo "the device check after a failed creation is not bounded ($src): ${elapsed}s"; return 1; }
+    adds=$(grep -c "^link add " "$TEST_DIR/ip.argv" 2>/dev/null || echo 0)
+    [ "$adds" -eq 1 ] || { echo "the probe walked on to another name while the device was unknown ($src): $adds"; return 1; }
+    ls "$TEST_DIR"/awg31probe.*.iface >/dev/null 2>&1 || { echo "the record was erased although the device could not be checked ($src)"; return 1; }
+}
+@test "probe: a device check that cannot answer keeps the record, both twins" {
+    both p_add_device_check_cannot_answer
+}
+
 @test "probe: a creation that failed after making the device keeps its record, both twins" {
     both p_add_made_but_failed_keeps_the_record
 }
 
 p_says_why() {
-    # The probe can refuse for thirteen reasons and used to name none of them.
+    # The probe can refuse for a good many reasons and used to name none of
+    # them. No number here on purpose: three copies of that count have already
+    # gone stale in this branch alone.
     # stdout carries the verdict, so the explanation goes to stderr.
     # 🔴 BOTH branches of the helper are exercised. With no logger it falls back
     # to stderr; with one it must go through it, and that branch had no coverage
@@ -1182,6 +1224,30 @@ p_key_no_newline() {
     local out; out=$(probe "$1")
     [ "$out" = "failed" ] || { echo "a key file with no trailing newline was accepted ($1): $out"; return 1; }
 }
+p_key_nul_byte() {
+    # 🔴 The fourth visit to this one place, and the one that showed the other
+    # three were reaching for the wrong dimension. The three guards here cited
+    # the library's rule - exactly 45 bytes - and never counted a byte: they
+    # rebuilt the expected string out of data bash had already normalised and
+    # compared it with itself. `mapfile` and `read -N` both DROP a NUL, so a
+    # 46-byte file shaped `<44 base64><NUL><LF>` satisfied all three: one line,
+    # the file equal to that line plus a newline, the right shape.
+    #
+    # The cost is the expensive verdict, not a safe refusal. The tool is handed
+    # the file AS IT IS, refuses it over its size, control step 1 carries no key
+    # and passes, and the refusal at control step 2 reads as "the module does
+    # not understand the key" - a healthy third-line module told to rebuild
+    # itself and reboot. Measured before the fix: both twins answered `line2`
+    # against stubs modelling a healthy module.
+    local src="$1" out
+    make_ip add; make_awg nulkey
+    out=$(probe "$src")
+    [ "$out" = "failed" ] || { echo "a key file padded with a NUL was judged ($src): $out"; return 1; }
+}
+@test "probe: a key file padded with a NUL byte stops the probe, both twins" {
+    both p_key_nul_byte
+}
+
 @test "probe: a key file with no trailing newline stops the probe, both twins" {
     both p_key_no_newline
 }
@@ -1189,10 +1255,17 @@ p_key_no_newline() {
 c_probe_explains_every_bail() {
     # 🔴 The refusal text tells the operator to re-run with --verbose and says
     # the probe will name what stopped it. That promise was made while only four
-    # of nineteen bail points said anything at all: a person would have followed
+    # of the bail points said anything at all: a person would have followed
     # the advice, seen nothing, and concluded the option was broken. Structural
-    # on purpose - driving all nineteen from a test is not within reach, and the
-    # invariant is what matters: no silent exit.
+    # on purpose - driving every one of them from a test is not within reach,
+    # and the invariant is what matters: no silent exit ON ANY PATH THE PROBE
+    # CHOOSES ITSELF.
+    # ⚠️ Said exactly, because the scan cannot see further than that: it matches
+    # `printf 'failed'` in SINGLE quotes, and the signal trap bails with
+    # `printf "failed"` in double quotes and says nothing. That silence is
+    # deliberate - a handler that runs on a signal should not try to reach a
+    # logger - but it is outside what this case measures, and the invariant has
+    # to be stated with that boundary rather than as a blanket claim.
     local f body line prev bad
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         body=$(sed -n '/^_awg31_module_probe() (/,/^)$/p' "$BATS_TEST_DIRNAME/../$f")
@@ -1392,23 +1465,62 @@ c_record_write_is_guarded() {
 }
 
 c_record_read_is_bounded() {
-    # Structural, and honest about why. The regular-file test rejects a FIFO
+    # 🔴 TWO bounds, and they are not the same bound. The time bound keeps the
+    # exit trap from hanging for good on a planted FIFO. The SIZE bound keeps a
+    # planted file from being read whole: `head -n 1` on a file with no newline
+    # in it streams all of it, and the result is handed to a warning that writes
+    # to the log under /root and to the console. Measured: 20 MB came back well
+    # inside the five second bound, so the clock does not stand in for the size.
+    # The path is predictable (a world writable directory plus a pid from
+    # /proc), and this trap fires on EVERY exit of the installer, `--help`
+    # included, where the probe never ran at all.
+    #
+    # Structural, and honest about why: the regular-file test rejects a FIFO
     # before the read, so an unbounded read never hangs in any case a test can
-    # set up: what the bound protects against is the RACE, a swap between the
-    # test and the open, and a race cannot be driven from a test without
-    # injecting one. Measured: a mutant replacing the bounded read with a plain
-    # one survives the whole behavioural suite, which is exactly why this is
-    # pinned by shape instead of pretending the coverage exists.
-    # The bound matters because this runs inside a trap that fires on EVERY exit
-    # of the installer, so a hang here hangs the installer for good.
+    # set up - what the time bound protects is the RACE, a swap between the test
+    # and the open, which cannot be driven from a test without injecting one.
+    # The size half IS driven behaviourally, by the case below this one.
     local f body
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         body=$(sed -n '/^_install_cleanup() {/,/^}/p' "$BATS_TEST_DIRNAME/../$f")
         [ -n "$body" ] || { echo "no cleanup body in $f"; return 1; }
-        grep -q 'timeout -k 1 5 head -n 1 "$_probe_rec"' <<< "$body" \
-            || { echo "the record read is not bounded by a separate process in $f"; return 1; }
+        grep -q 'timeout -k 1 5 head -c 64 "$_probe_rec"' <<< "$body" \
+            || { echo "the record read is not bounded in both time and size in $f"; return 1; }
     done
     return 0
+}
+
+c_record_read_is_bounded_in_size() {
+    # The behavioural half: a record whose first line is long must not put that
+    # line into the warning. A megabyte here stands in for the 20 MB measured by
+    # hand; what is asserted is that the output stays small, not a byte count.
+    local src="$1" out len
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\nexit 0\n" > "$2/bin/ip"
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
+        rm -rf "$TMPDIR"/awg31probe.*
+        # one line, no newline anywhere in it
+        head -c 1048576 /dev/zero | tr "\0" "A" > "$TMPDIR/awg31probe.$$.iface"
+        # 🔴 The message itself, not its length. The first version of this
+        # case printed ${#1} and was therefore vacuous: the output stayed small
+        # whether the read was bounded or not, and the mutant survived.
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        echo finished
+    ' _ "$src" "$TEST_DIR" 2>&1)
+    [[ "$out" == *finished* ]] || { echo "the cleanup did not finish on a long record ($src): ${out:0:200}"; return 1; }
+    len=${#out}
+    [ "$len" -lt 4096 ] || { echo "a long record reached the output ($src): $len characters"; return 1; }
+}
+@test "cleanup: a record with a very long line does not reach the log, both twins" {
+    both c_record_read_is_bounded_in_size
 }
 @test "cleanup: the record is read under a bound, both twins" {
     c_record_read_is_bounded
@@ -1456,6 +1568,22 @@ p_key_gone_before_control() {
     local out; out=$(probe "$1")
     [ "$out" = "failed" ] || { echo "a refusal over the key file was read as a verdict ($1): $out"; return 1; }
 }
+p_key_replaced_before_control() {
+    # 🔴 The key file is still THERE at control step 2, and still non-empty -
+    # it is simply no longer the file that was validated. The old guard asked
+    # `-s` alone, which is true for exactly the file that does the damage: the
+    # tool refuses over the FILE, and the refusal at step 2 reads as "the module
+    # refused the key", so a healthy third-line module is told to rebuild itself
+    # and reboot. The guard now asks the same question the validation asked.
+    local src="$1" out
+    make_ip add; make_awg keygrow
+    out=$(probe "$src")
+    [ "$out" = "failed" ] || { echo "a key file replaced before control step 2 produced a verdict ($src): $out"; return 1; }
+}
+@test "probe: a key file replaced before control step 2 is not a second-line verdict, both twins" {
+    both p_key_replaced_before_control
+}
+
 @test "probe: a key file that goes missing is not a second-line verdict, both twins" {
     both p_key_gone_before_control
 }

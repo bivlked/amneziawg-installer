@@ -102,7 +102,7 @@ _install_cleanup() {
     # EXIT - the second call must be a no-op.
     [[ "$_install_cleaned" -eq 1 ]] && return 0
     _install_cleaned=1
-    local f _probe_rec="" _probe_if="" _probe_safe="" _probe_f="" _probe_rc=0 _probe_keep=0
+    local f _probe_rec="" _probe_if="" _probe_safe="" _probe_f="" _probe_rc=0 _probe_head_rc=0 _probe_keep=0
     for f in "${_install_temp_files[@]}"; do [[ -f "$f" ]] && rm -f "$f"; done
     # Leftovers of the module probe. The trap inside the probe itself cleans up
     # on an ordinary exit, but on a signal the subshell may not get there, so the
@@ -115,8 +115,13 @@ _install_cleanup() {
     # runs as root - so it trusts not one byte of what it reads. The path is
     # predictable (/tmp plus our pid, and the pid is visible in /proc) and the
     # directory is world writable. Hence three checks in a row:
-    #   - a regular file and not a symlink: a FIFO planted at that path would
-    #     block the read forever;
+    #   - a regular file and not a symlink: a FIFO can be planted at that path.
+    #     ⚠️ This used to read "would block the read forever". Since the read
+    #     went under a bound that is UNTRUE, and leaving it there is dangerous:
+    #     a reader concludes the check cannot be removed because of a hang,
+    #     while in fact without it the read merely sits out the bound and comes
+    #     back empty. The real cost is different - a genuine leftover then goes
+    #     unremoved, because we never learn the name of the interface;
     #   - the name has to be one the probe of THIS run could have created, or a
     #     planted string like eth0 would take the machine off the network;
     #   - the delete is bounded, because a wedged netlink is exactly the state
@@ -136,7 +141,19 @@ _install_cleanup() {
             # the cleanup takes the "empty or unreadable" branch, the record is
             # kept and the warning is heard, but a real leftover is not removed.
             # That is still better than an installer that hangs for good.
-            _probe_if=$(timeout -k 1 5 head -n 1 "$_probe_rec" 2>/dev/null)
+            # 🔴 A bound in TIME is not a bound in SIZE, and the comment above
+            # promises that this block trusts no byte it read. `head -n 1` on a
+            # file with no newline in it pulls the WHOLE file: measured, a 20 MB
+            # file fitted inside the five second bound and produced a twenty
+            # million character variable, which then goes into a warning, that
+            # is into the log under /root and onto the console. The directory is
+            # world writable, the pid is readable from /proc, and this cleanup
+            # runs on EVERY exit of the installer, `--help` included, where no
+            # probe ever ran. A legal record is `awgp<pid>x<n>` plus a newline,
+            # under twenty bytes; sixty four is generous.
+            _probe_if=$(timeout -k 1 5 head -c 64 "$_probe_rec" 2>/dev/null)
+            _probe_head_rc=$?
+            _probe_if="${_probe_if%%$'\n'*}"
             _probe_if="${_probe_if%$'\r'}"
             # The contents of a file in a world writable directory must not be
             # able to draw on a root console: only printable characters go out.
@@ -164,9 +181,25 @@ _install_cleanup() {
                 # have made.
                 _probe_keep=1
                 _probe_warn "The module probe record carries a name the probe of this run could not have created: $_probe_safe. The interface is left alone and the record itself is kept in the temporary directory."
-            else
+            elif (( _probe_head_rc == 0 )); then
+                # Empty AND read successfully: the record was created but never
+                # filled. The only way here is death between creating the file
+                # and writing the name into it, and `ip link add` comes AFTER
+                # that, so no interface exists and there is nothing to look for.
                 _probe_keep=1
-                _probe_warn "The module probe record is empty or unreadable. The interface is left alone and the record itself is kept in the temporary directory."
+                _probe_warn "The module probe record is empty: the name was never written and no interface was created. The record itself is kept in the temporary directory."
+            else
+                # 🔴 The read FAILED, which is a different thing entirely. The
+                # ways here are the bound firing (a planted FIFO, a hung mount)
+                # and head or timeout being absent. In all three an interface
+                # very likely DOES exist and we do not know its name. The old
+                # wording told such a person the record was "empty or
+                # unreadable" and gave neither a name nor a command, while both
+                # changelogs promise the opposite. There is no name to give, but
+                # there is a way to FIND it, and that is the only action
+                # available here at all.
+                _probe_keep=1
+                _probe_warn "The module probe record cannot be read (code $_probe_head_rc). A leftover may exist; find it with: ip link show type amneziawg | grep awgp$$. The record itself is kept in the temporary directory."
             fi
         elif [[ -e "$_probe_rec" || -L "$_probe_rec" ]]; then
             _probe_keep=1
@@ -780,7 +813,9 @@ awg31_tools_support() {
 # thing away. Step 1 is the same padding sizes without the third-line
 # parameters: if it fails, they are not the reason and the module cannot be
 # judged. Step 2 is the same plus the header protection key alone: a REAL
-# refusal (code 1) there is the second line. If the key was taken, the refusal
+# refusal (code 1) there, WITH THE INTERFACE STILL PRESENT, is the second
+# line - the device check is not decoration, an interface that went away
+# returns the same one. If the key was taken, the refusal
 # was about the padding and the line cannot be named from it; any other code (a
 # timeout, a missing binary) is not a verdict either.
 #
@@ -807,8 +842,13 @@ awg31_module_support() {
 _awg31_module_probe() (
     case $- in *x*) set +x ;; esac
     umask 077
-    # 🔴 The probe can refuse for nineteen different reasons, and until this was
-    # added a person learned none of them: the verdict goes to stdout and
+    # 🔴 The probe can refuse for a good many different reasons, and until this
+    # was added a person learned none of them. There is deliberately NO number
+    # here: it has already drifted from the code twice, and the second time it
+    # was raised to the count of the PREVIOUS commit - the very commit that had
+    # added another reason. The code can be asked (`grep -c '_probe_say "'` over
+    # the function body), while a written number rots in silence. What matters
+    # is not the count but the invariant: no refusal is silent. the verdict goes to stdout and
     # everything else was thrown away. stdout is taken, but stderr is free and
     # is not captured. The key never reaches it: the module is handed a PATH to
     # a file, and the showconf output does not go into diagnostics at all.
@@ -821,7 +861,7 @@ _awg31_module_probe() (
         fi
     }
     local ifn="" kf="" rec="" key="" out="" line="" ctl="" rc=0 arc=0 i=0 made=0 cleaned=0
-    local klines=() kraw=""
+    local klines=() kraw="" kbytes=""
     local seen=0 hpk=0 cpa=0 hpk_name=0 cpa_name=0
     command -v ip >/dev/null 2>&1  || { _probe_say "the ip command was not found"; printf 'failed'; exit 0; }
     command -v awg >/dev/null 2>&1 || { _probe_say "the awg command was not found"; printf 'failed'; exit 0; }
@@ -871,18 +911,37 @@ _awg31_module_probe() (
     # and caught such a tail; the library (_awg_hpk_file_valid) also checks the
     # size of the file.
     # 🔴 The FILE itself is validated, not a cleaned copy of it. This is the
-    # third visit to this one place, and the root was the same all three times:
-    # I compared what I had read and tidied, while the module is handed the file
-    # AS IT IS. The carriage return was stripped from the variable, so a CRLF
-    # file passed the check, the tool refused it, and the refusal at control
-    # step 2 called a healthy module second line. The library
-    # (_awg_hpk_file_valid) demands exactly 45 bytes for a reason.
-    # Three checks catch three different corruptions, one each (measured 20 sep
-    # 2026):
-    #   not one line          -> two lines, junk behind;
-    #   file is not line + \n -> no trailing newline, extra bytes;
+    # FOURTH visit to this one place, and the root was the same all four times:
+    # I compared what I had READ and normalised, while the tool is handed the
+    # file AS IT IS.
+    # 🔴 This one was worse than the three before it. The checks CITED the rule
+    # that the library demands exactly 45 bytes, and then never counted a byte:
+    # the expected string was rebuilt out of data bash had already normalised
+    # and compared with itself. Measured 20 sep 2026: a 46-byte file shaped
+    # `<44 base64><NUL><LF>` passed ALL THREE checks, because `mapfile` and
+    # `read -N` both drop a NUL. The tool then refused the file, the refusal at
+    # control step 2 called a healthy module second line, and its owner went off
+    # to rebuild a module that was fine - the exact defect this probe exists to
+    # prevent.
+    # 🔴 So the size is measured the way the library measures it
+    # (_awg_hpk_file_valid): with `wc -c`. Builtins CANNOT do this - bash cannot
+    # hold a NUL in a variable at all, so every reader loses it in silence. The
+    # old promise that the key path runs no external command is withdrawn
+    # DELIBERATELY: the key VALUE still never leaves the file (it is fed on
+    # stdin, the path never reaches argv, and only a number comes back), and
+    # without counting the bytes that promise was costing a verdict.
+    # What each check catches (measured 20 sep 2026 over six corruptions):
+    #   not 45 bytes          -> a NUL, and any byte the readers cannot see;
+    #   not one line          -> two lines and junk; it gives the better message;
+    #   file is not line + \n -> no trailing newline;
     #   shape is wrong        -> a carriage return, junk inside the line.
-    # All builtins: the key path still has no external command in it.
+    # 🔴 The checks overlap ON PURPOSE, and "one each" would be untrue: two
+    # lines are caught by the first and by the second alike. Removing one of two
+    # overlapping guards leaves the verdict where it was - measured by mutation,
+    # not asserted.
+    kbytes=$(wc -c < "$kf" 2>/dev/null)
+    kbytes="${kbytes//[^0-9]/}"
+    [[ "$kbytes" == 45 ]] || { _probe_say "the key file is not exactly 45 bytes (bytes: ${kbytes:-unknown})"; printf 'failed'; exit 0; }
     mapfile -t klines 2>/dev/null < "$kf" || :
     (( ${#klines[@]} == 1 )) || { _probe_say "the key file is not exactly one line (lines: ${#klines[@]})"; printf 'failed'; exit 0; }
     key="${klines[0]}"
@@ -971,7 +1030,20 @@ _awg31_module_probe() (
         # error, a key file it cannot read included. If the file went away
         # between the shape check and this step, the refusal would be about the
         # FILE, and we would call a healthy module second line.
-        [[ -s "$kf" ]] || { _probe_say "the key file went away before control step 2"; printf 'failed'; exit 0; }
+        # 🔴 The SAME thing is checked here as at validation: a regular file,
+        # not a symlink, readable, and exactly 45 bytes. ⚠️ Only the SIZE half
+        # is held behaviourally, by the case where the file grows between the
+        # shape check and this step. The -f/! -L/-r triple is covered by the
+        # size measurement on every input this suite can produce and has NO case
+        # of its own: a file cannot be turned into a symlink or made unreadable
+        # on the development host. Said plainly so the next reader does not take
+        # overlap for coverage. The old `-s` form asked
+        # only "not empty" and let through precisely the file it was put there
+        # to stop - one replaced between the validation and this step.
+        [[ -f "$kf" && ! -L "$kf" && -r "$kf" ]] || { _probe_say "the key file is not a regular readable file before control step 2"; printf 'failed'; exit 0; }
+        kbytes=$(wc -c < "$kf" 2>/dev/null)
+        kbytes="${kbytes//[^0-9]/}"
+        [[ "$kbytes" == 45 ]] || { _probe_say "the key file is not exactly 45 bytes before control step 2 (bytes: ${kbytes:-unknown})"; printf 'failed'; exit 0; }
         timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 \
             header-protection-key "$kf" </dev/null >/dev/null 2>&1
         ctl=$?
@@ -987,6 +1059,7 @@ _awg31_module_probe() (
             # of the error: the wording of a tool changes between versions, the
             # presence of a device does not.
             timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1 || { _probe_say "the refusal on step 2 came from a vanished interface, not from the module"; printf 'failed'; exit 0; }
+            _probe_say "verdict: second line - the tool refused the key ALONE on step 2 and the interface is still there"
             printf 'line2'
         else
             _probe_say "step 2 returned code $ctl, and only 1 counts as a verdict about the module"
@@ -1028,7 +1101,13 @@ _awg31_module_probe() (
     # not about the generation: a substituted binary, a truncated pipe, a device
     # that vanished.
     (( seen == 1 )) || { _probe_say "the awg showconf answer does not look like a config"; printf 'failed'; exit 0; }
+    # 🔴 A verdict says what it rests on as well. Only the refusals used to
+    # speak, and the three verdicts were silent - so a wrong "second line",
+    # which costs its owner a module rebuild and a reboot, arrived WITH NO
+    # EVIDENCE, `--verbose` included. The most expensive answer has to be the
+    # most traceable one.
     if (( hpk == 1 && cpa == 1 )); then
+        _probe_say "verdict: third line - both parameters came back with the values we set"
         printf 'ok'
     elif (( hpk_name == 0 && cpa_name == 0 )); then
         # 🔴 A silent acceptance is when the answer carries NOT EVEN THE NAMES of
@@ -1040,6 +1119,7 @@ _awg31_module_probe() (
         # "second line" and its owner would be told to rebuild a healthy module.
         # The output shape rests on a single bench measurement, and a drift in it
         # has to lead to "could not check", never to a confident verdict.
+        _probe_say "verdict: second line - the tool took everything in silence and the answer carries NEITHER NAME"
         printf 'line2'
     else
         # 🔴 Everything else lands here: one of the two came back, or the names
