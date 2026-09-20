@@ -40,7 +40,10 @@ teardown() {
 #          an interface that went away in mid probe looks like;
 # addhang - creates the device and THEN hangs, which is what a delayed netlink
 #          acknowledgement looks like: timeout kills the command after the
-#          kernel has already made the interface.
+#          kernel has already made the interface;
+# addmade - creates the device and then exits 2, which is the same situation
+#          arriving through an exit code that is NOT one of the timeout ones:
+#          a signal from outside, a failure reported after the fact.
 #
 # 🔴 The creating modes keep a directory of the names they made, so that `show`
 # answers about a device that exists. A stub that says "no such interface" right
@@ -62,6 +65,7 @@ make_ip() {
             delfail) echo 'D="'"$TEST_DIR"'/ifaces"; case "$2" in show) [ -e "$D/$3" ] && exit 0 || exit 1 ;; add) mkdir -p "$D"; : > "$D/$3"; exit 0 ;; del) exit 1 ;; esac; exit 0' ;;
             vanish) echo 'case "$2" in show) exit 1 ;; add) exit 0 ;; del) exit 0 ;; esac; exit 0' ;;
             addhang) echo 'D="'"$TEST_DIR"'/ifaces"; case "$2" in show) [ -e "$D/$3" ] && exit 0 || exit 1 ;; add) mkdir -p "$D"; : > "$D/$3"; sleep 30 ;; del) rm -f "$D/$3"; exit 0 ;; esac; exit 0' ;;
+            addmade) echo 'D="'"$TEST_DIR"'/ifaces"; case "$2" in show) [ -e "$D/$3" ] && exit 0 || exit 1 ;; add) mkdir -p "$D"; : > "$D/$3"; exit 2 ;; del) rm -f "$D/$3"; exit 0 ;; esac; exit 0' ;;
             fail) echo 'case "$2" in show) exit 1 ;; add) exit 2 ;; del) exit 0 ;; esac; exit 0' ;;
             busy) echo 'case "$2" in show) exit 0 ;; add) exit 2 ;; del) exit 0 ;; esac; exit 0' ;;
             hang) echo 'case "$2" in show) exit 1 ;; add) sleep 30 ;; del) exit 0 ;; esac; exit 0' ;;
@@ -91,6 +95,9 @@ make_ip() {
 #           that masks the value would look like;
 # keyhang - awg genkey never answers;
 # twoline - awg genkey prints a valid key and then a second line;
+# crlfkey - awg genkey writes a valid key ending in CRLF: the variable can be
+#          cleaned of the carriage return, the FILE handed to the module cannot;
+# nonlkey - awg genkey writes a valid key with no trailing newline at all;
 # blankline - awg genkey prints a valid key, a BLANK line, and then junk: the
 #          shape that slipped past a guard which only looked at lines one and
 #          two and called the file one line long when the second was empty;
@@ -115,11 +122,13 @@ make_awg() {
             keyhang) echo '  genkey) sleep 30 ;;' ;;
             twoline) echo '  genkey) echo "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; echo "trailing junk" ;;' ;;
             blankline) echo '  genkey) echo "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; echo ""; echo "trailing junk" ;;' ;;
+            crlfkey)   echo '  genkey) printf "%s\r\n" "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
+            nonlkey)   echo '  genkey) printf "%s" "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
             *)       echo '  genkey) echo "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
         esac
         echo '  set)'
         case "$mode" in
-            ok|silent|empty|hpkshow|cpashow|wrongkey|keyhang|spaced|bothwrong|twoline|blankline|cpawrong|indented)
+            ok|silent|empty|hpkshow|cpashow|wrongkey|keyhang|spaced|bothwrong|twoline|blankline|cpawrong|indented|crlfkey|nonlkey)
                 echo '    shift 2; printf "%s\n" "$*" > "'"$TEST_DIR"'/set.args"; exit 0 ;;' ;;
             refuse)
                 # The wording is the one a module built from tag v1.0.20260725
@@ -154,7 +163,7 @@ make_awg() {
         esac
         echo '  showconf)'
         case "$mode" in
-            ok|twoline|blankline)
+            ok|twoline|blankline|crlfkey|nonlkey)
                 echo '    echo "[Interface]"; echo "ListenPort = 51820"'
                 echo '    echo "HeaderProtectionKey = PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="'
                 echo '    echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
@@ -506,6 +515,36 @@ p_key_not_in_argv() {
     both p_key_not_in_argv
 }
 
+p_key_not_in_xtrace() {
+    # 🔴 This is not hygiene for its own sake. `--verbose` turns xtrace on for
+    # the whole installer (`if [[ "$VERBOSE" -eq 1 ]]; then set -x; fi`), and
+    # the text printed when the probe fails TELLS the user to re-run with
+    # `--verbose` and bring the log. That is the exact path along which a log
+    # carrying the key reaches a public issue. The probe suppresses the trace
+    # for its own body; nothing held that in place until this case.
+    # Measured with the suppression replaced by a no-op: the key appears in the
+    # trace seven times, and the whole suite stays green.
+    local src="$1" out trace="$TEST_DIR/xtrace.log"
+    make_ip add; make_awg ok
+    out=$(PATH="$BIN:$PATH" TMPDIR="$TEST_DIR" timeout 60 bash -c '
+        eval "$(sed -n "/^_awg31_module_probe() (/,/^)$/p" "$1")"
+        set -x
+        _awg31_module_probe
+    ' _ "$src" 2>"$trace")
+    [ "$out" = "ok" ] || { echo "the probe under set -x did not reach its verdict ($src): $out"; return 1; }
+    # Without this the case would pass on an empty file, which is how a test
+    # that greps for an absence quietly stops testing anything.
+    [ -s "$trace" ] || { echo "set -x produced no trace at all, so this case proves nothing ($src)"; return 1; }
+    grep -qF 'PROBE+KEY/' "$trace" && { echo "the probe key is in the xtrace output ($src)"; return 1; }
+    return 0
+}
+# Nothing is asserted here about xtrace being restored afterwards: the probe
+# body is a subshell, so its `set +x` cannot escape it in the first place. An
+# assertion about that would hold with the guard and without it.
+@test "probe: the key stays out of the trace under set -x, both twins" {
+    both p_key_not_in_xtrace
+}
+
 p_one_command() {
     make_ip add; make_awg ok
     probe "$1" >/dev/null
@@ -838,9 +877,18 @@ c_cleanup_not_a_file() {
     # 🔴 A FIFO, not a directory. The first version of this test used a
     # directory, and a mutant that dropped the guard entirely SURVIVED it: a
     # directory yields an empty read either way, so the test could not tell the
-    # guarded code from the unguarded one. A FIFO can: without the guard the
-    # read blocks forever, inside a trap that runs on every exit of the
-    # installer, and the cleanup never finishes.
+    # guarded code from the unguarded one.
+    #
+    # ⚠️ Be honest about what is measured NOW: since the read was put under
+    # `timeout -k 1 5 head`, this case no longer separates the guard from its
+    # absence either. Without the guard the read no longer hangs, it stalls for
+    # five seconds and comes back empty, the cleanup takes the "empty or
+    # unreadable" branch, and all three assertions below still hold. Measured:
+    # replacing `-f && ! -L` with `-e` keeps the whole suite green. What this
+    # case still holds down is the OUTCOME - the cleanup finishes, deletes
+    # nothing and does not keep quiet - and the two guards together, since
+    # removing both does hang. Telling them apart needs a writer feeding the
+    # FIFO a well formed name and an assertion that nothing was deleted.
     command -v mkfifo >/dev/null 2>&1 || skip "mkfifo not available"
     local src="$1" out
     out=$(timeout 60 bash -c '
@@ -866,6 +914,41 @@ c_cleanup_not_a_file() {
 }
 @test "cleanup: a record that is not a regular file is ignored, both twins" {
     both c_cleanup_not_a_file
+}
+
+c_cleanup_dangling_symlink() {
+    # 🔴 A dangling symlink fails BOTH the regular-file test and the existence
+    # test, so the branch that reports an unusable record used to stay quiet and
+    # the sweep removed it without a word. That gap was opened by the previous
+    # round's own fix, which narrowed an unconditional else into `elif -e`.
+    # Skipped where the shell cannot make one: Git Bash refuses `ln -s` to a
+    # missing target, and pretending otherwise would be a test that measures
+    # nothing. It runs on Linux, which is where the installer runs.
+    local src="$1" out
+    ( cd "$TEST_DIR" && ln -s /nonexistent/target .lntest ) 2>/dev/null \
+        || skip "this shell cannot create a symlink to a missing target"
+    rm -f "$TEST_DIR/.lntest"
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\nexit 0\n" > "$2/bin/ip"
+        chmod +x "$2/bin/ip"
+        export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
+        rm -f "$TMPDIR"/awg31probe.*
+        ln -s /nonexistent/target "$TMPDIR/awg31probe.$$.iface"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        echo finished
+    ' _ "$src" "$TEST_DIR")
+    [[ "$out" == *finished* ]] || { echo "the cleanup did not finish on a dangling symlink ($src): [$out]"; return 1; }
+    [[ "$out" == *WARNED* ]] || { echo "a dangling symlink record was passed over in silence ($src): [$out]"; return 1; }
+}
+@test "cleanup: a dangling symlink in place of the record is said out loud, both twins" {
+    both c_cleanup_dangling_symlink
 }
 
 c_cleanup_show_unknown() {
@@ -990,11 +1073,32 @@ p_add_bounded_out_keeps_the_record() {
     [ "$out" = "failed" ] || { echo "a bounded-out creation was judged ($src): $out"; return 1; }
     adds=$(grep -c "^link add " "$TEST_DIR/ip.argv" 2>/dev/null || echo 0)
     [ "$adds" -eq 1 ] || { echo "the probe kept creating interfaces after a bounded-out add ($src): $adds"; return 1; }
-    [ -s "$TEST_DIR/awg31probe.$(cat "$TEST_DIR/probe.pid" 2>/dev/null).iface" ] 2>/dev/null || true
     ls "$TEST_DIR"/awg31probe.*.iface >/dev/null 2>&1 || { echo "the record was erased after a bounded-out add ($src)"; return 1; }
 }
 @test "probe: a bounded-out creation keeps its record and stops, both twins" {
     both p_add_bounded_out_keeps_the_record
+}
+
+p_add_made_but_failed_keeps_the_record() {
+    # 🔴 The same situation arriving through an exit code that is not a timeout
+    # one. The first fix here special-cased 124/125/137 and let every other
+    # abnormal exit erase the record and walk to the next name - and then the
+    # `ip link show` that followed found OUR OWN device and read it as "the name
+    # is taken by someone else". Measured before the fix: five interfaces on the
+    # machine, no record naming any of them, not a word. What decides now is
+    # whether the device is there, which does not depend on how the command
+    # ended.
+    local src="$1" out adds
+    make_ip addmade; make_awg ok
+    rm -f "$TEST_DIR"/awg31probe.*
+    out=$(probe "$src")
+    [ "$out" = "failed" ] || { echo "a creation that failed after making the device was judged ($src): $out"; return 1; }
+    adds=$(grep -c "^link add " "$TEST_DIR/ip.argv" 2>/dev/null || echo 0)
+    [ "$adds" -eq 1 ] || { echo "the probe walked on to another name after making a device ($src): $adds"; return 1; }
+    ls "$TEST_DIR"/awg31probe.*.iface >/dev/null 2>&1 || { echo "the record was erased although the device exists ($src)"; return 1; }
+}
+@test "probe: a creation that failed after making the device keeps its record, both twins" {
+    both p_add_made_but_failed_keeps_the_record
 }
 
 p_says_why() {
@@ -1055,6 +1159,31 @@ p_key_blank_second_line() {
 }
 @test "probe: a key file with a blank line and junk stops the probe, both twins" {
     both p_key_blank_second_line
+}
+
+p_key_crlf() {
+    # 🔴 The third visit to this one place, and the root was the same each time:
+    # the check looked at what had been READ AND TIDIED while the module is
+    # handed the file AS IT IS. Stripping the carriage return from the variable
+    # let a CRLF file through, the tool refused it, and control step 2 turned
+    # that into a second-line verdict for a healthy module.
+    make_ip add; make_awg crlfkey
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "a key file with CRLF was accepted ($1): $out"; return 1; }
+}
+@test "probe: a key file ending in CRLF stops the probe, both twins" {
+    both p_key_crlf
+}
+
+p_key_no_newline() {
+    # The library demands exactly 45 bytes, that is the key and one newline. A
+    # file one byte short is not what it validates, so it is not what we accept.
+    make_ip add; make_awg nonlkey
+    local out; out=$(probe "$1")
+    [ "$out" = "failed" ] || { echo "a key file with no trailing newline was accepted ($1): $out"; return 1; }
+}
+@test "probe: a key file with no trailing newline stops the probe, both twins" {
+    both p_key_no_newline
 }
 
 c_probe_explains_every_bail() {
@@ -1241,11 +1370,19 @@ c_record_write_is_guarded() {
     # (O_EXCL) closes the race where something re-plants it in between. Neither
     # can be driven portably from a test on this host, so what is pinned here is
     # that both are present and in that order.
+    #
+    # 🔴 The order half has to be checked as ADJACENCY, not as two independent
+    # greps: `rm -f "$rec"` occurs three times in the probe body (inside
+    # `_probe_cleanup`, in front of the write, and after a failed creation), so
+    # a plain grep for it was satisfied by lines that have nothing to do with
+    # the write. Measured: removing exactly the `rm -f` that guards the write
+    # left this case green.
     local f body
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         body=$(sed -n '/^_awg31_module_probe() (/,/^)$/p' "$BATS_TEST_DIRNAME/../$f")
         [ -n "$body" ] || { echo "no probe body in $f"; return 1; }
-        grep -q 'rm -f "$rec"' <<< "$body" || { echo "the record write is not preceded by rm -f in $f"; return 1; }
+        grep -A1 'rm -f "$rec" 2>/dev/null' <<< "$body" | grep -q 'set -C; printf' \
+            || { echo "the record write is not a cleared path followed by an O_EXCL write in $f"; return 1; }
         grep -q 'set -C; printf' <<< "$body" || { echo "the record write does not use set -C in $f"; return 1; }
     done
     return 0
