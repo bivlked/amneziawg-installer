@@ -1617,7 +1617,7 @@ safe_load_config() {
                 value="${value%\"}"
             fi
             case "$key" in
-                OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
+                OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|AWG_DNS|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
                 AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
@@ -1734,6 +1734,42 @@ validate_port() {
     if ! [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || (( port > 65535 )); then
         die "Некорректный порт: '$port'. Допустимый диапазон: 1-65535."
     fi
+}
+
+validate_dns_list() {
+    local input="$1"
+    local dns
+
+    input="${input//$'\r'/}"
+    input="${input//$'\t'/}"
+
+    [[ -n "$input" ]] || return 1
+    [[ "$input" != *$'\n'* ]] || return 1
+    [[ "$input" != *"'"* ]] || return 1
+    [[ "$input" != *'"'* ]] || return 1
+
+    IFS=',' read -ra dns_servers <<< "$input"
+
+    (( ${#dns_servers[@]} >= 1 && ${#dns_servers[@]} <= 5 )) || return 1
+
+    for dns in "${dns_servers[@]}"; do
+        dns="${dns// /}"
+
+        if [[ "$dns" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+            IFS='.' read -ra octets <<< "$dns"
+
+            for octet in "${octets[@]}"; do
+                (( 10#$octet <= 255 )) || return 1
+            done
+
+        elif [[ "$dns" =~ ^[0-9A-Fa-f:]+$ ]]; then
+            _valid_ipv6 "$dns" || return 1
+        else
+            return 1
+        fi
+    done
+
+    return 0
 }
 
 validate_subnet() {
@@ -2112,7 +2148,22 @@ configure_routing_mode() {
            # служебный 0.0.0.0/8, на котором ядро iOS спотыкается и не доходит до остальных
            # маршрутов. 1.0.0.0/8 + 2.0.0.0/7 + 4.0.0.0/6 = тот же охват без нулевого блока
            # (0.0.0.0/8 всё равно не маршрутизируется). Не возвращать к 0.0.0.0/5 (Issue #42).
-           ALLOWED_IPS="1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6, 8.0.0.0/7, 11.0.0.0/8, 12.0.0.0/6, 16.0.0.0/4, 32.0.0.0/3, 64.0.0.0/2, 128.0.0.0/3, 160.0.0.0/5, 168.0.0.0/6, 172.0.0.0/12, 172.32.0.0/11, 172.64.0.0/10, 172.128.0.0/9, 173.0.0.0/8, 174.0.0.0/7, 176.0.0.0/4, 192.0.0.0/9, 192.128.0.0/11, 192.160.0.0/13, 192.169.0.0/16, 192.170.0.0/15, 192.172.0.0/14, 192.176.0.0/12, 192.192.0.0/10, 193.0.0.0/8, 194.0.0.0/7, 196.0.0.0/6, 200.0.0.0/5, 208.0.0.0/4, 8.8.8.8/32, 1.1.1.1/32"
+           ALLOWED_IPS="1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6, 8.0.0.0/7, 11.0.0.0/8, 12.0.0.0/6, 16.0.0.0/4, 32.0.0.0/3, 64.0.0.0/2, 128.0.0.0/3, 160.0.0.0/5, 168.0.0.0/6, 172.0.0.0/12, 172.32.0.0/11, 172.64.0.0/10, 172.128.0.0/9, 173.0.0.0/8, 174.0.0.0/7, 176.0.0.0/4, 192.0.0.0/9, 192.128.0.0/11, 192.160.0.0/13, 192.169.0.0/16, 192.170.0.0/15, 192.172.0.0/14, 192.176.0.0/12, 192.192.0.0/10, 193.0.0.0/8, 194.0.0.0/7, 196.0.0.0/6, 200.0.0.0/5, 208.0.0.0/4"
+           local _dns _dns_route
+           IFS=',' read -ra _dns_servers <<< "${AWG_DNS:-}"
+           for _dns in "${_dns_servers[@]}"; do
+                _dns="${_dns// /}"
+
+                if [[ "$_dns" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+                    _dns_route="${_dns}/32"
+                elif [[ "$_dns" =~ : ]]; then
+                    _dns_route="${_dns}/128"
+                else
+                    continue
+                fi
+
+                ALLOWED_IPS+=", ${_dns_route}"
+            done
            log "Выбран режим: Список Amnezia+DNS." ;;
         3) if [[ -z "$CLI_CUSTOM_ROUTES" ]]; then
                # 🔴 Проверять КОД ВОЗВРАТА read обязательно, а не только значение.
@@ -4205,6 +4256,7 @@ initialize_setup() {
     # Инициализация переменных
     AWG_PORT=$default_port
     AWG_TUNNEL_SUBNET=$default_subnet
+    AWG_DNS=""
     DISABLE_IPV6="default"
     ALLOWED_IPS_MODE="default"
     ALLOWED_IPS=""
@@ -4229,6 +4281,7 @@ initialize_setup() {
         safe_load_config "$CONFIG_FILE" || log_warn "Не удалось полностью загрузить настройки из $CONFIG_FILE."
         AWG_PORT=${AWG_PORT:-$default_port}
         AWG_TUNNEL_SUBNET=${AWG_TUNNEL_SUBNET:-$default_subnet}
+        AWG_DNS=${AWG_DNS:-"1.1.1.1, 1.0.0.1"}
         DISABLE_IPV6=${DISABLE_IPV6:-"default"}
         ALLOWED_IPS_MODE=${ALLOWED_IPS_MODE:-"default"}
         ALLOWED_IPS=${ALLOWED_IPS:-""}
@@ -4393,6 +4446,20 @@ initialize_setup() {
             done
         fi
         validate_subnet "$AWG_TUNNEL_SUBNET"
+        if [[ "$AUTO_YES" -eq 0 ]]; then
+            while true; do
+                read -rp "Введите DNS-серверы для клиентов (через запятую): " input_dns < /dev/tty
+
+                if validate_dns_list "$input_dns"; then
+                    AWG_DNS="$input_dns"
+                    break
+                fi
+
+                log_warn "Некорректный DNS. Пример: 1.1.1.1, 8.8.8.8"
+            done
+        fi
+        AWG_DNS="${AWG_DNS:-1.1.1.1, 1.0.0.1}"
+        validate_dns_list "$AWG_DNS"
         if [[ "$DISABLE_IPV6" == "default" ]]; then configure_ipv6; fi
         if [[ "$ALLOWED_IPS_MODE" == "default" ]]; then configure_routing_mode; fi
     else
@@ -4532,6 +4599,7 @@ export OS_VERSION='${OS_VERSION:-}'
 export OS_CODENAME='${OS_CODENAME:-}'
 export AWG_PORT=${AWG_PORT}
 export AWG_TUNNEL_SUBNET='${AWG_TUNNEL_SUBNET}'
+export AWG_DNS='${AWG_DNS}'
 export DISABLE_IPV6=${DISABLE_IPV6}
 export ALLOWED_IPS_MODE=${ALLOWED_IPS_MODE}
 export ALLOWED_IPS='${ALLOWED_IPS}'

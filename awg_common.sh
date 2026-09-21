@@ -2049,6 +2049,7 @@ render_server_config() {
 [Interface]
 PrivateKey = ${server_privkey}
 Address = ${address_line}
+DNS = ${AWG_DNS:-1.1.1.1, 1.0.0.1}
 MTU = ${AWG_MTU:-1280}
 ListenPort = ${AWG_PORT}
 PostUp = ${postup}
@@ -2345,7 +2346,7 @@ render_client_config() {
 [Interface]
 PrivateKey = ${client_privkey}
 Address = ${address_line}
-DNS = 1.1.1.1, 1.0.0.1
+DNS = ${AWG_DNS:-1.1.1.1, 1.0.0.1}
 MTU = ${mtu}
 Jc = ${AWG_Jc}
 Jmin = ${AWG_Jmin}
@@ -4209,7 +4210,7 @@ regenerate_client() {
     fi
 
     # Сохраняем пользовательские настройки из текущего .conf (modify)
-    local current_dns="1.1.1.1, 1.0.0.1" current_keepalive="33" current_allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
+    local current_dns="${AWG_DNS:-1.1.1.1, 1.0.0.1}" current_keepalive="33" current_allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
     local _had_conf=0
     if [[ -f "$AWG_DIR/${name}.conf" ]]; then
         _had_conf=1
@@ -4321,7 +4322,6 @@ regenerate_client() {
         fi
         current_allowed_ips="$_aip_new"
     fi
-    [[ "$current_dns" == "1.1.1.1" ]] && current_dns="1.1.1.1, 1.0.0.1"
 
     # Восстанавливаем пользовательские настройки (экранируем & и \ для sed replacement)
     local _dns _ka _aip
