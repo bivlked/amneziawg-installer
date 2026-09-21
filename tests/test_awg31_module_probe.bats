@@ -41,6 +41,9 @@ teardown() {
 # addhang - creates the device and THEN hangs, which is what a delayed netlink
 #          acknowledgement looks like: timeout kills the command after the
 #          kernel has already made the interface;
+# addunknown - answers the availability check normally and then stops answering
+#          once a creation has been attempted: a netlink socket that goes quiet,
+#          which is the third arm of the device check ("could not be checked");
 # addmade - creates the device and then exits 2, which is the same situation
 #          arriving through an exit code that is NOT one of the timeout ones:
 #          a signal from outside, a failure reported after the fact.
@@ -110,6 +113,19 @@ make_ip() {
 # bothwrong - both parameter NAMES come back carrying values that are not ours;
 # notconf - the set is taken, but showconf answers with something that is not a
 #           config at all;
+# nulkey - genkey writes `<44 base64><NUL><LF>`, 46 bytes: the corruption that
+#          passed all three of the older guards, because bash drops a NUL;
+# nulendkey - genkey writes `<44 base64><NUL>`: exactly 45 bytes, with a NUL
+#          where the newline belongs. The size measurement is satisfied, so this
+#          is the input that belongs to the byte comparison alone;
+# badshapekey - genkey writes 44 characters that are not base64 plus a newline:
+#          45 bytes again, and the input that belongs to the shape check alone;
+# keyswap - replaces the validated key file with a SYMLINK to another 45-byte
+#          file and then refuses the key: `wc -c` follows the link and answers
+#          45, so only `! -L` can see it;
+# keygrow - refuses anything carrying the key AND grows the key file by a byte
+#          each time, which models a key file replaced between the validation
+#          and control step 2;
 # hangrefuse - the full set hangs, and a later set carrying the key refuses.
 make_awg() {
     local mode="$1"
@@ -126,11 +142,13 @@ make_awg() {
             crlfkey)   echo '  genkey) printf "%s\r\n" "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
             nonlkey)   echo '  genkey) printf "%s" "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
             nulkey)    echo '  genkey) printf "%s\\0\\n" "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
+            nulendkey) echo '  genkey) printf "%s\\0" "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
+            badshapekey) echo '  genkey) printf "%s\\n" "PROBE KEY THAT IS FORTY FOUR CHARACTERS LONG" ;;' ;;
             *)       echo '  genkey) echo "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;' ;;
         esac
         echo '  set)'
         case "$mode" in
-            ok|silent|empty|hpkshow|cpashow|wrongkey|keyhang|spaced|bothwrong|twoline|blankline|cpawrong|indented|crlfkey|nonlkey|nulkey)
+            ok|silent|empty|hpkshow|cpashow|wrongkey|keyhang|spaced|bothwrong|twoline|blankline|cpawrong|indented|crlfkey|nonlkey|nulkey|nulendkey|badshapekey)
                 echo '    shift 2; printf "%s\n" "$*" > "'"$TEST_DIR"'/set.args"; exit 0 ;;' ;;
             refuse)
                 # The wording is the one a module built from tag v1.0.20260725
@@ -147,6 +165,20 @@ make_awg() {
                 echo '    exit 1 ;;' ;;
             hang)
                 echo '    if [[ "$*" == *header-protection-key* ]]; then sleep 30; fi; exit 0 ;;' ;;
+            keyswap)
+                # Replaces the validated key file with a SYMLINK to another file
+                # of exactly 45 bytes, then refuses anything carrying the key.
+                # `wc -c` follows the link and still answers 45, so the size
+                # measurement cannot see the swap at all: only `! -L` can.
+                echo '    p=""; prev=""; for a in "$@"; do [ "$prev" = "header-protection-key" ] && p="$a"; prev="$a"; done'
+                echo '    if [[ -n "$p" ]]; then'
+                echo '      if [[ ! -L "$p" ]]; then'
+                echo '        printf "%s\\n" "OTHER+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" > "$p.real"'
+                echo '        rm -f "$p"; MSYS=winsymlinks:nativestrict ln -s "$p.real" "$p"'
+                echo '      fi'
+                echo '      exit 1'
+                echo '    fi'
+                echo '    exit 0 ;;' ;;
             keygrow)
                 # Refuses anything carrying the key AND makes the file one byte
                 # longer each time, which models a key file replaced between the
@@ -174,9 +206,17 @@ make_awg() {
         esac
         echo '  showconf)'
         case "$mode" in
-            ok|twoline|blankline|crlfkey|nonlkey|nulkey|keygrow)
+            ok|twoline|blankline|crlfkey|nonlkey|nulkey|nulendkey|keygrow|keyswap)
                 echo '    echo "[Interface]"; echo "ListenPort = 51820"'
                 echo '    echo "HeaderProtectionKey = PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="'
+                echo '    echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
+            badshapekey)
+                # Echoes back the MALFORMED key, so that with the shape check
+                # removed the probe reaches `ok` and the case can see it. Sharing
+                # the `ok` branch made the probe refuse over a value mismatch
+                # instead, and the mutant survived.
+                echo '    echo "[Interface]"; echo "ListenPort = 51820"'
+                echo '    echo "HeaderProtectionKey = PROBE KEY THAT IS FORTY FOUR CHARACTERS LONG"'
                 echo '    echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
             silent)
                 echo '    echo "[Interface]"; echo "ListenPort = 51820"; exit 0 ;;' ;;
@@ -933,11 +973,16 @@ c_cleanup_dangling_symlink() {
     # test, so the branch that reports an unusable record used to stay quiet and
     # the sweep removed it without a word. That gap was opened by the previous
     # round's own fix, which narrowed an unconditional else into `elif -e`.
-    # Skipped where the shell cannot make one: Git Bash refuses `ln -s` to a
-    # missing target, and pretending otherwise would be a test that measures
-    # nothing. It runs on Linux, which is where the installer runs.
+    # 🔴 It used to skip here, on the belief that this shell cannot make a
+    # dangling symlink. That belief was wrong and the skip made the only guard
+    # of the `|| -L` fix run NOWHERE: `MSYS=winsymlinks:nativestrict` makes a
+    # real one, and measured on it `-e` is false while `-L` is true, which is
+    # exactly the shape this case needs. The skip stays as a fallback for a
+    # shell that genuinely cannot, because a case that quietly measures nothing
+    # is worse than one that says so.
     local src="$1" out
-    ( cd "$TEST_DIR" && ln -s /nonexistent/target .lntest ) 2>/dev/null \
+    ( cd "$TEST_DIR" && MSYS=winsymlinks:nativestrict ln -s /nonexistent/target .lntest ) 2>/dev/null \
+        && [ -L "$TEST_DIR/.lntest" ] \
         || skip "this shell cannot create a symlink to a missing target"
     rm -f "$TEST_DIR/.lntest"
     out=$(timeout 60 bash -c '
@@ -947,7 +992,7 @@ c_cleanup_dangling_symlink() {
         export PATH="$2/bin:$PATH"
         export TMPDIR="$2/tmp"
         rm -f "$TMPDIR"/awg31probe.*
-        ln -s /nonexistent/target "$TMPDIR/awg31probe.$$.iface"
+        MSYS=winsymlinks:nativestrict ln -s /nonexistent/target "$TMPDIR/awg31probe.$$.iface"
         log_warn() { echo "WARNED $*"; }
         _install_temp_files=()
         _install_cleaned=0
@@ -961,6 +1006,80 @@ c_cleanup_dangling_symlink() {
 }
 @test "cleanup: a dangling symlink in place of the record is said out loud, both twins" {
     both c_cleanup_dangling_symlink
+}
+
+c_cleanup_read_cut_short() {
+    # 🔴 A read that was CUT SHORT after printing something. `timeout` killing
+    # `head` does not take back what `head` had already written, so the value in
+    # hand is a FRAGMENT with a non-zero status beside it. The branch chain used
+    # to test `-n "$_probe_if"` before it ever looked at the status, so the
+    # fragment was announced as the record's CONTENTS: a confident sentence
+    # about a name that is not ours, no word that the read had failed, and a
+    # real leftover interface left with no way to find it.
+    #
+    # The stub prints a plausible foreign name and exits non-zero, which is what
+    # the bound firing looks like from inside this block.
+    local src="$1" out want="прочиталась не полностью"
+    [[ "$src" == *_en.sh ]] && want="read only in part"
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\nexit 0\n" > "$2/bin/ip"
+        printf "#!/usr/bin/env bash\nprintf \"awgp999x1\"\nexit 124\n" > "$2/bin/head"
+        chmod +x "$2/bin/ip" "$2/bin/head"
+        export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
+        rm -rf "$TMPDIR"/awg31probe.*
+        printf "%s\n" "awgp999x1" > "$TMPDIR/awg31probe.$$.iface"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        echo finished
+    ' _ "$src" "$TEST_DIR" 2>&1)
+    [[ "$out" == *finished* ]] || { echo "the cleanup did not finish on a truncated read ($src): [$out]"; return 1; }
+    [[ "$out" == *"$want"* ]] || { echo "a truncated read was announced as the record contents ($src): [$out]"; return 1; }
+}
+@test "cleanup: a read cut short is not announced as the record contents, both twins" {
+    both c_cleanup_read_cut_short
+}
+
+c_cleanup_read_failed() {
+    # 🔴 The branch that carries the ONLY useful advice in this block, and it
+    # had no case: a mutant turning `elif (( _probe_head_rc == 0 ))` into
+    # `elif true` survived the whole suite, and under it a record that could not
+    # be READ is reported as an empty one - "no interface was created" - exactly
+    # where an interface most likely DOES exist.
+    #
+    # A `head` that exits non-zero is what an unreadable file, a hung mount and
+    # a missing `head` all look like from inside this block. A planted FIFO does
+    # NOT reach here: `-f && ! -L` turns it away earlier, which is why
+    # c_cleanup_not_a_file cannot cover this fork.
+    local src="$1" out want="код 1"
+    [[ "$src" == *_en.sh ]] && want="code 1"
+    out=$(timeout 60 bash -c '
+        mkdir -p "$2/bin" "$2/tmp"
+        printf "#!/usr/bin/env bash\nexit 0\n" > "$2/bin/ip"
+        printf "#!/usr/bin/env bash\nexit 1\n" > "$2/bin/head"
+        chmod +x "$2/bin/ip" "$2/bin/head"
+        export PATH="$2/bin:$PATH"
+        export TMPDIR="$2/tmp"
+        rm -rf "$TMPDIR"/awg31probe.*
+        printf "%s\n" "awgp$$x1" > "$TMPDIR/awg31probe.$$.iface"
+        log_warn() { echo "WARNED $*"; }
+        _install_temp_files=()
+        _install_cleaned=0
+        eval "$(sed -n "/^_probe_warn() {/,/^}/p" "$1")"
+        eval "$(sed -n "/^_install_cleanup() {/,/^}/p" "$1")"
+        _install_cleanup
+        echo finished
+    ' _ "$src" "$TEST_DIR" 2>&1)
+    [[ "$out" == *finished* ]] || { echo "the cleanup did not finish on an unreadable record ($src): [$out]"; return 1; }
+    [[ "$out" == *"$want"* ]] || { echo "a record that could not be read was reported as an empty one ($src): [$out]"; return 1; }
+}
+@test "cleanup: a record that cannot be read is not reported as an empty one, both twins" {
+    both c_cleanup_read_failed
 }
 
 c_cleanup_show_unknown() {
@@ -1237,13 +1356,124 @@ p_key_nul_byte() {
     # the file AS IT IS, refuses it over its size, control step 1 carries no key
     # and passes, and the refusal at control step 2 reads as "the module does
     # not understand the key" - a healthy third-line module told to rebuild
-    # itself and reboot. Measured before the fix: both twins answered `line2`
-    # against stubs modelling a healthy module.
+    # itself and reboot.
+    #
+    # ⚠️ Be exact about what THIS case measures, because the danger and the case
+    # are not the same thing. The `nulkey` stub ACCEPTS everything, so before the
+    # fix both twins answered `ok` here, not `line2` - and that is still a red
+    # case against an expectation of `failed`, which is why it works. The `line2`
+    # chain needs a stub that refuses over the FILE, the way a real tool does;
+    # measured separately, and it does produce `line2` on both twins. Pinning
+    # that chain here would need such a stub, and until one exists a reader must
+    # not take this case for cover of it.
     local src="$1" out
     make_ip add; make_awg nulkey
     out=$(probe "$src")
     [ "$out" = "failed" ] || { echo "a key file padded with a NUL was judged ($src): $out"; return 1; }
 }
+p_wc_lies() {
+    # 🔴 The size measurement is only worth what its PARSING is worth. The first
+    # form threw away every non-digit and ignored the exit status, so a `wc`
+    # printing `4x5` collapsed into "45" and the guard passed the very byte it
+    # was put there to catch - a path to a wrong verdict inside the fix for a
+    # wrong verdict.
+    #
+    # 🔴 TWO stubs, because the two halves have to be held SEPARATELY. The first
+    # version used one stub that both printed rubbish AND exited non-zero, so
+    # the status check alone accounted for it and a mutant restoring the loose
+    # digit filter survived. Measured: with the exiting-zero stub that mutant
+    # dies.
+    #
+    # The key file is malformed in both halves (a NUL before the newline), so a
+    # healthy module would refuse it and the probe would say `line2`. The byte
+    # count is the only thing standing between that and the truth.
+    local src="$1" out
+    make_ip add; make_awg nulkey
+
+    # half 1: rubbish that the loose filter would turn into 45, exit status fine
+    printf '#!/usr/bin/env bash\nprintf "4x5\\n"\nexit 0\n' > "$BIN/wc"
+    chmod +x "$BIN/wc"
+    out=$(probe "$src")
+    rm -f "$BIN/wc"
+    [ "$out" = "failed" ] || { echo "a wc printing 4x5 produced a verdict ($src): $out"; return 1; }
+
+    # half 2: a believable number from a command that FAILED
+    printf '#!/usr/bin/env bash\nprintf "45\\n"\nexit 1\n' > "$BIN/wc"
+    chmod +x "$BIN/wc"
+    out=$(probe "$src")
+    rm -f "$BIN/wc"
+    [ "$out" = "failed" ] || { echo "a failed wc printing 45 produced a verdict ($src): $out"; return 1; }
+
+    # half 3: digits split across LINES, from a command that succeeded. This is
+    # the half that tells `[[:blank:]]` from `[[:space:]]` - a newline is
+    # whitespace, so stripping whitespace would join `4` and `5` into 45 and
+    # accept a 46-byte file. Stripping blanks only keeps them apart.
+    printf '#!/usr/bin/env bash\nprintf "4\\n5\\n"\nexit 0\n' > "$BIN/wc"
+    chmod +x "$BIN/wc"
+    out=$(probe "$src")
+    rm -f "$BIN/wc"
+    [ "$out" = "failed" ] || { echo "a wc printing digits on separate lines produced a verdict ($src): $out"; return 1; }
+}
+@test "probe: a size measurement that cannot be trusted stops the probe, both twins" {
+    both p_wc_lies
+}
+
+p_key_swapped_for_symlink() {
+    # 🔴 The case the size measurement CANNOT have. The key file is replaced
+    # between the shape check and control step 2 by a symlink pointing at
+    # another file of exactly 45 bytes. `wc -c` follows the link and answers 45,
+    # `-f` follows it and is true; the only guard that sees the swap is `! -L`.
+    # Measured with that guard reverted to a bare `-s`: both twins answer
+    # `line2` - a healthy third-line module told to rebuild itself and reboot,
+    # while the probe's own message says the interface is fine.
+    #
+    # Reachable by anyone who can write into the temporary directory, which is
+    # weaker than the usual "a hostile root" excuse: TMPDIR comes from the
+    # environment.
+    command -v ln >/dev/null 2>&1 || skip "ln not available"
+    local src="$1" out
+    make_ip add; make_awg keyswap
+    out=$(probe "$src")
+    [ "$out" = "failed" ] || { echo "a key file swapped for a symlink produced a verdict ($src): $out"; return 1; }
+}
+@test "probe: a key file swapped for a symlink is not a second-line verdict, both twins" {
+    both p_key_swapped_for_symlink
+}
+
+p_key_nul_instead_of_newline() {
+    # 🔴 Exactly 45 bytes, so the size measurement is satisfied - and a NUL where
+    # the newline belongs, which bash drops in every reader. What refuses this is
+    # the comparison of the raw file against the line plus its newline, and
+    # nothing else: measured, with that comparison neutralised both twins answer
+    # `ok` on a file the tool would refuse.
+    #
+    # This case exists because the size measurement took over the inputs of the
+    # three older guards when it was added in front of them. A guard whose every
+    # input is caught by something else is a guard that will be deleted by the
+    # next person who reads the file.
+    local src="$1" out
+    make_ip add; make_awg nulendkey
+    out=$(probe "$src")
+    [ "$out" = "failed" ] || { echo "a key file with a NUL where the newline belongs was judged ($src): $out"; return 1; }
+}
+@test "probe: a key file with a NUL in place of the newline stops the probe, both twins" {
+    both p_key_nul_instead_of_newline
+}
+
+p_key_wrong_shape_right_size() {
+    # The input that belongs to the SHAPE check alone: 45 bytes, one line, the
+    # file equal to that line plus its newline, and 44 characters that are not
+    # base64. Same reason as the case above - the shape check kept its job and
+    # lost every input that used to demonstrate it.
+    local src="$1" out
+    make_ip add; make_awg badshapekey
+    out=$(probe "$src")
+    [ "$out" = "failed" ] || { echo "a key of the right size and the wrong shape was judged ($src): $out"; return 1; }
+}
+@test "probe: a key of the right size and the wrong shape stops the probe, both twins" {
+    both p_key_wrong_shape_right_size
+}
+
 @test "probe: a key file padded with a NUL byte stops the probe, both twins" {
     both p_key_nul_byte
 }

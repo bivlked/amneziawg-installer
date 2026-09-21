@@ -173,6 +173,18 @@ _install_cleanup() {
                         _probe_warn "A leftover of the module probe could not be removed: $_probe_safe (checking the device returned $_probe_rc). Take it away by hand: ip link del $_probe_safe."
                     fi
                 fi
+            elif [[ -n "$_probe_if" && $_probe_head_rc -ne 0 ]]; then
+                # 🔴 The read was CUT SHORT, but something had already arrived:
+                # `timeout` killing `head` does not take back what it printed.
+                # So what we hold is a FRAGMENT, not the contents of the record,
+                # and it must not be spoken of as the contents - which is exactly
+                # what the previous form did, because it looked at emptiness
+                # before it looked at the exit status. The cost: a person was
+                # told confidently about a name that is not theirs, was not told
+                # the read had failed, and was left with a real leftover and no
+                # way to find it.
+                _probe_keep=1
+                _probe_warn "The module probe record was read only in part (code $_probe_head_rc), it begins: $_probe_safe. It cannot be judged from; look for a leftover with: ip link show type amneziawg | grep awgp$$. The record itself is kept in the temporary directory."
             elif [[ -n "$_probe_if" ]]; then
                 # 🔴 Staying quiet here is not allowed. "There is a record and I
                 # did not understand it" is not the same as "there was no probe",
@@ -183,11 +195,17 @@ _install_cleanup() {
                 _probe_warn "The module probe record carries a name the probe of this run could not have created: $_probe_safe. The interface is left alone and the record itself is kept in the temporary directory."
             elif (( _probe_head_rc == 0 )); then
                 # Empty AND read successfully: the record was created but never
-                # filled. The only way here is death between creating the file
-                # and writing the name into it, and `ip link add` comes AFTER
-                # that, so no interface exists and there is nothing to look for.
+                # filled. The ordinary way here is death between creating the
+                # file and writing the name into it, and `ip link add` comes
+                # AFTER that, so most likely no interface exists. ⚠️ "Most
+                # likely" on purpose: this block is built on not trusting what
+                # the directory holds, and three lines above a record naming
+                # eth0 is treated as planted. An empty record can be planted too,
+                # or truncated after the interface already existed. So the way to
+                # find a leftover is offered here as well - it costs one clause
+                # and does not lie if the assumption is wrong.
                 _probe_keep=1
-                _probe_warn "The module probe record is empty: the name was never written and no interface was created. The record itself is kept in the temporary directory."
+                _probe_warn "The module probe record is empty: the name was never written, so most likely no interface was created. If in doubt, look: ip link show type amneziawg | grep awgp$$. The record itself is kept in the temporary directory."
             else
                 # 🔴 The read FAILED, which is a different thing entirely. The
                 # ways here are the bound firing (a planted FIFO, a hung mount)
@@ -848,7 +866,10 @@ _awg31_module_probe() (
     # was raised to the count of the PREVIOUS commit - the very commit that had
     # added another reason. The code can be asked (`grep -c '_probe_say "'` over
     # the function body), while a written number rots in silence. What matters
-    # is not the count but the invariant: no refusal is silent. the verdict goes to stdout and
+    # is not the count but the invariant: no refusal is silent on any path the
+    # probe chooses ITSELF - the signal handler below is silent on purpose, and
+    # that is the only exception.
+    # Why none of them were learned before: the verdict goes to stdout and
     # everything else was thrown away. stdout is taken, but stderr is free and
     # is not captured. The key never reaches it: the module is handed a PATH to
     # a file, and the showconf output does not go into diagnostics at all.
@@ -861,7 +882,7 @@ _awg31_module_probe() (
         fi
     }
     local ifn="" kf="" rec="" key="" out="" line="" ctl="" rc=0 arc=0 i=0 made=0 cleaned=0
-    local klines=() kraw="" kbytes=""
+    local klines=() kraw="" kbytes="" krc=0
     local seen=0 hpk=0 cpa=0 hpk_name=0 cpa_name=0
     command -v ip >/dev/null 2>&1  || { _probe_say "the ip command was not found"; printf 'failed'; exit 0; }
     command -v awg >/dev/null 2>&1 || { _probe_say "the awg command was not found"; printf 'failed'; exit 0; }
@@ -930,7 +951,8 @@ _awg31_module_probe() (
     # DELIBERATELY: the key VALUE still never leaves the file (it is fed on
     # stdin, the path never reaches argv, and only a number comes back), and
     # without counting the bytes that promise was costing a verdict.
-    # What each check catches (measured 20 sep 2026 over six corruptions):
+    # What each check catches (measured 20 sep 2026, one file per corrupt
+    # genkey stub; again NO number here, for the same reason):
     #   not 45 bytes          -> a NUL, and any byte the readers cannot see;
     #   not one line          -> two lines and junk; it gives the better message;
     #   file is not line + \n -> no trailing newline;
@@ -939,9 +961,18 @@ _awg31_module_probe() (
     # lines are caught by the first and by the second alike. Removing one of two
     # overlapping guards leaves the verdict where it was - measured by mutation,
     # not asserted.
-    kbytes=$(wc -c < "$kf" 2>/dev/null)
-    kbytes="${kbytes//[^0-9]/}"
-    [[ "$kbytes" == 45 ]] || { _probe_say "the key file is not exactly 45 bytes (bytes: ${kbytes:-unknown})"; printf 'failed'; exit 0; }
+    kbytes=$(timeout -k 1 5 wc -c < "$kf" 2>/dev/null)
+    krc=$?
+    # 🔴 Only BLANKS are stripped - spaces and tabs, `[[:blank:]]` - and the
+    # exit status is read. Not `[[:space:]]`: a newline is whitespace too, so
+    # `4\n5` would collapse into "45", the very joining this was moved away from. The first
+    # form threw away every non-digit (`${kbytes//[^0-9]/}`) and ignored the
+    # status: a `wc` that printed `4x5` and failed then collapsed into "45" and
+    # opened a path to a WRONG verdict - the guard put there to catch an extra
+    # byte let that byte through itself. Whitespace still has to go: not every
+    # `wc` prints the number without padding.
+    kbytes="${kbytes//[[:blank:]]/}"
+    [[ $krc -eq 0 && "$kbytes" == 45 ]] || { _probe_say "the key file is not exactly 45 bytes (code $krc, bytes: ${kbytes:-unknown})"; printf 'failed'; exit 0; }
     mapfile -t klines 2>/dev/null < "$kf" || :
     (( ${#klines[@]} == 1 )) || { _probe_say "the key file is not exactly one line (lines: ${#klines[@]})"; printf 'failed'; exit 0; }
     key="${klines[0]}"
@@ -1033,17 +1064,24 @@ _awg31_module_probe() (
         # 🔴 The SAME thing is checked here as at validation: a regular file,
         # not a symlink, readable, and exactly 45 bytes. ⚠️ Only the SIZE half
         # is held behaviourally, by the case where the file grows between the
-        # shape check and this step. The -f/! -L/-r triple is covered by the
-        # size measurement on every input this suite can produce and has NO case
-        # of its own: a file cannot be turned into a symlink or made unreadable
-        # on the development host. Said plainly so the next reader does not take
-        # overlap for coverage. The old `-s` form asked
+        # shape check and this step.
+        # 🔴 But the -f/! -L/-r triple is NOT redundant, and the previous wording
+        # of this comment lied by saying it had no case of its own. Its case is a
+        # file whose size CANNOT be measured: a FIFO can be planted at that path,
+        # and `wc -c` on one sits there rather than answering. Measured: reading
+        # a FIFO under an external bound returns 124 after five seconds. There is
+        # a bound around `wc` now, so the hang is gone either way, but the triple
+        # runs FIRST and answers before those five seconds are spent - and it
+        # also sees a symlink to a perfectly good file, which the size cannot see
+        # at all. What it genuinely lacks is a TEST: on the development host a
+        # file can be turned neither into a symlink nor into an unreadable one. The old `-s` form asked
         # only "not empty" and let through precisely the file it was put there
         # to stop - one replaced between the validation and this step.
         [[ -f "$kf" && ! -L "$kf" && -r "$kf" ]] || { _probe_say "the key file is not a regular readable file before control step 2"; printf 'failed'; exit 0; }
-        kbytes=$(wc -c < "$kf" 2>/dev/null)
-        kbytes="${kbytes//[^0-9]/}"
-        [[ "$kbytes" == 45 ]] || { _probe_say "the key file is not exactly 45 bytes before control step 2 (bytes: ${kbytes:-unknown})"; printf 'failed'; exit 0; }
+        kbytes=$(timeout -k 1 5 wc -c < "$kf" 2>/dev/null)
+        krc=$?
+        kbytes="${kbytes//[[:blank:]]/}"
+        [[ $krc -eq 0 && "$kbytes" == 45 ]] || { _probe_say "the key file is not exactly 45 bytes before control step 2 (code $krc, bytes: ${kbytes:-unknown})"; printf 'failed'; exit 0; }
         timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 \
             header-protection-key "$kf" </dev/null >/dev/null 2>&1
         ctl=$?
