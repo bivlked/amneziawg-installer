@@ -948,9 +948,13 @@ _awg31_module_probe() (
     # (_awg_hpk_file_valid): with `wc -c`. Builtins CANNOT do this - bash cannot
     # hold a NUL in a variable at all, so every reader loses it in silence. The
     # old promise that the key path runs no external command is withdrawn
-    # DELIBERATELY: the key VALUE still never leaves the file (it is fed on
-    # stdin, the path never reaches argv, and only a number comes back), and
-    # without counting the bytes that promise was costing a verdict.
+    # DELIBERATELY: the key VALUE still never leaves the file - it is fed on
+    # stdin, only a number comes back, and without counting the bytes that
+    # promise was costing a verdict.
+    # ⚠️ Exactly about the PATH, because the previous wording promised more than
+    # it kept: the path DOES reach argv, both here in `timeout`/`sh` and below in
+    # `awg set`, which is handed it on purpose. It is not a secret: it is a random
+    # name from `mktemp` whose only job is to make a race hard, not to hide.
     # What each check catches (measured 20 sep 2026, one file per corrupt
     # genkey stub; again NO number here, for the same reason):
     #   not 45 bytes          -> a NUL, and any byte the readers cannot see;
@@ -961,7 +965,18 @@ _awg31_module_probe() (
     # lines are caught by the first and by the second alike. Removing one of two
     # overlapping guards leaves the verdict where it was - measured by mutation,
     # not asserted.
-    kbytes=$(timeout -k 1 5 wc -c < "$kf" 2>/dev/null)
+    # 🔴 The TRIPLE first, and it answers WITHOUT OPENING the file. That is not
+    # decoration: a `timeout` around `wc` does NOT bound the open, because the
+    # redirection `< "$kf"` is performed by the CALLING shell before `timeout`
+    # ever runs. Measured 21 sep 2026: `timeout -k 1 5 wc -c < FIFO` NEVER
+    # returns, while the same command with the redirection INSIDE the bounded
+    # process honestly gives 124 after five seconds. So a planted FIFO hung the
+    # probe for good, and silently - the exact state it was written to avoid.
+    # Both things are done here: the triple answers first and cheaply, and the
+    # redirection moved inside the bound, which closes the race between the test
+    # and the open. The same trap is described below for `read -t` in the cleanup.
+    [[ -f "$kf" && ! -L "$kf" && -r "$kf" ]] || { _probe_say "the key file is not a regular readable file"; printf 'failed'; exit 0; }
+    kbytes=$(timeout -k 1 5 sh -c 'wc -c < "$0"' "$kf" 2>/dev/null)
     krc=$?
     # 🔴 Only BLANKS are stripped - spaces and tabs, `[[:blank:]]` - and the
     # exit status is read. Not `[[:space:]]`: a newline is whitespace too, so
@@ -972,6 +987,9 @@ _awg31_module_probe() (
     # byte let that byte through itself. Whitespace still has to go: not every
     # `wc` prints the number without padding.
     kbytes="${kbytes//[[:blank:]]/}"
+    # The comparison is EXACT precisely because the right-hand side is a literal:
+    # put a variable or a pattern there and the exactness disappears in silence,
+    # with no test noticing.
     [[ $krc -eq 0 && "$kbytes" == 45 ]] || { _probe_say "the key file is not exactly 45 bytes (code $krc, bytes: ${kbytes:-unknown})"; printf 'failed'; exit 0; }
     mapfile -t klines 2>/dev/null < "$kf" || :
     (( ${#klines[@]} == 1 )) || { _probe_say "the key file is not exactly one line (lines: ${#klines[@]})"; printf 'failed'; exit 0; }
@@ -1068,17 +1086,18 @@ _awg31_module_probe() (
         # 🔴 But the -f/! -L/-r triple is NOT redundant, and the previous wording
         # of this comment lied by saying it had no case of its own. Its case is a
         # file whose size CANNOT be measured: a FIFO can be planted at that path,
-        # and `wc -c` on one sits there rather than answering. Measured: reading
-        # a FIFO under an external bound returns 124 after five seconds. There is
-        # a bound around `wc` now, so the hang is gone either way, but the triple
-        # runs FIRST and answers before those five seconds are spent - and it
-        # also sees a symlink to a perfectly good file, which the size cannot see
-        # at all. What it genuinely lacks is a TEST: on the development host a
+        # and `wc -c` on one sits there rather than answering. ⚠️ The previous
+        # wording credited the `timeout` with stopping that, and it was WRONG: a
+        # bound does not cover the open when the redirection is performed by the
+        # calling shell (the measurement and the reasoning are at the first size
+        # check). What stops a FIFO here is the TRIPLE: `-f` on one is false and
+        # answers without opening. It also sees a symlink to a perfectly good
+        # file, which the size cannot see at all. What it genuinely lacks is a TEST: on the development host a
         # file can be turned neither into a symlink nor into an unreadable one. The old `-s` form asked
         # only "not empty" and let through precisely the file it was put there
         # to stop - one replaced between the validation and this step.
         [[ -f "$kf" && ! -L "$kf" && -r "$kf" ]] || { _probe_say "the key file is not a regular readable file before control step 2"; printf 'failed'; exit 0; }
-        kbytes=$(timeout -k 1 5 wc -c < "$kf" 2>/dev/null)
+        kbytes=$(timeout -k 1 5 sh -c 'wc -c < "$0"' "$kf" 2>/dev/null)
         krc=$?
         kbytes="${kbytes//[[:blank:]]/}"
         [[ $krc -eq 0 && "$kbytes" == 45 ]] || { _probe_say "the key file is not exactly 45 bytes before control step 2 (code $krc, bytes: ${kbytes:-unknown})"; printf 'failed'; exit 0; }

@@ -1418,6 +1418,37 @@ p_wc_lies() {
     both p_wc_lies
 }
 
+p_key_path_is_a_symlink() {
+    # 🔴 The guard in FRONT of the first size measurement, and it is there for a
+    # reason a comment alone could not carry: a `timeout` around `wc` does NOT
+    # bound the open, because `< "$kf"` is performed by the calling shell before
+    # `timeout` runs. Measured: `timeout -k 1 5 wc -c < FIFO` never returns.
+    # So without something that answers WITHOUT OPENING, a planted FIFO hangs
+    # the installer in silence.
+    #
+    # A FIFO cannot be driven from here - the probe would block earlier, writing
+    # genkey's output into it - so the case uses the other half of the same
+    # guard: a symlink. `mktemp` is stubbed to hand back a path that is a symlink
+    # to a real file, which is what a swap in a world-writable directory leaves
+    # behind. `wc -c` follows it and answers 45; only `! -L` sees it.
+    command -v ln >/dev/null 2>&1 || skip "ln not available"
+    local src="$1" out
+    make_ip add; make_awg ok
+    printf '%s\n' "PROBE+KEY/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" > "$TEST_DIR/realkey"
+    rm -f "$TEST_DIR/linkkey"
+    ( cd "$TEST_DIR" && MSYS=winsymlinks:nativestrict ln -s realkey linkkey ) 2>/dev/null \
+        && [ -L "$TEST_DIR/linkkey" ] \
+        || skip "this shell cannot create a symlink"
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "%s/linkkey"\n' "$TEST_DIR" > "$BIN/mktemp"
+    chmod +x "$BIN/mktemp"
+    out=$(probe "$src")
+    rm -f "$BIN/mktemp"
+    [ "$out" = "failed" ] || { echo "a key path that is a symlink produced a verdict ($src): $out"; return 1; }
+}
+@test "probe: a key path that is a symlink stops the probe before it is measured, both twins" {
+    both p_key_path_is_a_symlink
+}
+
 p_key_swapped_for_symlink() {
     # 🔴 The case the size measurement CANNOT have. The key file is replaced
     # between the shape check and control step 2 by a symlink pointing at
@@ -1690,6 +1721,36 @@ c_record_write_is_guarded() {
     done
     return 0
 }
+p_size_read_is_bounded_inside() {
+    # 🔴 Structural, and the reason is a bash fact rather than a preference: a
+    # `timeout` does NOT bound an open when the redirection is written outside
+    # it. `timeout -k 1 5 wc -c < FIFO` is performed by the CALLING shell, which
+    # blocks in open() before `timeout` is ever exec'd - measured 21 sep 2026,
+    # that form never returns at all, while `timeout -k 1 5 sh -c 'wc -c < "$0"'`
+    # returns 124 after five seconds.
+    #
+    # Honest about what this pins and what it does not. The `-f` test in front
+    # already stops a planted FIFO without opening anything, and THAT half has a
+    # behavioural case. What the inner redirection buys is the RACE - a path that
+    # becomes a FIFO between the test and the open - and a race cannot be driven
+    # from a test without injecting one. Measured: reverting the form alone
+    # survives the whole suite, which is exactly why it is pinned by shape here
+    # instead of pretending the coverage exists.
+    local f body n
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        body=$(sed -n '/^_awg31_module_probe() (/,/^)$/p' "$BATS_TEST_DIRNAME/../$f")
+        [ -n "$body" ] || { echo "no probe body in $f"; return 1; }
+        n=$(grep -c "timeout -k 1 5 sh -c 'wc -c < \"\$0\"'" <<< "$body")
+        [ "$n" -eq 2 ] || { echo "the size measurement does not redirect inside the bound in $f (found $n of 2)"; return 1; }
+        grep -q 'wc -c < "\$kf"' <<< "$body" \
+            && { echo "a size measurement still redirects outside the bound in $f"; return 1; }
+    done
+    return 0
+}
+@test "probe: the size measurement opens inside its own bound, both twins" {
+    p_size_read_is_bounded_inside
+}
+
 @test "probe: the record is written with O_EXCL over a cleared path, both twins" {
     c_record_write_is_guarded
 }
