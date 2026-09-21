@@ -17,7 +17,17 @@ concurrency:
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 🔴 Twenty, because ten had no headroom left and ran out. Measured on this
+    # workflow: 7m41s before the module probe landed, 9m48s on its pull request
+    # (green by twelve seconds), 10m18s on the push to main - which hits the cap
+    # and is reported as `cancelled`, not as a failure, so it reads like somebody
+    # pressed a button rather than like a run that never finished.
+    # The suite genuinely takes that long now; this is a budget, not a symptom.
+    # ⚠️ Not solved by `bats --jobs`: measured 21 sep 2026 on a three-core box,
+    # a parallel run of this suite produced nine failures of which eight passed
+    # when the same files were re-run serially, because some cases share state.
+    # Parallelism here would trade a timeout for red runs on a green tree.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
