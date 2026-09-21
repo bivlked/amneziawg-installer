@@ -1092,8 +1092,10 @@ _awg31_module_probe() (
         # calling shell (the measurement and the reasoning are at the first size
         # check). What stops a FIFO here is the TRIPLE: `-f` on one is false and
         # answers without opening. It also sees a symlink to a perfectly good
-        # file, which the size cannot see at all. What it genuinely lacks is a TEST: on the development host a
-        # file can be turned neither into a symlink nor into an unreadable one. The old `-s` form asked
+        # file, which the size cannot see at all. ⚠️ The `! -L` half DOES have a test - the case that
+        # swaps the key file for a symlink. What is left without one is `-f` and
+        # `-r`: neither a FIFO at that path nor an unreadable file can be made on
+        # the development host. The old `-s` form asked
         # only "not empty" and let through precisely the file it was put there
         # to stop - one replaced between the validation and this step.
         [[ -f "$kf" && ! -L "$kf" && -r "$kf" ]] || { _probe_say "the key file is not a regular readable file before control step 2"; printf 'failed'; exit 0; }
