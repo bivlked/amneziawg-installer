@@ -87,13 +87,155 @@ PROTOCOL_DEFAULT="2.0"
 # --- Auto-cleanup of temporary files ---
 _install_temp_files=()
 _install_cleaned=0
+# A warning from a trap that can fire BEFORE the logger is defined: on a signal
+# during argument parsing log_warn does not exist yet, and the error message
+# itself would die with "command not found".
+_probe_warn() {
+    if type log_warn >/dev/null 2>&1; then
+        log_warn "$1"
+    else
+        printf '%s\n' "$1" >&2
+    fi
+}
 _install_cleanup() {
     # Idempotent: on INT/TERM it is called from the signal handler, then again on
     # EXIT - the second call must be a no-op.
     [[ "$_install_cleaned" -eq 1 ]] && return 0
     _install_cleaned=1
-    local f
+    local f _probe_rec="" _probe_if="" _probe_safe="" _probe_f="" _probe_rc=0 _probe_head_rc=0 _probe_keep=0
     for f in "${_install_temp_files[@]}"; do [[ -f "$f" ]] && rm -f "$f"; done
+    # Leftovers of the module probe. The trap inside the probe itself cleans up
+    # on an ordinary exit, but on a signal the subshell may not get there, so the
+    # cleanup is repeated here, where the exit is guaranteed.
+    # 🔴 What marks a probe as having happened is a FILE on disk, not a
+    # variable. The probe is called through $( ), so nothing it assigns reaches
+    # this far: a flag in a variable made this cleanup dead code on every real
+    # run.
+    # 🔴 This block runs on EVERY exit of the installer, --help included, and it
+    # runs as root - so it trusts not one byte of what it reads. The path is
+    # predictable (/tmp plus our pid, and the pid is visible in /proc) and the
+    # directory is world writable. Hence three checks in a row:
+    #   - a regular file and not a symlink: a FIFO can be planted at that path.
+    #     ⚠️ This used to read "would block the read forever". Since the read
+    #     went under a bound that is UNTRUE, and leaving it there is dangerous:
+    #     a reader concludes the check cannot be removed because of a hang,
+    #     while in fact without it the read merely sits out the bound and comes
+    #     back empty. The real cost is different - a genuine leftover then goes
+    #     unremoved, because we never learn the name of the interface;
+    #   - the name has to be one the probe of THIS run could have created, or a
+    #     planted string like eth0 would take the machine off the network;
+    #   - the delete is bounded, because a wedged netlink is exactly the state
+    #     the probe refuses over.
+    # When no probe happened, not one external command runs at all: compgen is
+    # a builtin.
+    if compgen -G "${TMPDIR:-/tmp}/awg31probe.$$.*" >/dev/null 2>&1; then
+        _probe_rec="${TMPDIR:-/tmp}/awg31probe.$$.iface"
+        if [[ -f "$_probe_rec" && ! -L "$_probe_rec" ]]; then
+            # 🔴 The read is bounded by a SEPARATE process, not by `read -t`.
+            # The regular-file test and the open are two operations, and between
+            # them the file can be swapped for a FIFO. Measured: `read -t` never
+            # reaches the open and hangs for good, while a bound around the
+            # process does fire.
+            # The cost of this form is stated plainly: it brings in a
+            # dependency on head. With no head or no timeout the output is empty,
+            # the cleanup takes the "empty or unreadable" branch, the record is
+            # kept and the warning is heard, but a real leftover is not removed.
+            # That is still better than an installer that hangs for good.
+            # 🔴 A bound in TIME is not a bound in SIZE, and the comment above
+            # promises that this block trusts no byte it read. `head -n 1` on a
+            # file with no newline in it pulls the WHOLE file: measured, a 20 MB
+            # file fitted inside the five second bound and produced a twenty
+            # million character variable, which then goes into a warning, that
+            # is into the log under /root and onto the console. The directory is
+            # world writable, the pid is readable from /proc, and this cleanup
+            # runs on EVERY exit of the installer, `--help` included, where no
+            # probe ever ran. A legal record is `awgp<pid>x<n>` plus a newline,
+            # under twenty bytes; sixty four is generous.
+            _probe_if=$(timeout -k 1 5 head -c 64 "$_probe_rec" 2>/dev/null)
+            _probe_head_rc=$?
+            _probe_if="${_probe_if%%$'\n'*}"
+            _probe_if="${_probe_if%$'\r'}"
+            # The contents of a file in a world writable directory must not be
+            # able to draw on a root console: only printable characters go out.
+            _probe_safe="${_probe_if//[^[:print:]]/?}"
+            if [[ "$_probe_if" =~ ^awgp$$x[1-5]$ ]]; then
+                if ! timeout -k 1 5 ip link del "$_probe_if" >/dev/null 2>&1; then
+                    timeout -k 1 5 ip link show "$_probe_if" >/dev/null 2>&1
+                    _probe_rc=$?
+                    # 🔴 Quiet ONLY on code 1, that is "no such device". On
+                    # Ctrl-C the probe subshell can remove the interface first,
+                    # and warning then would send a person looking for nothing.
+                    # But a timeout and a missing binary are "do not know", not
+                    # "taken away": the interface may still be there, and being
+                    # quiet about that is not allowed.
+                    if (( _probe_rc != 1 )); then
+                        _probe_keep=1
+                        _probe_warn "A leftover of the module probe could not be removed: $_probe_safe (checking the device returned $_probe_rc). Take it away by hand: ip link del $_probe_safe."
+                    fi
+                fi
+            elif [[ -n "$_probe_if" && $_probe_head_rc -ne 0 ]]; then
+                # 🔴 The read was CUT SHORT, but something had already arrived:
+                # `timeout` killing `head` does not take back what it printed.
+                # So what we hold is a FRAGMENT, not the contents of the record,
+                # and it must not be spoken of as the contents - which is exactly
+                # what the previous form did, because it looked at emptiness
+                # before it looked at the exit status. The cost: a person was
+                # told confidently about a name that is not theirs, was not told
+                # the read had failed, and was left with a real leftover and no
+                # way to find it.
+                _probe_keep=1
+                _probe_warn "The module probe record was read only in part (code $_probe_head_rc), it begins: $_probe_safe. It cannot be judged from; look for a leftover with: ip link show type amneziawg | grep awgp$$. The record itself is kept in the temporary directory."
+            elif [[ -n "$_probe_if" ]]; then
+                # 🔴 Staying quiet here is not allowed. "There is a record and I
+                # did not understand it" is not the same as "there was no probe",
+                # and the difference only shows if it is said out loud. The
+                # interface is left alone: the name is not one this run could
+                # have made.
+                _probe_keep=1
+                _probe_warn "The module probe record carries a name the probe of this run could not have created: $_probe_safe. The interface is left alone and the record itself is kept in the temporary directory."
+            elif (( _probe_head_rc == 0 )); then
+                # Empty AND read successfully: the record was created but never
+                # filled. The ordinary way here is death between creating the
+                # file and writing the name into it, and `ip link add` comes
+                # AFTER that, so most likely no interface exists. ⚠️ "Most
+                # likely" on purpose: this block is built on not trusting what
+                # the directory holds, and three lines above a record naming
+                # eth0 is treated as planted. An empty record can be planted too,
+                # or truncated after the interface already existed. So the way to
+                # find a leftover is offered here as well - it costs one clause
+                # and does not lie if the assumption is wrong.
+                _probe_keep=1
+                _probe_warn "The module probe record is empty: the name was never written, so most likely no interface was created. If in doubt, look: ip link show type amneziawg | grep awgp$$. The record itself is kept in the temporary directory."
+            else
+                # 🔴 The read FAILED, which is a different thing entirely. The
+                # ways here are the bound firing (a planted FIFO, a hung mount)
+                # and head or timeout being absent. In all three an interface
+                # very likely DOES exist and we do not know its name. The old
+                # wording told such a person the record was "empty or
+                # unreadable" and gave neither a name nor a command, while both
+                # changelogs promise the opposite. There is no name to give, but
+                # there is a way to FIND it, and that is the only action
+                # available here at all.
+                _probe_keep=1
+                _probe_warn "The module probe record cannot be read (code $_probe_head_rc). A leftover may exist; find it with: ip link show type amneziawg | grep awgp$$. The record itself is kept in the temporary directory."
+            fi
+        elif [[ -e "$_probe_rec" || -L "$_probe_rec" ]]; then
+            _probe_keep=1
+            _probe_warn "The module probe record is not a regular file, so it is neither read nor removed. Please look at the temporary directory."
+        fi
+        # 🔴 No record at all means there is nothing to say. This branch used to
+        # fire on a missing record too: the operator was told it "cannot be read"
+        # while the sweep behind it removed the one file that was there, because
+        # the guard protected a path that did not exist. The same "says it out
+        # loud, then destroys the evidence" class, inside the branch written to
+        # close it.
+        # 🔴 The evidence we have just spoken about is not destroyed along with
+        # the rest: "go and look at the record" has to stay a usable instruction.
+        for _probe_f in "${TMPDIR:-/tmp}/awg31probe.$$."*; do
+            [[ "$_probe_keep" -eq 1 && "$_probe_f" == "$_probe_rec" ]] && continue
+            rm -f "$_probe_f" 2>/dev/null
+        done
+    fi
     # Clean up temporary files from awg_common.sh (if already sourced)
     type _awg_cleanup &>/dev/null && _awg_cleanup
 }
@@ -659,13 +801,403 @@ awg31_tools_support() {
     # pipe.
     usage=$(timeout -k 1 5 awg set </dev/null 2>&1); rc=$?
     (( rc == 1 )) || return 1
-    [[ "$usage" == *header-protection-key* ]]
+    # 🔴 BOTH names, not one. The probe sends the header protection key and the
+    # padding range in a single command. A tools build that knows only the first
+    # would pass this gate and then run into the probe, whose text talks about
+    # permissions and netlink - while the cure is a tools upgrade, for which
+    # tools_old already carries the right advice. Measured 19 sep 2026: the
+    # usage of real 3.1 tools (ee0f0a9, tag v3.1.20260812) prints both names
+    # next to each other, so this does not turn away a healthy build.
+    [[ "$usage" == *header-protection-key* && "$usage" == *content-padding-addition* ]]
 }
+
+# awg31_module_support : does the LOADED module understand the third-line
+# parameters. Returns 0 - it does; 1 - second line; 2 - could not check.
+#
+# 🔴 The line cannot be derived from the module version string: a measurement on
+# 30 aug 2026 saw the same 3.1.20260812 string on two different builds. So the
+# CAPABILITY is probed, the way the tools are: a header protection key and a
+# padding range are set on a temporary interface and read back. A match means a
+# third-line module.
+#
+# 🔴 The key and the padding go in ONE command together with S1..S4: with a key
+# set the module requires S1..S4 of at least 12, a fresh interface has zeros,
+# and a probe carrying only the key would be refused by a healthy third-line
+# module.
+#
+# 🔴 A refusal from `awg set` is not a verdict on its own: it looks the same for
+# a second-line module and for an environment problem (permissions, netlink, a
+# namespace). So a refusal is followed by TWO control steps, each taking one
+# thing away. Step 1 is the same padding sizes without the third-line
+# parameters: if it fails, they are not the reason and the module cannot be
+# judged. Step 2 is the same plus the header protection key alone: a REAL
+# refusal (code 1) there, WITH THE INTERFACE STILL PRESENT, is the second
+# line - the device check is not decoration, an interface that went away
+# returns the same one. If the key was taken, the refusal
+# was about the padding and the line cannot be named from it; any other code (a
+# timeout, a missing binary) is not a verdict either.
+#
+# The key is one-shot and lives only inside the probe; it never goes into argv
+# (the module gets a file path), the file is created under umask 077 and is
+# removed on every ordinary exit, a signal included.
+awg31_module_support() {
+    local verdict=""
+    verdict=$(_awg31_module_probe)
+    case "$verdict" in
+        ok)    return 0 ;;
+        line2) return 1 ;;
+        *)     return 2 ;;
+    esac
+}
+
+# _awg31_module_probe : prints ok | line2 | failed. The body is a subshell
+# (round brackets instead of braces) on purpose: the cleanup trap then leaves
+# the caller's traps alone, and the interface and the key file are removed on
+# every exit, a signal included. The showconf output never reaches the log: it
+# carries the header protection key in clear. There is no private key in it -
+# the probe never sets one, and a fresh amneziawg interface does not carry one
+# (measured on a stand, 19 sep 2026).
+_awg31_module_probe() (
+    case $- in *x*) set +x ;; esac
+    umask 077
+    # 🔴 The probe can refuse for a good many different reasons, and until this
+    # was added a person learned none of them. There is deliberately NO number
+    # here: it has already drifted from the code twice, and the second time it
+    # was raised to the count of the PREVIOUS commit - the very commit that had
+    # added another reason. The code can be asked (`grep -c '_probe_say "'` over
+    # the function body), while a written number rots in silence. What matters
+    # is not the count but the invariant: no refusal is silent on any path the
+    # probe chooses ITSELF - the signal handler below is silent on purpose, and
+    # that is the only exception.
+    # Why none of them were learned before: the verdict goes to stdout and
+    # everything else was thrown away. stdout is taken, but stderr is free and
+    # is not captured. The key never reaches it: the module is handed a PATH to
+    # a file, and the showconf output does not go into diagnostics at all.
+    # Through log_debug when it exists, to respect --verbose and the log format.
+    _probe_say() {
+        if type log_debug >/dev/null 2>&1; then
+            log_debug "module probe: $1"
+        else
+            printf 'module probe: %s\n' "$1" >&2
+        fi
+    }
+    local ifn="" kf="" rec="" key="" out="" line="" ctl="" rc=0 arc=0 i=0 made=0 cleaned=0
+    local klines=() kraw="" kbytes="" krc=0
+    local seen=0 hpk=0 cpa=0 hpk_name=0 cpa_name=0
+    command -v ip >/dev/null 2>&1  || { _probe_say "the ip command was not found"; printf 'failed'; exit 0; }
+    command -v awg >/dev/null 2>&1 || { _probe_say "the awg command was not found"; printf 'failed'; exit 0; }
+
+    kf=$(mktemp "${TMPDIR:-/tmp}/awg31probe.$$.XXXXXX" 2>/dev/null) || { _probe_say "a temporary file could not be created in ${TMPDIR:-/tmp}"; printf 'failed'; exit 0; }
+    # 🔴 The name of the interface goes into a FILE, not into a variable. The
+    # installer cleanup lives in the parent shell, the probe is called through
+    # $( ), and anything assigned inside is lost with the subshell. A file
+    # outlives both the subshell and a SIGKILL, which is also what makes it the
+    # marker for "a probe happened here".
+    rec="${TMPDIR:-/tmp}/awg31probe.$$.iface"
+    # The cleanup has to survive both an ordinary exit and a signal: the machine
+    # must not keep an interface of ours after the probe.
+    _probe_cleanup() {
+        # Idempotent, following _install_cleanup: on a signal the cleanup runs
+        # from the handler and then once more on EXIT, and the second call has
+        # to be a no-op. Otherwise Ctrl-C costs another `ip link del` against an
+        # interface that is already gone - up to five more seconds of silence in
+        # exactly the wedged-netlink state the probe exists to refuse over.
+        [[ "$cleaned" -eq 1 ]] && return 0
+        cleaned=1
+        rm -f "$kf" 2>/dev/null
+        if [[ "$made" -eq 1 ]]; then
+            # The record is dropped ONLY after a delete that worked. If it
+            # did not, the record stays, the installer cleanup picks the
+            # interface up and says so out loud. Saying it from here is not
+            # possible: stdout carries the verdict.
+            if timeout -k 1 5 ip link del "$ifn" >/dev/null 2>&1; then
+                rm -f "$rec" 2>/dev/null
+            fi
+        fi
+    }
+    # 🔴 A signal needs an EXPLICIT exit, not just the cleanup. Without it the
+    # body carries on after the interrupted command - sending awg set and
+    # showconf to an interface the trap has just removed - and the cleanup runs
+    # a second time on EXIT. The same class that is already fixed for the
+    # installer itself above.
+    trap '_probe_cleanup' EXIT
+    trap '_probe_cleanup; printf "failed"; exit 0' INT TERM HUP
+
+    timeout -k 1 5 awg genkey </dev/null > "$kf" 2>/dev/null || { _probe_say "awg genkey did not produce a key"; printf 'failed'; exit 0; }
+    # 🔴 But BOTH lines have to be read. `read` takes only the first, while the
+    # module is handed the WHOLE file: a file with a correct first line and junk
+    # behind it would pass the shape check, the tool would refuse it, and the
+    # refusal at control step 2 would call a healthy module second line - exactly
+    # the defect this probe exists to prevent. The old `tr` joined the whole file
+    # and caught such a tail; the library (_awg_hpk_file_valid) also checks the
+    # size of the file.
+    # 🔴 The FILE itself is validated, not a cleaned copy of it. This is the
+    # FOURTH visit to this one place, and the root was the same all four times:
+    # I compared what I had READ and normalised, while the tool is handed the
+    # file AS IT IS.
+    # 🔴 This one was worse than the three before it. The checks CITED the rule
+    # that the library demands exactly 45 bytes, and then never counted a byte:
+    # the expected string was rebuilt out of data bash had already normalised
+    # and compared with itself. Measured 20 sep 2026: a 46-byte file shaped
+    # `<44 base64><NUL><LF>` passed ALL THREE checks, because `mapfile` and
+    # `read -N` both drop a NUL. The tool then refused the file, the refusal at
+    # control step 2 called a healthy module second line, and its owner went off
+    # to rebuild a module that was fine - the exact defect this probe exists to
+    # prevent.
+    # 🔴 So the size is measured the way the library measures it
+    # (_awg_hpk_file_valid): with `wc -c`. Builtins CANNOT do this - bash cannot
+    # hold a NUL in a variable at all, so every reader loses it in silence. The
+    # old promise that the key path runs no external command is withdrawn
+    # DELIBERATELY: the key VALUE still never leaves the file - it is fed on
+    # stdin, only a number comes back, and without counting the bytes that
+    # promise was costing a verdict.
+    # ⚠️ Exactly about the PATH, because the previous wording promised more than
+    # it kept: the path DOES reach argv, both here in `timeout`/`sh` and below in
+    # `awg set`, which is handed it on purpose. It is not a secret: it is a random
+    # name from `mktemp` whose only job is to make a race hard, not to hide.
+    # What each check catches (measured 20 sep 2026, one file per corrupt
+    # genkey stub; again NO number here, for the same reason):
+    #   not 45 bytes          -> a NUL, and any byte the readers cannot see;
+    #   not one line          -> two lines and junk; it gives the better message;
+    #   file is not line + \n -> no trailing newline;
+    #   shape is wrong        -> a carriage return, junk inside the line.
+    # 🔴 The checks overlap ON PURPOSE, and "one each" would be untrue: two
+    # lines are caught by the first and by the second alike. Removing one of two
+    # overlapping guards leaves the verdict where it was - measured by mutation,
+    # not asserted.
+    # 🔴 The TRIPLE first, and it answers WITHOUT OPENING the file. That is not
+    # decoration: a `timeout` around `wc` does NOT bound the open, because the
+    # redirection `< "$kf"` is performed by the CALLING shell before `timeout`
+    # ever runs. Measured 21 sep 2026: `timeout -k 1 5 wc -c < FIFO` NEVER
+    # returns, while the same command with the redirection INSIDE the bounded
+    # process honestly gives 124 after five seconds. So a planted FIFO hung the
+    # probe for good, and silently - the exact state it was written to avoid.
+    # Both things are done here: the triple answers first and cheaply, and the
+    # redirection moved inside the bound, which closes the race between the test
+    # and the open. The same trap is described below for `read -t` in the cleanup.
+    [[ -f "$kf" && ! -L "$kf" && -r "$kf" ]] || { _probe_say "the key file is not a regular readable file"; printf 'failed'; exit 0; }
+    kbytes=$(timeout -k 1 5 sh -c 'wc -c < "$0"' "$kf" 2>/dev/null)
+    krc=$?
+    # 🔴 Only BLANKS are stripped - spaces and tabs, `[[:blank:]]` - and the
+    # exit status is read. Not `[[:space:]]`: a newline is whitespace too, so
+    # `4\n5` would collapse into "45", the very joining this was moved away from. The first
+    # form threw away every non-digit (`${kbytes//[^0-9]/}`) and ignored the
+    # status: a `wc` that printed `4x5` and failed then collapsed into "45" and
+    # opened a path to a WRONG verdict - the guard put there to catch an extra
+    # byte let that byte through itself. Whitespace still has to go: not every
+    # `wc` prints the number without padding.
+    kbytes="${kbytes//[[:blank:]]/}"
+    # The comparison is EXACT precisely because the right-hand side is a literal:
+    # put a variable or a pattern there and the exactness disappears in silence,
+    # with no test noticing.
+    [[ $krc -eq 0 && "$kbytes" == 45 ]] || { _probe_say "the key file is not exactly 45 bytes (code $krc, bytes: ${kbytes:-unknown})"; printf 'failed'; exit 0; }
+    mapfile -t klines 2>/dev/null < "$kf" || :
+    (( ${#klines[@]} == 1 )) || { _probe_say "the key file is not exactly one line (lines: ${#klines[@]})"; printf 'failed'; exit 0; }
+    key="${klines[0]}"
+    IFS= read -r -N 46 kraw < "$kf" 2>/dev/null || :
+    [[ "$kraw" == "$key"$'\n' ]] || { _probe_say "the key file is not exactly one line plus a newline"; printf 'failed'; exit 0; }
+    # The key shape is judged by the same measure the library uses
+    # (_awg_hpk_file_valid): 44 base64 characters. "Not empty" is not enough - a
+    # genkey that exits zero and prints rubbish would pass it, control step 2
+    # would then refuse over the KEY FILE, and we would call a healthy module
+    # second line and send its owner to rebuild it for nothing.
+    [[ "$key" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]] || { _probe_say "the key is not of the shape the library requires"; printf 'failed'; exit 0; }
+
+    # A name shorter than 15 characters and never awg0: the probe has no
+    # business touching the working interface. The protection here is the SHAPE
+    # of the name (`awgp<pid>x<n>` cannot equal awg0), and a test pins it; there
+    # is deliberately no separate awg0 check, which would be an unreachable line
+    # reading like a live guard. A taken name means the next one, never a write
+    # into someone else's device.
+    for i in 1 2 3 4 5; do
+        ifn="awgp$$x$i"
+        # A hanging ip is "do not know", not "the name is free": going on and
+        # creating an interface under an unread name would be writing blind.
+        timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1
+        rc=$?
+        (( rc == 0 )) && continue
+        if (( rc == 124 || rc == 125 || rc == 137 )); then _probe_say "checking the name $ifn did not answer within the bound (code $rc)"; printf 'failed'; exit 0; fi
+        # 🔴 The record is laid down BEFORE anything is created, not after. A
+        # signal fits between a successful `ip link add` and the write, and then
+        # the interface is on the machine with nothing to find it by - exactly
+        # the silent loss this record exists to prevent. If the write fails,
+        # NOTHING is created: an honest refusal beats a trace nobody knows of.
+        # 🔴 set -C (O_EXCL) is required: the path is predictable, the installer
+        # runs as root, and a plain `>` would follow a symlink planted there and
+        # overwrite somebody else's file.
+        rm -f "$rec" 2>/dev/null
+        ( set -C; printf '%s\n' "$ifn" > "$rec" ) 2>/dev/null || { _probe_say "the interface name could not be written to $rec"; printf 'failed'; exit 0; }
+        timeout -k 1 5 ip link add "$ifn" type amneziawg >/dev/null 2>&1
+        rc=$?
+        if (( rc == 0 )); then made=1; break; fi
+        # 🔴 The PRESENCE OF THE DEVICE decides, not the exit code. The command
+        # may have been cut short after the kernel had already created the
+        # interface: a timeout, a signal from outside, a delayed netlink
+        # acknowledgement. The previous form caught only the three timeout codes
+        # and, on any other, dropped the record and took the next name - measured
+        # at five interfaces on the machine and not one record naming them. The
+        # name is built from OUR pid, so it cannot be anyone else's: a device
+        # found here is ours, and the record of it has to stay.
+        timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1
+        arc=$?
+        if (( arc != 1 )); then
+            _probe_say "creating the interface $ifn was not confirmed (code $rc), but the device is there or could not be checked (code $arc); the record is left for the cleanup"
+            printf 'failed'; exit 0
+        fi
+        # No device: the creation really did fail, and the same reason will
+        # repeat on the other names, so there is nothing to walk to.
+        rm -f "$rec" 2>/dev/null
+        _probe_say "the interface $ifn was not created (code $rc), and the reason will repeat on the other names"
+        printf 'failed'; exit 0
+    done
+    [[ "$made" -eq 1 ]] || { _probe_say "all five temporary names are taken"; printf 'failed'; exit 0; }
+
+    timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 \
+        header-protection-key "$kf" content-padding-addition 32-128 </dev/null >/dev/null 2>&1
+    rc=$?
+    if (( rc != 0 )); then
+        # A timeout is not a verdict about the module: no answer came back. 124
+        # is timeout firing, 125 is timeout itself failing, 137 is the KILL that
+        # -k sends. The control steps cannot help here: they say WHAT was
+        # rejected, and after a hang nothing was rejected at all, so their answer
+        # would describe another command rather than the one that never replied.
+        if (( rc == 124 || rc == 125 || rc == 137 )); then _probe_say "the main awg set did not answer within the bound (code $rc)"; printf 'failed'; exit 0; fi
+        # The control takes TWO steps, because the refused command carried two
+        # different third-line parameters at once.
+        # Step 1: the same padding sizes without the third-line parameters. A
+        # refusal here means they are not the reason, and the module cannot be
+        # judged.
+        timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 </dev/null >/dev/null 2>&1
+        ctl=$?
+        if (( ctl != 0 )); then _probe_say "control step 1 refused (code $ctl): the third-line parameters are not the reason"; printf 'failed'; exit 0; fi
+        # Step 2: the same plus the header protection key ALONE. A refusal here
+        # is a module that does not understand the third line. If the key was
+        # taken and the refusal was about the padding, the line cannot be named
+        # from that refusal: "update the module" would be wrong advice, so saying
+        # the check could not be made is the honest answer.
+        # 🔴 Step 2 judges by exit code 1, and `awg set` returns one on ANY
+        # error, a key file it cannot read included. If the file went away
+        # between the shape check and this step, the refusal would be about the
+        # FILE, and we would call a healthy module second line.
+        # 🔴 The SAME thing is checked here as at validation: a regular file,
+        # not a symlink, readable, and exactly 45 bytes. ⚠️ Only the SIZE half
+        # is held behaviourally, by the case where the file grows between the
+        # shape check and this step.
+        # 🔴 But the -f/! -L/-r triple is NOT redundant, and the previous wording
+        # of this comment lied by saying it had no case of its own. Its case is a
+        # file whose size CANNOT be measured: a FIFO can be planted at that path,
+        # and `wc -c` on one sits there rather than answering. ⚠️ The previous
+        # wording credited the `timeout` with stopping that, and it was WRONG: a
+        # bound does not cover the open when the redirection is performed by the
+        # calling shell (the measurement and the reasoning are at the first size
+        # check). What stops a FIFO here is the TRIPLE: `-f` on one is false and
+        # answers without opening. It also sees a symlink to a perfectly good
+        # file, which the size cannot see at all. ⚠️ The `! -L` half DOES have a test - the case that
+        # swaps the key file for a symlink. What is left without one is `-f` and
+        # `-r`: neither a FIFO at that path nor an unreadable file can be made on
+        # the development host. The old `-s` form asked
+        # only "not empty" and let through precisely the file it was put there
+        # to stop - one replaced between the validation and this step.
+        [[ -f "$kf" && ! -L "$kf" && -r "$kf" ]] || { _probe_say "the key file is not a regular readable file before control step 2"; printf 'failed'; exit 0; }
+        kbytes=$(timeout -k 1 5 sh -c 'wc -c < "$0"' "$kf" 2>/dev/null)
+        krc=$?
+        kbytes="${kbytes//[[:blank:]]/}"
+        [[ $krc -eq 0 && "$kbytes" == 45 ]] || { _probe_say "the key file is not exactly 45 bytes before control step 2 (code $krc, bytes: ${kbytes:-unknown})"; printf 'failed'; exit 0; }
+        timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 \
+            header-protection-key "$kf" </dev/null >/dev/null 2>&1
+        ctl=$?
+        # Only a REAL refusal from the tool (code 1) is a verdict about the
+        # module. A timeout, a missing binary or any other code cannot be: a hung
+        # command would otherwise declare a healthy module second line and send a
+        # person to rebuild it for nothing - the same thing the timeout check on
+        # the main command guards against.
+        if (( ctl == 1 )); then
+            # 🔴 A one from `awg set` means "any error", not "the module said
+            # no". An interface that went away, or became unreachable, returns
+            # the same one. What is checked is the device itself, not the text
+            # of the error: the wording of a tool changes between versions, the
+            # presence of a device does not.
+            timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1 || { _probe_say "the refusal on step 2 came from a vanished interface, not from the module"; printf 'failed'; exit 0; }
+            _probe_say "verdict: second line - the tool refused the key ALONE on step 2 and the interface is still there"
+            printf 'line2'
+        else
+            _probe_say "step 2 returned code $ctl, and only 1 counts as a verdict about the module"
+            printf 'failed'
+        fi
+        exit 0
+    fi
+
+    out=$(timeout -k 1 5 awg showconf "$ifn" </dev/null 2>/dev/null) || { _probe_say "awg showconf refused"; printf 'failed'; exit 0; }
+    # 🔴 The parsing uses no external command, and that is not a matter of
+    # style but of three reasons.
+    # 1. The key must not reach the argv of ANY command: argv is visible to
+    #    anyone through /proc/<pid>/cmdline. The previous version built a
+    #    pattern out of the key and handed it to grep, which made the promise
+    #    "it never appears in a command line" untrue, in the comment and in the
+    #    changelog alike.
+    # 2. A failure of grep or sed themselves (a missing binary, a pattern error)
+    #    landed in the second-line branch, so a person was told to rebuild a
+    #    healthy module because a utility was missing.
+    # 3. The escaping disappears: a random base64 key carries '+' or '/' about
+    #    three times in four, and that branch was never once tested with one.
+    #    A whole-line comparison has nothing to escape.
+    # Measured on a stand, 19 sep 2026: the key is read back VERBATIM (checked
+    # with two different random keys) and the range exactly as it was set.
+    while IFS= read -r line; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        case "$line" in
+            "[Interface]")                     seen=1 ;;
+            "HeaderProtectionKey = $key")      hpk=1; hpk_name=1 ;;
+            "ContentPaddingAddition = 32-128") cpa=1; cpa_name=1 ;;
+            "HeaderProtectionKey"*)            hpk_name=1 ;;
+            "ContentPaddingAddition"*)         cpa_name=1 ;;
+        esac
+    done <<< "$out"
+    # The answer has to be a config. `awg showconf` on an interface that exists
+    # always prints at least the [Interface] line (same measurement), so a zero
+    # exit with empty or unrecognisable output speaks about the environment and
+    # not about the generation: a substituted binary, a truncated pipe, a device
+    # that vanished.
+    (( seen == 1 )) || { _probe_say "the awg showconf answer does not look like a config"; printf 'failed'; exit 0; }
+    # 🔴 A verdict says what it rests on as well. Only the refusals used to
+    # speak, and the three verdicts were silent - so a wrong "second line",
+    # which costs its owner a module rebuild and a reboot, arrived WITH NO
+    # EVIDENCE, `--verbose` included. The most expensive answer has to be the
+    # most traceable one.
+    if (( hpk == 1 && cpa == 1 )); then
+        _probe_say "verdict: third line - both parameters came back with the values we set"
+        printf 'ok'
+    elif (( hpk_name == 0 && cpa_name == 0 )); then
+        # 🔴 A silent acceptance is when the answer carries NOT EVEN THE NAMES of
+        # the two parameters: an older module passes unknown netlink attributes
+        # over without a word. What is compared here is the presence of the NAME,
+        # not a matching value. Otherwise an answer where the module took
+        # everything and gave everything back, only in another shape - an extra
+        # space, a masked value, a differently written range - would land in
+        # "second line" and its owner would be told to rebuild a healthy module.
+        # The output shape rests on a single bench measurement, and a drift in it
+        # has to lead to "could not check", never to a confident verdict.
+        _probe_say "verdict: second line - the tool took everything in silence and the answer carries NEITHER NAME"
+        printf 'line2'
+    else
+        # 🔴 Everything else lands here: one of the two came back, or the names
+        # are there and the values are not ours. Neither is the second line.
+        # Upstream shipped the third-line parameters at different times, so an
+        # intermediate build knows the key but not the padding; and a value that
+        # does not match means we simply did not understand the answer. The
+        # second-line text would be false in both of its clauses, and its advice
+        # to rebuild the module would be a guess.
+        _probe_say "only part of the values came back (key: $hpk, padding: $cpa), the generation cannot be named"
+        printf 'failed'
+    fi
+    exit 0
+)
 
 # awg31_environment_blocker : empty when the 3.1 profile is available on this
 # environment, otherwise the reason CODE.
 # Codes: arch_unknown | arch_unsupported | arm | kernel | tools_old |
-#        not_implemented_yet | internal_error.
+#        module_line2 | module_probe_failed | not_implemented_yet | internal_error.
 # Arg $1: stage, REQUIRED: 'pre' or 'post'.
 # Arg $2: architecture (for tests; defaults to _awg31_host_arch).
 # Arg $3: kernel release (for tests; defaults to uname -r).
@@ -756,15 +1288,16 @@ awg31_environment_blocker() {
 
     if [[ "$stage" == "post" ]]; then
         awg31_tools_support || { printf 'tools_old'; return 0; }
-        # The line of the LOADED module is not checked here, and that is a
-        # boundary of this change rather than an omission. An honest probe needs
-        # a temporary interface and stand time, while deriving the line from the
-        # module version string is FORBIDDEN by the 30 aug 2026 measurement: the
-        # very same string 3.1.20260812 was observed on two different builds.
-        # The probe is feasible (a temporary interface of type amneziawg can be
-        # created, checked on the stand 7 sep 2026) but not written yet; until
-        # then there is no module_line2 code.
-        :
+        # The line of the LOADED module is checked AFTER the tools: the probe
+        # runs through those same tools, and with an old awg its refusal would
+        # be about them rather than about the module. A person would be told
+        # "second-line module" where apt is all it takes.
+        awg31_module_support
+        case $? in
+            0) : ;;
+            1) printf 'module_line2'; return 0 ;;
+            *) printf 'module_probe_failed'; return 0 ;;
+        esac
     fi
 
     # UNTIL PHASE 5: the 3.1 profile generator, the header protection key and
@@ -833,6 +1366,12 @@ _awg31_blocker_message() {
             ;;
         tools_old)
             printf '%s' "The installed awg tools do not understand third-line parameters. This is the ONLY reason on the list that an upgrade fixes: apt-get update && apt-get install --only-upgrade amneziawg-tools, then run the installer again. Or install with --protocol=2.0."
+            ;;
+        module_line2)
+            printf '%s' "The loaded amneziawg kernel module does not understand the third-line parameters: it either refuses the header protection key or takes it without a word and does not give it back. A 3.1 profile would be written on such a module and the connection would never come up. This one is fixed by updating the module: apt-get update && apt-get install --only-upgrade amneziawg-dkms, then a reboot (the module is rebuilt for your kernel) and another run of the installer. Or install with --protocol=2.0."
+            ;;
+        module_probe_failed)
+            printf '%s' "Whether the loaded module understands the third-line parameters could not be checked: the probe either could not create a temporary interface and get an answer, or got an answer that does not name the generation. The reasons differ - permissions, the state of netlink, the network namespace of a container. We do not know whether the module fits, and guessing is not an option here. Way out: install with --protocol=2.0. If you think this is wrong, send the output of six commands: 'ip link add awgprobe type amneziawg', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <a file with a 32-byte key in base64> content-padding-addition 32-128' (the main command of the probe; the probe can stop here too), 'awg set awgprobe s1 15 s2 15 s3 12 s4 12', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <the same file>', 'awg showconf awgprobe' (the read back; the probe can stop here too) and 'ip link del awgprobe' (the last one takes the temporary interface away again). The key file is made like this: 'umask 077; awg genkey > /tmp/probekey', and take it away afterwards: 'rm -f /tmp/probekey'. The probe also stops before any of these commands - if it cannot create a temporary file, or if 'awg genkey' does not give a key of the right shape - and on the third and fourth commands, that is on either control step. The first command is a stopping point too, and the most common one: if the module is not loaded, the amneziawg link type is not registered and the interface is not created, even though the awg tool itself is present. Quicker than running the commands by hand: start the installer with --verbose and the probe writes to the log where exactly it stopped."
             ;;
         not_implemented_yet)
             printf '%s' "This installer version (v${SCRIPT_VERSION}) does not issue the AmneziaWG 3.1 profile: your environment fits, and it is not your machine. Way out: --protocol=2.0."

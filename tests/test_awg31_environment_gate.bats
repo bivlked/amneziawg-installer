@@ -62,6 +62,8 @@ load_gate() {
     eval "$(func_from "$script" _kernel_supports_awg3)"
     eval "$(func_from "$script" _awg31_host_arch)"
     eval "$(func_from "$script" awg31_tools_support)"
+    eval "$(sed -n "/^_awg31_module_probe() (/,/^)\$/p" "$script")"
+    eval "$(func_from "$script" awg31_module_support)"
     eval "$(func_from "$script" awg31_environment_blocker)"
 }
 
@@ -76,19 +78,24 @@ load_gate() {
 #   zero     key, but exit 0                             -> refused
 #   t124     key, but exit 124 (what timeout returns)    -> refused
 #   verclaim no key in usage, but --version claims 3.1   -> refused
+#   hpkonly  the key in usage but not the padding range    -> not supported
 # Every invocation appends its full argv to $TEST_DIR/awg.argv.
 make_awg_stub() {
     local variant="$1" path="$TEST_DIR/bin/awg" usage stream="2" code="1"
     local version="awg-tools v1.0.20210914"
+    # Real 3.1 tools print both third-line options in one usage line (measured
+    # on a stand, 19 sep 2026), and the probe sends both, so the gate wants both.
+    local third="[header-protection-key <key>] [content-padding-addition <range>]"
     mkdir -p "$TEST_DIR/bin"
     usage="Usage: awg set <interface> [listen-port <port>] [jc <n>] [s1 <n>]"
     case "$variant" in
         20)       : ;;
         verclaim) version="awg-tools v3.1.20260812" ;;
-        stdout)   usage="$usage [header-protection-key <key>]"; stream="1" ;;
-        zero)     usage="$usage [header-protection-key <key>]"; code="0" ;;
-        t124)     usage="$usage [header-protection-key <key>]"; code="124" ;;
-        *)        usage="$usage [header-protection-key <key>]" ;;
+        stdout)   usage="$usage $third"; stream="1" ;;
+        zero)     usage="$usage $third"; code="0" ;;
+        t124)     usage="$usage $third"; code="124" ;;
+        hpkonly)  usage="$usage [header-protection-key <key>]" ;;
+        *)        usage="$usage $third" ;;
     esac
     {
         echo "#!/usr/bin/env bash"
@@ -103,6 +110,54 @@ make_awg_stub() {
     chmod +x "$path"
     PATH="$TEST_DIR/bin:$PATH"
     export PATH
+}
+
+# make_module_stub <ok|line2|broken> : how the LOADED module answers the probe.
+# ok     - takes the third-line parameters and reads them back
+# line2  - refuses them loudly, so control step 1 passes and step 2 refuses
+#          (measured on a stand against a module built from tag v1.0.20260725)
+# broken - no interface can be created at all
+#
+# The awg stub above answers the tools usage; this one extends it, because the
+# probe drives the same binary.
+make_module_stub() {
+    local mode="$1" awg="$TEST_DIR/bin/awg" ip="$TEST_DIR/bin/ip"
+    mkdir -p "$TEST_DIR/bin"
+    {
+        echo '#!/usr/bin/env bash'
+        echo "echo \"\$*\" >> \"$TEST_DIR/ip.argv\""
+        case "$mode" in
+            broken) echo 'case "$2" in add) exit 2 ;; *) exit 1 ;; esac' ;;
+            # Remembers what it created, so that `show` answers about a device
+            # that exists: the probe asks again after a refusal to tell "the
+            # module said no" from "the device went away".
+            *)      echo 'D="'"$TEST_DIR"'/ifaces"; case "$2" in show) [ -e "$D/$3" ] && exit 0 || exit 1 ;; add) mkdir -p "$D"; : > "$D/$3"; exit 0 ;; del) rm -f "$D/$3"; exit 0 ;; *) exit 0 ;; esac' ;;
+        esac
+    } > "$ip"
+    chmod +x "$ip"
+    # The usage probe keeps working: the tools branch is untouched, the module
+    # verbs are added in front of it.
+    local usage_body
+    usage_body=$(cat "$awg")
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'case "$1" in'
+        echo '  genkey) echo "GATEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; exit 0 ;;'
+        case "$mode" in
+            ok)    echo '  showconf) echo "[Interface]"; echo "HeaderProtectionKey = GATEKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; echo "ContentPaddingAddition = 32-128"; exit 0 ;;' ;;
+            *)     echo '  showconf) exit 1 ;;' ;;
+        esac
+        case "$mode" in
+            line2) echo '  set) if [[ "$*" == *header-protection-key* ]]; then echo "Unable to modify interface: Invalid argument" >&2; exit 1; fi'
+                   echo '       if [[ "$2" == awgp* ]]; then exit 0; fi' ;;
+            *)     echo '  set) if [[ "$2" == awgp* ]]; then exit 0; fi' ;;
+        esac
+        echo '       ;;'
+        echo 'esac'
+        printf '%s\n' "${usage_body#*bash}"
+    } > "$awg.new"
+    mv "$awg.new" "$awg"
+    chmod +x "$awg"
 }
 
 # Make architecture detection answer with a fixed value, exercising the path
@@ -240,15 +295,54 @@ break_arch_detection() {
     [ ! -e "$TEST_DIR/awg.argv" ]
 }
 
-@test "post: a fully suitable environment still reports not_implemented_yet" {
+# gate_case <installer> <awg variant> <module mode> <expected code> : the gate
+# answer of ONE twin. Every module case runs both, because a verdict that only
+# holds in one language is half a gate - measured: mutations of the EN file
+# survived while these cases ran the RU installer only.
+gate_case() {
+    local script="$1" awg="$2" mod="$3" want="$4"
+    rm -f "$TEST_DIR/ip.argv" "$TEST_DIR/awg.argv"
+    load_gate "$script"
+    make_awg_stub "$awg"
+    make_module_stub "$mod"
+    run awg31_environment_blocker post "amd64" "6.14.0-generic"
+    [ "$status" -eq 0 ] || { echo "status $status ($script)"; return 1; }
+    [ "$output" = "$want" ] || { echo "expected $want, got $output ($script)"; return 1; }
+}
+
+@test "post: a fully suitable environment still reports not_implemented_yet, both twins" {
     # The second half of the tripwire. If post ever answers empty before the
     # path opens, the installer would be told to write a 3.1 profile that has no
     # downgrade and no lifecycle behind it.
-    load_gate
-    make_awg_stub 31
-    run awg31_environment_blocker post "amd64" "6.14.0-generic"
-    [ "$status" -eq 0 ]
-    [ "$output" = "not_implemented_yet" ]
+    gate_case "$INSTALL_RU" 31 ok not_implemented_yet
+    gate_case "$INSTALL_EN" 31 ok not_implemented_yet
+}
+
+@test "post: a second-line module is refused with its own code, both twins" {
+    # Capable tools, suitable machine, old module: the reason must name the
+    # module, because the way out is an update rather than another machine.
+    gate_case "$INSTALL_RU" 31 line2 module_line2
+    gate_case "$INSTALL_EN" 31 line2 module_line2
+}
+
+@test "post: a probe that cannot check says so instead of guessing, both twins" {
+    gate_case "$INSTALL_RU" 31 broken module_probe_failed
+    gate_case "$INSTALL_EN" 31 broken module_probe_failed
+}
+
+@test "post: the module probe runs only after the tools probe, both twins" {
+    # With old tools the module is never touched: its refusal would be about
+    # them, and the person would be sent to rebuild a module instead of apt.
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        rm -f "$TEST_DIR/ip.argv" "$TEST_DIR/awg.argv"
+        load_gate "$script"
+        make_awg_stub 20
+        make_module_stub line2
+        run awg31_environment_blocker post "amd64" "6.14.0-generic"
+        [ "$output" = "tools_old" ] || { echo "expected tools_old, got $output ($script)"; return 1; }
+        [ ! -e "$TEST_DIR/ip.argv" ] || { echo "the module was probed with old tools ($script)"; return 1; }
+    done
 }
 
 @test "post: tools without the 3.1 usage are refused with tools_old" {
@@ -294,6 +388,46 @@ break_arch_detection() {
     [ "$status" -ne 0 ]
     run awg31_environment_blocker post "amd64" "6.14.0-generic"
     [ "$output" = "tools_old" ]
+}
+
+@test "tools that name the key but not the padding range are not enough" {
+    # The probe sends both third-line options in one command. Tools that know
+    # only the key would pass this gate, fail the probe, and the person would
+    # read about permissions and netlink while the cure is a tools upgrade -
+    # which tools_old already says in plain words.
+    # Both twins. A regression planted in the EN file alone was measured to go
+    # unnoticed here, because this was the one new gate rule running on the RU
+    # file only, and an EN user would have read about permissions and netlink
+    # while the cure was a tools upgrade.
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        load_gate "$script"
+        make_awg_stub hpkonly
+        run awg31_tools_support
+        [ "$status" -ne 0 ] || { echo "tools without the padding range were accepted ($script)"; return 1; }
+        run awg31_environment_blocker post "amd64" "6.14.0-generic"
+        [ "$output" = "tools_old" ] || { echo "expected tools_old, got $output ($script)"; return 1; }
+    done
+}
+
+@test "the usage probe demands exactly exit 1, on both twins" {
+    # A wrapper that prints a plausible usage and then times out, or succeeds,
+    # is not awg answering. Measured: weakening this to "any non-zero" in the EN
+    # file alone went unnoticed, because the surrounding contract was pinned on
+    # the RU file only.
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        load_gate "$script"
+        make_awg_stub zero
+        run awg31_tools_support
+        [ "$status" -ne 0 ] || { echo "a zero exit was accepted as a usage answer ($script)"; return 1; }
+        make_awg_stub t124
+        run awg31_tools_support
+        [ "$status" -ne 0 ] || { echo "a timeout was accepted as a usage answer ($script)"; return 1; }
+        make_awg_stub 31
+        run awg31_tools_support
+        [ "$status" -eq 0 ] || { echo "a real usage answer was refused ($script)"; return 1; }
+    done
 }
 
 @test "the probe accepts usage printed on stdout as well as on stderr" {
@@ -456,7 +590,7 @@ break_arch_detection() {
     local body
     for f in "$INSTALL_RU" "$INSTALL_EN"; do
         body=$(func_from "$f" awg31_environment_blocker)
-        for code in arch_unknown arch_unsupported arm kernel tools_old not_implemented_yet internal_error; do
+        for code in arch_unknown arch_unsupported arm kernel tools_old module_line2 module_probe_failed not_implemented_yet internal_error; do
             [[ "$body" == *"printf '$code'"* ]]
         done
     done
