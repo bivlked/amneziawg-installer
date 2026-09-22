@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.35.0
-# Date: 2026-09-17
+# Version: 5.36.0
+# Date: 2026-09-22
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -23,7 +23,7 @@ set -o pipefail
 # script.
 export WG_COLOR_MODE=never
 
-SCRIPT_VERSION="5.35.0"
+SCRIPT_VERSION="5.36.0"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -42,8 +42,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="c93c08be60de685a9296c83c56ab1da212d84c5e1460a77ee8c13993dd118d43"
-MANAGE_SCRIPT_SHA256="1be5e3f9a5113f8f15ae85210c9b814a1c85114be2746470af03f974cadfe8d9"
+COMMON_SCRIPT_SHA256="f00f8c7b95a881817dd726a4de0b42b94becc55e7a15c111b977ee492034cd23"
+MANAGE_SCRIPT_SHA256="33bdd7a2141cdc176de96bad9aa5707f9c54f8e597599cc5f4a7f54e45d0be6b"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back
@@ -891,8 +891,10 @@ _awg31_module_probe() (
     # 🔴 The name of the interface goes into a FILE, not into a variable. The
     # installer cleanup lives in the parent shell, the probe is called through
     # $( ), and anything assigned inside is lost with the subshell. A file
-    # outlives both the subshell and a SIGKILL, which is also what makes it the
-    # marker for "a probe happened here".
+    # outlives both the subshell and a SIGKILL of the probe itself, which is also
+    # what makes it the marker for "a probe happened here". ⚠️ If the whole
+    # installer gets a SIGKILL, the record and the interface stay until a reboot:
+    # the next run only looks for records of its own $$.
     rec="${TMPDIR:-/tmp}/awg31probe.$$.iface"
     # The cleanup has to survive both an ordinary exit and a signal: the machine
     # must not keep an interface of ours after the probe.
@@ -974,7 +976,7 @@ _awg31_module_probe() (
     # probe for good, and silently - the exact state it was written to avoid.
     # Both things are done here: the triple answers first and cheaply, and the
     # redirection moved inside the bound, which closes the race between the test
-    # and the open. The same trap is described below for `read -t` in the cleanup.
+    # and the open. The same trap is described above for `read -t`, in `_install_cleanup`.
     [[ -f "$kf" && ! -L "$kf" && -r "$kf" ]] || { _probe_say "the key file is not a regular readable file"; printf 'failed'; exit 0; }
     kbytes=$(timeout -k 1 5 sh -c 'wc -c < "$0"' "$kf" 2>/dev/null)
     krc=$?
@@ -1333,8 +1335,8 @@ awg31_environment_blocker() {
 # back into one.
 #
 # ⚠️ The reasons split into permanent (kernel, arm, arch_*) and temporary
-# (tools_old). The temporary one says so in plain words, so that nobody
-# abandons a machine that is almost ready.
+# (tools_old, module_line2). The temporary ones name the package whose upgrade
+# fixes them, so that nobody abandons a machine that is almost ready.
 _awg31_blocker_message() {
     local code="${1-}"
     case "$code" in
@@ -1365,7 +1367,7 @@ _awg31_blocker_message() {
             printf '%s' "The machine architecture could not be determined, and not knowing it is not the same as knowing it fits. Way out: --protocol=2.0. If you believe this is wrong, send the output of 'dpkg --print-architecture' and 'uname -m'."
             ;;
         tools_old)
-            printf '%s' "The installed awg tools do not understand third-line parameters. This is the ONLY reason on the list that an upgrade fixes: apt-get update && apt-get install --only-upgrade amneziawg-tools, then run the installer again. Or install with --protocol=2.0."
+            printf '%s' "The installed awg tools do not understand third-line parameters. This one is fixed by upgrading the tools: apt-get update && apt-get install --only-upgrade amneziawg-tools, then run the installer again. Or install with --protocol=2.0."
             ;;
         module_line2)
             printf '%s' "The loaded amneziawg kernel module does not understand the third-line parameters: it either refuses the header protection key or takes it without a word and does not give it back. A 3.1 profile would be written on such a module and the connection would never come up. This one is fixed by updating the module: apt-get update && apt-get install --only-upgrade amneziawg-dkms, then a reboot (the module is rebuilt for your kernel) and another run of the installer. Or install with --protocol=2.0."
@@ -5857,7 +5859,7 @@ step3_check_module() {
 
     # ── Environment gate, stage post ─────────────────────────────────────────
     # This asks what step 0 could not know: whether the tools that ARRIVED
-    # understand third-line parameters. There are two reboots between steps 0
+    # and the loaded module understand third-line parameters. There are two reboots between steps 0
     # and 3, so the generation comes from the marker read afresh from disk, not
     # from the memory of an earlier run.
     #
@@ -5884,7 +5886,7 @@ step3_check_module() {
         # The same fail-closed rule as at step 0: the silence of a gate that
         # crashed is not permission.
         if (( _awg31_rc != 0 )); then
-            die "The environment gate could not check the tools for the AmneziaWG 3.1 profile (exit code ${_awg31_rc}, no reason given). The installation stops: without an answer we do not ship the third line."
+            die "The environment gate could not check the tools and the module for the AmneziaWG 3.1 profile (exit code ${_awg31_rc}, no reason given). The installation stops: without an answer we do not ship the third line."
         fi
         log "3.1 environment gate (post) passed."
     fi

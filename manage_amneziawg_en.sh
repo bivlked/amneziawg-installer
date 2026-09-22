@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 peer management script
 # Author: @bivlked
-# Version: 5.35.0
-# Date: 2026-09-17
+# Version: 5.36.0
+# Date: 2026-09-22
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="5.35.0"
+SCRIPT_VERSION="5.36.0"
 set -o pipefail
 # awg show colours its labels when WG_COLOR_MODE=always is in the environment,
 # even into a pipe. The secrets filter then does not recognise "header
@@ -2154,7 +2154,7 @@ list_clients() {
         # consumer needs one question answered - can the value be trusted - and
         # it is the administrator who deals with the particular file.
         #
-        # Only a canonical decimal of at most 10 digits counts as a number. A
+        # Only a canonical decimal of at most 15 digits counts as a number. A
         # leading zero is rejected for a reason, not out of pedantry: JSON
         # forbids such numbers and a strict parser on the consumer side
         # (Python, .NET, Go) would reject the WHOLE document because of one
