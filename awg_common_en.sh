@@ -1070,8 +1070,8 @@ safe_load_config() {
 # 🔴 grep only ever gets a regular file (-f): on a FIFO it would wait for a
 # writer forever, on /dev/zero it would read without end. A missing path and a
 # non-regular file in place of the init never reach grep and read as "no
-# marker", so the -f check must stay. In manage such an init never reaches the
-# function: check_dependencies refuses it earlier. The installer treats it as
+# marker", so the -f check must stay. In manage the live init of that kind never reaches
+# the function: check_dependencies refuses it earlier. The installer treats it as
 # absent at step 0 and calls the function with the same path; the -f check is
 # what gives it 2.0 instead of a hang.
 awg_installed_protocol() {
@@ -1549,7 +1549,7 @@ _ensure_server_public_key() {
 # _mask_report_secrets : the secrets filter for everything that goes to the screen
 # or the log from awg show and configs. A copy of the installer's filter: there it
 # has to work without the downloaded library (--diagnostic), here it serves manage
-# check, show, diagnose and the service status text on a failed restore or restart. The body is the same in all four copies, and a parity
+# check, show, diagnose and the service status text in check and on a failed restore or restart. The body is the same in all four copies, and a parity
 # test checks that; the rules and the five upstream string literals are explained
 # in the installer's comment.
 _mask_report_secrets() {
@@ -4844,7 +4844,7 @@ check_expired_clients() {
             log_warn "Expiry marker for '$name' was not read (status $_exp_rc) - leaving the client alone."
             continue
         fi
-        # A canonical decimal of at most 10 digits - the same form list_clients
+        # A canonical decimal of at most 15 digits - the same form list_clients
         # uses, and the two must not diverge. The previous ^[0-9]+$ accepted a
         # leading zero, and the comparison below reads such a value as OCTAL:
         # the marker 01750000000 became 262144000, that is 1978, the condition

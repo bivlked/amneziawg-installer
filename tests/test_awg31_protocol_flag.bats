@@ -139,10 +139,12 @@ run_argparse() {
     [[ "$output" == *"6.7"* ]]
 }
 
-@test "tools_old is the only reason presented as fixable by an upgrade" {
+@test "tools_old and module_line2 name the package an upgrade fixes, arm names none" {
     build_harness
     run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message tools_old"
     [[ "$output" == *"amneziawg-tools"* ]]
+    run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message module_line2"
+    [[ "$output" == *"amneziawg-dkms"* ]]
     run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message arm"
     [[ "$output" != *"amneziawg-tools"* ]]
 }
