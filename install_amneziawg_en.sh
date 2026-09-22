@@ -1335,8 +1335,8 @@ awg31_environment_blocker() {
 # back into one.
 #
 # ⚠️ The reasons split into permanent (kernel, arm, arch_*) and temporary
-# (tools_old, module_line2). The temporary ones say so in plain words, so that nobody
-# abandons a machine that is almost ready.
+# (tools_old, module_line2). The temporary ones name the package whose upgrade
+# fixes them, so that nobody abandons a machine that is almost ready.
 _awg31_blocker_message() {
     local code="${1-}"
     case "$code" in
