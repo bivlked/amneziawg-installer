@@ -12,9 +12,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.36.0] - 2026-09-22
+
+**v5.36.0** - protocol generation in manage, keys hidden in service status.
+
 ### Added
 
-- **The installer checks whether the loaded kernel module understands the third-line parameters.** The line cannot be told from the module version string: the same string was seen on different builds. So the capability is probed: a header protection key and a padding range are set on a temporary interface and read back. A refusal now has two distinct outcomes. A second-line module is named as such, together with the way to update it. If the check could not be made, the installer says so instead of guessing: that covers both environment problems (permissions, netlink, the network namespace of a container) and the case where the key was taken and the padding range refused, which says nothing about the generation. The probe key is one-shot, never appears in a command line and never in the log, `--verbose` included, and the temporary interface is removed on every ordinary exit, a signal included; and when it cannot be removed, the installer does not keep quiet about it but names it and says how to take it away by hand.
+- **With `--protocol=3.1` requested, the installer checks whether the loaded kernel module understands the third-line parameters.** The path itself stays closed in this version: even on a suitable machine the installer ends with the notice that this version does not issue the 3.1 profile, and names `--protocol=2.0` as the way out. What changes is the reason a person gets on an unsuitable machine. The line cannot be told from the module version string: the same string was seen on different builds. So the capability is probed: a header protection key and a padding range are set on a temporary interface and read back. A refusal now has two distinct outcomes. A second-line module is named as such, together with the way to update it. If the check could not be made, the installer says so instead of guessing: that covers both environment problems (permissions, netlink, the network namespace of a container) and the case where the key was taken and the padding range refused, which says nothing about the generation. The probe key is one-shot, never appears in a command line and never in the log, `--verbose` included, and the temporary interface is removed on every ordinary exit, a signal included; and when it cannot be removed, the installer does not keep quiet about it but names it and says how to take it away by hand.
 - **`manage check`, `show` and `diagnose` show the protocol generation of the installation, and `check --json` returns it in the `protocol` field.** The generation comes from the `AWG_PROTOCOL` marker, not from the module version: a third-line module runs a second-line configuration as a matter of course, and an "AmneziaWG 2.0" header next to a module version 3.1 confused people. Command headers no longer name a generation; it has a line of its own. A broken marker never turns into "2.0": `check` treats it as a problem (`ok=false`, `protocol_error: "unreadable"`), `show` and `diagnose` say the marker cannot be read and exit with an error.
 - **`diagnose` reports `Jmin` greater than `Jmax` on the live interface as a FAIL (exit code 1).** Such a pair is invalid, and the kernel module does not check it and writes past a buffer end with it ([amneziawg-linux-kernel-module#225](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/225)). The installer never produces this pair; it only appears after a hand edit of `awg0.conf`. A missing `Jmax` with `Jmin` set counts as the same error.
 
@@ -1964,7 +1968,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.35.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.0...HEAD
+[5.36.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.35.0...v5.36.0
 [5.35.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.34.1...v5.35.0
 [5.34.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.34.0...v5.34.1
 [5.34.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.33.0...v5.34.0
