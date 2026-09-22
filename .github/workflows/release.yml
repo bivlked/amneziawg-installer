@@ -32,11 +32,17 @@ jobs:
         # cannot run.
         run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
 
-      - name: Install shellcheck, bats and minisign
+      - name: Install shellcheck, bats, minisign, qrencode and jq
         # minisign matters here: without it preflight step 10 can only warn,
         # so the signature check would first run in the release job, after
         # the tag is already pushed and can no longer be amended cheaply.
-        run: sudo apt-get update && sudo apt-get install -y shellcheck bats minisign
+        # qrencode and jq matter too: the vpn:// QR ceiling test and the
+        # generation display tests FAIL in CI when their tool is missing (they
+        # only skip locally), so this list has to match test.yml. Without
+        # qrencode the first tag after that test landed stopped here, and no
+        # release was published. jq is preinstalled on the runner today; it is
+        # listed so the gate does not depend on that.
+        run: sudo apt-get update && sudo apt-get install -y shellcheck bats minisign qrencode jq
 
       - name: Run preflight checks
         env:
