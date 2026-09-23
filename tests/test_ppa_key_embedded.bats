@@ -79,8 +79,11 @@ both() {
 installs_pinned_key_offline() {
     local src="$1" dest="$BATS_TEST_TMPDIR/keyrings/amnezia-ppa.gpg" out
     rm -f "$dest"; : > "$BATS_TEST_TMPDIR/net_calls"
-    out=$(key_run "$src" "$dest")
+    # stderr too: on a fresh GNUPGHOME gpg announces the keybox and trustdb it
+    # creates, which a first-time user would take for an error.
+    out=$(key_run "$src" "$dest" 2>&1)
     [[ "$out" == *"RC=0"* && "$out" != *"DIE:"* ]] || { echo "install failed ($src): $out"; return 1; }
+    [[ "$out" != *"gpg:"* ]] || { echo "gpg chatter on success ($src): $out"; return 1; }
     [[ -s "$dest" ]] || { echo "no keyring written ($src)"; return 1; }
     [[ "$(fpr_of "$dest")" == "$PIN" ]] || { echo "keyring fingerprint is not the pin ($src): $(fpr_of "$dest")"; return 1; }
     [[ "$(stat -c %a "$dest")" == 644 ]] || { echo "keyring mode is not 644 ($src)"; return 1; }
@@ -150,7 +153,8 @@ unreadable_keyring_is_named() {
     rm -f "$dest"
     out=$(key_run "$src" "$dest" 'gpg() { if [[ " $* " == *" --show-keys "* ]]; then echo "gpg: listing failed" >&2; return 2; fi; command gpg "$@"; }' 2>&1)
     refused_intact "$src" "$out" "an unreadable keyring" || return 1
-    [[ "$out" == *"gpg: listing failed"* ]] || { echo "gpg's error is hidden ($src): $out"; return 1; }
+    # In the die message itself, so it reaches the install log, not only the terminal.
+    [[ "$out" == *"DIE:"*"gpg: listing failed"* ]] || { echo "gpg's error is not in the refusal ($src): $out"; return 1; }
     [[ "$out" != *"<пусто>"* && "$out" != *"<empty>"* ]] || { echo "reported as an empty fingerprint ($src): $out"; return 1; }
 }
 

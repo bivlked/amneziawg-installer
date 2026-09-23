@@ -5119,7 +5119,7 @@ PPAKEY
 # a fingerprint check, then mv - a half-written or foreign key never lands
 # on the target path.
 install_amnezia_ppa_keyring() {
-    local keyring_file="$1" kf_tmp keys n_keys got_fpr
+    local keyring_file="$1" kf_tmp keys n_keys got_fpr gpg_err
     # Checked against the FULL 40-character fingerprint and for exactly one
     # key. The key is embedded, but the check stays: it catches a damaged,
     # swapped or appended block in an edit. apt would trust an extra key in
@@ -5135,11 +5135,15 @@ install_amnezia_ppa_keyring() {
         rm -f "$kf_tmp" 2>/dev/null
         die "Amnezia PPA GPG key import error."
     fi
-    # gpg's stderr is not silenced: if it cannot read the key, the cause shows.
-    if ! keys=$(gpg --batch --no-tty --show-keys --with-colons "$kf_tmp"); then
-        rm -f "$kf_tmp" 2>/dev/null
-        die "gpg could not read the embedded Amnezia PPA key (gpg error above). Check that the gpg package is installed and works."
+    # gpg's stderr is captured: on a fresh server gpg reports the keybox and
+    # trustdb it creates, which a newcomer would take for an error. On a
+    # refusal the gpg text goes into the die message, and so into the log.
+    if ! gpg_err=$(gpg --batch --no-tty --show-keys --with-colons "$kf_tmp" 2>&1 >"${kf_tmp}.keys"); then
+        rm -f "$kf_tmp" "${kf_tmp}.keys" 2>/dev/null
+        die "gpg could not read the embedded Amnezia PPA key: ${gpg_err:0:500}. Check that the gpg package is installed and works."
     fi
+    keys=$(<"${kf_tmp}.keys")
+    rm -f "${kf_tmp}.keys" 2>/dev/null
     n_keys=$(grep -c '^pub:' <<< "$keys")
     got_fpr=$(awk -F: '/^fpr:/{print $10; exit}' <<< "$keys")
     if [[ "$n_keys" != 1 || "$got_fpr" != "$ppa_key_fpr" ]]; then

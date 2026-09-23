@@ -5004,7 +5004,7 @@ PPAKEY
 # сверка отпечатка, mv - полу-записанный или чужой ключ на целевой путь
 # не попадает.
 install_amnezia_ppa_keyring() {
-    local keyring_file="$1" kf_tmp keys n_keys got_fpr
+    local keyring_file="$1" kf_tmp keys n_keys got_fpr gpg_err
     # Сверка по ПОЛНОМУ 40-символьному отпечатку и ровно одному ключу. Ключ
     # встроен, но проверка остаётся: она ловит повреждённый, подменённый или
     # дописанный при правке файла блок. Лишний ключ в keyring apt принял бы
@@ -5020,11 +5020,15 @@ install_amnezia_ppa_keyring() {
         rm -f "$kf_tmp" 2>/dev/null
         die "Ошибка импорта GPG ключа Amnezia PPA."
     fi
-    # stderr gpg не глушим: если он не смог прочитать ключ, причина видна.
-    if ! keys=$(gpg --batch --no-tty --show-keys --with-colons "$kf_tmp"); then
-        rm -f "$kf_tmp" 2>/dev/null
-        die "gpg не смог прочитать встроенный ключ Amnezia PPA (ошибка gpg выше). Проверьте, что пакет gpg установлен и работает."
+    # stderr gpg перехватывается: на свежем сервере gpg сообщает о созданных
+    # keybox и trustdb, и новичок принял бы это за ошибку. При отказе текст
+    # gpg идёт в сообщение die, а значит и в журнал установки.
+    if ! gpg_err=$(gpg --batch --no-tty --show-keys --with-colons "$kf_tmp" 2>&1 >"${kf_tmp}.keys"); then
+        rm -f "$kf_tmp" "${kf_tmp}.keys" 2>/dev/null
+        die "gpg не смог прочитать встроенный ключ Amnezia PPA: ${gpg_err:0:500}. Проверьте, что пакет gpg установлен и работает."
     fi
+    keys=$(<"${kf_tmp}.keys")
+    rm -f "${kf_tmp}.keys" 2>/dev/null
     n_keys=$(grep -c '^pub:' <<< "$keys")
     got_fpr=$(awk -F: '/^fpr:/{print $10; exit}' <<< "$keys")
     if [[ "$n_keys" != 1 || "$got_fpr" != "$ppa_key_fpr" ]]; then
