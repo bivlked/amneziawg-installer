@@ -475,18 +475,24 @@ _aip_migrate_legacy_v6() {
     local list="$1" base="$2" toks v6 mine srv tok out=""
     toks=$(_aip_tokens "$list") || return 1
     v6=$(grep -F ':' <<< "$toks")
-    if [[ "$v6" == "::/0" && -n "$base" && "$base" != *:* ]] \
-       && ! _aip_has_token "$base" "0.0.0.0/0" && _is_full_tunnel "$base"; then
-        mine=$(grep -vF ':' <<< "$toks" | LC_ALL=C sort -u) || return 1
-        srv=$(_aip_tokens "$base" | LC_ALL=C sort -u) || return 1
-        if [[ "$mine" == "$srv" ]]; then
-            while IFS= read -r tok; do
-                [[ "$tok" == "::/0" ]] && tok="2000::/3"
-                out+="${out:+, }${tok}"
-            done <<< "$toks"
-            printf '%s' "$out"
-            return 0
-        fi
+    if [[ "$v6" != "::/0" || -z "$base" || "$base" == *:* ]] \
+       || _aip_has_token "$base" "0.0.0.0/0" || ! _is_full_tunnel "$base"; then
+        printf '%s' "$list"
+        return 0
+    fi
+    # Without an IPv4 part (modify accepts a bare ::/0 too) this is not our list.
+    # grep exit code 1 here means "no lines", not a failure: inside a pipeline
+    # under pipefail it used to fail regen on a valid list.
+    mine=$(grep -vF ':' <<< "$toks") || { printf '%s' "$list"; return 0; }
+    mine=$(LC_ALL=C sort -u <<< "$mine") || return 1
+    srv=$(_aip_tokens "$base" | LC_ALL=C sort -u) || return 1
+    if [[ "$mine" == "$srv" ]]; then
+        while IFS= read -r tok; do
+            [[ "$tok" == "::/0" ]] && tok="2000::/3"
+            out+="${out:+, }${tok}"
+        done <<< "$toks"
+        printf '%s' "$out"
+        return 0
     fi
     printf '%s' "$list"
 }
@@ -530,7 +536,7 @@ _sync_v6_sink_address() {
     # The IPv4 is checked whole: the value goes into a sed replacement, and an
     # '&' in it would duplicate the line with exit code 0. An empty Address is
     # refused here too.
-    if [[ ! "$v4" =~ ^[0-9.]+(/[0-9]{1,2})?$ ]] || ! _valid_ipv4 "${v4%%/*}"; then
+    if [[ ! "$v4" =~ ^[0-9.]+(/([0-9]|[12][0-9]|3[0-2]))?$ ]] || ! _valid_ipv4 "${v4%%/*}"; then
         log_error "Address in $conf not parsed ('$v4')."
         return 1
     fi
@@ -4543,6 +4549,13 @@ regenerate_client() {
             if [[ "$_aip_new" != "$current_allowed_ips" ]]; then
                 log "Client '$name': IPv6 route ::/0 replaced with 2000::/3 (with ::/0 the Windows client cuts off the local network)."
                 current_allowed_ips="$_aip_new"
+            elif _aip_has_token "$current_allowed_ips" "::/0" \
+                 && ! _aip_has_token "$current_allowed_ips" "0.0.0.0/0" \
+                 && _is_full_tunnel "$current_allowed_ips"; then
+                # Whether this ::/0 is ours cannot be proven: the server list may
+                # have changed since (isolation, subnet), or it was set by hand.
+                # Kept, but not silently - this is the cut-off LAN.
+                log_warn "Client '$name': full tunnel with ::/0 kept as is - with ::/0 the AmneziaWG Windows client cuts off the local network. If the route was issued by an earlier installer version, run regen --reset-routes '$name'."
             fi
         fi
         _aip_new=$(_append_ipv6_full_tunnel_route "$current_allowed_ips") && [[ -n "$_aip_new" ]] || {
@@ -4614,7 +4627,7 @@ regenerate_client() {
     # The restored list may differ from the one render wrote Address for (a
     # custom partial list on a server in mode 2).
     if ! _sync_v6_sink_address "$_client_conf"; then
-        log_error "Could not bring the Address of client '$name' in line with its AllowedIPs - check $_client_conf."
+        log_error "Could not bring the Address of client '$name' in line with its AllowedIPs: the routes in $_client_conf are already written, and the IPv6 sink address may not match them; QR and vpn:// were not rebuilt. Fix the cause and run regen '$name' again."
         exec {lock_fd}>&-
         unset CLIENT_PSK
         return 1

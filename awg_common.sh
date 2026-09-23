@@ -470,18 +470,24 @@ _aip_migrate_legacy_v6() {
     local list="$1" base="$2" toks v6 mine srv tok out=""
     toks=$(_aip_tokens "$list") || return 1
     v6=$(grep -F ':' <<< "$toks")
-    if [[ "$v6" == "::/0" && -n "$base" && "$base" != *:* ]] \
-       && ! _aip_has_token "$base" "0.0.0.0/0" && _is_full_tunnel "$base"; then
-        mine=$(grep -vF ':' <<< "$toks" | LC_ALL=C sort -u) || return 1
-        srv=$(_aip_tokens "$base" | LC_ALL=C sort -u) || return 1
-        if [[ "$mine" == "$srv" ]]; then
-            while IFS= read -r tok; do
-                [[ "$tok" == "::/0" ]] && tok="2000::/3"
-                out+="${out:+, }${tok}"
-            done <<< "$toks"
-            printf '%s' "$out"
-            return 0
-        fi
+    if [[ "$v6" != "::/0" || -z "$base" || "$base" == *:* ]] \
+       || _aip_has_token "$base" "0.0.0.0/0" || ! _is_full_tunnel "$base"; then
+        printf '%s' "$list"
+        return 0
+    fi
+    # Без IPv4-части (modify принимает и голый ::/0) это не наш список. Код 1
+    # у grep здесь значит «строк нет», а не отказ: в конвейере под pipefail он
+    # ронял бы regen на валидном списке.
+    mine=$(grep -vF ':' <<< "$toks") || { printf '%s' "$list"; return 0; }
+    mine=$(LC_ALL=C sort -u <<< "$mine") || return 1
+    srv=$(_aip_tokens "$base" | LC_ALL=C sort -u) || return 1
+    if [[ "$mine" == "$srv" ]]; then
+        while IFS= read -r tok; do
+            [[ "$tok" == "::/0" ]] && tok="2000::/3"
+            out+="${out:+, }${tok}"
+        done <<< "$toks"
+        printf '%s' "$out"
+        return 0
     fi
     printf '%s' "$list"
 }
@@ -523,7 +529,7 @@ _sync_v6_sink_address() {
     [[ -n "$second" ]] && ! _is_v6_sink_addr "$second" && return 0
     # IPv4 проверяется целиком: значение уходит в замену sed, и '&' в нём
     # размножил бы строку при коде возврата 0. Пустой Address отвергается здесь же.
-    if [[ ! "$v4" =~ ^[0-9.]+(/[0-9]{1,2})?$ ]] || ! _valid_ipv4 "${v4%%/*}"; then
+    if [[ ! "$v4" =~ ^[0-9.]+(/([0-9]|[12][0-9]|3[0-2]))?$ ]] || ! _valid_ipv4 "${v4%%/*}"; then
         log_error "Address в $conf не разобран ('$v4')."
         return 1
     fi
@@ -4491,6 +4497,13 @@ regenerate_client() {
             if [[ "$_aip_new" != "$current_allowed_ips" ]]; then
                 log "Клиент '$name': IPv6-маршрут ::/0 заменён на 2000::/3 (с ::/0 клиент для Windows отрезает локальную сеть)."
                 current_allowed_ips="$_aip_new"
+            elif _aip_has_token "$current_allowed_ips" "::/0" \
+                 && ! _aip_has_token "$current_allowed_ips" "0.0.0.0/0" \
+                 && _is_full_tunnel "$current_allowed_ips"; then
+                # Наш ли это ::/0, доказать нельзя: список сервера с тех пор
+                # мог поменяться (изоляция, подсеть), а мог быть задан вручную.
+                # Оставляем, но молчать нельзя - это и есть отрезанная сеть.
+                log_warn "Клиент '$name': полный туннель с ::/0 оставлен как есть - с ::/0 клиент AmneziaWG для Windows отрезает локальную сеть. Если маршрут выдан прежней версией установщика, выполните regen --reset-routes '$name'."
             fi
         fi
         _aip_new=$(_append_ipv6_full_tunnel_route "$current_allowed_ips") && [[ -n "$_aip_new" ]] || {
@@ -4560,7 +4573,7 @@ regenerate_client() {
     # Восстановленный список мог не совпасть с тем, под который render написал
     # Address (индивидуальный раздельный список на сервере в режиме 2).
     if ! _sync_v6_sink_address "$_client_conf"; then
-        log_error "Не удалось привести Address клиента '$name' к его AllowedIPs - проверьте $_client_conf."
+        log_error "Не удалось привести Address клиента '$name' к его AllowedIPs: маршруты в $_client_conf уже записаны, а адрес стока IPv6 может им не соответствовать; QR и vpn:// не пересобраны. Устраните причину и повторите regen '$name'."
         exec {lock_fd}>&-
         unset CLIENT_PSK
         return 1

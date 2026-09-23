@@ -72,10 +72,13 @@ H4 = 100000000-800000000
 CONF
     printf 'SRVPRIVKEYPLACEHOLDER\n' > "$d/server_private.key"
     printf 'SRVPUBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n' > "$d/server_public.key"
+    # pipefail as in manage_amneziawg.sh: without it a grep that finds nothing
+    # inside a pipeline passes here and fails in production.
     AWG_DIR="$d" timeout 60 bash -c '
+        set -o pipefail
         export CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init" SERVER_CONF_FILE="$AWG_DIR/awg0.conf"
         export KEYS_DIR="$AWG_DIR/keys" EXPIRY_DIR="$AWG_DIR/expiry"
-        log() { :; }; log_warn() { echo "WARN: $*" >&2; }; log_error() { echo "ERR: $*" >&2; }; log_debug() { :; }
+        log() { echo "LOG: $*" >&2; }; log_warn() { echo "WARN: $*" >&2; }; log_error() { echo "ERR: $*" >&2; }; log_debug() { :; }
         source "$1" >/dev/null 2>&1 || true
         safe_load_config "$CONFIG_FILE" >/dev/null 2>&1
         get_main_nic() { echo eth0; }
@@ -184,7 +187,10 @@ migrate_cases() {
         echo "OTHERBASE=$(_aip_migrate_legacy_v6 "$L, ::/0" "0.0.0.0/0")"
         echo "MIXED=$(_aip_migrate_legacy_v6 "$L, ::/0, fddd:2c4:2c4:2c4::/64" "$L")"
         echo "NOV6=$(_aip_migrate_legacy_v6 "$L" "$L")"
-        echo "DONE=$(_aip_migrate_legacy_v6 "$L, 2000::/3" "$L")"')
+        echo "DONE=$(_aip_migrate_legacy_v6 "$L, 2000::/3" "$L")"
+        R=$(printf "%s\n" "$L" | tr "," "\n" | tac | paste -sd, -)
+        echo "REORD=$(_aip_migrate_legacy_v6 "$R, ::/0, 1.0.0.0/8" "$L")"
+        V=$(_aip_migrate_legacy_v6 "::/0" "$L"); echo "V6ONLY=$V rc=$?"')
     # Only the exact shape v5.31-v5.36 wrote: the server list plus our ::/0.
     [[ "$out" == *"OURS=$list, 2000::/3"$'\n'* ]] || { echo "our ::/0 not migrated ($lib): $out"; return 1; }
     [[ "$out" == *"CR=$list, 2000::/3"$'\n'* ]] || { echo "CR broke the migration ($lib): $out"; return 1; }
@@ -194,7 +200,11 @@ migrate_cases() {
     [[ "$out" == *"OTHERBASE=$list, ::/0"$'\n'* ]] || { echo "migrated against a mode-1 server ($lib): $out"; return 1; }
     [[ "$out" == *"MIXED=$list, ::/0, fddd:2c4:2c4:2c4::/64"$'\n'* ]] || { echo "mixed IPv6 part migrated ($lib): $out"; return 1; }
     [[ "$out" == *"NOV6=$list"$'\n'* ]] || { echo "list without IPv6 changed ($lib): $out"; return 1; }
-    [[ "$out" == *"DONE=$list, 2000::/3"* ]] || { echo "not idempotent ($lib): $out"; return 1; }
+    [[ "$out" == *"DONE=$list, 2000::/3"$'\n'* ]] || { echo "not idempotent ($lib): $out"; return 1; }
+    # the same routes in another order, one repeated: still ours
+    [[ "$out" == *"REORD="*", 2000::/3, 1.0.0.0/8"$'\n'* ]] || { echo "reordered list not migrated ($lib): $out"; return 1; }
+    # no IPv4 part at all (modify accepts it): kept, and no failure under pipefail
+    [[ "$out" == *"V6ONLY=::/0 rc=0"* ]] || { echo "IPv6-only list ($lib): $out"; return 1; }
 }
 @test "migrate: only the server list plus our old ::/0 becomes 2000::/3, both twins" {
     both migrate_cases
@@ -315,6 +325,8 @@ regen_migrates() {
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = $list, 2000::/3" ] || { echo "routes ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
     [ "$(conf_line "$lib" Address r1)" = "Address = 10.9.9.20/32, ${SINK_PREFIX}::a09:914/128" ] || { echo "address ($lib): $(conf_line "$lib" Address r1)"; return 1; }
     [ "$(grep -o "$SINK_PREFIX" "$(dir_of "$lib")/r1.conf" | wc -l)" -eq 1 ] || { echo "sink doubled ($lib)"; return 1; }
+    # the only message the operator gets about the change
+    [[ "$out" == *"LOG:"*"2000::/3"* ]] || { echo "migration not reported ($lib): $out"; return 1; }
 }
 @test "regen: a mode-2 client issued with ::/0 gets 2000::/3 and the sink, twice is idempotent, both twins" {
     require_flock
@@ -340,6 +352,7 @@ regen_mode1_kept() {
     [[ "$out" == *"RC=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = 0.0.0.0/0, ::/0" ] || { echo "routes ($lib)"; return 1; }
     [ "$(conf_line "$lib" Address r1)" = "Address = 10.9.9.20/32" ] || { echo "address ($lib)"; return 1; }
+    [[ "$out" != *"WARN:"* ]] || { echo "warning on mode 1 ($lib): $out"; return 1; }
 }
 @test "regen: a client customized to 0.0.0.0/0 keeps ::/0 and no sink, both twins" {
     require_flock
@@ -365,10 +378,38 @@ regen_explicit_kept() {
     [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = 0.0.0.0/1, 128.0.0.0/1, ::/0" ] || { echo "explicit list migrated ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
     [ "$(conf_line "$lib" Address r1)" = "Address = 10.9.9.20/32" ] || { echo "sink on an explicit ::/0 ($lib)"; return 1; }
+    # kept, but not silently: with ::/0 the Windows client loses the LAN
+    [[ "$out" == *"WARN:"*"reset-routes"* ]] || { echo "kept silently ($lib): $out"; return 1; }
 }
-@test "regen: a hand-written full tunnel with ::/0 keeps ::/0, no sink, both twins" {
+@test "regen: a hand-written full tunnel with ::/0 keeps ::/0, no sink, with a warning, both twins" {
     require_flock
     both regen_explicit_kept
+}
+
+# A v5.31-v5.36 profile after the server list changed (isolation toggled, the
+# tunnel subnet moved): no longer provably ours, so it is kept - and said so.
+regen_legacy_base_changed() {
+    local lib="$1" list out
+    list=$(mode2_list)
+    out=$(regen_run "$lib" "$list" "$list, 10.9.9.0/24, ::/0" "10.9.9.20/32")
+    [[ "$out" == *"RC=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
+    [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = $list, 10.9.9.0/24, ::/0" ] || { echo "routes ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
+    [[ "$out" == *"WARN:"*"reset-routes"* ]] || { echo "legacy ::/0 kept silently ($lib): $out"; return 1; }
+}
+@test "regen: an old ::/0 on a list that no longer matches the server is kept with a warning, both twins" {
+    require_flock
+    both regen_legacy_base_changed
+}
+
+regen_ipv6_only() {
+    local lib="$1" out
+    out=$(regen_run "$lib" "$(mode2_list)" "::/0" "10.9.9.20/32")
+    [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
+    [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = ::/0" ] || { echo "IPv6-only list lost ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
+}
+@test "regen: an IPv6-only AllowedIPs survives regen under pipefail, both twins" {
+    require_flock
+    both regen_ipv6_only
 }
 
 # A dual-stack client on a server with native IPv6: add writes the list plus ::/0
@@ -383,6 +424,8 @@ regen_dual_native() {
     [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = $list, ::/0" ] || { echo "dual-stack route flipped ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
     [ "$(conf_line "$lib" Address r1)" = "Address = 10.9.9.20/32, fddd:2c4:2c4:2c4::20/128" ] || { echo "dual-stack address ($lib): $(conf_line "$lib" Address r1)"; return 1; }
+    # ::/0 is present, nothing to warn about
+    [[ "$out" != *"WARN:"* ]] || { echo "false warning ($lib): $out"; return 1; }
 }
 @test "regen: a dual-stack client on a native-IPv6 server keeps ::/0, both twins" {
     require_flock
@@ -393,7 +436,20 @@ regen_sync_fails() {
     local lib="$1" out
     out=$(regen_run "$lib" "$(mode2_list)" "10.0.0.0/8" "10.9.9.20/32" '_sync_v6_sink_address() { return 1; }')
     [[ "$out" == *"RC=1"* && "$out" == *"ERR:"*"Address"* ]] || { echo "sync failure swallowed ($lib): $out"; return 1; }
+    # the state left behind is named: the routes are written, QR and vpn:// are not rebuilt
+    [[ "$out" == *"ERR:"*"Address"*"QR"* ]] || { echo "stale QR not mentioned ($lib): $out"; return 1; }
 }
+regen_migrate_fails() {
+    local lib="$1" out list
+    list=$(mode2_list)
+    out=$(regen_run "$lib" "$list" "$list, ::/0" "10.9.9.20/32" '_aip_migrate_legacy_v6() { return 1; }')
+    [[ "$out" == *"RC=1"* && "$out" == *"ERR:"*"AllowedIPs"* ]] || { echo "migration failure swallowed ($lib): $out"; return 1; }
+}
+@test "regen: a failure to compute the migrated routes is reported, not swallowed, both twins" {
+    require_flock
+    both regen_migrate_fails
+}
+
 @test "regen: a failure to align Address is reported, not swallowed, both twins" {
     require_flock
     both regen_sync_fails
@@ -401,9 +457,9 @@ regen_sync_fails() {
 
 # --- modify ---
 
-# mod_run <lib> <client AllowedIPs> <client Address> <new AllowedIPs>
+# mod_run <lib> <client AllowedIPs> <client Address> <new AllowedIPs> [extra snippet]
 mod_run() {
-    local lib="$1" caips="$2" caddr="$3" newv="$4" manage
+    local lib="$1" caips="$2" caddr="$3" newv="$4" extra="${5:-}" manage
     manage="${lib/awg_common/manage_amneziawg}"
     lr "$lib" "$(mode2_list)" '
         cat > "$AWG_DIR/m1.conf" << EOF
@@ -422,6 +478,7 @@ EOF
         eval "$(awk "/^modify_client\\(\\) \\{/,/^\\}/" "'"$BATS_TEST_DIRNAME/../$manage"'")"
         escape_sed() { printf "%s" "$1" | sed "s/[&\\\\/]/\\\\&/g"; }
         apply_config() { return 0; }; generate_qr() { return 0; }; generate_vpn_uri() { return 0; }; generate_qr_vpnuri() { return 0; }
+        '"$extra"'
         modify_client m1 AllowedIPs "'"$newv"'"; echo "RC=$?"'
 }
 
@@ -471,6 +528,19 @@ modify_rolls_back() {
     both modify_rolls_back
 }
 
+# manage one patch newer than the library: the edit goes through, with a warning.
+modify_old_library() {
+    local lib="$1" out list
+    list=$(mode2_list)
+    out=$(mod_run "$lib" "10.0.0.0/8" "10.9.9.40/32" "$list, 2000::/3" 'unset -f _sync_v6_sink_address')
+    [[ "$out" == *"RC=0"* && "$out" == *"WARN:"*"awg_common.sh"* ]] || { echo "old library ($lib): $out"; return 1; }
+    [ "$(conf_line "$lib" AllowedIPs m1)" = "AllowedIPs = $list, 2000::/3" ] || { echo "edit rolled back ($lib)"; return 1; }
+}
+@test "modify AllowedIPs: next to an older library the edit is kept and the gap is named, both twins" {
+    require_flock
+    both modify_old_library
+}
+
 # --- _sync_v6_sink_address on hand-edited files ---
 
 # sync_on <lib> <file content (printf format)> : runs the sync, prints RC and the file.
@@ -499,6 +569,17 @@ sync_hand_edited() {
     # a value sed would mangle is refused, the file stays as it was
     out=$(sync_on "$lib" '[Interface]\nAddress = 10.9.9.5/32&\n[Peer]\nAllowedIPs = 1.0.0.0/8, 2000::/3\n')
     [[ "$out" == *"RC=1"* && "$out" == *"Address = 10.9.9.5/32&"$'\n'* ]] || { echo "bad Address written ($lib): $out"; return 1; }
+    # a short IPv4 or an impossible prefix is refused even when no sink is due
+    out=$(sync_on "$lib" '[Interface]\nAddress = 10.9.9/32\n[Peer]\nAllowedIPs = 10.0.0.0/8\n')
+    [[ "$out" == *"RC=1"* && "$out" == *"ERR:"* ]] || { echo "short IPv4 accepted ($lib): $out"; return 1; }
+    out=$(sync_on "$lib" '[Interface]\nAddress = 10.9.9.5/99\n[Peer]\nAllowedIPs = 1.0.0.0/8, 2000::/3\n')
+    [[ "$out" == *"RC=1"* && "$out" != *"$SINK_PREFIX"* ]] || { echo "/99 accepted ($lib): $out"; return 1; }
+    # a failed write is a failure
+    out=$(lr "$lib" "0.0.0.0/0" '
+        printf "[Interface]\nAddress = 10.9.9.5/32\n[Peer]\nAllowedIPs = 1.0.0.0/8, 2000::/3\n" > "$AWG_DIR/h.conf"
+        sed() { return 1; }
+        _sync_v6_sink_address "$AWG_DIR/h.conf"; echo "RC=$?"')
+    [[ "$out" == *"RC=1"* && "$out" == *"ERR:"* ]] || { echo "failed write reported as success ($lib): $out"; return 1; }
     # Address over two lines, the second a real IPv6: a hand-made layout, left alone with a warning
     out=$(sync_on "$lib" '[Interface]\nAddress = 10.9.9.5/32\nAddress = fd00::5/128\n[Peer]\nAllowedIPs = 1.0.0.0/8, 2000::/3\n')
     [[ "$out" == *"RC=0"* && "$out" != *"$SINK_PREFIX"* && "$out" == *"WARN:"* ]] || { echo "two Address lines ($lib): $out"; return 1; }
@@ -524,11 +605,15 @@ gap_cases() {
         export SERVER_HAS_NATIVE_IPV6=1
         _aip_full_tunnel_v6_gap "'"$list"', 2000::/3" && echo "G1=gap" || echo "G1=ok"
         _aip_full_tunnel_v6_gap "'"$list"', fddd:2c4:2c4:2c4::/64" && echo "G2=gap" || echo "G2=ok"
-        _aip_full_tunnel_v6_gap "0.0.0.0/0, 2000::/32" && echo "G3=gap" || echo "G3=ok"')
+        _aip_full_tunnel_v6_gap "0.0.0.0/0, 2000::/32" && echo "G3=gap" || echo "G3=ok"
+        _aip_full_tunnel_v6_gap "'"$list"', ::/0" && echo "G4=gap" || echo "G4=ok"
+        _aip_full_tunnel_v6_gap "'"$list"'" && echo "G5=gap" || echo "G5=ok"')
     [[ "$out" == *"G1=ok"* ]] || { echo "2000::/3 treated as a gap ($lib): $out"; return 1; }
     [[ "$out" == *"G2=gap"* ]] || { echo "real gap not reported ($lib): $out"; return 1; }
     # 2000::/32 is one /32, not the global unicast space
     [[ "$out" == *"G3=gap"* ]] || { echo "2000::/32 taken for 2000::/3 ($lib): $out"; return 1; }
+    # no false alarms: ::/0 covers IPv6, and an IPv4-only list is not this state
+    [[ "$out" == *"G4=ok"* && "$out" == *"G5=ok"* ]] || { echo "false gap ($lib): $out"; return 1; }
 }
 @test "gap predicate: 2000::/3 counts as covering IPv6, a ULA-only part still does not, both twins" {
     both gap_cases
