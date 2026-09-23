@@ -1275,7 +1275,13 @@ modify_client() {
     log_debug "sed: ${param} = ${value} in $cf"
     # Address follows the routes: the IPv6 sink address is needed exactly with
     # 2000::/3 and no ::/0 (see AWG_V6_SINK_PREFIX in the library).
-    if [[ "$param" == "AllowedIPs" ]] && ! _sync_v6_sink_address "$cf"; then
+    # _check_common_compat only compares MAJOR.MINOR, so a library one patch
+    # behind gets this far. Without the function the edit is not rolled back:
+    # such a library never writes 2000::/3 itself, and a rollback would present
+    # it as a failure.
+    if [[ "$param" == "AllowedIPs" ]] && ! declare -F _sync_v6_sink_address >/dev/null; then
+        log_warn "The awg_common.sh library is older than this script: the Address of client '$name' was not aligned with the routes. Update awg_common.sh and run regen '$name'."
+    elif [[ "$param" == "AllowedIPs" ]] && ! _sync_v6_sink_address "$cf"; then
         log_error "Could not bring the Address of client '$name' in line with the new routes. Restoring..."
         if cp "$bak" "$cf"; then
             rm -f "$bak"
@@ -2111,6 +2117,10 @@ list_clients() {
                     _a2="${_a2// /}"
                     _a2="${_a2%%/*}"
                     ip6="${_a2:-?}"
+                    # The IPv6 sink address (mode 2) is a service address, not
+                    # the client's IPv6. declare -F: a library with the same
+                    # MAJOR.MINOR but an older patch does not have the function.
+                    declare -F _is_v6_sink_addr >/dev/null && _is_v6_sink_addr "$_a2" && ip6="-"
                 else
                     ip6="-"
                 fi

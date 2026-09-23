@@ -142,8 +142,9 @@ append_cases() {
         L="'"$list"'"
         echo "M2=$(_append_ipv6_full_tunnel_route "$L")"
         echo "M1=$(_append_ipv6_full_tunnel_route "0.0.0.0/0")"
-        echo "MIG=$(_append_ipv6_full_tunnel_route "$L, ::/0")"
+        echo "EXPL=$(_append_ipv6_full_tunnel_route "$L, ::/0")"
         echo "IDEM=$(_append_ipv6_full_tunnel_route "$L, 2000::/3")"
+        echo "P32=$(_append_ipv6_full_tunnel_route "$L, 2000::/32")"
         echo "M1V6=$(_append_ipv6_full_tunnel_route "0.0.0.0/0, ::/0")"
         echo "SPLIT=$(_append_ipv6_full_tunnel_route "10.0.0.0/8, 192.168.0.0/16")"
         echo "SPLITV6=$(_append_ipv6_full_tunnel_route "10.0.0.0/8, ::/0")"
@@ -151,9 +152,12 @@ append_cases() {
         echo "MIXED=$(_append_ipv6_full_tunnel_route "$L, ::/0, fddd:2c4:2c4:2c4::/64")"')
     [[ "$out" == *"M2=$list, 2000::/3"$'\n'* ]] || { echo "mode 2 ($lib): $out"; return 1; }
     [[ "$out" == *"M1=0.0.0.0/0, ::/0"$'\n'* ]] || { echo "mode 1 ($lib): $out"; return 1; }
-    # A client issued by v5.31-v5.36 carries our own ::/0 - a plain regen must deliver the fix.
-    [[ "$out" == *"MIG=$list, 2000::/3"$'\n'* ]] || { echo "migration ($lib): $out"; return 1; }
+    # A list that already has an IPv6 part is never rewritten here: an explicit
+    # ::/0 is the user's choice (add --allowed-ips), and the migration of our own
+    # old ::/0 lives in regen, which knows where the list came from.
+    [[ "$out" == *"EXPL=$list, ::/0"$'\n'* ]] || { echo "explicit ::/0 rewritten ($lib): $out"; return 1; }
     [[ "$out" == *"IDEM=$list, 2000::/3"$'\n'* ]] || { echo "not idempotent ($lib): $out"; return 1; }
+    [[ "$out" == *"P32=$list, 2000::/32"$'\n'* ]] || { echo "2000::/32 touched ($lib): $out"; return 1; }
     [[ "$out" == *"M1V6=0.0.0.0/0, ::/0"$'\n'* ]] || { echo "mode 1 with ::/0 changed ($lib): $out"; return 1; }
     [[ "$out" == *"SPLIT=10.0.0.0/8, 192.168.0.0/16"$'\n'* ]] || { echo "split changed ($lib): $out"; return 1; }
     # A split list someone gave ::/0 by hand is theirs: not a full tunnel, not touched.
@@ -161,8 +165,57 @@ append_cases() {
     [[ "$out" == *"DUAL=$list, fddd:2c4:2c4:2c4::/64"$'\n'* ]] || { echo "dual-stack touched ($lib): $out"; return 1; }
     [[ "$out" == *"MIXED=$list, ::/0, fddd:2c4:2c4:2c4::/64"* ]] || { echo "mixed IPv6 part touched ($lib): $out"; return 1; }
 }
-@test "append: list gets 2000::/3, mode 1 keeps ::/0, an old ::/0 on the list is migrated, both twins" {
+@test "append: list gets 2000::/3, mode 1 keeps ::/0, an explicit IPv6 part is kept, both twins" {
     both append_cases
+}
+
+# --- the migration of our own old ::/0 ---
+
+migrate_cases() {
+    local lib="$1" list out
+    list=$(mode2_list)
+    [ -n "$list" ] || { echo "empty mode-2 fixture"; return 1; }
+    out=$(lr "$lib" "$list" '
+        L="'"$list"'"
+        echo "OURS=$(_aip_migrate_legacy_v6 "$L, ::/0" "$L")"
+        echo "CR=$(_aip_migrate_legacy_v6 "$L, ::/0"$'"'"'\r'"'"' "$L")"
+        echo "EXPL=$(_aip_migrate_legacy_v6 "0.0.0.0/1, 128.0.0.0/1, ::/0" "$L")"
+        echo "M1=$(_aip_migrate_legacy_v6 "0.0.0.0/0, ::/0" "0.0.0.0/0")"
+        echo "OTHERBASE=$(_aip_migrate_legacy_v6 "$L, ::/0" "0.0.0.0/0")"
+        echo "MIXED=$(_aip_migrate_legacy_v6 "$L, ::/0, fddd:2c4:2c4:2c4::/64" "$L")"
+        echo "NOV6=$(_aip_migrate_legacy_v6 "$L" "$L")"
+        echo "DONE=$(_aip_migrate_legacy_v6 "$L, 2000::/3" "$L")"')
+    # Only the exact shape v5.31-v5.36 wrote: the server list plus our ::/0.
+    [[ "$out" == *"OURS=$list, 2000::/3"$'\n'* ]] || { echo "our ::/0 not migrated ($lib): $out"; return 1; }
+    [[ "$out" == *"CR=$list, 2000::/3"$'\n'* ]] || { echo "CR broke the migration ($lib): $out"; return 1; }
+    # A full tunnel the user wrote by hand is theirs, even with ::/0.
+    [[ "$out" == *"EXPL=0.0.0.0/1, 128.0.0.0/1, ::/0"$'\n'* ]] || { echo "explicit list migrated ($lib): $out"; return 1; }
+    [[ "$out" == *"M1=0.0.0.0/0, ::/0"$'\n'* ]] || { echo "mode 1 migrated ($lib): $out"; return 1; }
+    [[ "$out" == *"OTHERBASE=$list, ::/0"$'\n'* ]] || { echo "migrated against a mode-1 server ($lib): $out"; return 1; }
+    [[ "$out" == *"MIXED=$list, ::/0, fddd:2c4:2c4:2c4::/64"$'\n'* ]] || { echo "mixed IPv6 part migrated ($lib): $out"; return 1; }
+    [[ "$out" == *"NOV6=$list"$'\n'* ]] || { echo "list without IPv6 changed ($lib): $out"; return 1; }
+    [[ "$out" == *"DONE=$list, 2000::/3"* ]] || { echo "not idempotent ($lib): $out"; return 1; }
+}
+@test "migrate: only the server list plus our old ::/0 becomes 2000::/3, both twins" {
+    both migrate_cases
+}
+
+# grep -q quits on the first match; under pipefail the writer then dies of
+# SIGPIPE and the pipeline reports "not found". Long lists make it near certain.
+has_token_pipefail() {
+    local lib="$1" out
+    out=$(lr "$lib" "0.0.0.0/0" '
+        set -o pipefail
+        L="0.0.0.0/0"; for i in $(seq 1 400); do L+=", 10.$((i / 250)).$((i % 250)).1/32"; done
+        miss=0
+        for i in $(seq 1 30); do _aip_has_token "$L" "0.0.0.0/0" || miss=$((miss + 1)); done
+        echo "MISS=$miss"
+        echo "ROUTE=$(_append_ipv6_full_tunnel_route "$L" | grep -o "::/0\|2000::/3")"')
+    [[ "$out" == *"MISS=0"* ]] || { echo "false negatives ($lib): $out"; return 1; }
+    [[ "$out" == *"ROUTE=::/0"* ]] || { echo "mode 1 list got the wrong route ($lib): $out"; return 1; }
+}
+@test "tokens: a long list under pipefail never reports a present token as missing, both twins" {
+    both has_token_pipefail
 }
 
 # --- render_client_config ---
@@ -212,6 +265,19 @@ render_dual() {
 }
 @test "render: a dual-stack client keeps its own address and scheme, no sink, both twins" {
     both render_dual
+}
+
+render_explicit_v6() {
+    local lib="$1" out
+    out=$(lr "$lib" "$(mode2_list)" '
+        export CLIENT_ALLOWED_IPS="0.0.0.0/1, 128.0.0.0/1, ::/0"
+        render_client_config c1 10.9.9.7 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+    [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
+    [ "$(conf_line "$lib" AllowedIPs c1)" = "AllowedIPs = 0.0.0.0/1, 128.0.0.0/1, ::/0" ] || { echo "explicit list rewritten ($lib): $(conf_line "$lib" AllowedIPs c1)"; return 1; }
+    [ "$(conf_line "$lib" Address c1)" = "Address = 10.9.9.7/32" ] || { echo "sink on an explicit ::/0 ($lib): $(conf_line "$lib" Address c1)"; return 1; }
+}
+@test "render: add --allowed-ips with an explicit ::/0 is written as is, no sink, both twins" {
+    both render_explicit_v6
 }
 
 # --- regen ---
@@ -293,6 +359,46 @@ regen_reset() {
     both regen_reset
 }
 
+regen_explicit_kept() {
+    local lib="$1" out
+    out=$(regen_run "$lib" "$(mode2_list)" "0.0.0.0/1, 128.0.0.0/1, ::/0" "10.9.9.20/32")
+    [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
+    [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = 0.0.0.0/1, 128.0.0.0/1, ::/0" ] || { echo "explicit list migrated ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
+    [ "$(conf_line "$lib" Address r1)" = "Address = 10.9.9.20/32" ] || { echo "sink on an explicit ::/0 ($lib)"; return 1; }
+}
+@test "regen: a hand-written full tunnel with ::/0 keeps ::/0, no sink, both twins" {
+    require_flock
+    both regen_explicit_kept
+}
+
+# A dual-stack client on a server with native IPv6: add writes the list plus ::/0
+# for it, and a plain regen must not flip that to 2000::/3 (the tunnel ULA would
+# go with it).
+regen_dual_native() {
+    local lib="$1" list out
+    list=$(mode2_list)
+    out=$(regen_run "$lib" "$list" "$list, ::/0" "10.9.9.20/32, fddd:2c4:2c4:2c4::20/128" '
+        sed -i "s|^AllowedIPs = 10.9.9.20/32\$|AllowedIPs = 10.9.9.20/32, fddd:2c4:2c4:2c4::20/128|" "$SERVER_CONF_FILE"
+        export ALLOW_IPV6_TUNNEL=1 IPV6_SUBNET="fddd:2c4:2c4:2c4::/64" SERVER_HAS_NATIVE_IPV6=1')
+    [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
+    [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = $list, ::/0" ] || { echo "dual-stack route flipped ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
+    [ "$(conf_line "$lib" Address r1)" = "Address = 10.9.9.20/32, fddd:2c4:2c4:2c4::20/128" ] || { echo "dual-stack address ($lib): $(conf_line "$lib" Address r1)"; return 1; }
+}
+@test "regen: a dual-stack client on a native-IPv6 server keeps ::/0, both twins" {
+    require_flock
+    both regen_dual_native
+}
+
+regen_sync_fails() {
+    local lib="$1" out
+    out=$(regen_run "$lib" "$(mode2_list)" "10.0.0.0/8" "10.9.9.20/32" '_sync_v6_sink_address() { return 1; }')
+    [[ "$out" == *"RC=1"* && "$out" == *"ERR:"*"Address"* ]] || { echo "sync failure swallowed ($lib): $out"; return 1; }
+}
+@test "regen: a failure to align Address is reported, not swallowed, both twins" {
+    require_flock
+    both regen_sync_fails
+}
+
 # --- modify ---
 
 # mod_run <lib> <client AllowedIPs> <client Address> <new AllowedIPs>
@@ -335,13 +441,78 @@ modify_follows() {
     out=$(mod_run "$lib" "$list, 2000::/3" "$sinkaddr" "$list")
     [[ "$out" == *"RC=0"* && "$out" == *"WARN:"*"regen"* ]] || { echo "no warning ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" Address m1)" = "Address = 10.9.9.40/32" ] || { echo "sink kept without route ($lib)"; return 1; }
-    # a dual-stack client: its real IPv6 address is never touched
+    # a dual-stack client: its real IPv6 address is never touched, and the edit
+    # itself goes through (a rollback would leave the old Address too)
     out=$(mod_run "$lib" "$list, fddd:2c4:2c4:2c4::/64" "10.9.9.40/32, fddd:2c4:2c4:2c4::40/128" "$list, 2000::/3")
+    [[ "$out" == *"RC=0"* ]] || { echo "modify failed ($lib): $out"; return 1; }
+    [ "$(conf_line "$lib" AllowedIPs m1)" = "AllowedIPs = $list, 2000::/3" ] || { echo "edit not applied ($lib)"; return 1; }
     [ "$(conf_line "$lib" Address m1)" = "Address = 10.9.9.40/32, fddd:2c4:2c4:2c4::40/128" ] || { echo "dual-stack address touched ($lib): $(conf_line "$lib" Address m1)"; return 1; }
+    # 2000::/3 next to ::/0: ::/0 brings the Windows kill switch anyway, no sink
+    out=$(mod_run "$lib" "10.0.0.0/8" "10.9.9.40/32" "$list, 2000::/3, ::/0")
+    [[ "$out" == *"RC=0"* ]] || { echo "modify failed ($lib): $out"; return 1; }
+    [ "$(conf_line "$lib" Address m1)" = "Address = 10.9.9.40/32" ] || { echo "sink next to ::/0 ($lib): $(conf_line "$lib" Address m1)"; return 1; }
 }
 @test "modify AllowedIPs: the sink address follows the routes, dual-stack untouched, both twins" {
     require_flock
     both modify_follows
+}
+
+modify_rolls_back() {
+    local lib="$1" out d
+    d=$(dir_of "$lib")
+    # An empty Address cannot be aligned: the edit must be undone, loudly.
+    out=$(mod_run "$lib" "10.0.0.0/8" "" "$(mode2_list), 2000::/3")
+    [[ "$out" == *"RC=1"* && "$out" == *"ERR:"* ]] || { echo "no failure ($lib): $out"; return 1; }
+    [ "$(conf_line "$lib" AllowedIPs m1)" = "AllowedIPs = 10.0.0.0/8" ] || { echo "not restored ($lib): $(conf_line "$lib" AllowedIPs m1)"; return 1; }
+    [ -z "$(find "$d" -maxdepth 1 -name 'm1.conf.bak-*')" ] || { echo "backup left ($lib): $(ls "$d")"; return 1; }
+}
+@test "modify AllowedIPs: when Address cannot follow, the edit is rolled back, both twins" {
+    require_flock
+    both modify_rolls_back
+}
+
+# --- _sync_v6_sink_address on hand-edited files ---
+
+# sync_on <lib> <file content (printf format)> : runs the sync, prints RC and the file.
+sync_on() {
+    local lib="$1" content="$2"
+    lr "$lib" "0.0.0.0/0" '
+        printf "'"$content"'" > "$AWG_DIR/h.conf"
+        _sync_v6_sink_address "$AWG_DIR/h.conf"; echo "RC=$?"
+        cat "$AWG_DIR/h.conf"'
+}
+
+sync_hand_edited() {
+    local lib="$1" out
+    # CRLF from a Windows editor: the sink is added, no stray CR in the value
+    out=$(sync_on "$lib" '[Interface]\r\nAddress = 10.9.9.5/32\r\n[Peer]\r\nAllowedIPs = 1.0.0.0/8, 2000::/3\r\n')
+    [[ "$out" == *"RC=0"* && "$out" == *"Address = 10.9.9.5/32, ${SINK_PREFIX}::a09:905/128"* ]] || { echo "CRLF ($lib): $out"; return 1; }
+    # a non-/24 tunnel subnet: the sink is derived from the client address alone
+    out=$(sync_on "$lib" '[Interface]\nAddress = 172.16.200.9/32\n[Peer]\nAllowedIPs = 1.0.0.0/8, 2000::/3\n')
+    [[ "$out" == *"RC=0"* && "$out" == *"Address = 172.16.200.9/32, ${SINK_PREFIX}::ac10:c809/128"* ]] || { echo "non-/24 ($lib): $out"; return 1; }
+    # AllowedIPs split over two lines (wg sums them): 2000::/3 on the second one counts
+    out=$(sync_on "$lib" '[Interface]\nAddress = 10.9.9.5/32\n[Peer]\nAllowedIPs = 1.0.0.0/8\nAllowedIPs = 2000::/3\n')
+    [[ "$out" == *"RC=0"* && "$out" == *"${SINK_PREFIX}::a09:905/128"* ]] || { echo "multi-line AllowedIPs ($lib): $out"; return 1; }
+    # 2000::/32 is not 2000::/3
+    out=$(sync_on "$lib" '[Interface]\nAddress = 10.9.9.5/32\n[Peer]\nAllowedIPs = 1.0.0.0/8, 2000::/32\n')
+    [[ "$out" == *"RC=0"* && "$out" != *"$SINK_PREFIX"* ]] || { echo "2000::/32 took a sink ($lib): $out"; return 1; }
+    # a value sed would mangle is refused, the file stays as it was
+    out=$(sync_on "$lib" '[Interface]\nAddress = 10.9.9.5/32&\n[Peer]\nAllowedIPs = 1.0.0.0/8, 2000::/3\n')
+    [[ "$out" == *"RC=1"* && "$out" == *"Address = 10.9.9.5/32&"$'\n'* ]] || { echo "bad Address written ($lib): $out"; return 1; }
+    # Address over two lines, the second a real IPv6: a hand-made layout, left alone with a warning
+    out=$(sync_on "$lib" '[Interface]\nAddress = 10.9.9.5/32\nAddress = fd00::5/128\n[Peer]\nAllowedIPs = 1.0.0.0/8, 2000::/3\n')
+    [[ "$out" == *"RC=0"* && "$out" != *"$SINK_PREFIX"* && "$out" == *"WARN:"* ]] || { echo "two Address lines ($lib): $out"; return 1; }
+    # three addresses: not our layout, left alone with a warning
+    out=$(sync_on "$lib" "[Interface]\nAddress = 10.9.9.5/32, ${SINK_PREFIX}::a09:905/128, fd00::1/128\n[Peer]\nAllowedIPs = 10.0.0.0/8\n")
+    [[ "$out" == *"RC=0"* && "$out" == *"WARN:"* ]] || { echo "three addresses silently kept ($lib): $out"; return 1; }
+    # no Address, no file: failures, each named
+    out=$(sync_on "$lib" '[Interface]\n[Peer]\nAllowedIPs = 10.0.0.0/8\n')
+    [[ "$out" == *"RC=1"* && "$out" == *"ERR:"* ]] || { echo "missing Address ($lib): $out"; return 1; }
+    out=$(lr "$lib" "0.0.0.0/0" '_sync_v6_sink_address "$AWG_DIR/nope.conf"; echo "RC=$?"')
+    [[ "$out" == *"RC=1"* && "$out" == *"ERR:"* ]] || { echo "missing file ($lib): $out"; return 1; }
+}
+@test "sync: hand-edited client files - CRLF, other subnets, split lines, bad values, both twins" {
+    both sync_hand_edited
 }
 
 # --- the gap warning predicate ---
@@ -352,9 +523,12 @@ gap_cases() {
     out=$(lr "$lib" "0.0.0.0/0" '
         export SERVER_HAS_NATIVE_IPV6=1
         _aip_full_tunnel_v6_gap "'"$list"', 2000::/3" && echo "G1=gap" || echo "G1=ok"
-        _aip_full_tunnel_v6_gap "'"$list"', fddd:2c4:2c4:2c4::/64" && echo "G2=gap" || echo "G2=ok"')
+        _aip_full_tunnel_v6_gap "'"$list"', fddd:2c4:2c4:2c4::/64" && echo "G2=gap" || echo "G2=ok"
+        _aip_full_tunnel_v6_gap "0.0.0.0/0, 2000::/32" && echo "G3=gap" || echo "G3=ok"')
     [[ "$out" == *"G1=ok"* ]] || { echo "2000::/3 treated as a gap ($lib): $out"; return 1; }
     [[ "$out" == *"G2=gap"* ]] || { echo "real gap not reported ($lib): $out"; return 1; }
+    # 2000::/32 is one /32, not the global unicast space
+    [[ "$out" == *"G3=gap"* ]] || { echo "2000::/32 taken for 2000::/3 ($lib): $out"; return 1; }
 }
 @test "gap predicate: 2000::/3 counts as covering IPv6, a ULA-only part still does not, both twins" {
     both gap_cases
@@ -387,4 +561,42 @@ vpnuri_no_sink() {
 @test "vpn://: the sink is not passed as client_ipv6, the route is, both twins" {
     require_perl_zlib; require_python3
     both vpnuri_no_sink
+}
+
+# --- manage list ---
+
+# list_run <lib> <JSON_OUTPUT> <VERBOSE_LIST> : three clients - a sink one, the
+# same with CRLF line endings, a dual-stack one - through the real list_clients.
+list_run() {
+    local lib="$1" manage
+    manage="${BATS_TEST_DIRNAME}/../${lib/awg_common/manage_amneziawg}"
+    lr "$lib" "$(mode2_list)" '
+        for n in s1:10.9.9.2 c1:10.9.9.3 d1:10.9.9.4; do
+            printf "\n[Peer]\n#_Name = %s\nPublicKey = PK_%s\nAllowedIPs = %s/32\n" "${n%%:*}" "${n%%:*}" "${n#*:}" >> "$SERVER_CONF_FILE"
+        done
+        printf "[Interface]\nAddress = 10.9.9.2/32, '"$SINK_PREFIX"'::a09:902/128\n" > "$AWG_DIR/s1.conf"
+        printf "[Interface]\r\nAddress = 10.9.9.3/32, '"$SINK_PREFIX"'::a09:903/128\r\n" > "$AWG_DIR/c1.conf"
+        printf "[Interface]\nAddress = 10.9.9.4/32, fddd:2c4:2c4:2c4::4/128\n" > "$AWG_DIR/d1.conf"
+        for f in json_escape json_out list_clients; do
+            eval "$(awk -v f="$f" "\$0 ~ \"^\" f \"\\\\(\\\\)\" {p=1} p {print} p && /^\\}\$/ {exit}" "'"$manage"'")"
+        done
+        JSON_OUTPUT='"$2"' VERBOSE_LIST='"$3"' NO_COLOR=1
+        awg() { return 1; }; format_remaining() { echo "-"; }
+        list_clients; echo "RC=$?"'
+}
+
+list_hides_sink() {
+    local lib="$1" out
+    out=$(list_run "$lib" 1 0)
+    [[ "$out" == *"RC=0"* ]] || { echo "list failed ($lib): $out"; return 1; }
+    [[ "$out" == *'"name":"s1","ip":"10.9.9.2","client_ipv6":""'* ]] || { echo "sink in client_ipv6 ($lib): $out"; return 1; }
+    [[ "$out" == *'"name":"c1","ip":"10.9.9.3","client_ipv6":""'* ]] || { echo "CRLF sink in client_ipv6 ($lib): $out"; return 1; }
+    [[ "$out" == *'"name":"d1","ip":"10.9.9.4","client_ipv6":"fddd:2c4:2c4:2c4::4"'* ]] || { echo "dual-stack lost ($lib): $out"; return 1; }
+    out=$(list_run "$lib" 0 1)
+    [[ "$out" == *"RC=0"* ]] || { echo "list -v failed ($lib): $out"; return 1; }
+    [[ "$out" != *"$SINK_PREFIX"* ]] || { echo "sink shown in the table ($lib): $out"; return 1; }
+    [[ "$out" == *"10.9.9.4 / fddd:2c4:2c4:2c4::4"* ]] || { echo "dual-stack not shown ($lib): $out"; return 1; }
+}
+@test "list: the sink is not a client IPv6 address, in the table or in --json, both twins" {
+    both list_hides_sink
 }

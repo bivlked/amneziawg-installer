@@ -1257,7 +1257,12 @@ modify_client() {
     log_debug "sed: ${param} = ${value} в $cf"
     # Address следует за маршрутами: адрес стока IPv6 нужен ровно при 2000::/3
     # без ::/0 (см. AWG_V6_SINK_PREFIX в библиотеке).
-    if [[ "$param" == "AllowedIPs" ]] && ! _sync_v6_sink_address "$cf"; then
+    # _check_common_compat сверяет только MAJOR.MINOR, поэтому библиотека,
+    # отстающая патчем, до сюда доживает. Без функции правку не откатываем:
+    # такая библиотека сама 2000::/3 не пишет, а откат выдал бы её за отказ.
+    if [[ "$param" == "AllowedIPs" ]] && ! declare -F _sync_v6_sink_address >/dev/null; then
+        log_warn "Библиотека awg_common.sh старее этого скрипта: Address клиента '$name' не выровнен по маршрутам. Обновите awg_common.sh и выполните regen '$name'."
+    elif [[ "$param" == "AllowedIPs" ]] && ! _sync_v6_sink_address "$cf"; then
         log_error "Не удалось привести Address клиента '$name' к новым маршрутам. Восстановление..."
         if cp "$bak" "$cf"; then
             rm -f "$bak"
@@ -2090,6 +2095,10 @@ list_clients() {
                     _a2="${_a2// /}"
                     _a2="${_a2%%/*}"
                     ip6="${_a2:-?}"
+                    # Адрес стока IPv6 (режим 2) - служебный, не IPv6 клиента.
+                    # declare -F: библиотека того же MAJOR.MINOR, но старше
+                    # патчем, этой функции не знает.
+                    declare -F _is_v6_sink_addr >/dev/null && _is_v6_sink_addr "$_a2" && ip6="-"
                 else
                     ip6="-"
                 fi

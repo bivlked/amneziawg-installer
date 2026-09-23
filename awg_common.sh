@@ -399,8 +399,13 @@ _aip_tokens() {
 }
 
 # _aip_has_token <список> <элемент> : есть ли в списке ровно такой элемент.
+# Без конвейера: grep -q выходит на первом совпадении, генератор получает
+# SIGPIPE, и под pipefail конвейер отвечает «нет» на присутствующий элемент
+# (на списке в 400 маршрутов - почти всегда).
 _aip_has_token() {
-    _aip_tokens "$1" | grep -qxF -- "$2"
+    local toks
+    toks=$(_aip_tokens "$1") || return 1
+    grep -qxF -- "$2" <<< "$toks"
 }
 
 # _aip_wants_v6_sink <список> : нужен ли клиенту адрес стока - в списке есть
@@ -422,9 +427,9 @@ _aip_wants_v6_sink() {
 #     Windows там включает сам 0.0.0.0/0;
 #   - полный туннель списком (режим 2) -> 2000::/3, адрес стока дописывает
 #     render_client_config (см. AWG_V6_SINK_PREFIX).
-# Список режима 2 с ::/0 - это наш же прежний маршрут (v5.31.0-v5.36.x), и он
-# заменяется на 2000::/3: иначе обычный regen не доставил бы исправление уже
-# выданным клиентам. Список, где IPv6-часть другая, не трогается.
+# Список, где IPv6-часть уже есть, не трогается: явный ::/0 из --allowed-ips -
+# выбор пользователя. Наш прежний ::/0 у списка режима 2 (v5.31.0-v5.36.x)
+# заменяет regen через _aip_migrate_legacy_v6: только он знает, откуда список.
 #
 # Идемпотентность обязательна: regen выполняется многократно и в том числе
 # поверх dual-stack клиента, чья IPv6-часть уже сформирована.
@@ -450,16 +455,33 @@ _append_ipv6_full_tunnel_route() {
         fi
         return 0
     fi
-    local v6 tok out=""
-    v6=$(_aip_tokens "$list" | grep -F ':')
-    if [[ "$v6" == "::/0" ]] && ! _aip_has_token "$list" "0.0.0.0/0" \
-       && _is_full_tunnel "$list"; then
-        while IFS= read -r tok; do
-            [[ "$tok" == "::/0" ]] && tok="2000::/3"
-            out+="${out:+, }${tok}"
-        done < <(_aip_tokens "$list")
-        printf '%s' "$out"
-        return 0
+    printf '%s' "$list"
+}
+
+# _aip_migrate_legacy_v6 <список клиента> <список сервера> : печатает список,
+# где наш прежний ::/0 заменён на 2000::/3, иначе список как есть.
+# v5.31.0-v5.36.x дописывали списку режима 2 голый ::/0, и на Windows он
+# отрезает локальную сеть. Заменяется ТОЛЬКО то, что написали мы: IPv4-часть
+# совпадает с глобальным списком сервера (набором маршрутов), IPv6-часть ровно
+# ::/0, и этот список - полный туннель без 0.0.0.0/0. Полный туннель, который
+# человек расписал сам (--allowed-ips, modify), остаётся его выбором. Клиента с
+# настоящим IPv6 (dual-stack) regen сюда не передаёт вовсе.
+_aip_migrate_legacy_v6() {
+    local list="$1" base="$2" toks v6 mine srv tok out=""
+    toks=$(_aip_tokens "$list") || return 1
+    v6=$(grep -F ':' <<< "$toks")
+    if [[ "$v6" == "::/0" && -n "$base" && "$base" != *:* ]] \
+       && ! _aip_has_token "$base" "0.0.0.0/0" && _is_full_tunnel "$base"; then
+        mine=$(grep -vF ':' <<< "$toks" | LC_ALL=C sort -u) || return 1
+        srv=$(_aip_tokens "$base" | LC_ALL=C sort -u) || return 1
+        if [[ "$mine" == "$srv" ]]; then
+            while IFS= read -r tok; do
+                [[ "$tok" == "::/0" ]] && tok="2000::/3"
+                out+="${out:+, }${tok}"
+            done <<< "$toks"
+            printf '%s' "$out"
+            return 0
+        fi
     fi
     printf '%s' "$list"
 }
@@ -468,26 +490,56 @@ _append_ipv6_full_tunnel_route() {
 # файла - адрес стока есть ровно тогда, когда его требует список. Нужен там, где
 # список меняют после рендера: regen, восстанавливающий индивидуальный список, и
 # modify AllowedIPs. Dual-stack клиента (второй адрес не из стока) не трогает.
+# Раскладку, которую мы не пишем (Address в несколько строк, три адреса), не
+# трогает тоже, но говорит об этом: молча оставленный сток разошёлся бы с
+# маршрутами. Каждый отказ назван, вызывающий добавит, что было откачено.
 _sync_v6_sink_address() {
-    local conf="$1" addr aips v4 second new sink
+    local conf="$1" addr aips v4 second new sink n_addr
     local -a parts=()
-    addr=$(awk '/^Address[[:space:]]*=/{sub(/^Address[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}' "$conf") || return 1
-    aips=$(awk '/^AllowedIPs[[:space:]]*=/{sub(/^AllowedIPs[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}' "$conf") || return 1
-    [[ -n "$addr" ]] || return 1
+    # Отсутствующий файл дойдёт до awk ниже и будет назван там.
+    n_addr=$(grep -c '^[[:space:]]*Address[[:space:]]*=' "$conf" 2>/dev/null) || n_addr=0
+    if (( n_addr > 1 )); then
+        log_warn "Address в $conf задан несколькими строками - адрес стока IPv6 не выравниваю, проверьте его вручную."
+        return 0
+    fi
+    addr=$(awk '/^[[:space:]]*Address[[:space:]]*=/{sub(/^[[:space:]]*Address[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}' "$conf") || {
+        log_error "Address: не удалось прочитать $conf."
+        return 1
+    }
+    # Все строки AllowedIPs: wg их складывает, и 2000::/3 на второй строке
+    # такой же маршрут, как на первой.
+    aips=$(awk '/^[[:space:]]*AllowedIPs[[:space:]]*=/{sub(/^[[:space:]]*AllowedIPs[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); printf "%s%s", sep, $0; sep=", "}' "$conf") || {
+        log_error "AllowedIPs: не удалось прочитать $conf."
+        return 1
+    }
     IFS=',' read -ra parts <<< "$addr"
     v4="${parts[0]//[[:space:]]/}"
     second="${parts[1]:-}"
     second="${second//[[:space:]]/}"
-    if (( ${#parts[@]} > 2 )) || { [[ -n "$second" ]] && ! _is_v6_sink_addr "$second"; }; then
+    if (( ${#parts[@]} > 2 )); then
+        log_warn "Address в $conf несёт больше двух адресов - адрес стока IPv6 не выравниваю, проверьте его вручную."
         return 0
+    fi
+    [[ -n "$second" ]] && ! _is_v6_sink_addr "$second" && return 0
+    # IPv4 проверяется целиком: значение уходит в замену sed, и '&' в нём
+    # размножил бы строку при коде возврата 0. Пустой Address отвергается здесь же.
+    if [[ ! "$v4" =~ ^[0-9.]+(/[0-9]{1,2})?$ ]] || ! _valid_ipv4 "${v4%%/*}"; then
+        log_error "Address в $conf не разобран ('$v4')."
+        return 1
     fi
     new="$v4"
     if _aip_wants_v6_sink "$aips"; then
-        sink=$(_awg_v6_sink_addr "${v4%%/*}") || return 1
+        sink=$(_awg_v6_sink_addr "${v4%%/*}") || {
+            log_error "Address: не удалось вычислить адрес стока для '$v4'."
+            return 1
+        }
         new="${v4}, ${sink}/128"
     fi
     [[ "$new" == "$addr" ]] && return 0
-    sed -i "s|^Address[[:space:]]*=.*|Address = ${new}|" "$conf"
+    sed -i "s|^[[:space:]]*Address[[:space:]]*=.*|Address = ${new}|" "$conf" || {
+        log_error "Address: не удалось записать $conf."
+        return 1
+    }
 }
 
 # Полный туннель с явной IPv6-частью AllowedIPs, но без ::/0, на сервере с
@@ -498,8 +550,8 @@ _sync_v6_sink_address() {
 # правило, а не утечка, и предупреждение звало бы чинить исправное.
 _aip_full_tunnel_v6_gap() {
     local list="$1"
-    [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" \
-        && "$list" == *:* && "$list" != *"::/0"* && "$list" != *"2000::/3"* ]] \
+    [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" && "$list" == *:* ]] \
+        && ! _aip_has_token "$list" "::/0" && ! _aip_has_token "$list" "2000::/3" \
         && _is_full_tunnel "$list"
 }
 
@@ -4426,6 +4478,21 @@ regenerate_client() {
     # уронил бы уже удавшийся перевыпуск.
     if [[ "${AWG_REGEN_RESET_ROUTES:-0}" != "1" && "$_had_conf" -eq 1 ]]; then
         local _aip_new
+        # Наш прежний ::/0 у списка режима 2 (v5.31.0-v5.36.x) отрезает на
+        # Windows локальную сеть; обычный regen должен доставить замену. У
+        # dual-stack клиента ::/0 - его собственная схема, её не трогаем.
+        if [[ -z "$client_ipv6" ]]; then
+            _aip_new=$(_aip_migrate_legacy_v6 "$current_allowed_ips" "${ALLOWED_IPS:-}") && [[ -n "$_aip_new" ]] || {
+                log_error "Не удалось вычислить AllowedIPs для клиента '$name'. Конфиг уже перегенерирован из текущего режима маршрутизации, но индивидуальные настройки НЕ восстановлены - проверьте $AWG_DIR/${name}.conf."
+                exec {lock_fd}>&-
+                unset CLIENT_PSK
+                return 1
+            }
+            if [[ "$_aip_new" != "$current_allowed_ips" ]]; then
+                log "Клиент '$name': IPv6-маршрут ::/0 заменён на 2000::/3 (с ::/0 клиент для Windows отрезает локальную сеть)."
+                current_allowed_ips="$_aip_new"
+            fi
+        fi
         _aip_new=$(_append_ipv6_full_tunnel_route "$current_allowed_ips") && [[ -n "$_aip_new" ]] || {
             # Файл к этому моменту УЖЕ переписан render_client_config, поэтому
             # «конфиг не изменён» было бы ложью о состоянии, а это хуже отказа:
