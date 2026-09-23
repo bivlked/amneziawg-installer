@@ -12,9 +12,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.36.1] - 2026-09-23
+
+**v5.36.1** - the PPA key is embedded in the installer, step 2 no longer depends on a keyserver.
+
 ### Fixed
 
-- **Step 2 no longer fetches the PPA key from `keyserver.ubuntu.com`: the public Amnezia PPA key is embedded in the installer.** The key used to come only from there, with no time limit, so a server that could not reach that host stopped at step 2 after a couple of minutes of waiting, even when the PPA itself was reachable ([Discussion #292](https://github.com/bivlked/amneziawg-installer/discussions/292)). Getting the key needs no network now. The check against the full fingerprint `75C9DD72C799870E310542E24166F2C257290828` stays: a key with another fingerprint is not installed. If Amnezia ever changes the PPA key, a new installer version will be needed.
+- **Step 2 no longer fetches the PPA key from `keyserver.ubuntu.com`: the public Amnezia PPA key is embedded in the installer.** The key used to come only from there, with no time limit, so a server that could not reach that host stopped at step 2 after a couple of minutes of waiting, even when the PPA itself was reachable ([Discussion #292](https://github.com/bivlked/amneziawg-installer/discussions/292)). Getting the key needs no network now. The check against the full fingerprint `75C9DD72C799870E310542E24166F2C257290828` stays: a key with another fingerprint, or a block with an extra key, is not installed. If gpg cannot read the written key during the check, its message goes into the error text and the install log. If Amnezia ever changes the PPA key, a new installer version will be needed.
 
 ## [5.36.0] - 2026-09-22
 
@@ -1972,7 +1976,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.1...HEAD
+[5.36.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.0...v5.36.1
 [5.36.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.35.0...v5.36.0
 [5.35.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.34.1...v5.35.0
 [5.34.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.34.0...v5.34.1
