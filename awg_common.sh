@@ -349,14 +349,82 @@ _is_full_tunnel() {
     return 0
 }
 
-# _append_ipv6_full_tunnel_route <allowed_ips> : печатает список с дописанным
-# ::/0, если это полный туннель и IPv6 в списке ещё нет; иначе список как есть.
+# Префикс «стока» IPv6 для списочного полного туннеля (режим 2).
 #
-# Зачем: IPv6 через IPv4-туннель не проходит, поэтому без этой строки он идёт
+# Зачем. Клиент AmneziaWG для Windows (форк wireguard-windows) включает
+# kill-switch, если у единственного пира есть 0.0.0.0/0 ИЛИ ::/0, и этот
+# kill-switch отрезает локальную сеть - а режим 2 существует ради неё (замер на
+# стенде: шлюз, соседние хосты и SSH недоступны). Без IPv6-адреса на интерфейсе
+# Windows не ставит вообще никакой IPv6-маршрут (amneziawg-windows-client #112),
+# поэтому один 2000::/3 вместо ::/0 вернул бы LAN, но выпустил бы IPv6 мимо
+# туннеля. Поэтому списку достаётся 2000::/3 (весь глобальный IPv6) плюс адрес
+# из этого префикса: маршрут встаёт, IPv6 уходит в туннель и гаснет там
+# (сервер без IPv6-туннеля такой источник отбрасывает), LAN остаётся снаружи.
+# Замерено на Windows, Linux awg-quick и Android с настоящим IPv6.
+# Префикс отдельный от туннельной подсети dual-stack (fddd:2c4:2c4:2c4::/64):
+# vpn:// и regen отличают сток от настоящего IPv6-адреса клиента по префиксу.
+AWG_V6_SINK_PREFIX="fddd:2c4:2c4:ffff"
+
+# _awg_v6_sink_addr <ipv4> : адрес стока клиента - префикс плюс его IPv4 в
+# младших 32 битах (10.9.9.5 -> fddd:2c4:2c4:ffff::a09:905). Уникален для
+# клиента, не меняется при regen и считается без хранимого состояния.
+_awg_v6_sink_addr() {
+    local ip="${1:-}" o1 o2 o3 o4
+    _valid_ipv4 "$ip" || return 1
+    IFS=. read -r o1 o2 o3 o4 <<< "$ip"
+    printf '%s::%x:%x' "$AWG_V6_SINK_PREFIX" \
+        $(( (10#$o1 << 8) | 10#$o2 )) $(( (10#$o3 << 8) | 10#$o4 ))
+}
+
+# _is_v6_sink_addr <адрес[/длина]> : адрес из префикса стока.
+_is_v6_sink_addr() {
+    local a="${1%%/*}"
+    a="${a,,}"
+    [[ -n "$a" && "$a" == "${AWG_V6_SINK_PREFIX}:"* ]]
+}
+
+# _aip_tokens <список> : элементы списка AllowedIPs по одному в строке, без
+# пробелов. Перевод строки и запятая - разделители, возврат каретки не значим.
+_aip_tokens() {
+    local list="$1" tok
+    local -a toks=()
+    list="${list//$'\r'/}"
+    list="${list//$'\n'/,}"
+    IFS=',' read -ra toks <<< "$list"
+    for tok in "${toks[@]}"; do
+        tok="${tok//[[:space:]]/}"
+        [[ -n "$tok" ]] && printf '%s\n' "$tok"
+    done
+    return 0
+}
+
+# _aip_has_token <список> <элемент> : есть ли в списке ровно такой элемент.
+_aip_has_token() {
+    _aip_tokens "$1" | grep -qxF -- "$2"
+}
+
+# _aip_wants_v6_sink <список> : нужен ли клиенту адрес стока - в списке есть
+# 2000::/3 и нет ::/0 (с ::/0 kill-switch Windows включается всё равно).
+_aip_wants_v6_sink() {
+    _aip_has_token "$1" "2000::/3" && ! _aip_has_token "$1" "::/0"
+}
+
+# _append_ipv6_full_tunnel_route <allowed_ips> : печатает список с IPv6-частью
+# полного туннеля, если это полный туннель без IPv6; иначе список как есть.
+#
+# Зачем: IPv6 через IPv4-туннель не проходит, поэтому без IPv6-маршрута он идёт
 # мимо VPN со своим настоящим адресом - заблокированный ресурс с записью AAAA
 # остаётся заблокированным, а выглядит это как 'VPN не работает на мобильном'.
-# ::/0 забирает IPv6 в туннель, где он гасится, и клиент откатывается на IPv4
+# Маршрут забирает IPv6 в туннель, где он гасится, и клиент откатывается на IPv4
 # (Happy Eyeballs). Того же требует iOS AmneziaVPN для режима 'весь трафик'.
+# Какой маршрут:
+#   - в списке есть 0.0.0.0/0 (режим 1) -> ::/0, как раньше: kill-switch
+#     Windows там включает сам 0.0.0.0/0;
+#   - полный туннель списком (режим 2) -> 2000::/3, адрес стока дописывает
+#     render_client_config (см. AWG_V6_SINK_PREFIX).
+# Список режима 2 с ::/0 - это наш же прежний маршрут (v5.31.0-v5.36.x), и он
+# заменяется на 2000::/3: иначе обычный regen не доставил бы исправление уже
+# выданным клиентам. Список, где IPv6-часть другая, не трогается.
 #
 # Идемпотентность обязательна: regen выполняется многократно и в том числе
 # поверх dual-stack клиента, чья IPv6-часть уже сформирована.
@@ -364,17 +432,62 @@ _append_ipv6_full_tunnel_route() {
     local list="$1"
     # Решение принимается по нормализованной копии, поэтому и печатать надо её.
     # Иначе возврат каретки из середины строки уехал бы в клиентский конфиг
-    # вместе с дописанным ::/0, а такой токен клиенты отвергают.
+    # вместе с дописанным маршрутом, а такой токен клиенты отвергают.
     # Возврат каретки не значим НИКОГДА и просто удаляется; перевод строки - это
     # разделитель элементов, поэтому он становится запятой, а не пробелом:
     # пробел склеил бы два маршрута в один нечитаемый токен.
     list="${list//$'\r'/}"
     list="${list//$'\n'/, }"
-    if [[ "$list" != *:* ]] && _is_full_tunnel "$list"; then
-        printf '%s, ::/0' "$list"
-    else
-        printf '%s' "$list"
+    if [[ "$list" != *:* ]]; then
+        if _is_full_tunnel "$list"; then
+            if _aip_has_token "$list" "0.0.0.0/0"; then
+                printf '%s, ::/0' "$list"
+            else
+                printf '%s, 2000::/3' "$list"
+            fi
+        else
+            printf '%s' "$list"
+        fi
+        return 0
     fi
+    local v6 tok out=""
+    v6=$(_aip_tokens "$list" | grep -F ':')
+    if [[ "$v6" == "::/0" ]] && ! _aip_has_token "$list" "0.0.0.0/0" \
+       && _is_full_tunnel "$list"; then
+        while IFS= read -r tok; do
+            [[ "$tok" == "::/0" ]] && tok="2000::/3"
+            out+="${out:+, }${tok}"
+        done < <(_aip_tokens "$list")
+        printf '%s' "$out"
+        return 0
+    fi
+    printf '%s' "$list"
+}
+
+# _sync_v6_sink_address <конфиг клиента> : привести Address к AllowedIPs того же
+# файла - адрес стока есть ровно тогда, когда его требует список. Нужен там, где
+# список меняют после рендера: regen, восстанавливающий индивидуальный список, и
+# modify AllowedIPs. Dual-stack клиента (второй адрес не из стока) не трогает.
+_sync_v6_sink_address() {
+    local conf="$1" addr aips v4 second new sink
+    local -a parts=()
+    addr=$(awk '/^Address[[:space:]]*=/{sub(/^Address[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}' "$conf") || return 1
+    aips=$(awk '/^AllowedIPs[[:space:]]*=/{sub(/^AllowedIPs[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}' "$conf") || return 1
+    [[ -n "$addr" ]] || return 1
+    IFS=',' read -ra parts <<< "$addr"
+    v4="${parts[0]//[[:space:]]/}"
+    second="${parts[1]:-}"
+    second="${second//[[:space:]]/}"
+    if (( ${#parts[@]} > 2 )) || { [[ -n "$second" ]] && ! _is_v6_sink_addr "$second"; }; then
+        return 0
+    fi
+    new="$v4"
+    if _aip_wants_v6_sink "$aips"; then
+        sink=$(_awg_v6_sink_addr "${v4%%/*}") || return 1
+        new="${v4}, ${sink}/128"
+    fi
+    [[ "$new" == "$addr" ]] && return 0
+    sed -i "s|^Address[[:space:]]*=.*|Address = ${new}|" "$conf"
 }
 
 # Полный туннель с явной IPv6-частью AllowedIPs, но без ::/0, на сервере с
@@ -386,7 +499,7 @@ _append_ipv6_full_tunnel_route() {
 _aip_full_tunnel_v6_gap() {
     local list="$1"
     [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" \
-        && "$list" == *:* && "$list" != *"::/0"* ]] \
+        && "$list" == *:* && "$list" != *"::/0"* && "$list" != *"2000::/3"* ]] \
         && _is_full_tunnel "$list"
 }
 
@@ -2339,6 +2452,17 @@ render_client_config() {
         address_line="${client_ip}/32, ${client_ipv6}/128"
     else
         address_line="${client_ip}/32"
+        # Адрес стока для 2000::/3 (см. AWG_V6_SINK_PREFIX): без него Windows
+        # маршрут не поставит и IPv6 пойдёт мимо туннеля.
+        if _aip_wants_v6_sink "$allowed_ips"; then
+            local _sink
+            _sink=$(_awg_v6_sink_addr "$client_ip") || {
+                rm -f "$tmpfile"
+                log_error "Не удалось вычислить IPv6-адрес стока для '$name' ($client_ip) - клиентский конфиг не создан."
+                return 1
+            }
+            address_line+=", ${_sink}/128"
+        fi
     fi
 
     cat > "$tmpfile" << EOF
@@ -3471,6 +3595,10 @@ generate_vpn_uri() {
         exit
     }' "$conf_file" 2>/dev/null)
     client_ipv6="${client_ipv6:-}"
+    # Адрес стока - не IPv6 клиента: в client_ipv6 он не идёт.
+    if _is_v6_sink_addr "$client_ipv6"; then
+        client_ipv6=""
+    fi
     _ensure_server_public_key || return 1
     server_pubkey=$(cat "$AWG_DIR/server_public.key" 2>/dev/null) || { log_warn "Не прочитан $AWG_DIR/server_public.key - vpn:// URI не создан для '$name'."; return 1; }
     # PresharedKey — опциональный. awk вместо grep чтобы пустой результат
@@ -4284,8 +4412,9 @@ regenerate_client() {
     }
 
     # При regen подтягиваем новые дефолты для НЕ-кастомизированных клиентов:
-    # полный туннель получает ::/0 (нужно iOS AmneziaVPN и закрывает утечку
-    # IPv6), одиночный DNS 1.1.1.1 становится парой с резервом. Раздельная
+    # полный туннель получает IPv6-маршрут (::/0 при 0.0.0.0/0, 2000::/3 у
+    # списка режима 2; нужно iOS AmneziaVPN и закрывает утечку IPv6), одиночный
+    # DNS 1.1.1.1 становится парой с резервом. Раздельная
     # маршрутизация, заданная пользователем через modify, полным туннелем не
     # является и сохраняется как есть.
     # Развилка живёт и здесь намеренно: без неё перевыпуск профиля не доставлял
@@ -4357,6 +4486,14 @@ regenerate_client() {
         log "Конфиг клиента '$name' отсутствовал - AllowedIPs взят из текущего режима маршрутизации."
     elif ! sed -i "s/^AllowedIPs = .*/AllowedIPs = ${_aip}/" "$_client_conf"; then
         log_error "Ошибка sed при записи AllowedIPs в $_client_conf"
+        exec {lock_fd}>&-
+        unset CLIENT_PSK
+        return 1
+    fi
+    # Восстановленный список мог не совпасть с тем, под который render написал
+    # Address (индивидуальный раздельный список на сервере в режиме 2).
+    if ! _sync_v6_sink_address "$_client_conf"; then
+        log_error "Не удалось привести Address клиента '$name' к его AllowedIPs - проверьте $_client_conf."
         exec {lock_fd}>&-
         unset CLIENT_PSK
         return 1

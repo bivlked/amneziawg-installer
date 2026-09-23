@@ -350,15 +350,84 @@ _is_full_tunnel() {
     return 0
 }
 
-# _append_ipv6_full_tunnel_route <allowed_ips> : prints the list with ::/0
-# appended when it is a full tunnel and carries no IPv6 yet; otherwise prints
+# The IPv6 "sink" prefix for the list-based full tunnel (routing mode 2).
+#
+# Why. The AmneziaWG Windows client (a wireguard-windows fork) turns on its kill
+# switch when a single peer carries 0.0.0.0/0 OR ::/0, and that kill switch cuts
+# off the LAN - the very thing mode 2 exists for (measured on a stand: gateway,
+# LAN hosts and SSH unreachable). Without an IPv6 address on the interface,
+# Windows installs no IPv6 route at all (amneziawg-windows-client #112), so
+# 2000::/3 alone instead of ::/0 would bring the LAN back and let IPv6 leak
+# around the tunnel. Hence the list gets 2000::/3 (all global IPv6) plus an
+# address from this prefix: the route is installed, IPv6 enters the tunnel and
+# dies there (a server without the IPv6 tunnel drops that source), and the LAN
+# stays outside. Measured on Windows, Linux awg-quick and Android with real IPv6.
+# The prefix is separate from the dual-stack tunnel subnet
+# (fddd:2c4:2c4:2c4::/64): vpn:// and regen tell the sink from a real client
+# IPv6 address by the prefix.
+AWG_V6_SINK_PREFIX="fddd:2c4:2c4:ffff"
+
+# _awg_v6_sink_addr <ipv4> : the client's sink address - the prefix plus its
+# IPv4 in the low 32 bits (10.9.9.5 -> fddd:2c4:2c4:ffff::a09:905). Unique per
+# client, stable across regen, computed without stored state.
+_awg_v6_sink_addr() {
+    local ip="${1:-}" o1 o2 o3 o4
+    _valid_ipv4 "$ip" || return 1
+    IFS=. read -r o1 o2 o3 o4 <<< "$ip"
+    printf '%s::%x:%x' "$AWG_V6_SINK_PREFIX" \
+        $(( (10#$o1 << 8) | 10#$o2 )) $(( (10#$o3 << 8) | 10#$o4 ))
+}
+
+# _is_v6_sink_addr <address[/len]> : an address from the sink prefix.
+_is_v6_sink_addr() {
+    local a="${1%%/*}"
+    a="${a,,}"
+    [[ -n "$a" && "$a" == "${AWG_V6_SINK_PREFIX}:"* ]]
+}
+
+# _aip_tokens <list> : the AllowedIPs elements one per line, without spaces.
+# Newline and comma separate elements, a carriage return is not meaningful.
+_aip_tokens() {
+    local list="$1" tok
+    local -a toks=()
+    list="${list//$'\r'/}"
+    list="${list//$'\n'/,}"
+    IFS=',' read -ra toks <<< "$list"
+    for tok in "${toks[@]}"; do
+        tok="${tok//[[:space:]]/}"
+        [[ -n "$tok" ]] && printf '%s\n' "$tok"
+    done
+    return 0
+}
+
+# _aip_has_token <list> <element> : whether the list has exactly that element.
+_aip_has_token() {
+    _aip_tokens "$1" | grep -qxF -- "$2"
+}
+
+# _aip_wants_v6_sink <list> : whether the client needs the sink address - the
+# list has 2000::/3 and no ::/0 (with ::/0 the Windows kill switch is on anyway).
+_aip_wants_v6_sink() {
+    _aip_has_token "$1" "2000::/3" && ! _aip_has_token "$1" "::/0"
+}
+
+# _append_ipv6_full_tunnel_route <allowed_ips> : prints the list with the IPv6
+# part of a full tunnel when it is a full tunnel without IPv6; otherwise prints
 # the list unchanged.
 #
-# Why: IPv6 does not travel through an IPv4 tunnel, so without this line it goes
-# around the VPN with its real address - a blocked site with an AAAA record stays
-# blocked, and it looks like "the VPN does not work on mobile". ::/0 pulls IPv6
-# into the tunnel where it is dropped, and the client falls back to IPv4 (Happy
-# Eyeballs). iOS AmneziaVPN requires the same for its "all traffic" mode.
+# Why: IPv6 does not travel through an IPv4 tunnel, so without an IPv6 route it
+# goes around the VPN with its real address - a blocked site with an AAAA record
+# stays blocked, and it looks like "the VPN does not work on mobile". The route
+# pulls IPv6 into the tunnel where it is dropped, and the client falls back to
+# IPv4 (Happy Eyeballs). iOS AmneziaVPN requires the same for its "all traffic"
+# mode. Which route:
+#   - the list has 0.0.0.0/0 (mode 1) -> ::/0, as before: the Windows kill
+#     switch is turned on by 0.0.0.0/0 itself there;
+#   - a full tunnel written as a list (mode 2) -> 2000::/3, and
+#     render_client_config adds the sink address (see AWG_V6_SINK_PREFIX).
+# A mode-2 list with ::/0 carries our own earlier route (v5.31.0-v5.36.x), and
+# it is replaced with 2000::/3: otherwise a plain regen would not deliver the
+# fix to clients already issued. A list with any other IPv6 part is untouched.
 #
 # Idempotence is mandatory: regen runs repeatedly, including over a dual-stack
 # client whose IPv6 part has already been built.
@@ -366,18 +435,64 @@ _append_ipv6_full_tunnel_route() {
     local list="$1"
     # The decision is taken on a normalised copy, so the normalised copy is what
     # gets printed. Otherwise a carriage return from the middle of the line would
-    # travel into the client config together with the appended ::/0, and clients
-    # reject such a token.
+    # travel into the client config together with the appended route, and
+    # clients reject such a token.
     # A carriage return is NEVER meaningful and is simply dropped; a newline is
     # an element separator, so it becomes a comma rather than a space - a space
     # would glue two routes into one unreadable token.
     list="${list//$'\r'/}"
     list="${list//$'\n'/, }"
-    if [[ "$list" != *:* ]] && _is_full_tunnel "$list"; then
-        printf '%s, ::/0' "$list"
-    else
-        printf '%s' "$list"
+    if [[ "$list" != *:* ]]; then
+        if _is_full_tunnel "$list"; then
+            if _aip_has_token "$list" "0.0.0.0/0"; then
+                printf '%s, ::/0' "$list"
+            else
+                printf '%s, 2000::/3' "$list"
+            fi
+        else
+            printf '%s' "$list"
+        fi
+        return 0
     fi
+    local v6 tok out=""
+    v6=$(_aip_tokens "$list" | grep -F ':')
+    if [[ "$v6" == "::/0" ]] && ! _aip_has_token "$list" "0.0.0.0/0" \
+       && _is_full_tunnel "$list"; then
+        while IFS= read -r tok; do
+            [[ "$tok" == "::/0" ]] && tok="2000::/3"
+            out+="${out:+, }${tok}"
+        done < <(_aip_tokens "$list")
+        printf '%s' "$out"
+        return 0
+    fi
+    printf '%s' "$list"
+}
+
+# _sync_v6_sink_address <client config> : bring Address in line with the
+# AllowedIPs of the same file - the sink address is there exactly when the list
+# needs it. Used where the list changes after rendering: regen restoring a
+# custom list, and modify AllowedIPs. A dual-stack client (second address not
+# from the sink) is left alone.
+_sync_v6_sink_address() {
+    local conf="$1" addr aips v4 second new sink
+    local -a parts=()
+    addr=$(awk '/^Address[[:space:]]*=/{sub(/^Address[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}' "$conf") || return 1
+    aips=$(awk '/^AllowedIPs[[:space:]]*=/{sub(/^AllowedIPs[[:space:]]*=[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}' "$conf") || return 1
+    [[ -n "$addr" ]] || return 1
+    IFS=',' read -ra parts <<< "$addr"
+    v4="${parts[0]//[[:space:]]/}"
+    second="${parts[1]:-}"
+    second="${second//[[:space:]]/}"
+    if (( ${#parts[@]} > 2 )) || { [[ -n "$second" ]] && ! _is_v6_sink_addr "$second"; }; then
+        return 0
+    fi
+    new="$v4"
+    if _aip_wants_v6_sink "$aips"; then
+        sink=$(_awg_v6_sink_addr "${v4%%/*}") || return 1
+        new="${v4}, ${sink}/128"
+    fi
+    [[ "$new" == "$addr" ]] && return 0
+    sed -i "s|^Address[[:space:]]*=.*|Address = ${new}|" "$conf"
 }
 
 # A full tunnel whose AllowedIPs carry an explicit IPv6 part but no ::/0,
@@ -390,7 +505,7 @@ _append_ipv6_full_tunnel_route() {
 _aip_full_tunnel_v6_gap() {
     local list="$1"
     [[ "${SERVER_HAS_NATIVE_IPV6:-0}" == "1" \
-        && "$list" == *:* && "$list" != *"::/0"* ]] \
+        && "$list" == *:* && "$list" != *"::/0"* && "$list" != *"2000::/3"* ]] \
         && _is_full_tunnel "$list"
 }
 
@@ -2377,6 +2492,17 @@ render_client_config() {
         address_line="${client_ip}/32, ${client_ipv6}/128"
     else
         address_line="${client_ip}/32"
+        # The sink address for 2000::/3 (see AWG_V6_SINK_PREFIX): without it
+        # Windows does not install the route and IPv6 goes around the tunnel.
+        if _aip_wants_v6_sink "$allowed_ips"; then
+            local _sink
+            _sink=$(_awg_v6_sink_addr "$client_ip") || {
+                rm -f "$tmpfile"
+                log_error "Could not compute the IPv6 sink address for '$name' ($client_ip) - client config not created."
+                return 1
+            }
+            address_line+=", ${_sink}/128"
+        fi
     fi
 
     cat > "$tmpfile" << EOF
@@ -3511,6 +3637,10 @@ generate_vpn_uri() {
         exit
     }' "$conf_file" 2>/dev/null)
     client_ipv6="${client_ipv6:-}"
+    # The sink address is not the client's IPv6: it does not go into client_ipv6.
+    if _is_v6_sink_addr "$client_ipv6"; then
+        client_ipv6=""
+    fi
     _ensure_server_public_key || return 1
     server_pubkey=$(cat "$AWG_DIR/server_public.key" 2>/dev/null) || { log_warn "Could not read $AWG_DIR/server_public.key - vpn:// URI not created for '$name'."; return 1; }
     # PresharedKey is optional. awk instead of grep so an empty result is not
@@ -4333,8 +4463,9 @@ regenerate_client() {
     }
 
     # On regen, pull in the new defaults for non-customized clients: a full
-    # tunnel gets ::/0 (needed by iOS AmneziaVPN, and it closes the IPv6 leak),
-    # a single DNS 1.1.1.1 becomes a pair with a fallback. Split routing set by
+    # tunnel gets an IPv6 route (::/0 with 0.0.0.0/0, 2000::/3 for the mode-2
+    # list; needed by iOS AmneziaVPN, and it closes the IPv6 leak), a single
+    # DNS 1.1.1.1 becomes a pair with a fallback. Split routing set by
     # the user via modify is not a full tunnel and is kept as-is.
     # This fork lives here on purpose: without it, re-issuing a profile would
     # not deliver the fix to already issued clients, and "update your profile"
@@ -4407,6 +4538,14 @@ regenerate_client() {
         log "Client '$name' had no config - AllowedIPs taken from the current routing mode."
     elif ! sed -i "s/^AllowedIPs = .*/AllowedIPs = ${_aip}/" "$_client_conf"; then
         log_error "sed error writing AllowedIPs to $_client_conf"
+        exec {lock_fd}>&-
+        unset CLIENT_PSK
+        return 1
+    fi
+    # The restored list may differ from the one render wrote Address for (a
+    # custom partial list on a server in mode 2).
+    if ! _sync_v6_sink_address "$_client_conf"; then
+        log_error "Could not bring the Address of client '$name' in line with its AllowedIPs - check $_client_conf."
         exec {lock_fd}>&-
         unset CLIENT_PSK
         return 1
