@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Step 2 no longer fetches the PPA key from `keyserver.ubuntu.com`: the public Amnezia PPA key is embedded in the installer.** The key used to come only from there, with no time limit, so a server that could not reach that host stopped at step 2 after a couple of minutes of waiting, even when the PPA itself was reachable ([Discussion #292](https://github.com/bivlked/amneziawg-installer/discussions/292)). Getting the key needs no network now. The check against the full fingerprint `75C9DD72C799870E310542E24166F2C257290828` stays: a key with another fingerprint is not installed. If Amnezia ever changes the PPA key, a new installer version will be needed.
+
 ## [5.36.0] - 2026-09-22
 
 **v5.36.0** - protocol generation in manage, keys hidden in service status.

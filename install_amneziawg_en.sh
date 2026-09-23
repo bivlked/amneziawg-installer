@@ -5071,6 +5071,91 @@ _install_pinned_awg2_module() {
 }
 
 # ==============================================================================
+# Amnezia PPA key
+# ==============================================================================
+
+# The public key that signs the indexes of ppa.launchpadcontent.net/amnezia/ppa.
+# Embedded in the installer: it used to be downloaded from keyserver.ubuntu.com,
+# and a server that could not reach that host failed step 2 even with the PPA
+# up (D#292). RSA 4096, no expiry. The fingerprint was checked against the
+# signing_key_fingerprint field of the PPA page on Launchpad and against the
+# signatures of the live PPA indexes. If Amnezia changes the key, a new
+# installer release is needed (as it already was because of the pin).
+_amnezia_ppa_key_armored() {
+    cat <<'PPAKEY'
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+xsFNBGV0UhsBEAC33rMndHSN/k+u7gcZbh9/FjgYfGltQAtVe2QDxzn7UV+k/ChX
+OrYRw6Izw/DrhaapkNCThK2jwJE64e0NjboLH7UrrmSJLXMfOlDFbyGJVRA+1sTB
+lo7kKHY0xiZ1CHDzjKNV3czbesu80A9nuTZYyWHEn9ax6wsqKG3N8SvzQkUrIOVD
+2wZjh0p273CCEGkBnax1ghAV3MF8OrsPU6FRJ+ZakzKbu54g68xoV+2813YECme0
+JKsWfUUe/1uEJOXCvuACURSxnYr0sihJd8QI/jHSGlfeq72e5MflFEOrnu5xaDSJ
+r2W5lvUetG7EGSxtNKd7Jm/KhUV04g7arA0qydRjRToW3QqyzG7VB2nXKz3AOBYN
+earWAuBcTkfPvRVchxbjiYonKZA5tIlVrpawMZsdxKvYwl6LVnpBcccFWPhpudfy
+4TpCqCxRoAanOCvSirI3/y7TcZMBw643SaxXi1ifGeg6eyMzrLtP3CeonKBHGzrt
+1eeKGtEw/PFN4RmwpBePxi+uj0CoTD6zjCQa3c8EeB4Qz7tt6PnpibxdtZE8sBdd
+51wSA/fPGi2tFph8IVAsws7oxcQxZYl8CyncKDLcoR4dxVHYdFEDDf1GjRjoQ3Ai
+nD7fxD5qYzExe50DBVpuUbWcAiGICNxfvzQtUSRRtMoSHDcvzsy03KC6VwARAQAB
+zR5MYXVuY2hwYWQgUFBBIGZvciBJdXJpaSBFZ29yb3bCwY4EEwEKADgWIQR1yd1y
+x5mHDjEFQuJBZvLCVykIKAUCZXRSGwIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIX
+gAAKCRBBZvLCVykIKBu5D/9akmHCHlUqm2RTTBeTMbLNGc0l6YugpPaCM6vz0O9k
+BFP5PfRaNSRzyF7wHFHNY3JUHcor28my1fD8AE4+C3PwXz8tVYLh57UUsp4wjqHY
++MTl/1ngDViPGD3PRjB8ZlO+19yerfplZv1Jaw7FZZv2BZOAXb+ddqUG4EmlzOnC
+EhcSDdFrzEBB3RGthjIb3QkKWKGbELDiMfogmsO9BE139Raiw23blagDrbnWsG4j
+ReZeu3atjG6AW8eL7m+i7bKKshD2CYVMznI5cYGLMKo9w7sb33uylPj1Vx9O7joP
+2GFf2rTpCY8wgzk7i1RqsipJ80u1/DY91Xdizv3f2BBe6UY7qHKoK00O11J0y8yU
+is2Asycy33Wy51pf6rCFUBLQu+c1fEypHF6jqANmQwaH7pPBliy4gGWvrVggzV4m
+xv7SnRiMi4PFyVwjKWm8dmuMxi/B9s++VG/ed+5aYgJYL58MohG3MUI/L58eitSC
+DDcQ1iAnBmawnGMKPqzMgRFB3OU3wDwfh7LNVvQqWpQ4q7pr4Cq1CvZvGoggXWDo
+1/vylPsRmiiuNetfsoVYmrkgtj1om07m5Xp1v4SyXJH11c3dc/xfMmn/4RlMWIpq
+86IsOjpr3avsw3FVUNCgD5Wf5+rHG+7gNmM6Cm/F8MDfAnnRmsw4h6hgvcJNQT5D
+ig==
+=OY2W
+-----END PGP PUBLIC KEY BLOCK-----
+PPAKEY
+}
+
+# Puts the PPA key into keyring $1. Atomic: a temp file next to the target,
+# a fingerprint check, then mv - a half-written or foreign key never lands
+# on the target path.
+install_amnezia_ppa_keyring() {
+    local keyring_file="$1" kf_tmp keys n_keys got_fpr gpg_err
+    # Checked against the FULL 40-character fingerprint and for exactly one
+    # key. The key is embedded, but the check stays: it catches a damaged,
+    # swapped or appended block in an edit. apt would trust an extra key in
+    # the keyring for the PPA, so a matching first fingerprint is not enough.
+    local ppa_key_fpr="75C9DD72C799870E310542E24166F2C257290828"
+    kf_tmp=$(mktemp -p "$(dirname "$keyring_file")" ".amnezia-ppa.gpg.tmp.XXXXXX") \
+        || die "Failed to create temp file for GPG key."
+    # --batch --no-tty --yes: gpg must not open /dev/tty (non-interactive
+    # SSH, cloud-init, Ansible, etc.) and must not abort with "File exists"
+    # when overwriting the mktemp-created tmp file. Without --yes gpg in
+    # batch mode refuses to write into the pre-existing empty tmp file.
+    if ! _amnezia_ppa_key_armored | gpg --batch --no-tty --yes --dearmor -o "$kf_tmp"; then
+        rm -f "$kf_tmp" 2>/dev/null
+        die "Amnezia PPA GPG key import error."
+    fi
+    # gpg's stderr is captured: on a fresh server gpg reports the keybox and
+    # trustdb it creates, which a newcomer would take for an error. On a
+    # refusal the gpg text goes into the die message, and so into the log.
+    if ! gpg_err=$(gpg --batch --no-tty --show-keys --with-colons "$kf_tmp" 2>&1 >"${kf_tmp}.keys"); then
+        rm -f "$kf_tmp" "${kf_tmp}.keys" 2>/dev/null
+        die "gpg could not read the embedded Amnezia PPA key: ${gpg_err:0:500}. Check that the gpg package is installed and works."
+    fi
+    keys=$(<"${kf_tmp}.keys")
+    rm -f "${kf_tmp}.keys" 2>/dev/null
+    n_keys=$(grep -c '^pub:' <<< "$keys")
+    got_fpr=$(awk -F: '/^fpr:/{print $10; exit}' <<< "$keys")
+    if [[ "$n_keys" != 1 || "$got_fpr" != "$ppa_key_fpr" ]]; then
+        rm -f "$kf_tmp" 2>/dev/null
+        die "Amnezia PPA GPG key failed the fingerprint check: expected exactly one key ${ppa_key_fpr}, got ${n_keys:-0} key(s), first: '${got_fpr:-<none>}'. The installer file is damaged or modified: download it again from the release page and check its signature."
+    fi
+    chmod 644 "$kf_tmp" || { rm -f "$kf_tmp" 2>/dev/null; die "chmod GPG key error."; }
+    mv -f "$kf_tmp" "$keyring_file" \
+        || { rm -f "$kf_tmp" 2>/dev/null; die "Failed to move GPG key to target path."; }
+}
+
+# ==============================================================================
 # STEP 2: Installing AmneziaWG and dependencies
 # ==============================================================================
 
@@ -5209,39 +5294,9 @@ step2_install_amnezia() {
     elif [[ -f "$ppa_sources" ]] || [[ -f "$ppa_list" ]]; then
         log "PPA already added."
     else
-        mkdir -p "$keyring_dir"
-        log "Importing Amnezia PPA GPG key..."
-        # Atomic: pipe into temp, then mv — a half-written keyring never
-        # lives on the target path, even if curl/gpg die mid-way.
-        local _kf_tmp
-        _kf_tmp=$(mktemp -p "$keyring_dir" ".amnezia-ppa.gpg.tmp.XXXXXX") \
-            || die "Failed to create temp file for GPG key."
-        # --batch --no-tty --yes: gpg must not open /dev/tty (non-interactive
-        # SSH, cloud-init, Ansible, etc.) and must not abort with "File exists"
-        # when overwriting the mktemp-created tmp file. Without --yes gpg in
-        # batch mode refuses to write into the pre-existing empty tmp file.
-        # Request by the FULL 40-character fingerprint, not the short ID:
-        # short 32-bit IDs have preimage collisions (evil32), and
-        # keyserver.ubuntu.com accepts uploads of arbitrary keys. A swapped
-        # key would not give RCE (package signatures would not match), but it
-        # would break the install with a cryptic apt error.
-        local _ppa_key_fpr="75C9DD72C799870E310542E24166F2C257290828"
-        if ! curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${_ppa_key_fpr}" \
-             | gpg --batch --no-tty --yes --dearmor -o "$_kf_tmp"; then
-            rm -f "$_kf_tmp" 2>/dev/null
-            die "Amnezia PPA GPG key import error."
-        fi
-        # Verify the downloaded key fingerprint against the expected one (pin).
-        local _got_fpr
-        _got_fpr=$(gpg --batch --no-tty --show-keys --with-colons "$_kf_tmp" 2>/dev/null \
-            | awk -F: '/^fpr:/{print $10; exit}')
-        if [[ "$_got_fpr" != "$_ppa_key_fpr" ]]; then
-            rm -f "$_kf_tmp" 2>/dev/null
-            die "Amnezia PPA GPG key failed the fingerprint check (got: '${_got_fpr:-<empty>}')."
-        fi
-        chmod 644 "$_kf_tmp" || { rm -f "$_kf_tmp" 2>/dev/null; die "chmod GPG key error."; }
-        mv -f "$_kf_tmp" "$keyring_file" \
-            || { rm -f "$_kf_tmp" 2>/dev/null; die "Failed to move GPG key to target path."; }
+        mkdir -p "$keyring_dir" || die "Failed to create directory $keyring_dir."
+        log "Importing the Amnezia PPA GPG key (embedded in the installer)..."
+        install_amnezia_ppa_keyring "$keyring_file"
 
         # Debian 12 uses traditional .list format, Debian 13+ and Ubuntu 24.04+ use DEB822 .sources
         if [[ "${OS_ID:-ubuntu}" == "debian" && "${OS_VERSION}" == "12" ]]; then
