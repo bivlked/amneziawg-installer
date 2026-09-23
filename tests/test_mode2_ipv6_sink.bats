@@ -190,7 +190,11 @@ migrate_cases() {
         echo "DONE=$(_aip_migrate_legacy_v6 "$L, 2000::/3" "$L")"
         R=$(printf "%s\n" "$L" | tr "," "\n" | tac | paste -sd, -)
         echo "REORD=$(_aip_migrate_legacy_v6 "$R, ::/0, 1.0.0.0/8" "$L")"
-        V=$(_aip_migrate_legacy_v6 "::/0" "$L"); echo "V6ONLY=$V rc=$?"')
+        V=$(_aip_migrate_legacy_v6 "::/0" "$L"); echo "V6ONLY=$V rc=$?"
+        echo "SPLITBASE=$(_aip_migrate_legacy_v6 "10.0.0.0/8, ::/0" "10.0.0.0/8")"
+        # grep failing for real (exit 2) is a failure, not "no lines"
+        V=$(grep() { [[ "$1" == "-vF" ]] && return 2; command grep "$@"; }; _aip_migrate_legacy_v6 "$L, ::/0" "$L"); echo "GREPV rc=$?"
+        V=$(grep() { [[ "$1" == "-F" ]] && return 2; command grep "$@"; }; _aip_migrate_legacy_v6 "$L, ::/0" "$L"); echo "GREPF rc=$?"')
     # Only the exact shape v5.31-v5.36 wrote: the server list plus our ::/0.
     [[ "$out" == *"OURS=$list, 2000::/3"$'\n'* ]] || { echo "our ::/0 not migrated ($lib): $out"; return 1; }
     [[ "$out" == *"CR=$list, 2000::/3"$'\n'* ]] || { echo "CR broke the migration ($lib): $out"; return 1; }
@@ -205,6 +209,9 @@ migrate_cases() {
     [[ "$out" == *"REORD="*", 2000::/3, 1.0.0.0/8"$'\n'* ]] || { echo "reordered list not migrated ($lib): $out"; return 1; }
     # no IPv4 part at all (modify accepts it): kept, and no failure under pipefail
     [[ "$out" == *"V6ONLY=::/0 rc=0"* ]] || { echo "IPv6-only list ($lib): $out"; return 1; }
+    # a split server list (mode 3) is never a mode-2 origin
+    [[ "$out" == *"SPLITBASE=10.0.0.0/8, ::/0"$'\n'* ]] || { echo "migrated against a split server ($lib): $out"; return 1; }
+    [[ "$out" == *"GREPV rc=1"* && "$out" == *"GREPF rc=1"* ]] || { echo "grep failure taken for no lines ($lib): $out"; return 1; }
 }
 @test "migrate: only the server list plus our old ::/0 becomes 2000::/3, both twins" {
     both migrate_cases
@@ -401,6 +408,27 @@ regen_legacy_base_changed() {
     both regen_legacy_base_changed
 }
 
+# The hint must fit the server: --reset-routes only helps where the server list
+# is itself mode 2; on a mode-1 or mode-3 server it would hand out 0.0.0.0/0 or a
+# split list and lose the client's own routes.
+regen_keep_advice() {
+    local lib="$1" list out
+    list=$(mode2_list)
+    out=$(regen_run "$lib" "0.0.0.0/0" "0.0.0.0/1, 128.0.0.0/1, ::/0" "10.9.9.20/32")
+    [[ "$out" == *"RC=0"* && "$out" == *"WARN:"*"2000::/3"* ]] || { echo "mode-1 server: no usable hint ($lib): $out"; return 1; }
+    [[ "$out" != *"reset-routes"* ]] || { echo "mode-1 server: harmful reset hint ($lib): $out"; return 1; }
+    out=$(regen_run "$lib" "10.0.0.0/8" "$list, ::/0" "10.9.9.20/32")
+    [[ "$out" == *"RC=0"* && "$out" == *"WARN:"*"2000::/3"* ]] || { echo "mode-3 server: no usable hint ($lib): $out"; return 1; }
+    [[ "$out" != *"reset-routes"* ]] || { echo "mode-3 server: harmful reset hint ($lib): $out"; return 1; }
+    # a split list with ::/0 is not a full tunnel: nothing to warn about
+    out=$(regen_run "$lib" "$list" "10.0.0.0/8, ::/0" "10.9.9.20/32")
+    [[ "$out" == *"RC=0"* && "$out" != *"WARN:"* ]] || { echo "false warning on a split list ($lib): $out"; return 1; }
+}
+@test "regen: the hint for a kept ::/0 fits the server's routing mode, both twins" {
+    require_flock
+    both regen_keep_advice
+}
+
 regen_ipv6_only() {
     local lib="$1" out
     out=$(regen_run "$lib" "$(mode2_list)" "::/0" "10.9.9.20/32")
@@ -574,6 +602,8 @@ sync_hand_edited() {
     [[ "$out" == *"RC=1"* && "$out" == *"ERR:"* ]] || { echo "short IPv4 accepted ($lib): $out"; return 1; }
     out=$(sync_on "$lib" '[Interface]\nAddress = 10.9.9.5/99\n[Peer]\nAllowedIPs = 1.0.0.0/8, 2000::/3\n')
     [[ "$out" == *"RC=1"* && "$out" != *"$SINK_PREFIX"* ]] || { echo "/99 accepted ($lib): $out"; return 1; }
+    out=$(sync_on "$lib" '[Interface]\nAddress = 10.9.9.5/33\n[Peer]\nAllowedIPs = 1.0.0.0/8, 2000::/3\n')
+    [[ "$out" == *"RC=1"* ]] || { echo "/33 accepted ($lib): $out"; return 1; }
     # a failed write is a failure
     out=$(lr "$lib" "0.0.0.0/0" '
         printf "[Interface]\nAddress = 10.9.9.5/32\n[Peer]\nAllowedIPs = 1.0.0.0/8, 2000::/3\n" > "$AWG_DIR/h.conf"

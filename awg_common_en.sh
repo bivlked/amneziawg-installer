@@ -472,18 +472,22 @@ _append_ipv6_full_tunnel_route() {
 # a person wrote out themselves (--allowed-ips, modify) stays their choice.
 # Regen never passes a client with a real IPv6 address (dual-stack) here.
 _aip_migrate_legacy_v6() {
-    local list="$1" base="$2" toks v6 mine srv tok out=""
+    local list="$1" base="$2" toks v6 mine srv tok out="" rc
     toks=$(_aip_tokens "$list") || return 1
-    v6=$(grep -F ':' <<< "$toks")
+    # grep exit code 1 means "no lines", which is an answer; 2 and above is a
+    # failure and must not pass for an answer: the migration would silently skip.
+    v6=$(grep -F ':' <<< "$toks"); rc=$?
+    (( rc > 1 )) && return 1
     if [[ "$v6" != "::/0" || -z "$base" || "$base" == *:* ]] \
        || _aip_has_token "$base" "0.0.0.0/0" || ! _is_full_tunnel "$base"; then
         printf '%s' "$list"
         return 0
     fi
     # Without an IPv4 part (modify accepts a bare ::/0 too) this is not our list.
-    # grep exit code 1 here means "no lines", not a failure: inside a pipeline
-    # under pipefail it used to fail regen on a valid list.
-    mine=$(grep -vF ':' <<< "$toks") || { printf '%s' "$list"; return 0; }
+    # Not in a pipeline: under pipefail "no lines" would fail regen on a valid list.
+    mine=$(grep -vF ':' <<< "$toks"); rc=$?
+    (( rc > 1 )) && return 1
+    [[ -n "$mine" ]] || { printf '%s' "$list"; return 0; }
     mine=$(LC_ALL=C sort -u <<< "$mine") || return 1
     srv=$(_aip_tokens "$base" | LC_ALL=C sort -u) || return 1
     if [[ "$mine" == "$srv" ]]; then
@@ -4555,7 +4559,15 @@ regenerate_client() {
                 # Whether this ::/0 is ours cannot be proven: the server list may
                 # have changed since (isolation, subnet), or it was set by hand.
                 # Kept, but not silently - this is the cut-off LAN.
-                log_warn "Client '$name': full tunnel with ::/0 kept as is - with ::/0 the AmneziaWG Windows client cuts off the local network. If the route was issued by an earlier installer version, run regen --reset-routes '$name'."
+                # The hint follows the server's mode: --reset-routes hands out the
+                # SERVER list and helps only when that list is mode 2 itself; on
+                # mode 1 or 3 it would give 0.0.0.0/0 or a partial list and erase
+                # the client's own.
+                if ! _aip_has_token "${ALLOWED_IPS:-}" "0.0.0.0/0" && _is_full_tunnel "${ALLOWED_IPS:-}"; then
+                    log_warn "Client '$name': full tunnel with ::/0 kept as is - with ::/0 the AmneziaWG Windows client cuts off the local network. If the route was issued by an earlier installer version, run regen --reset-routes '$name'."
+                else
+                    log_warn "Client '$name': full tunnel with ::/0 kept as is - with ::/0 the AmneziaWG Windows client cuts off the local network. To keep the network reachable, replace ::/0 with 2000::/3 in its AllowedIPs with modify '$name' AllowedIPs."
+                fi
             fi
         fi
         _aip_new=$(_append_ipv6_full_tunnel_route "$current_allowed_ips") && [[ -n "$_aip_new" ]] || {

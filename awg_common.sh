@@ -467,18 +467,22 @@ _append_ipv6_full_tunnel_route() {
 # человек расписал сам (--allowed-ips, modify), остаётся его выбором. Клиента с
 # настоящим IPv6 (dual-stack) regen сюда не передаёт вовсе.
 _aip_migrate_legacy_v6() {
-    local list="$1" base="$2" toks v6 mine srv tok out=""
+    local list="$1" base="$2" toks v6 mine srv tok out="" rc
     toks=$(_aip_tokens "$list") || return 1
-    v6=$(grep -F ':' <<< "$toks")
+    # Код 1 у grep - «строк нет», это ответ; 2 и выше - отказ, и его нельзя
+    # выдавать за ответ: миграция молча не случилась бы.
+    v6=$(grep -F ':' <<< "$toks"); rc=$?
+    (( rc > 1 )) && return 1
     if [[ "$v6" != "::/0" || -z "$base" || "$base" == *:* ]] \
        || _aip_has_token "$base" "0.0.0.0/0" || ! _is_full_tunnel "$base"; then
         printf '%s' "$list"
         return 0
     fi
-    # Без IPv4-части (modify принимает и голый ::/0) это не наш список. Код 1
-    # у grep здесь значит «строк нет», а не отказ: в конвейере под pipefail он
-    # ронял бы regen на валидном списке.
-    mine=$(grep -vF ':' <<< "$toks") || { printf '%s' "$list"; return 0; }
+    # Без IPv4-части (modify принимает и голый ::/0) это не наш список. Не в
+    # конвейере: под pipefail «строк нет» ронял бы regen на валидном списке.
+    mine=$(grep -vF ':' <<< "$toks"); rc=$?
+    (( rc > 1 )) && return 1
+    [[ -n "$mine" ]] || { printf '%s' "$list"; return 0; }
     mine=$(LC_ALL=C sort -u <<< "$mine") || return 1
     srv=$(_aip_tokens "$base" | LC_ALL=C sort -u) || return 1
     if [[ "$mine" == "$srv" ]]; then
@@ -4503,7 +4507,14 @@ regenerate_client() {
                 # Наш ли это ::/0, доказать нельзя: список сервера с тех пор
                 # мог поменяться (изоляция, подсеть), а мог быть задан вручную.
                 # Оставляем, но молчать нельзя - это и есть отрезанная сеть.
-                log_warn "Клиент '$name': полный туннель с ::/0 оставлен как есть - с ::/0 клиент AmneziaWG для Windows отрезает локальную сеть. Если маршрут выдан прежней версией установщика, выполните regen --reset-routes '$name'."
+                # Совет по режиму сервера: --reset-routes выдаёт СПИСОК СЕРВЕРА,
+                # и помогает только когда тот сам в режиме 2; на режиме 1 или 3
+                # он выдал бы 0.0.0.0/0 или раздельный список и стёр бы свой.
+                if ! _aip_has_token "${ALLOWED_IPS:-}" "0.0.0.0/0" && _is_full_tunnel "${ALLOWED_IPS:-}"; then
+                    log_warn "Клиент '$name': полный туннель с ::/0 оставлен как есть - с ::/0 клиент AmneziaWG для Windows отрезает локальную сеть. Если маршрут выдан прежней версией установщика, выполните regen --reset-routes '$name'."
+                else
+                    log_warn "Клиент '$name': полный туннель с ::/0 оставлен как есть - с ::/0 клиент AmneziaWG для Windows отрезает локальную сеть. Чтобы сеть оставалась доступной, замените в его AllowedIPs ::/0 на 2000::/3 командой modify '$name' AllowedIPs."
+                fi
             fi
         fi
         _aip_new=$(_append_ipv6_full_tunnel_route "$current_allowed_ips") && [[ -n "$_aip_new" ]] || {
