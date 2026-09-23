@@ -5119,9 +5119,11 @@ PPAKEY
 # a fingerprint check, then mv - a half-written or foreign key never lands
 # on the target path.
 install_amnezia_ppa_keyring() {
-    local keyring_file="$1" kf_tmp got_fpr
-    # Checked against the FULL 40-character fingerprint. The key is embedded,
-    # but the check stays: it catches a damaged or swapped block in an edit.
+    local keyring_file="$1" kf_tmp keys n_keys got_fpr
+    # Checked against the FULL 40-character fingerprint and for exactly one
+    # key. The key is embedded, but the check stays: it catches a damaged,
+    # swapped or appended block in an edit. apt would trust an extra key in
+    # the keyring for the PPA, so a matching first fingerprint is not enough.
     local ppa_key_fpr="75C9DD72C799870E310542E24166F2C257290828"
     kf_tmp=$(mktemp -p "$(dirname "$keyring_file")" ".amnezia-ppa.gpg.tmp.XXXXXX") \
         || die "Failed to create temp file for GPG key."
@@ -5133,11 +5135,16 @@ install_amnezia_ppa_keyring() {
         rm -f "$kf_tmp" 2>/dev/null
         die "Amnezia PPA GPG key import error."
     fi
-    got_fpr=$(gpg --batch --no-tty --show-keys --with-colons "$kf_tmp" 2>/dev/null \
-        | awk -F: '/^fpr:/{print $10; exit}')
-    if [[ "$got_fpr" != "$ppa_key_fpr" ]]; then
+    # gpg's stderr is not silenced: if it cannot read the key, the cause shows.
+    if ! keys=$(gpg --batch --no-tty --show-keys --with-colons "$kf_tmp"); then
         rm -f "$kf_tmp" 2>/dev/null
-        die "Amnezia PPA GPG key failed the fingerprint check (got: '${got_fpr:-<empty>}')."
+        die "gpg could not read the embedded Amnezia PPA key (gpg error above). Check that the gpg package is installed and works."
+    fi
+    n_keys=$(grep -c '^pub:' <<< "$keys")
+    got_fpr=$(awk -F: '/^fpr:/{print $10; exit}' <<< "$keys")
+    if [[ "$n_keys" != 1 || "$got_fpr" != "$ppa_key_fpr" ]]; then
+        rm -f "$kf_tmp" 2>/dev/null
+        die "Amnezia PPA GPG key failed the fingerprint check: expected exactly one key ${ppa_key_fpr}, got ${n_keys:-0} key(s), first: '${got_fpr:-<none>}'. The installer file is damaged or modified: download it again from the release page and check its signature."
     fi
     chmod 644 "$kf_tmp" || { rm -f "$kf_tmp" 2>/dev/null; die "chmod GPG key error."; }
     mv -f "$kf_tmp" "$keyring_file" \
@@ -5283,7 +5290,7 @@ step2_install_amnezia() {
     elif [[ -f "$ppa_sources" ]] || [[ -f "$ppa_list" ]]; then
         log "PPA already added."
     else
-        mkdir -p "$keyring_dir"
+        mkdir -p "$keyring_dir" || die "Failed to create directory $keyring_dir."
         log "Importing the Amnezia PPA GPG key (embedded in the installer)..."
         install_amnezia_ppa_keyring "$keyring_file"
 
