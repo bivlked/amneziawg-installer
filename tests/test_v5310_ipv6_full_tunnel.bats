@@ -208,10 +208,12 @@ mode2_list() {
     [ "$(_append_ipv6_full_tunnel_route '0.0.0.0/0')" = "0.0.0.0/0, ::/0" ]
 }
 
-@test "v5.31.0 append: the mode-2 list gains ::/0" {
+@test "v5.31.0 append: the mode-2 list gains an IPv6 route (2000::/3 since the Windows LAN fix)" {
+    # v5.31.0 appended ::/0 here; the Windows kill switch then cut off the LAN,
+    # so the list now gets 2000::/3 plus a sink address (test_mode2_ipv6_sink.bats).
     local list
     list=$(mode2_list)
-    [ "$(_append_ipv6_full_tunnel_route "$list")" = "$list, ::/0" ]
+    [ "$(_append_ipv6_full_tunnel_route "$list")" = "$list, 2000::/3" ]
 }
 
 @test "v5.31.0 append: idempotent - a list that already has ::/0 is untouched" {
@@ -254,8 +256,9 @@ mode2_list() {
     [ "$v" = "0.0.0.0/0, ::/0" ]
     [[ "$v" != *$'\r'* ]]
     # A newline is an element separator, so the result stays a parsable list.
+    # Two halves are a full tunnel written as a list, so the route is 2000::/3.
     v=$(_append_ipv6_full_tunnel_route "$(printf '0.0.0.0/1\n128.0.0.0/1')")
-    [ "$v" = "0.0.0.0/1, 128.0.0.0/1, ::/0" ]
+    [ "$v" = "0.0.0.0/1, 128.0.0.0/1, 2000::/3" ]
 }
 
 # --- render_client_config: the actual bug ---
@@ -271,16 +274,16 @@ setup_mode2() {
     safe_load_config "$CONFIG_FILE"
 }
 
-@test "v5.31.0 render: mode 2 writes ::/0 into the client config" {
+@test "v5.31.0 render: mode 2 writes an IPv6 route into the client config (2000::/3 since the LAN fix)" {
     setup_mode2
     render_client_config "def" "10.9.9.2" "FAKEPRIV" "FAKEPUB" "1.2.3.4" "39743"
-    grep -q "^AllowedIPs = .*, ::/0$" "$AWG_DIR/def.conf"
+    grep -q "^AllowedIPs = .*, 2000::/3$" "$AWG_DIR/def.conf"
 }
 
 @test "v5.31.0 render: the mode-2 client keeps its whole IPv4 list" {
     setup_mode2
     render_client_config "def2" "10.9.9.3" "FAKEPRIV" "FAKEPUB" "1.2.3.4" "39743"
-    grep -q "^AllowedIPs = 1.0.0.0/8, .*208.0.0.0/4, 8.8.8.8/32, 1.1.1.1/32, ::/0$" "$AWG_DIR/def2.conf"
+    grep -q "^AllowedIPs = 1.0.0.0/8, .*208.0.0.0/4, 8.8.8.8/32, 1.1.1.1/32, 2000::/3$" "$AWG_DIR/def2.conf"
 }
 
 @test "v5.31.0 render: mode 1 output is unchanged" {
@@ -367,25 +370,26 @@ EOF
     export -f get_server_public_ip _ensure_server_public_key generate_qr generate_vpn_uri generate_qr_vpnuri
 }
 
-@test "v5.31.0 regen: an already issued default client gets ::/0 on re-issue" {
+@test "v5.31.0 regen: an already issued default client gets its IPv6 route on re-issue" {
     require_flock
     setup_regen "alice" "10.9.9.10" "$(mode2_list)"
     run regenerate_client "alice"
     [ "$status" -eq 0 ]
     # The whole IPv4 list is pinned, not just the tail: a collapsed list would
-    # still satisfy ".*, ::/0".
-    grep -q "^AllowedIPs = 1.0.0.0/8, .*208.0.0.0/4, 8.8.8.8/32, 1.1.1.1/32, ::/0$" "$AWG_DIR/alice.conf"
+    # still satisfy ".*, 2000::/3".
+    grep -q "^AllowedIPs = 1.0.0.0/8, .*208.0.0.0/4, 8.8.8.8/32, 1.1.1.1/32, 2000::/3$" "$AWG_DIR/alice.conf"
 }
 
-@test "v5.31.0 regen: running it twice does not double the ::/0" {
+@test "v5.31.0 regen: running it twice does not double the IPv6 route" {
     require_flock
     setup_regen "bob" "10.9.9.11" "$(mode2_list)"
     run regenerate_client "bob"
     [ "$status" -eq 0 ]
     run regenerate_client "bob"
     [ "$status" -eq 0 ]
-    [ "$(grep -c '::/0' "$AWG_DIR/bob.conf")" -eq 1 ]
-    [ "$(grep -o '::/0' "$AWG_DIR/bob.conf" | wc -l)" -eq 1 ]
+    [ "$(grep -o '2000::/3' "$AWG_DIR/bob.conf" | wc -l)" -eq 1 ]
+    run grep -qF '::/0' "$AWG_DIR/bob.conf"
+    [ "$status" -ne 0 ]
 }
 
 @test "v5.31.0 regen: a customized split client is still left alone" {
@@ -593,8 +597,8 @@ EOF
 }
 
 @test "v5.31.0 modify: the warning exists in both manage twins" {
-    grep -qF 'задан полным туннелем без ::/0' "${BATS_TEST_DIRNAME}/../manage_amneziawg.sh"
-    grep -qF 'is a full tunnel without ::/0' "${BATS_TEST_DIRNAME}/../manage_amneziawg_en.sh"
+    grep -qF 'задан полным туннелем без IPv6-маршрута' "${BATS_TEST_DIRNAME}/../manage_amneziawg.sh"
+    grep -qF 'is a full tunnel without an IPv6 route' "${BATS_TEST_DIRNAME}/../manage_amneziawg_en.sh"
     local p
     for p in manage_amneziawg.sh manage_amneziawg_en.sh; do
         # The predicate must actually be called, not merely mentioned: without

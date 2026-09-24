@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The "Amnezia" routing mode (mode 2) keeps the local network reachable in the AmneziaWG Windows client again.** Since v5.31.0 this mode's list got `::/0` appended so the device's IPv6 would not go around the tunnel. But with `::/0` the Windows client blocks all traffic outside the tunnel, and the router, other computers and SSH on the home network went with it - exactly what people choose this mode for. The list now gets `2000::/3` (all global IPv6), and the client's `Address` a service address like `fddd:2c4:2c4:ffff::a09:905/128`: without an IPv6 address Windows does not install that route. The device's IPv6 still goes into the tunnel and dies there, and the local network stays outside the tunnel. Checked on Windows, on Linux, and on Android on a mobile network with IPv6. Profiles already issued are updated by a plain `manage regen`, then re-imported on the devices; `::/0` is replaced only on a list matching the server's current list, clients issued with `--allow-ipv6-tunnel` are left alone, and if a full tunnel keeps `::/0` (a different list, or the server's list changed since), it warns and says how to move to `2000::/3`. The "All traffic" mode does not change.
+
 ## [5.36.1] - 2026-09-23
 
 **v5.36.1** - the PPA key is embedded in the installer, step 2 no longer depends on a keyserver.

@@ -1203,10 +1203,10 @@ modify_client() {
             value="$_norm"
             log "Value normalised to: $value"
             # modify writes exactly what it was asked for - that is its contract,
-            # and it is also how people drop ::/0 when they want working IPv6.
-            # But if the given list is a full tunnel WITHOUT ::/0, the client
-            # loses the route that add and regen hand it, and its IPv6 goes
-            # around the tunnel again. Public recipes of the shape
+            # and it is also how people drop the IPv6 route when they want
+            # working IPv6. But if the given list is a full tunnel WITHOUT an IPv6
+            # route (::/0 or 2000::/3), the client loses the route that add and
+            # regen hand it, and its IPv6 goes around the tunnel again. Public recipes of the shape
             # `modify <name> AllowedIPs "$ALLOWED_IPS"` do precisely that.
             # The value is written as asked, but staying silent is not an option.
             # No need to check that _is_full_tunnel exists here:
@@ -1215,7 +1215,7 @@ modify_client() {
             # next to an old library" never reaches this point.
             if [[ "$param" == "AllowedIPs" && "$value" != *:* ]] \
                && _is_full_tunnel "$value"; then
-                log_warn "AllowedIPs of client '$name' is a full tunnel without ::/0 - the device's IPv6 will go around the tunnel with its real address. To restore the route: regen '$name'."
+                log_warn "AllowedIPs of client '$name' is a full tunnel without an IPv6 route - the device's IPv6 will go around the tunnel with its real address. To restore the route: regen '$name'."
             fi
             ;;
     esac
@@ -1273,6 +1273,27 @@ modify_client() {
         return 1
     fi
     log_debug "sed: ${param} = ${value} in $cf"
+    # Address follows the routes: the IPv6 sink address is needed exactly with
+    # 2000::/3 and no ::/0 (see AWG_V6_SINK_PREFIX in the library).
+    # _check_common_compat only compares MAJOR.MINOR, so a library one patch
+    # behind gets this far. Without the function the edit is not rolled back:
+    # such a library never writes 2000::/3 itself, and a rollback would present
+    # it as a failure.
+    if [[ "$param" == "AllowedIPs" ]] && ! declare -F _sync_v6_sink_address >/dev/null; then
+        log_warn "The awg_common.sh library is older than this script: the Address of client '$name' was not aligned with the routes. Update awg_common.sh and run regen '$name'."
+    elif [[ "$param" == "AllowedIPs" ]] && ! _sync_v6_sink_address "$cf"; then
+        log_error "Could not bring the Address of client '$name' in line with the new routes. Restoring..."
+        if cp "$bak" "$cf"; then
+            rm -f "$bak"
+            log_warn "QR and vpn:// files of client '$name' may have been removed before the edit - fix the cause and repeat modify, it rebuilds them."
+            _JSON_ERR="edit rolled back, the .conf is restored; repeat modify to rebuild QR and vpn://"
+        else
+            log_error "Could not restore $cf from $bak - the backup is kept, put it back by hand."
+            _JSON_ERR="edit failed and the .conf was not restored; backup: $bak"
+        fi
+        exec {modify_lock_fd}>&-
+        return 1
+    fi
 
     log "Parameter '$param' changed."
     rm -f "$bak"
@@ -2096,6 +2117,10 @@ list_clients() {
                     _a2="${_a2// /}"
                     _a2="${_a2%%/*}"
                     ip6="${_a2:-?}"
+                    # The IPv6 sink address (mode 2) is a service address, not
+                    # the client's IPv6. declare -F: a library with the same
+                    # MAJOR.MINOR but an older patch does not have the function.
+                    declare -F _is_v6_sink_addr >/dev/null && _is_v6_sink_addr "$_a2" && ip6="-"
                 else
                     ip6="-"
                 fi
@@ -2589,7 +2614,7 @@ case $COMMAND in
                 # The applied AllowedIPs (maintainer request in Issue #253):
                 # routes are read from the created .conf - the source of truth.
                 # The value may differ from the flag argument: a full-tunnel
-                # IPv4 list gets ::/0 added (the iOS rule). This spares a bot
+                # IPv4 list gets an IPv6 route added (the iOS rule). This spares a bot
                 # its verification call after creation.
                 _jaip="null"
                 _jaip_val=$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$AWG_DIR/${_cname}.conf")
