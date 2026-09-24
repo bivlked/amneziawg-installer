@@ -1061,7 +1061,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>Q: How do I change the MTU?</strong></summary>
-  <b>A:</b> Starting with v5.7.4, <code>MTU = 1280</code> is set automatically. To change it, stop the tunnel (<code>sudo systemctl stop awg-quick@awg0</code>) and edit the <code>MTU = &lt;value&gt;</code> line in the <code>[Interface]</code> section of <code>/etc/amnezia/amneziawg/awg0.conf</code> and in client <code>.conf</code> files. In the same <code>awg0.conf</code>, change the <code>--set-mss</code> values in the <code>PostUp</code> and <code>PostDown</code> lines: 40 less than the MTU for the <code>iptables</code> rules, 60 less for the <code>ip6tables</code> rules (if IPv6 is enabled). For MTU 1200 that is 1160 and 1140. Otherwise large packets stop fitting into the tunnel and some sites open only now and then. Then start the tunnel: <code>sudo systemctl start awg-quick@awg0</code>. Stopping it before the edit lets the old MSS rules be removed with their old values. See <a href="#mtu-mobile-adv">MTU and Mobile Clients</a> for details.
+  <b>A:</b> Starting with v5.7.4, <code>MTU = 1280</code> is set automatically. To change it, stop the tunnel (<code>sudo systemctl stop awg-quick@awg0</code>) and edit the <code>MTU = &lt;value&gt;</code> line in the <code>[Interface]</code> section of <code>/etc/amnezia/amneziawg/awg0.conf</code> and in client <code>.conf</code> files. In the same <code>awg0.conf</code>, change the <code>--set-mss</code> values in the <code>PostUp</code> and <code>PostDown</code> lines: 40 less than the MTU for the <code>iptables</code> rules, 60 less for the <code>ip6tables</code> rules (if <code>PostUp</code> has them). For MTU 1200 that is 1160 and 1140. Otherwise large packets stop fitting into the tunnel and some sites open only now and then. Then start the tunnel: <code>sudo systemctl start awg-quick@awg0</code>. Stopping it before the edit lets the old MSS rules be removed with their old values. See <a href="#mtu-mobile-adv">MTU and Mobile Clients</a> for details.
 </details>
 
 <details>
@@ -1190,7 +1190,7 @@ sudo systemctl restart awg-quick@awg0</pre>
 
   <b>Existing install — manual edit:</b>
   <ol>
-    <li>Open <code>/etc/amnezia/amneziawg/awg0.conf</code> and change <code>Jc</code> to <code>3</code>. If <code>I1</code> looks like <code>&lt;r N&gt;</code> with N above 64, replace it with a DNS-shaped string from <a href="#no-hs-mobile-adv">the diagnosis</a> or with <code>&lt;r 64&gt;</code>. Leave a DNS-shaped <code>I1</code>, written by installs of v5.33.0 and newer, as it is.</li>
+    <li>Open <code>/etc/amnezia/amneziawg/awg0.conf</code> and change <code>Jc</code> to <code>3</code>. If <code>I1</code> looks like <code>&lt;r N&gt;</code> with N above 64, replace it with a DNS-shaped string (where to get one is in <a href="#no-hs-mobile-adv">the diagnosis</a>) or with <code>&lt;r 64&gt;</code>. Leave a DNS-shaped <code>I1</code>, written by installs of v5.33.0 and newer, as it is.</li>
     <li><code>sudo systemctl restart awg-quick@awg0</code></li>
     <li><code>sudo bash /root/awg/manage_amneziawg.sh regen &lt;client_name&gt;</code> for each client.</li>
     <li>Redistribute updated configs.</li>

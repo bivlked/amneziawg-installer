@@ -1056,7 +1056,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>В: Как изменить MTU?</strong></summary>
-  **О:** Начиная с v5.7.4 `MTU = 1280` устанавливается автоматически. Для изменения остановите туннель (`sudo systemctl stop awg-quick@awg0`) и отредактируйте строку `MTU = <значение>` в секции `[Interface]` файла `/etc/amnezia/amneziawg/awg0.conf` и в `.conf` файлах клиентов. Там же, в строках `PostUp` и `PostDown` файла `awg0.conf`, поменяйте значения `--set-mss`: у правил `iptables` на 40 меньше MTU, у правил `ip6tables` (если IPv6 включён) на 60 меньше. При MTU 1200 это 1160 и 1140. Без этого крупные пакеты перестанут пролезать в туннель, и часть сайтов будет открываться через раз. Затем запустите туннель: `sudo systemctl start awg-quick@awg0`. Останавливать его до правки нужно, чтобы старые правила MSS снялись по старым значениям. Подробнее - в разделе <a href="#mtu-mobile-adv">MTU и мобильные клиенты</a>.
+  **О:** Начиная с v5.7.4 `MTU = 1280` устанавливается автоматически. Для изменения остановите туннель (`sudo systemctl stop awg-quick@awg0`) и отредактируйте строку `MTU = <значение>` в секции `[Interface]` файла `/etc/amnezia/amneziawg/awg0.conf` и в `.conf` файлах клиентов. Там же, в строках `PostUp` и `PostDown` файла `awg0.conf`, поменяйте значения `--set-mss`: у правил `iptables` на 40 меньше MTU, у правил `ip6tables` (если они есть в `PostUp`) на 60 меньше. При MTU 1200 это 1160 и 1140. Без этого крупные пакеты перестанут пролезать в туннель, и часть сайтов будет открываться через раз. Затем запустите туннель: `sudo systemctl start awg-quick@awg0`. Останавливать его до правки нужно, чтобы старые правила MSS снялись по старым значениям. Подробнее - в разделе <a href="#mtu-mobile-adv">MTU и мобильные клиенты</a>.
 </details>
 
 <details>
@@ -1185,7 +1185,7 @@ sudo systemctl restart awg-quick@awg0</pre>
 
   <b>Существующая установка — ручная правка:</b>
   <ol>
-    <li>Откройте <code>/etc/amnezia/amneziawg/awg0.conf</code> и замените <code>Jc</code> на <code>3</code>. Если <code>I1</code> вида <code>&lt;r N&gt;</code> с N больше 64, замените его на строку формы DNS из <a href="#no-hs-mobile-adv">разбора</a> или на <code>&lt;r 64&gt;</code>. <code>I1</code> формы DNS, который пишут установки v5.33.0 и новее, не трогайте.</li>
+    <li>Откройте <code>/etc/amnezia/amneziawg/awg0.conf</code> и замените <code>Jc</code> на <code>3</code>. Если <code>I1</code> вида <code>&lt;r N&gt;</code> с N больше 64, замените его на строку формы DNS (где её взять - в <a href="#no-hs-mobile-adv">разборе</a>) или на <code>&lt;r 64&gt;</code>. <code>I1</code> формы DNS, который пишут установки v5.33.0 и новее, не трогайте.</li>
     <li><code>sudo systemctl restart awg-quick@awg0</code></li>
     <li><code>sudo bash /root/awg/manage_amneziawg.sh regen &lt;имя_клиента&gt;</code> для каждого клиента.</li>
     <li>Раздайте обновлённые конфиги.</li>
