@@ -162,7 +162,7 @@ sudo bash install_amneziawg_en.sh --jc=2 --jmin=20 --jmax=60 --yes
 | `--jmin=N` | 0-1280 | Minimum junk size (bytes) |
 | `--jmax=N` | 0-1280 | Maximum junk size (bytes), must be ≥ Jmin |
 
-> **Tip:** If VPN works on home Wi-Fi but does not connect over mobile data, check `I1` first: the diagnosis and a ready fix are in <a href="#no-hs-mobile-adv">The handshake never completes on cellular</a>. Lowering the junk packets does not help the handshake, according to our measurement. Other mobile carrier cases are in the <a href="#faq-advanced-adv">FAQ</a>.
+> **Tip:** If VPN works on home Wi-Fi but does not connect over mobile data, check `I1` first: the diagnosis and a ready fix are in <a href="#no-hs-mobile-adv">The handshake never completes on cellular</a>. On the measured route, lowering the junk packets did not help the handshake. Other mobile carrier cases are in the <a href="#faq-advanced-adv">FAQ</a>.
 
 ---
 
@@ -1061,7 +1061,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>Q: How do I change the MTU?</strong></summary>
-  <b>A:</b> Starting with v5.7.4, <code>MTU = 1280</code> is set automatically. To change it: edit the <code>MTU = &lt;value&gt;</code> line in the <code>[Interface]</code> section of <code>/etc/amnezia/amneziawg/awg0.conf</code> and in client <code>.conf</code> files. Change the MSS along with the MTU: the <code>--set-mss</code> value in the <code>PostUp</code> and <code>PostDown</code> lines of the same <code>awg0.conf</code> must be 40 less than the MTU (1160 for MTU 1200), otherwise large packets stop fitting into the tunnel and some sites open only now and then. Restart the service: <code>sudo systemctl restart awg-quick@awg0</code>. The other way is reinstalling with <code>--force</code>, which recomputes the MSS from the new MTU itself. See <a href="#mtu-mobile-adv">MTU and Mobile Clients</a> for details.
+  <b>A:</b> Starting with v5.7.4, <code>MTU = 1280</code> is set automatically. To change it, stop the tunnel (<code>sudo systemctl stop awg-quick@awg0</code>) and edit the <code>MTU = &lt;value&gt;</code> line in the <code>[Interface]</code> section of <code>/etc/amnezia/amneziawg/awg0.conf</code> and in client <code>.conf</code> files. In the same <code>awg0.conf</code>, change the <code>--set-mss</code> values in the <code>PostUp</code> and <code>PostDown</code> lines: 40 less than the MTU for the <code>iptables</code> rules, 60 less for the <code>ip6tables</code> rules (if IPv6 is enabled). For MTU 1200 that is 1160 and 1140. Otherwise large packets stop fitting into the tunnel and some sites open only now and then. Then start the tunnel: <code>sudo systemctl start awg-quick@awg0</code>. Stopping it before the edit lets the old MSS rules be removed with their old values. See <a href="#mtu-mobile-adv">MTU and Mobile Clients</a> for details.
 </details>
 
 <details>
@@ -1183,19 +1183,19 @@ sudo systemctl restart awg-quick@awg0</pre>
 
 <details>
   <summary><strong>Q: VPN connects over cellular only on the third attempt / unstable</strong></summary>
-  <b>A:</b> If the handshake never completes on cellular at all, start with <a href="#no-hs-mobile-adv">The handshake never completes on cellular</a>: the September 2026 measurement shows that the shape of the <code>I1</code> concealment packet decides, while the number and size of junk packets (<code>Jc</code>, <code>Jmin</code>, <code>Jmax</code>) do not help the handshake. If the connection is merely unstable, try the <code>--preset=mobile</code> flag (since v5.10.0), which makes the junk smaller and sparser. In Discussion #38 (@elvaleto), on Tattelecom (Letai) with Jc=4-8 it took multiple attempts to connect, and after setting <code>Jc = 3</code> it worked immediately.
+  <b>A:</b> If the handshake never completes on cellular at all, start with <a href="#no-hs-mobile-adv">The handshake never completes on cellular</a>: the September 2026 measurement on MTS Moscow shows that the shape of the <code>I1</code> concealment packet decides the handshake, while the number and size of junk packets (<code>Jc</code>, <code>Jmin</code>, <code>Jmax</code>) do not affect it. If the connection is merely unstable, try the <code>--preset=mobile</code> flag (since v5.10.0): it sends fewer and smaller junk packets (Jc=3). In Discussion #38 (@elvaleto), on Tattelecom (Letai) with Jc=4-8 it took multiple attempts to connect, and after setting <code>Jc = 3</code> it worked immediately.
   <br><br>
   <b>Fresh install (recommended):</b>
   <pre>sudo bash install_amneziawg_en.sh --preset=mobile --yes</pre>
 
   <b>Existing install — manual edit:</b>
   <ol>
-    <li>Open <code>/etc/amnezia/amneziawg/awg0.conf</code> and change <code>Jc</code> to <code>3</code> and <code>I1</code> to <code>&lt;r 64&gt;</code>.</li>
+    <li>Open <code>/etc/amnezia/amneziawg/awg0.conf</code> and change <code>Jc</code> to <code>3</code>. If <code>I1</code> looks like <code>&lt;r N&gt;</code> with N above 64, replace it with a DNS-shaped string from <a href="#no-hs-mobile-adv">the diagnosis</a> or with <code>&lt;r 64&gt;</code>. Leave a DNS-shaped <code>I1</code>, written by installs of v5.33.0 and newer, as it is.</li>
     <li><code>sudo systemctl restart awg-quick@awg0</code></li>
     <li><code>sudo bash /root/awg/manage_amneziawg.sh regen &lt;client_name&gt;</code> for each client.</li>
     <li>Redistribute updated configs.</li>
   </ol>
-  Lowering the junk further makes no sense: if <code>--preset=mobile</code> did not help, the cause is most likely <code>I1</code>, see <a href="#no-hs-mobile-adv">the diagnosis</a>.
+  If the handshake still never completes, lowering the junk further is useless: on the measured route the cause was <code>I1</code>, see <a href="#no-hs-mobile-adv">the diagnosis</a>.
   <br><br>
   <b>Carrier reports (from issues/discussions):</b>
   <table>
@@ -1205,7 +1205,7 @@ sudo systemctl restart awg-quick@awg0</pre>
   <tr><td>Yota/Tele2 (Moscow)</td><td>Jc=3, Jmin=40, Jmax=70</td><td><code>--preset=mobile</code></td><td>✅</td></tr>
   <tr><td>Tele2 (Krasnoyarsk)</td><td>earlier I1=absent; May 2026: I1=&lt;r 48&gt;</td><td><code>--preset=mobile</code>; in the May wave I1=&lt;r 48&gt;</td><td>✅</td></tr>
   <tr><td>MTS (Primorsky Krai)</td><td>Jc=3, I1=&lt;r 48&gt; (May 2026)</td><td><code>--preset=mobile</code> + I1=&lt;r 48&gt;</td><td>✅</td></tr>
-  <tr><td>MTS (Moscow)</td><td>a random I1=&lt;r 96&gt; and longer does not pass, &lt;r 64&gt; and a DNS-shaped I1 pass; Jc/Jmin/Jmax make no difference (measured, September 2026)</td><td>DNS-shaped I1 (the installer writes it itself since v5.33.0) or &lt;r 64&gt;, see <a href="#no-hs-mobile-adv">the diagnosis</a></td><td>✅</td></tr>
+  <tr><td>MTS (Moscow)</td><td>a random I1=&lt;r 96&gt; and longer does not pass, &lt;r 64&gt; and a DNS-shaped I1 pass; Jc/Jmin/Jmax make no difference (measured, September 2026)</td><td>DNS-shaped I1 (written by the installer on fresh installs since v5.33.0) or &lt;r 64&gt;, see <a href="#no-hs-mobile-adv">the diagnosis</a></td><td>✅</td></tr>
   <tr><td>Beeline</td><td>default</td><td><code>--preset=default</code></td><td>✅</td></tr>
   <tr><td>Megafon (Moscow)</td><td>Jc=3, Jmin=80, Jmax=268</td><td><code>--preset=mobile</code></td><td>🔄 testing</td></tr>
   <tr><td>Megafon (regions)</td><td><b>I1=absent</b></td><td><code>--preset=mobile</code> + remove <code>I1</code></td><td>✅</td></tr>
@@ -1714,7 +1714,7 @@ Starting with v5.17.0 the server additionally clamps the TCP MSS to the tunnel s
 
 **Why:** even with `MTU = 1280`, large pages and downloads sometimes stall on mobile carriers, behind double-NAT, and in a two-server cascade. The cause is a PMTU blackhole: when ICMP "Fragmentation needed" (or ICMPv6 "Packet Too Big" for IPv6) is filtered along the path, oversized TCP segments with the DF flag are silently dropped at the tunnel, and the connection hangs on large transfers (small requests still go through). The MSS clamp tells both sides a tunnel-safe segment size up front, so those packets never appear. It complements `MTU = 1280` rather than replacing it.
 
-The rule is applied automatically on install and reinstall (`--force`) for v5.17.0 and later. It needs no client config regeneration - it lives on the server and applies to every client. The MSS value is derived from `MTU` when the config is generated; if you change `MTU` manually after install, re-run the installer with `--force` (or edit the `PostUp` rule) so the clamp value updates.
+The rule is applied automatically on install and reinstall (`--force`) for v5.17.0 and later. It needs no client config regeneration - it lives on the server and applies to every client. The MSS value is derived from `MTU` when the config is generated; if you change `MTU` manually after install, re-run the installer with `--force` without the `--preset`, `--jc`, `--jmin`, `--jmax` flags (with them the MTU comes from `awgsetup_cfg.init` and the manual edit is rolled back), or adjust the rules in `PostUp` and `PostDown` as described in the FAQ "How do I change the MTU?".
 
 > The MSS clamp only affects TCP. Video and QUIC/HTTP3 (UDP) are untouched: if that is the traffic that stalls, the cause is elsewhere - see the obfuscation parameters and carrier presets.
 
