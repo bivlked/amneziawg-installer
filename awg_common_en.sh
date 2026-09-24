@@ -2504,11 +2504,12 @@ render_client_config() {
         allowed_ips="$_aip_base"
         # iOS AmneziaVPN in "all traffic" mode requires both address families:
         # with a bare 0.0.0.0/0 it treats the config as incomplete split routing
-        # and refuses to bring the tunnel up. For a full tunnel we add ::/0 -
-        # IPv6 goes into the tunnel (and is dropped if the server has no native
-        # IPv6), so it never leaks past the VPN. A full tunnel is decided by
-        # route coverage, so both mode 1 and the list-shaped mode 2 land here;
-        # split routing does not.
+        # and refuses to bring the tunnel up. For a full tunnel we add an IPv6
+        # route: ::/0 with 0.0.0.0/0 (mode 1), 2000::/3 with the sink address
+        # for the mode-2 list (see _append_ipv6_full_tunnel_route). IPv6 goes
+        # into the tunnel (and is dropped if the server has no native IPv6), so
+        # it never leaks past the VPN. A full tunnel is decided by route
+        # coverage, so both mode 1 and mode 2 land here; split routing does not.
         # Checking the substitution result is mandatory: the old code was a pure
         # string comparison and could not fail, while a command substitution
         # returns an empty string when fork/exec fails. Without the check the
