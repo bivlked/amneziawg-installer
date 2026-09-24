@@ -12,6 +12,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **Mobile network advice now follows the measurement.** The tip after the flag table and the FAQ "VPN connects over cellular only on the third attempt" no longer suggest lowering the junk packets further (`--jc=2 --jmin=20 --jmax=60`): the September 2026 measurement shows the shape of `I1` decides the handshake, while `Jc`, `Jmin` and `Jmax` do not affect it. Both now point to "The handshake never completes on cellular" first. The carrier table gains an "MTS (Moscow)" row with the results of the same measurement.
+- **Changing the MTU now mentions the MSS.** The FAQ "How do I change the MTU?" and the "reduce MTU" troubleshooting step say that `--set-mss` in `PostUp` and `PostDown` must change along with the MTU (MTU minus 40), or the server reinstalled with `--force`. Without it, large packets stop passing through the tunnel after the MTU is lowered ([discussion #38](https://github.com/bivlked/amneziawg-installer/discussions/38)).
+
 ## [5.36.2] - 2026-09-24
 
 **v5.36.2** - the "Amnezia" mode keeps the local network reachable in the AmneziaWG Windows client again.

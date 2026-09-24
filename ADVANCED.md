@@ -160,7 +160,7 @@ sudo bash install_amneziawg.sh --jc=2 --jmin=20 --jmax=60 --yes
 | `--jmin=N` | 0-1280 | Минимальный размер junk (байт) |
 | `--jmax=N` | 0-1280 | Максимальный размер junk (байт), должен быть ≥ Jmin |
 
-> **Совет:** Если VPN работает на домашнем Wi-Fi, но нестабилен через мобильную сеть — переустановите с `--preset=mobile`. Подробнее о проблемах мобильных операторов — в <a href="#faq-advanced-adv">FAQ</a>.
+> **Совет:** Если VPN работает на домашнем Wi-Fi, а через мобильную сеть не подключается, сначала проверьте `I1`: разбор и готовое решение в разделе <a href="#no-hs-mobile-adv">Рукопожатие не собирается на мобильном интернете</a>. Уменьшать junk-пакеты ради рукопожатия, по нашему замеру, бесполезно. Остальные случаи мобильных операторов - в <a href="#faq-advanced-adv">FAQ</a>.
 
 ---
 
@@ -1056,7 +1056,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>В: Как изменить MTU?</strong></summary>
-  **О:** Начиная с v5.7.4 `MTU = 1280` устанавливается автоматически. Для изменения: отредактируйте строку `MTU = <значение>` в секции `[Interface]` файла `/etc/amnezia/amneziawg/awg0.conf` и в `.conf` файлах клиентов. Перезапустите сервис. Подробнее — в разделе <a href="#mtu-mobile-adv">MTU и мобильные клиенты</a>.
+  **О:** Начиная с v5.7.4 `MTU = 1280` устанавливается автоматически. Для изменения: отредактируйте строку `MTU = <значение>` в секции `[Interface]` файла `/etc/amnezia/amneziawg/awg0.conf` и в `.conf` файлах клиентов. Вместе с MTU поменяйте и MSS: значение `--set-mss` в строках `PostUp` и `PostDown` того же `awg0.conf` должно быть на 40 меньше MTU (при MTU 1200 это 1160), иначе крупные пакеты перестанут пролезать в туннель и часть сайтов будет открываться через раз. Перезапустите сервис: `sudo systemctl restart awg-quick@awg0`. Другой путь - переустановка с `--force`, она пересчитает MSS из нового MTU сама. Подробнее - в разделе <a href="#mtu-mobile-adv">MTU и мобильные клиенты</a>.
 </details>
 
 <details>
@@ -1178,7 +1178,7 @@ sudo systemctl restart awg-quick@awg0</pre>
 
 <details>
   <summary><strong>В: Подключается через мобильную сеть только с третьего раза / нестабильно</strong></summary>
-  <b>О:</b> Начиная с v5.10.0 достаточно установить с флагом <code>--preset=mobile</code> — он автоматически выставляет оптимальные параметры для мобильных сетей (Jc=3, узкий Jmax). Discussion #38 (@elvaleto): на Таттелеком (Летай) c Jc=4-8 подключалось раза с третьего, а после снижения <code>Jc = 3</code> заработало сразу.
+  <b>О:</b> Если на мобильной сети рукопожатие не собирается вовсе, начните с разбора <a href="#no-hs-mobile-adv">Рукопожатие не собирается на мобильном интернете</a>: по замеру сентября 2026 решает форма маскирующего пакета <code>I1</code>, а количество и размер junk-пакетов (<code>Jc</code>, <code>Jmin</code>, <code>Jmax</code>) рукопожатию не помогают. Если же подключение просто нестабильно, попробуйте флаг <code>--preset=mobile</code> (с v5.10.0), он делает junk мельче и реже. В Discussion #38 (@elvaleto) на Таттелеком (Летай) с Jc=4-8 подключалось раза с третьего, а после снижения <code>Jc = 3</code> заработало сразу.
   <br><br>
   <b>Новая установка (рекомендуется):</b>
   <pre>sudo bash install_amneziawg.sh --preset=mobile --yes</pre>
@@ -1190,7 +1190,7 @@ sudo systemctl restart awg-quick@awg0</pre>
     <li><code>sudo bash /root/awg/manage_amneziawg.sh regen &lt;имя_клиента&gt;</code> для каждого клиента.</li>
     <li>Раздайте обновлённые конфиги.</li>
   </ol>
-  Если <code>--preset=mobile</code> недостаточно — попробуйте ещё ниже: <code>--jc=2 --jmin=20 --jmax=60</code>.
+  Снижать junk ещё сильнее смысла нет: если <code>--preset=mobile</code> не помог, дело, скорее всего, в <code>I1</code>, см. <a href="#no-hs-mobile-adv">разбор</a>.
   <br><br>
   <b>Отчёты по операторам (из issues/discussions):</b>
   <table>
@@ -1200,6 +1200,7 @@ sudo systemctl restart awg-quick@awg0</pre>
   <tr><td>Yota/Tele2 (Москва)</td><td>Jc=3, Jmin=40, Jmax=70</td><td><code>--preset=mobile</code></td><td>✅</td></tr>
   <tr><td>Tele2 (Красноярск)</td><td>ранее I1=отсутствует; май 2026: I1=&lt;r 48&gt;</td><td><code>--preset=mobile</code>; в майскую волну I1=&lt;r 48&gt;</td><td>✅</td></tr>
   <tr><td>МТС (Приморье)</td><td>Jc=3, I1=&lt;r 48&gt; (май 2026)</td><td><code>--preset=mobile</code> + I1=&lt;r 48&gt;</td><td>✅</td></tr>
+  <tr><td>МТС (Москва)</td><td>случайный I1=&lt;r 96&gt; и длиннее не проходит, &lt;r 64&gt; и I1 формы DNS проходят; Jc/Jmin/Jmax не влияют (замер, сентябрь 2026)</td><td>I1 формы DNS (установщик пишет его сам с v5.33.0) или &lt;r 64&gt;, см. <a href="#no-hs-mobile-adv">разбор</a></td><td>✅</td></tr>
   <tr><td>Beeline</td><td>дефолт</td><td><code>--preset=default</code></td><td>✅</td></tr>
   <tr><td>Megafon (Москва)</td><td>Jc=3, Jmin=80, Jmax=268</td><td><code>--preset=mobile</code></td><td>🔄 тестируется</td></tr>
   <tr><td>Megafon (регионы)</td><td><b>I1=отсутствует</b></td><td><code>--preset=mobile</code> + удалить <code>I1</code></td><td>✅</td></tr>
@@ -1424,7 +1425,7 @@ reboot
 2. Проверьте NAT правила: `iptables -t nat -L POSTROUTING -v`
 3. Проверьте AllowedIPs клиента (режим маршрутизации)
 4. Проверьте DNS: `nslookup google.com` из VPN
-5. Проверьте MTU: `ping -s 1280 -M do <IP_сервера>` — если не проходит, уменьшите MTU
+5. Проверьте MTU: `ping -s 1280 -M do <IP_сервера>` - если не проходит, уменьшите MTU, а вместе с ним и MSS (см. вопрос «Как изменить MTU?» в FAQ)
 </details>
 
 <details>
