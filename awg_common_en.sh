@@ -4562,8 +4562,10 @@ regenerate_client() {
                 # The hint follows the server's mode: --reset-routes hands out the
                 # SERVER list and helps only when that list is mode 2 itself; on
                 # mode 1 or 3 it would give 0.0.0.0/0 or a partial list and erase
-                # the client's own.
-                if ! _aip_has_token "${ALLOWED_IPS:-}" "0.0.0.0/0" && _is_full_tunnel "${ALLOWED_IPS:-}"; then
+                # the client's own; with ::/0 in the server list itself it would
+                # hand that ::/0 back.
+                if [[ "${ALLOWED_IPS:-}" != *:* ]] && ! _aip_has_token "${ALLOWED_IPS:-}" "0.0.0.0/0" \
+                   && _is_full_tunnel "${ALLOWED_IPS:-}"; then
                     log_warn "Client '$name': full tunnel with ::/0 kept as is - with ::/0 the AmneziaWG Windows client cuts off the local network. If the route was issued by an earlier installer version, run regen --reset-routes '$name'."
                 else
                     log_warn "Client '$name': full tunnel with ::/0 kept as is - with ::/0 the AmneziaWG Windows client cuts off the local network. To keep the network reachable, replace ::/0 with 2000::/3 in its AllowedIPs with modify '$name' AllowedIPs."

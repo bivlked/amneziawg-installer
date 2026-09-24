@@ -420,6 +420,10 @@ regen_keep_advice() {
     out=$(regen_run "$lib" "10.0.0.0/8" "$list, ::/0" "10.9.9.20/32")
     [[ "$out" == *"RC=0"* && "$out" == *"WARN:"*"2000::/3"* ]] || { echo "mode-3 server: no usable hint ($lib): $out"; return 1; }
     [[ "$out" != *"reset-routes"* ]] || { echo "mode-3 server: harmful reset hint ($lib): $out"; return 1; }
+    # a hand-edited server list that carries ::/0 itself: a reset would hand
+    # ::/0 back, so the hint is modify, not reset
+    out=$(regen_run "$lib" "$list, ::/0" "0.0.0.0/1, 128.0.0.0/1, ::/0" "10.9.9.20/32")
+    [[ "$out" == *"RC=0"* && "$out" == *"WARN:"*"2000::/3"* && "$out" != *"reset-routes"* ]] || { echo "server list with ::/0: wrong hint ($lib): $out"; return 1; }
     # a split list with ::/0 is not a full tunnel: nothing to warn about
     out=$(regen_run "$lib" "$list" "10.0.0.0/8, ::/0" "10.9.9.20/32")
     [[ "$out" == *"RC=0"* && "$out" != *"WARN:"* ]] || { echo "false warning on a split list ($lib): $out"; return 1; }
