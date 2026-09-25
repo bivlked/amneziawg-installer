@@ -83,7 +83,6 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 * **Automated system optimization:**
     * Removal of unnecessary packages (snapd, modemmanager, etc.)
     * Hardware-aware swap and network buffer tuning
-    * NIC offload disabling (GRO/GSO/TSO) for VPN optimization
 * **Secure by default:**
     * `UFW`: Policy `deny incoming`, SSH rate-limiting, VPN port allowed.
     * `IPv6`: Disabled by default via `sysctl` (optional).
@@ -608,7 +607,6 @@ With `--yes` no question is asked and the behaviour stays as before, that is the
 
 **Hardware-aware settings:**
 * **Swap:** 1 GB if RAM ≤ 2 GB, 512 MB if RAM > 2 GB. `vm.swappiness = 10`.
-* **NIC:** GRO/GSO/TSO offloads disabled (can interfere with VPN traffic).
 * **Network buffers:** Automatic `rmem_max`/`wmem_max` tuning based on available RAM.
 
 ---
@@ -1108,7 +1106,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
   <b>A:</b> The protocol underneath is the same - AmneziaWG 2.0 with the same obfuscation. What differs is how the server is deployed and run. The official Amnezia app is a graphical client: you point it at a server and it installs the server side in Docker containers over SSH, without the host-wide tuning and hardening this installer does. This installer is built to get the most out of a dedicated VPS as a VPN server, so it works differently:
   <ul>
     <li>AmneziaWG runs as a kernel module (DKMS), with no Docker - no background daemon and none of its RAM/CPU cost.</li>
-    <li>The whole server is tuned to the hardware: sysctl buffers, swap, NIC offloads, BBR, unneeded packages stripped.</li>
+    <li>The whole server is tuned to the hardware: sysctl buffers, swap, BBR, unneeded packages stripped.</li>
     <li>The attack surface is kept small: UFW deny-all, Fail2Ban, strict permissions, sysctl hardening, one service instead of a stack.</li>
     <li>Fine tuning is available: a mobile-network preset and direct access to the AWG 2.0 parameters.</li>
     <li>Management is from the CLI (<code>manage</code> add/remove/list/<code>--expires</code>), with prebuilt ARM modules and a headless mode for automation.</li>
@@ -1928,7 +1926,7 @@ Starting with v5.9.0, the installer works on ARM systems alongside x86_64.
 |----------|-------------|----------------------|
 | Raspberry Pi 3, 4 (64-bit) | ARM64 (aarch64) | `linux-headers-rpi-v8` |
 | Raspberry Pi 5 | ARM64 (aarch64) | `linux-headers-rpi-2712` |
-| Raspberry Pi 3, 4 (32-bit) | ARMv7 (armhf) | `linux-headers-rpi-v7` |
+| Raspberry Pi 3, 4 (32-bit) | ARMv7 (armhf) | `linux-headers-rpi-v7` or `linux-headers-rpi-v7l`, by the kernel suffix in `uname -r` |
 | Ubuntu ARM64 (AWS Graviton, Oracle Ampere, Hetzner) | ARM64 | `linux-headers-generic` |
 | Debian ARM64 (cloud VPS) | ARM64 | `linux-headers-arm64` |
 

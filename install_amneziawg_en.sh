@@ -3349,32 +3349,15 @@ optimize_swap() {
     sysctl -w vm.swappiness=10 >/dev/null 2>&1
 }
 
-# Network interface optimization
-optimize_nic() {
-    if [[ -z "$MAIN_NIC" ]]; then
-        log_warn "Main NIC not detected, skipping optimization."
-        return 1
-    fi
-
-    if ! command -v ethtool &>/dev/null; then
-        log_debug "ethtool not found, skipping NIC optimization."
-        return 0
-    fi
-
-    log "NIC optimization: $MAIN_NIC"
-    # Disable GRO/GSO/TSO — may interfere with VPN traffic
-    ethtool -K "$MAIN_NIC" gro off 2>/dev/null || log_debug "GRO: not supported/already off."
-    ethtool -K "$MAIN_NIC" gso off 2>/dev/null || log_debug "GSO: not supported/already off."
-    ethtool -K "$MAIN_NIC" tso off 2>/dev/null || log_debug "TSO: not supported/already off."
-    log "NIC optimization completed."
-}
-
-# Full system optimization
+# Full system optimization.
+# The GRO/GSO/TSO step is gone: ethtool turned them off only until the reboot
+# that follows step 1, so on a finished server the offloads were always on, and
+# every speed measurement was taken that way. Making it stick without a
+# measurement was rejected: it raises the CPU load.
 optimize_system() {
     log "Optimizing system for VPN server..."
     detect_hardware
     optimize_swap
-    optimize_nic
     log "System optimization completed."
 }
 
@@ -3907,6 +3890,52 @@ _mask_report_secrets() {
         -e "s|\`[A-Za-z0-9+/]{20,}={0,2}'|\`[HIDDEN]'|g"
 }
 
+# _diag_sysattr <file>: a module attribute from /sys for --diagnostic.
+# "No file", "no permission" and "empty" are different states; the report keeps them apart.
+_diag_sysattr() {
+    local x
+    if [[ ! -e "$1" ]]; then echo "N/A (no file)"
+    elif [[ ! -r "$1" ]]; then echo "N/A (no read permission)"
+    elif ! x=$(cat "$1" 2>/dev/null); then echo "N/A (read error)"
+    else echo "${x:-(empty)}"
+    fi
+}
+
+# _diag_module_info <directory in /sys>: module details for --diagnostic.
+# modinfo describes the module FILE on disk, while the LOADED module is what runs.
+# Both are printed and labelled, and their srcversion compared. A mismatch has more
+# than one cause: usually the module was updated and not reloaded, but modinfo can
+# also find a different module file. The argument is the module directory in /sys;
+# tests pass their own.
+_diag_module_info() {
+    local sysd="${1:-/sys/module/amneziawg}" loaded_src="" disk_src="" mi
+    echo "Loaded module (${sysd}):"
+    if [[ -d "$sysd" ]]; then
+        echo "  version:    $(_diag_sysattr "$sysd/version")"
+        echo "  srcversion: $(_diag_sysattr "$sysd/srcversion")"
+        [[ -r "$sysd/initstate" ]] && echo "  initstate:  $(_diag_sysattr "$sysd/initstate")"
+        [[ -r "$sysd/srcversion" ]] && loaded_src=$(cat "$sysd/srcversion" 2>/dev/null)
+    else
+        echo "  N/A (module not loaded)"
+    fi
+    echo "Module file on disk (modinfo):"
+    if ! command -v modinfo >/dev/null 2>&1; then
+        echo "  N/A (no modinfo command)"
+    elif mi=$(modinfo amneziawg 2>/dev/null); then
+        echo "$mi"
+        disk_src=$(printf '%s\n' "$mi" | awk '/^srcversion:/{print $2; exit}')
+    else
+        echo "  N/A (modinfo did not find the module)"
+    fi
+    if [[ -n "$loaded_src" && -n "$disk_src" ]]; then
+        if [[ "$loaded_src" == "$disk_src" ]]; then
+            echo "srcversion: the loaded module matches the file on disk"
+        else
+            echo "srcversion: DIFFERENT - usually the module was updated and not reloaded (reboot the server); less often modinfo found another module file"
+        fi
+    fi
+}
+
 create_diagnostic_report() {
     # --diagnostic runs BEFORE initialize_setup (home of the main root check):
     # as a regular user every log_msg write into /root/awg fails, the report
@@ -4049,7 +4078,7 @@ create_diagnostic_report() {
         dkms status 2>/dev/null || echo "N/A"
         echo ""
         echo "--- Module Info ---"
-        modinfo amneziawg 2>/dev/null || echo "N/A"
+        _diag_module_info /sys/module/amneziawg
         echo ""
         echo "=== END ==="
     } | _mask_report_secrets > "$rf" || die "Report write error: $rf"
@@ -4198,13 +4227,20 @@ step_uninstall() {
     else
         DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg-tools qrencode 2>/dev/null || log_warn "Purge error."
     fi
-    DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || log_warn "Autoremove error."
+    # No apt-get autoremove here, same as in cleanup_system (Issue #84). It removes
+    # everything apt considers unneeded across the whole system, not just what we left;
+    # at install time in #84 it took netplan-generator that way and the server came
+    # back without an IP. Installs after the #223 fix mark such packages manual, older
+    # ones do not. Explicitly installed packages (dkms, compiler, kernel headers) were
+    # never touched by autoremove; now the automatic deps of purged packages stay too.
+    log "Dependency packages the installer added (dkms, build-essential, kernel headers and others) are left in place. If you do not need them, remove them with apt by hand."
     log "Removing PPA and files..."
     rm -f /etc/apt/sources.list.d/amnezia-ppa.sources \
         /etc/apt/sources.list.d/amnezia-ppa.list \
         /etc/apt/sources.list.d/amnezia-ubuntu-ppa-*.list \
         /etc/apt/sources.list.d/amnezia-ubuntu-ppa-*.sources \
-        /etc/apt/keyrings/amnezia-ppa.gpg 2>/dev/null
+        /etc/apt/keyrings/amnezia-ppa.gpg \
+        /etc/apt/apt.conf.d/99-amneziawg-lock-timeout 2>/dev/null
     rm -rf /etc/amnezia \
         /etc/modules-load.d/amneziawg.conf \
         /etc/sysctl.d/99-amneziawg-security.conf \
@@ -4879,7 +4915,7 @@ step1_update_and_optimize() {
     log "System updated."
 
 
-    install_packages curl wget gpg sudo ethtool
+    install_packages curl wget gpg sudo
 
     if [[ "$NO_TWEAKS" -eq 0 ]]; then
         # System optimization
@@ -4902,6 +4938,25 @@ step1_update_and_optimize() {
 # ==============================================================================
 # ARM prebuilt support
 # ==============================================================================
+
+# _rpi_headers_pkg <uname -r>: the Raspberry Pi headers meta-package for the
+# kernel flavour. The Raspberry Pi repository (bookworm) carries only rpi-v6,
+# rpi-v7 and rpi-v7l for armhf, and only rpi-v8 and rpi-2712 for arm64. The old
+# choice "everything but a Pi 5 is v8" asked a 32-bit system for a package its
+# repository does not have, so the flavour now comes from the kernel's own suffix.
+# An unknown flavour keeps the old behaviour (2712 by substring, otherwise v8). A
+# kernel not from the Raspberry Pi Foundation prints nothing.
+_rpi_headers_pkg() {
+    local kr="$1"
+    [[ "$kr" == *+rpt* || "$kr" == *-rpi* ]] || return 0
+    if [[ "$kr" =~ -rpi-(v6|v7|v7l|v8|2712)$ ]]; then
+        echo "linux-headers-rpi-${BASH_REMATCH[1]}"
+    elif [[ "$kr" == *2712* ]]; then
+        echo "linux-headers-rpi-2712"
+    else
+        echo "linux-headers-rpi-v8"
+    fi
+}
 
 # _try_install_prebuilt_arm — download and install a prebuilt amneziawg .deb
 # for the current ARM kernel from the arm-packages GitHub release.
@@ -5486,14 +5541,10 @@ PPASRC
         local kernel_release
         kernel_release="$(uname -r)"
         if [[ "$kernel_release" == *+rpt* || "$kernel_release" == *-rpi* ]]; then
-            # Raspberry Pi Foundation kernel (+rpt suffix) — use RPi meta-package
-            # linux-headers-rpi-2712: Pi 5 / Cortex-A76; linux-headers-rpi-v8: Pi 3/4 arm64
+            # Raspberry Pi Foundation kernel (+rpt suffix) - RPi meta-package for the
+            # kernel flavour (v6/v7/v7l on armhf, v8/2712 on arm64), see _rpi_headers_pkg.
             local rpi_headers
-            if [[ "$kernel_release" == *2712* ]]; then
-                rpi_headers="linux-headers-rpi-2712"
-            else
-                rpi_headers="linux-headers-rpi-v8"
-            fi
+            rpi_headers="$(_rpi_headers_pkg "$kernel_release")"
             log "Raspberry Pi kernel detected, using $rpi_headers"
             packages+=("$rpi_headers")
         elif [[ "${OS_ID:-ubuntu}" == "debian" ]]; then
