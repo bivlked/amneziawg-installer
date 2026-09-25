@@ -71,7 +71,7 @@ The script runs as root - here is a short list of what it does to the system:
 - **Network**: sysctl - forwarding, network buffers, BBR (as separate files in `/etc/sysctl.d/`); host IPv6 is disabled by default (keep it with `--allow-ipv6`); swap is sized to fit the RAM.
 - **Protection**: UFW - incoming denied, SSH rate-limited, only the VPN UDP port open; Fail2Ban for SSH.
 - **Files and services**: the main files live in `/root/awg/` and `/etc/amnezia/amneziawg/` with 600/700 permissions; the `awg-quick@awg0` service; a cron job that removes expired clients.
-- **Rollback**: `--uninstall` removes its own module, configs, sysctl files, cron jobs, the VPN-port UFW allow rule and the `awg0` UFW route rule. It disables UFW and purges Fail2Ban only if it enabled/installed them itself; if UFW was already active before install, the SSH rate-limit rule it added stays. It does not restore swap settings or removed packages.
+- **Rollback**: `--uninstall` removes its own module, configs, sysctl files, cron jobs, the VPN-port UFW allow rule and the `awg0` UFW route rule. It disables UFW and purges Fail2Ban only if it enabled/installed them itself; if UFW was already active before install, the SSH rate-limit rule it added stays. It does not restore swap settings or removed packages, and the dependency packages it added (dkms, the compiler, kernel headers) stay.
 
 Step-by-step details in [ADVANCED.en.md](ADVANCED.en.md), threat model in [SECURITY.md](SECURITY.md).
 </details>
@@ -222,7 +222,7 @@ There are a few other ways to get AmneziaWG running. Each picks a different trad
 The official Amnezia app is the official graphical client: you install the app, point it at a server, and it deploys the server side in Docker over SSH. Handy when all you want is a GUI. This installer is built for a different goal - to get the most out of a single dedicated VPS as a VPN server. That is where the differences come from:
 
 * **No Docker, and none of its overhead.** AmneziaWG runs as a kernel module rather than inside a container. There is no Docker daemon sitting in the background, so RAM and CPU use stay lower. On a cheap VPS that matters a lot, and it does no harm on a bigger one either.
-* **The whole server is tuned to the hardware.** The script reads the server's RAM and network card, then sets sysctl buffers and swap size and turns on BBR - it wrings the most out of the plan you are paying for. The official app deploys its containers and does not optimize or tune the server itself.
+* **The whole server is tuned to the hardware.** The script reads the server's RAM, then sets sysctl buffers and swap size and turns on BBR - it wrings the most out of the plan you are paying for. The official app deploys its containers and does not optimize or tune the server itself.
 * **Smaller attack surface.** Unneeded packages and services are stripped, so the box does one thing - VPN. On top of that: UFW deny-all, Fail2Ban, strict file permissions, and sysctl hardening.
 * **Fine control over the obfuscation.** A mobile-network preset (`--preset=mobile`), direct access to the AmneziaWG 2.0 parameters, and field data on carriers and DPI - you can tune it for a specific network or carrier.
 * **Headless and scriptable.** One SSH command, every parameter as a flag, CLI client management, time-limited guests (`--expires`), QR or `vpn://` import, and prebuilt modules for ARM.

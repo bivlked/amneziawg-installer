@@ -69,13 +69,18 @@ _body() {
     for f in "${INSTALLERS[@]}"; do
         grep -qE 'rpi_headers="\$\(_rpi_headers_pkg ' "$BATS_TEST_DIRNAME/../$f" \
             || { echo "$f: headers block does not call _rpi_headers_pkg" >&2; return 1; }
-        ! grep -qE '^[[:space:]]+rpi_headers="linux-headers-rpi-v8"' "$BATS_TEST_DIRNAME/../$f"
+        # Explicit if, not `! grep`: a negated command does not trip errexit, so
+        # inside the loop only the last file would count.
+        if grep -qE '^[[:space:]]+rpi_headers="linux-headers-rpi-v8"' "$BATS_TEST_DIRNAME/../$f"; then
+            echo "$f: hardcoded rpi-v8 choice is back" >&2
+            return 1
+        fi
     done
 }
 
 @test "diagnostic: module info shows the loaded module and the file on disk (both languages)" {
     for f in "${INSTALLERS[@]}"; do
-        source <(_body "$f" _diag_module_info)
+        source <(_body "$f" _diag_sysattr); source <(_body "$f" _diag_module_info)
         declare -F _diag_module_info >/dev/null || { echo "$f: no _diag_module_info" >&2; return 1; }
         local sysd="$BATS_TEST_TMPDIR/sys-$f"
         mkdir -p "$sysd"
@@ -87,19 +92,19 @@ _body() {
         echo "$out" | grep -q 'ABCDEF0123456789ABCDEF0'
         echo "$out" | grep -q 'FFFFFFFFFFFFFFFFFFFFFFF'
         echo "$out" | grep -q 'amneziawg.ko.zst'
-        unset -f modinfo _diag_module_info
+        unset -f modinfo _diag_module_info _diag_sysattr
     done
 }
 
 @test "diagnostic: module not loaded and no module file are both reported, not silent (both languages)" {
     for f in "${INSTALLERS[@]}"; do
-        source <(_body "$f" _diag_module_info)
+        source <(_body "$f" _diag_sysattr); source <(_body "$f" _diag_module_info)
         modinfo() { return 1; }
         out=$(_diag_module_info "$BATS_TEST_TMPDIR/no-such-dir-$f")
         [ -n "$out" ]
         # Two separate N/A lines: loaded and on disk.
         [ "$(echo "$out" | grep -c 'N/A')" -ge 2 ]
-        unset -f modinfo _diag_module_info
+        unset -f modinfo _diag_module_info _diag_sysattr
     done
 }
 
@@ -112,6 +117,45 @@ _body() {
 @test "nic offloads: optimize_nic and ethtool are gone (both languages)" {
     for f in "${INSTALLERS[@]}"; do
         # Code lines only: the comment that explains the removal names ethtool.
-        ! grep -vE '^[[:space:]]*#' "$BATS_TEST_DIRNAME/../$f" | grep -qE 'optimize_nic|ethtool'
+        # Explicit if, not `! grep` (see the rpi headers test above).
+        if grep -vE '^[[:space:]]*#' "$BATS_TEST_DIRNAME/../$f" | grep -qE 'optimize_nic|ethtool'; then
+            echo "$f: optimize_nic or ethtool is back" >&2
+            return 1
+        fi
+    done
+}
+
+@test "diagnostic: srcversion match and mismatch are stated explicitly (both languages)" {
+    for f in "${INSTALLERS[@]}"; do
+        source <(_body "$f" _diag_sysattr); source <(_body "$f" _diag_module_info)
+        local sysd="$BATS_TEST_TMPDIR/cmp-$f"
+        mkdir -p "$sysd"
+        printf 'SAMESRC0000000000000000\n' > "$sysd/srcversion"
+        modinfo() { printf 'filename: /x/amneziawg.ko\nsrcversion:     SAMESRC0000000000000000\n'; }
+        out=$(_diag_module_info "$sysd")
+        echo "$out" | grep -qiE 'совпадает|matches' || { echo "$f: no match line" >&2; return 1; }
+        modinfo() { printf 'filename: /x/amneziawg.ko\nsrcversion:     OTHERSRC000000000000000\n'; }
+        out=$(_diag_module_info "$sysd")
+        echo "$out" | grep -qE 'РАЗЛИЧАЕТСЯ|DIFFERENT' || { echo "$f: no mismatch line" >&2; return 1; }
+        unset -f modinfo _diag_module_info _diag_sysattr
+    done
+}
+
+@test "diagnostic: module directory without attribute files says so, not a bare N/A (both languages)" {
+    for f in "${INSTALLERS[@]}"; do
+        source <(_body "$f" _diag_sysattr); source <(_body "$f" _diag_module_info)
+        local sysd="$BATS_TEST_TMPDIR/empty-$f"
+        mkdir -p "$sysd"
+        : > "$sysd/srcversion"
+        modinfo() { return 1; }
+        out=$(_diag_module_info "$sysd")
+        # version file is absent, srcversion file is empty: two different words.
+        echo "$out" | grep -E 'version:' | grep -qiE 'нет файла|no file' || { echo "$f: missing file not named" >&2; echo "$out" >&2; return 1; }
+        echo "$out" | grep -E 'srcversion:' | grep -qiE 'пусто|empty' || { echo "$f: empty file not named" >&2; echo "$out" >&2; return 1; }
+        # No comparison line when one side is unknown.
+        if echo "$out" | grep -qE 'совпадает|matches|РАЗЛИЧАЕТСЯ|DIFFERENT'; then
+            echo "$f: compared with an unknown side" >&2; return 1
+        fi
+        unset -f modinfo _diag_module_info _diag_sysattr
     done
 }

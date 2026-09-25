@@ -3890,23 +3890,50 @@ _mask_report_secrets() {
         -e "s|\`[A-Za-z0-9+/]{20,}={0,2}'|\`[HIDDEN]'|g"
 }
 
-# _diag_module_info [directory in /sys]: module details for --diagnostic.
-# modinfo describes the module FILE on disk, while the LOADED module is what runs;
-# after a DKMS update without a reboot those are different builds. Both are
-# printed and labelled: a srcversion mismatch is itself the diagnosis ("module
-# updated, not reloaded"). The argument is the module directory in /sys; tests pass their own.
+# _diag_sysattr <file>: a module attribute from /sys for --diagnostic.
+# "No file", "no permission" and "empty" are different states; the report keeps them apart.
+_diag_sysattr() {
+    local x
+    if [[ ! -e "$1" ]]; then echo "N/A (no file)"
+    elif [[ ! -r "$1" ]]; then echo "N/A (no read permission)"
+    elif ! x=$(cat "$1" 2>/dev/null); then echo "N/A (read error)"
+    else echo "${x:-(empty)}"
+    fi
+}
+
+# _diag_module_info <directory in /sys>: module details for --diagnostic.
+# modinfo describes the module FILE on disk, while the LOADED module is what runs.
+# Both are printed and labelled, and their srcversion compared. A mismatch has more
+# than one cause: usually the module was updated and not reloaded, but modinfo can
+# also find a different module file. The argument is the module directory in /sys;
+# tests pass their own.
 _diag_module_info() {
-    local sysd="${1:-/sys/module/amneziawg}" v s
+    local sysd="${1:-/sys/module/amneziawg}" loaded_src="" disk_src="" mi
     echo "Loaded module (${sysd}):"
     if [[ -d "$sysd" ]]; then
-        v=$(cat "$sysd/version" 2>/dev/null); s=$(cat "$sysd/srcversion" 2>/dev/null)
-        echo "  version:    ${v:-N/A}"
-        echo "  srcversion: ${s:-N/A}"
+        echo "  version:    $(_diag_sysattr "$sysd/version")"
+        echo "  srcversion: $(_diag_sysattr "$sysd/srcversion")"
+        [[ -r "$sysd/initstate" ]] && echo "  initstate:  $(_diag_sysattr "$sysd/initstate")"
+        [[ -r "$sysd/srcversion" ]] && loaded_src=$(cat "$sysd/srcversion" 2>/dev/null)
     else
         echo "  N/A (module not loaded)"
     fi
     echo "Module file on disk (modinfo):"
-    modinfo amneziawg 2>/dev/null || echo "  N/A (modinfo did not find the module)"
+    if ! command -v modinfo >/dev/null 2>&1; then
+        echo "  N/A (no modinfo command)"
+    elif mi=$(modinfo amneziawg 2>/dev/null); then
+        echo "$mi"
+        disk_src=$(printf '%s\n' "$mi" | awk '/^srcversion:/{print $2; exit}')
+    else
+        echo "  N/A (modinfo did not find the module)"
+    fi
+    if [[ -n "$loaded_src" && -n "$disk_src" ]]; then
+        if [[ "$loaded_src" == "$disk_src" ]]; then
+            echo "srcversion: the loaded module matches the file on disk"
+        else
+            echo "srcversion: DIFFERENT - usually the module was updated and not reloaded (reboot the server); less often modinfo found another module file"
+        fi
+    fi
 }
 
 create_diagnostic_report() {
@@ -4200,10 +4227,13 @@ step_uninstall() {
     else
         DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg-tools qrencode 2>/dev/null || log_warn "Purge error."
     fi
-    # No apt-get autoremove here, same as in cleanup_system (Issue #84): the installer
-    # removes cloud-init, and autoremove at uninstall would take the orphaned
-    # netplan-generator with it, leaving the server without an IP after a reboot. The
-    # dependencies the installer pulled in stay; the docs for --uninstall list them.
+    # No apt-get autoremove here, same as in cleanup_system (Issue #84). It removes
+    # everything apt considers unneeded across the whole system, not just what we left;
+    # at install time in #84 it took netplan-generator that way and the server came
+    # back without an IP. Installs after the #223 fix mark such packages manual, older
+    # ones do not. Explicitly installed packages (dkms, compiler, kernel headers) were
+    # never touched by autoremove; now the automatic deps of purged packages stay too.
+    log "Dependency packages the installer added (dkms, build-essential, kernel headers and others) are left in place. If you do not need them, remove them with apt by hand."
     log "Removing PPA and files..."
     rm -f /etc/apt/sources.list.d/amnezia-ppa.sources \
         /etc/apt/sources.list.d/amnezia-ppa.list \

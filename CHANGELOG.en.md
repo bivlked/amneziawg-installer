@@ -14,13 +14,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **Step 1 no longer turns off GRO/GSO/TSO on the network card or installs `ethtool`.** The change lasted only until the reboot that follows step 1, so on a finished server the offloads were always on anyway. A finished server behaves exactly as before.
+- **Step 1 no longer turns off GRO/GSO/TSO on the network card or installs `ethtool`.** The change lasted only until the reboot that follows step 1, and nothing of it remained on a finished server. A finished server behaves exactly as before.
 
 ### Fixed
 
-- **`--uninstall` no longer runs `apt-get autoremove`.** The installer removes cloud-init, and autoremove at uninstall could take the orphaned `netplan-generator` with it, as happened at install time in [#84](https://github.com/bivlked/amneziawg-installer/issues/84); after a reboot the server would be left without an IP. The dependencies the installer pulled in now stay. The uninstall also removes `/etc/apt/apt.conf.d/99-amneziawg-lock-timeout`, which the installer creates and the uninstall used to leave behind.
+- **`--uninstall` no longer runs `apt-get autoremove`.** It removes everything apt considers unneeded across the whole system, not just what the installer left; at install time in [#84](https://github.com/bivlked/amneziawg-installer/issues/84) it took `netplan-generator` that way and the server came back without an IP. Installs made after the #223 fix protect such packages, older ones do not. Packages the installer added explicitly (dkms, the compiler, kernel headers) were never removed by the uninstall; now the automatic dependencies of the purged packages stay as well, and the uninstall says so in the log. The uninstall also removes `/etc/apt/apt.conf.d/99-amneziawg-lock-timeout`, which the installer creates and the uninstall used to leave behind.
 - **Raspberry Pi kernel headers follow the kernel flavour.** When the exact `linux-headers-$(uname -r)` package is missing, the installer picks the meta-package from the kernel suffix: `rpi-v6`, `rpi-v7`, `rpi-v7l`, `rpi-v8` or `rpi-2712`. Previously everything but a Pi 5 got `rpi-v8`, which the 32-bit Raspberry Pi OS repository does not carry.
-- **`--diagnostic` reports the loaded module separately from the file on disk.** The Module Info section now has two parts: the version and `srcversion` of the loaded module from `/sys/module/amneziawg`, and `modinfo` for the file on disk. If they differ, the module was updated but not reloaded yet.
+- **`--diagnostic` reports the loaded module separately from the file on disk.** The Module Info section now has two parts: the version and `srcversion` of the loaded module from `/sys/module/amneziawg`, and `modinfo` for the file on disk. The report compares their `srcversion`: a mismatch usually means the module was updated but not reloaded. "No file", "no permission" and "empty" are now told apart.
 
 ### Documentation
 

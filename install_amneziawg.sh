@@ -3801,23 +3801,49 @@ _mask_report_secrets() {
         -e "s|\`[A-Za-z0-9+/]{20,}={0,2}'|\`[HIDDEN]'|g"
 }
 
-# _diag_module_info [каталог в /sys]: сведения о модуле для --diagnostic.
-# modinfo описывает ФАЙЛ модуля на диске, а работает ЗАГРУЖЕННЫЙ; после
-# обновления DKMS без перезагрузки это разные сборки. Печатаем обе, подписав:
-# расхождение srcversion само по себе диагноз («модуль обновлён, не перезагружен»).
+# _diag_sysattr <файл>: значение атрибута модуля из /sys для --diagnostic.
+# «Нет файла», «нет прав» и «пусто» - разные состояния, в отчёте их не сливаем.
+_diag_sysattr() {
+    local x
+    if [[ ! -e "$1" ]]; then echo "N/A (нет файла)"
+    elif [[ ! -r "$1" ]]; then echo "N/A (нет прав на чтение)"
+    elif ! x=$(cat "$1" 2>/dev/null); then echo "N/A (ошибка чтения)"
+    else echo "${x:-(пусто)}"
+    fi
+}
+
+# _diag_module_info <каталог в /sys>: сведения о модуле для --diagnostic.
+# modinfo описывает ФАЙЛ модуля на диске, а работает ЗАГРУЖЕННЫЙ модуль. Печатаем
+# оба, подписав, и сравниваем srcversion. Расхождение не доказывает одну причину:
+# чаще всего модуль обновлён и не перезагружен, но modinfo может найти и другой файл.
 # Аргумент - каталог модуля в /sys; тесты подставляют свой.
 _diag_module_info() {
-    local sysd="${1:-/sys/module/amneziawg}" v s
+    local sysd="${1:-/sys/module/amneziawg}" loaded_src="" disk_src="" mi
     echo "Загруженный модуль (${sysd}):"
     if [[ -d "$sysd" ]]; then
-        v=$(cat "$sysd/version" 2>/dev/null); s=$(cat "$sysd/srcversion" 2>/dev/null)
-        echo "  version:    ${v:-N/A}"
-        echo "  srcversion: ${s:-N/A}"
+        echo "  version:    $(_diag_sysattr "$sysd/version")"
+        echo "  srcversion: $(_diag_sysattr "$sysd/srcversion")"
+        [[ -r "$sysd/initstate" ]] && echo "  initstate:  $(_diag_sysattr "$sysd/initstate")"
+        [[ -r "$sysd/srcversion" ]] && loaded_src=$(cat "$sysd/srcversion" 2>/dev/null)
     else
         echo "  N/A (модуль не загружен)"
     fi
     echo "Файл модуля на диске (modinfo):"
-    modinfo amneziawg 2>/dev/null || echo "  N/A (modinfo не нашёл модуль)"
+    if ! command -v modinfo >/dev/null 2>&1; then
+        echo "  N/A (команды modinfo нет)"
+    elif mi=$(modinfo amneziawg 2>/dev/null); then
+        echo "$mi"
+        disk_src=$(printf '%s\n' "$mi" | awk '/^srcversion:/{print $2; exit}')
+    else
+        echo "  N/A (modinfo не нашёл модуль)"
+    fi
+    if [[ -n "$loaded_src" && -n "$disk_src" ]]; then
+        if [[ "$loaded_src" == "$disk_src" ]]; then
+            echo "srcversion: загруженный модуль совпадает с файлом на диске"
+        else
+            echo "srcversion: РАЗЛИЧАЕТСЯ - обычно модуль обновлён, но не перезагружен (перезагрузка сервера); реже modinfo нашёл другой файл модуля"
+        fi
+    fi
 }
 
 create_diagnostic_report() {
@@ -4106,10 +4132,13 @@ step_uninstall() {
     else
         DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg-tools qrencode 2>/dev/null || log_warn "Ошибка purge."
     fi
-    # apt-get autoremove здесь НЕ вызываем, как и в cleanup_system (Issue #84): установщик
-    # удаляет cloud-init, и autoremove при удалении снёс бы осиротевший netplan-generator,
-    # после перезагрузки сервер остался бы без IP. Зависимости, которые ставил установщик,
-    # остаются; их список - в документации к --uninstall.
+    # apt-get autoremove здесь НЕ вызываем, как и в cleanup_system (Issue #84). Он чистит
+    # всё, что apt считает ненужным, по всей системе, а не только оставшееся от нас; при
+    # установке в #84 он так снял netplan-generator, и сервер после перезагрузки остался
+    # без IP. Установки после исправления #223 помечают такие пакеты manual, старые - нет.
+    # Явно поставленные пакеты (dkms, компилятор, заголовки ядра) autoremove не трогал и
+    # раньше; теперь остаются и автоматические зависимости удалённых пакетов.
+    log "Пакеты-зависимости, которые ставил установщик (dkms, build-essential, заголовки ядра и другие), оставлены. Если они не нужны, удалите их вручную через apt."
     log "Удаление PPA и файлов..."
     rm -f /etc/apt/sources.list.d/amnezia-ppa.sources \
         /etc/apt/sources.list.d/amnezia-ppa.list \
