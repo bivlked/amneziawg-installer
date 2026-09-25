@@ -15,8 +15,9 @@ sudo bash ./install_amneziawg_en.sh
 - About 20 minutes and two reboots. After each reboot, run the same script again and it continues from the step where it stopped.
 - Meant for a clean VPS dedicated to the VPN, not a home router, shared hosting or a server that does other work: the installer hardens and tunes the whole machine (UFW, Fail2Ban, sysctl).
 - Systems: for a new server Ubuntu 24.04 or Debian 13; Ubuntu 26.04 is also supported; Ubuntu 25.10 and Debian 12 still work but are kept for existing servers, not new ones. Architectures: x86_64, ARM64, ARMv7. The machine-readable source of truth is `docs/support-matrix.json` (linked below).
-- At the end it prints a QR code and a `vpn://` link for one-tap import into the Amnezia client. Clients are managed afterwards with `manage_amneziawg.sh` (`add`, `remove`, `list`, `regen`); time-limited access is `add <name> --expires=7d`.
+- It creates two clients and saves their configs and QR codes (PNG, including a QR of the `vpn://` link for the Amnezia client) in `/root/awg/` on the server; at the end the script prints where the files are and how to copy them with `scp`. Clients are managed afterwards with `manage_amneziawg.sh` (`add`, `remove`, `list`, `regen`); time-limited access is `add <name> --expires=7d`.
 - Generated client configs use the AmneziaWG 2.0 profile even when the kernel module is 3.x. Which protocol line a server gets is explained on the AmneziaWG 3.0 and 3.1 page below.
+- A Synology NAS (DSM) is not supported by the installer: its kernel is too old to build the module. A manual userspace path is described in the advanced reference, section "AmneziaWG on a Synology NAS (DSM)".
 - Everything below exists in English and in Russian.
 
 ## Docs
@@ -27,7 +28,7 @@ sudo bash ./install_amneziawg_en.sh
 - [Two-server cascade](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/CASCADE.en.md): split exit, Russian traffic through a Russian server and the rest abroad
 - [Russian networks through Cloudflare WARP](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/WARP-RU.en.md): route the Russian segment separately on an existing install, without a second server
 - [Supported systems, machine-readable](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/docs/support-matrix.json): platforms, vendor support dates and project policy
-- [Security policy](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/SECURITY.md): threat model and how to report a vulnerability
+- [Security policy](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/SECURITY.md): supported versions and how to report a vulnerability
 - [Changelog](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/CHANGELOG.en.md): changes per release
 
 ## Guides
@@ -51,6 +52,6 @@ sudo bash ./install_amneziawg_en.sh
 
 ## Optional
 
-- [Release signing design](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/docs/SIGNING_DESIGN.md): why minisign and how releases are signed
+- [Release signing design](https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/docs/SIGNING_DESIGN.md): threat model, why minisign and how releases are signed
 - [Releases](https://github.com/bivlked/amneziawg-installer/releases): all versions with notes and signed assets
 - [Repository](https://github.com/bivlked/amneziawg-installer): source, issues and discussions

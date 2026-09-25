@@ -45,7 +45,7 @@
   "installUrl": "https://github.com/bivlked/amneziawg-installer/releases/latest",
   "processorRequirements": "1 vCPU, amd64 or arm64",
   "memoryRequirements": "512 MB",
-  "storageRequirements": "5 GB",
+  "storageRequirements": "2 GB free, 3 GB recommended",
   "featureList": [
     "One-command install on a clean Ubuntu or Debian VPS",
     "AmneziaWG 2.0 obfuscation: junk packets, header masking H1-H4, padding S1-S4, I1-I5 concealment packets",
@@ -77,7 +77,7 @@
   "mainEntity": [
     { "@type": "Question", "name": "What is AmneziaWG?", "acceptedAnswer": { "@type": "Answer", "text": "A WireGuard fork from the Amnezia team. Plain WireGuard is recognisable from its very first packet, because that packet carries a fixed signature. AmneziaWG removes it: it sends separate junk packets, pads the protocol messages, replaces the fixed identifiers with values drawn from configurable ranges, and can hide the handshake behind an I1 concealment packet. That makes the connection harder to fingerprint, but it is no guarantee against every operator. The installer sets such a server up as a kernel module, so the throughput cost stays minimal." } },
     { "@type": "Question", "name": "Is it free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, the installer is free and open source under the MIT license. You only pay for the VPS, which starts around 3 to 5 dollars a month." } },
-    { "@type": "Question", "name": "Do I need Linux experience?", "acceptedAnswer": { "@type": "Answer", "text": "No, you do not need Linux experience: you copy one command into an SSH session on a clean VPS. The script handles the kernel module, firewall, forwarding, and the first client, then prints a QR code and a vpn link." } },
+    { "@type": "Question", "name": "Do I need Linux experience?", "acceptedAnswer": { "@type": "Answer", "text": "No, you do not need Linux experience: you copy one command into an SSH session on a clean VPS. The script handles the kernel module, firewall and forwarding and creates two clients. Their configs and QR codes are saved in /root/awg/ on the server, and the README shows how to get them onto your phone." } },
     { "@type": "Question", "name": "Which VPS should I pick?", "acceptedAnswer": { "@type": "Answer", "text": "A clean Ubuntu or Debian VPS with 1 vCPU and at least 512 MB of RAM. It is meant for a dedicated VPS, not a home router or shared hosting. Check separately whether your host gives you an emergency console and whether it actually works: that is the simplest way back in if SSH stops answering, either after a reboot or because of a firewall rule. If there is none, recovery takes much longer: provider support, a snapshot rollback, or a reinstall. And if your SSH listens on a non-standard port, pass it at install time with --ssh-port=PORT. The installer does detect the port on its own, but an unattended --yes install skips the confirmation, so there is nobody left to double-check it." } },
     { "@type": "Question", "name": "Does it bypass DPI and censorship?", "acceptedAnswer": { "@type": "Answer", "text": "AmneziaWG 2.0 adds obfuscation on top of WireGuard to resist the deep packet inspection used in Russia, Iran, China, and on school or corporate networks. No method is guaranteed against every operator, but the protocol gives you the obfuscation settings that get through today." } },
     { "@type": "Question", "name": "Which AmneziaWG version does the installer set up, 2.0 or 3.0?", "acceptedAnswer": { "@type": "Answer", "text": "The kernel decides, not the distribution name. If the server runs kernel 6.7 or newer, the module comes from the official PPA, and that is a third-line module - that is what you get on current Ubuntu 24.04 and later and Debian 13 images. Which line runs on your server is answered by one command: cat /sys/module/amneziawg/version. On kernels older than 6.7 the installer builds a pinned 2.0 module from source: the third line is not validated there, so we keep the second on purpose. ARM servers we ship a prebuilt module for get that instead and also stay on 2.0. The generated configs are the same either way - the 2.0 parameters Jc/Jmin/Jmax, S1-S4, H1-H4 and the I1 concealment packet - and none of the third-line features are enabled, so configs handed out earlier need no changes." } },
@@ -124,13 +124,13 @@
 <span class="prompt">$ </span>sudo bash ./install_amneziawg_en.sh</pre>
     </div>
     <p class="sr-only" role="status" aria-live="polite" data-copy-status></p>
-    <p class="inline-note">Pin the latest version from the <a href="https://github.com/bivlked/amneziawg-installer/releases">releases page</a>. Three commands, two reboots, about twenty minutes to a working VPN.</p>
+    <p class="inline-note">The command always fetches the latest release; all versions are on the <a href="https://github.com/bivlked/amneziawg-installer/releases">releases page</a>. Before running it you can <a href="https://github.com/bivlked/amneziawg-installer/blob/main/README.en.md#verifying-a-release">verify the signature</a>. Three commands, two reboots, about twenty minutes to a working VPN.</p>
     <div class="trust">
       <span>MIT licensed</span>
       <span>Ubuntu and Debian</span>
       <span>x86_64 and ARM64</span>
-      <span>No runtime dependencies</span>
-      <span>1100+ automated tests</span>
+      <span>No Docker, no web panel</span>
+      <span>2000+ automated tests</span>
     </div>
     <figure class="hero-art" aria-hidden="true">
       <svg viewBox="0 0 760 132" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
@@ -188,7 +188,7 @@
     <ol class="steps">
       <li class="step"><span class="n" aria-hidden="true"></span><p>Rent a clean Ubuntu or Debian VPS and connect over SSH as root.</p></li>
       <li class="step"><span class="n" aria-hidden="true"></span><p>Run the command above. The script reboots when it needs to. After a reboot, run it again and it resumes from where it stopped.</p></li>
-      <li class="step"><span class="n" aria-hidden="true"></span><p>Scan the QR code or open the vpn link in the Amnezia client. You are connected.</p></li>
+      <li class="step"><span class="n" aria-hidden="true"></span><p>Download the client files from <code>/root/awg/</code> on the server (the <a href="https://github.com/bivlked/amneziawg-installer/blob/main/README.en.md#after-installation">README</a> shows how), then open the vpn link in the Amnezia client or scan its QR code. You are connected.</p></li>
     </ol>
     <p class="inline-note mt">For automation, the same script takes <code>--yes --route-all</code> and every other parameter as a flag. The <a href="https://github.com/bivlked/amneziawg-installer/blob/main/INSTALL_VPS.md">full guide</a> covers VPS choice, ARM notes, troubleshooting, and uninstall.</p>
   </div>
@@ -197,7 +197,7 @@
 <section id="os">
   <div class="wrap">
     <h2>Supported systems</h2>
-    <p class="sub">Tested on clean, minimal server installs. Kernel upgrades are handled automatically through DKMS, and on ARM hosts running a prebuilt module the repair-module command brings it back.</p>
+    <p class="sub">Tested on clean, minimal server installs. Kernel upgrades are handled automatically through DKMS, and on ARM hosts running a prebuilt module you run the installer again after a kernel upgrade.</p>
     <div class="os-list">
       <span class="pill"><b>Ubuntu</b> 24.04 LTS</span>
       <span class="pill"><b>Debian</b> 13 trixie</span>
@@ -207,7 +207,7 @@
     </div>
     <p class="inline-note">For a new server: Ubuntu 24.04 LTS or Debian 13 are the default choice, and Ubuntu 26.04 works too.</p>
     <p class="inline-note">Ubuntu 25.10 and Debian 12 install and work, but they are not a good pick for a new server. Ubuntu 25.10 reached end of life on 1 July 2026 and gets no security updates at all: it is an interim release and will not be extended. Debian 12 left regular support on 11 July 2026; its security updates now come through Debian LTS until 30 June 2028.</p>
-    <p class="inline-note mt">Built for cheap budgets: 1 vCPU, 512 MB of RAM minimum, 5 GB of disk. Both amd64 and arm64.</p>
+    <p class="inline-note mt">Built for cheap budgets: 1 vCPU, 512 MB of RAM minimum, 2 GB of free disk (3 GB recommended). Both amd64 and arm64.</p>
   </div>
 </section>
 
@@ -215,14 +215,14 @@
   <div class="wrap">
     <h2>Why a plain bash script</h2>
     <p class="sub">It runs as a kernel module, with nothing extra sitting between you and the tunnel.</p>
-    <p>A web panel is worth it only if you add and rotate clients constantly. For most people a VPN server is set once and left alone, so the bash approach keeps the footprint tiny and runs comfortably on the cheapest VPS. The kernel-native module is faster than a userspace tunnel, and there is nothing extra to keep patched. If you do want a UI or a different trade-off, the <a href="https://github.com/bivlked/amneziawg-installer#similar-tools">comparison in the README</a> is honest about when another tool fits better. For a side-by-side with the official Amnezia app, see <a href="compare/">how it differs</a>.</p>
+    <p>A web panel is worth it only if you add and rotate clients constantly. For most people a VPN server is set once and left alone, so the bash approach keeps the footprint tiny and runs comfortably on the cheapest VPS. The kernel-native module is faster than a userspace tunnel, and there is nothing extra to keep patched. If you do want a UI or a different trade-off, the <a href="https://github.com/bivlked/amneziawg-installer/blob/main/README.en.md#similar-tools">comparison in the README</a> is honest about when another tool fits better. For a side-by-side with the official Amnezia app, see <a href="compare/">how it differs</a>.</p>
   </div>
 </section>
 
 <section id="guides" class="related">
   <div class="wrap">
     <h2>Guides and comparisons</h2>
-    <p class="sub">Three deeper reads once the basic server is running.</p>
+    <p class="sub">Deeper reads once the basic server is running.</p>
     <div class="grid">
       <div class="card">
         <div class="ico" aria-hidden="true">&#9878;&#65039;</div>
@@ -264,7 +264,7 @@
     <div class="faq">
       <details><summary>What is AmneziaWG?</summary><div class="answer">A WireGuard fork from the Amnezia team. Plain WireGuard is recognisable from its very first packet, because that packet carries a fixed signature. AmneziaWG removes it: it sends separate junk packets, pads the protocol messages, replaces the fixed identifiers with values drawn from configurable ranges, and can hide the handshake behind an I1 concealment packet. That makes the connection harder to fingerprint, but it is no guarantee against every operator. The installer sets such a server up as a kernel module, so the throughput cost stays minimal.</div></details>
       <details><summary>Is it free?</summary><div class="answer">Yes, the installer is free and open source under the MIT license. You only pay for the VPS, which starts around 3 to 5 dollars a month.</div></details>
-      <details><summary>Do I need Linux experience?</summary><div class="answer">No, you do not need Linux experience: you copy one command into an SSH session on a clean VPS. The script handles the kernel module, firewall, forwarding, and the first client, then prints a QR code and a vpn link.</div></details>
+      <details><summary>Do I need Linux experience?</summary><div class="answer">No, you do not need Linux experience: you copy one command into an SSH session on a clean VPS. The script handles the kernel module, firewall and forwarding and creates two clients. Their configs and QR codes are saved in <code>/root/awg/</code> on the server, and the <a href="https://github.com/bivlked/amneziawg-installer/blob/main/README.en.md#after-installation">README</a> shows how to get them onto your phone.</div></details>
       <details><summary>Which VPS should I pick?</summary><div class="answer">A clean Ubuntu or Debian VPS with 1 vCPU and at least 512 MB of RAM. It is meant for a dedicated VPS, not a home router or shared hosting. Check separately whether your host gives you an emergency console and whether it actually works: that is the simplest way back in if SSH stops answering, either after a reboot or because of a firewall rule. If there is none, recovery takes much longer: provider support, a snapshot rollback, or a reinstall. And if your SSH listens on a non-standard port, pass it at install time with <code>--ssh-port=PORT</code>. The installer does detect the port on its own, but an unattended <code>--yes</code> install skips the confirmation, so there is nobody left to double-check it.</div></details>
       <details><summary>Does it bypass DPI and censorship?</summary><div class="answer">AmneziaWG 2.0 adds obfuscation on top of WireGuard to resist the deep packet inspection used in Russia, Iran, China, and on school or corporate networks. No method is guaranteed against every operator, but the protocol gives you the obfuscation settings that get through today.</div></details>
       <details><summary>Which AmneziaWG version does the installer set up, 2.0 or 3.0?</summary><div class="answer">The kernel decides, not the distribution name. If the server runs kernel 6.7 or newer, the module comes from the official PPA, and that is a third-line module - that is what you get on current Ubuntu 24.04 and later and Debian 13 images. Which line runs on your server is answered by one command: cat /sys/module/amneziawg/version. On kernels older than 6.7 the installer builds a pinned 2.0 module from source: the third line is not validated there, so we keep the second on purpose. ARM servers we ship a prebuilt module for get that instead and also stay on 2.0. The generated configs are the same either way - the 2.0 parameters Jc/Jmin/Jmax, S1-S4, H1-H4 and the I1 concealment packet - and none of the third-line features are enabled, so configs handed out earlier need no changes.</div></details>
