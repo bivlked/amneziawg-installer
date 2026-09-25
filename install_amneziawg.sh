@@ -3265,32 +3265,15 @@ optimize_swap() {
     sysctl -w vm.swappiness=10 >/dev/null 2>&1
 }
 
-# Оптимизация сетевого интерфейса
-optimize_nic() {
-    if [[ -z "$MAIN_NIC" ]]; then
-        log_warn "Основной NIC не определён, пропуск оптимизации."
-        return 1
-    fi
-
-    if ! command -v ethtool &>/dev/null; then
-        log_debug "ethtool не найден, пропуск NIC оптимизации."
-        return 0
-    fi
-
-    log "Оптимизация NIC: $MAIN_NIC"
-    # Отключение GRO/GSO/TSO — могут мешать VPN-трафику
-    ethtool -K "$MAIN_NIC" gro off 2>/dev/null || log_debug "GRO: не поддерживается/уже выкл."
-    ethtool -K "$MAIN_NIC" gso off 2>/dev/null || log_debug "GSO: не поддерживается/уже выкл."
-    ethtool -K "$MAIN_NIC" tso off 2>/dev/null || log_debug "TSO: не поддерживается/уже выкл."
-    log "NIC оптимизация завершена."
-}
-
-# Полная оптимизация системы
+# Полная оптимизация системы.
+# Шага с отключением GRO/GSO/TSO здесь больше нет: ethtool выключал их только до
+# перезагрузки, которая идёт сразу за шагом 1, так что на готовом сервере оффлоады
+# всегда были включены, и все замеры скорости сделаны именно так. Закреплять
+# отключение без замера не стали: оно поднимает нагрузку на CPU.
 optimize_system() {
     log "Оптимизация системы под VPN-сервер..."
     detect_hardware
     optimize_swap
-    optimize_nic
     log "Оптимизация системы завершена."
 }
 
@@ -3818,6 +3801,25 @@ _mask_report_secrets() {
         -e "s|\`[A-Za-z0-9+/]{20,}={0,2}'|\`[HIDDEN]'|g"
 }
 
+# _diag_module_info [каталог в /sys]: сведения о модуле для --diagnostic.
+# modinfo описывает ФАЙЛ модуля на диске, а работает ЗАГРУЖЕННЫЙ; после
+# обновления DKMS без перезагрузки это разные сборки. Печатаем обе, подписав:
+# расхождение srcversion само по себе диагноз («модуль обновлён, не перезагружен»).
+# Аргумент - каталог модуля в /sys; тесты подставляют свой.
+_diag_module_info() {
+    local sysd="${1:-/sys/module/amneziawg}" v s
+    echo "Загруженный модуль (${sysd}):"
+    if [[ -d "$sysd" ]]; then
+        v=$(cat "$sysd/version" 2>/dev/null); s=$(cat "$sysd/srcversion" 2>/dev/null)
+        echo "  version:    ${v:-N/A}"
+        echo "  srcversion: ${s:-N/A}"
+    else
+        echo "  N/A (модуль не загружен)"
+    fi
+    echo "Файл модуля на диске (modinfo):"
+    modinfo amneziawg 2>/dev/null || echo "  N/A (modinfo не нашёл модуль)"
+}
+
 create_diagnostic_report() {
     # --diagnostic вызывается ДО initialize_setup (где живёт основной root-check):
     # под обычным пользователем запись в /root/awg падает на каждом log_msg,
@@ -3956,7 +3958,7 @@ create_diagnostic_report() {
         dkms status 2>/dev/null || echo "N/A"
         echo ""
         echo "--- Module Info ---"
-        modinfo amneziawg 2>/dev/null || echo "N/A"
+        _diag_module_info /sys/module/amneziawg
         echo ""
         echo "=== END ==="
     } | _mask_report_secrets > "$rf" || die "Ошибка записи отчета: $rf"
@@ -4104,13 +4106,17 @@ step_uninstall() {
     else
         DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg-tools qrencode 2>/dev/null || log_warn "Ошибка purge."
     fi
-    DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || log_warn "Ошибка autoremove."
+    # apt-get autoremove здесь НЕ вызываем, как и в cleanup_system (Issue #84): установщик
+    # удаляет cloud-init, и autoremove при удалении снёс бы осиротевший netplan-generator,
+    # после перезагрузки сервер остался бы без IP. Зависимости, которые ставил установщик,
+    # остаются; их список - в документации к --uninstall.
     log "Удаление PPA и файлов..."
     rm -f /etc/apt/sources.list.d/amnezia-ppa.sources \
         /etc/apt/sources.list.d/amnezia-ppa.list \
         /etc/apt/sources.list.d/amnezia-ubuntu-ppa-*.list \
         /etc/apt/sources.list.d/amnezia-ubuntu-ppa-*.sources \
-        /etc/apt/keyrings/amnezia-ppa.gpg 2>/dev/null
+        /etc/apt/keyrings/amnezia-ppa.gpg \
+        /etc/apt/apt.conf.d/99-amneziawg-lock-timeout 2>/dev/null
     rm -rf /etc/amnezia \
         /etc/modules-load.d/amneziawg.conf \
         /etc/sysctl.d/99-amneziawg-security.conf \
@@ -4775,7 +4781,7 @@ step1_update_and_optimize() {
     log "Система обновлена."
 
 
-    install_packages curl wget gpg sudo ethtool
+    install_packages curl wget gpg sudo
 
     if [[ "$NO_TWEAKS" -eq 0 ]]; then
         # Оптимизация системы
@@ -4798,6 +4804,24 @@ step1_update_and_optimize() {
 # ==============================================================================
 # Поддержка предсобранных пакетов для ARM
 # ==============================================================================
+
+# _rpi_headers_pkg <uname -r>: мета-пакет заголовков Raspberry Pi по варианту
+# ядра. В репозитории Raspberry Pi (bookworm) armhf несёт только rpi-v6, rpi-v7 и
+# rpi-v7l, arm64 - только rpi-v8 и rpi-2712. Прежний выбор «всё, кроме Pi 5, это
+# v8» на 32-битной системе просил пакет, которого в её репозитории нет, поэтому
+# вариант берётся из суффикса самого ядра. Незнакомый вариант - прежнее поведение
+# (2712 по подстроке, иначе v8). Ядро не от Raspberry Pi Foundation - пустой вывод.
+_rpi_headers_pkg() {
+    local kr="$1"
+    [[ "$kr" == *+rpt* || "$kr" == *-rpi* ]] || return 0
+    if [[ "$kr" =~ -rpi-(v6|v7|v7l|v8|2712)$ ]]; then
+        echo "linux-headers-rpi-${BASH_REMATCH[1]}"
+    elif [[ "$kr" == *2712* ]]; then
+        echo "linux-headers-rpi-2712"
+    else
+        echo "linux-headers-rpi-v8"
+    fi
+}
 
 # _try_install_prebuilt_arm — скачать и установить предсобранный .deb для
 # текущего ARM-ядра из релиза arm-packages на GitHub.
@@ -5364,14 +5388,10 @@ PPASRC
         local kernel_release
         kernel_release="$(uname -r)"
         if [[ "$kernel_release" == *+rpt* || "$kernel_release" == *-rpi* ]]; then
-            # Ядро Raspberry Pi Foundation (+rpt suffix) — использовать мета-пакет RPi
-            # linux-headers-rpi-2712: Pi 5 / Cortex-A76; linux-headers-rpi-v8: Pi 3/4 arm64
+            # Ядро Raspberry Pi Foundation (+rpt suffix) - мета-пакет RPi по варианту
+            # ядра (v6/v7/v7l на armhf, v8/2712 на arm64), см. _rpi_headers_pkg.
             local rpi_headers
-            if [[ "$kernel_release" == *2712* ]]; then
-                rpi_headers="linux-headers-rpi-2712"
-            else
-                rpi_headers="linux-headers-rpi-v8"
-            fi
+            rpi_headers="$(_rpi_headers_pkg "$kernel_release")"
             log "Обнаружено ядро Raspberry Pi, используем $rpi_headers"
             packages+=("$rpi_headers")
         elif [[ "${OS_ID:-ubuntu}" == "debian" ]]; then

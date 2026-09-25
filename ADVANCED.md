@@ -83,7 +83,6 @@
 * **Оптимизация сервера:**
     * Удаление ненужных пакетов (snapd, modemmanager, и др.)
     * Hardware-aware настройка swap и сетевых буферов
-    * Отключение NIC offloads (GRO/GSO/TSO) для оптимизации VPN
 * **Безопасность по умолчанию:**
     * `UFW`: Политика `deny incoming`, лимит SSH, разрешение VPN-порта.
     * `IPv6`: По умолчанию предлагается отключить через `sysctl`.
@@ -604,7 +603,6 @@ bash /root/awg/manage_amneziawg.sh regen
 
 **Hardware-aware настройки:**
 * **Swap:** 1 ГБ при RAM ≤ 2 ГБ, 512 МБ при RAM > 2 ГБ. `vm.swappiness = 10`.
-* **NIC:** Отключение GRO/GSO/TSO (могут конфликтовать с VPN-трафиком).
 * **Сетевые буферы:** Автоматическая настройка `rmem_max`/`wmem_max` в зависимости от объёма RAM.
 
 ---
@@ -1103,7 +1101,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
   <b>О:</b> Под капотом тот же протокол - AmneziaWG 2.0 с той же обфускацией. Отличается то, как разворачивается и работает сервер. Официальное приложение Amnezia - графический клиент: указываешь сервер, и оно ставит серверную часть в Docker-контейнерах по SSH, не выполняя такой настройки и защиты самого сервера. Этот установщик создан, чтобы выжать из выделенного VPS максимум как из VPN-сервера, поэтому работает иначе:
   <ul>
     <li>AmneziaWG ставится модулем ядра (DKMS), без Docker - нет постоянного демона и его расхода RAM/CPU.</li>
-    <li>Весь сервер оптимизируется под железо: sysctl-буферы, swap, офлоады NIC, BBR, срез лишних пакетов.</li>
+    <li>Весь сервер оптимизируется под железо: sysctl-буферы, swap, BBR, срез лишних пакетов.</li>
     <li>Поверхность атаки минимальна: UFW deny-all, Fail2Ban, строгие права, sysctl-хардненинг, один сервис вместо стека.</li>
     <li>Доступна тонкая настройка: пресет для мобильных сетей и прямой доступ к параметрам AWG 2.0.</li>
     <li>Управление из CLI (<code>manage</code> add/remove/list/<code>--expires</code>), готовые сборки под ARM, headless-режим для автоматизации.</li>
@@ -1923,7 +1921,7 @@ apt-get update && apt-get install -y curl
 |-----------|-------------|----------------------|
 | Raspberry Pi 3, 4 (64-bit) | ARM64 (aarch64) | `linux-headers-rpi-v8` |
 | Raspberry Pi 5 | ARM64 (aarch64) | `linux-headers-rpi-2712` |
-| Raspberry Pi 3, 4 (32-bit) | ARMv7 (armhf) | `linux-headers-rpi-v7` |
+| Raspberry Pi 3, 4 (32-bit) | ARMv7 (armhf) | `linux-headers-rpi-v7` или `linux-headers-rpi-v7l`, по суффиксу ядра в `uname -r` |
 | Ubuntu ARM64 (AWS Graviton, Oracle Ampere, Hetzner) | ARM64 | `linux-headers-generic` |
 | Debian ARM64 (облачные VPS) | ARM64 | `linux-headers-arm64` |
 

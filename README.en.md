@@ -222,7 +222,7 @@ There are a few other ways to get AmneziaWG running. Each picks a different trad
 The official Amnezia app is the official graphical client: you install the app, point it at a server, and it deploys the server side in Docker over SSH. Handy when all you want is a GUI. This installer is built for a different goal - to get the most out of a single dedicated VPS as a VPN server. That is where the differences come from:
 
 * **No Docker, and none of its overhead.** AmneziaWG runs as a kernel module rather than inside a container. There is no Docker daemon sitting in the background, so RAM and CPU use stay lower. On a cheap VPS that matters a lot, and it does no harm on a bigger one either.
-* **The whole server is tuned to the hardware.** The script reads the server's RAM and network card, then sets sysctl buffers, swap size, and NIC offloads and turns on BBR - it wrings the most out of the plan you are paying for. The official app deploys its containers and does not optimize or tune the server itself.
+* **The whole server is tuned to the hardware.** The script reads the server's RAM and network card, then sets sysctl buffers and swap size and turns on BBR - it wrings the most out of the plan you are paying for. The official app deploys its containers and does not optimize or tune the server itself.
 * **Smaller attack surface.** Unneeded packages and services are stripped, so the box does one thing - VPN. On top of that: UFW deny-all, Fail2Ban, strict file permissions, and sysctl hardening.
 * **Fine control over the obfuscation.** A mobile-network preset (`--preset=mobile`), direct access to the AmneziaWG 2.0 parameters, and field data on carriers and DPI - you can tune it for a specific network or carrier.
 * **Headless and scriptable.** One SSH command, every parameter as a flag, CLI client management, time-limited guests (`--expires`), QR or `vpn://` import, and prebuilt modules for ARM.
@@ -249,7 +249,7 @@ Detailed comparison: [amneziawg-installer vs the official Amnezia app](https://b
 <summary><strong>All features</strong></summary>
 
 * Native key and config generation via `awg` - no Python or external dependencies
-* Hardware-aware optimization: swap, NIC offloads, network buffers tuned to server specs
+* Hardware-aware optimization: swap and network buffers tuned to server specs
 * DKMS - automatic kernel module rebuild on updates
 * `vpn://` URI for one-tap import into Amnezia Client (`.vpnuri` files)
 * Per-client traffic statistics (`stats`, `stats --json`)

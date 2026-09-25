@@ -5,27 +5,17 @@
 
 load test_helper
 
-# Extract just the headers-detection logic into a testable function by
-# re-implementing it here with injectable mock stubs (uname, dpkg, apt-cache).
-# This avoids sourcing the full installer (which has root-only side effects).
+# The Raspberry Pi choice comes from the installer's own _rpi_headers_pkg
+# (sourced below, so this file tests the shipped code, not a copy of it). The
+# non-RPi arch fallback is still restated here with an injectable dpkg stub.
+
+source <(sed -n '/^_rpi_headers_pkg() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../install_amneziawg.sh")
 
 select_rpi_headers() {
     # Args: $1 = simulated kernel string (e.g. "6.12.75+rpt-rpi-v8")
     local kernel_release="$1"
-    local current_headers="linux-headers-${kernel_release}"
-
-    # Simulate dpkg -s / apt-cache show both failing (headers not installed)
-    if false; then
-        echo "$current_headers"
-        return
-    fi
-
     if [[ "$kernel_release" == *+rpt* || "$kernel_release" == *-rpi* ]]; then
-        if [[ "$kernel_release" == *2712* ]]; then
-            echo "linux-headers-rpi-2712"
-        else
-            echo "linux-headers-rpi-v8"
-        fi
+        _rpi_headers_pkg "$kernel_release"
     else
         echo "linux-headers-$(dpkg --print-architecture 2>/dev/null || echo "amd64")"
     fi

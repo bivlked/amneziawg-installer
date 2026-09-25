@@ -12,6 +12,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Step 1 no longer turns off GRO/GSO/TSO on the network card or installs `ethtool`.** The change lasted only until the reboot that follows step 1, so on a finished server the offloads were always on anyway. A finished server behaves exactly as before.
+
+### Fixed
+
+- **`--uninstall` no longer runs `apt-get autoremove`.** The installer removes cloud-init, and autoremove at uninstall could take the orphaned `netplan-generator` with it, as happened at install time in [#84](https://github.com/bivlked/amneziawg-installer/issues/84); after a reboot the server would be left without an IP. The dependencies the installer pulled in now stay. The uninstall also removes `/etc/apt/apt.conf.d/99-amneziawg-lock-timeout`, which the installer creates and the uninstall used to leave behind.
+- **Raspberry Pi kernel headers follow the kernel flavour.** When the exact `linux-headers-$(uname -r)` package is missing, the installer picks the meta-package from the kernel suffix: `rpi-v6`, `rpi-v7`, `rpi-v7l`, `rpi-v8` or `rpi-2712`. Previously everything but a Pi 5 got `rpi-v8`, which the 32-bit Raspberry Pi OS repository does not carry.
+- **`--diagnostic` reports the loaded module separately from the file on disk.** The Module Info section now has two parts: the version and `srcversion` of the loaded module from `/sys/module/amneziawg`, and `modinfo` for the file on disk. If they differ, the module was updated but not reloaded yet.
+
 ### Documentation
 
 - **Mobile network advice now follows the measurement.** The tip after the flag table and the FAQ "VPN connects over cellular only on the third attempt" no longer suggest lowering the junk packets further (`--jc=2 --jmin=20 --jmax=60`): the September 2026 measurement on MTS Moscow shows the shape of `I1` decides the handshake, while `Jc`, `Jmin` and `Jmax` do not affect it. The manual edit step no longer swaps a DNS-shaped `I1` for a random one. Both now point to "The handshake never completes on cellular" first. The carrier table gains an "MTS (Moscow)" row with the results of the same measurement.
