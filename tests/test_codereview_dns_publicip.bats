@@ -10,24 +10,10 @@
 
 load test_helper
 
-# Faithful copy of the per-element DNS validation added to modify_client.
+# Since Sep 2026 the check lives in the library (awg_validate_dns_list) and modify
+# delegates to it, so the tests below drive the shipped function, not a copy.
 dns_list_ok() {
-    local value="$1"
-    case "$value" in
-        *$'\n'*|*$'\r'*|*\\*|*\"*|*\'*|"") return 1 ;;
-    esac
-    case "$value" in
-        ,*|*,|*,,*) return 1 ;;
-    esac
-    local tok ifs="$IFS"
-    IFS=','
-    for tok in $value; do
-        tok="${tok//[[:space:]]/}"
-        if [[ -z "$tok" ]]; then IFS="$ifs"; return 1; fi
-        if ! _valid_ipv4 "$tok" && ! _valid_ipv6 "$tok"; then IFS="$ifs"; return 1; fi
-    done
-    IFS="$ifs"
-    return 0
+    awg_validate_dns_list "$1"
 }
 
 @test "A5 DNS: well-formed IPv4/IPv6 lists pass" {
@@ -50,9 +36,16 @@ dns_list_ok() {
         # (a literal inside an explanatory comment is fine).
         run grep -E '=~ \^\[0-9a-fA-F' "$BATS_TEST_DIRNAME/../$f"
         [ "$status" -ne 0 ] || { echo "$f still uses charset-only DNS regex"; false; }
-        # The DNS branch must reference the structural validators.
-        run grep -E '_valid_ipv4 "\$_dns_tok"' "$BATS_TEST_DIRNAME/../$f"
-        [ "$status" -eq 0 ] || { echo "$f DNS branch missing _valid_ipv4"; false; }
+        # Since Sep 2026 the DNS branch delegates to the library validator ...
+        run grep -E 'awg_validate_dns_list "\$value" \|\| return 1' "$BATS_TEST_DIRNAME/../$f"
+        [ "$status" -eq 0 ] || { echo "$f DNS branch does not delegate to awg_validate_dns_list"; false; }
+    done
+    # ... and that validator checks every element structurally.
+    local lib body
+    for lib in awg_common.sh awg_common_en.sh; do
+        body=$(sed -n '/^awg_validate_dns_list() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../$lib")
+        grep -qE '_valid_ipv4 "\$tok"' <<< "$body" || { echo "$lib: validator lacks _valid_ipv4"; false; }
+        grep -qE '_valid_ipv6 "\$tok"' <<< "$body" || { echo "$lib: validator lacks _valid_ipv6"; false; }
     done
 }
 

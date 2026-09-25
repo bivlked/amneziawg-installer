@@ -1190,7 +1190,7 @@ safe_load_config() {
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
                 AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
-                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME)
+                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS)
                     export "$key=$value"
                     ;;
             esac
@@ -2366,6 +2366,56 @@ awg_validate_allowed_ips_list() {
     return 0
 }
 
+# Валидация списка DNS для клиентского конфига: только IPv4/IPv6 через запятую,
+# без имён хостов и пустых элементов. Единая точка для `manage modify DNS` и для
+# CLIENT_DNS из awgsetup_cfg.init (две инлайн-копии разъезжаются, см. выше про
+# AllowedIPs). Разбор через read -a, а не `for x in $value`: прежний цикл в modify
+# раскрывал шаблоны, и «1.1.1.*» проходило, если в текущем каталоге лежал файл 1.1.1.1.
+awg_validate_dns_list() {
+    local value="$1" tok
+    local -a parts
+    case "$value" in
+        *$'\n'*|*$'\r'*|*\\*|*\"*|*\'*|"")
+            log_error "Невалидный DNS: '$value'"
+            return 1 ;;
+    esac
+    case "$value" in
+        ,*|*,|*,,*)
+            log_error "Невалидный DNS '$value': пустой элемент списка (лишняя запятая)"
+            return 1 ;;
+    esac
+    IFS=',' read -r -a parts <<< "$value"
+    for tok in "${parts[@]}"; do
+        tok="${tok//[[:space:]]/}"
+        if [[ -z "$tok" ]]; then
+            log_error "Невалидный DNS '$value': пустой элемент списка (лишняя запятая)"
+            return 1
+        fi
+        if ! _valid_ipv4 "$tok" && ! _valid_ipv6 "$tok"; then
+            log_error "Невалидный DNS '$value': '$tok' не похож на IPv4/IPv6-адрес"
+            return 1
+        fi
+    done
+    return 0
+}
+
+# DNS для НОВОГО клиентского конфига: CLIENT_DNS из awgsetup_cfg.init, иначе
+# прежнее «1.1.1.1, 1.0.0.1». Невалидное значение - громкий отказ, а не тихий
+# откат на значение по умолчанию: человек, который вписал свой резолвер, иначе
+# получил бы клиентов с Cloudflare и не узнал бы об этом. Существующих клиентов
+# не касается: regen сохраняет их DNS из текущего .conf.
+awg_client_dns() {
+    if [[ -z "${CLIENT_DNS:-}" ]]; then
+        printf '%s' "1.1.1.1, 1.0.0.1"
+        return 0
+    fi
+    if ! awg_validate_dns_list "$CLIENT_DNS"; then
+        log_error "CLIENT_DNS в $CONFIG_FILE невалиден ('$CLIENT_DNS'). Исправьте значение (IP через запятую) или удалите строку - тогда будет 1.1.1.1, 1.0.0.1."
+        return 1
+    fi
+    awg_normalize_csv "$CLIENT_DNS"
+}
+
 # Допустимый диапазон MTU для AWG / WireGuard.
 # Минимум 576 (классический минимум IPv4), максимум 9100 (verge на jumbo frame).
 # Значения вне диапазона трактуются как ошибочные и игнорируются (fallback к 1280).
@@ -2421,6 +2471,11 @@ render_client_config() {
     local client_ipv6="${7:-}"
 
     load_awg_params || return 1
+
+    # DNS нового клиента: CLIENT_DNS или значение по умолчанию. Считаем ДО tmpfile,
+    # чтобы невалидный CLIENT_DNS не оставил недописанного конфига.
+    local client_dns
+    client_dns=$(awg_client_dns) || return 1
 
     local conf_file="$AWG_DIR/${name}.conf"
     # База маршрутов: индивидуальный override клиента (CLIENT_ALLOWED_IPS,
@@ -2532,7 +2587,7 @@ render_client_config() {
 [Interface]
 PrivateKey = ${client_privkey}
 Address = ${address_line}
-DNS = 1.1.1.1, 1.0.0.1
+DNS = ${client_dns}
 MTU = ${mtu}
 Jc = ${AWG_Jc}
 Jmin = ${AWG_Jmin}
@@ -4400,7 +4455,10 @@ regenerate_client() {
     fi
 
     # Сохраняем пользовательские настройки из текущего .conf (modify)
-    local current_dns="1.1.1.1, 1.0.0.1" current_keepalive="33" current_allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
+    # current_dns пуст, пока нет старого .conf: тогда DNS в конфиге - тот, что записал
+    # render_client_config (CLIENT_DNS или значение по умолчанию), и перезаписывать его
+    # зашитой константой нельзя - так терялся CLIENT_DNS на пути восстановления.
+    local current_dns="" current_keepalive="33" current_allowed_ips="${ALLOWED_IPS:-0.0.0.0/0}"
     local _had_conf=0
     if [[ -f "$AWG_DIR/${name}.conf" ]]; then
         _had_conf=1
@@ -4552,11 +4610,13 @@ regenerate_client() {
     _ka=$(printf '%s' "$current_keepalive" | sed 's/[&\\/]/\\&/g')
     _aip=$(printf '%s' "$current_allowed_ips" | sed 's/[&\\/]/\\&/g')
     local _client_conf="$AWG_DIR/${name}.conf"
-    if ! sed -i "s/^DNS = .*/DNS = ${_dns}/" "$_client_conf"; then
-        log_error "Ошибка sed при записи DNS в $_client_conf"
-        exec {lock_fd}>&-
-        unset CLIENT_PSK
-        return 1
+    if [[ -n "$current_dns" ]]; then
+        if ! sed -i "s/^DNS = .*/DNS = ${_dns}/" "$_client_conf"; then
+            log_error "Ошибка sed при записи DNS в $_client_conf"
+            exec {lock_fd}>&-
+            unset CLIENT_PSK
+            return 1
+        fi
     fi
     if ! sed -i "s/^PersistentKeepalive = .*/PersistentKeepalive = ${_ka}/" "$_client_conf"; then
         log_error "Ошибка sed при записи PersistentKeepalive в $_client_conf"

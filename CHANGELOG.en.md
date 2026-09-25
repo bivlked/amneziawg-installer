@@ -12,12 +12,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **The DNS for new clients is set in `awgsetup_cfg.init`.** A line `export CLIENT_DNS='10.9.9.1'` (IPs separated by commas) gives that DNS to clients created after the edit and to a client whose config `regen` rebuilds from scratch. Configs already handed out keep their DNS. An invalid value is not silently replaced: creating a client refuses with a clear message. Before this the only way was to edit the library, and the installer and script updates overwrote that edit.
+- **The `--no-prebuilt` flag.** On ARM the installer skips the prebuilt module package from the `arm-packages` release and builds the module with DKMS. The prebuilt packages are built by this project's CI and checked only against a SHA256 from the same release, with no signature; the flag is for those who care. The choice is saved in `awgsetup_cfg.init` and survives the install's reboots.
+
 ### Changed
 
 - **Step 1 no longer turns off GRO/GSO/TSO on the network card or installs `ethtool`.** The change lasted only until the reboot that follows step 1, and nothing of it remained on a finished server. A finished server behaves exactly as before.
 
 ### Fixed
 
+- **`modify <name> DNS` no longer expands globs.** The DNS list check parsed the value in an unquoted loop, so `1.1.1.*` passed whenever a file named `1.1.1.1` sat in the current directory. The check is now shared with `CLIENT_DNS` and lives in `awg_common.sh`.
 - **`--uninstall` no longer runs `apt-get autoremove`.** It removes everything apt considers unneeded across the whole system, not just what the installer left; at install time in [#84](https://github.com/bivlked/amneziawg-installer/issues/84) it took `netplan-generator` that way and the server came back without an IP. Installs made after the #223 fix protect such packages, older ones do not. Packages the installer added explicitly (dkms, the compiler, kernel headers) were never removed by the uninstall; now the automatic dependencies of the purged packages stay as well, and the uninstall says so in the log. The uninstall also removes `/etc/apt/apt.conf.d/99-amneziawg-lock-timeout`, which the installer creates and the uninstall used to leave behind.
 - **Raspberry Pi kernel headers follow the kernel flavour.** When the exact `linux-headers-$(uname -r)` package is missing, the installer picks the meta-package from the kernel suffix: `rpi-v6`, `rpi-v7`, `rpi-v7l`, `rpi-v8` or `rpi-2712`. Previously everything but a Pi 5 got `rpi-v8`, which the 32-bit Raspberry Pi OS repository does not carry.
 - **`--diagnostic` reports the loaded module separately from the file on disk.** The Module Info section now has two parts: the version and `srcversion` of the loaded module from `/sys/module/amneziawg`, and `modinfo` for the file on disk. The report compares their `srcversion`: a mismatch usually means the module was updated but not reloaded. "No file", "no permission" and "empty" are now told apart.

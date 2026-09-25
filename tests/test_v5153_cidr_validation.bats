@@ -132,14 +132,24 @@ allowedips_comma_ok() {
     # matches the DNS arm's identical guard instead. Target the library (the
     # guard occurs there exactly once - in the validator) and assert the
     # delegation point in manage, so neither copy can vanish silently.
-    local f
+    # Since the audit of Sep 2026 the DNS list check moved into the library too
+    # (awg_validate_dns_list), so the guard now lives in exactly two validators.
+    # Check it inside EACH of them rather than counting the file: a count would
+    # stay at 2 if one copy vanished and another appeared elsewhere.
+    local f fn
     for f in awg_common.sh awg_common_en.sh; do
         run grep -cF ',*|*,|*,,' "$BATS_TEST_DIRNAME/../$f"
         [ "$status" -eq 0 ]
-        [ "$output" = "1" ]
+        [ "$output" = "2" ]
+        for fn in awg_validate_allowed_ips_list awg_validate_dns_list; do
+            sed -n "/^${fn}() {\$/,/^}\$/p" "$BATS_TEST_DIRNAME/../$f" | grep -qF ',*|*,|*,,' \
+                || { echo "$f: $fn lost its trailing-comma guard" >&2; return 1; }
+        done
     done
     for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
         run grep -E 'awg_validate_allowed_ips_list "\$value" \|\| return 1' "$BATS_TEST_DIRNAME/../$f"
+        [ "$status" -eq 0 ]
+        run grep -E 'awg_validate_dns_list "\$value" \|\| return 1' "$BATS_TEST_DIRNAME/../$f"
         [ "$status" -eq 0 ]
     done
 }

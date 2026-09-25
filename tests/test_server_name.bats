@@ -228,7 +228,9 @@ CONF
 
 @test "D#180: AWG_SERVER_NAME whitelisted in safe_load_config (all four copies)" {
     for f in awg_common.sh awg_common_en.sh install_amneziawg.sh install_amneziawg_en.sh; do
-        run grep -c '|AWG_SERVER_NAME)' "$BATS_TEST_DIRNAME/../$f"
+        # The key may be the last in the whitelist or be followed by another one
+        # (CLIENT_DNS joined after it in Sep 2026).
+        run grep -cE '\|AWG_SERVER_NAME(\||\))' "$BATS_TEST_DIRNAME/../$f"
         [ "$status" -eq 0 ]
         [ "$output" -ge 1 ]
     done

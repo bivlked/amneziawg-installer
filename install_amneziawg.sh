@@ -55,11 +55,11 @@ AWG2_PIN_TAG="v1.0.20260725"
 AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
 
 # Флаги CLI
-UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; KEEP_PACKAGES=""
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PREBUILT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""
-CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_KEEP_PACKAGES=0
+CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PREBUILT=0; CLI_KEEP_PACKAGES=0
 CLI_ALLOW_IPV6_TUNNEL=0
 CLI_ISOLATION="default"
 CLI_SERVER_NAME=""
@@ -281,6 +281,7 @@ while [[ $# -gt 0 ]]; do
         --yes|-y)        AUTO_YES=1 ;;
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
         --no-cps)        NO_CPS=1; CLI_NO_CPS=1 ;;
+        --no-prebuilt)   NO_PREBUILT=1; CLI_NO_PREBUILT=1 ;;
         --keep-packages) KEEP_PACKAGES=1; CLI_KEEP_PACKAGES=1 ;;
         --force|-f)      FORCE_REINSTALL=1 ;;
         --preset=*)      CLI_PRESET="${1#*=}" ;;
@@ -510,6 +511,8 @@ show_help() {
   --jmax=N             Задать Jmax вручную (0-1280, поверх preset, должно быть >= Jmin)
   --no-cps              Отключить CPS (параметр I1) - нужно, если десктопный
                         AmneziaVPN на macOS виснет при подключении (issue #159)
+  --no-prebuilt         На ARM не ставить готовый пакет модуля из релиза
+                        arm-packages, а собрать модуль через DKMS
 
 Примеры:
   sudo bash install_amneziawg.sh                             # Интерактивная установка
@@ -1622,8 +1625,8 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
-                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME)
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PREBUILT|KEEP_PACKAGES|\
+                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS)
                     export "$key=$value"
                     ;;
             esac
@@ -4552,6 +4555,17 @@ initialize_setup() {
         log "CPS (I1) отключён (--no-cps / сохранённый NO_CPS=1): десктопный AmneziaVPN на macOS не поддерживает CPS."
     fi
 
+    # --no-prebuilt: флаг включает, сохранённый NO_PREBUILT=1 держится между
+    # перезагрузками (шаг 2 идёт в другом процессе). Снять - удалить строку из init.
+    if [[ "${CLI_NO_PREBUILT:-0}" -eq 1 ]]; then
+        NO_PREBUILT=1
+    fi
+    # CLIENT_DNS пишется в init в одинарных кавычках: символ вне набора IP-адресов
+    # сломал бы файл. Полную проверку делает awg_client_dns при создании клиента.
+    if [[ -n "${CLIENT_DNS:-}" && ! "$CLIENT_DNS" =~ ^[0-9a-fA-F.:,\ ]+$ ]]; then
+        die "CLIENT_DNS в $CONFIG_FILE содержит недопустимые символы ('$CLIENT_DNS'). Укажите IP через запятую или удалите строку."
+    fi
+
     # Сохранение конфигурации
     log "Сохранение настроек в $CONFIG_FILE..."
     # temp в каталоге итогового конфига -> mv = атомарный rename на той же ФС
@@ -4598,6 +4612,9 @@ export AWG_PRESET='${AWG_PRESET:-default}'
 export NO_TWEAKS=${NO_TWEAKS}
 export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
 export NO_CPS=${NO_CPS}
+export NO_PREBUILT=${NO_PREBUILT:-0}
+# DNS для НОВЫХ клиентов (IP через запятую). Пусто - 1.1.1.1, 1.0.0.1.
+export CLIENT_DNS='${CLIENT_DNS:-}'
 export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
 export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
 export IPV6_SUBNET='${IPV6_SUBNET}'
@@ -5344,7 +5361,11 @@ PPASRC
     local arch
     arch="$(uname -m)"
     if [[ "$arch" == "aarch64" || "$arch" == "armv7l" ]]; then
-        if _try_install_prebuilt_arm; then
+        if [[ "${NO_PREBUILT:-0}" -eq 1 ]]; then
+            # --no-prebuilt: готовый .deb из релиза arm-packages проверяется только по
+            # sha256 из того же релиза и не подписан; кому это важно, тот собирает сам.
+            log "Готовый пакет модуля пропущен (--no-prebuilt), модуль соберётся через DKMS."
+        elif _try_install_prebuilt_arm; then
             log "Модуль ядра установлен из предсобранного пакета. Установка утилит из PPA..."
             # 🔴 Hold ОБЯЗАТЕЛЕН и здесь, НЕЗАВИСИМО от версии ядра. Выше он
             # ставится только на пиновом пути (ядро < 6.7), а в ветке >= 6.7
@@ -5391,8 +5412,9 @@ PPASRC
             _boot_critical_guard
             # request_reboot всегда завершает процесс (exit), сюда не вернёмся.
             request_reboot 3
+        else
+            log "Совпадений не найдено - откат на DKMS."
         fi
-        log "Совпадений не найдено — откат на DKMS."
     fi
 
     # Пакеты: на пиновом пути (ядро < 6.7) amneziawg-dkms НЕ ставим (это был бы
