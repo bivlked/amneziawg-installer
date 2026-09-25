@@ -9,6 +9,7 @@ load test_helper
 # (sourced below, so this file tests the shipped code, not a copy of it). The
 # non-RPi arch fallback is still restated here with an injectable dpkg stub.
 
+# shellcheck source=/dev/null
 source <(sed -n '/^_rpi_headers_pkg() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../install_amneziawg.sh")
 
 select_rpi_headers() {

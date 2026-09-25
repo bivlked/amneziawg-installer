@@ -39,6 +39,7 @@ _body() {
 
 @test "rpi headers: package follows the kernel flavour (both languages)" {
     for f in "${INSTALLERS[@]}"; do
+        # shellcheck source=/dev/null
         source <(_body "$f" _rpi_headers_pkg)
         declare -F _rpi_headers_pkg >/dev/null || { echo "$f: no _rpi_headers_pkg" >&2; return 1; }
         [ "$(_rpi_headers_pkg 6.6.51+rpt-rpi-v6)" = linux-headers-rpi-v6 ]
@@ -54,6 +55,7 @@ _body() {
 
 @test "rpi headers: unknown flavour keeps the previous choice, non-RPi kernel gives nothing (both languages)" {
     for f in "${INSTALLERS[@]}"; do
+        # shellcheck source=/dev/null
         source <(_body "$f" _rpi_headers_pkg)
         # Unknown flavour: the pre-audit behaviour (2712 by substring, otherwise v8).
         [ "$(_rpi_headers_pkg 6.18.1+rpt-rpi-2712k)" = linux-headers-rpi-2712 ]
@@ -80,7 +82,10 @@ _body() {
 
 @test "diagnostic: module info shows the loaded module and the file on disk (both languages)" {
     for f in "${INSTALLERS[@]}"; do
-        source <(_body "$f" _diag_sysattr); source <(_body "$f" _diag_module_info)
+        # shellcheck source=/dev/null
+        source <(_body "$f" _diag_sysattr)
+        # shellcheck source=/dev/null
+        source <(_body "$f" _diag_module_info)
         declare -F _diag_module_info >/dev/null || { echo "$f: no _diag_module_info" >&2; return 1; }
         local sysd="$BATS_TEST_TMPDIR/sys-$f"
         mkdir -p "$sysd"
@@ -98,7 +103,10 @@ _body() {
 
 @test "diagnostic: module not loaded and no module file are both reported, not silent (both languages)" {
     for f in "${INSTALLERS[@]}"; do
-        source <(_body "$f" _diag_sysattr); source <(_body "$f" _diag_module_info)
+        # shellcheck source=/dev/null
+        source <(_body "$f" _diag_sysattr)
+        # shellcheck source=/dev/null
+        source <(_body "$f" _diag_module_info)
         modinfo() { return 1; }
         out=$(_diag_module_info "$BATS_TEST_TMPDIR/no-such-dir-$f")
         [ -n "$out" ]
@@ -127,7 +135,10 @@ _body() {
 
 @test "diagnostic: srcversion match and mismatch are stated explicitly (both languages)" {
     for f in "${INSTALLERS[@]}"; do
-        source <(_body "$f" _diag_sysattr); source <(_body "$f" _diag_module_info)
+        # shellcheck source=/dev/null
+        source <(_body "$f" _diag_sysattr)
+        # shellcheck source=/dev/null
+        source <(_body "$f" _diag_module_info)
         local sysd="$BATS_TEST_TMPDIR/cmp-$f"
         mkdir -p "$sysd"
         printf 'SAMESRC0000000000000000\n' > "$sysd/srcversion"
@@ -143,7 +154,10 @@ _body() {
 
 @test "diagnostic: module directory without attribute files says so, not a bare N/A (both languages)" {
     for f in "${INSTALLERS[@]}"; do
-        source <(_body "$f" _diag_sysattr); source <(_body "$f" _diag_module_info)
+        # shellcheck source=/dev/null
+        source <(_body "$f" _diag_sysattr)
+        # shellcheck source=/dev/null
+        source <(_body "$f" _diag_module_info)
         local sysd="$BATS_TEST_TMPDIR/empty-$f"
         mkdir -p "$sysd"
         : > "$sysd/srcversion"
