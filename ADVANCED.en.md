@@ -28,6 +28,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
   - [IPv6 Dual-Stack Tunnel (v5.15.0+)](#ipv6-tunnel-adv)
   - [PersistentKeepalive](#persistentkeepalive-adv)
   - [DNS](#dns-adv)
+  - [Your Own DNS Server for Clients](#own-dns-adv)
   - [Changing Default Settings](#change-defaults-adv)
 - [🔒 Server Security Settings](#security-adv)
   - [UFW Firewall](#ufw-adv)
@@ -463,6 +464,27 @@ Then re-import the new `.conf` on the device. A plain `regen` will not help here
 * **Default value:** `1.1.1.1, 1.0.0.1` (Cloudflare, primary + fallback).
 * DNS server for the client inside the VPN.
 * **Change:** `sudo bash /root/awg/manage_amneziawg.sh modify <name> DNS "8.8.8.8,1.0.0.1"`
+
+<a id="own-dns-adv"></a>
+### Your Own DNS Server for Clients (Pi-hole, AdGuard Home, Blocky)
+
+You can run an ad blocker or your own resolver on the VPN server itself and give clients the server's tunnel address as their DNS. The installer does not set such a service up, and it does not get in its way either. Skip anything from the list below and the setup will not work, without a single error:
+
+1. **The service listens on the server's tunnel address, taken from the configuration.** It is `10.9.9.1` by default, but with `--subnet` the address is different. `ip -4 addr show awg0` or the `Address` line in `/etc/amnezia/amneziawg/awg0.conf` shows yours. Use it instead of `10.9.9.1` in the commands below.
+2. **Clients get this address as their DNS:** `sudo bash /root/awg/manage_amneziawg.sh modify <name> DNS "10.9.9.1"` for every client. New clients get the default DNS (`1.1.1.1, 1.0.0.1`), so repeat the command for them.
+3. **The address is inside the client's `AllowedIPs`.** A full tunnel (`0.0.0.0/0` in the `AllowedIPs` line of the client config, the default mode since v5.34.0) covers it. The mode 2 list sends private networks around the tunnel on purpose, and your own mode 3 list does not have the address unless you add it. That holds with client isolation on, which is also the default. Then the query goes around the tunnel and never reaches the server, and the device may be left without DNS or quietly ask the provider's DNS: the blocking looks configured but does nothing. The simplest fix is adding the server's address to the client's list:
+
+   ```bash
+   # current list: everything after "AllowedIPs = ", IPv6 entries included
+   sudo sed -n 's/^AllowedIPs = //p' /root/awg/<name>.conf
+   sudo bash /root/awg/manage_amneziawg.sh modify <name> AllowedIPs "<current list>, 10.9.9.1/32"
+   ```
+
+   Do the same for new clients. A plain `regen` keeps such a list, `regen --reset-routes` resets it.
+4. **Port 53 is open on `awg0` only.** If UFW is active (`sudo ufw status verbose` shows `Default: deny (incoming)`), incoming traffic is denied, and without a rule the queries from the tunnel are dropped: `sudo ufw allow in on awg0 to any port 53`. A rule without `in on awg0` opens the resolver to the whole internet. If the service runs in Docker, UFW does not filter its published ports, so publish the port on the tunnel address only: `-p 10.9.9.1:53:53/udp -p 10.9.9.1:53:53/tcp`.
+5. **Files copied over from Windows are stripped of `CRLF`:** `sed -i 's/\r$//' <file>`. A carriage return at the end of a list line can become part of the domain name, and that line stops blocking.
+
+After changing a client, import its config on the device again. These pitfalls were worked out by @Cueuler in [discussion #237](https://github.com/bivlked/amneziawg-installer/discussions/237).
 
 <a id="change-defaults-adv"></a>
 ### Changing Default Settings
