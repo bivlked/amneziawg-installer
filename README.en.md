@@ -739,6 +739,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 | [amneziawg-manager](https://github.com/rockysys/amneziawg-manager) | macOS | Native GUI that drives the server over SSH via the bundled manage script - no web panel or daemons |
 | [awgram](https://github.com/ekuraev/awgram) | Telegram | Rust bot: add/remove clients, stats, backup - via the bundled manage script |
 | [amneziawg-installer-tg-bot](https://github.com/blindtechnique/amneziawg-installer-tg-bot) | Telegram | Python bot that runs on the server itself: clients by button, guest access with an expiry, stats, backup - via the bundled manage script |
+| [amneziawg_dns_adblock](https://github.com/Cueuler/amneziawg_dns_adblock) | Server | DNS ad and tracker blocking for VPN clients by @Cueuler: Blocky on the tunnel address, installed on top of an existing setup, needs the full tunnel (`--route-all`). There is no license file; the author allowed free use in [discussion #237](https://github.com/bivlked/amneziawg-installer/discussions/237#discussioncomment-18605625) |
 
 <a id="featured-in"></a>
 <details>
