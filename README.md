@@ -65,16 +65,21 @@ sudo bash ./install_amneziawg.sh
 <details>
 <summary><strong>Что установщик меняет на сервере (прозрачность)</strong></summary>
 
-Скрипт получает root - вот краткий список того, что он делает с системой:
+Скрипт работает от root. Ниже всё, что он делает с системой.
 
-- **Пакеты**: обновляет систему, ставит зависимости (amneziawg-tools, qrencode и т.д.); вычищает ненужное на VPN-сервере - в т.ч. `unattended-upgrades` (значит, обновления безопасности перестают ставиться автоматически) и `cloud-init`, если он не управляет сетью (полный список в [ADVANCED.md](ADVANCED.md)).
-- **Ядро**: подключает PPA Amnezia (GPG-ключ проверяется по полному отпечатку) и собирает модуль AmneziaWG через DKMS.
-- **Сеть**: sysctl - форвардинг, сетевые буферы, BBR (отдельными файлами в `/etc/sysctl.d/`); IPv6 на хосте по умолчанию выключается (оставить: `--allow-ipv6`); swap подгоняется под размер RAM.
-- **Защита**: UFW - входящие запрещены, SSH с rate-limit, открыт только UDP-порт VPN; Fail2Ban для SSH.
-- **Файлы и сервисы**: основные файлы в `/root/awg/` и `/etc/amnezia/amneziawg/` с правами 600/700; сервис `awg-quick@awg0`; крон автоудаления истёкших клиентов.
+- **Обновление системы.** `apt-get upgrade --with-new-pkgs`: пакеты он не удаляет, но новое ядро приехать может. Перед обновлением пишет `/etc/apt/apt.conf.d/99-amneziawg-lock-timeout` (ждать блокировку dpkg до 5 минут) и помечает установленными вручную пакеты, без которых сервер не загрузится или останется без сети (`udev`, `initramfs-tools`, `openssh-server`, `netplan.io` и другие).
+- **Удаление пакетов** - только после вашего согласия; отказаться можно флагом `--keep-packages`. Удаляются `modemmanager`, `networkd-dispatcher`, `unattended-upgrades` (обновления безопасности перестают ставиться автоматически), `packagekit`, `udisks2`. На Ubuntu ещё `snapd` вместе с `/snap`, `/var/snap`, `/var/lib/snapd` и `lxd-agent-loader`. `cloud-init` с `/etc/cloud` и `/var/lib/cloud` удаляется, только если он не управляет сетью.
+- **Установка пакетов.** `curl`, `wget`, `gpg`, `sudo`, `amneziawg-dkms`, `amneziawg-tools`, `wireguard-tools`, `dkms`, `build-essential`, `dpkg-dev`, `qrencode`, заголовки ядра, `ufw`, `fail2ban` (на Debian ещё `python3-systemd`). Если модуль 2.0 собирается из исходников, ставится `git`; при устаревших заголовках ядра ставится `gcc-13`. На части ARM вместо сборки ставится готовый пакет модуля из релиза `arm-packages`.
+- **Репозиторий.** PPA Amnezia: `/etc/apt/sources.list.d/amnezia-ppa.sources` (на Debian 12 `.list`) и ключ `/etc/apt/keyrings/amnezia-ppa.gpg`. Ключ встроен в установщик, сверяется по полному отпечатку и действует только для этого репозитория.
+- **Модуль ядра.** `amneziawg` собирается через DKMS и загружается при старте (`/etc/modules-load.d/amneziawg.conf`). После обновления ядра модуль пересобирается сам: за это отвечают `/usr/local/sbin/amneziawg-ensure-module`, apt-хук `/etc/apt/apt.conf.d/99-amneziawg-post-kernel` и юнит `amneziawg-ensure-module.service`, журнал - `/var/log/amneziawg-ensure-module.log`. На ARM с готовым пакетом этой обвязки нет: после смены ядра установщик нужно запустить ещё раз.
+- **sysctl**, файл `/etc/sysctl.d/99-amneziawg-security.conf`: форвардинг, выключение IPv6 на хосте (оставить - флаг `--allow-ipv6`), BBR, буферы по объёму памяти, `rp_filter = 2`, запрет redirect, SYN cookies, `kernel.sysrq = 0`, `kernel.printk = 3 4 1 3`.
+- **Swap.** Если swap меньше 1 ГБ (при памяти до 2 ГБ) или меньше 512 МБ (при большем объёме), создаётся `/swapfile` со строкой в `/etc/fstab`.
+- **Фаервол.** UFW: входящие запрещены, SSH с ограничением частоты на найденном порту (порт можно задать флагом `--ssh-port`), открыт UDP-порт VPN, правило пересылки `awg0` -> внешний интерфейс. Если UFW ещё не включён, установщик спрашивает, включать ли его (с `--yes` включает сам). Fail2Ban защищает SSH, его настройки в `/etc/fail2ban/jail.d/amneziawg.conf`. **Настройки SSH-сервера установщик не меняет.**
+- **VPN.** Серверный конфиг `/etc/amnezia/amneziawg/awg0.conf` с правилами `iptables` в `PostUp`, сервис `awg-quick@awg0`, каталог `/root/awg/` (ключи, конфиги клиентов, журнал, скрипты управления) с правами 700/600, cron `/etc/cron.d/awg-expiry` для клиентов со сроком действия.
+- **Перезагрузки.** Их две: после обновления системы и после установки модуля. После каждой запустите ту же команду снова.
 - **Откат**: `--uninstall` убирает своё - модуль, конфиги, sysctl-файлы, кроны, UFW-правило VPN-порта и UFW-правило маршрутизации `awg0`. UFW отключает и Fail2Ban удаляет только если сам их включал/ставил; если UFW был активен до установки, добавленное правило SSH rate-limit остаётся. Не возвращает: swap и удалённые пакеты; пакеты-зависимости, которые он ставил (dkms, компилятор, заголовки ядра), остаются. По умолчанию, в том числе с `--yes`, перед удалением создаётся архив `/root/awg_uninstall_backup_*.tar.gz` с конфигами и приватными ключами; он остаётся на сервере, удалите его сами, когда он станет не нужен.
 
-Пошаговые детали - в [ADVANCED.md](ADVANCED.md), модель угроз - в [SECURITY.md](SECURITY.md).
+Флаг `--no-tweaks` оставляет пакеты, swap, sysctl-hardening, UFW и Fail2Ban как есть (форвардинг включается всё равно). Что остаётся после удаления - в [INSTALL_VPS.ru.md](INSTALL_VPS.ru.md), модель угроз - в [SECURITY.md](SECURITY.md), проверка подписи - в разделе [Проверка подписи](#proverka-podpisi).
 </details>
 
 <details>

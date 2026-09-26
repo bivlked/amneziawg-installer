@@ -64,16 +64,21 @@ sudo bash ./install_amneziawg_en.sh
 <details>
 <summary><strong>What the installer changes on your server (transparency)</strong></summary>
 
-The script runs as root - here is a short list of what it does to the system:
+The script runs as root. Below is everything it does to the system.
 
-- **Packages**: updates the system, installs dependencies (amneziawg-tools, qrencode, etc.); purges packages a VPN-only server does not need - including `unattended-upgrades` (so security updates stop installing automatically) and `cloud-init` when it does not manage the network (full list in [ADVANCED.en.md](ADVANCED.en.md)).
-- **Kernel**: adds the Amnezia PPA (GPG key verified by full fingerprint) and builds the AmneziaWG module via DKMS.
-- **Network**: sysctl - forwarding, network buffers, BBR (as separate files in `/etc/sysctl.d/`); host IPv6 is disabled by default (keep it with `--allow-ipv6`); swap is sized to fit the RAM.
-- **Protection**: UFW - incoming denied, SSH rate-limited, only the VPN UDP port open; Fail2Ban for SSH.
-- **Files and services**: the main files live in `/root/awg/` and `/etc/amnezia/amneziawg/` with 600/700 permissions; the `awg-quick@awg0` service; a cron job that removes expired clients.
+- **System update.** `apt-get upgrade --with-new-pkgs`: it never removes packages, but a new kernel can arrive. Before that it writes `/etc/apt/apt.conf.d/99-amneziawg-lock-timeout` (wait up to 5 minutes for the dpkg lock) and marks as manually installed the packages the server needs to boot and keep its network (`udev`, `initramfs-tools`, `openssh-server`, `netplan.io` and others).
+- **Package removal**, only with your consent; opt out with `--keep-packages`. It removes `modemmanager`, `networkd-dispatcher`, `unattended-upgrades` (security updates stop installing automatically), `packagekit` and `udisks2`. On Ubuntu also `snapd` with `/snap`, `/var/snap`, `/var/lib/snapd`, and `lxd-agent-loader`. `cloud-init` goes, with `/etc/cloud` and `/var/lib/cloud`, only when it does not manage the network.
+- **Packages installed.** `curl`, `wget`, `gpg`, `sudo`, `amneziawg-dkms`, `amneziawg-tools`, `wireguard-tools`, `dkms`, `build-essential`, `dpkg-dev`, `qrencode`, kernel headers, `ufw`, `fail2ban` (plus `python3-systemd` on Debian). When the 2.0 module is built from source, `git` is added; stale kernel headers bring `gcc-13`. On some ARM boards a prebuilt module package from the `arm-packages` release is installed instead of a build.
+- **Repository.** The Amnezia PPA: `/etc/apt/sources.list.d/amnezia-ppa.sources` (`.list` on Debian 12) and the key `/etc/apt/keyrings/amnezia-ppa.gpg`. The key ships inside the installer, is checked by its full fingerprint and is trusted for this repository only.
+- **Kernel module.** `amneziawg` is built via DKMS and loaded at boot (`/etc/modules-load.d/amneziawg.conf`). After a kernel update the module is rebuilt automatically by `/usr/local/sbin/amneziawg-ensure-module`, the apt hook `/etc/apt/apt.conf.d/99-amneziawg-post-kernel` and the `amneziawg-ensure-module.service` unit, with a log in `/var/log/amneziawg-ensure-module.log`. ARM hosts with a prebuilt package do not get this: after a kernel change, run the installer again.
+- **sysctl**, in `/etc/sysctl.d/99-amneziawg-security.conf`: forwarding, host IPv6 off (keep it with `--allow-ipv6`), BBR, buffers sized to RAM, `rp_filter = 2`, no redirects, SYN cookies, `kernel.sysrq = 0`, `kernel.printk = 3 4 1 3`.
+- **Swap.** When swap is below 1 GB (up to 2 GB of RAM) or below 512 MB (more RAM), it creates `/swapfile` and adds a line to `/etc/fstab`.
+- **Firewall.** UFW: incoming denied, SSH rate-limited on the detected port (or `--ssh-port`), the VPN UDP port open, and a forwarding rule from `awg0` to the external interface. If UFW is not on yet, the installer asks whether to enable it (with `--yes` it is enabled without asking). Fail2Ban protects SSH, with its settings in `/etc/fail2ban/jail.d/amneziawg.conf`. **The SSH server configuration is not touched.**
+- **VPN.** The server config `/etc/amnezia/amneziawg/awg0.conf` with `iptables` rules in `PostUp`, the `awg-quick@awg0` service, the `/root/awg/` directory (keys, client configs, log, management scripts) with 700/600 permissions, and the cron job `/etc/cron.d/awg-expiry` for clients with an expiry date.
+- **Reboots.** There are two: after the system update and after the module install. After each one, run the same command again.
 - **Rollback**: `--uninstall` removes its own module, configs, sysctl files, cron jobs, the VPN-port UFW allow rule and the `awg0` UFW route rule. It disables UFW and purges Fail2Ban only if it enabled/installed them itself; if UFW was already active before install, the SSH rate-limit rule it added stays. It does not restore swap settings or removed packages, and the dependency packages it added (dkms, the compiler, kernel headers) stay. By default, `--yes` included, it first creates the archive `/root/awg_uninstall_backup_*.tar.gz` with the configs and private keys; it stays on the server, so delete it yourself once you no longer need it.
 
-Step-by-step details in [ADVANCED.en.md](ADVANCED.en.md), threat model in [SECURITY.md](SECURITY.md).
+`--no-tweaks` leaves packages, swap, sysctl hardening, UFW and Fail2Ban alone (forwarding is enabled anyway). What stays after an uninstall is in [INSTALL_VPS.md](INSTALL_VPS.md#uninstall), the threat model in [SECURITY.md](SECURITY.md), signature verification in [Verifying a release](#verifying-a-release).
 </details>
 
 <details>
