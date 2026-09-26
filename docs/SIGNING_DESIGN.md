@@ -59,7 +59,7 @@ Generated files:
 
 ## Signing flow
 
-Per release, after the last change to the six scripts and before `git tag`: the signatures are committed under `signing/` so they land in the tagged commit. Each signature carries a trusted comment binding it to the tag and filename, so `scripts/verify-signatures.sh`, and a user who reads the `Trusted comment:` line, reject a signature made for a different file or release (rollback / misbinding protection). Sign with:
+Per release, after the last change to the six scripts and before `git tag`: the signatures are committed under `signing/` so they land in the tagged commit. Each signature carries a trusted comment binding it to the tag and filename, so `scripts/verify-signatures.sh` and a user who reads the `Trusted comment:` line reject a signature made for a different file or release (rollback / misbinding protection). Sign with:
 
 ```bash
 bash scripts/sign-release.sh vX.Y.Z
