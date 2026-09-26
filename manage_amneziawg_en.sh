@@ -877,7 +877,7 @@ restore_backup() {
     if command -v awg_restore_generation_notice >/dev/null 2>&1; then
         awg_restore_generation_notice "$td/clients/awgsetup_cfg.init" "$CONFIG_FILE"
     else
-        log_warn "awg_common.sh is outdated: awg_restore_generation_notice is missing, the generation check on restore was skipped. Update the scripts (section "How to Update Scripts" in ADVANCED.en.md)."
+        log_warn "awg_common.sh is outdated: awg_restore_generation_notice is missing, the generation check on restore was skipped. Update the scripts (section 'How to Update Scripts' in ADVANCED.en.md)."
     fi
 
     log "Stopping service..."
