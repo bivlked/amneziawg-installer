@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.37.0] - 2026-09-27
+
+**v5.37.0** - client DNS in the config, --no-prebuilt for ARM, and a docs review.
+
 ### Added
 
 - **The DNS for new clients is set in `awgsetup_cfg.init`.** A line `export CLIENT_DNS='10.9.9.1'` (IPs separated by commas) gives that DNS to clients created after the edit and to a client whose config `regen` rebuilds from scratch. Configs already handed out keep their DNS. An invalid value is not silently replaced: creating a client and the installer refuse with a clear message, while `regen` of clients already handed out works as before. An empty value means `1.1.1.1, 1.0.0.1`. Before this the only way was to edit the library, and the installer and script updates overwrote that edit. Idea from [PR #294](https://github.com/bivlked/amneziawg-installer/pull/294) by @rootcreep.
@@ -2036,7 +2040,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.2...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.0...HEAD
+[5.37.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.2...v5.37.0
 [5.36.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.1...v5.36.2
 [5.36.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.0...v5.36.1
 [5.36.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.35.0...v5.36.0

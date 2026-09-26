@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 2.0
 # Author: @bivlked
-# Version: 5.36.2
-# Date: 2026-09-24
+# Version: 5.37.0
+# Date: 2026-09-27
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -24,7 +24,7 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # drifted apart (one file updated, the other not) - otherwise the mismatch shows
 # up as a "command not found" somewhere random. Bumped with the other versions.
 # shellcheck disable=SC2034  # used by the manage script after sourcing
-AWG_COMMON_VERSION="5.36.2"
+AWG_COMMON_VERSION="5.37.0"
 
 # --- Auto-cleanup of temporary files ---
 # NOTE: trap is NOT set here to avoid overwriting the caller's trap handler.
@@ -443,7 +443,7 @@ _aip_wants_v6_sink() {
 #     render_client_config adds the sink address (see AWG_V6_SINK_PREFIX).
 # A list that already has an IPv6 part is untouched: an explicit ::/0 from
 # --allowed-ips is the user's choice. Our own earlier ::/0 on a mode-2 list
-# (v5.31.0-v5.36.x) is replaced by regen via _aip_migrate_legacy_v6: only regen
+# (v5.31.0-v5.36.1) is replaced by regen via _aip_migrate_legacy_v6: only regen
 # knows where the list came from.
 #
 # Idempotence is mandatory: regen runs repeatedly, including over a dual-stack
@@ -476,7 +476,7 @@ _append_ipv6_full_tunnel_route() {
 
 # _aip_migrate_legacy_v6 <client list> <server list> : prints the list with our
 # earlier ::/0 replaced by 2000::/3, otherwise the list unchanged.
-# v5.31.0-v5.36.x appended a bare ::/0 to the mode-2 list, and on Windows it
+# v5.31.0-v5.36.1 appended a bare ::/0 to the mode-2 list, and on Windows it
 # cuts off the local network. ONLY what we wrote is replaced: the IPv4 part
 # matches the server's global list (as a set of routes), the IPv6 part is
 # exactly ::/0, and that list is a full tunnel without 0.0.0.0/0. A full tunnel
@@ -2992,8 +2992,8 @@ awg_cps_decoded_size() {
 awg_cps_is_shaped() {
     local s="${1:-}" rest mat tag n lit=0 rnd_max=0
     [[ -n "$s" ]] || return 1
-    # Разбирается целиком: код 2 означает «встретилось неразобранное», и такой
-    # тег обе реализации отвергнут - интерфейс не поднимется.
+    # Parsed as a whole: code 2 means "something unparsed was found", and both
+    # implementations reject such a tag - the interface will not come up.
     awg_cps_decoded_size "$s" >/dev/null 2>&1 || return 1
     rest="$s"
     while [[ "$rest" =~ \<[[:space:]]*([a-zA-Z]+)[[:space:]]*([^\>]*)\> ]]; do
@@ -3018,8 +3018,8 @@ awg_cps_is_shaped() {
             *) return 1 ;;
         esac
     done
-    # Ни одного случайного куска длиннее метки DNS и не меньше тридцати
-    # литеральных байт структуры.
+    # No random run longer than a DNS label, and at least thirty literal bytes
+    # of structure.
     [[ "$rnd_max" -le 63 && "$lit" -ge 30 ]]
 }
 
@@ -4647,7 +4647,7 @@ regenerate_client() {
     # re-issue that had already succeeded.
     if [[ "${AWG_REGEN_RESET_ROUTES:-0}" != "1" && "$_had_conf" -eq 1 ]]; then
         local _aip_new
-        # Our earlier ::/0 on a mode-2 list (v5.31.0-v5.36.x) cuts off the local
+        # Our earlier ::/0 on a mode-2 list (v5.31.0-v5.36.1) cuts off the local
         # network on Windows; a plain regen has to deliver the replacement. For a
         # dual-stack client ::/0 is its own scheme and stays.
         if [[ -z "$client_ipv6" ]]; then
