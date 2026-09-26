@@ -85,7 +85,8 @@ _run_guard() { run bash "$FIX/scripts/check-docs-consistency.sh"; }
     _run_guard
     [[ "$output" == *"PASS: межфайловые и HTML-ссылки на якоря резолвятся ("* ]]
     for form in "[r]: ../A.md#gone" "<a href='../A.md#gone'>x</a>" '<a href = "../A.md#gone">x</a>' '<a href= "../A.md#gone">x</a>' \
-                '<A HREF="../A.md#gone">x</A>' '[x](../A.MD#gone)' '[x]( ../A.md#gone)' '<a href=../A.md#gone>x</a>' '[r]: <../A.md#gone>'; do
+                '<A HREF="../A.md#gone">x</A>' '[x](../A.MD#gone)' '[x]( ../A.md#gone)' '<a href=../A.md#gone>x</a>' '[r]: <../A.md#gone>' \
+                $'<a\nhref=\x27../A.md#gone\x27>x</a>'; do
         git checkout -q -- docs/B.md
         printf '%s\n' "$form" >> docs/B.md
         _run_guard
@@ -199,6 +200,11 @@ _run_guard() { run bash "$FIX/scripts/check-docs-consistency.sh"; }
         _run_guard
         [[ "$output" == *"ссылка на README.md#posle-ustanovki"* ]] || { echo "not caught: $form"; false; }
     done
+    # A path named in prose is not a link.
+    git checkout -q -- INSTALL_VPS.ru.md
+    printf 'See README.md#posle-ustanovki for details.\n' >> INSTALL_VPS.ru.md
+    _run_guard
+    [[ "$output" == *"PASS: исправленные ссылки не вернулись в чужие разделы"* ]]
 }
 
 @test "code blocks: an indented closing fence ends the block, an unclosed block fails" {

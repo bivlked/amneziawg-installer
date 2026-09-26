@@ -872,15 +872,15 @@ done
 # Формы, которые разбор выше не видит, запрещены: иначе битая ссылка в такой форме
 # проходила бы молча. Их переписывают в канон ](файл.md#x) или href="файл.md#x".
 # Внешние URL (со схемой) не трогаем ни в одной форме: их этот сторож не проверяет.
-# href считается атрибутом, только если перед ним пробел: иначе ?href= внутри
+# href считается атрибутом, только если перед ним пробел или начало строки: иначе ?href= внутри
 # чужого URL принимался бы за ссылку.
 SCH='(?![A-Za-z][A-Za-z0-9+.-]*:)'
 FORMS_RE='^\s*\[[^]]+\]:\s*(?!<?[A-Za-z][A-Za-z0-9+.-]*:)\S*\.[mM][dD]#'  # сноска [r]: файл.md#x, в т.ч. <...>
-FORMS_RE+='|(?<=\s)href\s*=\s*\x27'"$SCH"'[^\x27]*#'                 # href='...#x'
-FORMS_RE+='|(?<=\s)href\s+=\s*["\x27]'"$SCH"'[^"\x27]*#'             # href ="...#x"
-FORMS_RE+='|(?<=\s)href=\s+["\x27]'"$SCH"'[^"\x27]*#'                # href= "...#x"
-FORMS_RE+='|(?<=\s)href=(?!["\x27\s])'"$SCH"'[^\s>]*#'                # href=...#x без кавычек
-FORMS_RE+='|(?<=\s)(?!href)[hH][rR][eE][fF]\s*=\s*["\x27]?'"$SCH"'[^"\x27\s>]*#'  # HREF, Href
+FORMS_RE+='|(?:^|(?<=\s))href\s*=\s*\x27'"$SCH"'[^\x27]*#'                 # href='...#x'
+FORMS_RE+='|(?:^|(?<=\s))href\s+=\s*["\x27]'"$SCH"'[^"\x27]*#'             # href ="...#x"
+FORMS_RE+='|(?:^|(?<=\s))href=\s+["\x27]'"$SCH"'[^"\x27]*#'                # href= "...#x"
+FORMS_RE+='|(?:^|(?<=\s))href=(?!["\x27\s])'"$SCH"'[^\s>]*#'                # href=...#x без кавычек
+FORMS_RE+='|(?:^|(?<=\s))(?!href)[hH][rR][eE][fF]\s*=\s*["\x27]?'"$SCH"'[^"\x27\s>]*#'  # HREF, Href
 FORMS_RE+='|\]\('"$SCH"'[^)\s]*\.(?!md#)[mM][dD]#'                   # ](файл.MD#x)
 FORMS_RE+='|\]\(\s+'"$SCH"'[^)\s]*\.[mM][dD]#'                       # ]( файл.md#x)
 for f in "${DOC_FILES[@]}"; do
@@ -963,8 +963,8 @@ while IFS='|' read -r mf mpat mwhy; do
         misroute_fail=1
     fi
 done <<'MISROUTE'
-INSTALL_VPS.ru.md|[(<"\x27\s](\.?/)?README\.md#posle-ustanovki[)>"\x27\s]|ссылка на README.md#posle-ustanovki: «управление клиентами» живёт в README.md#upravlenie
-INSTALL_VPS.ru.md|[(<"\x27\s](\.?/)?ADVANCED\.md#client-compat-adv[)>"\x27\s]|ссылка на ADVANCED.md#client-compat-adv: про два QR-кода нужен ADVANCED.md#vpnuri-adv
+INSTALL_VPS.ru.md|[(<"\x27](\.?/)?README\.md#posle-ustanovki[)>"\x27\s]|ссылка на README.md#posle-ustanovki: «управление клиентами» живёт в README.md#upravlenie
+INSTALL_VPS.ru.md|[(<"\x27](\.?/)?ADVANCED\.md#client-compat-adv[)>"\x27\s]|ссылка на ADVANCED.md#client-compat-adv: про два QR-кода нужен ADVANCED.md#vpnuri-adv
 MISROUTE
 if [[ "$misroute_fail" -eq 0 ]]; then _ok "исправленные ссылки не вернулись в чужие разделы"; else _bad "ссылка снова ведёт в чужой раздел"; fi
 
