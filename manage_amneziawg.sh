@@ -969,12 +969,16 @@ restore_backup() {
     # несуществующих клиентов не трогаем (см. C11 выше), метки из архива тоже.
     # Имена берёт sed, а не цикл по строкам: под bash -x цикл печатал бы в трассу
     # строку PrivateKey серверного конфига.
-    local _exp_names _exp_name
+    local _exp_names _exp_name _exp_stamp
     _exp_names=$(sed -n 's/^#_Name = //p' "$td/server/$_srv_base")
     while IFS= read -r _exp_name; do
         [[ "$_exp_name" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
         [[ -e "$td/expiry/$_exp_name" ]] && continue
-        rm -f "${EXPIRY_DIR:-$AWG_DIR/expiry}/$_exp_name" 2>/dev/null || true
+        _exp_stamp="${EXPIRY_DIR:-$AWG_DIR/expiry}/$_exp_name"
+        if ! rm -f "$_exp_stamp" 2>/dev/null || [[ -e "$_exp_stamp" || -L "$_exp_stamp" ]]; then
+            log_error "Не удалось удалить метку срока $_exp_stamp: клиент '$_exp_name' бессрочный по бэкапу получил бы чужой срок - запуск отката."
+            return 1
+        fi
     done <<< "$_exp_names"
     if [[ -f "$td/awg-expiry" ]]; then
         cp -a "$td/awg-expiry" /etc/cron.d/awg-expiry
@@ -2551,7 +2555,16 @@ case $COMMAND in
             # значит метка чужая (прежний клиент, restore), и без зачистки
             # бессрочный клиент получил бы её срок, а cron удалил бы его в момент
             # старой метки. Для --expires метка ставится ниже, после generate_client.
-            rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png" "${EXPIRY_DIR:-$AWG_DIR/expiry}/${_cname}"
+            # Неудавшееся удаление метки - отказ по этому клиенту: иначе он
+            # создался бы с чужим сроком, а ответ рапортовал бы бессрочного.
+            rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png"
+            _stale_stamp="${EXPIRY_DIR:-$AWG_DIR/expiry}/${_cname}"
+            if ! rm -f "$_stale_stamp" 2>/dev/null || [[ -e "$_stale_stamp" || -L "$_stale_stamp" ]]; then
+                log_error "Не удалось удалить старую метку срока $_stale_stamp - клиент '$_cname' не создан, иначе он получил бы чужой срок."
+                _cmd_rc=1
+                _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"error\"}")
+                continue
+            fi
 
             log "Добавление '$_cname'..."
             if generate_client "$_cname"; then

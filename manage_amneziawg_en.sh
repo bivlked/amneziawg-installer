@@ -986,12 +986,16 @@ restore_backup() {
     # stamps from the archive.
     # Names come from sed, not from a loop over the lines: under bash -x such a
     # loop would print the server config PrivateKey line into the trace.
-    local _exp_names _exp_name
+    local _exp_names _exp_name _exp_stamp
     _exp_names=$(sed -n 's/^#_Name = //p' "$td/server/$_srv_base")
     while IFS= read -r _exp_name; do
         [[ "$_exp_name" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
         [[ -e "$td/expiry/$_exp_name" ]] && continue
-        rm -f "${EXPIRY_DIR:-$AWG_DIR/expiry}/$_exp_name" 2>/dev/null || true
+        _exp_stamp="${EXPIRY_DIR:-$AWG_DIR/expiry}/$_exp_name"
+        if ! rm -f "$_exp_stamp" 2>/dev/null || [[ -e "$_exp_stamp" || -L "$_exp_stamp" ]]; then
+            log_error "Could not remove the expiry stamp $_exp_stamp: client '$_exp_name', permanent in the backup, would inherit someone else's deadline - starting rollback."
+            return 1
+        fi
     done <<< "$_exp_names"
     if [[ -f "$td/awg-expiry" ]]; then
         cp -a "$td/awg-expiry" /etc/cron.d/awg-expiry
@@ -2584,7 +2588,16 @@ case $COMMAND in
             # former client, a restore), and without cleanup a permanent client
             # would inherit its deadline and cron would delete it at the old
             # stamp. For --expires the stamp is set below, after generate_client.
-            rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png" "${EXPIRY_DIR:-$AWG_DIR/expiry}/${_cname}"
+            # A failed stamp removal refuses this client: otherwise it would be
+            # created with someone else's deadline while the reply said permanent.
+            rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png"
+            _stale_stamp="${EXPIRY_DIR:-$AWG_DIR/expiry}/${_cname}"
+            if ! rm -f "$_stale_stamp" 2>/dev/null || [[ -e "$_stale_stamp" || -L "$_stale_stamp" ]]; then
+                log_error "Could not remove the old expiry stamp $_stale_stamp - client '$_cname' not created, it would otherwise inherit someone else's deadline."
+                _cmd_rc=1
+                _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"error\"}")
+                continue
+            fi
 
             log "Adding '$_cname'..."
             if generate_client "$_cname"; then

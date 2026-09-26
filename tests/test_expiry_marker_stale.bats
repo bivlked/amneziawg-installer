@@ -123,9 +123,20 @@ teardown() {
     }
 }
 
+# _lib_for <script>: put the library of the script's language where manage
+# loads it from. On a server the EN installer saves awg_common_en.sh under the
+# plain name, so the EN manage must run against the EN library here too.
+_lib_for() {
+    case "$1" in
+        *_en.sh) cp "$BATS_TEST_DIRNAME/../awg_common_en.sh" "$TEST_DIR/awg/awg_common.sh" ;;
+        *)       cp "$BATS_TEST_DIRNAME/../awg_common.sh" "$TEST_DIR/awg/awg_common.sh" ;;
+    esac
+}
+
 # _m <script> <args...>: run manage in the sandbox.
 _m() {
     local s="$1"; shift
+    _lib_for "$s"
     run --separate-stderr bash "$s" "$@" --yes "${MOCK_ARGS[@]}"
 }
 
@@ -133,6 +144,7 @@ _m() {
 # awg-expiry, otherwise restore would write the host /etc/cron.d.
 _backup() {
     local s="$1" out path listing
+    _lib_for "$s"
     out=$(bash "$s" backup --json "${MOCK_ARGS[@]}" 2>/dev/null) || return 1
     path=$(printf '%s' "$out" | jq -re '.path') || return 1
     listing=$(tar -tzf "$path") || return 1
@@ -146,6 +158,7 @@ _backup() {
 # _list_exp <script> <name>: expires_at of <name> from list --json.
 _list_exp() {
     local out
+    _lib_for "$1"
     out=$(bash "$1" list --json "${MOCK_ARGS[@]}" 2>/dev/null) || return 1
     printf '%s' "$out" | jq -c --arg n "$2" \
         '[.. | objects | select(.name? == $n) | .expires_at] | if length == 1 then .[0] else error("no single record") end'
@@ -316,4 +329,60 @@ _scenario_rollback() {
 @test "EN control: failed restore rolls the removed stamp back" {
     require_jq
     _scenario_rollback "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
+}
+
+# A stamp that cannot be removed must not turn into a false success. A
+# non-empty directory in place of the stamp makes rm -f fail even as root.
+# add: the client is refused (status error, nothing in awg0.conf), because it
+# would otherwise be created with someone else's deadline.
+_scenario_add_stamp_stuck() {
+    local s="$1"
+    mkdir -p "$EXP/guest/stuck"
+    _m "$s" add guest --json
+    [ "$status" -ne 0 ]
+    printf '%s' "$output" | jq -e '.results[0].status == "error"' >/dev/null
+    if grep -qxF '#_Name = guest' "$TEST_DIR/awg/awg0.conf"; then
+        echo "guest created although its stale stamp could not be removed" >&2; return 1
+    fi
+    [ ! -e "$TEST_DIR/awg/guest.conf" ]
+    [ ! -s "$TEST_DIR/net.log" ]
+}
+
+# restore: the stamp of a client permanent in the backup cannot be removed ->
+# restore fails and rolls back instead of reporting success.
+_scenario_restore_stamp_stuck() {
+    local s="$1" b1
+    _m "$s" add bob --json
+    [ "$status" -eq 0 ]
+    b1=$(_backup "$s")
+    [ -n "$b1" ]
+    _m "$s" remove bob --json
+    [ "$status" -eq 0 ]
+    rm -f "$EXP/bob"
+    mkdir -p "$EXP/bob/stuck"
+    _m "$s" restore "$b1" --json
+    [ "$status" -ne 0 ]
+    printf '%s' "$output" | jq -e '.ok == false and .rolled_back == true' >/dev/null
+    [ -d "$EXP/bob/stuck" ]
+    [ ! -s "$TEST_DIR/net.log" ]
+}
+
+@test "RU: add refuses a client whose stale expiry stamp cannot be removed" {
+    require_jq
+    _scenario_add_stamp_stuck "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+}
+
+@test "EN: add refuses a client whose stale expiry stamp cannot be removed" {
+    require_jq
+    _scenario_add_stamp_stuck "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
+}
+
+@test "RU: restore rolls back when a stale expiry stamp cannot be removed" {
+    require_jq
+    _scenario_restore_stamp_stuck "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+}
+
+@test "EN: restore rolls back when a stale expiry stamp cannot be removed" {
+    require_jq
+    _scenario_restore_stamp_stuck "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
 }
