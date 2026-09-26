@@ -1028,18 +1028,20 @@ ok=1 tag=
 for f in "$M" "$C"; do
   wget -q -O "$f"         "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f" \
     && wget -q -O "$f.minisig" "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f.minisig" \
-    && t=$(minisign -V -P "$KEY" -m "$f" -x "$f.minisig" | sed -n "s/^Trusted comment: amneziawg-installer \(v[0-9.]*\) $f\$/\1/p") \
+    && out=$(minisign -V -P "$KEY" -m "$f" -x "$f.minisig") \
+    && t=$(printf '%s\n' "$out" | sed -n "s/^Trusted comment: amneziawg-installer \(v[0-9.]*\) $f\$/\1/p") \
     && [ -n "$t" ] && [ "${tag:-$t}" = "$t" ] || { echo "NOT VERIFIED: $f"; ok=0; break; }
   tag=$t
 done
-old=$(sudo sed -n 's/^SCRIPT_VERSION="\(.*\)"/v\1/p' /root/awg/manage_amneziawg.sh 2>/dev/null)
+[ "$ok" = 1 ] && { old=$(sudo sed -n 's/^SCRIPT_VERSION="\(.*\)"/v\1/p' /root/awg/manage_amneziawg.sh) && [ -n "$old" ] \
+  || { echo "NOT VERIFIED: cannot read the installed version from /root/awg/manage_amneziawg.sh"; ok=0; }; }
 [ "$ok" = 1 ] && [ "$(printf '%s\n' "$old" "$tag" | sort -V | tail -1)" != "$tag" ] \
   && { echo "NOT VERIFIED: release $tag is older than the installed $old"; ok=0; }
-[ "$ok" = 1 ] && echo "Verified release $tag" && sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
-  && sudo install -m 700 "$C" /root/awg/awg_common.sh
+[ "$ok" = 1 ] && { sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
+  && sudo install -m 700 "$C" /root/awg/awg_common.sh && echo "Installed verified release $tag" || echo "NOT FULLY INSTALLED: run the block again"; }
 ```
 
-If the script printed "NOT VERIFIED", the working files are untouched. The block only accepts a pair of files from one release that is not older than the installed one, so a tampered "latest release" pointer cannot roll the scripts back to older signed versions. It prints the verified release number: compare it with the [releases page](https://github.com/bivlked/amneziawg-installer/releases). A plain `wget -O` over the working file would leave an empty file if the download failed. How the signature works: [Verifying a release](README.en.md#verifying-a-release).
+If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULLY INSTALLED" means only the first file was replaced, so run the block again. The block only accepts a pair of files from one release that is not older than the installed one, so a tampered "latest release" pointer cannot roll the scripts back to older signed versions. It prints the verified release number: compare it with the [releases page](https://github.com/bivlked/amneziawg-installer/releases). A plain `wget -O` over the working file would leave an empty file if the download failed. How the signature works: [Verifying a release](README.en.md#verifying-a-release).
 
 > **Note:** Reinstalling `install_amneziawg.sh` is **not required** for management updates. A reinstallation is only necessary when switching protocol versions.
 

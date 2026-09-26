@@ -627,17 +627,19 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
   for f in "$M" "$C"; do
     wget -q -O "$f"         "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f" \
       && wget -q -O "$f.minisig" "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f.minisig" \
-      && t=$(minisign -V -P "$KEY" -m "$f" -x "$f.minisig" | sed -n "s/^Trusted comment: amneziawg-installer \(v[0-9.]*\) $f\$/\1/p") \
+      && out=$(minisign -V -P "$KEY" -m "$f" -x "$f.minisig") \
+      && t=$(printf '%s\n' "$out" | sed -n "s/^Trusted comment: amneziawg-installer \(v[0-9.]*\) $f\$/\1/p") \
       && [ -n "$t" ] && [ "${tag:-$t}" = "$t" ] || { echo "НЕ ПРОВЕРЕН: $f"; ok=0; break; }
     tag=$t
   done
-  old=$(sudo sed -n 's/^SCRIPT_VERSION="\(.*\)"/v\1/p' /root/awg/manage_amneziawg.sh 2>/dev/null)
+  [ "$ok" = 1 ] && { old=$(sudo sed -n 's/^SCRIPT_VERSION="\(.*\)"/v\1/p' /root/awg/manage_amneziawg.sh) && [ -n "$old" ] \
+    || { echo "НЕ ПРОВЕРЕН: не удалось прочитать установленную версию из /root/awg/manage_amneziawg.sh"; ok=0; }; }
   [ "$ok" = 1 ] && [ "$(printf '%s\n' "$old" "$tag" | sort -V | tail -1)" != "$tag" ] \
     && { echo "НЕ ПРОВЕРЕН: релиз $tag старше установленного $old"; ok=0; }
-  [ "$ok" = 1 ] && echo "Проверен релиз $tag" && sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
-    && sudo install -m 700 "$C" /root/awg/awg_common.sh
+  [ "$ok" = 1 ] && { sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
+    && sudo install -m 700 "$C" /root/awg/awg_common.sh && echo "Установлен проверенный релиз $tag" || echo "НЕ УСТАНОВЛЕН до конца: запустите блок ещё раз"; }
   </pre>
-  Если скрипт напечатал «НЕ ПРОВЕРЕН», рабочие файлы не тронуты. Блок принимает только пару файлов из одного релиза и не старше уже установленного, поэтому подменённая ссылка на последний релиз не откатит скрипты на старые подписанные версии. Номер проверенного релиза он печатает: сверьте его со <a href="https://github.com/bivlked/amneziawg-installer/releases">страницей релизов</a>.
+  Если скрипт напечатал «НЕ ПРОВЕРЕН», рабочие файлы не тронуты; «НЕ УСТАНОВЛЕН до конца» значит, что заменить удалось только первый файл, и блок нужно запустить ещё раз. Блок принимает только пару файлов из одного релиза и не старше уже установленного, поэтому подменённая ссылка на последний релиз не откатит скрипты на старые подписанные версии. Номер проверенного релиза он печатает: сверьте его со <a href="https://github.com/bivlked/amneziawg-installer/releases">страницей релизов</a>.
   <br><br>
   С v5.21.0 пара скриптов защищена от рассинхрона: обновили manage, а awg_common забыли (или наоборот), и версии разошлись - скрипт остановится и покажет, какими командами докачать вторую половину, вместо странных ошибок посреди работы.
 </details>

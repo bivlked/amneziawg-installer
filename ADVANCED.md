@@ -1023,18 +1023,20 @@ ok=1 tag=
 for f in "$M" "$C"; do
   wget -q -O "$f"         "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f" \
     && wget -q -O "$f.minisig" "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f.minisig" \
-    && t=$(minisign -V -P "$KEY" -m "$f" -x "$f.minisig" | sed -n "s/^Trusted comment: amneziawg-installer \(v[0-9.]*\) $f\$/\1/p") \
+    && out=$(minisign -V -P "$KEY" -m "$f" -x "$f.minisig") \
+    && t=$(printf '%s\n' "$out" | sed -n "s/^Trusted comment: amneziawg-installer \(v[0-9.]*\) $f\$/\1/p") \
     && [ -n "$t" ] && [ "${tag:-$t}" = "$t" ] || { echo "НЕ ПРОВЕРЕН: $f"; ok=0; break; }
   tag=$t
 done
-old=$(sudo sed -n 's/^SCRIPT_VERSION="\(.*\)"/v\1/p' /root/awg/manage_amneziawg.sh 2>/dev/null)
+[ "$ok" = 1 ] && { old=$(sudo sed -n 's/^SCRIPT_VERSION="\(.*\)"/v\1/p' /root/awg/manage_amneziawg.sh) && [ -n "$old" ] \
+  || { echo "НЕ ПРОВЕРЕН: не удалось прочитать установленную версию из /root/awg/manage_amneziawg.sh"; ok=0; }; }
 [ "$ok" = 1 ] && [ "$(printf '%s\n' "$old" "$tag" | sort -V | tail -1)" != "$tag" ] \
   && { echo "НЕ ПРОВЕРЕН: релиз $tag старше установленного $old"; ok=0; }
-[ "$ok" = 1 ] && echo "Проверен релиз $tag" && sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
-  && sudo install -m 700 "$C" /root/awg/awg_common.sh
+[ "$ok" = 1 ] && { sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
+  && sudo install -m 700 "$C" /root/awg/awg_common.sh && echo "Установлен проверенный релиз $tag" || echo "НЕ УСТАНОВЛЕН до конца: запустите блок ещё раз"; }
 ```
 
-Если скрипт напечатал «НЕ ПРОВЕРЕН», рабочие файлы не тронуты. Блок принимает только пару файлов из одного релиза и не старше уже установленного, поэтому подменённая ссылка на последний релиз не откатит скрипты на старые подписанные версии. Номер проверенного релиза он печатает: сверьте его со [страницей релизов](https://github.com/bivlked/amneziawg-installer/releases). Прямой `wget -O` поверх рабочего файла при сбое скачивания оставил бы пустой файл. Как устроена подпись: [Проверка подписи](README.md#proverka-podpisi).
+Если скрипт напечатал «НЕ ПРОВЕРЕН», рабочие файлы не тронуты; «НЕ УСТАНОВЛЕН до конца» значит, что заменить удалось только первый файл, и блок нужно запустить ещё раз. Блок принимает только пару файлов из одного релиза и не старше уже установленного, поэтому подменённая ссылка на последний релиз не откатит скрипты на старые подписанные версии. Номер проверенного релиза он печатает: сверьте его со [страницей релизов](https://github.com/bivlked/amneziawg-installer/releases). Прямой `wget -O` поверх рабочего файла при сбое скачивания оставил бы пустой файл. Как устроена подпись: [Проверка подписи](README.md#proverka-podpisi).
 
 > **Примечание:** Переустановка скрипта `install_amneziawg.sh` **не требуется** для обновления управления. Переустановка нужна только при смене версии протокола.
 
