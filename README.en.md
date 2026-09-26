@@ -638,7 +638,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
   [ "$ok" = 1 ] && { sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
     && sudo install -m 700 "$C" /root/awg/awg_common.sh && echo "Installed verified release $tag" || echo "NOT FULLY INSTALLED: run the block again"; }
   </pre>
-  If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULLY INSTALLED" means only the first file was replaced, so run the block again. The block only accepts a pair of files from one release that is not older than the installed one, so a tampered "latest release" pointer cannot roll the scripts back to older signed versions. It prints the verified release number: compare it with the <a href="https://github.com/bivlked/amneziawg-installer/releases">releases page</a>.
+  If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULLY INSTALLED" means the files were not both replaced, so run the block again. If the installed `manage` predates v5.7.0, it has no version line and the block will refuse: update such a server with the new installer and `--force`. The block only accepts a pair of files from one release that is not older than the installed one, so a tampered "latest release" pointer cannot roll the scripts back to older signed versions. It prints the verified release number: compare it with the <a href="https://github.com/bivlked/amneziawg-installer/releases">releases page</a>.
   <br><br>
   Since v5.21.0 the script pair is protected against drift: if you update manage but forget awg_common (or the other way around) and the versions diverge, the script stops and shows the exact commands to fetch the other half, instead of throwing strange errors halfway through.
 </details>
