@@ -282,7 +282,7 @@ cat /sys/module/amneziawg/version    # версия загруженного м�
 
 Вашего оператора нет в списке? Попробуйте `--preset=mobile`. Не помогло - заведите тред в [Discussions](https://github.com/bivlked/amneziawg-installer/discussions) или [Issues](https://github.com/bivlked/amneziawg-installer/issues), добавлю в список.
 
-> Полная таблица операторских параметров (Jc, Jmin, Jmax, I1) - в [ADVANCED.md → FAQ «через мобильную сеть»](ADVANCED.md#faq-advanced-adv). Точечная настройка через `--jc`/`--jmin`/`--jmax` - в [ADVANCED.md → Presets](ADVANCED.md#presets-adv).
+> Полная таблица операторских параметров (Jc, Jmin, Jmax, I1) - в [ADVANCED.md → FAQ «через мобильную сеть»](ADVANCED.md#faq-mobile-unstable-adv). Точечная настройка через `--jc`/`--jmin`/`--jmax` - в [ADVANCED.md → Presets](ADVANCED.md#presets-adv).
 
 ---
 
@@ -676,7 +676,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 <details>
   <summary><strong>В: iPhone подключается, но через ~10 секунд трафик пропадает</strong></summary>
-  <b>О:</b> Исправлено в v5.16.1 (Issue #42, спасибо @LiaNdrY). Тогдашний режим маршрутизации по умолчанию (mode 2, «Список Amnezia+DNS») начинался с <code>0.0.0.0/5</code> - на iOS этот блок ломал весь список маршрутов, и туннель вставал примерно через 10 секунд. На уже установленном сервере проще всего поставить в конфиге iOS-клиента <code>AllowedIPs = 0.0.0.0/0</code> (обычная переустановка с <code>--force</code> сохранённый список не меняет). Точечная правка с сохранением split-tunnel - в <a href="ADVANCED.md#faq-advanced-adv">ADVANCED.md</a>.
+  <b>О:</b> Исправлено в v5.16.1 (Issue #42, спасибо @LiaNdrY). Тогдашний режим маршрутизации по умолчанию (mode 2, «Список Amnezia+DNS») начинался с <code>0.0.0.0/5</code> - на iOS этот блок ломал весь список маршрутов, и туннель вставал примерно через 10 секунд. На уже установленном сервере проще всего поставить в конфиге iOS-клиента <code>AllowedIPs = 0.0.0.0/0</code> (обычная переустановка с <code>--force</code> сохранённый список не меняет). Точечная правка с сохранением split-tunnel - в <a href="ADVANCED.md#faq-iphone-10s-adv">ADVANCED.md</a>.
 </details>
 
 <details>
@@ -716,7 +716,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 <details>
   <summary><strong>В: Почему конфиг AmneziaWG подсвечен жёлтым в приложении Amnezia?</strong></summary>
-  <b>О:</b> Это не ошибка: жёлтым приложение Amnezia помечает конфигурации второй линии AmneziaWG, а установщик выдаёт именно их. Сама по себе метка не говорит, что с соединением что-то не так, и переделывать из-за неё ничего не нужно. Подробнее - в <a href="ADVANCED.md#faq-advanced-adv">FAQ ADVANCED.md</a>.
+  <b>О:</b> Это не ошибка: жёлтым приложение Amnezia помечает конфигурации второй линии AmneziaWG, а установщик выдаёт именно их. Сама по себе метка не говорит, что с соединением что-то не так, и переделывать из-за неё ничего не нужно. Подробнее - в <a href="ADVANCED.md#faq-yellow-adv">FAQ ADVANCED.md</a>.
 </details>
 
 <details>

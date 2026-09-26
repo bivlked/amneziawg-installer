@@ -281,7 +281,7 @@ The installer tunes AmneziaWG 2.0 obfuscation for mobile networks with DPI: `--m
 
 Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work - open a thread in [Discussions](https://github.com/bivlked/amneziawg-installer/discussions) or [Issues](https://github.com/bivlked/amneziawg-installer/issues) and I'll add the entry.
 
-> Full operator parameter table (Jc, Jmin, Jmax, I1) - in [ADVANCED.en.md → FAQ "connects over cellular only on the third attempt"](ADVANCED.en.md#faq-advanced-adv). Per-flag overrides via `--jc`/`--jmin`/`--jmax` - in [ADVANCED.en.md → Presets](ADVANCED.en.md#presets-adv).
+> Full operator parameter table (Jc, Jmin, Jmax, I1) - in [ADVANCED.en.md → FAQ "connects over cellular only on the third attempt"](ADVANCED.en.md#faq-mobile-unstable-adv). Per-flag overrides via `--jc`/`--jmin`/`--jmax` - in [ADVANCED.en.md → Presets](ADVANCED.en.md#presets-adv).
 
 ---
 
@@ -675,7 +675,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: iPhone connects but traffic stops after ~10 seconds</strong></summary>
-  <b>A:</b> Fixed in v5.16.1 (Issue #42, thanks to @LiaNdrY). The routing mode that was default back then (mode 2, Amnezia List) started with <code>0.0.0.0/5</code>, and on iOS that block broke the whole route list, so the tunnel stalled after about 10 seconds. On an existing server the simplest fix is to set <code>AllowedIPs = 0.0.0.0/0</code> in the iOS client config (a plain <code>--force</code> reinstall keeps the stored list). A precise split-tunnel-preserving edit is in <a href="ADVANCED.en.md#faq-advanced-adv">ADVANCED.en.md</a>.
+  <b>A:</b> Fixed in v5.16.1 (Issue #42, thanks to @LiaNdrY). The routing mode that was default back then (mode 2, Amnezia List) started with <code>0.0.0.0/5</code>, and on iOS that block broke the whole route list, so the tunnel stalled after about 10 seconds. On an existing server the simplest fix is to set <code>AllowedIPs = 0.0.0.0/0</code> in the iOS client config (a plain <code>--force</code> reinstall keeps the stored list). A precise split-tunnel-preserving edit is in <a href="ADVANCED.en.md#faq-iphone-10s-adv">ADVANCED.en.md</a>.
 </details>
 
 <details>
@@ -715,7 +715,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: Why is my AmneziaWG config marked yellow in the Amnezia app?</strong></summary>
-  <b>A:</b> It is not an error: the Amnezia app marks second-line AmneziaWG configs in yellow, and those are what the installer issues. The mark on its own does not mean anything is wrong with the connection, and nothing needs redoing because of it. More in the <a href="ADVANCED.en.md#faq-advanced-adv">ADVANCED.en.md FAQ</a>.
+  <b>A:</b> It is not an error: the Amnezia app marks second-line AmneziaWG configs in yellow, and those are what the installer issues. The mark on its own does not mean anything is wrong with the connection, and nothing needs redoing because of it. More in the <a href="ADVANCED.en.md#faq-yellow-adv">ADVANCED.en.md FAQ</a>.
 </details>
 
 <details>
