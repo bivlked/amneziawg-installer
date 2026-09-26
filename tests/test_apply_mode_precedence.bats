@@ -291,6 +291,7 @@ check_unknown_mode_named() {
     precreate_client pre
     run --separate-stderr mgmt remove pre
     [ "$status" -eq 0 ]
+    # shellcheck disable=SC2154  # $stderr is set by `run --separate-stderr`
     [[ "$stderr" == *"AWG_APPLY_MODE"*"Restart"* ]] || { echo "no warning, stderr: $stderr" >&2; return 1; }
     assert_syncconf_used
 }
