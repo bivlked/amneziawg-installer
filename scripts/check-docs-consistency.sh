@@ -651,7 +651,7 @@ ipv6_mode2_files=(ADVANCED.md ADVANCED.en.md README.md README.en.md
                   INSTALL_VPS.md INSTALL_VPS.ru.md
                   WARP-RU.md WARP-RU.en.md CASCADE.md CASCADE.en.md)
 for f in "${ipv6_mode2_files[@]}"; do
-    [[ -f "$f" ]] || continue
+    [[ -f "$f" ]] || { echo "  $f: нет файла - проверка 7b по нему НЕ ВЫПОЛНЕНА" >&2; ipv6_mode2_fail=1; continue; }
     if grep -qE 'режим(ы|ах|ов) 2 и 3|modes 2 and 3|российские сайты идут мимо туннеля|в режиме раздельной маршрутизации \(по умолчанию\)|in split routing \(the default\)|split-режим[^[:space:]]* \(2/3\)|split modes? \(2/3\)|поведение split-режимов по умолчанию|default behavior of split modes' "$f"; then
         echo "  $f: дефолтный режим назван раздельной маршрутизацией (с v5.31.0 это полный туннель с ::/0)" >&2
         ipv6_mode2_fail=1
@@ -834,7 +834,11 @@ xref_count=0
 for f in "${DOC_FILES[@]}"; do
     [[ -f "$f" ]] || continue
     fdir="$(dirname "$f")"
-    stripped="$(_strip_code "$f")"
+    if ! stripped="$(_strip_code "$f")"; then
+        echo "  $f: не прочитан - проверка ссылок НЕ ВЫПОЛНЕНА" >&2
+        xref_fail=1
+        continue
+    fi
     while IFS= read -r ref; do
         [[ -z "$ref" ]] && continue
         path="${ref%%#*}"
@@ -864,10 +868,28 @@ for f in "${DOC_FILES[@]}"; do
 done
 # Формы, которые разбор выше не видит, запрещены: иначе битая ссылка в такой форме
 # проходила бы молча. Их переписывают в канон ](файл.md#x) или href="файл.md#x".
+# Внешние URL (со схемой) не трогаем ни в одной форме: их этот сторож не проверяет.
+SCH='(?![A-Za-z][A-Za-z0-9+.-]*:)'
+FORMS_RE='^\s*\[[^]]+\]:\s*'"$SCH"'\S*\.[mM][dD]#'                 # сноска [r]: файл.md#x
+FORMS_RE+='|href\s*=\s*\x27'"$SCH"'[^\x27]*#'                        # href='...#x'
+FORMS_RE+='|href\s+=\s*["\x27]'"$SCH"'[^"\x27]*#'                    # href ="...#x"
+FORMS_RE+='|href=\s+["\x27]'"$SCH"'[^"\x27]*#'                       # href= "...#x"
+FORMS_RE+='|href=(?!["\x27\s])'"$SCH"'[^\s>]*#'                       # href=...#x без кавычек
+FORMS_RE+='|(?<![A-Za-z])(?!href)[hH][rR][eE][fF]\s*=\s*["\x27]?'"$SCH"'[^"\x27\s>]*#'  # HREF, Href
+FORMS_RE+='|\]\('"$SCH"'[^)\s]*\.(?!md#)[mM][dD]#'                   # ](файл.MD#x)
+FORMS_RE+='|\]\(\s+'"$SCH"'[^)\s]*\.[mM][dD]#'                       # ]( файл.md#x)
 for f in "${DOC_FILES[@]}"; do
     [[ -f "$f" ]] || continue
-    bad_forms="$(_strip_code "$f" | grep -nP '^\s*\[[^]]+\]:\s*\S*\.[mM][dD]#|href\s*=\s*\x27|href\s+=|href=\s+"|(?<![A-Za-z])(?!href)[hH][rR][eE][fF]\s*=|\]\([^)\s]*\.(?!md#)[mM][dD]#')"
-    if [[ -n "$bad_forms" ]]; then
+    if ! fs="$(_strip_code "$f")"; then
+        echo "  $f: не прочитан - проверка форм ссылок НЕ ВЫПОЛНЕНА" >&2
+        xref_fail=1
+        continue
+    fi
+    bad_forms="$(printf '%s\n' "$fs" | grep -nP "$FORMS_RE")"; frc=$?
+    if [[ $frc -gt 1 ]]; then
+        echo "  $f: grep форм ссылок не отработал - проверка НЕ ВЫПОЛНЕНА" >&2
+        xref_fail=1
+    elif [[ -n "$bad_forms" ]]; then
         echo "  $f: неканоническая форма ссылки (перепишите в ](файл.md#x) или href=\"файл.md#x\"):" >&2
         printf '%s\n' "$bad_forms" | sed 's/^/    /' >&2
         xref_fail=1
@@ -922,7 +944,10 @@ misroute_fail=0
 while IFS='|' read -r mf mpat mwhy; do
     [[ -z "$mf" ]] && continue
     [[ -f "$mf" ]] || { echo "  нет $mf - проверка по нему НЕ ВЫПОЛНЕНА" >&2; misroute_fail=1; continue; }
-    grep -qF "$mpat" "$mf"; mrc=$?
+    # Цель ищется в любой обёртке - ](...), ](./...), href="..." - и вне блоков
+    # кода: ссылка, приведённая в коде как пример, откатом не является.
+    ms="$(_strip_code "$mf")" || { echo "  $mf: не прочитан - проверка НЕ ВЫПОЛНЕНА" >&2; misroute_fail=1; continue; }
+    printf '%s\n' "$ms" | grep -qP "$mpat"; mrc=$?
     if [[ $mrc -eq 0 ]]; then
         echo "  $mf: $mwhy" >&2
         misroute_fail=1
@@ -931,8 +956,8 @@ while IFS='|' read -r mf mpat mwhy; do
         misroute_fail=1
     fi
 done <<'MISROUTE'
-INSTALL_VPS.ru.md|](README.md#posle-ustanovki)|ссылка на README.md#posle-ustanovki: «управление клиентами» живёт в README.md#upravlenie
-INSTALL_VPS.ru.md|](ADVANCED.md#client-compat-adv)|ссылка на ADVANCED.md#client-compat-adv: про два QR-кода нужен ADVANCED.md#vpnuri-adv
+INSTALL_VPS.ru.md|[("\x27](\./)?README\.md#posle-ustanovki[)"\x27]|ссылка на README.md#posle-ustanovki: «управление клиентами» живёт в README.md#upravlenie
+INSTALL_VPS.ru.md|[("\x27](\./)?ADVANCED\.md#client-compat-adv[)"\x27]|ссылка на ADVANCED.md#client-compat-adv: про два QR-кода нужен ADVANCED.md#vpnuri-adv
 MISROUTE
 if [[ "$misroute_fail" -eq 0 ]]; then _ok "исправленные ссылки не вернулись в чужие разделы"; else _bad "ссылка снова ведёт в чужой раздел"; fi
 

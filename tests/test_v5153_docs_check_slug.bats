@@ -33,6 +33,8 @@ setup() {
     [ "$out" = "-дорожная-карта-и-публичный-бэклог" ]
     out=$(printf '%s\n' '✨ Features' | _slug_stream)
     [ "$out" = "-features" ]
+    out=$(printf '%s\n' 'Features ✨' | _slug_stream)
+    [ "$out" = "features-" ]
 }
 
 @test ".4 _slug_stream: slugs several headings in a single pass" {

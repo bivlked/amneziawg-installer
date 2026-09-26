@@ -84,12 +84,46 @@ _run_guard() { run bash "$FIX/scripts/check-docs-consistency.sh"; }
     printf '[ok](HTTPS://example.com/X.md#nothing)\n' >> docs/B.md
     _run_guard
     [[ "$output" == *"PASS: межфайловые и HTML-ссылки на якоря резолвятся ("* ]]
-    for form in "[r]: ../A.md#gone" "<a href='../A.md#gone'>x</a>" '<a href = "../A.md#gone">x</a>' '<A HREF="../A.md#gone">x</A>' '[x](../A.MD#gone)'; do
+    for form in "[r]: ../A.md#gone" "<a href='../A.md#gone'>x</a>" '<a href = "../A.md#gone">x</a>' '<a href= "../A.md#gone">x</a>' \
+                '<A HREF="../A.md#gone">x</A>' '[x](../A.MD#gone)' '[x]( ../A.md#gone)' '<a href=../A.md#gone>x</a>'; do
         git checkout -q -- docs/B.md
         printf '%s\n' "$form" >> docs/B.md
         _run_guard
         [[ "$output" == *"неканоническая форма ссылки"* ]] || { echo "not rejected: $form"; false; }
     done
+    # External URLs are outside this guard in every form: none of these may fail it.
+    for ext in '[r]: https://github.com/o/r/blob/main/README.md#x' "<a href='https://example.com'>x</a>" \
+               '<a href="https://example.com/X.MD#y">x</a>' '[x](HTTPS://example.com/README.MD#y)'; do
+        git checkout -q -- docs/B.md
+        printf '%s\n' "$ext" >> docs/B.md
+        _run_guard
+        [[ "$output" != *"неканоническая форма ссылки"* ]] || { echo "external URL rejected: $ext"; false; }
+        [[ "$output" == *"PASS: межфайловые и HTML-ссылки на якоря резолвятся ("* ]] || { echo "external URL broke the check: $ext"; false; }
+    done
+}
+
+@test "guard stops when grep has no -P support" {
+    mkdir -p "$BATS_TEST_TMPDIR/shim"
+    printf '#!/bin/sh\ncase " $* " in *" -"*P*) exit 2 ;; esac\nexec /usr/bin/grep "$@"\n' > "$BATS_TEST_TMPDIR/shim/grep"
+    chmod +x "$BATS_TEST_TMPDIR/shim/grep"
+    PATH="$BATS_TEST_TMPDIR/shim:$PATH" run bash "$FIX/scripts/check-docs-consistency.sh"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"нужен grep с поддержкой -P"* ]]
+}
+
+@test "7b: a missing file and a grep error are failures, not passes" {
+    _run_guard
+    [[ "$output" == *"README.en.md: нет файла - проверка 7b по нему НЕ ВЫПОЛНЕНА"* ]]
+    [[ "$output" == *"FAIL: дефолтный режим снова назван раздельной маршрутизацией"* ]]
+    # all ten files present and grep failing on the 7b pattern
+    for f in ADVANCED.md ADVANCED.en.md README.md README.en.md INSTALL_VPS.md INSTALL_VPS.ru.md WARP-RU.md WARP-RU.en.md CASCADE.md CASCADE.en.md; do
+        [ -f "$f" ] || printf '# %s\n' "$f" > "$f"
+    done
+    mkdir -p "$BATS_TEST_TMPDIR/shim7b"
+    printf '#!/bin/sh\ncase "$*" in *"modes 2 and 3"*) exit 2 ;; esac\nexec /usr/bin/grep "$@"\n' > "$BATS_TEST_TMPDIR/shim7b/grep"
+    chmod +x "$BATS_TEST_TMPDIR/shim7b/grep"
+    PATH="$BATS_TEST_TMPDIR/shim7b:$PATH" run bash "$FIX/scripts/check-docs-consistency.sh"
+    [[ "$output" == *"grep не смог выполнить шаблон - проверка НЕ ВЫПОЛНЕНА"* ]]
 }
 
 @test "16: an HTML href to a missing anchor in the same file fails" {
@@ -139,6 +173,21 @@ _run_guard() { run bash "$FIX/scripts/check-docs-consistency.sh"; }
     _run_guard
     [[ "$output" == *"ссылка на README.md#posle-ustanovki"* ]]
     [[ "$output" == *"FAIL: ссылка снова ведёт в чужой раздел"* ]]
+}
+
+@test "18: the wrong target in other wrappers fails, the same link inside a code block does not" {
+    printf '[a](./README.md#posle-ustanovki)\n' >> INSTALL_VPS.ru.md
+    _run_guard
+    [[ "$output" == *"ссылка на README.md#posle-ustanovki"* ]]
+    git checkout -q -- INSTALL_VPS.ru.md
+    printf '<a href="ADVANCED.md#client-compat-adv">x</a>\n' >> INSTALL_VPS.ru.md
+    printf '# A\n\n<a id="client-compat-adv"></a>\n## C\n' > ADVANCED.md
+    _run_guard
+    [[ "$output" == *"ссылка на ADVANCED.md#client-compat-adv"* ]]
+    git checkout -q -- INSTALL_VPS.ru.md
+    printf '```\n[old](README.md#posle-ustanovki)\n```\n' >> INSTALL_VPS.ru.md
+    _run_guard
+    [[ "$output" == *"PASS: исправленные ссылки не вернулись в чужие разделы"* ]]
 }
 
 @test "18: a missing file is a failure, not a silent skip" {
