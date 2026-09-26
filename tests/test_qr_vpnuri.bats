@@ -3,8 +3,8 @@
 #
 # The helper renders <name>.vpnuri.png from <name>.vpnuri so that users can
 # one-tap-import a client into the Amnezia VPN app (Android/iOS/Desktop),
-# complementing the existing <name>.png which is scanned by classic
-# WireGuard-compatible clients.
+# complementing the existing <name>.png, the QR of the .conf itself, which
+# AmneziaWG apps scan (a plain WireGuard client cannot import it).
 
 load test_helper
 
