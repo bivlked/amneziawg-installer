@@ -23,6 +23,7 @@ This guide turns two `amneziawg-installer` setups into a cascade: a client conne
 - [Updating the list of Russian networks](#update)
 - [Troubleshooting](#trouble)
 - [Security](#security)
+- [Removing the cascade](#uninstall)
 - [Limitations and notes](#limits)
 
 <a id="what"></a>
@@ -484,6 +485,44 @@ One thing to expect: with `RemainAfterExit=no`, `systemctl status awg-routing` s
 
 - Do not disable UFW entirely (`ufw disable`) for speed - the firewall has a negligible effect on throughput; the heavy load comes from encryption and forwarding. Keep a minimum: forwarding and the needed ports, everything else closed.
 - The entry server AWG0 sees all client traffic before it leaves through `awg1` - this is a trust point, keep access to it under control.
+
+<a id="uninstall"></a>
+## Removing the cascade
+
+On AWG0, fill in your own values from the top of `/root/awg/awg-routing.sh`: `CLIENT_SUBNET` and `AWG1_ENDPOINT`, plus `TABLE_ID` and `FWMARK` if you changed them. Then run:
+
+```bash
+CLIENT_SUBNET="172.16.17.0/24"
+AWG1_ENDPOINT="AWG1_PUBLIC_IP"
+TABLE_ID=100
+FWMARK="0x1"
+
+systemctl disable --now awg-routing.timer 2>/dev/null
+systemctl disable --now awg-routing awg-quick@awg1
+rm -f /etc/systemd/system/awg-routing.service /etc/systemd/system/awg-routing.timer /etc/cron.d/awg-routing-refresh
+systemctl daemon-reload
+
+iptables -t mangle -D PREROUTING -i awg0 -s "$CLIENT_SUBNET" -m set --match-set ru dst -j RETURN
+iptables -t mangle -D PREROUTING -i awg0 -s "$CLIENT_SUBNET" -j MARK --set-mark "$FWMARK"
+iptables -t nat -D POSTROUTING -s "$CLIENT_SUBNET" -o awg1 -j MASQUERADE
+ip rule del fwmark "$FWMARK" table "$TABLE_ID" 2>/dev/null
+ip route flush table "$TABLE_ID" 2>/dev/null
+ip route del "$AWG1_ENDPOINT" 2>/dev/null
+ipset destroy ru_tmp 2>/dev/null
+ipset destroy ru
+
+rm -f /etc/amnezia/amneziawg/awg1.conf /root/awg/awg-routing.sh /root/awg/ru.zone /root/awg/awg-routing.lock
+```
+
+The `iptables` rules go before `ipset destroy`: a set cannot be removed while a rule still refers to it. The `ru_tmp` line removes the temporary set in case the script was ever interrupted halfway. The timer and cron lines are harmless if you only used one of the two. If you added rules of your own on top of the script, for example for Google from [Troubleshooting](#trouble), remove those too.
+
+On AWG1, remove the client you issued for AWG0:
+
+```bash
+bash /root/awg/manage_amneziawg.sh remove ru_host
+```
+
+If you are going to remove the installer itself afterwards (`--uninstall`), do the steps above first. The installer only stops `awg0` and knows nothing about `awg1` or the cascade unit and timer, while it deletes `/etc/amnezia` and `/root/awg` as a whole, so after a reboot the enabled cascade units would be left without their files.
 
 <a id="limits"></a>
 ## Limitations and notes

@@ -23,6 +23,7 @@
 - [Обновление списка российских сетей](#update)
 - [Диагностика](#trouble)
 - [Безопасность](#security)
+- [Как убрать каскад](#uninstall)
 - [Ограничения и нюансы](#limits)
 
 <a id="what"></a>
@@ -481,6 +482,44 @@ systemctl list-timers awg-routing.timer
 
 - Не выключайте UFW целиком (`ufw disable`) ради скорости - на пропускную способность фаервол практически не влияет, основную нагрузку дают шифрование и пересылка. Оставьте минимум: пересылку и нужные порты, остальное закрыто.
 - Сервер-вход AWG0 видит весь трафик клиентов до ухода в `awg1` - это точка доверия, держите к нему доступ под контролем.
+
+<a id="uninstall"></a>
+## Как убрать каскад
+
+На AWG0 подставьте свои значения из начала `/root/awg/awg-routing.sh`: `CLIENT_SUBNET` и `AWG1_ENDPOINT`, а если меняли, то и `TABLE_ID` с `FWMARK`. Затем выполните:
+
+```bash
+CLIENT_SUBNET="172.16.17.0/24"
+AWG1_ENDPOINT="ВНЕШНИЙ_IP_AWG1"
+TABLE_ID=100
+FWMARK="0x1"
+
+systemctl disable --now awg-routing.timer 2>/dev/null
+systemctl disable --now awg-routing awg-quick@awg1
+rm -f /etc/systemd/system/awg-routing.service /etc/systemd/system/awg-routing.timer /etc/cron.d/awg-routing-refresh
+systemctl daemon-reload
+
+iptables -t mangle -D PREROUTING -i awg0 -s "$CLIENT_SUBNET" -m set --match-set ru dst -j RETURN
+iptables -t mangle -D PREROUTING -i awg0 -s "$CLIENT_SUBNET" -j MARK --set-mark "$FWMARK"
+iptables -t nat -D POSTROUTING -s "$CLIENT_SUBNET" -o awg1 -j MASQUERADE
+ip rule del fwmark "$FWMARK" table "$TABLE_ID" 2>/dev/null
+ip route flush table "$TABLE_ID" 2>/dev/null
+ip route del "$AWG1_ENDPOINT" 2>/dev/null
+ipset destroy ru_tmp 2>/dev/null
+ipset destroy ru
+
+rm -f /etc/amnezia/amneziawg/awg1.conf /root/awg/awg-routing.sh /root/awg/ru.zone /root/awg/awg-routing.lock
+```
+
+Правила `iptables` удаляются до `ipset destroy`: пока на набор `ru` ссылается правило, удалить его нельзя. Строка с `ru_tmp` убирает временный набор, если скрипт когда-то прервали на середине. Строки для таймера и cron безвредны, если у вас был только один из вариантов. Если вы добавляли свои правила сверх скрипта, например для Google из раздела [Диагностика](#trouble), уберите и их.
+
+На AWG1 удалите клиента, которого выпускали для AWG0:
+
+```bash
+bash /root/awg/manage_amneziawg.sh remove ru_host
+```
+
+Если потом собираетесь удалять и сам установщик (`--uninstall`), сначала выполните шаги выше. Установщик останавливает только `awg0`, про `awg1`, юнит и таймер каскада он не знает, а `/etc/amnezia` и `/root/awg` удаляет целиком, так что после перезагрузки включённые юниты каскада остались бы без своих файлов.
 
 <a id="limits"></a>
 ## Ограничения и нюансы
