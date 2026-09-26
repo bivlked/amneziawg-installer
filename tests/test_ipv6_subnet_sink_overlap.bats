@@ -56,7 +56,8 @@ _cfg() {
       # shellcheck source=/dev/null
       source <(sed -n '/^configure_ipv6_tunnel() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../$f")
       declare -F configure_ipv6_tunnel >/dev/null || exit 99
-      CLI_ALLOW_IPV6_TUNNEL=0 ALLOW_IPV6_TUNNEL="$allow" DISABLE_IPV6=0 IPV6_SUBNET="$subnet" configure_ipv6_tunnel
+      CONFIG_FILE="$TEST_DIR/awgsetup_cfg.init" SERVER_CONF_FILE="${SRV_CONF:-$TEST_DIR/none.conf}" \
+          CLI_ALLOW_IPV6_TUNNEL=0 ALLOW_IPV6_TUNNEL="$allow" DISABLE_IPV6=0 IPV6_SUBNET="$subnet" configure_ipv6_tunnel
     ) 2>"$TEST_DIR/err" || rc=$?
     return "$rc"
 }
@@ -69,6 +70,12 @@ _cfg() {
         grep -q 'DIE: .*IPV6_SUBNET' "$TEST_DIR/err" || { echo "$f: no refusal naming IPV6_SUBNET: $(cat "$TEST_DIR/err")" >&2; return 1; }
         rc=0; _cfg "$f" 1 'fddd:2c4:2c4:2c4::/64' || rc=$?
         [ "$rc" -eq 0 ] || { echo "$f: default subnet refused: rc=$rc $(cat "$TEST_DIR/err")" >&2; return 1; }
+        # A server that already has clients is warned, not stopped: the subnet
+        # cannot change under live peers, and a rerun makes nothing worse.
+        printf '[Interface]\nAddress = 10.9.9.1/24\n\n[Peer]\n#_Name = a\n' > "$TEST_DIR/srv.conf"
+        rc=0; SRV_CONF="$TEST_DIR/srv.conf" _cfg "$f" 1 'fddd:2c4:2c4:ffff::/64' || rc=$?
+        [ "$rc" -eq 0 ] || { echo "$f: server with peers stopped: rc=$rc $(cat "$TEST_DIR/err")" >&2; return 1; }
+        grep -q 'WARN: .*IPV6_SUBNET.*--uninstall' "$TEST_DIR/err" || { echo "$f: no warning with the clean path: $(cat "$TEST_DIR/err")" >&2; return 1; }
         # Without the IPv6 tunnel IPV6_SUBNET is not used, nothing to stop.
         rc=0; _cfg "$f" 0 'fddd:2c4:2c4:ffff::/64' || rc=$?
         [ "$rc" -eq 0 ] || { echo "$f: sink subnet without the IPv6 tunnel refused: rc=$rc" >&2; return 1; }
@@ -82,5 +89,24 @@ _cfg() {
         inst_prefix=$(sed -n 's/^[[:space:]]*local sink_prefix="\(.*\)"$/\1/p' "$BATS_TEST_DIRNAME/../${INSTALLERS[$i]}")
         [ -n "$lib_prefix" ] || { echo "${LIBS[$i]}: AWG_V6_SINK_PREFIX not found" >&2; return 1; }
         [ "$lib_prefix" = "$inst_prefix" ] || { echo "${INSTALLERS[$i]}: sink prefix '$inst_prefix' != library '$lib_prefix'" >&2; return 1; }
+    done
+}
+
+# The invariant the predicate stands for: it holds exactly when a client
+# address built from the subnet ("prefix::N", as get_next_client_ipv6 does) would
+# be recognised as a sink. Pinned on a spread of spellings so the two functions
+# cannot drift apart.
+@test "sink overlap: the predicate agrees with _is_v6_sink_addr on client addresses (both libraries)" {
+    local lib v p want got
+    for lib in "${LIBS[@]}"; do
+        _use_lib "$lib"
+        for v in 'fddd:2c4:2c4:ffff::/64' 'FDDD:2C4:2C4:FFFF::/64' 'fddd:2c4:2c4:ffff:0::/80' \
+                 'fddd:2c4:2c4:ffff:1:2::/96' 'fddd:2c4:2c4:2c4::/64' 'fddd:2c4:2c4::/48' \
+                 'fddd:02c4:02c4:ffff::/64' 'fddd:2c4:2c4:fffe::/64' 'fddd:2c4:2c4:ffff0::/64' 'fd00::/64'; do
+            p="${v%%::*}"
+            want=no; _is_v6_sink_addr "${p}::2" && want=yes
+            got=no; _ipv6_subnet_hits_sink "$v" && got=yes
+            [ "$want" = "$got" ] || { echo "$lib: '$v': sink address check says $want, subnet check says $got" >&2; return 1; }
+        done
     done
 }

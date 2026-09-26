@@ -1641,7 +1641,15 @@ configure_ipv6_tunnel() {
         local _v6p="${IPV6_SUBNET%%::*}"
         _v6p="${_v6p,,}"
         if [[ "$_v6p" == "$sink_prefix" || "$_v6p" == "${sink_prefix}:"* ]]; then
-            die "IPV6_SUBNET ($IPV6_SUBNET) overlaps ${sink_prefix}::/64, which the installer keeps for routing mode 2. Set another ULA subnet in $CONFIG_FILE."
+            # A server with clients already handed out is not stopped: the subnet
+            # cannot change under live peers (their IPv6 would stay in the old
+            # subnet), and unlike IPv4 there is no IPv6 subnet change guard. A
+            # rerun makes nothing worse, so a loud warning only.
+            if [[ -f "$SERVER_CONF_FILE" ]] && grep -q '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null; then
+                log_warn "IPV6_SUBNET ($IPV6_SUBNET) overlaps the routing mode 2 prefix ${sink_prefix}::/64: real client IPv6 addresses look like sinks, regen and modify may drop them, and new clients with IPv6 will not be created. The subnet cannot change while clients exist; the clean path is --uninstall and an install with another ULA subnet."
+            else
+                die "IPV6_SUBNET ($IPV6_SUBNET) overlaps ${sink_prefix}::/64, which the installer keeps for routing mode 2. Set another ULA subnet in $CONFIG_FILE."
+            fi
         fi
     fi
     # The IPv6 tunnel requires host IPv6 enabled. Override --disallow-ipv6 AND
