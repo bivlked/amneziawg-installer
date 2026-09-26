@@ -1632,6 +1632,43 @@ configure_ipv6_tunnel() {
         ALLOW_IPV6_TUNNEL=0
     fi
     : "${IPV6_SUBNET:=fddd:2c4:2c4:2c4::/64}"
+    # The routing mode 2 IPv6 sink prefix (AWG_V6_SINK_PREFIX in awg_common.sh;
+    # the library is not there yet at step 0, a test checks the copies match). A
+    # tunnel subnet inside it would make real client addresses indistinguishable
+    # from sinks.
+    local sink_prefix="fddd:2c4:2c4:ffff"
+    if [[ "$ALLOW_IPV6_TUNNEL" -eq 1 ]]; then
+        local _v6p="${IPV6_SUBNET%%::*}"
+        _v6p="${_v6p,,}"
+        if [[ "$_v6p" == "$sink_prefix" || "$_v6p" == "${sink_prefix}:"* ]]; then
+            # A server that ALREADY sits in this prefix and has handed out
+            # clients is not stopped: the subnet cannot change under live peers
+            # (their IPv6 would stay in the old one), and unlike IPv4 there is no
+            # IPv6 subnet change guard. A rerun makes nothing worse there, so a
+            # warning. "Already sits" means exactly the server address (prefix
+            # and length) this subnet would give: any other subnet, even inside
+            # the sink, is a new change and is stopped as on a clean server.
+            # Address is parsed without a pipeline: grep -m1 under pipefail could
+            # cut its writer off and lose the address it found.
+            local _cur_v6="" _want_v6 _addr_line _el
+            local -a _addr_els=()
+            if [[ -f "$SERVER_CONF_FILE" ]] && grep -q '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null; then
+                _addr_line=$(sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null) || _addr_line=""
+                IFS=',' read -ra _addr_els <<< "${_addr_line//$'\n'/,}"
+                for _el in "${_addr_els[@]}"; do
+                    _el="${_el//[[:space:]]/}"
+                    if [[ "$_el" == *:* ]]; then _cur_v6="${_el,,}"; break; fi
+                done
+            fi
+            _want_v6="${IPV6_SUBNET/::\//::1\/}"
+            _want_v6="${_want_v6,,}"
+            if [[ -n "$_cur_v6" && "$_cur_v6" == "$_want_v6" ]]; then
+                log_warn "IPV6_SUBNET ($IPV6_SUBNET) overlaps the routing mode 2 prefix ${sink_prefix}::/64: real client IPv6 addresses look like sinks, regen and modify may drop them, and new clients with IPv6 will not be created. The subnet cannot change while clients exist; the clean path is --uninstall and an install with another ULA subnet."
+            else
+                die "IPV6_SUBNET ($IPV6_SUBNET) overlaps ${sink_prefix}::/64, which the installer keeps for routing mode 2. Set another ULA subnet in $CONFIG_FILE."
+            fi
+        fi
+    fi
     # The IPv6 tunnel requires host IPv6 enabled. Override --disallow-ipv6 AND
     # actively re-enable IPv6 at runtime BEFORE detection/render: on an upgrade
     # from a default past install (IPv6 was runtime-disabled), the kernel hides

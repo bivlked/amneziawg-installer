@@ -117,10 +117,12 @@ teardown() {
     unset AWG_SKIP_APPLY EXPIRY_CRON
     rm -rf "$TEST_DIR"
     # The host cron directory must be untouched by backup/restore.
-    _crond_state > "$BATS_FILE_TMPDIR/crond.after"
-    cmp -s "$BATS_FILE_TMPDIR/crond.before" "$BATS_FILE_TMPDIR/crond.after" || {
+    # Per-test file: with bats --jobs the tests of this file run in parallel,
+    # and one shared "after" file made teardowns overwrite each other.
+    _crond_state > "$BATS_TEST_TMPDIR/crond.after"
+    cmp -s "$BATS_FILE_TMPDIR/crond.before" "$BATS_TEST_TMPDIR/crond.after" || {
         echo "host /etc/cron.d changed" >&2
-        diff "$BATS_FILE_TMPDIR/crond.before" "$BATS_FILE_TMPDIR/crond.after" >&2
+        diff "$BATS_FILE_TMPDIR/crond.before" "$BATS_TEST_TMPDIR/crond.after" >&2
         return 1
     }
 }

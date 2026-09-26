@@ -383,6 +383,16 @@ _is_v6_sink_addr() {
     [[ -n "$a" && "$a" == "${AWG_V6_SINK_PREFIX}:"* ]]
 }
 
+# _ipv6_subnet_hits_sink <IPV6_SUBNET> : адреса из этой подсети попали бы в
+# префикс стока. Адрес клиента строится как «префикс::N», а сток опознаётся по
+# тексту без учёта регистра (_is_v6_sink_addr), поэтому и сверка текстовая:
+# настоящий IPv6 клиента из такой подсети regen и modify приняли бы за сток.
+_ipv6_subnet_hits_sink() {
+    local p="${1%%::*}"
+    p="${p,,}"
+    [[ "$p" == "$AWG_V6_SINK_PREFIX" || "$p" == "${AWG_V6_SINK_PREFIX}:"* ]]
+}
+
 # _aip_tokens <список> : элементы списка AllowedIPs по одному в строке, без
 # пробелов. Перевод строки и запятая - разделители, возврат каретки не значим.
 _aip_tokens() {
@@ -3451,6 +3461,10 @@ get_next_client_ipv6() {
     local subnet="${IPV6_SUBNET:-fddd:2c4:2c4:2c4::/64}"
     local prefix="${subnet%%::*}"
     [[ "$prefix" == *:* ]] || { log_error "get_next_client_ipv6: IPV6_SUBNET не содержит :: (значение: $subnet)"; return 1; }
+    if _ipv6_subnet_hits_sink "$subnet"; then
+        log_error "get_next_client_ipv6: IPV6_SUBNET ($subnet) пересекается с префиксом стока ${AWG_V6_SINK_PREFIX}::/64 - задайте другую ULA-подсеть."
+        return 1
+    fi
     echo "${prefix}::${suffix}"
     return 0
 }

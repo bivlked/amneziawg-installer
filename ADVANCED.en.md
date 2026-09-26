@@ -446,7 +446,7 @@ Then re-import the new `.conf` on the device. A plain `regen` will not help here
 
 **Troubleshooting:**
 
-- **ULA subnet collision.** If `fddd:2c4:2c4:2c4::/64` is already used in your network, set a different ULA subnet via `IPV6_SUBNET=` before installing.
+- **ULA subnet collision.** If `fddd:2c4:2c4:2c4::/64` is already used in your network, set a different ULA subnet via `IPV6_SUBNET=` before installing. Not `fddd:2c4:2c4:ffff::/64`: that prefix is taken by the IPv6 sink of routing mode 2, and the installer stops on such a value.
 - **IPv6 not routing to the internet.** Check both signs of native IPv6: a global address outside ULA (`ip -6 addr show scope global`) AND a default route (`ip -6 route show default`). If either is missing, IPv6 internet egress is not possible - this is expected, and the tunnel works over IPv4. If both are present, check the ip6tables MASQUERADE rule and forwarding (`sysctl net.ipv6.conf.all.forwarding`).
 - **Rollback / IPv6 cleanup.** Setting `ALLOW_IPV6_TUNNEL=0` does not remove dual-stack `AllowedIPs` entries already added to `awg0.conf`. For a full cleanup: `awg-quick down awg0; sed -i 's|, fddd:[^/]*/[0-9]*||g' /etc/amnezia/amneziawg/awg0.conf; awg-quick up awg0`.
 
