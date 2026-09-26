@@ -3566,8 +3566,10 @@ detect_ssh_ports() {
 
     # Validate (decimal 1-65535, 10# guards against octal) + dedup preserving order
     for p in $ports; do
-        if [[ "$p" =~ ^[0-9]+$ ]]; then
-            pp=$((10#$p))
+        # At most five significant digits BEFORE any arithmetic: $((10#...)) wraps
+        # modulo 2^64, and 18446744073709551638 became 22. Leading zeros are fine.
+        if [[ "$p" =~ ^0*([0-9]{1,5})$ ]]; then
+            pp=$((10#${BASH_REMATCH[1]}))
             if (( pp >= 1 && pp <= 65535 )); then
                 case " $valid " in
                     *" $pp "*) ;;
@@ -4541,7 +4543,7 @@ initialize_setup() {
         fi
         AWG_ENDPOINT=$CLI_ENDPOINT
     fi
-    # --ssh-port is checked at step 0, before any system change: otherwise a
+    # --ssh-port is checked at step 0, before package upgrades and reboots: otherwise a
     # value without a single valid port would only surface at step 4, after
     # package upgrades and reboots. With the flag set, detect_ssh_ports probes
     # nothing and only parses the value.

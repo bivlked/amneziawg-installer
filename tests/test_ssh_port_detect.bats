@@ -93,6 +93,28 @@ setup() {
     done
 }
 
+# A long string of digits must be refused before any arithmetic: $((10#...))
+# wraps modulo 2^64, so 18446744073709551638 became 22 and 18446744073709551617
+# became 1 - the silent 22 again, through overflow. Leading zeros still work.
+@test "RU+EN detect: overflowing --ssh-port is refused, leading zeros still parse" {
+    local script v
+    for script in "$RU_SCRIPT" "$EN_SCRIPT"; do
+        _load_detect_fn "$script"
+        for v in 18446744073709551638 18446744073709551617 100022 0000000000000000000000; do
+            CLI_SSH_PORT="$v"
+            run detect_ssh_ports
+            if [ "$status" -eq 0 ]; then echo "$script '$v': status 0, output '$output'"; return 1; fi
+            if [ -n "$output" ]; then echo "$script '$v': non-empty output '$output'"; return 1; fi
+        done
+        CLI_SSH_PORT="2222,18446744073709551638"
+        run detect_ssh_ports
+        if [ "$output" != "2222" ]; then echo "$script mixed with overflow: '$output'"; return 1; fi
+        CLI_SSH_PORT="0000000000000000000022"
+        run detect_ssh_ports
+        if [ "$output" != "22" ]; then echo "$script leading zeros: '$output'"; return 1; fi
+    done
+}
+
 @test "RU detect: mixed valid+invalid keeps only valid" {
     _load_detect_fn "$RU_SCRIPT"
     CLI_SSH_PORT="2222,abc"
