@@ -59,7 +59,7 @@ sudo bash ./install_amneziawg_en.sh
 
 > 📘 Full deployment guide: [Install AmneziaWG VPN server on Ubuntu/Debian VPS](INSTALL_VPS.md) - covers VPS choice, ARM, troubleshooting, and uninstall.
 
-> 🔐 Integrity: the script is fetched over HTTPS from `raw.githubusercontent.com` (pinned tag), and the helper scripts (`awg_common`, `manage`) are verified against pinned SHA256 hashes. Releases additionally carry a detached minisign signature - how to check it is in [Verifying a release](#verifying-a-release) below; threat model in [SECURITY.md](SECURITY.md).
+> 🔐 Integrity: the installer is downloaded over HTTPS from the latest GitHub release. You can check it before running with its minisign signature: [Verifying a release](#verifying-a-release). The helper scripts it fetches itself (`awg_common`, `manage`) come from the tag of its own version and are checked against SHA256 hashes built into it, so the installer's signature covers them too. Threat model: [SECURITY.md](SECURITY.md) and [docs/SIGNING_DESIGN.md](docs/SIGNING_DESIGN.md).
 
 <details>
 <summary><strong>What the installer changes on your server (transparency)</strong></summary>
@@ -71,7 +71,7 @@ The script runs as root - here is a short list of what it does to the system:
 - **Network**: sysctl - forwarding, network buffers, BBR (as separate files in `/etc/sysctl.d/`); host IPv6 is disabled by default (keep it with `--allow-ipv6`); swap is sized to fit the RAM.
 - **Protection**: UFW - incoming denied, SSH rate-limited, only the VPN UDP port open; Fail2Ban for SSH.
 - **Files and services**: the main files live in `/root/awg/` and `/etc/amnezia/amneziawg/` with 600/700 permissions; the `awg-quick@awg0` service; a cron job that removes expired clients.
-- **Rollback**: `--uninstall` removes its own module, configs, sysctl files, cron jobs, the VPN-port UFW allow rule and the `awg0` UFW route rule. It disables UFW and purges Fail2Ban only if it enabled/installed them itself; if UFW was already active before install, the SSH rate-limit rule it added stays. It does not restore swap settings or removed packages, and the dependency packages it added (dkms, the compiler, kernel headers) stay.
+- **Rollback**: `--uninstall` removes its own module, configs, sysctl files, cron jobs, the VPN-port UFW allow rule and the `awg0` UFW route rule. It disables UFW and purges Fail2Ban only if it enabled/installed them itself; if UFW was already active before install, the SSH rate-limit rule it added stays. It does not restore swap settings or removed packages, and the dependency packages it added (dkms, the compiler, kernel headers) stay. By default, `--yes` included, it first creates the archive `/root/awg_uninstall_backup_*.tar.gz` with the configs and private keys; it stays on the server, so delete it yourself once you no longer need it.
 
 Step-by-step details in [ADVANCED.en.md](ADVANCED.en.md), threat model in [SECURITY.md](SECURITY.md).
 </details>
@@ -329,7 +329,7 @@ For a stable, high-throughput VPN server, you need reliable hosting with a good 
 - Generous or unlimited traffic and a 1 Gbps+ port.
 - Your target OS (Ubuntu 24.04 LTS, 26.04 or Debian 13; 25.10 and Debian 12 work too) and root access.
 
-I've tested and recommend [**FreakHosting**](https://freakhosting.com/clientarea/aff.php?aff=392). Their **BUDGET VPS** lineup offers excellent value for money.
+I've tested and recommend [**FreakHosting**](https://freakhosting.com/clientarea/aff.php?aff=392). Their **BUDGET VPS** lineup offers excellent value for money. This is an affiliate link: I get a small commission if you order through it, the price for you is the same.
 
 Their IPs are not flagged as datacenter - they are not blocked by services that restrict hosting/datacenter IP ranges (unlike Azure and some major clouds).
 
@@ -612,19 +612,21 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: How do I update the scripts to a newer version?</strong></summary>
-  <b>A:</b> Download the updated scripts and replace them on the server:
+  <b>A:</b> No server reinstall is needed: replacing the two scripts in <code>/root/awg/</code> is enough. Download them into a temporary directory, verify the signatures, and only then replace the files (this needs <code>minisign</code>: <code>sudo apt install minisign</code>). A plain <code>wget -O</code> over the working file would leave an empty file if the download failed.
   <pre>
-  # English version:
-  wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg_en.sh
-  wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common_en.sh
-  chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
-
-  # Russian version:
-  wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg.sh
-  wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common.sh
-  chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
+  cd "$(mktemp -d)"
+  BASE=https://github.com/bivlked/amneziawg-installer/releases/latest/download
+  KEY=RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN
+  M=manage_amneziawg_en.sh C=awg_common_en.sh   # Russian version: M=manage_amneziawg.sh C=awg_common.sh
+  ok=1
+  for f in "$M" "$C"; do
+    wget -q -O "$f" "$BASE/$f" && wget -q -O "$f.minisig" "$BASE/$f.minisig" \
+      && minisign -V -P "$KEY" -m "$f" -x "$f.minisig" || { echo "NOT VERIFIED: $f"; ok=0; break; }
+  done
+  [ "$ok" = 1 ] && sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
+    && sudo install -m 700 "$C" /root/awg/awg_common.sh
   </pre>
-  Server reinstallation is not required.
+  If the script printed "NOT VERIFIED", the working files are untouched.
   <br><br>
   Since v5.21.0 the script pair is protected against drift: if you update manage but forget awg_common (or the other way around) and the versions diverge, the script stops and shows the exact commands to fetch the other half, instead of throwing strange errors halfway through.
 </details>

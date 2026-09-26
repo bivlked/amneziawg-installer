@@ -381,7 +381,7 @@ echo "module amneziawg -p" > /sys/kernel/debug/dynamic_debug/control
 <a id="client-isolation-adv"></a>
 ### Изоляция клиентов
 
-По умолчанию клиенты VPN не видят друг друга: сервер добавляет в `PostUp`/`PostDown` конфига `awg0.conf` правило `iptables -I FORWARD -i awg0 -o awg0 -j DROP` (и симметричное `ip6tables`, если включён IPv6-туннель) - оно рвёт трафик между пирами до общего `ACCEPT`, независимо от режима маршрутизации. До этой настройки изоляция была случайным побочным эффектом режима: split-режимы (2/3) изолировали клиентов только потому, что в их `AllowedIPs` не было маршрута к соседям, `--route-all` не изолировал вовсе, а dual-stack клиенты в split-режимах всё равно оставались достижимы друг для друга по IPv6-подсети туннеля.
+По умолчанию клиенты VPN не видят друг друга: сервер добавляет в `PostUp`/`PostDown` конфига `awg0.conf` правило `iptables -I FORWARD -i awg0 -o awg0 -j DROP` (и симметричное `ip6tables`, если включён IPv6-туннель) - оно рвёт трафик между пирами до общего `ACCEPT`, независимо от режима маршрутизации. До этой настройки изоляция была случайным побочным эффектом режима: режим «Amnezia» и свой список сетей изолировали клиентов только потому, что в их `AllowedIPs` не было маршрута к соседям (подсеть туннеля в список не входит), `--route-all` не изолировал вовсе, а dual-stack клиенты в этих режимах всё равно оставались достижимы друг для друга по IPv6-подсети туннеля.
 
 **Отключение:** флаг `--isolation=off` при установке (или ответ `n` на интерактивный вопрос «Изолировать клиентов VPN друг от друга?» при первом запуске без `--yes`). DROP-правило не добавляется, а подсеть туннеля дописывается в `AllowedIPs` клиентов (режимы 2/3 - режим 1 с `0.0.0.0/0` уже покрывает её), так что устройства видят друг друга внутри VPN.
 
@@ -393,7 +393,7 @@ sudo bash ./install_amneziawg.sh --force --isolation=off   # или --isolation=
 
 Настройка сохраняется в `awgsetup_cfg.init` (ключ `CLIENT_ISOLATION`). Как и смена режима маршрутизации, смена изоляции переустановкой не трогает уже выпущенные клиентские конфиги - им нужен явный перевыпуск: `sudo bash /root/awg/manage_amneziawg.sh regen --reset-routes` (инсталлятор печатает эту подсказку после переустановки со сменой режима).
 
-**Устаревшие конфиги.** Конфиг без ключа `CLIENT_ISOLATION` (созданный до появления этой настройки) трактуется как изолированный (`1`) - это и есть прежнее поведение split-режимов по умолчанию, никаких сюрпризов при переустановке без `--isolation`.
+**Устаревшие конфиги.** Конфиг без ключа `CLIENT_ISOLATION` (созданный до появления этой настройки) трактуется как изолированный (`1`) - это и есть прежнее поведение режимов со списком сетей по умолчанию, никаких сюрпризов при переустановке без `--isolation`.
 
 <a id="ipv6-tunnel-adv"></a>
 ### IPv6 dual-stack в туннеле (v5.15.0+)
@@ -1013,20 +1013,23 @@ AWG_BRANCH=my-feature-branch sudo bash ./install_amneziawg.sh
 <a id="update-scripts-adv"></a>
 ## 🔄 Как обновить скрипты
 
-Для обновления скриптов управления и общей библиотеки **без переустановки сервера**:
+Для обновления скриптов управления и общей библиотеки **без переустановки сервера** скачайте их во временную папку, проверьте подпись и только потом замените (нужен `minisign`: `sudo apt install minisign`):
 
 ```bash
-# Русская версия:
-wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg.sh
-wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common.sh
-
-# Английская версия:
-wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg_en.sh
-wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common_en.sh
-
-# Установить права
-chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
+cd "$(mktemp -d)"
+BASE=https://github.com/bivlked/amneziawg-installer/releases/latest/download
+KEY=RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN
+M=manage_amneziawg.sh C=awg_common.sh   # английская версия: M=manage_amneziawg_en.sh C=awg_common_en.sh
+ok=1
+for f in "$M" "$C"; do
+  wget -q -O "$f" "$BASE/$f" && wget -q -O "$f.minisig" "$BASE/$f.minisig" \
+    && minisign -V -P "$KEY" -m "$f" -x "$f.minisig" || { echo "НЕ ПРОВЕРЕН: $f"; ok=0; break; }
+done
+[ "$ok" = 1 ] && sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
+  && sudo install -m 700 "$C" /root/awg/awg_common.sh
 ```
+
+Если скрипт напечатал «НЕ ПРОВЕРЕН», рабочие файлы не тронуты. Прямой `wget -O` поверх рабочего файла при сбое скачивания оставил бы пустой файл. Как устроена подпись: [Проверка подписи](README.md#proverka-podpisi).
 
 > **Примечание:** Переустановка скрипта `install_amneziawg.sh` **не требуется** для обновления управления. Переустановка нужна только при смене версии протокола.
 
@@ -1127,7 +1130,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>В: Сервер за NAT — как указать внешний IP?</strong></summary>
-  **О:** Используйте флаг `--endpoint=<внешний_IP>` при установке: `sudo bash ./install_amneziawg.sh --endpoint=1.2.3.4`. Или укажите его позже через `sudo bash /root/awg/manage_amneziawg.sh regen` (скрипт попытается определить IP автоматически).
+  **О:** Используйте флаг `--endpoint=<внешний_IP>` при установке: `sudo bash ./install_amneziawg.sh --endpoint=1.2.3.4`. На уже установленном сервере впишите адрес в `/root/awg/awgsetup_cfg.init` (строка `export AWG_ENDPOINT='1.2.3.4'`) и перевыпустите клиентов: `sudo bash /root/awg/manage_amneziawg.sh regen`. Если `AWG_ENDPOINT` пуст, `regen` определяет внешний IP сам.
 </details>
 
 <details>
@@ -1192,7 +1195,7 @@ sudo systemctl restart awg-quick@awg0</pre>
 
 <details>
   <summary><strong>В: Подробности миграции VPN на другой сервер?</strong></summary>
-  **О:** 1. На старом сервере: <code>sudo bash /root/awg/manage_amneziawg.sh backup</code>. 2. Скопируйте архив: <code>scp root@старый_сервер:/root/awg/backups/awg_backup_*.tar.gz .</code>. 3. На новом сервере установите AmneziaWG. 4. Скопируйте бэкап: <code>scp awg_backup_*.tar.gz root@новый_сервер:/root/awg/backups/</code>. 5. Восстановите: <code>sudo bash /root/awg/manage_amneziawg.sh restore</code> (интерактивный выбор, или укажите полный путь к архиву). 6. Перегенерируйте конфиги с новым IP: <code>sudo bash /root/awg/manage_amneziawg.sh regen</code>. 7. Раздайте новые конфиги клиентам.
+  **О:** 1. На старом сервере: <code>sudo bash /root/awg/manage_amneziawg.sh backup</code>. 2. Скопируйте архив: <code>scp root@старый_сервер:/root/awg/backups/awg_backup_*.tar.gz .</code>. 3. На новом сервере установите AmneziaWG. 4. Скопируйте бэкап: <code>scp awg_backup_*.tar.gz root@новый_сервер:/root/awg/backups/</code>. 5. Восстановите: <code>sudo bash /root/awg/manage_amneziawg.sh restore</code> (интерактивный выбор, или укажите полный путь к архиву). 6. Проверьте то, что приехало со старого сервера: в <code>/etc/amnezia/amneziawg/awg0.conf</code> строки <code>PostUp</code>/<code>PostDown</code> содержат имя сетевого интерфейса старой машины (<code>-o eth0</code> и т.п.). Если у нового сервера он называется иначе (<code>ip route get 1.1.1.1</code>), замените имя и перезапустите сервис (<code>sudo systemctl restart awg-quick@awg0</code>). <code>ListenPort</code> должен совпадать с портом, открытым в UFW. Если в <code>/root/awg/awgsetup_cfg.init</code> задан <code>AWG_ENDPOINT</code>, впишите туда новый адрес или оставьте пустым для автоопределения. 7. Перегенерируйте конфиги с новым IP: <code>sudo bash /root/awg/manage_amneziawg.sh regen</code>. 8. Раздайте новые конфиги клиентам.
 </details>
 
 <details>
@@ -1202,9 +1205,9 @@ sudo systemctl restart awg-quick@awg0</pre>
 
 <details>
   <summary><strong>В: iPhone подключается, но через ~10 секунд трафик пропадает (туннель «висит»)</strong></summary>
-  <b>О:</b> Исправлено в v5.16.1. Причина - тогдашний режим маршрутизации по умолчанию (mode 2, «Список Amnezia+DNS») начинался с диапазона <code>0.0.0.0/5</code>, который включает служебный <code>0.0.0.0/8</code>. Ядро iOS спотыкается на этом блоке и не доходит до остальных маршрутов, поэтому туннель поднимается и через ~10 секунд встаёт (симптом легко спутать с DPI). Разобрался и предложил фикс @LiaNdrY (Issue #42). В v5.16.1 первый диапазон списка разбит на <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code> - это тот же охват без проблемного нулевого блока, split-tunnel сохраняется.
+  <b>О:</b> Исправлено в v5.16.1. Причина - тогдашний режим маршрутизации по умолчанию (mode 2, «Список Amnezia+DNS») начинался с диапазона <code>0.0.0.0/5</code>, который включает служебный <code>0.0.0.0/8</code>. Ядро iOS спотыкается на этом блоке и не доходит до остальных маршрутов, поэтому туннель поднимается и через ~10 секунд встаёт (симптом легко спутать с DPI). Разобрался и предложил фикс @LiaNdrY (Issue #42). В v5.16.1 первый диапазон списка разбит на <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code> - это тот же охват без проблемного нулевого блока, частные сети по-прежнему остаются вне туннеля.
   <br><br>
-  <b>На уже установленном сервере (до v5.16.1)</b> сохранённый список лежит в <code>/root/awg/awgsetup_cfg.init</code> и обычной переустановкой с <code>--force</code> не меняется (берётся из конфига). Поэтому: (1) быстрый разовый фикс - в конфиге iOS-клиента заменить строку <code>AllowedIPs = ...</code> на <code>AllowedIPs = 0.0.0.0/0</code>; (2) с сохранением split-tunnel - отредактировать <code>/root/awg/awgsetup_cfg.init</code>, заменив начальный <code>0.0.0.0/5</code> на <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code>, затем пересоздать клиента (<code>remove</code> + <code>add</code>); (3) либо чистая установка заново (<code>--uninstall</code>, затем установка v5.16.1) - тогда список сгенерируется корректно.
+  <b>На уже установленном сервере (до v5.16.1)</b> сохранённый список лежит в <code>/root/awg/awgsetup_cfg.init</code> и обычной переустановкой с <code>--force</code> не меняется (берётся из конфига). Поэтому: (1) быстрый разовый фикс - в конфиге iOS-клиента заменить строку <code>AllowedIPs = ...</code> на <code>AllowedIPs = 0.0.0.0/0</code>; (2) сохранить список режима «Amnezia» - отредактировать <code>/root/awg/awgsetup_cfg.init</code>, заменив начальный <code>0.0.0.0/5</code> на <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code>, затем пересоздать клиента (<code>remove</code> + <code>add</code>); (3) либо чистая установка заново (<code>--uninstall</code>, затем установка v5.16.1) - тогда список сгенерируется корректно.
 </details>
 
 <details>
@@ -1291,7 +1294,7 @@ sudo ufw reload</pre>
 
 <details>
   <summary><strong>В: Работает ли AmneziaWG в LXC-контейнере?</strong></summary>
-  <b>О:</b> Нет. AmneziaWG требует загрузки ядерного модуля через DKMS. LXC-контейнеры разделяют ядро с хостом и не позволяют загружать свои модули. Используйте полноценную VM (KVM/QEMU) или bare-metal.
+  <b>О:</b> Установщик - нет: он ставит модуль ядра через DKMS, а контейнер делит ядро с хостом и свой модуль загрузить не может, поэтому в контейнере установщик останавливается в самом начале с сообщением «Обнаружен контейнер». Варианты: полноценная VM (KVM/QEMU) или bare-metal для обычной установки, либо userspace-реализация <code>amneziawg-go</code> внутри LXC, настроенная вручную: <a href="#lxc-userspace-adv">LXC / Docker через amneziawg-go</a>.
 </details>
 
 <details>

@@ -60,7 +60,7 @@ sudo bash ./install_amneziawg.sh
 
 > 📘 Полный гайд по развёртыванию: [Установка сервера AmneziaWG на VPS](INSTALL_VPS.ru.md) - выбор VPS, ARM, troubleshooting, удаление. [English version](INSTALL_VPS.md).
 
-> 🔐 Целостность: скрипт качается по HTTPS с `raw.githubusercontent.com` (тег закреплён), вспомогательные скрипты (`awg_common`, `manage`) проверяются по закреплённым SHA256-хешам. Релизы дополнительно подписываются detached-подписью minisign - как проверить, ниже в разделе [Проверка подписи](#proverka-podpisi); модель угроз в [SECURITY.md](SECURITY.md).
+> 🔐 Целостность: установщик скачивается по HTTPS из последнего релиза на GitHub. Проверить его до запуска можно подписью minisign: [Проверка подписи](#proverka-podpisi). Скрипты, которые он качает сам (`awg_common`, `manage`), он берёт с тега своей версии и сверяет с зашитыми в него SHA256-хешами, так что подпись установщика покрывает и их. Модель угроз - в [SECURITY.md](SECURITY.md) и [docs/SIGNING_DESIGN.md](docs/SIGNING_DESIGN.md).
 
 <details>
 <summary><strong>Что установщик меняет на сервере (прозрачность)</strong></summary>
@@ -72,7 +72,7 @@ sudo bash ./install_amneziawg.sh
 - **Сеть**: sysctl - форвардинг, сетевые буферы, BBR (отдельными файлами в `/etc/sysctl.d/`); IPv6 на хосте по умолчанию выключается (оставить: `--allow-ipv6`); swap подгоняется под размер RAM.
 - **Защита**: UFW - входящие запрещены, SSH с rate-limit, открыт только UDP-порт VPN; Fail2Ban для SSH.
 - **Файлы и сервисы**: основные файлы в `/root/awg/` и `/etc/amnezia/amneziawg/` с правами 600/700; сервис `awg-quick@awg0`; крон автоудаления истёкших клиентов.
-- **Откат**: `--uninstall` убирает своё - модуль, конфиги, sysctl-файлы, кроны, UFW-правило VPN-порта и UFW-правило маршрутизации `awg0`. UFW отключает и Fail2Ban удаляет только если сам их включал/ставил; если UFW был активен до установки, добавленное правило SSH rate-limit остаётся. Не возвращает: swap и удалённые пакеты; пакеты-зависимости, которые он ставил (dkms, компилятор, заголовки ядра), остаются.
+- **Откат**: `--uninstall` убирает своё - модуль, конфиги, sysctl-файлы, кроны, UFW-правило VPN-порта и UFW-правило маршрутизации `awg0`. UFW отключает и Fail2Ban удаляет только если сам их включал/ставил; если UFW был активен до установки, добавленное правило SSH rate-limit остаётся. Не возвращает: swap и удалённые пакеты; пакеты-зависимости, которые он ставил (dkms, компилятор, заголовки ядра), остаются. По умолчанию, в том числе с `--yes`, перед удалением создаётся архив `/root/awg_uninstall_backup_*.tar.gz` с конфигами и приватными ключами; он остаётся на сервере, удалите его сами, когда он станет не нужен.
 
 Пошаговые детали - в [ADVANCED.md](ADVANCED.md), модель угроз - в [SECURITY.md](SECURITY.md).
 </details>
@@ -330,7 +330,7 @@ cat /sys/module/amneziawg/version    # версия загруженного м�
 - Большой или неограниченный трафик и канал от 1 Гбит/с.
 - Поддержка нужной ОС (Ubuntu 24.04 LTS, 26.04 или Debian 13; 25.10 и Debian 12 тоже работают) и root-доступ.
 
-Опробовал и рекомендую [**FreakHosting**](https://freakhosting.com/clientarea/aff.php?aff=392). В частности, их линейка **BUDGET VPS** предлагает отличное соотношение цены и качества.
+Опробовал и рекомендую [**FreakHosting**](https://freakhosting.com/clientarea/aff.php?aff=392). В частности, их линейка **BUDGET VPS** предлагает отличное соотношение цены и качества. Это партнёрская ссылка: при заказе по ней я получаю небольшой процент, для вас цена та же.
 
 Их IP-адреса не идентифицируются, как адреса датацентров и не попадают под блокировки по признаку «IP принадлежит хостинг-провайдеру» (в отличие, например, от Azure и некоторых крупных облаков).
 
@@ -613,19 +613,21 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 <details>
   <summary><strong>В: Как обновить скрипты до новой версии?</strong></summary>
-  <b>О:</b> Скачайте новый скрипт установки и замените скрипты управления на сервере:
+  <b>О:</b> Переустановка сервера не нужна: достаточно заменить два скрипта в <code>/root/awg/</code>. Скачайте их во временную папку, проверьте подпись и только потом замените (нужен <code>minisign</code>: <code>sudo apt install minisign</code>). Прямой <code>wget -O</code> поверх рабочего файла при сбое скачивания оставил бы пустой файл.
   <pre>
-  # Русская версия:
-  wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg.sh
-  wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common.sh
-  chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
-
-  # Английская версия:
-  wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg_en.sh
-  wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common_en.sh
-  chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
+  cd "$(mktemp -d)"
+  BASE=https://github.com/bivlked/amneziawg-installer/releases/latest/download
+  KEY=RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN
+  M=manage_amneziawg.sh C=awg_common.sh   # английская версия: M=manage_amneziawg_en.sh C=awg_common_en.sh
+  ok=1
+  for f in "$M" "$C"; do
+    wget -q -O "$f" "$BASE/$f" && wget -q -O "$f.minisig" "$BASE/$f.minisig" \
+      && minisign -V -P "$KEY" -m "$f" -x "$f.minisig" || { echo "НЕ ПРОВЕРЕН: $f"; ok=0; break; }
+  done
+  [ "$ok" = 1 ] && sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
+    && sudo install -m 700 "$C" /root/awg/awg_common.sh
   </pre>
-  Переустановка сервера не требуется.
+  Если скрипт напечатал «НЕ ПРОВЕРЕН», рабочие файлы не тронуты.
   <br><br>
   С v5.21.0 пара скриптов защищена от рассинхрона: обновили manage, а awg_common забыли (или наоборот), и версии разошлись - скрипт остановится и покажет, какими командами докачать вторую половину, вместо странных ошибок посреди работы.
 </details>

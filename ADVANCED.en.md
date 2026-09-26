@@ -385,7 +385,7 @@ To check from a connected device: `curl -6 ifconfig.co`. Look at the address rat
 <a id="client-isolation-adv"></a>
 ### Client Isolation
 
-By default VPN clients cannot see each other: the server adds a rule to `PostUp`/`PostDown` in the `awg0.conf` config, `iptables -I FORWARD -i awg0 -o awg0 -j DROP` (plus a symmetric `ip6tables` rule if the IPv6 tunnel is enabled) - it cuts traffic between peers before the general `ACCEPT`, regardless of the routing mode. Before this setting, isolation was an accidental side effect of the mode: split modes (2/3) isolated clients only because their `AllowedIPs` had no route to their neighbors, `--route-all` did not isolate at all, and dual-stack clients in split modes remained reachable to each other over the tunnel's IPv6 subnet.
+By default VPN clients cannot see each other: the server adds a rule to `PostUp`/`PostDown` in the `awg0.conf` config, `iptables -I FORWARD -i awg0 -o awg0 -j DROP` (plus a symmetric `ip6tables` rule if the IPv6 tunnel is enabled) - it cuts traffic between peers before the general `ACCEPT`, regardless of the routing mode. Before this setting, isolation was an accidental side effect of the mode: the "Amnezia" mode and a custom network list isolated clients only because their `AllowedIPs` had no route to their neighbors (the tunnel subnet is not in the list), `--route-all` did not isolate at all, and dual-stack clients in those modes remained reachable to each other over the tunnel's IPv6 subnet.
 
 **Disabling it:** the `--isolation=off` flag at install time (or answering `n` to the interactive question "Isolate VPN clients from each other?" on first run without `--yes`). The DROP rule is not added, and the tunnel subnet is appended to clients' `AllowedIPs` (modes 2/3 - mode 1 with `0.0.0.0/0` already covers it), so devices can see each other inside the VPN.
 
@@ -397,7 +397,7 @@ sudo bash ./install_amneziawg_en.sh --force --isolation=off   # or --isolation=o
 
 The setting is persisted in `awgsetup_cfg.init` (the `CLIENT_ISOLATION` key). Just like a routing-mode change, changing isolation via reinstall does not touch already-issued client configs - they need an explicit reissue: `sudo bash /root/awg/manage_amneziawg.sh regen --reset-routes` (the installer prints this hint after a reinstall that changes the mode).
 
-**Legacy configs.** A config without the `CLIENT_ISOLATION` key (created before this setting existed) is treated as isolated (`1`) - that is the previous default behavior of split modes, so there is no surprise on a reinstall without `--isolation`.
+**Legacy configs.** A config without the `CLIENT_ISOLATION` key (created before this setting existed) is treated as isolated (`1`) - that is the previous default behavior of the list-based modes, so there is no surprise on a reinstall without `--isolation`.
 
 <a id="ipv6-tunnel-adv"></a>
 ### IPv6 Dual-Stack Tunnel (v5.15.0+)
@@ -1018,20 +1018,23 @@ AWG_BRANCH=my-feature-branch sudo bash ./install_amneziawg_en.sh
 <a id="update-scripts-adv"></a>
 ## 🔄 How to Update Scripts
 
-To update the management and shared library scripts **without reinstalling the server**:
+To update the management and shared library scripts **without reinstalling the server**, download them into a temporary directory, verify the signatures, and only then replace the files (this needs `minisign`: `sudo apt install minisign`):
 
 ```bash
-# Russian version:
-wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg.sh
-wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common.sh
-
-# English version:
-wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg_en.sh
-wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common_en.sh
-
-# Set permissions
-chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
+cd "$(mktemp -d)"
+BASE=https://github.com/bivlked/amneziawg-installer/releases/latest/download
+KEY=RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN
+M=manage_amneziawg_en.sh C=awg_common_en.sh   # Russian version: M=manage_amneziawg.sh C=awg_common.sh
+ok=1
+for f in "$M" "$C"; do
+  wget -q -O "$f" "$BASE/$f" && wget -q -O "$f.minisig" "$BASE/$f.minisig" \
+    && minisign -V -P "$KEY" -m "$f" -x "$f.minisig" || { echo "NOT VERIFIED: $f"; ok=0; break; }
+done
+[ "$ok" = 1 ] && sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
+  && sudo install -m 700 "$C" /root/awg/awg_common.sh
 ```
+
+If the script printed "NOT VERIFIED", the working files are untouched. A plain `wget -O` over the working file would leave an empty file if the download failed. How the signature works: [Verifying a release](README.en.md#verifying-a-release).
 
 > **Note:** Reinstalling `install_amneziawg.sh` is **not required** for management updates. A reinstallation is only necessary when switching protocol versions.
 
@@ -1132,7 +1135,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>Q: Server behind NAT — how do I specify the external IP?</strong></summary>
-  <b>A:</b> Use the <code>--endpoint=&lt;external_IP&gt;</code> flag during installation: <code>sudo bash ./install_amneziawg_en.sh --endpoint=1.2.3.4</code>. Or specify it later via <code>sudo bash /root/awg/manage_amneziawg.sh regen</code> (the script will attempt to detect the IP automatically).
+  <b>A:</b> Use the <code>--endpoint=&lt;external_IP&gt;</code> flag during installation: <code>sudo bash ./install_amneziawg_en.sh --endpoint=1.2.3.4</code>. On an installed server, put the address into <code>/root/awg/awgsetup_cfg.init</code> (the line <code>export AWG_ENDPOINT='1.2.3.4'</code>) and reissue the clients: <code>sudo bash /root/awg/manage_amneziawg.sh regen</code>. With <code>AWG_ENDPOINT</code> empty, <code>regen</code> detects the external IP itself.
 </details>
 
 <details>
@@ -1197,7 +1200,7 @@ sudo systemctl restart awg-quick@awg0</pre>
 
 <details>
   <summary><strong>Q: Detailed steps for VPN migration to another server?</strong></summary>
-  <b>A:</b> 1. On the old server: <code>sudo bash /root/awg/manage_amneziawg.sh backup</code>. 2. Copy the archive: <code>scp root@old_server:/root/awg/backups/awg_backup_*.tar.gz .</code>. 3. Install AmneziaWG on the new server. 4. Copy the backup: <code>scp awg_backup_*.tar.gz root@new_server:/root/awg/backups/</code>. 5. Restore: <code>sudo bash /root/awg/manage_amneziawg.sh restore</code> (interactive selection, or specify the full archive path). 6. Regenerate configs with new IP: <code>sudo bash /root/awg/manage_amneziawg.sh regen</code>. 7. Distribute new configs to clients.
+  <b>A:</b> 1. On the old server: <code>sudo bash /root/awg/manage_amneziawg.sh backup</code>. 2. Copy the archive: <code>scp root@old_server:/root/awg/backups/awg_backup_*.tar.gz .</code>. 3. Install AmneziaWG on the new server. 4. Copy the backup: <code>scp awg_backup_*.tar.gz root@new_server:/root/awg/backups/</code>. 5. Restore: <code>sudo bash /root/awg/manage_amneziawg.sh restore</code> (interactive selection, or specify the full archive path). 6. Check what came over from the old server: the <code>PostUp</code>/<code>PostDown</code> lines in <code>/etc/amnezia/amneziawg/awg0.conf</code> carry the old machine's network interface name (<code>-o eth0</code> and so on). If the new server names it differently (<code>ip route get 1.1.1.1</code>), replace the name and restart the service (<code>sudo systemctl restart awg-quick@awg0</code>). <code>ListenPort</code> must match the port open in UFW. If <code>/root/awg/awgsetup_cfg.init</code> sets <code>AWG_ENDPOINT</code>, put the new address there or leave it empty for auto-detection. 7. Regenerate configs with new IP: <code>sudo bash /root/awg/manage_amneziawg.sh regen</code>. 8. Distribute new configs to clients.
 </details>
 
 <details>
@@ -1207,9 +1210,9 @@ sudo systemctl restart awg-quick@awg0</pre>
 
 <details>
   <summary><strong>Q: iPhone connects but traffic stops after ~10 seconds (the tunnel "hangs")</strong></summary>
-  <b>A:</b> Fixed in v5.16.1. The routing mode that was default back then (mode 2, "Amnezia List + DNS") started with the <code>0.0.0.0/5</code> range, which covers the reserved <code>0.0.0.0/8</code>. The iOS kernel chokes on that block and never reaches the rest of the routes, so the tunnel comes up and then stalls after ~10 seconds (easy to mistake for DPI). Traced and fixed by @LiaNdrY (Issue #42). In v5.16.1 the first range is split into <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code> - the same coverage without the problematic zero block, and split-tunnel is preserved.
+  <b>A:</b> Fixed in v5.16.1. The routing mode that was default back then (mode 2, "Amnezia List + DNS") started with the <code>0.0.0.0/5</code> range, which covers the reserved <code>0.0.0.0/8</code>. The iOS kernel chokes on that block and never reaches the rest of the routes, so the tunnel comes up and then stalls after ~10 seconds (easy to mistake for DPI). Traced and fixed by @LiaNdrY (Issue #42). In v5.16.1 the first range is split into <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code> - the same coverage without the problematic zero block, and private networks still stay outside the tunnel.
   <br><br>
-  <b>On an existing server (before v5.16.1)</b> the stored list lives in <code>/root/awg/awgsetup_cfg.init</code> and a plain <code>--force</code> reinstall does not change it (it is read back from the config). So: (1) quick per-client fix - replace the <code>AllowedIPs = ...</code> line in the iOS client config with <code>AllowedIPs = 0.0.0.0/0</code>; (2) keep split-tunnel - edit <code>/root/awg/awgsetup_cfg.init</code>, replace the leading <code>0.0.0.0/5</code> with <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code>, then recreate the client (<code>remove</code> + <code>add</code>); (3) or a clean reinstall (<code>--uninstall</code>, then install v5.16.1) regenerates the list correctly.
+  <b>On an existing server (before v5.16.1)</b> the stored list lives in <code>/root/awg/awgsetup_cfg.init</code> and a plain <code>--force</code> reinstall does not change it (it is read back from the config). So: (1) quick per-client fix - replace the <code>AllowedIPs = ...</code> line in the iOS client config with <code>AllowedIPs = 0.0.0.0/0</code>; (2) keep the "Amnezia" mode list - edit <code>/root/awg/awgsetup_cfg.init</code>, replace the leading <code>0.0.0.0/5</code> with <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code>, then recreate the client (<code>remove</code> + <code>add</code>); (3) or a clean reinstall (<code>--uninstall</code>, then install v5.16.1) regenerates the list correctly.
 </details>
 
 <details>
@@ -1296,7 +1299,7 @@ sudo ufw reload</pre>
 
 <details>
   <summary><strong>Q: Does AmneziaWG work in an LXC container?</strong></summary>
-  <b>A:</b> No. AmneziaWG requires loading a kernel module via DKMS. LXC containers share the host kernel and cannot load custom modules. Use a full VM (KVM/QEMU) or bare-metal.
+  <b>A:</b> Not with this installer: it installs a kernel module via DKMS, and a container shares the host kernel and cannot load a module of its own, so inside a container the installer stops right at the start with "Container detected". Options: a full VM (KVM/QEMU) or bare metal for the regular install, or the <code>amneziawg-go</code> userspace implementation inside LXC, set up by hand: <a href="#lxc-userspace-adv">LXC / Docker via amneziawg-go</a>.
 </details>
 
 <details>
