@@ -3608,6 +3608,9 @@ detect_ssh_ports() {
 
     if [[ -n "$CLI_SSH_PORT" || "${CLI_SSH_PORT_SET:-0}" -eq 1 ]]; then
         _override=1
+        # An empty element (22, or 22,,2222) is an error too: that is what an unset
+        # variable looks like, and the port it should carry would vanish silently.
+        [[ ",${CLI_SSH_PORT}," =~ ,[[:space:]]*, ]] && bad="(empty element)"
         # 1. Manual override - authoritative source
         ports="${CLI_SSH_PORT//,/ }"
     else

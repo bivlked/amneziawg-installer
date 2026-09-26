@@ -124,7 +124,7 @@ setup() {
     local script v
     for script in "$RU_SCRIPT" "$EN_SCRIPT"; do
         _load_detect_fn "$script"
-        for v in "2222,abc" "22,500022" "2222,,x" ""; do
+        for v in "2222,abc" "22,500022" "2222,,x" "" "22," "22,,2222" ",22"; do
             CLI_SSH_PORT="$v"; CLI_SSH_PORT_SET=1
             run detect_ssh_ports
             if [ "$status" -eq 0 ] || [ -n "$output" ]; then echo "$script '$v': accepted as '$output'"; return 1; fi
