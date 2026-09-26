@@ -85,7 +85,7 @@ _run_guard() { run bash "$FIX/scripts/check-docs-consistency.sh"; }
     _run_guard
     [[ "$output" == *"PASS: межфайловые и HTML-ссылки на якоря резолвятся ("* ]]
     for form in "[r]: ../A.md#gone" "<a href='../A.md#gone'>x</a>" '<a href = "../A.md#gone">x</a>' '<a href= "../A.md#gone">x</a>' \
-                '<A HREF="../A.md#gone">x</A>' '[x](../A.MD#gone)' '[x]( ../A.md#gone)' '<a href=../A.md#gone>x</a>'; do
+                '<A HREF="../A.md#gone">x</A>' '[x](../A.MD#gone)' '[x]( ../A.md#gone)' '<a href=../A.md#gone>x</a>' '[r]: <../A.md#gone>'; do
         git checkout -q -- docs/B.md
         printf '%s\n' "$form" >> docs/B.md
         _run_guard
@@ -93,7 +93,8 @@ _run_guard() { run bash "$FIX/scripts/check-docs-consistency.sh"; }
     done
     # External URLs are outside this guard in every form: none of these may fail it.
     for ext in '[r]: https://github.com/o/r/blob/main/README.md#x' "<a href='https://example.com'>x</a>" \
-               '<a href="https://example.com/X.MD#y">x</a>' '[x](HTTPS://example.com/README.MD#y)'; do
+               '<a href="https://example.com/X.MD#y">x</a>' '[x](HTTPS://example.com/README.MD#y)' \
+               '[x](https://example.com/?href=foo.md#x)' '[r]: <https://example.com/README.md#x>'; do
         git checkout -q -- docs/B.md
         printf '%s\n' "$ext" >> docs/B.md
         _run_guard
@@ -188,6 +189,27 @@ _run_guard() { run bash "$FIX/scripts/check-docs-consistency.sh"; }
     printf '```\n[old](README.md#posle-ustanovki)\n```\n' >> INSTALL_VPS.ru.md
     _run_guard
     [[ "$output" == *"PASS: исправленные ссылки не вернулись в чужие разделы"* ]]
+}
+
+@test "18: a title, a leading slash, angle brackets or percent-encoding do not hide the wrong target" {
+    for form in '[a](README.md#posle-ustanovki "t")' '[a](/README.md#posle-ustanovki)' \
+                '[a](<README.md#posle-ustanovki>)' '[a](README.md#posle%2Dustanovki)'; do
+        git checkout -q -- INSTALL_VPS.ru.md
+        printf '%s\n' "$form" >> INSTALL_VPS.ru.md
+        _run_guard
+        [[ "$output" == *"ссылка на README.md#posle-ustanovki"* ]] || { echo "not caught: $form"; false; }
+    done
+}
+
+@test "code blocks: an indented closing fence ends the block, an unclosed block fails" {
+    printf '```bash\nx\n   ```\n[y](../A.md#gone-after-fence)\n' >> docs/B.md
+    _run_guard
+    [[ "$output" == *"битая межфайловая или HTML-ссылка: ../A.md#gone-after-fence"* ]]
+    git checkout -q -- docs/B.md
+    printf '```bash\nx\n' >> docs/B.md
+    _run_guard
+    [[ "$output" == *"docs/B.md: незакрытый блок кода"* ]]
+    [[ "$output" == *"FAIL: битые межфайловые или HTML-ссылки на якоря"* ]]
 }
 
 @test "18: a missing file is a failure, not a silent skip" {
