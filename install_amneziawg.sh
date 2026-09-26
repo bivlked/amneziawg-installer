@@ -4638,7 +4638,9 @@ initialize_setup() {
     mkdir -p "$cfg_dir" 2>/dev/null
     temp_conf=$(mktemp -p "$cfg_dir") || die "Ошибка mktemp."
     _install_temp_files+=("$temp_conf")
-    cat > "$temp_conf" << EOF
+    # Код записи проверяется: при ENOSPC/EFBIG обрезанный temp иначе заменил бы
+    # рабочий init, и следующий запуск заново сгенерировал бы набор обфускации.
+    cat > "$temp_conf" << EOF || { rm -f "$temp_conf"; die "Ошибка записи настроек в $temp_conf, $CONFIG_FILE не изменён"; }
 # Конфигурация установки AmneziaWG 2.0 (Авто-генерация)
 # Используется скриптами установки и управления
 export OS_ID='${OS_ID:-ubuntu}'

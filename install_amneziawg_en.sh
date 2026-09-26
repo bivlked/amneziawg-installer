@@ -4744,7 +4744,9 @@ initialize_setup() {
     mkdir -p "$cfg_dir" 2>/dev/null
     temp_conf=$(mktemp -p "$cfg_dir") || die "mktemp error."
     _install_temp_files+=("$temp_conf")
-    cat > "$temp_conf" << EOF
+    # The write status is checked: on ENOSPC/EFBIG a truncated temp would otherwise
+    # replace the working init, and the next run would regenerate the obfuscation set.
+    cat > "$temp_conf" << EOF || { rm -f "$temp_conf"; die "Error writing settings to $temp_conf, $CONFIG_FILE left unchanged"; }
 # AmneziaWG 2.0 installation configuration (Auto-generated)
 # Used by installation and management scripts
 export OS_ID='${OS_ID:-ubuntu}'
