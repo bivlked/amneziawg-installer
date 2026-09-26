@@ -24,6 +24,8 @@ A VPN server is mostly idle CPU and steady network. Three picks I keep coming ba
 
 Country matters mostly for latency and jurisdiction. ARM versus amd64 has no real performance difference for a personal-scale VPN.
 
+**Check that your host gives you an emergency console, and that it works.** It is the simplest way back in if SSH stops answering after a reboot or because of a firewall rule. Without one, recovery means provider support, a snapshot rollback or a reinstall.
+
 ## OS choice
 
 - **Ubuntu 24.04 LTS** is the best-tested platform. Default pick if you have no other preference.
@@ -85,17 +87,35 @@ The default install creates two clients (`my_phone`, `my_laptop`) so you can con
 sudo bash /root/awg/manage_amneziawg.sh add my_iphone
 ```
 
-The client import files land in `/root/awg/`:
+All client files land in `/root/awg/`. There are four of them, and they are not interchangeable:
 
-- `<name>.conf` for desktop AmneziaWG clients, Linux `awg-quick`, and routers.
-- `<name>.png` QR code of the `.conf` itself, for AmneziaWG clients (a plain WireGuard client cannot import it). Do not scan it in the Amnezia VPN app.
-- `<name>.vpnuri` and `<name>.vpnuri.png` for one-tap import into the Amnezia VPN app via clipboard or scanned QR.
+| File | What it is for |
+|---|---|
+| `<name>.conf` | text config: AmneziaWG desktop clients, Linux `awg-quick`, routers |
+| `<name>.png` | QR code of that same `.conf`, for AmneziaWG clients with QR import (a plain WireGuard client cannot import it) |
+| `<name>.vpnuri` | the `vpn://` link for the Amnezia VPN app |
+| `<name>.vpnuri.png` | QR code of the `vpn://` link, to import into the Amnezia VPN app with one scan |
 
-Pull files down with `scp`:
+**The two QR codes are easy to mix up.** `<name>.png` holds the config text, `<name>.vpnuri.png` holds the `vpn://` link. The Amnezia VPN app expects `<name>.vpnuri.png`; do not scan `<name>.png` in it. More: [ADVANCED, import via vpn://](ADVANCED.en.md#vpnuri-adv).
+
+The installer does not print a QR code in the terminal; it saves the files. Copy them to your computer by running `scp` **on your own computer, not in the SSH session on the server** (PowerShell works on Windows):
 
 ```bash
 scp root@SERVER_IP:/root/awg/my_iphone.conf .
+scp root@SERVER_IP:/root/awg/my_iphone.vpnuri.png .
 ```
+
+With a non-standard SSH port, `scp` takes it as `-P` (capital P):
+
+```bash
+scp -P YOUR_SSH_PORT root@SERVER_IP:/root/awg/my_iphone.conf .
+```
+
+Where to import:
+
+- **Amnezia VPN app** (Windows, macOS, Linux, Android, iOS): "Add VPN", then "Scan QR code" for `<name>.vpnuri.png`, or "Paste from clipboard" with the link from `sudo cat /root/awg/my_iphone.vpnuri`.
+- **AmneziaWG client for Windows**: import `<name>.conf`.
+- **Linux**: put `<name>.conf` in place and bring it up with `awg-quick up`.
 
 Verify the handshake from the server side with `sudo awg show awg0` after the client connects. The `latest handshake` line should refresh every minute. If you need PresharedKey for Shadowrocket on iOS or macOS, add the `--psk` flag during `manage add`.
 
@@ -107,6 +127,16 @@ sudo bash /root/awg/manage_amneziawg.sh add phone --json --yes
 ```
 
 Per-command output formats and the compatibility promise: [ADVANCED.en.md JSON interface](ADVANCED.en.md#json-api-adv).
+
+## What next
+
+- Add or remove people: `add <name>`, `remove <name>`, `list`, `stats`.
+- Time-limited access: `add guest --expires=7d`.
+- Reissue a lost config: `regen <name>` (the keys stay the same). If a config leaked, revoke it instead: `remove <name>`, then `add <name>` and hand out the new file.
+- Back up before experiments: `backup`, and `restore` to go back.
+- Check server health: `check`.
+
+All of them run as `sudo bash /root/awg/manage_amneziawg.sh <command>`. Common next steps: [two-server cascade](CASCADE.en.md), [Russian sites through WARP](WARP-RU.en.md).
 
 ## Update flow
 
@@ -127,20 +157,42 @@ A normal `apt-get upgrade` will pull a new kernel from time to time. For DKMS-ba
 
 ## Uninstall
 
+🔴 **The irreversible part first.** Uninstalling wipes `/root/awg/` entirely, and with it the server keys and every client config. Clients you handed files to stop connecting. If you may need the server later, make a copy **before** uninstalling and take it off the machine: run `sudo bash /root/awg/manage_amneziawg.sh backup` on the server, then `scp root@SERVER_ADDRESS:/root/awg/backups/*.tar.gz .` on your own computer. The uninstaller also offers a backup and makes one by default, but it can be declined or fail (the uninstall then continues), and it stays on the same server.
+
+If the server runs the cascade or WARP, remove them first, following their own guides: [cascade](CASCADE.en.md#uninstall), [WARP](WARP-RU.en.md#uninstall).
+
+Then uninstall:
+
 ```bash
 sudo bash ./install_amneziawg_en.sh --uninstall
 ```
 
-The uninstall path is symmetric: it removes the AmneziaWG service, the kernel module via DKMS, the PPA, the AmneziaWG-specific UFW rules (reverting to the pre-install UFW state via a marker file), Fail2Ban jails, and `/root/awg/`, `/etc/amnezia/`. Manage script and shared library go too. Re-installing later starts from a clean slate.
+What `--uninstall` does:
+- stops and disables `awg-quick@awg0`, unloads the module, and removes the `amneziawg-ensure-module` unit, hook and log;
+- purges `amneziawg-dkms`, `amneziawg-tools` and `qrencode`, plus `fail2ban` only if the installer added it;
+- removes the PPA and its key, `/etc/apt/apt.conf.d/99-amneziawg-lock-timeout`, `/etc/amnezia/`, `/etc/modules-load.d/amneziawg.conf`, its sysctl files, `/etc/cron.d/awg-expiry`, its Fail2Ban jail, the DKMS registration and `/root/awg/`, including the backups in `/root/awg/backups/`;
+- in UFW removes the VPN port rule and the `awg0` forwarding rule; it turns UFW off only if the installer turned it on.
+
+What stays:
+- the uninstaller's archive `/root/awg_uninstall_backup_<date>.tar.gz` with every server and client key, and the log `/root/awg_uninstall.log`: archives accumulate, one per uninstall, so if you no longer need the server, copy the archive to your own machine and delete it from the server;
+- the dependencies: `dkms`, `build-essential`, `dpkg-dev`, kernel headers, `wireguard-tools`, `ufw`, plus `git`, `gcc-13` and `python3-systemd` if they were installed;
+- on ARM with a prebuilt module, the module package `amneziawg-kmod-*` itself;
+- `/swapfile` and its line in `/etc/fstab`;
+- packages removed during the install, which you have to reinstall by hand (`sudo apt install unattended-upgrades` and so on);
+- the SSH rule in UFW if UFW was active before the install, and rules you added yourself;
+- the sysctl values, until the next reboot.
+
+Re-installing later starts from a clean slate.
 
 ## Troubleshooting
 
 - **PPA 404 on Ubuntu 25.10 or 26.04.** Automatic fallback to noble since v5.13.0. If you are still on v5.12.x, upgrade the installer.
 - **DKMS build fails on stale kernel headers** (typical after `do-release-upgrade` 24.04 to 25.10). v5.13.0 detects stale headers (kernel version differs from the running kernel) and installs gcc-13 as a fallback compiler so DKMS autoinstall succeeds across the version mismatch. If DKMS still fails, `sudo bash /root/awg/manage_amneziawg.sh repair-module` forces a rebuild.
-- **Mobile carrier unstable or only connects on the third attempt.** On a new server, install with `--mobile` - it enables the mobile obfuscation preset and moves the port to 443/udp in one flag (carriers often drop unfamiliar UDP ports; an explicit `--port` wins if you pass both). On a running server that is a `--force --mobile` reinstall, after which every client config has to be reissued with `regen`; if the handshake never completes at all, read [the walkthrough](ADVANCED.en.md#no-hs-mobile-adv) first. Tested carriers (Russia): Yota (Moscow), Tele2 (Moscow), Tattelecom / Letai (Tatarstan), Beeline (default preset). Tele2 (Krasnoyarsk) and Megafon (regional networks) additionally need the I1 parameter removed. Full per-carrier table and the underlying Jc / Jmin / Jmax mechanics are in [ADVANCED.en.md FAQ](ADVANCED.en.md#faq-advanced-adv).
+- **Mobile carrier unstable or only connects on the third attempt.** On a new server, install with `--mobile` - it enables the mobile obfuscation preset and moves the port to 443/udp in one flag (carriers often drop unfamiliar UDP ports; an explicit `--port` wins if you pass both). On a running server that is a `--force --mobile` reinstall, after which every client config has to be reissued with `regen`; if the handshake never completes at all, read [the walkthrough](ADVANCED.en.md#no-hs-mobile-adv) first. Tested carriers (Russia): Yota (Moscow), Tele2 (Moscow), Tattelecom / Letai (Tatarstan), Beeline (default preset). Tele2 (Krasnoyarsk) needed `I1 = <r 48>` in May 2026, and Megafon (regional networks) needed I1 removed. Full per-carrier table and the underlying Jc / Jmin / Jmax mechanics are in [ADVANCED.en.md FAQ](ADVANCED.en.md#faq-advanced-adv).
 - **Handshake completes but no packets flow.** Almost always the AllowedIPs gotcha on a custom split-tunnel config. Cover the server subnet too, not just the destinations you want. See [ADVANCED.en.md AllowedIPs](ADVANCED.en.md#allowedips-adv).
 - **iPhone does not connect over cellular.** MTU issue. The installer sets `MTU = 1280` by default since v5.7.4; older configs need the line added manually. See [MTU and Mobile Clients](ADVANCED.en.md#mtu-mobile-adv).
 - **ARM prebuilt unavailable for your kernel.** The installer falls back to DKMS automatically since v5.12.1. If both fail, file an issue with `sudo bash ./install_amneziawg_en.sh --diagnostic` output.
+- **Nothing answers at all, not even SSH or ping.** That is not the VPN. Check the address itself, ideally from another network: if the whole address is unreachable, no obfuscation setting will help.
 
 ## Where to ask
 
@@ -150,6 +202,9 @@ The uninstall path is symmetric: it removes the AmneziaWG service, the kernel mo
 
 ## Related reading
 
+- [INSTALL_VPS.ru.md](INSTALL_VPS.ru.md) - the same guide in Russian.
+- [CASCADE.en.md](CASCADE.en.md) - two-server cascade: Russian traffic direct, the rest abroad.
+- [WARP-RU.en.md](WARP-RU.en.md) - Russian sites through Cloudflare WARP on the same server.
 - [Hetzner Community: Making a website accessible from restricted regions](https://community.hetzner.com/tutorials/making-website-accessible-from-restricted-regions) - Hetzner tutorial that references this installer.
 - [Pinggy: Top 5 Best Self-Hosted VPNs in 2026](https://pinggy.io/blog/top_5_best_self_hosted_vpns/) - third-party listing.
 - [VPN Status (RU): AmneziaWG catalog](https://vpnstatus.site/protocols/amneziawg) - Russian-language directory of AmneziaWG server-side options.

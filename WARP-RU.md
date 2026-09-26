@@ -362,6 +362,8 @@ ip route show table 200        # пусто
 
 Установку `amneziawg-installer` это не затрагивает: клиенты продолжают работать, весь трафик снова идёт прямым выходом.
 
+Если удаляете и сам установщик (`--uninstall`), сначала выполните шаги выше: установщик останавливает только `awg0`, а `warp.conf` лежит в `/etc/amnezia`, который он удаляет целиком, поэтому `awg-quick@warp` останется включённым без конфига, а модуль не выгрузится, пока поднят `warp`.
+
 ---
 
 Схему предложил [@alexfiu4-cyber](https://github.com/alexfiu4-cyber) в [#103](https://github.com/bivlked/amneziawg-installer/issues/103). Вопросы и улучшения - туда же или в [Issues](https://github.com/bivlked/amneziawg-installer/issues).

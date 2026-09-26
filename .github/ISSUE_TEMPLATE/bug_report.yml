@@ -50,10 +50,42 @@ body:
     id: script-version
     attributes:
       label: Script Version
-      description: Version of the script (shown in the log header or in the script file header comment).
+      description: "Run `sudo bash /root/awg/manage_amneziawg.sh help` - the version is in the first lines. If the install stopped before that file appeared, run `grep -m1 SCRIPT_VERSION= install_amneziawg*.sh` in the folder you started the installer from."
       placeholder: "e.g., 5.x.y"
     validations:
       required: true
+
+  - type: input
+    id: client-app
+    attributes:
+      label: Client app and version
+      placeholder: "e.g., AmneziaVPN 4.8.x on Android / AmneziaWG for Windows 2.0.x"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network where it fails
+      options:
+        - Home internet
+        - Mobile internet (name the carrier below)
+        - Both
+        - Other
+    validations:
+      required: false
+
+  - type: dropdown
+    id: routing
+    attributes:
+      label: Routing mode
+      options:
+        - All traffic (default)
+        - Amnezia list
+        - Custom list
+        - Not sure
+    validations:
+      required: false
 
   - type: input
     id: kernel-version

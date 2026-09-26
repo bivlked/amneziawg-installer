@@ -60,21 +60,26 @@ sudo bash ./install_amneziawg.sh
 
 > 📘 Полный гайд по развёртыванию: [Установка сервера AmneziaWG на VPS](INSTALL_VPS.ru.md) - выбор VPS, ARM, troubleshooting, удаление. [English version](INSTALL_VPS.md).
 
-> 🔐 Целостность: скрипт качается по HTTPS с `raw.githubusercontent.com` (тег закреплён), вспомогательные скрипты (`awg_common`, `manage`) проверяются по закреплённым SHA256-хешам. Релизы дополнительно подписываются detached-подписью minisign - как проверить, ниже в разделе [Проверка подписи](#proverka-podpisi); модель угроз в [SECURITY.md](SECURITY.md).
+> 🔐 Целостность: установщик скачивается по HTTPS из последнего релиза на GitHub. Проверить его до запуска можно подписью minisign: [Проверка подписи](#proverka-podpisi). Скрипты, которые он качает сам (`awg_common`, `manage`), он берёт с тега своей версии и сверяет с зашитыми в него SHA256-хешами, так что подпись установщика покрывает и их (если не переопределять `AWG_BRANCH`). Модель угроз - в [SECURITY.md](SECURITY.md) и [docs/SIGNING_DESIGN.md](docs/SIGNING_DESIGN.md).
 
 <details>
 <summary><strong>Что установщик меняет на сервере (прозрачность)</strong></summary>
 
-Скрипт получает root - вот краткий список того, что он делает с системой:
+Скрипт работает от root. Ниже основные изменения, которые он вносит в систему.
 
-- **Пакеты**: обновляет систему, ставит зависимости (amneziawg-tools, qrencode и т.д.); вычищает ненужное на VPN-сервере - в т.ч. `unattended-upgrades` (значит, обновления безопасности перестают ставиться автоматически) и `cloud-init`, если он не управляет сетью (полный список в [ADVANCED.md](ADVANCED.md)).
-- **Ядро**: подключает PPA Amnezia (GPG-ключ проверяется по полному отпечатку) и собирает модуль AmneziaWG через DKMS.
-- **Сеть**: sysctl - форвардинг, сетевые буферы, BBR (отдельными файлами в `/etc/sysctl.d/`); IPv6 на хосте по умолчанию выключается (оставить: `--allow-ipv6`); swap подгоняется под размер RAM.
-- **Защита**: UFW - входящие запрещены, SSH с rate-limit, открыт только UDP-порт VPN; Fail2Ban для SSH.
-- **Файлы и сервисы**: основные файлы в `/root/awg/` и `/etc/amnezia/amneziawg/` с правами 600/700; сервис `awg-quick@awg0`; крон автоудаления истёкших клиентов.
-- **Откат**: `--uninstall` убирает своё - модуль, конфиги, sysctl-файлы, кроны, UFW-правило VPN-порта и UFW-правило маршрутизации `awg0`. UFW отключает и Fail2Ban удаляет только если сам их включал/ставил; если UFW был активен до установки, добавленное правило SSH rate-limit остаётся. Не возвращает: swap и удалённые пакеты; пакеты-зависимости, которые он ставил (dkms, компилятор, заголовки ядра), остаются.
+- **Обновление системы.** `apt-get upgrade --with-new-pkgs`: пакеты он не удаляет, но новое ядро приехать может. Перед обновлением пишет `/etc/apt/apt.conf.d/99-amneziawg-lock-timeout` (ждать блокировку dpkg до 5 минут) и помечает установленными вручную пакеты, без которых сервер не загрузится или останется без сети (`udev`, `initramfs-tools`, `openssh-server`, `netplan.io` и другие).
+- **Удаление пакетов** - после вашего согласия: если снапов на сервере нет, Enter означает «да», а с `--yes` согласие считается данным; сохранить пакеты можно флагом `--keep-packages`. Удаляются `modemmanager`, `networkd-dispatcher`, `unattended-upgrades` (обновления безопасности перестают ставиться автоматически), `packagekit`, `udisks2`. На Ubuntu ещё `snapd` вместе с `/snap`, `/var/snap`, `/var/lib/snapd` и `lxd-agent-loader`. `cloud-init` с `/etc/cloud` и `/var/lib/cloud` удаляется, только если он не управляет сетью.
+- **Установка пакетов.** `curl`, `wget`, `gpg`, `sudo`, `amneziawg-dkms`, `amneziawg-tools`, `wireguard-tools`, `dkms`, `build-essential`, `dpkg-dev`, `qrencode`, заголовки ядра, `ufw`, `fail2ban` (на Debian ещё `python3-systemd`). Если модуль 2.0 собирается из исходников, ставится `git`; при устаревших заголовках ядра ставится `gcc-13`. На части ARM вместо сборки ставится готовый пакет модуля из релиза `arm-packages`.
+- **Репозиторий.** PPA Amnezia: `/etc/apt/sources.list.d/amnezia-ppa.sources` (на Debian 12 `.list`) и ключ `/etc/apt/keyrings/amnezia-ppa.gpg`. Ключ встроен в установщик, сверяется по полному отпечатку и действует только для этого репозитория.
+- **Модуль ядра.** `amneziawg` собирается через DKMS и загружается при старте (`/etc/modules-load.d/amneziawg.conf`). После обновления ядра модуль пересобирается сам: за это отвечают `/usr/local/sbin/amneziawg-ensure-module`, apt-хук `/etc/apt/apt.conf.d/99-amneziawg-post-kernel` и юнит `amneziawg-ensure-module.service`, журнал - `/var/log/amneziawg-ensure-module.log`. На ARM с готовым пакетом этой обвязки нет: после смены ядра установщик нужно запустить ещё раз.
+- **sysctl**, файл `/etc/sysctl.d/99-amneziawg-security.conf`: форвардинг, выключение IPv6 на хосте (оставить - флаг `--allow-ipv6`), BBR, буферы по объёму памяти, `rp_filter = 2`, запрет redirect, SYN cookies, `vm.swappiness = 10`, `net.netfilter.nf_conntrack_max = 65536`, `kernel.sysrq = 0`, `kernel.printk = 3 4 1 3`.
+- **Swap.** Если swap меньше 1 ГБ (при памяти до 2 ГБ) или меньше 512 МБ (при большем объёме), создаётся `/swapfile` со строкой в `/etc/fstab`.
+- **Фаервол.** UFW: входящие запрещены, SSH с ограничением частоты на найденном порту (порт можно задать флагом `--ssh-port`), открыт UDP-порт VPN, правило пересылки `awg0` -> внешний интерфейс. Если UFW ещё не включён, установщик спрашивает, включать ли его (с `--yes` включает сам). Fail2Ban защищает SSH, его настройки в `/etc/fail2ban/jail.d/amneziawg.conf`. **Настройки SSH-сервера установщик не меняет.**
+- **VPN.** Серверный конфиг `/etc/amnezia/amneziawg/awg0.conf` с правилами `iptables` в `PostUp`, сервис `awg-quick@awg0`, каталог `/root/awg/` (ключи, конфиги клиентов, журнал, скрипты управления) с правами 700/600, cron `/etc/cron.d/awg-expiry` для клиентов со сроком действия.
+- **Перезагрузки.** Их две: после обновления системы и после установки модуля. После каждой запустите ту же команду снова.
+- **Откат**: `--uninstall` убирает своё - модуль, конфиги, sysctl-файлы, кроны, UFW-правило VPN-порта и UFW-правило маршрутизации `awg0`. UFW отключает и Fail2Ban удаляет только если сам их включал/ставил; если UFW был активен до установки, добавленное правило SSH rate-limit остаётся. Не возвращает: swap и удалённые пакеты; пакеты-зависимости, которые он ставил (dkms, компилятор, заголовки ядра), остаются. По умолчанию, в том числе с `--yes`, перед удалением создаётся архив `/root/awg_uninstall_backup_*.tar.gz` с конфигами и приватными ключами; он остаётся на сервере, удалите его сами, когда он станет не нужен.
 
-Пошаговые детали - в [ADVANCED.md](ADVANCED.md), модель угроз - в [SECURITY.md](SECURITY.md).
+Флаг `--no-tweaks` оставляет пакеты, swap, sysctl-hardening, UFW и Fail2Ban как есть. Форвардинг включается всё равно, в файле `/etc/sysctl.d/99-amneziawg-forwarding.conf`, и там же выключается IPv6 на хосте, если не передать `--allow-ipv6`; обновление системы идёт как обычно. Что остаётся после удаления - в [INSTALL_VPS.ru.md](INSTALL_VPS.ru.md#uninstall), модель угроз - в [SECURITY.md](SECURITY.md), проверка подписи - в разделе [Проверка подписи](#proverka-podpisi).
 </details>
 
 <details>
@@ -330,7 +335,7 @@ cat /sys/module/amneziawg/version    # версия загруженного м�
 - Большой или неограниченный трафик и канал от 1 Гбит/с.
 - Поддержка нужной ОС (Ubuntu 24.04 LTS, 26.04 или Debian 13; 25.10 и Debian 12 тоже работают) и root-доступ.
 
-Опробовал и рекомендую [**FreakHosting**](https://freakhosting.com/clientarea/aff.php?aff=392). В частности, их линейка **BUDGET VPS** предлагает отличное соотношение цены и качества.
+Опробовал и рекомендую [**FreakHosting**](https://freakhosting.com/clientarea/aff.php?aff=392). В частности, их линейка **BUDGET VPS** предлагает отличное соотношение цены и качества. Это партнёрская ссылка: при заказе по ней я получаю небольшой процент, для вас цена та же.
 
 Их IP-адреса не идентифицируются, как адреса датацентров и не попадают под блокировки по признаку «IP принадлежит хостинг-провайдеру» (в отличие, например, от Azure и некоторых крупных облаков).
 
@@ -613,19 +618,28 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 <details>
   <summary><strong>В: Как обновить скрипты до новой версии?</strong></summary>
-  <b>О:</b> Скачайте новый скрипт установки и замените скрипты управления на сервере:
+  <b>О:</b> Переустановка сервера не нужна: достаточно заменить два скрипта в <code>/root/awg/</code>. Скачайте их во временную папку, проверьте подпись и только потом замените (нужен <code>minisign</code>: <code>sudo apt install minisign</code>). Прямой <code>wget -O</code> поверх рабочего файла при сбое скачивания оставил бы пустой файл.
   <pre>
-  # Русская версия:
-  wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg.sh
-  wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common.sh
-  chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
-
-  # Английская версия:
-  wget -O /root/awg/manage_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/manage_amneziawg_en.sh
-  wget -O /root/awg/awg_common.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/awg_common_en.sh
-  chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
+  cd "$(mktemp -d)"
+  KEY=RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN
+  M=manage_amneziawg.sh C=awg_common.sh   # английская версия: M=manage_amneziawg_en.sh C=awg_common_en.sh
+  ok=1 tag=
+  for f in "$M" "$C"; do
+    wget -q -O "$f"         "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f" \
+      && wget -q -O "$f.minisig" "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f.minisig" \
+      && out=$(minisign -V -P "$KEY" -m "$f" -x "$f.minisig") \
+      && t=$(printf '%s\n' "$out" | sed -n "s/^Trusted comment: amneziawg-installer \(v[0-9.]*\) $f\$/\1/p") \
+      && [ -n "$t" ] && [ "${tag:-$t}" = "$t" ] || { echo "НЕ ПРОВЕРЕН: $f"; ok=0; break; }
+    tag=$t
+  done
+  [ "$ok" = 1 ] && { old=$(sudo sed -n 's/^SCRIPT_VERSION="\(.*\)"/v\1/p' /root/awg/manage_amneziawg.sh) && [ -n "$old" ] \
+    || { echo "НЕ ПРОВЕРЕН: не удалось прочитать установленную версию из /root/awg/manage_amneziawg.sh"; ok=0; }; }
+  [ "$ok" = 1 ] && [ "$(printf '%s\n' "$old" "$tag" | sort -V | tail -1)" != "$tag" ] \
+    && { echo "НЕ ПРОВЕРЕН: релиз $tag старше установленного $old"; ok=0; }
+  [ "$ok" = 1 ] && { sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
+    && sudo install -m 700 "$C" /root/awg/awg_common.sh && echo "Установлен проверенный релиз $tag" || echo "НЕ УСТАНОВЛЕН до конца: запустите блок ещё раз"; }
   </pre>
-  Переустановка сервера не требуется.
+  Если скрипт напечатал «НЕ ПРОВЕРЕН», рабочие файлы не тронуты; «НЕ УСТАНОВЛЕН до конца» значит, что заменены не оба файла, и блок нужно запустить ещё раз. Если установленный `manage` старше v5.7.0, строки версии в нём нет и блок откажет: такой сервер обновляйте новым установщиком с `--force`. Блок принимает только пару файлов из одного релиза и не старше уже установленного, поэтому подменённая ссылка на последний релиз не откатит скрипты на старые подписанные версии. Номер проверенного релиза он печатает: сверьте его со <a href="https://github.com/bivlked/amneziawg-installer/releases">страницей релизов</a>.
   <br><br>
   С v5.21.0 пара скриптов защищена от рассинхрона: обновили manage, а awg_common забыли (или наоборот), и версии разошлись - скрипт остановится и покажет, какими командами докачать вторую половину, вместо странных ошибок посреди работы.
 </details>
