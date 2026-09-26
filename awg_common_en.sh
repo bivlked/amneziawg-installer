@@ -1449,7 +1449,11 @@ _load_awg_params_from_server_conf_body() {
 load_awg_params() {
     # 1. Base settings from init (always, for non-AWG keys)
     if [[ -f "$CONFIG_FILE" ]]; then
+        # An apply mode set before the call (--apply-mode or the environment)
+        # wins over the one saved in init: otherwise init would override it.
+        local _apply_mode_keep="${AWG_APPLY_MODE:-}"
         safe_load_config "$CONFIG_FILE" || log_warn "Failed to load $CONFIG_FILE"
+        [[ -z "$_apply_mode_keep" ]] || export AWG_APPLY_MODE="$_apply_mode_keep"
     fi
 
     # Where the AWG parameters come from: the I1-I5 refusal names this file as
@@ -3329,6 +3333,13 @@ apply_config() {
         fi
     fi
 
+    # No mode from an option or the environment (remove and cron do not load
+    # init) - take the one saved in init with the same parser load_awg_params
+    # uses. It runs in a subshell, so the other init keys do not leak in here.
+    local AWG_APPLY_MODE="${AWG_APPLY_MODE:-}"
+    if [[ -z "$AWG_APPLY_MODE" && -f "$CONFIG_FILE" ]]; then
+        AWG_APPLY_MODE=$(safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${AWG_APPLY_MODE:-}")
+    fi
     if [[ "${AWG_APPLY_MODE:-syncconf}" == "restart" ]]; then
         # An explicit restart mode drops client connections, SSH through the
         # tunnel included, so warn exactly as manage restart does.
