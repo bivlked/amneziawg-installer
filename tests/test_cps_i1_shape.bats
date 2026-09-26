@@ -570,6 +570,35 @@ shaped() {  # shaped <value> -> prints yes/no
     done
 }
 
+@test "cps i1 shaped: a space inside a length does not hang the check" {
+    # 🔴 The digit check in the r/rc/rd branch is itself a `[[ =~ ]]` and
+    # clobbers BASH_REMATCH. The string used to be advanced AFTER the case, by
+    # that clobbered match: for `<r 1 0>` it was `10`, which does not occur in
+    # the text, so the string never got shorter and `manage diagnose` hung
+    # forever on such an I1. The size and safety checks both let the value
+    # through, so nothing stops it earlier. `timeout` turns a hang into 124.
+    # The literal carries no `10` on purpose: with one in it, the old code cut
+    # the string inside the hex and gave a wrong answer instead of hanging.
+    local lib v
+    for lib in "$COMMON" "${BATS_TEST_DIRNAME}/../awg_common_en.sh"; do
+        for v in '<b 0x8580000200020000000003646e730669636c6f756403636f6d0000020002c00c><r 1 0>' \
+                 '<r 1 0><b 0x8580000200020000000003646e730669636c6f756403636f6d0000020002c00c>'; do
+            run timeout 5 bash -c 'source "$1" >/dev/null 2>&1 || true; awg_cps_is_shaped "$2"' _ "$lib" "$v"
+            if [ "$status" -eq 124 ]; then
+                echo "awg_cps_is_shaped hung on $v (${lib##*/})"
+                false
+            fi
+            # The right answer, not merely an answer: a DNS-shaped literal plus
+            # a random tail is shaped (0), the same as with <r 10>. Checking only
+            # for 0 or 1 let a wrong answer of the same class through.
+            if [ "$status" -ne 0 ]; then
+                echo "status $status on $v (${lib##*/}), expected 0 as for <r 10>: $output"
+                false
+            fi
+        done
+    done
+}
+
 @test "cps i1: answer addresses are not pinned to a constant" {
     # 🔴 A mutation that pinned the middle octets to zero survived the first
     # version of this file: every server in the fleet would have answered

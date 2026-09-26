@@ -3543,7 +3543,8 @@ EOF
 # Detect the real SSH port(s) so the UFW rule does not lock you out.
 # Without this, ufw limit 22/tcp + default deny incoming cuts server access
 # after ufw enable when SSH runs on a non-standard port (Issue #91).
-# Self-contained: called at step 4, BEFORE awg_common.sh is sourced.
+# Self-contained: called at step 4, BEFORE awg_common.sh is sourced
+# (and at step 0 to check the --ssh-port value).
 # Sources:
 #   1. CLI_SSH_PORT (--ssh-port=, manual override, comma-separated list) - authoritative
 #   otherwise UNION (not fallback - so we never miss the real port):
@@ -3552,6 +3553,7 @@ EOF
 #   4. /etc/ssh/sshd_config + sshd_config.d/*.conf (parsing, only if 2-3 are empty)
 #   5. 22 (default, if nothing is found)
 # Prints unique valid ports (1-65535) space-separated to stdout.
+# A --ssh-port value without a single valid port: empty output and status 1.
 # IMPORTANT: only log_warn/log_error (stderr) inside; log() writes to stdout
 # and would corrupt the $(detect_ssh_ports) capture.
 detect_ssh_ports() {
@@ -3588,8 +3590,10 @@ detect_ssh_ports() {
 
     # Validate (decimal 1-65535, 10# guards against octal) + dedup preserving order
     for p in $ports; do
-        if [[ "$p" =~ ^[0-9]+$ ]]; then
-            pp=$((10#$p))
+        # At most five significant digits BEFORE any arithmetic: $((10#...)) wraps
+        # modulo 2^64, and 18446744073709551638 became 22. Leading zeros are fine.
+        if [[ "$p" =~ ^0*([0-9]{1,5})$ ]]; then
+            pp=$((10#${BASH_REMATCH[1]}))
             if (( pp >= 1 && pp <= 65535 )); then
                 case " $valid " in
                     *" $pp "*) ;;
@@ -3601,7 +3605,14 @@ detect_ssh_ports() {
 
     # 5. Default if detection produced nothing valid
     if [[ -z "$valid" ]]; then
-        [[ -n "$CLI_SSH_PORT" ]] && log_warn "--ssh-port has no valid ports, falling back to 22."
+        # A --ssh-port value without a single valid port is a refusal, not 22:
+        # the flag exists precisely for a non-standard SSH port, and silently
+        # using 22 while enabling UFW would lock the user out. Auto-detection
+        # did not run here.
+        if [[ -n "$CLI_SSH_PORT" ]]; then
+            log_error "--ssh-port='${CLI_SSH_PORT}' contains no valid port (1-65535). UFW will not be enabled with port 22 - fix --ssh-port."
+            return 1
+        fi
         valid="22"
     fi
     printf '%s' "$valid"
@@ -3620,7 +3631,9 @@ setup_improved_firewall() {
 
     # Detect the real SSH port(s) so we do not lock out access on a non-standard port (Issue #91)
     local ssh_ports _sp
-    ssh_ports=$(detect_ssh_ports)
+    # A --ssh-port parse failure stops here, before any ufw call (including
+    # the old port rule removal below).
+    ssh_ports=$(detect_ssh_ports) || die "Invalid --ssh-port: '${CLI_SSH_PORT}'. UFW setup stopped, no rules were changed."
     log "SSH port(s) for the UFW rule: ${ssh_ports}"
 
     # Port change on reinstall: delete the old port's rule before adding the
@@ -3810,7 +3823,13 @@ check_service_status() {
     # timeout: re-running the installer over a server with hand-inflated
     # I1-I5 would otherwise hang here forever (#228). The failure below is
     # already loud.
-    if ! timeout 10 awg show 2>/dev/null | grep -q "interface: awg0"; then
+    # Read the awg show output (and ss below) from a variable, not through a
+    # pipe: grep -q quits at the first match, the interface line is printed
+    # first, and with hundreds of peers the next write of awg gets SIGPIPE -
+    # under pipefail the check refused on a working interface.
+    local _show_all _show_awg0 _ss_out
+    _show_all=$(timeout 10 awg show 2>/dev/null) || _show_all=""
+    if ! grep -qF -- "interface: awg0" <<< "$_show_all"; then
         log_error "awg show cannot see interface!"
         ok=0
     fi
@@ -3823,14 +3842,16 @@ check_service_status() {
         port_check=${port_check:-0}
     fi
     if [[ "$port_check" -ne 0 ]]; then
-        if ! ss -lunp | grep -q ":${port_check} "; then
+        _ss_out=$(ss -lunp) || _ss_out=""
+        if ! grep -qF -- ":${port_check} " <<< "$_ss_out"; then
             log_error "Port $port_check/udp is not listening!"
             ok=0
         fi
     fi
 
     # AWG 2.0 parameter check
-    if timeout 10 awg show awg0 2>/dev/null | grep -q "jc:"; then
+    _show_awg0=$(timeout 10 awg show awg0 2>/dev/null) || _show_awg0=""
+    if grep -qF -- "jc:" <<< "$_show_awg0"; then
         log "AWG 2.0 parameters active."
     else
         log_warn "AWG 2.0 parameters not detected in awg show."
@@ -4546,6 +4567,13 @@ initialize_setup() {
         fi
         AWG_ENDPOINT=$CLI_ENDPOINT
     fi
+    # --ssh-port is checked at step 0: otherwise a value without a single valid
+    # port would only surface at step 4, after package upgrades and reboots. With the flag set, detect_ssh_ports probes
+    # nothing and only parses the value.
+    if [[ -n "$CLI_SSH_PORT" ]]; then
+        detect_ssh_ports >/dev/null \
+            || die "Invalid --ssh-port: '$CLI_SSH_PORT'. Give the SSH port as a number 1-65535, several separated by commas (--ssh-port=2222 or --ssh-port=22,2222)."
+    fi
     if [[ "$CLI_NO_TWEAKS" -eq 1 ]]; then NO_TWEAKS=1; fi
     if [[ "$CLI_KEEP_PACKAGES" -eq 1 ]]; then KEEP_PACKAGES=1; fi
 
@@ -4741,7 +4769,9 @@ initialize_setup() {
     mkdir -p "$cfg_dir" 2>/dev/null
     temp_conf=$(mktemp -p "$cfg_dir") || die "mktemp error."
     _install_temp_files+=("$temp_conf")
-    cat > "$temp_conf" << EOF
+    # The write status is checked: on ENOSPC/EFBIG a truncated temp would otherwise
+    # replace the working init, and the next run would regenerate the obfuscation set.
+    cat > "$temp_conf" << EOF || { rm -f "$temp_conf"; die "Error writing settings to $temp_conf, $CONFIG_FILE left unchanged"; }
 # AmneziaWG 2.0 installation configuration (Auto-generated)
 # Used by installation and management scripts
 export OS_ID='${OS_ID:-ubuntu}'

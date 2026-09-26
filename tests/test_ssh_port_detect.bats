@@ -67,11 +67,52 @@ setup() {
     [ "$output" = "22 2222" ]
 }
 
-@test "RU detect: invalid-only input falls back to 22" {
+# An explicit --ssh-port without a single valid port is refused (status 1,
+# empty output) instead of silently becoming 22: setup_improved_firewall would
+# otherwise enable UFW with `limit 22/tcp` only and lock out SSH on the real
+# custom port. Mixed lists still keep their valid ports (next test).
+@test "RU detect: invalid-only --ssh-port is refused, not replaced by 22" {
     _load_detect_fn "$RU_SCRIPT"
-    CLI_SSH_PORT="99999"
-    run detect_ssh_ports
-    [ "$output" = "22" ]
+    local v
+    for v in 99999 222222 abc 2222/tcp '2222;2223' ','; do
+        CLI_SSH_PORT="$v"
+        run detect_ssh_ports
+        if [ "$status" -eq 0 ]; then echo "'$v': status 0, output '$output'"; return 1; fi
+        if [ -n "$output" ]; then echo "'$v': non-empty output '$output'"; return 1; fi
+    done
+}
+
+@test "EN detect: invalid-only --ssh-port is refused, not replaced by 22" {
+    _load_detect_fn "$EN_SCRIPT"
+    local v
+    for v in 99999 222222 abc 2222/tcp '2222;2223' ','; do
+        CLI_SSH_PORT="$v"
+        run detect_ssh_ports
+        if [ "$status" -eq 0 ]; then echo "'$v': status 0, output '$output'"; return 1; fi
+        if [ -n "$output" ]; then echo "'$v': non-empty output '$output'"; return 1; fi
+    done
+}
+
+# A long string of digits must be refused before any arithmetic: $((10#...))
+# wraps modulo 2^64, so 18446744073709551638 became 22 and 18446744073709551617
+# became 1 - the silent 22 again, through overflow. Leading zeros still work.
+@test "RU+EN detect: overflowing --ssh-port is refused, leading zeros still parse" {
+    local script v
+    for script in "$RU_SCRIPT" "$EN_SCRIPT"; do
+        _load_detect_fn "$script"
+        for v in 18446744073709551638 18446744073709551617 100022 0000000000000000000000; do
+            CLI_SSH_PORT="$v"
+            run detect_ssh_ports
+            if [ "$status" -eq 0 ]; then echo "$script '$v': status 0, output '$output'"; return 1; fi
+            if [ -n "$output" ]; then echo "$script '$v': non-empty output '$output'"; return 1; fi
+        done
+        CLI_SSH_PORT="2222,18446744073709551638"
+        run detect_ssh_ports
+        if [ "$output" != "2222" ]; then echo "$script mixed with overflow: '$output'"; return 1; fi
+        CLI_SSH_PORT="0000000000000000000022"
+        run detect_ssh_ports
+        if [ "$output" != "22" ]; then echo "$script leading zeros: '$output'"; return 1; fi
+    done
 }
 
 @test "RU detect: mixed valid+invalid keeps only valid" {
@@ -88,10 +129,12 @@ setup() {
     [ "$output" = "65535" ]
     CLI_SSH_PORT="65536"
     run detect_ssh_ports
-    [ "$output" = "22" ]
+    [ "$status" -ne 0 ]
+    [ "$output" = "" ]
     CLI_SSH_PORT="0"
     run detect_ssh_ports
-    [ "$output" = "22" ]
+    [ "$status" -ne 0 ]
+    [ "$output" = "" ]
 }
 
 # ---------------------------------------------------------------------------
@@ -215,6 +258,82 @@ _fw_mocks() {
     [ "$status" -eq 0 ]
     grep -q 'limit 2222/tcp' "$UFW_CALLS"
     run ! grep -q 'limit 22/tcp' "$UFW_CALLS"
+}
+
+# An --ssh-port value without a single valid port must stop the firewall setup
+# before ANY ufw call. Before the fix it became 22 with a warning only, and
+# with --yes on an inactive UFW the installer ran `default deny incoming`,
+# `limit 22/tcp` and `--force enable` - SSH on 2222 was cut off. die is
+# redefined to exit, as the real one does (the _fw_mocks stub only returns 1).
+_assert_bad_ssh_port_stops_ufw() {
+    _load_fw_fns "$1"
+    _fw_mocks
+    die() { echo "DIE: $*"; exit 1; }
+    export -f die
+    CLI_SSH_PORT='2222/tcp'
+    PREV_AWG_PORT=40000
+    CONFIG_FILE="$BATS_TEST_TMPDIR/awgsetup_cfg.init"
+    : > "$CONFIG_FILE"
+    export CLI_SSH_PORT PREV_AWG_PORT CONFIG_FILE
+    run bash -c 'setup_improved_firewall < /dev/null'
+    if grep -qx -- '--force enable' "$UFW_CALLS"; then
+        echo "UFW enabled despite invalid --ssh-port; ufw calls:"; cat "$UFW_CALLS"; return 1
+    fi
+    if grep -q 'limit 22/tcp' "$UFW_CALLS"; then
+        echo "limit 22/tcp applied for --ssh-port=2222/tcp; ufw calls:"; cat "$UFW_CALLS"; return 1
+    fi
+    if grep -qx 'default deny incoming' "$UFW_CALLS"; then
+        echo "default deny incoming applied; ufw calls:"; cat "$UFW_CALLS"; return 1
+    fi
+    if [ -s "$UFW_CALLS" ]; then
+        echo "ufw was called before the refusal:"; cat "$UFW_CALLS"; return 1
+    fi
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"DIE: "*"--ssh-port"* ]]
+}
+
+@test "RU integration: --ssh-port without a valid port stops before any ufw call" {
+    _assert_bad_ssh_port_stops_ufw "$RU_SCRIPT"
+}
+
+@test "EN integration: --ssh-port without a valid port stops before any ufw call" {
+    _assert_bad_ssh_port_stops_ufw "$EN_SCRIPT"
+}
+
+# Step 0 checks --ssh-port, so a broken value stops the run before package
+# upgrades and reboots rather than at step 4. initialize_setup is too large to
+# run in a unit test: check that its body holds the guard, then run that guard
+# with the real detect_ssh_ports and an exiting die.
+@test "initialize_setup RU/EN: step 0 refuses --ssh-port without a valid port" {
+    local script body guard
+    for script in "$RU_SCRIPT" "$EN_SCRIPT"; do
+        body=$(sed -n '/^initialize_setup() {/,/^}/p' "$script")
+        guard=$(awk '/^    if \[\[ -n "\$CLI_SSH_PORT" \]\]; then$/,/^    fi$/' <<< "$body")
+        if [[ "$guard" != *'detect_ssh_ports >/dev/null'* || "$guard" != *'|| die '* ]]; then
+            echo "no --ssh-port check via detect_ssh_ports inside initialize_setup of $script"; return 1
+        fi
+        # The point of the step 0 check is to stop BEFORE the init file is
+        # written and the install moves on to upgrades and reboots.
+        local gl wl
+        gl=$(grep -n 'detect_ssh_ports >/dev/null' <<< "$body" | head -1 | cut -d: -f1)
+        wl=$(grep -n 'cat > "\$temp_conf" << EOF' <<< "$body" | head -1 | cut -d: -f1)
+        if [ -z "$gl" ] || [ -z "$wl" ] || [ "$gl" -ge "$wl" ]; then
+            echo "$script: --ssh-port check (line ${gl:-?}) is not before the init write (line ${wl:-?})"; return 1
+        fi
+        _load_detect_fn "$script"
+        die() { echo "DIE: $*"; exit 1; }
+        export -f detect_ssh_ports die
+        export GUARD="$guard"
+        export CLI_SSH_PORT='2222/tcp'
+        run bash -c 'eval "$GUARD"; echo passed'
+        if [ "$status" -eq 0 ]; then echo "$script: step 0 guard let 2222/tcp through: $output"; return 1; fi
+        export CLI_SSH_PORT='2222,abc'
+        run bash -c 'eval "$GUARD"; echo passed'
+        if [ "$status" -ne 0 ] || [ "$output" != "passed" ]; then echo "$script: step 0 guard refused 2222,abc: $output"; return 1; fi
+        export CLI_SSH_PORT=''
+        run bash -c 'eval "$GUARD"; echo passed'
+        if [ "$status" -ne 0 ] || [ "$output" != "passed" ]; then echo "$script: step 0 guard fired on empty flag: $output"; return 1; fi
+    done
 }
 
 # ---------------------------------------------------------------------------

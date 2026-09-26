@@ -1427,7 +1427,11 @@ _load_awg_params_from_server_conf_body() {
 load_awg_params() {
     # 1. Базовые настройки из init (всегда, для не-AWG ключей)
     if [[ -f "$CONFIG_FILE" ]]; then
+        # Режим применения, заданный до вызова (--apply-mode или окружение),
+        # важнее сохранённого в init: иначе init затирал бы явный выбор.
+        local _apply_mode_keep="${AWG_APPLY_MODE:-}"
         safe_load_config "$CONFIG_FILE" || log_warn "Не удалось загрузить $CONFIG_FILE"
+        [[ -z "$_apply_mode_keep" ]] || export AWG_APPLY_MODE="$_apply_mode_keep"
     fi
 
     # Откуда пришли AWG-параметры: этим файлом отказ по I1-I5 называет место
@@ -2926,15 +2930,21 @@ awg_cps_decoded_size() {
 #
 # Возвращает 0, если структура есть.
 awg_cps_is_shaped() {
-    local s="${1:-}" rest tag n lit=0 rnd_max=0
+    local s="${1:-}" rest mat tag n lit=0 rnd_max=0
     [[ -n "$s" ]] || return 1
     # Разбирается целиком: код 2 означает «встретилось неразобранное», и такой
     # тег обе реализации отвергнут - интерфейс не поднимется.
     awg_cps_decoded_size "$s" >/dev/null 2>&1 || return 1
     rest="$s"
     while [[ "$rest" =~ \<[[:space:]]*([a-zA-Z]+)[[:space:]]*([^\>]*)\> ]]; do
+        # Совпадение сохраняем и строку продвигаем ДО case: `[[ =~ ]]` в ветке
+        # r/rc/rd затирает BASH_REMATCH, и продвижение по затёртому совпадению
+        # не укорачивало строку. На `<r 1 0>` цикл тогда не завершался, и
+        # diagnose зависал.
+        mat="${BASH_REMATCH[0]}"
         tag="${BASH_REMATCH[1],,}"
         n="${BASH_REMATCH[2]//[[:space:]]/}"
+        rest="${rest#*"$mat"}"
         case "$tag" in
             b)
                 n="${n#0x}"; n="${n#0X}"
@@ -2947,7 +2957,6 @@ awg_cps_is_shaped() {
             t) : ;;
             *) return 1 ;;
         esac
-        rest="${rest#*"${BASH_REMATCH[0]}"}"
     done
     # Ни одного случайного куска длиннее метки DNS и не меньше тридцати
     # литеральных байт структуры.
@@ -3284,6 +3293,13 @@ apply_config() {
         fi
     fi
 
+    # Режим не задан ни опцией, ни окружением (remove и cron init не загружают) -
+    # берём сохранённый в init тем же разборщиком, что и load_awg_params. Разбор
+    # в подоболочке: остальные ключи init сюда не попадают.
+    local AWG_APPLY_MODE="${AWG_APPLY_MODE:-}"
+    if [[ -z "$AWG_APPLY_MODE" && -f "$CONFIG_FILE" ]]; then
+        AWG_APPLY_MODE=$(safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${AWG_APPLY_MODE:-}")
+    fi
     if [[ "${AWG_APPLY_MODE:-syncconf}" == "restart" ]]; then
         # Явный restart-режим рвёт соединения клиентов, в том числе SSH через
         # туннель, поэтому предупреждаем так же, как при manage restart.

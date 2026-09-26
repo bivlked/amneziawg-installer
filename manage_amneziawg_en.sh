@@ -36,6 +36,7 @@ VERBOSE_LIST=0
 JSON_OUTPUT=0
 CLI_CARRIER=""
 EXPIRES_DURATION=""
+CLI_ADD_EXPIRES_SEEN=0
 
 # --- Auto-cleanup of temporary files and directories ---
 # _manage_temp_dirs holds mktemp -d paths for backup/restore.
@@ -199,7 +200,7 @@ while [[ $# -gt 0 ]]; do
         -v|--verbose)      VERBOSE_LIST=1; shift ;;
         --no-color)        NO_COLOR=1; shift ;;
         --json)            JSON_OUTPUT=1; shift ;;
-        --expires=*)       EXPIRES_DURATION="${1#*=}"; shift ;;
+        --expires=*)       EXPIRES_DURATION="${1#*=}"; CLI_ADD_EXPIRES_SEEN=1; shift ;;
         --conf-dir=*)      AWG_DIR="${1#*=}"; shift ;;
         --server-conf=*)   SERVER_CONF_FILE="${1#*=}"; shift ;;
         --apply-mode=*)
@@ -975,6 +976,36 @@ restore_backup() {
         cp -a "$td/expiry/"* "${EXPIRY_DIR:-$AWG_DIR/expiry}/" 2>/dev/null || true
         chmod 600 "${EXPIRY_DIR:-$AWG_DIR/expiry}"/* 2>/dev/null
     fi
+    # An expiry stamp with no counterpart in the archive, for a client that IS
+    # in the archive, is left over from the current state (a same-named client
+    # created after the backup): without cleanup a client that is permanent in
+    # the backup would inherit someone else's deadline and be deleted by cron.
+    # Only stamps of names from the restored awg0.conf that are absent from the
+    # archive's expiry/ (or when the archive has no expiry/ at all) are removed;
+    # stamps of nonexistent clients are left alone (see C11 above), and so are
+    # stamps from the archive.
+    # Names come from sed, not from a loop over the lines: under bash -x such a
+    # loop would print the server config PrivateKey line into the trace.
+    local _exp_names _exp_name _exp_stamp
+    _exp_names=$(sed -n 's/^#_Name = //p' "$td/server/$_srv_base")
+    while IFS= read -r _exp_name; do
+        [[ "$_exp_name" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
+        _exp_stamp="${EXPIRY_DIR:-$AWG_DIR/expiry}/$_exp_name"
+        if [[ -e "$td/expiry/$_exp_name" ]]; then
+            # The archive's stamp must actually land: the cp above is
+            # best-effort, and if it failed the client would keep the current,
+            # someone else's deadline.
+            if ! cmp -s "$td/expiry/$_exp_name" "$_exp_stamp"; then
+                log_error "The expiry stamp of client '$_exp_name' from the archive was not restored to $_exp_stamp - starting rollback."
+                return 1
+            fi
+            continue
+        fi
+        if ! rm -f "$_exp_stamp" 2>/dev/null || [[ -e "$_exp_stamp" || -L "$_exp_stamp" ]]; then
+            log_error "Could not remove the expiry stamp $_exp_stamp: client '$_exp_name', permanent in the backup, would inherit someone else's deadline - starting rollback."
+            return 1
+        fi
+    done <<< "$_exp_names"
     if [[ -f "$td/awg-expiry" ]]; then
         cp -a "$td/awg-expiry" /etc/cron.d/awg-expiry
         chmod 644 /etc/cron.d/awg-expiry
@@ -1438,7 +1469,13 @@ check_server() {
             log_warn " - Failed to determine port."
         fi
     else
-        if ! ss -lunp | grep -q ":${port} "; then
+        # Capture the whole ss output first: in a `ss | grep -q` pipeline under
+        # pipefail grep exited on the first match, ss got SIGPIPE, and a port
+        # that was found read as "not listening". A failure of ss itself still
+        # means "not listening", as before.
+        local _ss_out _ss_rc=0
+        _ss_out=$(ss -lunp) || _ss_rc=$?
+        if (( _ss_rc != 0 )) || ! grep -qF -- ":${port} " <<< "$_ss_out"; then
             log_error " - Port ${port}/udp is NOT listening!"
             ok=0
         else
@@ -2486,6 +2523,13 @@ case $COMMAND in
         # bad format (--expires=bad) created permanent clients while
         # set_client_expiry failed silently per-client - a temporary client
         # quietly became permanent. A bad format now aborts before any change.
+        # An empty --expires= (a bot with an empty variable) is refused on "the
+        # flag was seen", like --allowed-ips= below: otherwise it silently
+        # created a permanent client with ok:true - the same "temporary became
+        # permanent".
+        if [[ "${CLI_ADD_EXPIRES_SEEN:-0}" == "1" && -z "$EXPIRES_DURATION" ]]; then
+            die "Empty --expires= - pass a duration (1h, 12h, 1d, 7d, 30d, 4w) or drop the flag."
+        fi
         if [[ -n "$EXPIRES_DURATION" ]]; then
             parse_duration "$EXPIRES_DURATION" >/dev/null \
                 || die "Invalid --expires='$EXPIRES_DURATION'. Use: 1h, 12h, 1d, 7d, 30d, 4w."
@@ -2548,8 +2592,49 @@ case $COMMAND in
             # Stale artifacts of a same-named client from the past (the QR
             # may not regenerate if qrencode disappeared): without cleanup the
             # [[ -f ]] checks below would report someone else's old file as
-            # fresh - both in the log and in JSON.
-            rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png"
+            # fresh - both in the log and in JSON. The expiry stamp too: the
+            # name is absent from awg0.conf, so the stamp is someone else's (a
+            # former client, a restore), and without cleanup a permanent client
+            # would inherit its deadline and cron would delete it at the old
+            # stamp. For --expires the stamp is set below, after generate_client.
+            # A failed stamp removal refuses this client: otherwise it would be
+            # created with someone else's deadline while the reply said permanent.
+            # The files and the stamp are removed under .awg_config.lock with the
+            # name checked again: otherwise a parallel add of the same name or a
+            # restore could have created the client, and we would erase its fresh
+            # QR, vpn:// and deadline. The lock is released before
+            # generate_client: it takes it itself, and flock is not re-entrant.
+            _stale_stamp="${EXPIRY_DIR:-$AWG_DIR/expiry}/${_cname}"
+            _stamp_state=ok
+            exec {_stamp_lock_fd}>"${AWG_DIR}/.awg_config.lock"
+            if ! flock -x -w 30 "$_stamp_lock_fd"; then
+                _stamp_state=lock
+            elif grep -qxF "#_Name = ${_cname}" "$SERVER_CONF_FILE"; then
+                _stamp_state=exists
+            else
+                rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png"
+                if ! rm -f "$_stale_stamp" 2>/dev/null || [[ -e "$_stale_stamp" || -L "$_stale_stamp" ]]; then
+                    _stamp_state=stuck
+                fi
+            fi
+            exec {_stamp_lock_fd}>&-
+            case "$_stamp_state" in
+                exists)
+                    log_warn "Client '$_cname' already exists, skipping."
+                    _cmd_rc=1
+                    _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"exists\"}")
+                    continue ;;
+                lock)
+                    log_error "Could not acquire the configuration lock - client '$_cname' not created."
+                    _cmd_rc=1
+                    _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"error\"}")
+                    continue ;;
+                stuck)
+                    log_error "Could not remove the old expiry stamp $_stale_stamp - client '$_cname' not created, it would otherwise inherit someone else's deadline."
+                    _cmd_rc=1
+                    _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"error\"}")
+                    continue ;;
+            esac
 
             log "Adding '$_cname'..."
             if generate_client "$_cname"; then

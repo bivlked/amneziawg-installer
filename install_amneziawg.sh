@@ -3457,7 +3457,8 @@ EOF
 # Определение реального SSH-порта(ов) для корректного правила UFW.
 # Без этого ufw limit 22/tcp + default deny incoming отрезает доступ к серверу
 # после ufw enable, если SSH поднят на нестандартном порту (Issue #91).
-# Функция самодостаточна: вызывается на шаге 4, ДО подключения awg_common.sh.
+# Функция самодостаточна: вызывается на шаге 4, ДО подключения awg_common.sh
+# (и на шаге 0 - проверка значения --ssh-port).
 # Источники:
 #   1. CLI_SSH_PORT (--ssh-port=, ручной override, список через запятую) - авторитетно
 #   иначе ОБЪЕДИНЕНИЕ (union, не fallback - так не пропустим реальный порт):
@@ -3466,6 +3467,7 @@ EOF
 #   4. /etc/ssh/sshd_config + sshd_config.d/*.conf (парсинг, только если 2-3 пусты)
 #   5. 22 (дефолт, если ничего не найдено)
 # Выводит уникальные валидные порты (1-65535) через пробел в stdout.
+# Заданный --ssh-port без единого допустимого порта: пустой вывод и код 1.
 # ВАЖНО: внутри только log_warn/log_error (stderr); log() пишет в stdout и
 # испортил бы перехват $(detect_ssh_ports).
 detect_ssh_ports() {
@@ -3502,8 +3504,10 @@ detect_ssh_ports() {
 
     # Валидация (десятичная 1-65535, 10# против octal) + дедуп с сохранением порядка
     for p in $ports; do
-        if [[ "$p" =~ ^[0-9]+$ ]]; then
-            pp=$((10#$p))
+        # Не больше пяти значащих цифр ДО арифметики: $((10#...)) идёт по модулю
+        # 2^64, и 18446744073709551638 превращалось в 22. Ведущие нули допустимы.
+        if [[ "$p" =~ ^0*([0-9]{1,5})$ ]]; then
+            pp=$((10#${BASH_REMATCH[1]}))
             if (( pp >= 1 && pp <= 65535 )); then
                 case " $valid " in
                     *" $pp "*) ;;
@@ -3515,7 +3519,13 @@ detect_ssh_ports() {
 
     # 5. Дефолт, если детект ничего валидного не дал
     if [[ -z "$valid" ]]; then
-        [[ -n "$CLI_SSH_PORT" ]] && log_warn "--ssh-port не содержит валидных портов, использую 22."
+        # Заданный --ssh-port без единого допустимого порта - отказ, а не 22:
+        # флаг нужен ровно для нестандартного SSH, и подмена на 22 при включении
+        # UFW отрезала бы доступ к серверу. Автодетект здесь не выполнялся.
+        if [[ -n "$CLI_SSH_PORT" ]]; then
+            log_error "--ssh-port='${CLI_SSH_PORT}' не содержит ни одного допустимого порта (1-65535). UFW не будет включён с портом 22 - исправьте --ssh-port."
+            return 1
+        fi
         valid="22"
     fi
     printf '%s' "$valid"
@@ -3534,7 +3544,9 @@ setup_improved_firewall() {
 
     # Определяем реальный SSH-порт(ы), чтобы не отрезать доступ при нестандартном порту (Issue #91)
     local ssh_ports _sp
-    ssh_ports=$(detect_ssh_ports)
+    # Отказ разбора --ssh-port - до любых вызовов ufw (включая удаление
+    # правила старого порта ниже).
+    ssh_ports=$(detect_ssh_ports) || die "Некорректный --ssh-port: '${CLI_SSH_PORT}'. Настройка UFW остановлена, правила не менялись."
     log "SSH-порт(ы) для правила UFW: ${ssh_ports}"
 
     # Смена порта при переустановке: удаляем правило старого порта до добавления
@@ -3723,7 +3735,13 @@ check_service_status() {
 
     # timeout: перезапуск установщика поверх сервера с раздутыми вручную
     # I1-I5 иначе повис бы здесь навсегда (#228). Отказ ниже и так громкий.
-    if ! timeout 10 awg show 2>/dev/null | grep -q "interface: awg0"; then
+    # Вывод awg show (и ss ниже) читаем из переменной, а не через конвейер:
+    # grep -q выходит на первом совпадении, строка interface печатается первой,
+    # и при сотнях пиров следующая запись awg получает SIGPIPE - под pipefail
+    # проверка отказывала на работающем интерфейсе.
+    local _show_all _show_awg0 _ss_out
+    _show_all=$(timeout 10 awg show 2>/dev/null) || _show_all=""
+    if ! grep -qF -- "interface: awg0" <<< "$_show_all"; then
         log_error "awg show не видит интерфейс!"
         ok=0
     fi
@@ -3736,14 +3754,16 @@ check_service_status() {
         port_check=${port_check:-0}
     fi
     if [[ "$port_check" -ne 0 ]]; then
-        if ! ss -lunp | grep -q ":${port_check} "; then
+        _ss_out=$(ss -lunp) || _ss_out=""
+        if ! grep -qF -- ":${port_check} " <<< "$_ss_out"; then
             log_error "Порт $port_check/udp не прослушивается!"
             ok=0
         fi
     fi
 
     # Проверка AWG 2.0 параметров
-    if timeout 10 awg show awg0 2>/dev/null | grep -q "jc:"; then
+    _show_awg0=$(timeout 10 awg show awg0 2>/dev/null) || _show_awg0=""
+    if grep -qF -- "jc:" <<< "$_show_awg0"; then
         log "AWG 2.0 параметры активны."
     else
         log_warn "AWG 2.0 параметры не обнаружены в awg show."
@@ -4442,6 +4462,13 @@ initialize_setup() {
         fi
         AWG_ENDPOINT=$CLI_ENDPOINT
     fi
+    # --ssh-port проверяется на шаге 0: иначе значение без единого допустимого
+    # порта всплыло бы только на шаге 4, после обновления пакетов и перезагрузок. При заданном флаге detect_ssh_ports
+    # ничего не зондирует, только разбирает значение.
+    if [[ -n "$CLI_SSH_PORT" ]]; then
+        detect_ssh_ports >/dev/null \
+            || die "Некорректный --ssh-port: '$CLI_SSH_PORT'. Укажите SSH-порт числом 1-65535, несколько - через запятую (--ssh-port=2222 или --ssh-port=22,2222)."
+    fi
     if [[ "$CLI_NO_TWEAKS" -eq 1 ]]; then NO_TWEAKS=1; fi
     if [[ "$CLI_KEEP_PACKAGES" -eq 1 ]]; then KEEP_PACKAGES=1; fi
 
@@ -4634,7 +4661,9 @@ initialize_setup() {
     mkdir -p "$cfg_dir" 2>/dev/null
     temp_conf=$(mktemp -p "$cfg_dir") || die "Ошибка mktemp."
     _install_temp_files+=("$temp_conf")
-    cat > "$temp_conf" << EOF
+    # Код записи проверяется: при ENOSPC/EFBIG обрезанный temp иначе заменил бы
+    # рабочий init, и следующий запуск заново сгенерировал бы набор обфускации.
+    cat > "$temp_conf" << EOF || { rm -f "$temp_conf"; die "Ошибка записи настроек в $temp_conf, $CONFIG_FILE не изменён"; }
 # Конфигурация установки AmneziaWG 2.0 (Авто-генерация)
 # Используется скриптами установки и управления
 export OS_ID='${OS_ID:-ubuntu}'

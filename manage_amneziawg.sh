@@ -34,6 +34,7 @@ NO_COLOR=0
 VERBOSE_LIST=0
 JSON_OUTPUT=0
 EXPIRES_DURATION=""
+CLI_ADD_EXPIRES_SEEN=0
 CLI_CARRIER=""
 
 # --- Автоочистка временных файлов и директорий ---
@@ -196,7 +197,7 @@ while [[ $# -gt 0 ]]; do
         -v|--verbose)      VERBOSE_LIST=1; shift ;;
         --no-color)        NO_COLOR=1; shift ;;
         --json)            JSON_OUTPUT=1; shift ;;
-        --expires=*)       EXPIRES_DURATION="${1#*=}"; shift ;;
+        --expires=*)       EXPIRES_DURATION="${1#*=}"; CLI_ADD_EXPIRES_SEEN=1; shift ;;
         --conf-dir=*)      AWG_DIR="${1#*=}"; shift ;;
         --server-conf=*)   SERVER_CONF_FILE="${1#*=}"; shift ;;
         --apply-mode=*)
@@ -960,6 +961,33 @@ restore_backup() {
         cp -a "$td/expiry/"* "${EXPIRY_DIR:-$AWG_DIR/expiry}/" 2>/dev/null || true
         chmod 600 "${EXPIRY_DIR:-$AWG_DIR/expiry}"/* 2>/dev/null
     fi
+    # Метка срока без пары в архиве у клиента, который в архиве ЕСТЬ, осталась
+    # от текущего состояния (одноимённый клиент, созданный после бэкапа): без
+    # зачистки бессрочный по бэкапу клиент получил бы чужой срок и был бы удалён
+    # cron. Удаляются только метки имён из восстановленного awg0.conf, которых
+    # нет в expiry/ архива (или expiry/ в архиве нет вовсе); метки
+    # несуществующих клиентов не трогаем (см. C11 выше), метки из архива тоже.
+    # Имена берёт sed, а не цикл по строкам: под bash -x цикл печатал бы в трассу
+    # строку PrivateKey серверного конфига.
+    local _exp_names _exp_name _exp_stamp
+    _exp_names=$(sed -n 's/^#_Name = //p' "$td/server/$_srv_base")
+    while IFS= read -r _exp_name; do
+        [[ "$_exp_name" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
+        _exp_stamp="${EXPIRY_DIR:-$AWG_DIR/expiry}/$_exp_name"
+        if [[ -e "$td/expiry/$_exp_name" ]]; then
+            # Метка из архива обязана лечь на место: cp выше best-effort, и при
+            # его сбое у клиента остался бы текущий, чужой срок.
+            if ! cmp -s "$td/expiry/$_exp_name" "$_exp_stamp"; then
+                log_error "Метка срока клиента '$_exp_name' из архива не восстановлена в $_exp_stamp - запуск отката."
+                return 1
+            fi
+            continue
+        fi
+        if ! rm -f "$_exp_stamp" 2>/dev/null || [[ -e "$_exp_stamp" || -L "$_exp_stamp" ]]; then
+            log_error "Не удалось удалить метку срока $_exp_stamp: клиент '$_exp_name' бессрочный по бэкапу получил бы чужой срок - запуск отката."
+            return 1
+        fi
+    done <<< "$_exp_names"
     if [[ -f "$td/awg-expiry" ]]; then
         cp -a "$td/awg-expiry" /etc/cron.d/awg-expiry
         chmod 644 /etc/cron.d/awg-expiry
@@ -1416,7 +1444,13 @@ check_server() {
             log_warn " - Не удалось определить порт."
         fi
     else
-        if ! ss -lunp | grep -q ":${port} "; then
+        # Вывод ss сначала целиком в переменную: в конвейере `ss | grep -q` под
+        # pipefail grep выходил на первом совпадении, ss получал SIGPIPE, и
+        # найденный порт читался как «не прослушивается». Отказ самого ss, как
+        # и раньше, значит «не прослушивается».
+        local _ss_out _ss_rc=0
+        _ss_out=$(ss -lunp) || _ss_rc=$?
+        if (( _ss_rc != 0 )) || ! grep -qF -- ":${port} " <<< "$_ss_out"; then
             log_error " - Порт ${port}/udp НЕ прослушивается!"
             ok=0
         else
@@ -2458,6 +2492,12 @@ case $COMMAND in
         # неверном формате (--expires=bad) клиенты создавались permanent, а
         # set_client_expiry молча падал per-client - временный клиент незаметно
         # становился постоянным. Плохой формат теперь рушит команду до изменений.
+        # Пустой --expires= (бот с пустой переменной) отвергаем по «флаг видели»,
+        # как --allowed-ips= ниже: иначе он молча создавал бессрочного клиента
+        # с ok:true - тот же «временный стал постоянным».
+        if [[ "${CLI_ADD_EXPIRES_SEEN:-0}" == "1" && -z "$EXPIRES_DURATION" ]]; then
+            die "Пустой --expires= - укажите срок (1h, 12h, 1d, 7d, 30d, 4w) или уберите флаг."
+        fi
         if [[ -n "$EXPIRES_DURATION" ]]; then
             parse_duration "$EXPIRES_DURATION" >/dev/null \
                 || die "Некорректный --expires='$EXPIRES_DURATION'. Используйте: 1h, 12h, 1d, 7d, 30d, 4w."
@@ -2519,8 +2559,48 @@ case $COMMAND in
             # Стейл-артефакты одноимённого клиента из прошлого (QR мог не
             # пересоздаться, если qrencode пропал): без зачистки проверка
             # [[ -f ]] ниже рапортовала бы чужой старый файл как свежий -
-            # и в логе, и в JSON.
-            rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png"
+            # и в логе, и в JSON. Туда же метка срока: имени нет в awg0.conf,
+            # значит метка чужая (прежний клиент, restore), и без зачистки
+            # бессрочный клиент получил бы её срок, а cron удалил бы его в момент
+            # старой метки. Для --expires метка ставится ниже, после generate_client.
+            # Неудавшееся удаление метки - отказ по этому клиенту: иначе он
+            # создался бы с чужим сроком, а ответ рапортовал бы бессрочного.
+            # Файлы и метку снимаем под .awg_config.lock с повторной проверкой
+            # имени: иначе параллельный add того же имени или restore мог успеть
+            # создать клиента, и мы стёрли бы его свежие QR, vpn:// и срок.
+            # Блокировку отпускаем до generate_client: он берёт её сам, а flock
+            # не реентерабелен.
+            _stale_stamp="${EXPIRY_DIR:-$AWG_DIR/expiry}/${_cname}"
+            _stamp_state=ok
+            exec {_stamp_lock_fd}>"${AWG_DIR}/.awg_config.lock"
+            if ! flock -x -w 30 "$_stamp_lock_fd"; then
+                _stamp_state=lock
+            elif grep -qxF "#_Name = ${_cname}" "$SERVER_CONF_FILE"; then
+                _stamp_state=exists
+            else
+                rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png"
+                if ! rm -f "$_stale_stamp" 2>/dev/null || [[ -e "$_stale_stamp" || -L "$_stale_stamp" ]]; then
+                    _stamp_state=stuck
+                fi
+            fi
+            exec {_stamp_lock_fd}>&-
+            case "$_stamp_state" in
+                exists)
+                    log_warn "Клиент '$_cname' уже существует, пропуск."
+                    _cmd_rc=1
+                    _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"exists\"}")
+                    continue ;;
+                lock)
+                    log_error "Не удалось получить блокировку конфигурации - клиент '$_cname' не создан."
+                    _cmd_rc=1
+                    _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"error\"}")
+                    continue ;;
+                stuck)
+                    log_error "Не удалось удалить старую метку срока $_stale_stamp - клиент '$_cname' не создан, иначе он получил бы чужой срок."
+                    _cmd_rc=1
+                    _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"error\"}")
+                    continue ;;
+            esac
 
             log "Добавление '$_cname'..."
             if generate_client "$_cname"; then

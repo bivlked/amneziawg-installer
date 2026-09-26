@@ -1449,7 +1449,11 @@ _load_awg_params_from_server_conf_body() {
 load_awg_params() {
     # 1. Base settings from init (always, for non-AWG keys)
     if [[ -f "$CONFIG_FILE" ]]; then
+        # An apply mode set before the call (--apply-mode or the environment)
+        # wins over the one saved in init: otherwise init would override it.
+        local _apply_mode_keep="${AWG_APPLY_MODE:-}"
         safe_load_config "$CONFIG_FILE" || log_warn "Failed to load $CONFIG_FILE"
+        [[ -z "$_apply_mode_keep" ]] || export AWG_APPLY_MODE="$_apply_mode_keep"
     fi
 
     # Where the AWG parameters come from: the I1-I5 refusal names this file as
@@ -2975,15 +2979,21 @@ awg_cps_decoded_size() {
 #
 # Returns 0 when the structure is there.
 awg_cps_is_shaped() {
-    local s="${1:-}" rest tag n lit=0 rnd_max=0
+    local s="${1:-}" rest mat tag n lit=0 rnd_max=0
     [[ -n "$s" ]] || return 1
     # Разбирается целиком: код 2 означает «встретилось неразобранное», и такой
     # тег обе реализации отвергнут - интерфейс не поднимется.
     awg_cps_decoded_size "$s" >/dev/null 2>&1 || return 1
     rest="$s"
     while [[ "$rest" =~ \<[[:space:]]*([a-zA-Z]+)[[:space:]]*([^\>]*)\> ]]; do
+        # Save the match and advance the string BEFORE the case: the `[[ =~ ]]`
+        # in the r/rc/rd branch clobbers BASH_REMATCH, and advancing by a
+        # clobbered match did not shorten the string. On `<r 1 0>` the loop
+        # then never ended and diagnose hung.
+        mat="${BASH_REMATCH[0]}"
         tag="${BASH_REMATCH[1],,}"
         n="${BASH_REMATCH[2]//[[:space:]]/}"
+        rest="${rest#*"$mat"}"
         case "$tag" in
             b)
                 n="${n#0x}"; n="${n#0X}"
@@ -2996,7 +3006,6 @@ awg_cps_is_shaped() {
             t) : ;;
             *) return 1 ;;
         esac
-        rest="${rest#*"${BASH_REMATCH[0]}"}"
     done
     # Ни одного случайного куска длиннее метки DNS и не меньше тридцати
     # литеральных байт структуры.
@@ -3329,6 +3338,13 @@ apply_config() {
         fi
     fi
 
+    # No mode from an option or the environment (remove and cron do not load
+    # init) - take the one saved in init with the same parser load_awg_params
+    # uses. It runs in a subshell, so the other init keys do not leak in here.
+    local AWG_APPLY_MODE="${AWG_APPLY_MODE:-}"
+    if [[ -z "$AWG_APPLY_MODE" && -f "$CONFIG_FILE" ]]; then
+        AWG_APPLY_MODE=$(safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${AWG_APPLY_MODE:-}")
+    fi
     if [[ "${AWG_APPLY_MODE:-syncconf}" == "restart" ]]; then
         # An explicit restart mode drops client connections, SSH through the
         # tunnel included, so warn exactly as manage restart does.
