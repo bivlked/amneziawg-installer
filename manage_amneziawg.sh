@@ -639,7 +639,27 @@ _restore_do_rollback() {
     [[ -d "$_rtd/keys" ]] && cp -a "$_rtd/keys/"* "$KEYS_DIR/" 2>/dev/null
     [[ -f "$_rtd/server_private.key" ]] && cp -a "$_rtd/server_private.key" "$AWG_DIR/" 2>/dev/null
     [[ -f "$_rtd/server_public.key" ]] && cp -a "$_rtd/server_public.key" "$AWG_DIR/" 2>/dev/null
-    [[ -d "$_rtd/expiry" ]] && { mkdir -p "${EXPIRY_DIR:-$AWG_DIR/expiry}"; cp -a "$_rtd/expiry"/* "${EXPIRY_DIR:-$AWG_DIR/expiry}/" 2>/dev/null; }
+    # Метки срока приводятся ровно к снимку. restore мог положить метки из
+    # архива, и такая метка у клиента, бессрочного до restore, означала бы его
+    # удаление cron в срок из архива при rolled_back=true. Снимок снят с
+    # каталога целиком, поэтому метка, которой в нём нет, пришла из архива.
+    local _edir="${EXPIRY_DIR:-$AWG_DIR/expiry}" _ef
+    if [[ -d "$_edir" ]]; then
+        for _ef in "$_edir"/*; do
+            [[ -e "$_ef" || -L "$_ef" ]] || continue
+            [[ -e "$_rtd/expiry/${_ef##*/}" ]] && continue
+            rm -f "$_ef" 2>/dev/null
+            if [[ -e "$_ef" || -L "$_ef" ]]; then
+                log_error "Откат: не удалось удалить метку срока $_ef из архива - клиент '${_ef##*/}' может быть удалён cron в срок из архива. Удалите метку вручную."
+            fi
+        done
+    fi
+    if [[ -d "$_rtd/expiry" ]]; then
+        mkdir -p "$_edir"
+        if compgen -G "$_rtd/expiry/*" >/dev/null && ! cp -a "$_rtd/expiry"/* "$_edir/" 2>/dev/null; then
+            log_error "Откат: метки срока из снимка не восстановлены в $_edir - проверьте сроки клиентов (manage list)."
+        fi
+    fi
     [[ -f "$_rtd/awg-expiry" ]] && cp -a "$_rtd/awg-expiry" /etc/cron.d/awg-expiry 2>/dev/null
     rm -rf "$_rtd"
     # Файлы отката скопированы - для JSON-конверта rolled_back=true даже если

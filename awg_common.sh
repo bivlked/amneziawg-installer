@@ -1207,7 +1207,14 @@ safe_load_config() {
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS)
                     export "$key=$value"
                     ;;
+                *)
+                    # Строка CLIENT_DNS, которую разбор не узнал, называется: иначе новые
+                    # клиенты молча получали бы DNS по умолчанию.
+                    if [[ "${key^^}" == CLIENT_DNS ]]; then log_warn "Строка CLIENT_DNS в $config_file не разобрана: '$line'. Нужен вид export CLIENT_DNS='10.9.9.1' без отступа и без пробелов вокруг =. Новые клиенты получат DNS по умолчанию."; fi
+                    ;;
             esac
+        elif [[ "${line^^}" == *CLIENT_DNS* ]]; then
+            log_warn "Строка CLIENT_DNS в $config_file не разобрана: '$line'. Нужен вид export CLIENT_DNS='10.9.9.1' без отступа и без пробелов вокруг =. Новые клиенты получат DNS по умолчанию."
         fi
     done < "$config_file"
 }
@@ -3310,6 +3317,13 @@ apply_config() {
     if [[ -z "$AWG_APPLY_MODE" && -f "$CONFIG_FILE" ]]; then
         AWG_APPLY_MODE=$(safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${AWG_APPLY_MODE:-}")
     fi
+    # Неизвестное значение (опечатка вроде Restart в init или окружении) по-прежнему
+    # даёт syncconf, но называется: иначе обход, ради которого выбран restart,
+    # пропадал бы молча.
+    case "${AWG_APPLY_MODE:-}" in
+        ""|syncconf|restart) ;;
+        *) log_warn "Неизвестный AWG_APPLY_MODE='$AWG_APPLY_MODE' (допустимо syncconf или restart) - применяю syncconf." ;;
+    esac
     if [[ "${AWG_APPLY_MODE:-syncconf}" == "restart" ]]; then
         # Явный restart-режим рвёт соединения клиентов, в том числе SSH через
         # туннель, поэтому предупреждаем так же, как при manage restart.

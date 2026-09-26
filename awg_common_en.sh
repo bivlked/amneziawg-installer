@@ -1226,7 +1226,14 @@ safe_load_config() {
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS)
                     export "$key=$value"
                     ;;
+                *)
+                    # A CLIENT_DNS line the parser did not recognise is named: otherwise
+                    # new clients would silently get the default DNS.
+                    if [[ "${key^^}" == CLIENT_DNS ]]; then log_warn "CLIENT_DNS line in $config_file not parsed: '$line'. Use the form export CLIENT_DNS='10.9.9.1' with no indent and no spaces around =. New clients will get the default DNS."; fi
+                    ;;
             esac
+        elif [[ "${line^^}" == *CLIENT_DNS* ]]; then
+            log_warn "CLIENT_DNS line in $config_file not parsed: '$line'. Use the form export CLIENT_DNS='10.9.9.1' with no indent and no spaces around =. New clients will get the default DNS."
         fi
     done < "$config_file"
 }
@@ -3356,6 +3363,13 @@ apply_config() {
     if [[ -z "$AWG_APPLY_MODE" && -f "$CONFIG_FILE" ]]; then
         AWG_APPLY_MODE=$(safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${AWG_APPLY_MODE:-}")
     fi
+    # An unknown value (a typo like Restart in init or the environment) still
+    # gives syncconf, but it is named: otherwise the workaround restart was
+    # chosen for would be lost without a word.
+    case "${AWG_APPLY_MODE:-}" in
+        ""|syncconf|restart) ;;
+        *) log_warn "Unknown AWG_APPLY_MODE='$AWG_APPLY_MODE' (use syncconf or restart) - applying with syncconf." ;;
+    esac
     if [[ "${AWG_APPLY_MODE:-syncconf}" == "restart" ]]; then
         # An explicit restart mode drops client connections, SSH through the
         # tunnel included, so warn exactly as manage restart does.

@@ -281,3 +281,19 @@ check_remove_init_restart_crlf() {
 
 @test "remove: init with BOM and CRLF still gives 'restart' (RU)" { check_remove_init_restart_crlf ru; }
 @test "remove: init with BOM and CRLF still gives 'restart' (EN)" { check_remove_init_restart_crlf en; }
+
+# An unknown mode in init or the environment used to fall to syncconf without a
+# word, so a typo like 'Restart' silently lost the workaround it was set for.
+# The fallback stays syncconf, but it is now named.
+check_unknown_mode_named() {
+    use_lang "$1"
+    set_init_mode Restart
+    precreate_client pre
+    run --separate-stderr mgmt remove pre
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"AWG_APPLY_MODE"*"Restart"* ]] || { echo "no warning, stderr: $stderr" >&2; return 1; }
+    assert_syncconf_used
+}
+
+@test "remove: an unknown apply mode is named and falls back to syncconf (RU)" { check_unknown_mode_named ru; }
+@test "remove: an unknown apply mode is named and falls back to syncconf (EN)" { check_unknown_mode_named en; }

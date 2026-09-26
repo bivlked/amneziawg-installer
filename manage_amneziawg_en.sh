@@ -646,7 +646,28 @@ _restore_do_rollback() {
     [[ -d "$_rtd/keys" ]] && cp -a "$_rtd/keys/"* "$KEYS_DIR/" 2>/dev/null
     [[ -f "$_rtd/server_private.key" ]] && cp -a "$_rtd/server_private.key" "$AWG_DIR/" 2>/dev/null
     [[ -f "$_rtd/server_public.key" ]] && cp -a "$_rtd/server_public.key" "$AWG_DIR/" 2>/dev/null
-    [[ -d "$_rtd/expiry" ]] && { mkdir -p "${EXPIRY_DIR:-$AWG_DIR/expiry}"; cp -a "$_rtd/expiry"/* "${EXPIRY_DIR:-$AWG_DIR/expiry}/" 2>/dev/null; }
+    # Expiry stamps are brought back to exactly the snapshot. restore may have
+    # put stamps from the archive in place, and such a stamp on a client that
+    # was permanent before restore would have cron delete it at the archived
+    # deadline while the JSON says rolled_back=true. The snapshot copies the
+    # whole directory, so a stamp missing from it came from the archive.
+    local _edir="${EXPIRY_DIR:-$AWG_DIR/expiry}" _ef
+    if [[ -d "$_edir" ]]; then
+        for _ef in "$_edir"/*; do
+            [[ -e "$_ef" || -L "$_ef" ]] || continue
+            [[ -e "$_rtd/expiry/${_ef##*/}" ]] && continue
+            rm -f "$_ef" 2>/dev/null
+            if [[ -e "$_ef" || -L "$_ef" ]]; then
+                log_error "Rollback: could not remove the archived expiry stamp $_ef - cron may delete client '${_ef##*/}' at the archived deadline. Remove the stamp by hand."
+            fi
+        done
+    fi
+    if [[ -d "$_rtd/expiry" ]]; then
+        mkdir -p "$_edir"
+        if compgen -G "$_rtd/expiry/*" >/dev/null && ! cp -a "$_rtd/expiry"/* "$_edir/" 2>/dev/null; then
+            log_error "Rollback: expiry stamps from the snapshot were not restored to $_edir - check client deadlines (manage list)."
+        fi
+    fi
     [[ -f "$_rtd/awg-expiry" ]] && cp -a "$_rtd/awg-expiry" /etc/cron.d/awg-expiry 2>/dev/null
     rm -rf "$_rtd"
     # Rollback files are in place - the JSON envelope reports rolled_back=true

@@ -105,6 +105,33 @@ _use_lib() {
     done
 }
 
+# A CLIENT_DNS line the parser does not recognise (spaces around =, an indent,
+# lower case) used to be skipped without a word, and new clients silently got
+# the default DNS. Every copy of the parser (both libraries, both installers)
+# now warns about it; the canonical line gives no warning.
+@test "client dns: an unrecognised CLIENT_DNS line is named, not skipped (libraries and installers)" {
+    local src form err
+    for src in "${LIBS[@]}" "${INSTALLERS[@]}"; do
+        eval "$(sed -n '/^safe_load_config() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../$src")"
+        log_warn() { printf 'WARN:%s\n' "$1" >&2; }
+        for form in 'CLIENT_DNS = 9.9.9.9' '  export CLIENT_DNS=9.9.9.9' "client_dns='9.9.9.9'" 'export  CLIENT_DNS=9.9.9.9'; do
+            create_init_config
+            printf '%s\n' "$form" >> "$CONFIG_FILE"
+            unset CLIENT_DNS
+            safe_load_config "$CONFIG_FILE" 2>"$TEST_DIR/err"
+            err=$(cat "$TEST_DIR/err")
+            [[ "$err" == *WARN:*CLIENT_DNS* ]] || { echo "$src: no warning for '$form'" >&2; return 1; }
+        done
+        create_init_config
+        echo "export CLIENT_DNS='10.9.9.1'" >> "$CONFIG_FILE"
+        safe_load_config "$CONFIG_FILE" 2>"$TEST_DIR/err"
+        [ ! -s "$TEST_DIR/err" ] || { echo "$src: warning on the canonical line: $(cat "$TEST_DIR/err")" >&2; return 1; }
+        [ "${CLIENT_DNS:-}" = "10.9.9.1" ]
+        unset CLIENT_DNS
+        log_warn() { :; }
+    done
+}
+
 @test "client dns: render_client_config writes CLIENT_DNS into a new client (both libraries)" {
     for lib in "${LIBS[@]}"; do
         _use_lib "$lib"

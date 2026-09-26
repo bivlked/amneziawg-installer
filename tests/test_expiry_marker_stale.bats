@@ -285,6 +285,49 @@ _scenario_rollback() {
     [ ! -s "$TEST_DIR/net.log" ]
 }
 
+# The mirror case: bob is timed in the archive and permanent now. restore
+# copies the archived stamp in, then fails; the rollback must take that stamp
+# away again, or cron deletes the permanent bob at the archived deadline while
+# the JSON says rolled_back. Two variants: the pre-restore state has an empty
+# expiry/ directory, or none at all.
+_scenario_rollback_imported() {
+    local s="$1" drop_dir="$2" b1
+    _m "$s" add bob --expires=30d --json
+    [ "$status" -eq 0 ]
+    b1=$(_backup "$s")
+    [ -n "$b1" ]
+    tar -tzf "$b1" | grep -qE '(^|/)expiry/bob$'
+    _m "$s" remove bob --json
+    [ "$status" -eq 0 ]
+    _m "$s" add bob --json
+    [ "$status" -eq 0 ]
+    [ ! -e "$EXP/bob" ]
+    if [ "$drop_dir" = 1 ]; then rmdir "$EXP"; fi
+    : > "$TEST_DIR/fail_start"
+    _m "$s" restore "$b1" --json
+    [ "$status" -ne 0 ]
+    printf '%s' "$output" | jq -e '.rolled_back == true' >/dev/null
+    if [ -e "$EXP/bob" ]; then
+        echo "archived stamp survived the rollback: $EXP/bob = $(cat "$EXP/bob")" >&2
+        return 1
+    fi
+    [ ! -s "$TEST_DIR/net.log" ]
+}
+
+@test "RU: failed restore takes back a stamp that came from the archive" {
+    require_jq
+    _scenario_rollback_imported "$BATS_TEST_DIRNAME/../manage_amneziawg.sh" 0
+    rm -rf "$TEST_DIR"; setup
+    _scenario_rollback_imported "$BATS_TEST_DIRNAME/../manage_amneziawg.sh" 1
+}
+
+@test "EN: failed restore takes back a stamp that came from the archive" {
+    require_jq
+    _scenario_rollback_imported "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh" 0
+    rm -rf "$TEST_DIR"; setup
+    _scenario_rollback_imported "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh" 1
+}
+
 @test "RU (a): add after restore does not inherit a stale expiry stamp" {
     require_jq
     _scenario_a "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
