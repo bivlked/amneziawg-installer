@@ -1181,11 +1181,11 @@ ensure_amneziawg_kernel_module() {
 # Parses only allowed keys in KEY=VALUE or export KEY=VALUE format
 safe_load_config() {
     local config_file="${1:-$CONFIG_FILE}"
-    if [[ ! -f "$config_file" ]]; then return 1; fi
     # CLIENT_DNS lives only in the file: without this reset a variable from root's
     # environment (CLIENT_DNS=... manage add) would silently reach new clients on
     # installs whose file has no such line yet.
     unset CLIENT_DNS
+    if [[ ! -f "$config_file" ]]; then return 1; fi
 
     local line key value first_line=1
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -2515,17 +2515,20 @@ render_client_config() {
     local endpoint="$5"
     local port="$6"
     local client_ipv6="${7:-}"
+    # The 8th argument is a live client's DNS from regenerate_client. An argument, not a
+    # variable: a variable can be inherited from the environment and skip the CLIENT_DNS check.
+    local keep_dns="${8:-}"
 
     load_awg_params || return 1
 
     # DNS of the new client: CLIENT_DNS or the default. Computed BEFORE the tmpfile,
     # so an invalid CLIENT_DNS never leaves a half-written config behind.
-    # regenerate_client with a live .conf passes the client's DNS in _AWG_KEEP_DNS:
+    # regenerate_client with a live .conf passes the client's DNS as the 8th argument:
     # CLIENT_DNS is then not needed and not checked, so a typo in it cannot block
     # regen of clients it does not concern.
     local client_dns
-    if [[ -n "${_AWG_KEEP_DNS:-}" ]]; then
-        client_dns="$_AWG_KEEP_DNS"
+    if [[ -n "$keep_dns" ]]; then
+        client_dns="$keep_dns"
     else
         client_dns=$(awg_client_dns) || return 1
     fi
@@ -4590,10 +4593,10 @@ regenerate_client() {
     fi
 
     # Config regeneration (pass client_ipv6 if dual-stack). A live client's DNS goes
-    # to render directly (see _AWG_KEEP_DNS there): it is restored below anyway.
-    local _AWG_KEEP_DNS=""
-    [[ "$_had_conf" -eq 1 && -n "$current_dns" ]] && _AWG_KEEP_DNS="$current_dns"
-    render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" || {
+    # to render directly (8th argument): it is restored below anyway.
+    local _keep_dns=""
+    [[ "$_had_conf" -eq 1 && -n "$current_dns" ]] && _keep_dns="$current_dns"
+    render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" "$_keep_dns" || {
         exec {lock_fd}>&-
         unset CLIENT_PSK
         return 1

@@ -2107,6 +2107,29 @@ validate_endpoint() {
     return 0
 }
 
+# _client_dns_shape_ok <list>: a rough CLIENT_DNS check at step 0, before the
+# library is available. No empty items, and every item is IPv4 with octets 0-255
+# or looks like IPv6 (hex and colons). awg_client_dns does the full check at step
+# 6; this catches what would otherwise surface only after steps 1-5.
+_client_dns_shape_ok() {
+    local v="${1// /}" tok o
+    local -a toks
+    case "$v" in ""|,*|*,|*,,*) return 1 ;; esac
+    IFS=',' read -r -a toks <<< "$v"
+    for tok in "${toks[@]}"; do
+        if [[ "$tok" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+            for o in "${BASH_REMATCH[@]:1}"; do
+                (( 10#$o <= 255 )) || return 1
+            done
+        elif [[ "$tok" == *:* && "$tok" =~ ^[0-9a-fA-F:]+$ ]]; then
+            :
+        else
+            return 1
+        fi
+    done
+    return 0
+}
+
 validate_cidr_list() {
     local input="$1" cidr o nospace
     input="${input//$'\r'/}"
@@ -4664,20 +4687,25 @@ initialize_setup() {
 
     # --no-prebuilt: the flag turns it on, a persisted NO_PREBUILT=1 survives the
     # reboots (step 2 runs in another process). To undo, delete the line from init.
-    if [[ "${CLI_NO_PREBUILT:-0}" -eq 1 ]]; then
-        NO_PREBUILT=1
-    fi
     # A safety flag: "true" or "yes" in the file would read as "no" under -eq 1, and
-    # an unsigned package would go in silently. Only 0 or 1.
+    # an unsigned package would go in silently. Only 0 or 1. The file's value is
+    # checked BEFORE the flag: --no-prebuilt below would overwrite a broken line
+    # with 1 and hide it.
     case "${NO_PREBUILT:-0}" in
         0|1) ;;
         *) die "NO_PREBUILT='$NO_PREBUILT' in $CONFIG_FILE is invalid (0 or 1 allowed)." ;;
     esac
+    if [[ "${CLI_NO_PREBUILT:-0}" -eq 1 ]]; then
+        NO_PREBUILT=1
+    fi
     # CLIENT_DNS is written to init in single quotes: a character outside the IP
-    # address set would break the file. awg_client_dns does the full check when a
-    # client is created.
-    if [[ -n "${CLIENT_DNS:-}" && ! "$CLIENT_DNS" =~ ^[0-9a-fA-F.:,\ ]+$ ]]; then
-        die "CLIENT_DNS in $CONFIG_FILE contains characters that are not allowed ('$CLIENT_DNS'). Use IPs separated by commas or delete the line."
+    # address set would break the file. The shape is checked here too; awg_client_dns
+    # does the full check at step 6.
+    if [[ -n "${CLIENT_DNS:-}" ]]; then
+        [[ "$CLIENT_DNS" =~ ^[0-9a-fA-F.:,\ ]+$ ]] \
+            || die "CLIENT_DNS in $CONFIG_FILE contains characters that are not allowed ('$CLIENT_DNS'). Use IPs separated by commas or delete the line."
+        _client_dns_shape_ok "$CLIENT_DNS" \
+            || die "CLIENT_DNS in $CONFIG_FILE is invalid ('$CLIENT_DNS'): IP addresses separated by commas are needed, with no empty items."
     fi
 
     # Save configuration
@@ -5500,7 +5528,7 @@ PPASRC
             # A prebuilt package installed by an earlier run does not go away by itself:
             # a DKMS module would land next to it, leaving two amneziawg trees.
             local _kmod
-            _kmod=$(dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '/ok installed$/{print $1}' | paste -sd' ' -)
+            _kmod=$(dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '$NF != "not-installed" && $NF != "config-files" {print $1}' | paste -sd' ' -)
             if [[ -n "$_kmod" ]]; then
                 die "A prebuilt module package is already installed: $_kmod. With --no-prebuilt a second module would be built next to it. Remove the prebuilt one: sudo apt-get purge -y $_kmod, then run the installer again."
             fi

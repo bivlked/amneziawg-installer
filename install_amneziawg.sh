@@ -2039,6 +2039,29 @@ validate_endpoint() {
     return 0
 }
 
+# _client_dns_shape_ok <список>: грубая проверка CLIENT_DNS на шаге 0, пока
+# библиотеки ещё нет. Без пустых элементов, каждый элемент - IPv4 с октетами 0-255
+# или похож на IPv6 (hex и двоеточия). Полную проверку делает awg_client_dns на
+# шаге 6; здесь ловим то, что иначе всплыло бы только после шагов 1-5.
+_client_dns_shape_ok() {
+    local v="${1// /}" tok o
+    local -a toks
+    case "$v" in ""|,*|*,|*,,*) return 1 ;; esac
+    IFS=',' read -r -a toks <<< "$v"
+    for tok in "${toks[@]}"; do
+        if [[ "$tok" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+            for o in "${BASH_REMATCH[@]:1}"; do
+                (( 10#$o <= 255 )) || return 1
+            done
+        elif [[ "$tok" == *:* && "$tok" =~ ^[0-9a-fA-F:]+$ ]]; then
+            :
+        else
+            return 1
+        fi
+    done
+    return 0
+}
+
 validate_cidr_list() {
     local input="$1" cidr o nospace
     input="${input//$'\r'/}"
@@ -4560,19 +4583,24 @@ initialize_setup() {
 
     # --no-prebuilt: флаг включает, сохранённый NO_PREBUILT=1 держится между
     # перезагрузками (шаг 2 идёт в другом процессе). Снять - удалить строку из init.
-    if [[ "${CLI_NO_PREBUILT:-0}" -eq 1 ]]; then
-        NO_PREBUILT=1
-    fi
     # Флаг ради безопасности: "true" или "yes" в файле при -eq 1 дали бы "нет", и молча
-    # встал бы неподписанный пакет. Только 0 или 1.
+    # встал бы неподписанный пакет. Только 0 или 1. Проверяем значение из файла ДО
+    # флага: --no-prebuilt ниже перезаписал бы испорченную строку единицей и спрятал её.
     case "${NO_PREBUILT:-0}" in
         0|1) ;;
         *) die "NO_PREBUILT='$NO_PREBUILT' в $CONFIG_FILE не валиден (допустимо 0 или 1)." ;;
     esac
+    if [[ "${CLI_NO_PREBUILT:-0}" -eq 1 ]]; then
+        NO_PREBUILT=1
+    fi
     # CLIENT_DNS пишется в init в одинарных кавычках: символ вне набора IP-адресов
-    # сломал бы файл. Полную проверку делает awg_client_dns при создании клиента.
-    if [[ -n "${CLIENT_DNS:-}" && ! "$CLIENT_DNS" =~ ^[0-9a-fA-F.:,\ ]+$ ]]; then
-        die "CLIENT_DNS в $CONFIG_FILE содержит недопустимые символы ('$CLIENT_DNS'). Укажите IP через запятую или удалите строку."
+    # сломал бы файл. Форму проверяем тут же, полную проверку делает awg_client_dns
+    # на шаге 6.
+    if [[ -n "${CLIENT_DNS:-}" ]]; then
+        [[ "$CLIENT_DNS" =~ ^[0-9a-fA-F.:,\ ]+$ ]] \
+            || die "CLIENT_DNS в $CONFIG_FILE содержит недопустимые символы ('$CLIENT_DNS'). Укажите IP через запятую или удалите строку."
+        _client_dns_shape_ok "$CLIENT_DNS" \
+            || die "CLIENT_DNS в $CONFIG_FILE невалиден ('$CLIENT_DNS'): нужны IP-адреса через запятую, без пустых элементов."
     fi
 
     # Сохранение конфигурации
@@ -5377,7 +5405,7 @@ PPASRC
             # Готовый пакет, поставленный прошлым прогоном, сам не уйдёт: рядом встанет
             # DKMS-модуль, и в системе окажутся два дерева amneziawg.
             local _kmod
-            _kmod=$(dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '/ok installed$/{print $1}' | paste -sd' ' -)
+            _kmod=$(dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '$NF != "not-installed" && $NF != "config-files" {print $1}' | paste -sd' ' -)
             if [[ -n "$_kmod" ]]; then
                 die "Уже установлен готовый пакет модуля: $_kmod. С --no-prebuilt рядом собрался бы второй модуль. Удалите готовый: sudo apt-get purge -y $_kmod, затем запустите установщик снова."
             fi

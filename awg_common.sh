@@ -1163,11 +1163,11 @@ ensure_amneziawg_kernel_module() {
 # Парсит только разрешённые ключи формата KEY=VALUE или export KEY=VALUE
 safe_load_config() {
     local config_file="${1:-$CONFIG_FILE}"
-    if [[ ! -f "$config_file" ]]; then return 1; fi
     # CLIENT_DNS живёт только в файле: без сброса переменная из окружения root
     # (CLIENT_DNS=... manage add) молча ушла бы в новых клиентов на установках,
     # где строки в файле ещё нет.
     unset CLIENT_DNS
+    if [[ ! -f "$config_file" ]]; then return 1; fi
 
     local line key value first_line=1
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -2473,16 +2473,19 @@ render_client_config() {
     local endpoint="$5"
     local port="$6"
     local client_ipv6="${7:-}"
+    # 8-й аргумент - DNS живого клиента от regenerate_client. Аргумент, а не переменная:
+    # переменную можно унаследовать из окружения и обойти проверку CLIENT_DNS.
+    local keep_dns="${8:-}"
 
     load_awg_params || return 1
 
     # DNS нового клиента: CLIENT_DNS или значение по умолчанию. Считаем ДО tmpfile,
     # чтобы невалидный CLIENT_DNS не оставил недописанного конфига. regenerate_client
-    # с живым .conf передаёт DNS клиента в _AWG_KEEP_DNS: тогда CLIENT_DNS не нужен
+    # с живым .conf передаёт DNS клиента 8-м аргументом: тогда CLIENT_DNS не нужен
     # и не проверяется, и опечатка в нём не блокирует regen чужих клиентов.
     local client_dns
-    if [[ -n "${_AWG_KEEP_DNS:-}" ]]; then
-        client_dns="$_AWG_KEEP_DNS"
+    if [[ -n "$keep_dns" ]]; then
+        client_dns="$keep_dns"
     else
         client_dns=$(awg_client_dns) || return 1
     fi
@@ -4536,10 +4539,10 @@ regenerate_client() {
     fi
 
     # Перегенерация конфига (передаём client_ipv6 если dual-stack). DNS живого клиента
-    # отдаём render напрямую (см. _AWG_KEEP_DNS там): его всё равно восстановим ниже.
-    local _AWG_KEEP_DNS=""
-    [[ "$_had_conf" -eq 1 && -n "$current_dns" ]] && _AWG_KEEP_DNS="$current_dns"
-    render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" || {
+    # отдаём render напрямую (8-й аргумент): его всё равно восстановим ниже.
+    local _keep_dns=""
+    [[ "$_had_conf" -eq 1 && -n "$current_dns" ]] && _keep_dns="$current_dns"
+    render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" "$_keep_dns" || {
         exec {lock_fd}>&-
         unset CLIENT_PSK
         return 1

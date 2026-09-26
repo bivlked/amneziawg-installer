@@ -275,7 +275,8 @@ _setup_regen_stubs() {
         echo "RITA_PRIV" > "$KEYS_DIR/rita.private"
         # No rita.conf: the restore path (the previous iteration moved its file away).
         [ ! -e "$AWG_DIR/rita.conf" ]
-        export CLIENT_DNS="10.9.9.1"
+        create_init_config
+        echo "export CLIENT_DNS='10.9.9.1'" >> "$CONFIG_FILE"
         unset AWG_REGEN_RESET_ROUTES
         run regenerate_client "rita"
         [ "$status" -eq 0 ] || { echo "$lib: $output" >&2; return 1; }
@@ -295,7 +296,8 @@ _setup_regen_stubs() {
         echo "TOM_PRIV" > "$KEYS_DIR/tom.private"
         printf '[Interface]\nPrivateKey = TOM_PRIV\nAddress = 10.9.9.4/32\nDNS = 9.9.9.9\nMTU = 1280\nPersistentKeepalive = 33\n[Peer]\nPublicKey = SERVER_PUB\nEndpoint = 203.0.113.1:39743\nAllowedIPs = 0.0.0.0/0\n' \
             > "$AWG_DIR/tom.conf"
-        export CLIENT_DNS="10.9.9.1,"
+        create_init_config
+        echo "export CLIENT_DNS='10.9.9.1,'" >> "$CONFIG_FILE"
         unset AWG_REGEN_RESET_ROUTES
         run regenerate_client "tom"
         [ "$status" -eq 0 ] || { echo "$lib: regen blocked: $output" >&2; return 1; }
@@ -314,6 +316,71 @@ _setup_regen_stubs() {
         [ -n "$chk" ] || { echo "$f: no CLIENT_DNS check in step 6" >&2; return 1; }
         [ -n "$gen" ] || { echo "$f: generate_client call not found in step 6" >&2; return 1; }
         [ "$chk" -lt "$gen" ] || { echo "$f: CLIENT_DNS check comes after generate_client" >&2; return 1; }
+        # Before any state change of step 6, not merely before the clients.
+        local sk
+        sk=$(echo "$body" | grep -nE 'generate_server_keys' | head -1 | cut -d: -f1)
+        [ -n "$sk" ] && [ "$chk" -lt "$sk" ] || { echo "$f: CLIENT_DNS check comes after the server keys" >&2; return 1; }
+    done
+}
+
+@test "client dns: step 0 shape check (both languages)" {
+    for f in "${INSTALLERS[@]}"; do
+        # shellcheck source=/dev/null
+        source <(sed -n '/^_client_dns_shape_ok() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../$f")
+        declare -F _client_dns_shape_ok >/dev/null || { echo "$f: no _client_dns_shape_ok" >&2; return 1; }
+        for ok in "10.9.9.1" "1.1.1.1, 1.0.0.1" "2606:4700:4700::1111" "10.9.9.1,fd00::1" "0.0.0.0"; do
+            _client_dns_shape_ok "$ok" || { echo "$f rejected '$ok'" >&2; return 1; }
+        done
+        for bad in "" "10.9.9.1," ",10.9.9.1" "10.9.9.1,,1.1.1.1" "999.1.1.1" "1.1.1" "cafe" "1.1.1.1.1" "256.0.0.1"; do
+            if _client_dns_shape_ok "$bad"; then echo "$f accepted '$bad'" >&2; return 1; fi
+        done
+        unset -f _client_dns_shape_ok
+    done
+}
+
+@test "no-prebuilt: the saved value is checked before --no-prebuilt can overwrite it (both languages)" {
+    for f in "${INSTALLERS[@]}"; do
+        local v c
+        v=$(grep -nE '^    case "\$\{NO_PREBUILT:-0\}" in$' "$BATS_TEST_DIRNAME/../$f" | head -1 | cut -d: -f1)
+        c=$(grep -nE '^    if \[\[ "\$\{CLI_NO_PREBUILT:-0\}" -eq 1 \]\]; then$' "$BATS_TEST_DIRNAME/../$f" | head -1 | cut -d: -f1)
+        [ -n "$v" ] && [ -n "$c" ] && [ "$v" -lt "$c" ] \
+            || { echo "$f: validation ($v) is not before the CLI override ($c)" >&2; return 1; }
+    done
+}
+
+@test "no-prebuilt: the installed-package filter catches half-installed packages, not removed ones (both languages)" {
+    for f in "${INSTALLERS[@]}"; do
+        line=$(grep -E '^[[:space:]]+_kmod=\$\(dpkg-query ' "$BATS_TEST_DIRNAME/../$f" | head -1)
+        [ -n "$line" ] || { echo "$f: _kmod line not found" >&2; return 1; }
+        out=$(bash -c '
+            dpkg-query() { printf "%s\n" \
+                "amneziawg-kmod-a install ok installed" \
+                "amneziawg-kmod-b hold ok installed" \
+                "amneziawg-kmod-c install ok half-configured" \
+                "amneziawg-kmod-d install ok unpacked" \
+                "amneziawg-kmod-e deinstall ok config-files" \
+                "amneziawg-kmod-f unknown ok not-installed"; }
+            eval "$1"; printf "%s" "$_kmod"' _ "$line")
+        [ "$out" = "amneziawg-kmod-a amneziawg-kmod-b amneziawg-kmod-c amneziawg-kmod-d" ] \
+            || { echo "$f: got '$out'" >&2; return 1; }
+    done
+}
+
+@test "client dns: a kept DNS goes to render_client_config as an argument, not through the environment (both libraries)" {
+    for lib in "${LIBS[@]}"; do
+        _use_lib "$lib"
+        create_server_config
+        create_init_config
+        echo "export CLIENT_DNS='bogus'" >> "$CONFIG_FILE"
+        # With the 8th argument the invalid CLIENT_DNS does not matter.
+        render_client_config "kept" "10.9.9.10" "FAKEPRIV" "FAKEPUB" "1.2.3.4" "39743" "" "9.9.9.9"
+        grep -qxF "DNS = 9.9.9.9" "$AWG_DIR/kept.conf"
+        # A variable in the environment is no substitute for the argument.
+        mv "$AWG_DIR/kept.conf" "$AWG_DIR/kept.conf.$lib"
+        export _AWG_KEEP_DNS="9.9.9.9" keep_dns="9.9.9.9"
+        run render_client_config "envk" "10.9.9.11" "FAKEPRIV" "FAKEPUB" "1.2.3.4" "39743"
+        unset _AWG_KEEP_DNS keep_dns
+        [ "$status" -ne 0 ] || { echo "$lib: an environment variable bypassed CLIENT_DNS validation" >&2; return 1; }
     done
 }
 
@@ -371,7 +438,8 @@ _setup_regen_stubs() {
         echo "UNA_PRIV" > "$KEYS_DIR/una.private"
         printf '[Interface]\nPrivateKey = UNA_PRIV\nAddress = 10.9.9.5/32\nDNS = 1.1.1.1\nMTU = 1280\nPersistentKeepalive = 33\n[Peer]\nPublicKey = SERVER_PUB\nEndpoint = 203.0.113.1:39743\nAllowedIPs = 0.0.0.0/0\n' \
             > "$AWG_DIR/una.conf"
-        export CLIENT_DNS="1.1.1.1"
+        create_init_config
+        echo "export CLIENT_DNS='1.1.1.1'" >> "$CONFIG_FILE"
         unset AWG_REGEN_RESET_ROUTES
         run regenerate_client "una"
         [ "$status" -eq 0 ] || { echo "$lib: $output" >&2; return 1; }
@@ -390,7 +458,8 @@ _setup_regen_stubs() {
         echo "SAM_PRIV" > "$KEYS_DIR/sam.private"
         printf '[Interface]\nPrivateKey = SAM_PRIV\nAddress = 10.9.9.3/32\nDNS = 8.8.8.8\nMTU = 1280\nPersistentKeepalive = 33\n[Peer]\nPublicKey = SERVER_PUB\nEndpoint = 203.0.113.1:39743\nAllowedIPs = 0.0.0.0/0\n' \
             > "$AWG_DIR/sam.conf"
-        export CLIENT_DNS="10.9.9.1"
+        create_init_config
+        echo "export CLIENT_DNS='10.9.9.1'" >> "$CONFIG_FILE"
         unset AWG_REGEN_RESET_ROUTES
         run regenerate_client "sam"
         [ "$status" -eq 0 ] || { echo "$lib: $output" >&2; return 1; }
