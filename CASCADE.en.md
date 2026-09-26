@@ -83,6 +83,8 @@ bash install_amneziawg_en.sh --yes --disallow-ipv6 --route-all --subnet=172.16.6
 bash install_amneziawg_en.sh --yes --disallow-ipv6 --route-all --subnet=172.16.17.1/24
 ```
 
+The install reboots the server twice (with `--yes`, without asking). After each reboot run the same command again; it ends with a success message.
+
 The installer sets up forwarding and NAT itself (`iptables -I FORWARD -i awg0 -j ACCEPT` and `MASQUERADE` on the external interface), and UFW allows return traffic by connection state. So you do not need to edit the `awg0.conf` server config later - the cascade script adds only what is missing.
 
 On AWG0, install the missing packages:
@@ -106,14 +108,14 @@ The script creates `/root/awg/ru_host.conf`. Copy this file to AWG0 by any conve
 [Interface]
 PrivateKey = ...
 Address = 172.16.61.4/32
-DNS = 1.1.1.1
+DNS = 1.1.1.1, 1.0.0.1
 MTU = 1280
 Jc = ... (obfuscation parameters)
 
 [Peer]
 PublicKey = ...
 Endpoint = AWG1_PUBLIC_IP:39743
-AllowedIPs = 0.0.0.0/0
+AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 33
 ```
 
@@ -135,9 +137,11 @@ Jc = ... (obfuscation parameters)
 [Peer]
 PublicKey = ...
 Endpoint = AWG1_PUBLIC_IP:39743
-AllowedIPs = 0.0.0.0/0
+AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 33
 ```
+
+Leave `::/0` as it is: with `Table = off` it adds no routes.
 
 Lock down permissions and check that the tunnel comes up:
 
@@ -419,11 +423,11 @@ iptables -t mangle -L PREROUTING -n -v
 
 The list of Russian networks changes over time. The script re-reads it on every run, so it is enough to restart it periodically. For example, weekly via cron:
 
-A scheduled run overlapping a manual one is no longer a concern: the script takes a lock, and whoever arrives second waits for its turn.
-
 ```bash
 echo '0 5 * * 1 root systemctl restart awg-routing' > /etc/cron.d/awg-routing-refresh
 ```
+
+A scheduled run overlapping a manual one is no longer a concern: the script takes a lock, and whoever arrives second waits for its turn.
 
 ### Alternative: a systemd timer
 

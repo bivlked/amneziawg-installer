@@ -87,8 +87,10 @@ Tested on Ubuntu 24.04 LTS (kernel 6.8) with `amneziawg-tools v1.0.20260618-2`, 
 ```bash
 mkdir -p /root/warp && cd /root/warp
 ARCH=amd64; [ "$(uname -m)" = "aarch64" ] && ARCH=arm64
-curl -fsSL -o wgcf "https://github.com/ViRb3/wgcf/releases/download/v2.2.32/wgcf_2.2.32_linux_${ARCH}"
-chmod +x wgcf
+F="wgcf_2.2.32_linux_${ARCH}"
+curl -fsSLO "https://github.com/ViRb3/wgcf/releases/download/v2.2.32/$F"
+curl -fsSLO "https://github.com/ViRb3/wgcf/releases/download/v2.2.32/checksums.txt"
+grep " $F\$" checksums.txt | sha256sum -c - && mv "$F" wgcf && chmod +x wgcf
 ./wgcf register --accept-tos
 ./wgcf generate
 ```
@@ -149,7 +151,7 @@ The first command should return a Cloudflare address, different from your server
 
 > **About MSS.** The original recipe also carried a `TCPMSS --clamp-mss-to-pmtu` rule for traffic into `warp`. On an install from this repository it changes nothing: since version 5.17.0 the installer already clamps MSS to 1240 in both directions for `awg0`, and with a `warp` MTU of 1280 the IPv4 result is exactly the same 1240. You only need that rule if you lower the WARP MTU or build this on top of someone else's install with no MSS clamping.
 
-> **Where to keep the `ip rule`.** Above it lives in `warp.conf` with an explicit `awg0`. The reverse also works: put `PostUp = ip rule add iif %i lookup 200` into `awg0.conf`, where `%i` expands to `awg0`, and both configs become generic. Either variant is fine; such a line in `awg0.conf` has been verified to survive the management script's `add`, `regen` and `remove` commands. What you must not do is write `iif %i` inside `warp.conf`: there `%i` expands to `warp`, and the rule would catch the wrong traffic.
+> **Where to keep the `ip rule`.** Above it lives in `warp.conf` with an explicit `awg0`. The reverse also works: put `PostUp = ip rule add iif %i lookup 200` into `awg0.conf`, where `%i` expands to `awg0`, and both configs become generic. Either variant is fine; such a line in `awg0.conf` has been verified to survive the management script's `add`, `regen` and `remove` commands. It does not survive a `--force` reinstall: the installer rebuilds `[Interface]` and carries over only the peers, so you would have to add the line back. The variant with the rule in `warp.conf` is not affected. What you must not do is write `iif %i` inside `warp.conf`: there `%i` expands to `warp`, and the rule would catch the wrong traffic.
 
 <a id="step3"></a>
 ## Step 3. Subscribing to the BGP feed
@@ -328,6 +330,7 @@ Hence the practical point about monitoring. Session state and route count are **
 - The `FORWARD` rules above are narrowed to the `awg0` and `warp` pair. In the original recipe they were wider and accepted traffic into `warp` from any interface. On a typical install the difference is invisible, because only client traffic ever reaches table 200, but the narrow rule states the intent more precisely.
 - Cloudflare sees the contents of your connections to exactly the same extent any other exit provider would. This changes who you trust with the exit, it does not add encryption.
 - The WARP account `wgcf` issues is free and anonymous, but it is still an account: `wgcf-account.toml` and `wgcf-profile.conf` contain keys, so keep them at mode `600` and do not publish them.
+- `wgcf` is third-party software and you run it as root. The commands above check it against `checksums.txt` from the same release: that catches a download corrupted or swapped on the way, not a compromise of the project itself. You can also generate the profile on another machine and copy only `wgcf-profile.conf` to the server.
 - The BGP feed is an external source that influences your routing. The `import limit` and the two rejecting rules in the filter exist for precisely that reason.
 
 <a id="limits"></a>
@@ -335,7 +338,7 @@ Hence the practical point about monitoring. Session state and route count are **
 
 - The scheme is not part of the installer and is not managed by it. Updating the scripts will not touch it, but it will not restore it either if you break it.
 - It works over IPv4: both the feed and table 200 carry IPv4 routes only. The installer keeps IPv6 disabled on the server by default; if you enabled it, the server's IPv6 traffic will bypass the split.
-- IPv6 on the client device is a separate layer, and this scheme does not touch it. These instructions go on top of an existing install and do not change the client's mode. Where IPv6 goes is decided by the client's `AllowedIPs`: since v5.31.0 a full tunnel (the "Amnezia" mode included) gets an IPv6 route (`::/0`, in the "Amnezia" mode `2000::/3`), so IPv6 goes into the tunnel and dies there; profiles issued earlier, and real split routing (`--route-custom`), get no IPv6 route, and then the device's IPv6 goes around the tunnel and a Russian site sees your real home address directly, with no scripts involved. To check from the device: `curl -6 ifconfig.co` - if your home address comes back, IPv6 is going around. Details in [ADVANCED.en.md](ADVANCED.en.md#split-detect-adv).
+- IPv6 on the client device is a separate layer, and this scheme does not touch it. These instructions go on top of an existing install and do not change the client's mode. Where IPv6 goes is decided by the client's `AllowedIPs`: since v5.31.0 a full tunnel gets an IPv6 route: "All traffic" gets `::/0`, the "Amnezia" mode gets `2000::/3` (since v5.36.2; "Amnezia" profiles issued earlier carry `::/0` and `manage regen` updates them), so IPv6 goes into the tunnel and dies there; profiles issued earlier, and real split routing (`--route-custom`), get no IPv6 route, and then the device's IPv6 goes around the tunnel and a Russian site sees your real home address directly, with no scripts involved. To check from the device: `curl -6 ifconfig.co` - if your home address comes back, IPv6 is going around. Details in [ADVANCED.en.md](ADVANCED.en.md#split-detect-adv).
 - Splitting by destination is visible from outside: a site can compare the connection's address with whatever a script on its page reports. That is a property of any split - see [Troubleshooting](#trouble).
 - Russian sites will see a Cloudflare address, not a Russian one. For services that specifically require a Russian IP this may not be enough - that calls for a cascade with a server in Russia, see [CASCADE.en.md](CASCADE.en.md).
 - WARP addresses are shared. Some Russian services treat them with suspicion, and on certain sites you may see a captcha.
