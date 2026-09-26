@@ -1623,9 +1623,9 @@ sudo bash /root/awg/manage_amneziawg.sh stats
 
 Name            | IP              | Received     | Sent         | Last handshake      | Status
 -----------------------------------------------------------------------------------------------
-guest           | 10.9.9.4        | 0 B          | 0 B          | never               | Inactive
-my_laptop       | 10.9.9.3        | 892.30 MiB   | 128.40 MiB   | 2026-09-26 14:04:30 | Active
 my_phone        | 10.9.9.2        | 1.24 GiB     | 356.69 MiB   | 2026-09-26 14:02:11 | Active
+my_laptop       | 10.9.9.3        | 892.30 MiB   | 128.40 MiB   | 2026-09-26 14:04:30 | Active
+guest           | 10.9.9.4        | 0 B          | 0 B          | never               | Inactive
 
 [2026-09-26 14:05:02] INFO: Total: Received 2.11 GiB, Sent 485.09 MiB
 ```
@@ -1998,7 +1998,7 @@ Raspberry Pi 3 has 1 GB RAM and 4 cores at 1.2 GHz. Kernel module compilation ca
 
 <details>
 <summary><strong>Q: How do I check if the prebuilt module was used?</strong></summary>
-Look for <code>Prebuilt installed</code> in the install log (<code>/root/awg/install_amneziawg.log</code>); the Russian installer writes <code>Предсобранный пакет установлен</code>. If you see <code>using DKMS</code> instead, the module was built from source.
+Look for <code>Prebuilt installed</code> in the install log (<code>/root/awg/install_amneziawg.log</code>); the Russian installer writes <code>Предсобранный пакет установлен</code>. If it is not there, the module was built with DKMS: on the fallback the log says <code>falling back to DKMS build</code>.
 </details>
 
 ---
@@ -2281,7 +2281,7 @@ it as a target.
 
 * **Single AWG protocol version per server.** All clients share the same obfuscation parameters. You cannot have some clients on AWG 1.x and others on 2.0 simultaneously.
 
-* **Ubuntu other than `noble`, `jammy` and `focal` (for example 25.10 and 26.04):** the installer checks whether the PPA has packages for the release codename, and if it does not (a 404), switches the PPA codename to `noble` (since v5.13.0). Debian is always mapped to the nearest Ubuntu release: 12 -> `focal`, 13 -> `noble`. Either way the module is built via DKMS for your kernel, so the first install takes longer.
+* **Ubuntu other than `noble`, `jammy` and `focal` (for example 25.10 and 26.04):** the installer requests `dists/<codename>/Release` from the PPA, and if there is no answer (a 404 or the PPA is unreachable), switches the PPA codename to `noble` (since v5.13.0). Debian is always mapped to the nearest Ubuntu release: 12 -> `focal`, 13 -> `noble`. The module still comes from the PPA DKMS package and is built for your kernel, except on ARM systems with a prebuilt module.
 
 * **IPv6 Dual-Stack Tunnel - rolling back `ALLOW_IPV6_TUNNEL=0`:** Setting `ALLOW_IPV6_TUNNEL=0` in `awgsetup_cfg.init` (or re-running without `--allow-ipv6-tunnel`) does **not** remove existing dual-stack `AllowedIPs = ..., fddd::.../128` entries from `[Peer]` blocks already written to `awg0.conf`. The entries remain and the kernel keeps IPv6 routes for those peers. `manage_amneziawg.sh regen <name>` (or the full path `/root/awg/manage_amneziawg.sh regen <name>`) after disabling the flag rebuilds only the client `.conf` - it becomes IPv4-only, since `regenerate_client` reads `ALLOW_IPV6_TUNNEL`. But `regen` does **not** remove the IPv6 `AllowedIPs` from the server `[Peer]` block. To clear the server side too, use the sed cleanup across all peers: `awg-quick down awg0; sed -i 's|, fddd:[^/]*/[0-9]*||g' /etc/amnezia/amneziawg/awg0.conf; awg-quick up awg0`, or `manage_amneziawg.sh remove <name>` + `add <name>`.
 

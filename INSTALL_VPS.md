@@ -12,7 +12,7 @@ A step-by-step guide for deploying an AmneziaWG 2.0 VPN server on a clean Ubuntu
 - Both x86_64 (amd64) and ARM64 (aarch64), with prebuilt kernel modules covering Raspberry Pi 4/5, Ubuntu 24.04/25.10 ARM64, and Debian 12/13 ARM64 (Hetzner CAX, Oracle Ampere A1, AWS Graviton all run on these stock kernels). Ubuntu 26.04 ARM64 builds the module from source via DKMS.
 - DPI bypass for Russia (ТСПУ), Iran, China, school and corporate firewalls.
 - Survives kernel upgrades automatically via DKMS auto-repair (since v5.12.0). On ARM with a prebuilt module there is no DKMS: after a kernel change, run the installer again.
-- Ubuntu 25.10 and 26.04: if the PPA has no packages for the release codename, the installer switches to `noble` itself (since v5.13.0).
+- Ubuntu 25.10 and 26.04: if the PPA does not answer for the release codename, the installer switches to `noble` itself (since v5.13.0).
 
 ## Choosing a VPS
 
@@ -198,7 +198,7 @@ Re-installing later starts from a clean slate.
 
 ## Troubleshooting
 
-- **PPA 404 on Ubuntu 25.10 or 26.04.** Since v5.13.0 the installer checks the codename in the PPA and switches to `noble` itself when it is missing. If you are still on v5.12.x, upgrade the installer.
+- **PPA 404 on Ubuntu 25.10 or 26.04.** Since v5.13.0 the installer checks whether the PPA answers for the codename and switches to `noble` itself when it does not. If you are still on v5.12.x, upgrade the installer.
 - **DKMS build fails on stale kernel headers** (typical after `do-release-upgrade` 24.04 to 25.10). v5.13.0 detects stale headers (kernel version differs from the running kernel) and installs gcc-13 as a fallback compiler so DKMS autoinstall succeeds across the version mismatch. If DKMS still fails, `sudo bash /root/awg/manage_amneziawg.sh repair-module` forces a rebuild.
 - **Mobile carrier unstable or only connects on the third attempt.** On a new server, install with `--mobile` - it enables the mobile obfuscation preset and moves the port to 443/udp in one flag (carriers often drop unfamiliar UDP ports; an explicit `--port` wins if you pass both). On a running server that is a `--force --mobile` reinstall, after which every client config has to be reissued with `regen`; if the handshake never completes at all, read [the walkthrough](ADVANCED.en.md#no-hs-mobile-adv) first. Tested carriers (Russia): Yota (Moscow), Tele2 (Moscow), Tattelecom / Letai (Tatarstan), Beeline (default preset). Tele2 (Krasnoyarsk) needed `I1 = <r 48>` in May 2026, and Megafon (regional networks) needed I1 removed. Full per-carrier table and the underlying Jc / Jmin / Jmax mechanics are in [ADVANCED.en.md FAQ](ADVANCED.en.md#faq-mobile-unstable-adv).
 - **Handshake completes but no packets flow.** Almost always the AllowedIPs gotcha on a custom split-tunnel config. Cover the server subnet too, not just the destinations you want. See [ADVANCED.en.md AllowedIPs](ADVANCED.en.md#allowedips-adv).

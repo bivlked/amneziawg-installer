@@ -300,9 +300,9 @@ Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work - o
 |----|----------|----------------|-------|
 | Ubuntu 24.04 LTS | ✅ default pick | until 2029-05-31 | The best-tested platform |
 | Debian 13 (trixie) | ✅ default pick | until 2028-08-09 | Tested. PPA via codename mapping to noble, DEB822 |
-| Ubuntu 26.04 | ✅ fine to use | until 2031-05-29 | The installer checks whether the PPA has packages for the release codename and switches to `noble` itself if it does not (since v5.13.0) |
+| Ubuntu 26.04 | ✅ fine to use | until 2031-05-29 | The installer checks whether the PPA answers for the release codename and switches to `noble` itself if it does not (since v5.13.0) |
 | Debian 12 (bookworm) | ⚠️ for migration | regular ended 2026-07-11, Debian LTS until 2028-06-30 | Works and is tested, security updates continue through Debian LTS. PPA via codename mapping to focal. For a new server prefer Debian 13 |
-| Ubuntu 25.10 (questing) | ⚠️ for migration | ended 2026-07-01, no extension | Works: the PPA has no `questing` packages, so the installer switches to `noble` itself (since v5.13.0). Receives no security updates of any kind, so do not pick it for a new server |
+| Ubuntu 25.10 (questing) | ⚠️ for migration | ended 2026-07-01, no extension | Works: if the PPA does not answer for `questing`, the installer switches to `noble` itself (since v5.13.0). Receives no security updates of any kind, so do not pick it for a new server |
 
 **Architecture support (v5.10.0+):**
 

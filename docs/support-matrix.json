@@ -5,7 +5,7 @@
     "last_verified": "2026-08-29",
     "scope": [
       "vendor_regular_eol and vendor_lts_eol against the lifecycle source",
-      "ppa_suite against the codename mapping in install_amneziawg.sh",
+      "ppa_suite against the codename mapping in install_amneziawg.sh; for Ubuntu outside noble, jammy and focal the installer probes the PPA live, so the value there is the suite used when the PPA answers",
       "arm_prebuilt_targets against the job ids in .github/workflows/arm-build.yml",
       "project_policy against what the documentation actually recommends"
     ],
