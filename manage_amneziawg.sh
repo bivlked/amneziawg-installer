@@ -1416,7 +1416,13 @@ check_server() {
             log_warn " - Не удалось определить порт."
         fi
     else
-        if ! ss -lunp | grep -q ":${port} "; then
+        # Вывод ss сначала целиком в переменную: в конвейере `ss | grep -q` под
+        # pipefail grep выходил на первом совпадении, ss получал SIGPIPE, и
+        # найденный порт читался как «не прослушивается». Отказ самого ss, как
+        # и раньше, значит «не прослушивается».
+        local _ss_out _ss_rc=0
+        _ss_out=$(ss -lunp) || _ss_rc=$?
+        if (( _ss_rc != 0 )) || ! grep -qF -- ":${port} " <<< "$_ss_out"; then
             log_error " - Порт ${port}/udp НЕ прослушивается!"
             ok=0
         else

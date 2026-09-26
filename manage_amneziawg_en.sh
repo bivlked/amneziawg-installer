@@ -1438,7 +1438,13 @@ check_server() {
             log_warn " - Failed to determine port."
         fi
     else
-        if ! ss -lunp | grep -q ":${port} "; then
+        # Capture the whole ss output first: in a `ss | grep -q` pipeline under
+        # pipefail grep exited on the first match, ss got SIGPIPE, and a port
+        # that was found read as "not listening". A failure of ss itself still
+        # means "not listening", as before.
+        local _ss_out _ss_rc=0
+        _ss_out=$(ss -lunp) || _ss_rc=$?
+        if (( _ss_rc != 0 )) || ! grep -qF -- ":${port} " <<< "$_ss_out"; then
             log_error " - Port ${port}/udp is NOT listening!"
             ok=0
         else
