@@ -2930,15 +2930,21 @@ awg_cps_decoded_size() {
 #
 # Возвращает 0, если структура есть.
 awg_cps_is_shaped() {
-    local s="${1:-}" rest tag n lit=0 rnd_max=0
+    local s="${1:-}" rest mat tag n lit=0 rnd_max=0
     [[ -n "$s" ]] || return 1
     # Разбирается целиком: код 2 означает «встретилось неразобранное», и такой
     # тег обе реализации отвергнут - интерфейс не поднимется.
     awg_cps_decoded_size "$s" >/dev/null 2>&1 || return 1
     rest="$s"
     while [[ "$rest" =~ \<[[:space:]]*([a-zA-Z]+)[[:space:]]*([^\>]*)\> ]]; do
+        # Совпадение сохраняем и строку продвигаем ДО case: `[[ =~ ]]` в ветке
+        # r/rc/rd затирает BASH_REMATCH, и продвижение по затёртому совпадению
+        # не укорачивало строку. На `<r 1 0>` цикл тогда не завершался, и
+        # diagnose зависал.
+        mat="${BASH_REMATCH[0]}"
         tag="${BASH_REMATCH[1],,}"
         n="${BASH_REMATCH[2]//[[:space:]]/}"
+        rest="${rest#*"$mat"}"
         case "$tag" in
             b)
                 n="${n#0x}"; n="${n#0X}"
@@ -2951,7 +2957,6 @@ awg_cps_is_shaped() {
             t) : ;;
             *) return 1 ;;
         esac
-        rest="${rest#*"${BASH_REMATCH[0]}"}"
     done
     # Ни одного случайного куска длиннее метки DNS и не меньше тридцати
     # литеральных байт структуры.

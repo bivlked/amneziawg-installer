@@ -2979,15 +2979,21 @@ awg_cps_decoded_size() {
 #
 # Returns 0 when the structure is there.
 awg_cps_is_shaped() {
-    local s="${1:-}" rest tag n lit=0 rnd_max=0
+    local s="${1:-}" rest mat tag n lit=0 rnd_max=0
     [[ -n "$s" ]] || return 1
     # Разбирается целиком: код 2 означает «встретилось неразобранное», и такой
     # тег обе реализации отвергнут - интерфейс не поднимется.
     awg_cps_decoded_size "$s" >/dev/null 2>&1 || return 1
     rest="$s"
     while [[ "$rest" =~ \<[[:space:]]*([a-zA-Z]+)[[:space:]]*([^\>]*)\> ]]; do
+        # Save the match and advance the string BEFORE the case: the `[[ =~ ]]`
+        # in the r/rc/rd branch clobbers BASH_REMATCH, and advancing by a
+        # clobbered match did not shorten the string. On `<r 1 0>` the loop
+        # then never ended and diagnose hung.
+        mat="${BASH_REMATCH[0]}"
         tag="${BASH_REMATCH[1],,}"
         n="${BASH_REMATCH[2]//[[:space:]]/}"
+        rest="${rest#*"$mat"}"
         case "$tag" in
             b)
                 n="${n#0x}"; n="${n#0X}"
@@ -3000,7 +3006,6 @@ awg_cps_is_shaped() {
             t) : ;;
             *) return 1 ;;
         esac
-        rest="${rest#*"${BASH_REMATCH[0]}"}"
     done
     # Ни одного случайного куска длиннее метки DNS и не меньше тридцати
     # литеральных байт структуры.
