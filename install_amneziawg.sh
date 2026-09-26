@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 2.0 на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 5.36.2
-# Дата: 2026-09-24
+# Версия: 5.37.0
+# Дата: 2026-09-27
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -22,7 +22,7 @@ set -o pipefail
 # Цвет инструментам здесь не нужен, поэтому он выключен для всего скрипта.
 export WG_COLOR_MODE=never
 
-SCRIPT_VERSION="5.36.2"
+SCRIPT_VERSION="5.37.0"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -40,8 +40,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="72712110519bf41caeb88d8a1e4b931651f8b54b49e5c59424e9a5ef768b9b86"
-MANAGE_SCRIPT_SHA256="df1a4817847cdea74e7038e87013a70fbc30440255a70e48fa29622df4e81cc3"
+COMMON_SCRIPT_SHA256="624bf633bd1df640862ee978f0dcea0429a79e18c0330658322c2e7711917fee"
+MANAGE_SCRIPT_SHA256="9e1fddacd3a58ac83da128be6daca25ec7831f48d4f12389c6de69bb73ede6f4"
 
 # AmneziaWG 2.0 пин (H0, 31 jul 2026). Upstream влил AmneziaWG 3.0 в default-ветку
 # amneziawg-linux-kernel-module, и PPA переключился на 3.0. Тогда на ядрах старее
@@ -58,7 +58,7 @@ AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
 UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PREBUILT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 _APT_UPDATED=0
-CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""
+CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""; CLI_SSH_PORT_SET=0
 CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PREBUILT=0; CLI_KEEP_PACKAGES=0
 CLI_ALLOW_IPV6_TUNNEL=0
 CLI_ISOLATION="default"
@@ -248,7 +248,7 @@ while [[ $# -gt 0 ]]; do
         --verbose|-v)    VERBOSE=1 ;;
         --no-color)      NO_COLOR=1 ;;
         --port=*)        CLI_PORT="${1#*=}" ;;
-        --ssh-port=*)    CLI_SSH_PORT="${1#*=}" ;;
+        --ssh-port=*)    CLI_SSH_PORT="${1#*=}"; CLI_SSH_PORT_SET=1 ;;
         --subnet=*)      CLI_SUBNET="${1#*=}" ;;
         --allow-ipv6)        CLI_DISABLE_IPV6=0 ;;
         --disallow-ipv6)     CLI_DISABLE_IPV6=1 ;;
@@ -1665,7 +1665,14 @@ safe_load_config() {
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS)
                     export "$key=$value"
                     ;;
+                *)
+                    # Строка CLIENT_DNS, которую разбор не узнал, называется: иначе новые
+                    # клиенты молча получали бы DNS по умолчанию.
+                    if [[ "${key^^}" == CLIENT_DNS ]]; then log_warn "Строка CLIENT_DNS в $config_file не разобрана: '$line'. Нужен вид export CLIENT_DNS='10.9.9.1' без отступа и без пробелов вокруг =. Новые клиенты получат DNS по умолчанию."; fi
+                    ;;
             esac
+        elif [[ "${line^^}" == *CLIENT_DNS* ]]; then
+            log_warn "Строка CLIENT_DNS в $config_file не разобрана: '$line'. Нужен вид export CLIENT_DNS='10.9.9.1' без отступа и без пробелов вокруг =. Новые клиенты получат DNS по умолчанию."
         fi
     done < "$config_file"
 }
@@ -3507,12 +3514,16 @@ EOF
 # ВАЖНО: внутри только log_warn/log_error (stderr); log() пишет в stdout и
 # испортил бы перехват $(detect_ssh_ports).
 detect_ssh_ports() {
-    local ports="" p pp valid=""
+    local ports="" p pp valid="" _override=0 _ok bad=""
     # awk: достаёт порт из строк `port N` и `listenaddress host:port`
     # (IPv4 и [IPv6]); голый адрес без порта пропускается.
     local awk_ports='tolower($1)=="port"&&$2~/^[0-9]+$/{print $2} tolower($1)=="listenaddress"{v=$2; if(v~/\]:[0-9]+$/){sub(/.*\]:/,"",v); print v} else if(v~/^[0-9.]+:[0-9]+$/){sub(/.*:/,"",v); print v}}'
 
-    if [[ -n "$CLI_SSH_PORT" ]]; then
+    if [[ -n "$CLI_SSH_PORT" || "${CLI_SSH_PORT_SET:-0}" -eq 1 ]]; then
+        _override=1
+        # Пустой элемент (22, или 22,,2222) - тоже ошибка: так выглядит подстановка
+        # незаданной переменной, и нужный порт потерялся бы молча.
+        [[ ",${CLI_SSH_PORT}," =~ ,[[:space:]]*, ]] && bad="(пустой элемент)"
         # 1. Ручной override - авторитетный источник
         ports="${CLI_SSH_PORT//,/ }"
     else
@@ -3539,26 +3550,37 @@ detect_ssh_ports() {
     fi
 
     # Валидация (десятичная 1-65535, 10# против octal) + дедуп с сохранением порядка
-    for p in $ports; do
+    # Разбор без раскрытия шаблонов: `for p in $ports` превращал бы
+    # --ssh-port='*' в имена файлов текущего каталога.
+    local -a _plist=()
+    IFS=$' \t\n' read -r -d '' -a _plist <<< "$ports" || true
+    for p in "${_plist[@]}"; do
+        _ok=0
         # Не больше пяти значащих цифр ДО арифметики: $((10#...)) идёт по модулю
         # 2^64, и 18446744073709551638 превращалось в 22. Ведущие нули допустимы.
         if [[ "$p" =~ ^0*([0-9]{1,5})$ ]]; then
             pp=$((10#${BASH_REMATCH[1]}))
             if (( pp >= 1 && pp <= 65535 )); then
+                _ok=1
                 case " $valid " in
                     *" $pp "*) ;;
                     *) valid+="${valid:+ }$pp" ;;
                 esac
             fi
         fi
+        [[ "$_ok" -eq 1 ]] || bad+="${bad:+,}$p"
     done
+    if [[ "$_override" -eq 1 && -n "$bad" ]]; then
+        log_error "--ssh-port='${CLI_SSH_PORT}': не порт: ${bad}. Явный список принимается только целиком - иначе UFW открыл бы не все нужные порты. Исправьте --ssh-port."
+        return 1
+    fi
 
     # 5. Дефолт, если детект ничего валидного не дал
     if [[ -z "$valid" ]]; then
         # Заданный --ssh-port без единого допустимого порта - отказ, а не 22:
         # флаг нужен ровно для нестандартного SSH, и подмена на 22 при включении
         # UFW отрезала бы доступ к серверу. Автодетект здесь не выполнялся.
-        if [[ -n "$CLI_SSH_PORT" ]]; then
+        if [[ "$_override" -eq 1 ]]; then
             log_error "--ssh-port='${CLI_SSH_PORT}' не содержит ни одного допустимого порта (1-65535). UFW не будет включён с портом 22 - исправьте --ssh-port."
             return 1
         fi
@@ -4501,7 +4523,7 @@ initialize_setup() {
     # --ssh-port проверяется на шаге 0: иначе значение без единого допустимого
     # порта всплыло бы только на шаге 4, после обновления пакетов и перезагрузок. При заданном флаге detect_ssh_ports
     # ничего не зондирует, только разбирает значение.
-    if [[ -n "$CLI_SSH_PORT" ]]; then
+    if [[ -n "$CLI_SSH_PORT" || "${CLI_SSH_PORT_SET:-0}" -eq 1 ]]; then
         detect_ssh_ports >/dev/null \
             || die "Некорректный --ssh-port: '$CLI_SSH_PORT'. Укажите SSH-порт числом 1-65535, несколько - через запятую (--ssh-port=2222 или --ssh-port=22,2222)."
     fi
