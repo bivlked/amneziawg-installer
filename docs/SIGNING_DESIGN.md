@@ -59,7 +59,7 @@ Generated files:
 
 ## Signing flow
 
-Per release, after the last change to the six scripts and before `git tag`: the signatures are committed under `signing/` so they land in the tagged commit. Each signature carries a trusted comment binding it to the tag and filename, so `scripts/verify-signatures.sh`, and a user who reads the `Trusted comment:` line, rejects a signature made for a different file or release (rollback / misbinding protection). `minisign -V` alone does not compare the comment with the tag:
+Per release, after the last change to the six scripts and before `git tag`: the signatures are committed under `signing/` so they land in the tagged commit. Each signature carries a trusted comment binding it to the tag and filename, so `scripts/verify-signatures.sh`, and a user who reads the `Trusted comment:` line, reject a signature made for a different file or release (rollback / misbinding protection). Sign with:
 
 ```bash
 bash scripts/sign-release.sh vX.Y.Z
@@ -67,7 +67,7 @@ bash scripts/sign-release.sh vX.Y.Z
 
 It writes the `.minisig` files under `signing/`, asks for the key password once, and refuses to run without a terminal. `release.yml` attaches the signatures to the release.
 
-Verifiers should glance at the `Trusted comment:` line that `minisign -V` prints and ensure it matches the file they actually downloaded for the tag they intended.
+`minisign -V` alone does not compare the comment with the tag, so verifiers should glance at the `Trusted comment:` line it prints and ensure it matches the file they actually downloaded for the tag they intended.
 
 ## Workflow integration (history)
 
