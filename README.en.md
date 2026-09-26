@@ -54,7 +54,7 @@ chmod +x install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh
 ```
 
-> What it does: installs AmneziaWG (kernel module via DKMS; which protocol line you end up with is covered in [AmneziaWG 3.x](#awg3)), configures the firewall and forwarding, creates the first client, and prints a QR code plus a `vpn://` link for one-tap import into the Amnezia client. Adding a friend or a device later is a single `add` command.
+> What it does: installs AmneziaWG (kernel module via DKMS, or a prebuilt package on some ARM boards; which protocol line you end up with is covered in [AmneziaWG 3.x](#awg3)), sets up the server and forwarding, offers to turn on the UFW firewall, and creates two clients, `my_phone` and `my_laptop`. Their configs, QR codes and `vpn://` links are saved in `/root/awg/`; how to get them onto your phone is in [After installation](#after-installation). Adding a friend or a device later is a single `add` command.
 > 3 commands. 2 reboots along the way. About 20 minutes to a working VPN. For a clean Ubuntu/Debian VPS, not a home router or shared hosting. [Details →](#installation)
 
 > 📘 Full deployment guide: [Install AmneziaWG VPN server on Ubuntu/Debian VPS](INSTALL_VPS.md) - covers VPS choice, ARM, troubleshooting, and uninstall.
@@ -265,7 +265,7 @@ Detailed comparison: [amneziawg-installer vs the official Amnezia app](https://b
 <a id="carriers"></a>
 ## 📡 Tested mobile carriers (Russia)
 
-The installer tunes AmneziaWG 2.0 obfuscation for mobile networks with DPI: `--mobile` switches on the mobile preset and port 443/udp in a single flag. If your VPN is unstable on mobile data, reinstall with `--mobile`. The configurations below come from user reports in issues and discussions (no guarantee: blocking and carrier parameters change over time):
+The installer tunes AmneziaWG 2.0 obfuscation for mobile networks with DPI: `--mobile` switches on the mobile preset and port 443/udp in a single flag. If your VPN is unstable on mobile data, use `--mobile` right away on a new server. On a running server this means reinstalling with `--force --mobile`: the obfuscation parameters and the port change, and every client needs its config reissued with `regen`. If the handshake never completes on mobile data, read the [walkthrough](ADVANCED.en.md#no-hs-mobile-adv) first. The configurations below come from user reports in issues and discussions (no guarantee: blocking and carrier parameters change over time):
 
 - **Yota** - Moscow, `--preset=mobile`
 - **Tele2** - Moscow (`--preset=mobile`); Krasnoyarsk (`--preset=mobile`; the May 2026 wave needed `I1=<r 48>`)
@@ -382,6 +382,7 @@ Installing AmneziaWG on Ubuntu or Debian comes down to three commands: download 
     * **Client isolation:** Whether to block traffic between clients inside the VPN. Enabled (`Y`) by default - clients cannot see each other; non-interactive: `--isolation=on|off`.
 
     * **Server name:** The server shows up under this name in the Amnezia app on `vpn://` import. Default `AWG Server`; non-interactive: `--server-name=NAME`.
+    * **Package cleanup:** the script lists what it would remove (snapd, unattended-upgrades and others) and asks first. To keep them, answer `n` or pass `--keep-packages`.
 
     AWG 2.0 parameters (Jc, S1-S4, H1-H4, I1) are generated **automatically** - no action required.
 
@@ -391,7 +392,7 @@ Installing AmneziaWG on Ubuntu or Debian comes down to three commands: download 
     ```bash
     sudo bash ./install_amneziawg_en.sh
     ```
-    The script will automatically resume from where it left off **without repeating any prompts**.
+    The script resumes from where it left off, and earlier questions are not asked again. One new question comes in the third run: "Enable UFW? [y/N]". Answer `y`: pressing Enter leaves the firewall off, and the server stays without one. With `--yes`, UFW is enabled without asking.
 
 8.  **Completion:** After the second reboot and the third script run, you will see the message:
     `AmneziaWG 2.0 installation and configuration completed SUCCESSFULLY!`
@@ -399,29 +400,30 @@ Installing AmneziaWG on Ubuntu or Debian comes down to three commands: download 
 ---
 
 <a id="verifying-a-release"></a>
-## 🔏 Verifying a release (optional)
+## 🔏 Verifying a release (optional, best done before running)
 
-Releases are signed with a key that lives offline on the maintainer's machine and never reaches GitHub Actions. On a signed release the scripts, the signatures and the public key are all attached, so verification needs nothing from a second place.
-
-Signing did not exist from the start: releases published before it was switched on carry no `.minisig` assets, and there is nothing to verify there.
+The installer is signed with a minisign key that the maintainer keeps offline and that never reaches GitHub Actions. Releases carry signatures from v5.29.0 on.
 
 ```bash
-sudo apt install minisign          # Ubuntu/Debian
+sudo apt install minisign
+BASE="https://github.com/bivlked/amneziawg-installer/releases/latest/download"
+wget -O install_amneziawg_en.sh         "$BASE/install_amneziawg_en.sh"
+wget -O install_amneziawg_en.sh.minisig "$BASE/install_amneziawg_en.sh.minisig"
 
-TAG=vX.Y.Z                         # the release you downloaded
-BASE="https://github.com/bivlked/amneziawg-installer/releases/download/$TAG"
-curl -LO "$BASE/install_amneziawg_en.sh"
-curl -LO "$BASE/install_amneziawg_en.sh.minisig"
-curl -LO "$BASE/KEYS.txt"
-
-minisign -V -p KEYS.txt -m install_amneziawg_en.sh -x install_amneziawg_en.sh.minisig
+minisign -V -P RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN \
+  -m install_amneziawg_en.sh -x install_amneziawg_en.sh.minisig
 ```
 
-Expected: `Signature and comment signature verified`, and on the next line `Trusted comment: amneziawg-installer <your tag> install_amneziawg_en.sh`.
+Expected: `Signature and comment signature verified`, and on the next line `Trusted comment: amneziawg-installer vX.Y.Z install_amneziawg_en.sh`. The tag must match the latest release on the [releases page](https://github.com/bivlked/amneziawg-installer/releases), and the name must match the file you downloaded. If the check fails, download both files again, since a new release may have come out between the two downloads. If it fails again, do not run the script.
 
-**Read that second line, not just the first.** It names the tag and the filename, so a signature from another release or another file does not pass here. Without that binding a signature would only prove that somebody signed some bytes at some point.
+**Compare the whole key.** The project public key is `RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN`. The same key is in `KEYS.txt` at the repository root and in every release. `3E598A1C01907E17` is the key ID, not a fingerprint: another key can carry the same ID, so it proves nothing on its own. Keep your own copy of the key and use it next time.
 
-⚠️ What this does NOT give you. If you fetch the script and the key from this repository in the same session, it protects against tampering on the way to you, but not against a compromise of the account itself: whoever can replace the script can replace the key. It starts to mean something once the key is one you saved earlier or took from an independent source. Key fingerprint: `3E598A1C01907E17`.
+**What the signature covers.** You verify the installer itself. The scripts it fetches later (`awg_common_en.sh`, `manage_amneziawg_en.sh`) are checked against SHA256 hashes built into it, so a signed installer covers them too. Not covered:
+- prebuilt ARM module packages from the `arm-packages` release: their hash sits next to them and only catches a broken download;
+- packages from the Amnezia PPA: apt checks them with the PPA key;
+- scripts you replace by hand: repeat the command above with their names.
+
+⚠️ **What this does not give you.** If you copy the key from this page in the same session, the check protects against tampering on the way to you, not against a compromised account: whoever can replace the script can replace this page. It starts to mean something once the key is one you saved earlier.
 
 <a id="after-installation"></a>
 ## 📦 After installation
@@ -431,8 +433,9 @@ Expected: `Signature and comment signature verified`, and on the next line `Trus
 | File | Path | Purpose |
 |------|------|---------|
 | `.conf` | `/root/awg/name.conf` | Configuration for client import |
-| `.png` | `/root/awg/name.png` | QR code for mobile devices |
+| `.png` | `/root/awg/name.png` | QR code of the same `.conf` for AmneziaWG clients |
 | `.vpnuri` | `/root/awg/name.vpnuri` | `vpn://` URI for Amnezia Client |
+| `.vpnuri.png` | `/root/awg/name.vpnuri.png` | QR code of the `vpn://` link for the Amnezia VPN app |
 
 **Download config to your computer:**
 
@@ -451,9 +454,11 @@ scp root@SERVER_IP:/root/awg/my_phone.conf .
 <details>
 <summary><strong>Import via QR code</strong></summary>
 
-1. Download the QR code: `scp root@SERVER_IP:/root/awg/my_phone.png .`
+1. Download the QR code of the link: `scp root@SERVER_IP:/root/awg/my_phone.vpnuri.png .`
 2. Open the file on your computer screen
 3. On your phone: Amnezia VPN → "Add VPN" → "Scan QR code"
+
+`my_phone.png` (without `vpnuri` in the name) is the QR code of the `.conf` itself, for an AmneziaWG client; do not scan it in Amnezia VPN.
 </details>
 
 <details>
@@ -570,7 +575,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: Will it survive a kernel update?</strong></summary>
-  <b>A:</b> Yes, DKMS should automatically rebuild the module. Verify with <code>dkms status</code>.
+  <b>A:</b> On a regular DKMS install, yes: the module is rebuilt at the next boot; check with <code>dkms status</code>. On ARM with a prebuilt module, no: after a kernel change the tunnel will not come up by itself. The standard fix is to run the installer again (<code>sudo bash ./install_amneziawg_en.sh --force</code>), which installs the module for the new kernel; it is a full run with two reboots.
 </details>
 
 <details>
@@ -678,9 +683,40 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
   <summary><strong>Q: Is it safe to re-run the installer? Will clients need new configs?</strong></summary>
   <b>A:</b> Yes, it is safe, and no re-issuing is needed. Re-running over an already working service requires the <code>--force</code> flag (or <code>AWG_FORCE_REINSTALL=1</code>) - without it the script reports that AmneziaWG is already installed and changes nothing. With <code>--force</code> the server config is written anew, but the server keys and the obfuscation parameters are taken from the existing setup, and the <code>[Peer]</code> blocks are carried over from the previous config. Every client is preserved, including the default <code>my_phone</code> and <code>my_laptop</code>: the creation loop skips the ones already present in the config. Config files and QR codes handed out earlier stay valid.
   <br><br>
-  There is exactly one exception: passing <code>--preset</code>, <code>--jc</code>, <code>--jmin</code> or <code>--jmax</code> regenerates the whole <code>Jc</code>/<code>S</code>/<code>H</code>/<code>I1</code> set, and then the old configs do stop connecting - they have to be re-issued with <code>regen</code> and handed out again. Leave those flags off for a plain update.
+  There is one exception: passing <code>--mobile</code>, <code>--preset</code>, <code>--jc</code>, <code>--jmin</code> or <code>--jmax</code> regenerates the whole <code>Jc</code>/<code>S</code>/<code>H</code>/<code>I1</code> set, and <code>--port</code> (and <code>--mobile</code>, which sets 443) changes the port in <code>Endpoint</code>. Either way the old configs stop connecting and have to be re-issued with <code>regen</code> and handed out again. Leave those flags off for a plain update.
   <br><br>
   Most of the time <code>--force</code> is not needed at all: to get the newer management commands it is enough to update the two scripts on the server (see the question above). Re-running the installer itself is only worth it when the installer changed.
+</details>
+
+<details>
+  <summary><strong>Q: AmneziaWG does not connect over mobile data but works on Wi-Fi - what should I do?</strong></summary>
+  <b>A:</b> Usually it is either a port the carrier blocks or the shape of the <code>I1</code> concealment packet. The server tells them apart: while the phone tries to connect, look at <code>sudo tcpdump -ni any udp</code> and <code>sudo awg show</code>.
+  <ul>
+    <li>No packets from the phone at all: check the address and port in <code>Endpoint</code>, the firewall and whether the hosting address is blocked. If it is the port, try <code>--mobile</code> (the mobile preset plus port 443/udp); on a running server that is a <code>--force</code> reinstall and reissuing every client config.</li>
+    <li>Packets arrive, but the peer <code>endpoint</code> does not change: <code>S1</code>-<code>S4</code> or <code>H1</code>-<code>H4</code> differ between server and client.</li>
+    <li>The <code>endpoint</code> changes and the receive counter grows, but <code>latest handshake</code> stays empty: that is <code>I1</code>. Since v5.33.0 new installs get it in DNS-response shape automatically; on older profiles you edit <code>I1</code> in the client <code>.conf</code>, the server stays as it is.</li>
+  </ul>
+  The walkthrough with a ready-made line is in <a href="ADVANCED.en.md#no-hs-mobile-adv">ADVANCED.en.md → The handshake never completes on cellular</a>, and common cases are collected in <a href="https://github.com/bivlked/amneziawg-installer/discussions/38">discussion #38</a>.
+</details>
+
+<details>
+  <summary><strong>Q: Why is my AmneziaWG config marked yellow in the Amnezia app?</strong></summary>
+  <b>A:</b> It is not an error: the Amnezia app marks second-line AmneziaWG configs in yellow, and those are what the installer issues. The mark on its own does not mean anything is wrong with the connection, and nothing needs redoing because of it. More in the <a href="ADVANCED.en.md#faq-advanced-adv">ADVANCED.en.md FAQ</a>.
+</details>
+
+<details>
+  <summary><strong>Q: With AmneziaWG on, my local network disappears or IPv6-only sites do not open - is that expected?</strong></summary>
+  <b>A:</b> Yes, that is how the full tunnel works, and it is the default mode: all device traffic, IPv6 included, goes into the VPN. By default IPv6 goes no further than the tunnel, so the device falls back to IPv4. Whether the local network stays reachable is up to the client: AmneziaWG for Windows cuts it off. If you need home devices while the VPN is on, switch the server to the Amnezia mode: reinstall with <code>--force --route-amnezia</code>, then run <code>sudo bash /root/awg/manage_amneziawg.sh regen --reset-routes</code> so the new mode reaches profiles you already handed out. The mode has its own trade-offs, see <a href="ADVANCED.en.md#client-ipv6-adv">ADVANCED.en.md → Device IPv6 and the local network</a>.
+</details>
+
+<details>
+  <summary><strong>Q: Can I install AmneziaWG on a Synology NAS?</strong></summary>
+  <b>A:</b> Not with this installer: on the DS918+ we checked, DSM 7.4.1 runs kernel 4.4, the module needs 5.15 or newer, and the box has nothing to build it with. AmneziaWG itself can run on Synology manually through the userspace implementation, step by step in <a href="ADVANCED.en.md#synology-adv">ADVANCED.en.md → AmneziaWG on a Synology NAS</a>.
+</details>
+
+<details>
+  <summary><strong>Q: AmneziaWG stopped connecting after an update - what should I check?</strong></summary>
+  <b>A:</b> Find out what exactly was updated. If the installer was run again with flags that change the obfuscation parameters or the port, the configs you handed out need reissuing; which flags those are is in the question "Is it safe to re-run the installer?" above. On ARM with a prebuilt module, run the installer again after a kernel upgrade. If the config turned yellow after an Amnezia app update, that is not an error (see the question above). Otherwise start with <code>sudo bash /root/awg/manage_amneziawg.sh check</code>.
 </details>
 
 > More answers and solutions in **[ADVANCED.en.md](ADVANCED.en.md)**.

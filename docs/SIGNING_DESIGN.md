@@ -4,7 +4,8 @@ Status: **ACTIVE** since 27 aug 2026. The keypair exists, `KEYS.txt` is
 committed, and `release.yml` refuses to publish a release whose signatures do
 not verify.
 
-Key fingerprint: `3E598A1C01907E17`. Publishing it through a channel that is
+Public key: `RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN` (key ID `3E598A1C01907E17`; the ID is not a fingerprint,
+another key can carry the same ID, so compare the whole key). Publishing it through a channel that is
 not this repository is what makes it worth anything to a first-time visitor;
 that is tracked separately and is not done by this document.
 
@@ -13,7 +14,7 @@ that is tracked separately and is not done by this document.
 Modern open-source security practice (NixOS, signify-based tools, libsodium ecosystem) ships releases with detached cryptographic signatures so users can verify a downloaded script has not been tampered with on the path from GitHub to their server. Right now `install_amneziawg.sh` is fetched via HTTPS from `raw.githubusercontent.com`, which means trust is rooted in GitHub's TLS chain + GitHub's account security alone. Adding a maintainer-controlled signature gives an independent verification path - with the important caveat below.
 
 - TLS only proves "the bytes came from GitHub". A signature proves "the bytes were signed by the holder of the private key", which lives offline on the maintainer's machine and is never exposed to GitHub Actions.
-- The protection is asymmetric. If a user already has the correct maintainer public key fingerprint pinned (e.g. saved from an earlier verified release, or fetched from an out-of-band channel - personal blog post, mastodon profile, signed git tag predating the compromise), then a malicious replacement script fails verification because the attacker cannot forge a signature without the offline secret key. **However**, a first-time user who fetches `KEYS.txt` and the installer from the same compromised GitHub account in the same session is exposed to a TOFU window: the attacker can atomically replace `KEYS.txt`, the script, and the signature, and the verification will succeed against the attacker's key. This is not a flaw of minisign - it is the general TOFU limitation of any public-key-on-the-same-domain scheme. To narrow the window, the maintainer should also publish the public-key fingerprint via at least one independent out-of-band channel.
+- The protection is asymmetric. If a user already has the correct maintainer public key pinned (e.g. saved from an earlier verified release, or fetched from an out-of-band channel - personal blog post, mastodon profile, signed git tag predating the compromise), then a malicious replacement script fails verification because the attacker cannot forge a signature without the offline secret key. **However**, a first-time user who fetches `KEYS.txt` and the installer from the same compromised GitHub account in the same session is exposed to a TOFU window: the attacker can atomically replace `KEYS.txt`, the script, and the signature, and the verification will succeed against the attacker's key. This is not a flaw of minisign - it is the general TOFU limitation of any public-key-on-the-same-domain scheme. To narrow the window, the maintainer should also publish the whole public key via at least one independent out-of-band channel.
 
 Competitor `pwnnex/ByeByeVPN` (303 stars, viral growth +48/week) already ships `minisign` signatures and an SBOM with each release. Cost: ~2-4 hours one-time setup + ~30 sec per release.
 
@@ -30,11 +31,11 @@ Competitor `pwnnex/ByeByeVPN` (303 stars, viral growth +48/week) already ships `
 ## Threat model
 
 Covered:
-- Tampering with `install_amneziawg.sh` or `install_amneziawg_en.sh` between GitHub Releases and the user's `wget` call, provided the user has the correct maintainer public-key fingerprint pinned from an earlier session or an out-of-band channel.
+- Tampering with `install_amneziawg.sh` or `install_amneziawg_en.sh` between GitHub Releases and the user's `wget` call, provided the user has the correct maintainer public key pinned from an earlier session or an out-of-band channel.
 - Compromise of GitHub Actions specifically: signatures are never produced by Actions, so a compromised CI cannot forge them.
 
 Partially covered:
-- Compromise of the GitHub account leading to a malicious replacement upload. Returning users with a pinned fingerprint detect this; first-time users fetching `KEYS.txt` from the same compromised repository in the same session do not (TOFU). Mitigated by publishing the fingerprint via at least one independent channel.
+- Compromise of the GitHub account leading to a malicious replacement upload. Returning users with a pinned public key detect this; first-time users fetching `KEYS.txt` from the same compromised repository in the same session do not (TOFU). Mitigated by publishing the public key via at least one independent channel.
 
 NOT covered:
 - Rollback / misbinding: an old valid script paired with its old valid `.minisig` will verify successfully if a user accepts whatever pair they happened to download. Mitigated by trusted comments tying the signature to a specific tag and filename (see signing flow below) and by users checking the comment line on verify.
@@ -138,7 +139,8 @@ curl -LO "https://github.com/bivlked/amneziawg-installer/releases/download/$TAG/
 curl -LO "https://github.com/bivlked/amneziawg-installer/releases/download/$TAG/install_amneziawg_en.sh.minisig"
 
 # 4. Verify:
-minisign -V -p KEYS.txt -m install_amneziawg_en.sh -x install_amneziawg_en.sh.minisig
+minisign -V -P RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN \
+  -m install_amneziawg_en.sh -x install_amneziawg_en.sh.minisig   # the whole key, compared with your saved copy
 # Expected: "Signature and comment signature verified"
 
 # 5. If verified - now you can install:
