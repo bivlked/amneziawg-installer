@@ -34,6 +34,7 @@ NO_COLOR=0
 VERBOSE_LIST=0
 JSON_OUTPUT=0
 EXPIRES_DURATION=""
+CLI_ADD_EXPIRES_SEEN=0
 CLI_CARRIER=""
 
 # --- Автоочистка временных файлов и директорий ---
@@ -196,7 +197,7 @@ while [[ $# -gt 0 ]]; do
         -v|--verbose)      VERBOSE_LIST=1; shift ;;
         --no-color)        NO_COLOR=1; shift ;;
         --json)            JSON_OUTPUT=1; shift ;;
-        --expires=*)       EXPIRES_DURATION="${1#*=}"; shift ;;
+        --expires=*)       EXPIRES_DURATION="${1#*=}"; CLI_ADD_EXPIRES_SEEN=1; shift ;;
         --conf-dir=*)      AWG_DIR="${1#*=}"; shift ;;
         --server-conf=*)   SERVER_CONF_FILE="${1#*=}"; shift ;;
         --apply-mode=*)
@@ -2464,6 +2465,12 @@ case $COMMAND in
         # неверном формате (--expires=bad) клиенты создавались permanent, а
         # set_client_expiry молча падал per-client - временный клиент незаметно
         # становился постоянным. Плохой формат теперь рушит команду до изменений.
+        # Пустой --expires= (бот с пустой переменной) отвергаем по «флаг видели»,
+        # как --allowed-ips= ниже: иначе он молча создавал бессрочного клиента
+        # с ok:true - тот же «временный стал постоянным».
+        if [[ "${CLI_ADD_EXPIRES_SEEN:-0}" == "1" && -z "$EXPIRES_DURATION" ]]; then
+            die "Пустой --expires= - укажите срок (1h, 12h, 1d, 7d, 30d, 4w) или уберите флаг."
+        fi
         if [[ -n "$EXPIRES_DURATION" ]]; then
             parse_duration "$EXPIRES_DURATION" >/dev/null \
                 || die "Некорректный --expires='$EXPIRES_DURATION'. Используйте: 1h, 12h, 1d, 7d, 30d, 4w."

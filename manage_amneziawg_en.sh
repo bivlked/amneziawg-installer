@@ -36,6 +36,7 @@ VERBOSE_LIST=0
 JSON_OUTPUT=0
 CLI_CARRIER=""
 EXPIRES_DURATION=""
+CLI_ADD_EXPIRES_SEEN=0
 
 # --- Auto-cleanup of temporary files and directories ---
 # _manage_temp_dirs holds mktemp -d paths for backup/restore.
@@ -199,7 +200,7 @@ while [[ $# -gt 0 ]]; do
         -v|--verbose)      VERBOSE_LIST=1; shift ;;
         --no-color)        NO_COLOR=1; shift ;;
         --json)            JSON_OUTPUT=1; shift ;;
-        --expires=*)       EXPIRES_DURATION="${1#*=}"; shift ;;
+        --expires=*)       EXPIRES_DURATION="${1#*=}"; CLI_ADD_EXPIRES_SEEN=1; shift ;;
         --conf-dir=*)      AWG_DIR="${1#*=}"; shift ;;
         --server-conf=*)   SERVER_CONF_FILE="${1#*=}"; shift ;;
         --apply-mode=*)
@@ -2492,6 +2493,13 @@ case $COMMAND in
         # bad format (--expires=bad) created permanent clients while
         # set_client_expiry failed silently per-client - a temporary client
         # quietly became permanent. A bad format now aborts before any change.
+        # An empty --expires= (a bot with an empty variable) is refused on "the
+        # flag was seen", like --allowed-ips= below: otherwise it silently
+        # created a permanent client with ok:true - the same "temporary became
+        # permanent".
+        if [[ "${CLI_ADD_EXPIRES_SEEN:-0}" == "1" && -z "$EXPIRES_DURATION" ]]; then
+            die "Empty --expires= - pass a duration (1h, 12h, 1d, 7d, 30d, 4w) or drop the flag."
+        fi
         if [[ -n "$EXPIRES_DURATION" ]]; then
             parse_duration "$EXPIRES_DURATION" >/dev/null \
                 || die "Invalid --expires='$EXPIRES_DURATION'. Use: 1h, 12h, 1d, 7d, 30d, 4w."
