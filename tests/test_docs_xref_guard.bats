@@ -86,7 +86,7 @@ _run_guard() { run bash "$FIX/scripts/check-docs-consistency.sh"; }
     [[ "$output" == *"PASS: межфайловые и HTML-ссылки на якоря резолвятся ("* ]]
     for form in "[r]: ../A.md#gone" "<a href='../A.md#gone'>x</a>" '<a href = "../A.md#gone">x</a>' '<a href= "../A.md#gone">x</a>' \
                 '<A HREF="../A.md#gone">x</A>' '[x](../A.MD#gone)' '[x]( ../A.md#gone)' '<a href=../A.md#gone>x</a>' '[r]: <../A.md#gone>' \
-                $'<a\nhref=\x27../A.md#gone\x27>x</a>'; do
+                $'<a\nhref=\x27../A.md#gone\x27>x</a>' $'<a\nhref=../A.md#gone>x</a>' $'<a\nHREF=\"../A.md#gone\">x</a>'; do
         git checkout -q -- docs/B.md
         printf '%s\n' "$form" >> docs/B.md
         _run_guard
@@ -194,7 +194,7 @@ _run_guard() { run bash "$FIX/scripts/check-docs-consistency.sh"; }
 
 @test "18: a title, a leading slash, angle brackets or percent-encoding do not hide the wrong target" {
     for form in '[a](README.md#posle-ustanovki "t")' '[a](/README.md#posle-ustanovki)' \
-                '[a](<README.md#posle-ustanovki>)' '[a](README.md#posle%2Dustanovki)'; do
+                '[a](<README.md#posle-ustanovki>)' '[a](README.md#posle%2Dustanovki)' $'[a](\n README.md#posle-ustanovki)'; do
         git checkout -q -- INSTALL_VPS.ru.md
         printf '%s\n' "$form" >> INSTALL_VPS.ru.md
         _run_guard

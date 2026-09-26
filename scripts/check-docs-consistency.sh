@@ -963,8 +963,8 @@ while IFS='|' read -r mf mpat mwhy; do
         misroute_fail=1
     fi
 done <<'MISROUTE'
-INSTALL_VPS.ru.md|[(<"\x27](\.?/)?README\.md#posle-ustanovki[)>"\x27\s]|ссылка на README.md#posle-ustanovki: «управление клиентами» живёт в README.md#upravlenie
-INSTALL_VPS.ru.md|[(<"\x27](\.?/)?ADVANCED\.md#client-compat-adv[)>"\x27\s]|ссылка на ADVANCED.md#client-compat-adv: про два QR-кода нужен ADVANCED.md#vpnuri-adv
+INSTALL_VPS.ru.md|(?<![^(<"\x27])\s*(\.?/)?README\.md#posle-ustanovki[)>"\x27\s]|ссылка на README.md#posle-ustanovki: «управление клиентами» живёт в README.md#upravlenie
+INSTALL_VPS.ru.md|(?<![^(<"\x27])\s*(\.?/)?ADVANCED\.md#client-compat-adv[)>"\x27\s]|ссылка на ADVANCED.md#client-compat-adv: про два QR-кода нужен ADVANCED.md#vpnuri-adv
 MISROUTE
 if [[ "$misroute_fail" -eq 0 ]]; then _ok "исправленные ссылки не вернулись в чужие разделы"; else _bad "ссылка снова ведёт в чужой раздел"; fi
 
