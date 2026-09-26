@@ -306,75 +306,106 @@ _setup_regen_stubs() {
     done
 }
 
-@test "client dns: the installer checks CLIENT_DNS in step 6 before creating clients (both languages)" {
+@test "client dns: the installer checks the loaded library in step 6, after sourcing it and before creating clients (both languages)" {
     for f in "${INSTALLERS[@]}"; do
         body=$(sed -n '/^step6_generate_configs() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../$f")
-        # The check exists and comes before the first generate_client. Its
-        # behaviour is covered by the _check_client_dns test below.
-        local chk gen
+        # The check sits after the library is sourced (before it, every library
+        # would look old and the full CLIENT_DNS check would never run) and
+        # before the first generate_client. Its behaviour is covered below.
+        local chk gen src
         if echo "$body" | grep -qE '^[[:space:]]*awg_client_dns >/dev/null'; then
-            echo "$f: step 6 calls awg_client_dns directly, bypassing _check_client_dns" >&2; return 1
+            echo "$f: step 6 calls awg_client_dns directly, bypassing _check_loaded_library" >&2; return 1
         fi
-        chk=$(echo "$body" | grep -nE '^[[:space:]]*_check_client_dns$' | head -1 | cut -d: -f1)
+        chk=$(echo "$body" | grep -nE '^[[:space:]]*_check_loaded_library$' | head -1 | cut -d: -f1)
+        src=$(echo "$body" | grep -nE '^[[:space:]]*source "\$COMMON_SCRIPT_PATH"$' | head -1 | cut -d: -f1)
         gen=$(echo "$body" | grep -nE 'generate_client "\$client_name"' | head -1 | cut -d: -f1)
-        [ -n "$chk" ] || { echo "$f: no CLIENT_DNS check in step 6" >&2; return 1; }
+        [ -n "$chk" ] || { echo "$f: no library check in step 6" >&2; return 1; }
+        [ -n "$src" ] || { echo "$f: source of the library not found in step 6" >&2; return 1; }
         [ -n "$gen" ] || { echo "$f: generate_client call not found in step 6" >&2; return 1; }
-        [ "$chk" -lt "$gen" ] || { echo "$f: CLIENT_DNS check comes after generate_client" >&2; return 1; }
+        [ "$src" -lt "$chk" ] || { echo "$f: library check comes before the library is sourced" >&2; return 1; }
+        [ "$chk" -lt "$gen" ] || { echo "$f: library check comes after generate_client" >&2; return 1; }
         # Before any state change of step 6, not merely before the clients.
         local sk
         sk=$(echo "$body" | grep -nE 'generate_server_keys' | head -1 | cut -d: -f1)
-        [ -n "$sk" ] && [ "$chk" -lt "$sk" ] || { echo "$f: CLIENT_DNS check comes after the server keys" >&2; return 1; }
+        [ -n "$sk" ] && [ "$chk" -lt "$sk" ] || { echo "$f: library check comes after the server keys" >&2; return 1; }
     done
+}
+
+# _lib_check <installer> <lib file|old> <CLIENT_DNS> <SCRIPT_VERSION>: run the
+# real _check_loaded_library of <installer> in a subshell, stderr to
+# $TEST_DIR/err, and return its status. "old" stands for the previous release
+# library: awg_client_dns absent, AWG_COMMON_VERSION 5.36.2. Any other value is
+# the library file to source; for the EN library its own awg_client_dns must be
+# the one loaded (setup has already sourced the RU library).
+_lib_check() {
+    local f="$1" lib="$2" dns="$3" ver="$4" rc=0
+    ( die() { echo "DIE: $*" >&2; exit 1; }
+      log_warn() { echo "WARN: $*" >&2; }
+      # shellcheck source=/dev/null
+      source <(sed -n '/^_check_loaded_library() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../$f")
+      declare -F _check_loaded_library >/dev/null || exit 99
+      if [ "$lib" = old ]; then
+          unset -f awg_client_dns; ! declare -F awg_client_dns >/dev/null || exit 98
+          # shellcheck disable=SC2034  # read by _check_loaded_library
+          AWG_COMMON_VERSION=5.36.2
+      else
+          unset -f awg_client_dns
+          _use_lib "$lib"
+          declare -F awg_client_dns >/dev/null || exit 97
+          if [ "$lib" = awg_common_en.sh ]; then
+              [[ "$(declare -f awg_client_dns)" == *"is invalid"* ]] || exit 96
+          fi
+      fi
+      CONFIG_FILE=/root/awg/awgsetup_cfg.init COMMON_SCRIPT_PATH=/root/awg/awg_common.sh \
+          SCRIPT_VERSION="$ver" CLIENT_DNS="$dns" _check_loaded_library ) 2>"$TEST_DIR/err" || rc=$?
+    return "$rc"
 }
 
 @test "client dns: step 6 check survives a library that predates CLIENT_DNS (both languages)" {
     # Between releases the installer on main downloads the helpers of the
-    # previous tag, where awg_client_dns does not exist. An empty CLIENT_DNS has
+    # previous tag, where awg_client_dns does not exist; a resumed step 6 can
+    # also run on a library left by an earlier run. An empty CLIENT_DNS has
     # nothing to check; a set one would be ignored by that library, so it must
     # stop the install with the real reason, not with "CLIENT_DNS is invalid".
     local i f lib rc
     for i in 0 1; do
         f="${INSTALLERS[$i]}"; lib="${LIBS[$i]}"
-        # Old library: awg_client_dns is not defined.
-        rc=0
-        ( die() { echo "DIE: $*" >&2; exit 1; }
-          # shellcheck source=/dev/null
-          source <(sed -n '/^_check_client_dns() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../$f")
-          declare -F _check_client_dns >/dev/null || exit 99
-          unset -f awg_client_dns; ! declare -F awg_client_dns >/dev/null || exit 98
-          CONFIG_FILE=/root/awg/awgsetup_cfg.init AWG_BRANCH=v5.36.2 CLIENT_DNS="" _check_client_dns ) || rc=$?
+        rc=0; _lib_check "$f" old "" 5.36.2 || rc=$?
         [ "$rc" -eq 0 ] || { echo "$f: old library, empty CLIENT_DNS: rc=$rc" >&2; return 1; }
-        rc=0
-        ( die() { echo "DIE: $*" >&2; exit 1; }
-          # shellcheck source=/dev/null
-          source <(sed -n '/^_check_client_dns() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../$f")
-          declare -F _check_client_dns >/dev/null || exit 99
-          unset -f awg_client_dns; ! declare -F awg_client_dns >/dev/null || exit 98
-          CONFIG_FILE=/root/awg/awgsetup_cfg.init AWG_BRANCH=v5.36.2 CLIENT_DNS="9.9.9.9" _check_client_dns ) 2>"$TEST_DIR/err" || rc=$?
+        rc=0; _lib_check "$f" old "9.9.9.9" 5.36.2 || rc=$?
         [ "$rc" -eq 1 ] || { echo "$f: old library, CLIENT_DNS set: rc=$rc" >&2; return 1; }
         grep -q 'DIE: ' "$TEST_DIR/err" || { echo "$f: no die" >&2; return 1; }
-        grep -q 'v5.36.2' "$TEST_DIR/err" || { echo "$f: message does not name the library branch" >&2; return 1; }
-        if grep -qiE 'невалиден|is invalid' "$TEST_DIR/err"; then
+        # The message names the library actually loaded and gives the advice
+        # that works on a resumed step 6: remove the line.
+        grep -q '/root/awg/awg_common.sh' "$TEST_DIR/err" || { echo "$f: message does not name the library file" >&2; return 1; }
+        grep -q '5\.36\.2' "$TEST_DIR/err" || { echo "$f: message does not name the library version" >&2; return 1; }
+        grep -q 'modify' "$TEST_DIR/err" || { echo "$f: message lacks the modify hint" >&2; return 1; }
+        if LC_ALL=C.UTF-8 grep -qiE 'невалиден|is invalid' "$TEST_DIR/err"; then
             echo "$f: old library reported as an invalid value" >&2; return 1
         fi
         # Current library: the full check runs and fails loudly on a bad value.
-        rc=0
-        ( die() { echo "DIE: $*" >&2; exit 1; }
-          _use_lib "$lib"
-          # shellcheck source=/dev/null
-          source <(sed -n '/^_check_client_dns() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../$f")
-          declare -F _check_client_dns >/dev/null || exit 99
-          CONFIG_FILE=/root/awg/awgsetup_cfg.init CLIENT_DNS="10.9.9.1, 1.1.1.1" _check_client_dns ) || rc=$?
+        rc=0; _lib_check "$f" "$lib" "10.9.9.1, 1.1.1.1" 5.36.2 || rc=$?
         [ "$rc" -eq 0 ] || { echo "$f: current library, valid CLIENT_DNS: rc=$rc" >&2; return 1; }
-        rc=0
-        ( die() { echo "DIE: $*" >&2; exit 1; }
-          _use_lib "$lib"
-          # shellcheck source=/dev/null
-          source <(sed -n '/^_check_client_dns() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../$f")
-          declare -F _check_client_dns >/dev/null || exit 99
-          CONFIG_FILE=/root/awg/awgsetup_cfg.init CLIENT_DNS="10.9.9.1," _check_client_dns ) 2>"$TEST_DIR/err" || rc=$?
+        rc=0; _lib_check "$f" "$lib" "10.9.9.1," 5.36.2 || rc=$?
         [ "$rc" -eq 1 ] || { echo "$f: current library, invalid CLIENT_DNS: rc=$rc" >&2; return 1; }
-        grep -qiE 'невалиден|is invalid' "$TEST_DIR/err" || { echo "$f: invalid value not reported as invalid" >&2; return 1; }
+        LC_ALL=C.UTF-8 grep -qiE 'невалиден|is invalid' "$TEST_DIR/err" || { echo "$f: invalid value not reported as invalid" >&2; return 1; }
+    done
+}
+
+@test "client dns: step 6 warns when the loaded library version differs from the installer (both languages)" {
+    local i f lib rc
+    for i in 0 1; do
+        f="${INSTALLERS[$i]}"; lib="${LIBS[$i]}"
+        # Same version: no warning.
+        rc=0; _lib_check "$f" "$lib" "" "$(sed -n 's/^AWG_COMMON_VERSION="\(.*\)"$/\1/p' "$BATS_TEST_DIRNAME/../$lib")" || rc=$?
+        [ "$rc" -eq 0 ] || { echo "$f: matching versions: rc=$rc" >&2; return 1; }
+        if grep -q 'WARN: ' "$TEST_DIR/err"; then
+            echo "$f: warning with matching versions: $(cat "$TEST_DIR/err")" >&2; return 1
+        fi
+        # Installer newer than the library on disk: a warning naming both.
+        rc=0; _lib_check "$f" old "" 9.99.0 || rc=$?
+        [ "$rc" -eq 0 ] || { echo "$f: mismatch with empty CLIENT_DNS must not stop: rc=$rc" >&2; return 1; }
+        grep -q 'WARN: .*5\.36\.2.*9\.99\.0' "$TEST_DIR/err" || { echo "$f: no warning naming both versions: $(cat "$TEST_DIR/err")" >&2; return 1; }
     done
 }
 
