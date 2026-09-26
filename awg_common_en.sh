@@ -3368,7 +3368,9 @@ apply_config() {
     # chosen for would be lost without a word.
     case "${AWG_APPLY_MODE:-}" in
         ""|syncconf|restart) ;;
-        *) log_warn "Unknown AWG_APPLY_MODE='$AWG_APPLY_MODE' (use syncconf or restart) - applying with syncconf." ;;
+        *)
+            log_warn "Unknown AWG_APPLY_MODE='$AWG_APPLY_MODE' (use syncconf or restart) - applying with syncconf."
+            ;;
     esac
     if [[ "${AWG_APPLY_MODE:-syncconf}" == "restart" ]]; then
         # An explicit restart mode drops client connections, SSH through the

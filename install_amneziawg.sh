@@ -40,7 +40,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="6c2fa2a74b12ee629e462a5a75e49b880176b13134807f7626699a1cee63198d"
+COMMON_SCRIPT_SHA256="624bf633bd1df640862ee978f0dcea0429a79e18c0330658322c2e7711917fee"
 MANAGE_SCRIPT_SHA256="9e1fddacd3a58ac83da128be6daca25ec7831f48d4f12389c6de69bb73ede6f4"
 
 # AmneziaWG 2.0 пин (H0, 31 jul 2026). Upstream влил AmneziaWG 3.0 в default-ветку
@@ -3550,7 +3550,7 @@ detect_ssh_ports() {
     # Разбор без раскрытия шаблонов: `for p in $ports` превращал бы
     # --ssh-port='*' в имена файлов текущего каталога.
     local -a _plist=()
-    read -ra _plist <<< "$ports"
+    IFS=$' \t\n' read -r -d '' -a _plist <<< "$ports" || true
     for p in "${_plist[@]}"; do
         _ok=0
         # Не больше пяти значащих цифр ДО арифметики: $((10#...)) идёт по модулю

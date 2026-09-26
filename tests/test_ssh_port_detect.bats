@@ -133,6 +133,13 @@ setup() {
         CLI_SSH_PORT='*'; CLI_SSH_PORT_SET=1
         run bash -c "cd '$BATS_TEST_TMPDIR/g' && $(declare -f detect_ssh_ports log_error log_warn); CLI_SSH_PORT='*' CLI_SSH_PORT_SET=1 detect_ssh_ports"
         if [ "$status" -eq 0 ] || [ -n "$output" ]; then echo "$script glob expanded to '$output'"; return 1; fi
+        # A newline inside the value must not hide what follows it.
+        CLI_SSH_PORT=$'22,\n2222'; CLI_SSH_PORT_SET=1
+        run detect_ssh_ports
+        [ "$status" -eq 0 ] && [ "$output" = "22 2222" ] || { echo "$script newline split: status $status, '$output'"; return 1; }
+        CLI_SSH_PORT=$'22,\nabc'; CLI_SSH_PORT_SET=1
+        run detect_ssh_ports
+        if [ "$status" -eq 0 ] || [ -n "$output" ]; then echo "$script bad element after a newline accepted: '$output'"; return 1; fi
         # Repeated and valid lists still work under the flag.
         CLI_SSH_PORT="2222,22,2222"; CLI_SSH_PORT_SET=1
         run detect_ssh_ports

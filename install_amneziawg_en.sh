@@ -42,7 +42,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="026af5548b81066eac0303304ab342996d7fbe387c2453b4aa8b3a86b38e97ad"
+COMMON_SCRIPT_SHA256="5592ac9ba016494dc2c359dc0e9d6286508ff4bbd4829c9153bf1c942daf21c9"
 MANAGE_SCRIPT_SHA256="be9856579a486bf127ad1fc35eddf32ac5feb02194345a31f9d2d2adf91fad27"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
@@ -3637,7 +3637,7 @@ detect_ssh_ports() {
     # Split without glob expansion: `for p in $ports` would turn
     # --ssh-port='*' into the file names of the current directory.
     local -a _plist=()
-    read -ra _plist <<< "$ports"
+    IFS=$' \t\n' read -r -d '' -a _plist <<< "$ports" || true
     for p in "${_plist[@]}"; do
         _ok=0
         # At most five significant digits BEFORE any arithmetic: $((10#...)) wraps

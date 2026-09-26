@@ -3322,7 +3322,9 @@ apply_config() {
     # пропадал бы молча.
     case "${AWG_APPLY_MODE:-}" in
         ""|syncconf|restart) ;;
-        *) log_warn "Неизвестный AWG_APPLY_MODE='$AWG_APPLY_MODE' (допустимо syncconf или restart) - применяю syncconf." ;;
+        *)
+            log_warn "Неизвестный AWG_APPLY_MODE='$AWG_APPLY_MODE' (допустимо syncconf или restart) - применяю syncconf."
+            ;;
     esac
     if [[ "${AWG_APPLY_MODE:-syncconf}" == "restart" ]]; then
         # Явный restart-режим рвёт соединения клиентов, в том числе SSH через
