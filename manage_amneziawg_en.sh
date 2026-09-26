@@ -976,6 +976,23 @@ restore_backup() {
         cp -a "$td/expiry/"* "${EXPIRY_DIR:-$AWG_DIR/expiry}/" 2>/dev/null || true
         chmod 600 "${EXPIRY_DIR:-$AWG_DIR/expiry}"/* 2>/dev/null
     fi
+    # An expiry stamp with no counterpart in the archive, for a client that IS
+    # in the archive, is left over from the current state (a same-named client
+    # created after the backup): without cleanup a client that is permanent in
+    # the backup would inherit someone else's deadline and be deleted by cron.
+    # Only stamps of names from the restored awg0.conf that are absent from the
+    # archive's expiry/ (or when the archive has no expiry/ at all) are removed;
+    # stamps of nonexistent clients are left alone (see C11 above), and so are
+    # stamps from the archive.
+    # Names come from sed, not from a loop over the lines: under bash -x such a
+    # loop would print the server config PrivateKey line into the trace.
+    local _exp_names _exp_name
+    _exp_names=$(sed -n 's/^#_Name = //p' "$td/server/$_srv_base")
+    while IFS= read -r _exp_name; do
+        [[ "$_exp_name" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
+        [[ -e "$td/expiry/$_exp_name" ]] && continue
+        rm -f "${EXPIRY_DIR:-$AWG_DIR/expiry}/$_exp_name" 2>/dev/null || true
+    done <<< "$_exp_names"
     if [[ -f "$td/awg-expiry" ]]; then
         cp -a "$td/awg-expiry" /etc/cron.d/awg-expiry
         chmod 644 /etc/cron.d/awg-expiry
@@ -2562,8 +2579,12 @@ case $COMMAND in
             # Stale artifacts of a same-named client from the past (the QR
             # may not regenerate if qrencode disappeared): without cleanup the
             # [[ -f ]] checks below would report someone else's old file as
-            # fresh - both in the log and in JSON.
-            rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png"
+            # fresh - both in the log and in JSON. The expiry stamp too: the
+            # name is absent from awg0.conf, so the stamp is someone else's (a
+            # former client, a restore), and without cleanup a permanent client
+            # would inherit its deadline and cron would delete it at the old
+            # stamp. For --expires the stamp is set below, after generate_client.
+            rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png" "${EXPIRY_DIR:-$AWG_DIR/expiry}/${_cname}"
 
             log "Adding '$_cname'..."
             if generate_client "$_cname"; then

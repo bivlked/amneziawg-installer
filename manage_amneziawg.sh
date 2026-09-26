@@ -961,6 +961,21 @@ restore_backup() {
         cp -a "$td/expiry/"* "${EXPIRY_DIR:-$AWG_DIR/expiry}/" 2>/dev/null || true
         chmod 600 "${EXPIRY_DIR:-$AWG_DIR/expiry}"/* 2>/dev/null
     fi
+    # Метка срока без пары в архиве у клиента, который в архиве ЕСТЬ, осталась
+    # от текущего состояния (одноимённый клиент, созданный после бэкапа): без
+    # зачистки бессрочный по бэкапу клиент получил бы чужой срок и был бы удалён
+    # cron. Удаляются только метки имён из восстановленного awg0.conf, которых
+    # нет в expiry/ архива (или expiry/ в архиве нет вовсе); метки
+    # несуществующих клиентов не трогаем (см. C11 выше), метки из архива тоже.
+    # Имена берёт sed, а не цикл по строкам: под bash -x цикл печатал бы в трассу
+    # строку PrivateKey серверного конфига.
+    local _exp_names _exp_name
+    _exp_names=$(sed -n 's/^#_Name = //p' "$td/server/$_srv_base")
+    while IFS= read -r _exp_name; do
+        [[ "$_exp_name" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
+        [[ -e "$td/expiry/$_exp_name" ]] && continue
+        rm -f "${EXPIRY_DIR:-$AWG_DIR/expiry}/$_exp_name" 2>/dev/null || true
+    done <<< "$_exp_names"
     if [[ -f "$td/awg-expiry" ]]; then
         cp -a "$td/awg-expiry" /etc/cron.d/awg-expiry
         chmod 644 /etc/cron.d/awg-expiry
@@ -2532,8 +2547,11 @@ case $COMMAND in
             # Стейл-артефакты одноимённого клиента из прошлого (QR мог не
             # пересоздаться, если qrencode пропал): без зачистки проверка
             # [[ -f ]] ниже рапортовала бы чужой старый файл как свежий -
-            # и в логе, и в JSON.
-            rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png"
+            # и в логе, и в JSON. Туда же метка срока: имени нет в awg0.conf,
+            # значит метка чужая (прежний клиент, restore), и без зачистки
+            # бессрочный клиент получил бы её срок, а cron удалил бы его в момент
+            # старой метки. Для --expires метка ставится ниже, после generate_client.
+            rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png" "${EXPIRY_DIR:-$AWG_DIR/expiry}/${_cname}"
 
             log "Добавление '$_cname'..."
             if generate_client "$_cname"; then
