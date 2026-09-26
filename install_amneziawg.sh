@@ -1586,15 +1586,24 @@ configure_ipv6_tunnel() {
             # останавливаем: сменить подсеть при живых пирах нельзя (их IPv6
             # остались бы в старой), а проверки смены IPv6-подсети, как у IPv4,
             # нет. Повторный запуск тут ничего не ухудшит, поэтому предупреждение.
-            # Если же сервер сейчас в другой подсети, значение в стоке - это новая
-            # смена, и её останавливаем, как на чистом сервере.
-            local _cur_v6=""
+            # «Уже стоит» значит ровно тот же адрес сервера (префикс и длина), что
+            # дала бы эта подсеть: любая другая подсеть, даже внутри стока, - это
+            # новая смена, и её останавливаем, как на чистом сервере.
+            # Address разбирается без конвейера: grep -m1 под pipefail мог бы
+            # оборвать писателя и потерять найденный адрес.
+            local _cur_v6="" _want_v6 _addr_line _el
+            local -a _addr_els=()
             if [[ -f "$SERVER_CONF_FILE" ]] && grep -q '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null; then
-                _cur_v6=$(sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null \
-                    | tr ',' '\n' | sed 's/[[:space:]]//g' | grep -m1 ':') || _cur_v6=""
-                _cur_v6="${_cur_v6,,}"
+                _addr_line=$(sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null) || _addr_line=""
+                IFS=',' read -ra _addr_els <<< "${_addr_line//$'\n'/,}"
+                for _el in "${_addr_els[@]}"; do
+                    _el="${_el//[[:space:]]/}"
+                    if [[ "$_el" == *:* ]]; then _cur_v6="${_el,,}"; break; fi
+                done
             fi
-            if [[ "$_cur_v6" == "${sink_prefix}:"* ]]; then
+            _want_v6="${IPV6_SUBNET/::\//::1\/}"
+            _want_v6="${_want_v6,,}"
+            if [[ -n "$_cur_v6" && "$_cur_v6" == "$_want_v6" ]]; then
                 log_warn "IPV6_SUBNET ($IPV6_SUBNET) пересекается с префиксом ${sink_prefix}::/64 режима маршрутизации 2: настоящие IPv6 клиентов похожи на сток, regen и modify могут их убрать, новые клиенты с IPv6 не создадутся. Менять подсеть при выданных клиентах нельзя; чистый путь - --uninstall и установка с другой ULA-подсетью."
             else
                 die "IPV6_SUBNET ($IPV6_SUBNET) пересекается с префиксом ${sink_prefix}::/64, который установщик держит для режима маршрутизации 2. Задайте другую ULA-подсеть в $CONFIG_FILE."

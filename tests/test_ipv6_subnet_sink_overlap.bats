@@ -86,6 +86,10 @@ _cfg() {
             [ "$rc" -eq 1 ] || { echo "$f: sink value on a server at '$addr' was not stopped: rc=$rc" >&2; return 1; }
             grep -q 'DIE: .*IPV6_SUBNET' "$TEST_DIR/err" || { echo "$f: no refusal for '$addr': $(cat "$TEST_DIR/err")" >&2; return 1; }
         done
+        # Another subnet inside the sink is a change too, not "already there".
+        printf '[Interface]\nAddress = 10.9.9.1/24, fddd:2c4:2c4:ffff::1/64\n\n[Peer]\n#_Name = a\n' > "$TEST_DIR/srv.conf"
+        rc=0; SRV_CONF="$TEST_DIR/srv.conf" _cfg "$f" 1 'fddd:2c4:2c4:ffff:1::/80' || rc=$?
+        [ "$rc" -eq 1 ] || { echo "$f: a different subnet inside the sink was not stopped: rc=$rc" >&2; return 1; }
         # Without the IPv6 tunnel IPV6_SUBNET is not used, nothing to stop.
         rc=0; _cfg "$f" 0 'fddd:2c4:2c4:ffff::/64' || rc=$?
         [ "$rc" -eq 0 ] || { echo "$f: sink subnet without the IPv6 tunnel refused: rc=$rc" >&2; return 1; }
