@@ -49,7 +49,7 @@ Coordinated disclosure. 30 days for a fix before public disclosure. If a vulnera
 
 ## Release integrity
 
-Installer and management scripts carry detached `minisign` signatures. The private key is held offline on the maintainer's machine and never reaches GitHub Actions; the workflow only verifies. The public key is `KEYS.txt` in the repository root, fingerprint `3E598A1C01907E17`. Design and threat model: [docs/SIGNING_DESIGN.md](docs/SIGNING_DESIGN.md); the commands are in the README section on verifying a release.
+Installer and management scripts carry detached `minisign` signatures. The private key is held offline on the maintainer's machine and never reaches GitHub Actions; the workflow only verifies. The public key is `RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN` (also `KEYS.txt` in the repository root). `3E598A1C01907E17` is its key ID, not a fingerprint: another key can carry the same ID, so compare the whole key. Design and threat model: [docs/SIGNING_DESIGN.md](docs/SIGNING_DESIGN.md); the commands are in the README section on verifying a release.
 
 Not covered by the signatures: the prebuilt ARM kernel-module packages in the `arm-packages` release. They are built by this project's CI, and the installer checks them only against a SHA256 file published next to them, which catches a broken download but not a replaced one. If that matters to you, install with `--no-prebuilt`: the module is then built on the server with DKMS.
 
