@@ -12,7 +12,7 @@ A step-by-step guide for deploying an AmneziaWG 2.0 VPN server on a clean Ubuntu
 - Both x86_64 (amd64) and ARM64 (aarch64), with prebuilt kernel modules covering Raspberry Pi 4/5, Ubuntu 24.04/25.10 ARM64, and Debian 12/13 ARM64 (Hetzner CAX, Oracle Ampere A1, AWS Graviton all run on these stock kernels). Ubuntu 26.04 ARM64 builds the module from source via DKMS.
 - DPI bypass for Russia (ТСПУ), Iran, China, school and corporate firewalls.
 - Survives kernel upgrades automatically via DKMS auto-repair (since v5.12.0). On ARM with a prebuilt module there is no DKMS: after a kernel change, run the installer again.
-- Ubuntu 25.10 and 26.04 PPA fallback to noble is automatic since v5.13.0.
+- Ubuntu 25.10 and 26.04: if the PPA has no packages for the release codename, the installer switches to `noble` itself (since v5.13.0).
 
 ## Choosing a VPS
 
@@ -77,7 +77,19 @@ For a non-interactive run pass `--yes`: `sudo bash ./install_amneziawg_en.sh --y
 | `--route-amnezia` | "Amnezia", a subnet list | when the private networks must stay out of the tunnel |
 | `--route-custom=NETS` | "Custom" | when the subnet list is your own |
 
-⚠️ The "Amnezia" mode sends the same public IPv4 into the tunnel as the full tunnel does: the only difference is the private networks, which stay outside. But the Amnezia app reads such a list as split routing already configured on the server and disables its own split-tunneling page, and a Linux client can loop its routes on it. That is why `--route-all` is the default. The details: [ADVANCED, AllowedIPs](ADVANCED.en.md#allowedips-adv). Common flags: `--port=39743` (any port 1-65535), `--subnet=10.9.9.1/24`, `--disallow-ipv6`, `--allow-ipv6-tunnel` (dual-stack IPv6 inside the tunnel), `--mobile` (mobile obfuscation preset plus port 443/udp in one flag; an explicit `--port` wins), `--isolation=on|off` (client-to-client isolation, on by default), `--endpoint=<public-IP>` (required when the server's public IP differs from its interface IP, typical on Oracle Cloud, GCP, or any NAT'd cloud setup). Full CLI: `--help` or [ADVANCED.en.md](ADVANCED.en.md#install-cli-adv).
+⚠️ The "Amnezia" mode sends the same public IPv4 into the tunnel as the full tunnel does: the only difference is the private networks, which stay outside. But the Amnezia app reads such a list as split routing already configured on the server and disables its own split-tunneling page, and a Linux client can loop its routes on it. That is why `--route-all` is the default. The details: [ADVANCED, AllowedIPs](ADVANCED.en.md#allowedips-adv).
+
+Common flags:
+
+- `--port=39743` - any port 1-65535;
+- `--subnet=10.9.9.1/24`;
+- `--disallow-ipv6`;
+- `--allow-ipv6-tunnel` - dual-stack IPv6 inside the tunnel;
+- `--mobile` - the mobile obfuscation preset plus port 443/udp in one flag; an explicit `--port` wins;
+- `--isolation=on|off` - client-to-client isolation, on by default;
+- `--endpoint=<public-IP>` - required when the server's public IP differs from its interface IP, typical on Oracle Cloud, GCP, or any NAT'd cloud setup.
+
+Full CLI: `--help` or [ADVANCED.en.md](ADVANCED.en.md#install-cli-adv).
 
 ## First-time client setup
 
@@ -186,7 +198,7 @@ Re-installing later starts from a clean slate.
 
 ## Troubleshooting
 
-- **PPA 404 on Ubuntu 25.10 or 26.04.** Automatic fallback to noble since v5.13.0. If you are still on v5.12.x, upgrade the installer.
+- **PPA 404 on Ubuntu 25.10 or 26.04.** Since v5.13.0 the installer checks the codename in the PPA and switches to `noble` itself when it is missing. If you are still on v5.12.x, upgrade the installer.
 - **DKMS build fails on stale kernel headers** (typical after `do-release-upgrade` 24.04 to 25.10). v5.13.0 detects stale headers (kernel version differs from the running kernel) and installs gcc-13 as a fallback compiler so DKMS autoinstall succeeds across the version mismatch. If DKMS still fails, `sudo bash /root/awg/manage_amneziawg.sh repair-module` forces a rebuild.
 - **Mobile carrier unstable or only connects on the third attempt.** On a new server, install with `--mobile` - it enables the mobile obfuscation preset and moves the port to 443/udp in one flag (carriers often drop unfamiliar UDP ports; an explicit `--port` wins if you pass both). On a running server that is a `--force --mobile` reinstall, after which every client config has to be reissued with `regen`; if the handshake never completes at all, read [the walkthrough](ADVANCED.en.md#no-hs-mobile-adv) first. Tested carriers (Russia): Yota (Moscow), Tele2 (Moscow), Tattelecom / Letai (Tatarstan), Beeline (default preset). Tele2 (Krasnoyarsk) needed `I1 = <r 48>` in May 2026, and Megafon (regional networks) needed I1 removed. Full per-carrier table and the underlying Jc / Jmin / Jmax mechanics are in [ADVANCED.en.md FAQ](ADVANCED.en.md#faq-advanced-adv).
 - **Handshake completes but no packets flow.** Almost always the AllowedIPs gotcha on a custom split-tunnel config. Cover the server subnet too, not just the destinations you want. See [ADVANCED.en.md AllowedIPs](ADVANCED.en.md#allowedips-adv).
