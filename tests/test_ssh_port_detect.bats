@@ -312,6 +312,14 @@ _assert_bad_ssh_port_stops_ufw() {
         if [[ "$guard" != *'detect_ssh_ports >/dev/null'* || "$guard" != *'|| die '* ]]; then
             echo "no --ssh-port check via detect_ssh_ports inside initialize_setup of $script"; return 1
         fi
+        # The point of the step 0 check is to stop BEFORE the init file is
+        # written and the install moves on to upgrades and reboots.
+        local gl wl
+        gl=$(grep -n 'detect_ssh_ports >/dev/null' <<< "$body" | head -1 | cut -d: -f1)
+        wl=$(grep -n 'cat > "\$temp_conf" << EOF' <<< "$body" | head -1 | cut -d: -f1)
+        if [ -z "$gl" ] || [ -z "$wl" ] || [ "$gl" -ge "$wl" ]; then
+            echo "$script: --ssh-port check (line ${gl:-?}) is not before the init write (line ${wl:-?})"; return 1
+        fi
         _load_detect_fn "$script"
         die() { echo "DIE: $*"; exit 1; }
         export -f detect_ssh_ports die

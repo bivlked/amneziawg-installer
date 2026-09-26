@@ -117,3 +117,35 @@ status() {
         fi
     done
 }
+
+# The port check must still refuse when the port is absent: only a neighbour
+# that shares the prefix (:397430) is listening. Without this case a step 7
+# that declares any port alive would stay green.
+@test "status check: a port that is not listening still refuses, both twins" {
+    local f
+    printf '#!/usr/bin/env bash\nprintf '"'"'UNCONN 0 0 0.0.0.0:397430 0.0.0.0:*\\n'"'"'\nexit 0\n' > "$BIN/ss"
+    for f in "${INSTALLERS[@]}"; do
+        run status "$f" 0
+        [[ "$output" != *NO_FUNCTION* ]] || { echo "$output"; return 1; }
+        if [[ "$output" != *"rc=1"* ]]; then
+            echo "$f: an absent port was not a refusal: $output"; return 1
+        fi
+        if [[ "$output" != *"ERR: "*"39743/udp"* ]]; then
+            echo "$f: no port error in the log: $output"; return 1
+        fi
+    done
+}
+
+# ss itself failing is a refusal too, even if it printed the port before dying:
+# the output of a failed ss is not trusted (|| _ss_out="").
+@test "status check: a failing ss is a refusal even if it printed the port, both twins" {
+    local f
+    printf '#!/usr/bin/env bash\nprintf '"'"'UNCONN 0 0 0.0.0.0:39743 0.0.0.0:*\\n'"'"'\nexit 1\n' > "$BIN/ss"
+    for f in "${INSTALLERS[@]}"; do
+        run status "$f" 0
+        [[ "$output" != *NO_FUNCTION* ]] || { echo "$output"; return 1; }
+        if [[ "$output" != *"rc=1"* ]]; then
+            echo "$f: a failing ss was not a refusal: $output"; return 1
+        fi
+    done
+}

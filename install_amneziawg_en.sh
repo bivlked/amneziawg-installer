@@ -4543,9 +4543,8 @@ initialize_setup() {
         fi
         AWG_ENDPOINT=$CLI_ENDPOINT
     fi
-    # --ssh-port is checked at step 0, before package upgrades and reboots: otherwise a
-    # value without a single valid port would only surface at step 4, after
-    # package upgrades and reboots. With the flag set, detect_ssh_ports probes
+    # --ssh-port is checked at step 0: otherwise a value without a single valid
+    # port would only surface at step 4, after package upgrades and reboots. With the flag set, detect_ssh_ports probes
     # nothing and only parses the value.
     if [[ -n "$CLI_SSH_PORT" ]]; then
         detect_ssh_ports >/dev/null \

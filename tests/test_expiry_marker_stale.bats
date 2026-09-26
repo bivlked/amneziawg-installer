@@ -20,6 +20,8 @@
 # archive is checked to carry no awg-expiry before restore, and each test
 # verifies that the host /etc/cron.d is unchanged.
 
+# shellcheck disable=SC2154  # $stderr is set by `run --separate-stderr`
+
 bats_require_minimum_version 1.5.0
 
 require_jq() { command -v jq &>/dev/null || skip "jq not available"; }
@@ -363,6 +365,10 @@ _scenario_restore_stamp_stuck() {
     _m "$s" restore "$b1" --json
     [ "$status" -ne 0 ]
     printf '%s' "$output" | jq -e '.ok == false and .rolled_back == true' >/dev/null
+    # The refusal is about this stamp, not some other failure of restore.
+    if ! LC_ALL=C.UTF-8 grep -qE '(Не удалось удалить метку срока|Could not remove the expiry stamp) .*/bob' <<< "$stderr"; then
+        echo "restore failed for another reason: $stderr" >&2; return 1
+    fi
     [ -d "$EXP/bob/stuck" ]
     [ ! -s "$TEST_DIR/net.log" ]
 }
@@ -385,4 +391,79 @@ _scenario_restore_stamp_stuck() {
 @test "EN: restore rolls back when a stale expiry stamp cannot be removed" {
     require_jq
     _scenario_restore_stamp_stuck "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
+}
+# Race: while this add waited for the config lock, a parallel add of the same
+# name created the client with a deadline. The name is checked again under the
+# lock, so the fresh stamp survives and this add reports "exists". The test
+# holds the lock itself and waits until add blocks on it (a flock child).
+_scenario_add_race() {
+    local s="$1" fd pid blocked=0 rc=0
+    _lib_for "$s"
+    exec {fd}>"$TEST_DIR/awg/.awg_config.lock"
+    flock -x "$fd"
+    # {fd}>&-: the child must not inherit the held lock descriptor.
+    bash "$s" add guest --json --yes "${MOCK_ARGS[@]}" > "$TEST_DIR/race.out" 2> "$TEST_DIR/race.err" {fd}>&- &
+    pid=$!
+    for _ in $(seq 1 100); do
+        if pgrep -P "$pid" -x flock >/dev/null; then blocked=1; break; fi
+        sleep 0.1
+    done
+    if [ "$blocked" != 1 ]; then
+        flock -u "$fd"; exec {fd}>&-; wait "$pid"
+        echo "add never blocked on the config lock" >&2; return 1
+    fi
+    printf '\n[Peer]\n#_Name = guest\nPublicKey = cmFjZS1wZWVyLWtleS1wbGFjZWhvbGRlci0wMDAwMDA=\nAllowedIPs = 10.9.9.200/32\n' >> "$TEST_DIR/awg/awg0.conf"
+    mkdir -p "$EXP"
+    printf '%s\n' 1999999999 > "$EXP/guest"
+    flock -u "$fd"
+    exec {fd}>&-
+    wait "$pid" || rc=$?
+    [ "$rc" -ne 0 ]
+    jq -e '.results[0].status == "exists"' "$TEST_DIR/race.out" >/dev/null
+    if [ "$(cat "$EXP/guest" 2>/dev/null)" != "1999999999" ]; then
+        echo "the parallel client's fresh stamp was removed" >&2; return 1
+    fi
+}
+
+@test "RU: add re-checks the name under the config lock and keeps a parallel client's stamp" {
+    require_jq
+    command -v pgrep >/dev/null || skip "pgrep not available"
+    _scenario_add_race "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+}
+
+@test "EN: add re-checks the name under the config lock and keeps a parallel client's stamp" {
+    require_jq
+    command -v pgrep >/dev/null || skip "pgrep not available"
+    _scenario_add_race "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
+}
+# restore: the archive carries carol's stamp, but it cannot be copied into
+# place (a non-empty directory sits there). The copy is best-effort, so without
+# a check carol would keep the current state's deadline. restore must fail and
+# roll back.
+_scenario_restore_archive_stamp_stuck() {
+    local s="$1" b1
+    _m "$s" add carol --expires=30d --json
+    [ "$status" -eq 0 ]
+    b1=$(_backup "$s")
+    [ -n "$b1" ]
+    grep -qE '(^|/)expiry/carol$' <<< "$(tar -tzf "$b1")"
+    rm -f "$EXP/carol"
+    mkdir -p "$EXP/carol/stuck"
+    _m "$s" restore "$b1" --json
+    [ "$status" -ne 0 ]
+    printf '%s' "$output" | jq -e '.ok == false and .rolled_back == true' >/dev/null
+    if ! LC_ALL=C.UTF-8 grep -qE "(Метка срока клиента 'carol' из архива не восстановлена|The expiry stamp of client 'carol' from the archive was not restored)" <<< "$stderr"; then
+        echo "restore failed for another reason: $stderr" >&2; return 1
+    fi
+    [ ! -s "$TEST_DIR/net.log" ]
+}
+
+@test "RU: restore rolls back when an archived expiry stamp cannot be put in place" {
+    require_jq
+    _scenario_restore_archive_stamp_stuck "$BATS_TEST_DIRNAME/../manage_amneziawg.sh"
+}
+
+@test "EN: restore rolls back when an archived expiry stamp cannot be put in place" {
+    require_jq
+    _scenario_restore_archive_stamp_stuck "$BATS_TEST_DIRNAME/../manage_amneziawg_en.sh"
 }

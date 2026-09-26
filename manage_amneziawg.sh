@@ -973,8 +973,16 @@ restore_backup() {
     _exp_names=$(sed -n 's/^#_Name = //p' "$td/server/$_srv_base")
     while IFS= read -r _exp_name; do
         [[ "$_exp_name" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
-        [[ -e "$td/expiry/$_exp_name" ]] && continue
         _exp_stamp="${EXPIRY_DIR:-$AWG_DIR/expiry}/$_exp_name"
+        if [[ -e "$td/expiry/$_exp_name" ]]; then
+            # Метка из архива обязана лечь на место: cp выше best-effort, и при
+            # его сбое у клиента остался бы текущий, чужой срок.
+            if ! cmp -s "$td/expiry/$_exp_name" "$_exp_stamp"; then
+                log_error "Метка срока клиента '$_exp_name' из архива не восстановлена в $_exp_stamp - запуск отката."
+                return 1
+            fi
+            continue
+        fi
         if ! rm -f "$_exp_stamp" 2>/dev/null || [[ -e "$_exp_stamp" || -L "$_exp_stamp" ]]; then
             log_error "Не удалось удалить метку срока $_exp_stamp: клиент '$_exp_name' бессрочный по бэкапу получил бы чужой срок - запуск отката."
             return 1
@@ -2558,13 +2566,38 @@ case $COMMAND in
             # Неудавшееся удаление метки - отказ по этому клиенту: иначе он
             # создался бы с чужим сроком, а ответ рапортовал бы бессрочного.
             rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png"
+            # Метку снимаем под .awg_config.lock с повторной проверкой имени:
+            # иначе параллельный add того же имени мог успеть создать клиента со
+            # сроком, и мы сняли бы его свежую метку. Блокировку отпускаем до
+            # generate_client: он берёт её сам, а flock не реентерабелен.
             _stale_stamp="${EXPIRY_DIR:-$AWG_DIR/expiry}/${_cname}"
-            if ! rm -f "$_stale_stamp" 2>/dev/null || [[ -e "$_stale_stamp" || -L "$_stale_stamp" ]]; then
-                log_error "Не удалось удалить старую метку срока $_stale_stamp - клиент '$_cname' не создан, иначе он получил бы чужой срок."
-                _cmd_rc=1
-                _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"error\"}")
-                continue
+            _stamp_state=ok
+            exec {_stamp_lock_fd}>"${AWG_DIR}/.awg_config.lock"
+            if ! flock -x -w 30 "$_stamp_lock_fd"; then
+                _stamp_state=lock
+            elif grep -qxF "#_Name = ${_cname}" "$SERVER_CONF_FILE"; then
+                _stamp_state=exists
+            elif ! rm -f "$_stale_stamp" 2>/dev/null || [[ -e "$_stale_stamp" || -L "$_stale_stamp" ]]; then
+                _stamp_state=stuck
             fi
+            exec {_stamp_lock_fd}>&-
+            case "$_stamp_state" in
+                exists)
+                    log_warn "Клиент '$_cname' уже существует, пропуск."
+                    _cmd_rc=1
+                    _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"exists\"}")
+                    continue ;;
+                lock)
+                    log_error "Не удалось получить блокировку конфигурации - клиент '$_cname' не создан."
+                    _cmd_rc=1
+                    _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"error\"}")
+                    continue ;;
+                stuck)
+                    log_error "Не удалось удалить старую метку срока $_stale_stamp - клиент '$_cname' не создан, иначе он получил бы чужой срок."
+                    _cmd_rc=1
+                    _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"error\"}")
+                    continue ;;
+            esac
 
             log "Добавление '$_cname'..."
             if generate_client "$_cname"; then

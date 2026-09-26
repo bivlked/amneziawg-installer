@@ -990,8 +990,17 @@ restore_backup() {
     _exp_names=$(sed -n 's/^#_Name = //p' "$td/server/$_srv_base")
     while IFS= read -r _exp_name; do
         [[ "$_exp_name" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
-        [[ -e "$td/expiry/$_exp_name" ]] && continue
         _exp_stamp="${EXPIRY_DIR:-$AWG_DIR/expiry}/$_exp_name"
+        if [[ -e "$td/expiry/$_exp_name" ]]; then
+            # The archive's stamp must actually land: the cp above is
+            # best-effort, and if it failed the client would keep the current,
+            # someone else's deadline.
+            if ! cmp -s "$td/expiry/$_exp_name" "$_exp_stamp"; then
+                log_error "The expiry stamp of client '$_exp_name' from the archive was not restored to $_exp_stamp - starting rollback."
+                return 1
+            fi
+            continue
+        fi
         if ! rm -f "$_exp_stamp" 2>/dev/null || [[ -e "$_exp_stamp" || -L "$_exp_stamp" ]]; then
             log_error "Could not remove the expiry stamp $_exp_stamp: client '$_exp_name', permanent in the backup, would inherit someone else's deadline - starting rollback."
             return 1
@@ -2591,13 +2600,39 @@ case $COMMAND in
             # A failed stamp removal refuses this client: otherwise it would be
             # created with someone else's deadline while the reply said permanent.
             rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png"
+            # The stamp is removed under .awg_config.lock with the name checked
+            # again: otherwise a parallel add of the same name could have created
+            # a client with a deadline, and we would remove its fresh stamp. The
+            # lock is released before generate_client: it takes it itself, and
+            # flock is not re-entrant.
             _stale_stamp="${EXPIRY_DIR:-$AWG_DIR/expiry}/${_cname}"
-            if ! rm -f "$_stale_stamp" 2>/dev/null || [[ -e "$_stale_stamp" || -L "$_stale_stamp" ]]; then
-                log_error "Could not remove the old expiry stamp $_stale_stamp - client '$_cname' not created, it would otherwise inherit someone else's deadline."
-                _cmd_rc=1
-                _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"error\"}")
-                continue
+            _stamp_state=ok
+            exec {_stamp_lock_fd}>"${AWG_DIR}/.awg_config.lock"
+            if ! flock -x -w 30 "$_stamp_lock_fd"; then
+                _stamp_state=lock
+            elif grep -qxF "#_Name = ${_cname}" "$SERVER_CONF_FILE"; then
+                _stamp_state=exists
+            elif ! rm -f "$_stale_stamp" 2>/dev/null || [[ -e "$_stale_stamp" || -L "$_stale_stamp" ]]; then
+                _stamp_state=stuck
             fi
+            exec {_stamp_lock_fd}>&-
+            case "$_stamp_state" in
+                exists)
+                    log_warn "Client '$_cname' already exists, skipping."
+                    _cmd_rc=1
+                    _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"exists\"}")
+                    continue ;;
+                lock)
+                    log_error "Could not acquire the configuration lock - client '$_cname' not created."
+                    _cmd_rc=1
+                    _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"error\"}")
+                    continue ;;
+                stuck)
+                    log_error "Could not remove the old expiry stamp $_stale_stamp - client '$_cname' not created, it would otherwise inherit someone else's deadline."
+                    _cmd_rc=1
+                    _jr+=("{\"name\":\"$(json_escape "$_cname")\",\"status\":\"error\"}")
+                    continue ;;
+            esac
 
             log "Adding '$_cname'..."
             if generate_client "$_cname"; then

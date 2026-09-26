@@ -588,9 +588,11 @@ shaped() {  # shaped <value> -> prints yes/no
                 echo "awg_cps_is_shaped hung on $v (${lib##*/})"
                 false
             fi
-            # A real answer, not a crash: only 0 or 1.
-            if [ "$status" -gt 1 ]; then
-                echo "status $status on $v (${lib##*/}): $output"
+            # The right answer, not merely an answer: a DNS-shaped literal plus
+            # a random tail is shaped (0), the same as with <r 10>. Checking only
+            # for 0 or 1 let a wrong answer of the same class through.
+            if [ "$status" -ne 0 ]; then
+                echo "status $status on $v (${lib##*/}), expected 0 as for <r 10>: $output"
                 false
             fi
         done
