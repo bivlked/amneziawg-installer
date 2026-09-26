@@ -1641,11 +1641,19 @@ configure_ipv6_tunnel() {
         local _v6p="${IPV6_SUBNET%%::*}"
         _v6p="${_v6p,,}"
         if [[ "$_v6p" == "$sink_prefix" || "$_v6p" == "${sink_prefix}:"* ]]; then
-            # A server with clients already handed out is not stopped: the subnet
-            # cannot change under live peers (their IPv6 would stay in the old
-            # subnet), and unlike IPv4 there is no IPv6 subnet change guard. A
-            # rerun makes nothing worse, so a loud warning only.
+            # A server that ALREADY sits in this prefix and has handed out
+            # clients is not stopped: the subnet cannot change under live peers
+            # (their IPv6 would stay in the old one), and unlike IPv4 there is no
+            # IPv6 subnet change guard. A rerun makes nothing worse there, so a
+            # warning. If the server is in another subnet now, a value in the
+            # sink is a new change, and it is stopped as on a clean server.
+            local _cur_v6=""
             if [[ -f "$SERVER_CONF_FILE" ]] && grep -q '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null; then
+                _cur_v6=$(sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null \
+                    | tr ',' '\n' | sed 's/[[:space:]]//g' | grep -m1 ':') || _cur_v6=""
+                _cur_v6="${_cur_v6,,}"
+            fi
+            if [[ "$_cur_v6" == "${sink_prefix}:"* ]]; then
                 log_warn "IPV6_SUBNET ($IPV6_SUBNET) overlaps the routing mode 2 prefix ${sink_prefix}::/64: real client IPv6 addresses look like sinks, regen and modify may drop them, and new clients with IPv6 will not be created. The subnet cannot change while clients exist; the clean path is --uninstall and an install with another ULA subnet."
             else
                 die "IPV6_SUBNET ($IPV6_SUBNET) overlaps ${sink_prefix}::/64, which the installer keeps for routing mode 2. Set another ULA subnet in $CONFIG_FILE."

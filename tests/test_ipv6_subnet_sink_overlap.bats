@@ -70,12 +70,22 @@ _cfg() {
         grep -q 'DIE: .*IPV6_SUBNET' "$TEST_DIR/err" || { echo "$f: no refusal naming IPV6_SUBNET: $(cat "$TEST_DIR/err")" >&2; return 1; }
         rc=0; _cfg "$f" 1 'fddd:2c4:2c4:2c4::/64' || rc=$?
         [ "$rc" -eq 0 ] || { echo "$f: default subnet refused: rc=$rc $(cat "$TEST_DIR/err")" >&2; return 1; }
-        # A server that already has clients is warned, not stopped: the subnet
-        # cannot change under live peers, and a rerun makes nothing worse.
-        printf '[Interface]\nAddress = 10.9.9.1/24\n\n[Peer]\n#_Name = a\n' > "$TEST_DIR/srv.conf"
+        # A server that already sits in the sink prefix and has clients is
+        # warned, not stopped: the subnet cannot change under live peers, and a
+        # rerun makes nothing worse there.
+        printf '[Interface]\nAddress = 10.9.9.1/24, FDDD:2c4:2c4:ffff::1/64\n\n[Peer]\n#_Name = a\n' > "$TEST_DIR/srv.conf"
         rc=0; SRV_CONF="$TEST_DIR/srv.conf" _cfg "$f" 1 'fddd:2c4:2c4:ffff::/64' || rc=$?
-        [ "$rc" -eq 0 ] || { echo "$f: server with peers stopped: rc=$rc $(cat "$TEST_DIR/err")" >&2; return 1; }
+        [ "$rc" -eq 0 ] || { echo "$f: server already in the sink stopped: rc=$rc $(cat "$TEST_DIR/err")" >&2; return 1; }
         grep -q 'WARN: .*IPV6_SUBNET.*--uninstall' "$TEST_DIR/err" || { echo "$f: no warning with the clean path: $(cat "$TEST_DIR/err")" >&2; return 1; }
+        # A server with clients in another IPv6 subnet (or without IPv6) and a
+        # sink value in the init file: that is a new subnet change under live
+        # peers, so it stops as on a clean server.
+        for addr in '10.9.9.1/24, fddd:2c4:2c4:2c4::1/64' '10.9.9.1/24'; do
+            printf '[Interface]\nAddress = %s\n\n[Peer]\n#_Name = a\n' "$addr" > "$TEST_DIR/srv.conf"
+            rc=0; SRV_CONF="$TEST_DIR/srv.conf" _cfg "$f" 1 'fddd:2c4:2c4:ffff::/64' || rc=$?
+            [ "$rc" -eq 1 ] || { echo "$f: sink value on a server at '$addr' was not stopped: rc=$rc" >&2; return 1; }
+            grep -q 'DIE: .*IPV6_SUBNET' "$TEST_DIR/err" || { echo "$f: no refusal for '$addr': $(cat "$TEST_DIR/err")" >&2; return 1; }
+        done
         # Without the IPv6 tunnel IPV6_SUBNET is not used, nothing to stop.
         rc=0; _cfg "$f" 0 'fddd:2c4:2c4:ffff::/64' || rc=$?
         [ "$rc" -eq 0 ] || { echo "$f: sink subnet without the IPv6 tunnel refused: rc=$rc" >&2; return 1; }
