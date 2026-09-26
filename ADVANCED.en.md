@@ -1714,7 +1714,7 @@ When a client is created, a `.vpnuri` file is automatically generated with a `vp
 2. Open Amnezia VPN → "Add VPN" → "Paste from clipboard".
 3. The configuration is imported automatically.
 
-> Alongside sits `<name>.png` — the QR of `.conf` for classic WireGuard-compatible clients (AmneziaWG Windows, wireguard-apple, `wg-quick`). The two formats target different clients: Amnezia VPN app scans `.vpnuri.png`, WireGuard-compatible clients scan `<name>.png`. Do not mix them up.
+> Alongside sits `<name>.png` - the QR of `.conf` for AmneziaWG clients (AmneziaWG for Windows and the other AmneziaWG apps, `awg-quick`); a plain WireGuard client cannot import it. The two formats target different clients: the Amnezia VPN app scans `.vpnuri.png`, AmneziaWG clients scan `<name>.png`. Do not mix them up.
 
 > For existing clients created before v5.11.3, `.vpnuri.png` appears after one `manage regen <name>`. New clients get both QR codes out of the box.
 

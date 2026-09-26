@@ -87,7 +87,7 @@ sudo bash /root/awg/manage_amneziawg.sh add my_iphone
 
 The client import files land in `/root/awg/`:
 
-- `<name>.conf` for desktop AmneziaWG clients, Linux `wg-quick`, and routers.
+- `<name>.conf` for desktop AmneziaWG clients, Linux `awg-quick`, and routers.
 - `<name>.png` QR code of the `.conf` itself, for AmneziaWG clients (a plain WireGuard client cannot import it). Do not scan it in the Amnezia VPN app.
 - `<name>.vpnuri` and `<name>.vpnuri.png` for one-tap import into the Amnezia VPN app via clipboard or scanned QR.
 

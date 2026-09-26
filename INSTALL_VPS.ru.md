@@ -87,7 +87,7 @@ sudo bash /root/awg/manage_amneziawg.sh add my_iphone
 
 | Файл | Для чего |
 |---|---|
-| `имя.conf` | текстовый конфиг: десктопные клиенты AmneziaWG, Linux `wg-quick`, роутеры |
+| `имя.conf` | текстовый конфиг: десктопные клиенты AmneziaWG, Linux `awg-quick`, роутеры |
 | `имя.png` | QR-код **этого же `.conf`** для клиентов AmneziaWG |
 | `имя.vpnuri` | ссылка `vpn://` для импорта в приложение Amnezia VPN |
 | `имя.vpnuri.png` | QR-код **ссылки** `vpn://`, для импорта в приложение одним снимком |

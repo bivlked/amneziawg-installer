@@ -1709,7 +1709,7 @@ sudo bash /root/awg/manage_amneziawg.sh list --json
 2. Откройте Amnezia VPN → «Добавить VPN» → «Вставить из буфера».
 3. Конфигурация импортируется автоматически.
 
-> Рядом лежит `<имя>.png` — QR из `.conf` для классических WireGuard-совместимых клиентов (AmneziaWG Windows, wireguard-apple, `wg-quick`). Это разные форматы с разными получателями: Amnezia VPN app сканирует `.vpnuri.png`, WireGuard-совместимые — `<имя>.png`. Не путайте.
+> Рядом лежит `<имя>.png` - QR из `.conf` для клиентов AmneziaWG (AmneziaWG для Windows и другие приложения AmneziaWG, `awg-quick`); обычный клиент WireGuard его не примет. Это разные форматы с разными получателями: приложение Amnezia VPN сканирует `.vpnuri.png`, клиенты AmneziaWG - `<имя>.png`. Не путайте.
 
 > Для существующих клиентов, созданных до v5.11.3, `.vpnuri.png` появится после одного `manage regen <имя>`. Новые клиенты получают оба QR-кода сразу.
 
