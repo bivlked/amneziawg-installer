@@ -17,11 +17,12 @@ number:
 
 On every release, regardless of which files changed content:
 
-1. Set `SCRIPT_VERSION` in all four scripts that carry it
-   (`install_amneziawg*.sh`, `manage_amneziawg*.sh`) and the
-   `# Version:` / `# Версия:` header in all six scripts to the same new
-   `X.Y.Z`. `preflight-check.sh` step 7 rejects a partial bump: it requires all
-   four `SCRIPT_VERSION` values and all six headers to agree. Update the header
+1. Set `SCRIPT_VERSION` in the four scripts that carry it
+   (`install_amneziawg*.sh`, `manage_amneziawg*.sh`), `AWG_COMMON_VERSION` in
+   `awg_common.sh` and `awg_common_en.sh`, and the `# Version:` / `# Версия:`
+   header in all six scripts to the same new `X.Y.Z`. `preflight-check.sh`
+   step 7 rejects a partial bump: it requires all four `SCRIPT_VERSION` values,
+   both `AWG_COMMON_VERSION` values and all six headers to agree. Update the header
    date in every file you edited; an untouched file may keep its existing date
    as long as the version matches. (The version-triple check also ties
    `SCRIPT_VERSION` to the README badge and the top changelog heading, so this
@@ -70,11 +71,12 @@ On every release, regardless of which files changed content:
    moved under `git tag -f`, will silently compare against the working tree
    instead. They announce which of the two comparisons they made; read that
    line rather than only the exit code.
-4. Bump the pinned raw-URL tags in `README*.md`, `ADVANCED*.md` and
-   `INSTALL_VPS*.md` from the previous `vX.Y.Z` to the new one. Users copy the
-   install and update one-liners verbatim, so a stale tag silently installs the
-   previous release. `check-docs-consistency.sh` (preflight step 9) enforces
-   that these tags equal `SCRIPT_VERSION`, but the bump itself is manual.
+4. Bump the pinned raw-URL tags that remain on purpose: the helper-download
+   example in `ADVANCED*.md` and `RU_ZONE_FALLBACK_URL` in `CASCADE*.md`.
+   Install and update commands use `releases/latest/download` and carry no
+   tag. `check-docs-consistency.sh` (preflight step 9) enforces that the pinned
+   tags equal `SCRIPT_VERSION` and that install commands stay on
+   `releases/latest`; the bump itself is manual.
 
 ## Pre-tag checklist
 
@@ -97,7 +99,7 @@ BASE_REF=origin/main bash scripts/preflight-check.sh
    welcome but not required.
 5. No AI / tool markers introduced in the diff or in the commit-message log.
 6. No `Co-authored-by` trailers in the commit-message log.
-7. `SCRIPT_VERSION` and the six version headers agree.
+7. `SCRIPT_VERSION`, `AWG_COMMON_VERSION` and the six version headers agree.
 8. SHA pins in lockstep (`update-sha-pins.sh --verify`).
 9. Documentation consistency (`scripts/check-docs-consistency.sh`): internal
    anchors resolve, changelog headings have reference links and the RU/EN
@@ -176,9 +178,8 @@ health check:
   `SCRIPT_VERSION` and the README version badge.
 - The `arm-packages` release was refreshed by `arm-build.yml` (its assets carry
   the new installer tag in their `.manifest.json`).
-- Open the rendered README on GitHub and confirm the install and update
-  one-liners point at the new tag - a final guard against a stale raw-URL
-  slipping past the automated check.
+- Download `releases/latest/download/install_amneziawg.sh` and check that its
+  `SCRIPT_VERSION` is the new one.
 
 Note: `release.yml` only depends on the preflight gate, so the GitHub Release can
 appear before `arm-build.yml` finishes. For a release that advertises ARM

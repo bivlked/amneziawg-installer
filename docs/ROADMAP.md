@@ -23,6 +23,7 @@ tracked in issues and discussions, not here:
   revision.
 - Ubuntu 24.04 / 25.10 / 26.04 and Debian 12 / 13 support.
 - CI and docs-consistency gates around releases.
+- Signed releases (since v5.29.0): every installer and helper script carries a detached minisign signature made offline; the release workflow refuses to publish if one does not verify ([SIGNING_DESIGN.md](SIGNING_DESIGN.md)).
 - Security and reliability hardening across installation and client management (atomic peer carry-over in the server config on `--force` reinstall, strict key permissions, careful temp-file and secret handling, Amnezia PPA GPG key pinned by full fingerprint).
 - iOS clients work correctly in the list-based routing mode (Amnezia List + DNS): the bundled route list no longer stalls the iOS tunnel.
 - Reliability on mobile, double-NAT and cascade paths: the TCP MSS is clamped to the tunnel size, which fixes the common PMTU-blackhole stall where large TCP pages and downloads hang when path-MTU discovery is blocked along the way.
@@ -35,9 +36,8 @@ tracked in issues and discussions, not here:
 These are directions, not commitments. Priority and timing are decided in
 issue #79 and the discussions.
 
-- **Release integrity:** activate detached `minisign` signatures for the
-  installer and helper scripts (design: [SIGNING_DESIGN.md](SIGNING_DESIGN.md);
-  currently planned, not active - see [SECURITY.md](../SECURITY.md)).
+- **Release integrity, next steps:** sign the ARM prebuilt packages; publish
+  the public key outside GitHub.
 - **ARM prebuilt reproducibility:** make a non-HEAD upstream kernel-module pin
   mandatory for release builds (the pin mechanism and the build manifest
   already ship; `HEAD` remains the default).
@@ -76,6 +76,7 @@ Carrier reports (operator, region, working parameters) are especially useful.
   upstream-модуля.
 - Поддержка Ubuntu 24.04 / 25.10 / 26.04 и Debian 12 / 13.
 - CI и проверки согласованности документации вокруг релизов.
+- Подписанные релизы (с v5.29.0): у каждого установщика и вспомогательного скрипта есть отдельная подпись minisign, сделанная офлайн; релиз не публикуется, если хоть одна подпись не сходится ([SIGNING_DESIGN.md](SIGNING_DESIGN.md)).
 - Закалка безопасности и надёжности при установке и управлении клиентами (атомарный перенос peer-блоков в серверном конфиге при переустановке `--force`, строгие права на ключи, аккуратная работа с временными файлами и секретами, GPG-ключ Amnezia PPA закреплён по полному отпечатку).
 - Клиенты iOS работают корректно в списочном режиме маршрутизации (Amnezia List + DNS): встроенный список маршрутов больше не подвешивает туннель на iOS.
 - Надёжность на мобильных, double-NAT и каскадных путях: TCP MSS ограничивается под размер туннеля, что устраняет типичный PMTU-блэкхол, когда крупные TCP-страницы и закачки зависают при заблокированном по пути обнаружении path-MTU.
@@ -88,9 +89,8 @@ Carrier reports (operator, region, working parameters) are especially useful.
 Это направления, а не обязательства. Приоритет и сроки определяются в issue #79
 и обсуждениях.
 
-- **Целостность релизов:** активировать detached-подписи `minisign` для
-  установщика и helper-скриптов (дизайн: [SIGNING_DESIGN.md](SIGNING_DESIGN.md);
-  пока запланировано, не активно - см. [SECURITY.md](../SECURITY.md)).
+- **Целостность релизов, дальше:** подписывать готовые ARM-пакеты; опубликовать
+  публичный ключ вне GitHub.
 - **Воспроизводимость ARM-сборок:** сделать закрепление не-HEAD ревизии
   upstream-модуля обязательным для релизных сборок (механизм закрепления и
   build-манифест уже поставляются; по умолчанию остаётся `HEAD`).

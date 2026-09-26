@@ -10,6 +10,9 @@ contact_links:
   - name: "Документация / Advanced Documentation"
     url: https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.md
     about: "Подробная документация / Detailed technical documentation"
+  - name: "FAQ (English)"
+    url: https://github.com/bivlked/amneziawg-installer/blob/main/README.en.md#faq
+    about: "Read the English FAQ before opening an issue"
   - name: "Documentation (English)"
     url: https://github.com/bivlked/amneziawg-installer/blob/main/README.en.md
     about: "English version of the project documentation"

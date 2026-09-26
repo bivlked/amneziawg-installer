@@ -16,8 +16,6 @@ Modern open-source security practice (NixOS, signify-based tools, libsodium ecos
 - TLS only proves "the bytes came from GitHub". A signature proves "the bytes were signed by the holder of the private key", which lives offline on the maintainer's machine and is never exposed to GitHub Actions.
 - The protection is asymmetric. If a user already has the correct maintainer public key pinned (e.g. saved from an earlier verified release, or fetched from an out-of-band channel - personal blog post, mastodon profile, signed git tag predating the compromise), then a malicious replacement script fails verification because the attacker cannot forge a signature without the offline secret key. **However**, a first-time user who fetches `KEYS.txt` and the installer from the same compromised GitHub account in the same session is exposed to a TOFU window: the attacker can atomically replace `KEYS.txt`, the script, and the signature, and the verification will succeed against the attacker's key. This is not a flaw of minisign - it is the general TOFU limitation of any public-key-on-the-same-domain scheme. To narrow the window, the maintainer should also publish the whole public key via at least one independent out-of-band channel.
 
-Competitor `pwnnex/ByeByeVPN` (303 stars, viral growth +48/week) already ships `minisign` signatures and an SBOM with each release. Cost: ~2-4 hours one-time setup + ~30 sec per release.
-
 ## Tool choice: minisign
 
 | Option | Pros | Cons |
@@ -61,27 +59,19 @@ Generated files:
 
 ## Signing flow
 
-Per release, after `git tag vX.Y.Z` but before `git push origin vX.Y.Z`. Each signature carries a trusted comment binding it to the tag and filename, so an old signature paired with a different file or a different release fails to verify (rollback / misbinding protection):
+Per release, after the last change to the six scripts and before `git tag`: the signatures are committed under `signing/` so they land in the tagged commit. Each signature carries a trusted comment binding it to the tag and filename, so an old signature paired with a different file or a different release fails to verify (rollback / misbinding protection):
 
 ```bash
-TAG=vX.Y.Z   # the release tag being signed
-KEY=~/.minisign/amneziawg-installer.key
-for f in install_amneziawg.sh install_amneziawg_en.sh \
-         manage_amneziawg.sh manage_amneziawg_en.sh \
-         awg_common.sh awg_common_en.sh; do
-  minisign -Sm "$f" -s "$KEY" -t "amneziawg-installer ${TAG} ${f}"
-done
+bash scripts/sign-release.sh vX.Y.Z
 ```
 
 Verifiers should glance at the `Trusted comment:` line that `minisign -V` prints and ensure it matches the file they actually downloaded for the tag they intended.
 
-Produces `*.minisig` files alongside each script.
+It writes the `.minisig` files under `signing/`, asks for the key password once, and refuses to run without a terminal. `release.yml` attaches the signatures to the release.
 
-Then attach them to the GitHub Release as assets (manually via `gh release upload`, or via the workflow described below).
+## Workflow integration (history)
 
-## Workflow integration (proposal)
-
-Two options, pick one when activating:
+Option B is what runs today; Option A is kept only as the record of the decision.
 
 ### Option A: Manual asset upload (lighter)
 
@@ -113,7 +103,7 @@ The original draft put the upload in a standalone `workflow_dispatch` workflow, 
 
 `release.yml` published with `draft: false` immediately, so a release became **Latest with zero assets** and stayed that way until somebody remembered to run the dispatch. For that entire window `releases/latest/download/<file>` answered 404 - and that is precisely the address documentation and third-party write-ups hand to users. The window was unbounded because nothing forced the second step.
 
-So the ordering is now: create the release as a **draft**, verify the signatures, attach the scripts, the signatures and `KEYS.txt`, count the assets, and only then flip it out of draft. A release is never visible in a half-assembled state, and the failure mode of a forgotten signature is a failed workflow rather than a silently empty release.
+So the ordering is now: verify the signatures, create the release as a **draft**, attach the scripts, the signatures and `KEYS.txt`, count the assets, and only then flip it out of draft. A release is never visible in a half-assembled state, and the failure mode of a forgotten signature is a failed workflow rather than a silently empty release.
 
 Two consequences worth stating plainly, because they change the maintainer's routine:
 
@@ -122,32 +112,7 @@ Two consequences worth stating plainly, because they change the maintainer's rou
 
 ## User-side verification
 
-Document in README "Verifying releases" section:
-
-```bash
-# 1. Install minisign:
-sudo apt install minisign           # Ubuntu/Debian
-# or:
-brew install minisign                # macOS
-
-# 2. Keep a copy of the public key (one time). It is the second line of
-#    KEYS.txt; step 4 passes it whole with -P, so later checks do not depend
-#    on fetching KEYS.txt from the same place as the script:
-curl -O https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/KEYS.txt
-
-# 3. Fetch the installer + signature:
-TAG=vX.Y.Z   # the release tag being signed
-curl -LO "https://github.com/bivlked/amneziawg-installer/releases/download/$TAG/install_amneziawg_en.sh"
-curl -LO "https://github.com/bivlked/amneziawg-installer/releases/download/$TAG/install_amneziawg_en.sh.minisig"
-
-# 4. Verify:
-minisign -V -P RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN \
-  -m install_amneziawg_en.sh -x install_amneziawg_en.sh.minisig   # the whole key, compared with your saved copy
-# Expected: "Signature and comment signature verified"
-
-# 5. If verified - now you can install:
-sudo bash ./install_amneziawg_en.sh
-```
+User-side verification lives in README ([EN](../README.en.md#verifying-a-release), [RU](../README.md#proverka-podpisi)); keep one copy of the commands there. It checks the whole public key with `minisign -P`, not the key ID.
 
 ## Implementation checkpoints
 
@@ -156,8 +121,8 @@ Activation steps, in order:
 1. **USER**: Generate offline keypair with `minisign -G` on a trusted machine. Backup the private key to encrypted offline storage. Set a strong password.
 2. **USER**: Hand over the public key file (`*.pub`) for commit to the repository as `KEYS.txt`.
 3. Add `docs/SIGNING_DESIGN.md` (this file). DONE in this commit.
-4. Add README section "Verifying releases" with placeholder link to this design doc. TODO - add when the public key is published as `KEYS.txt` so the section is actionable, not vapor.
-5. Add the draft workflow `docs/release-sign.yml.draft` for review. DONE.
+4. README section "Verifying a release": done, see 6c.
+5. A draft dispatch workflow: done, then superseded by `release.yml` (see 6a).
 6. After keypair exists and is published as `KEYS.txt`: DONE 27 aug 2026.
    a. Signature verification and asset upload folded into `release.yml`; the draft dispatch workflow was removed rather than activated (see above). The publish path uses `gh` directly, which removes one third-party action from the step that decides what the world downloads.
    b. Test on a pre-release tag (`vX.Y.Z-rc1`). A tag with a semver pre-release suffix is published as a pre-release automatically, so a test never displaces the real Latest.
