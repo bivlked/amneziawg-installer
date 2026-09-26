@@ -3786,7 +3786,13 @@ check_service_status() {
     # timeout: re-running the installer over a server with hand-inflated
     # I1-I5 would otherwise hang here forever (#228). The failure below is
     # already loud.
-    if ! timeout 10 awg show 2>/dev/null | grep -q "interface: awg0"; then
+    # Read the awg show output (and ss below) from a variable, not through a
+    # pipe: grep -q quits at the first match, the interface line is printed
+    # first, and with hundreds of peers the next write of awg gets SIGPIPE -
+    # under pipefail the check refused on a working interface.
+    local _show_all _show_awg0 _ss_out
+    _show_all=$(timeout 10 awg show 2>/dev/null) || _show_all=""
+    if ! grep -qF -- "interface: awg0" <<< "$_show_all"; then
         log_error "awg show cannot see interface!"
         ok=0
     fi
@@ -3799,14 +3805,16 @@ check_service_status() {
         port_check=${port_check:-0}
     fi
     if [[ "$port_check" -ne 0 ]]; then
-        if ! ss -lunp | grep -q ":${port_check} "; then
+        _ss_out=$(ss -lunp) || _ss_out=""
+        if ! grep -qF -- ":${port_check} " <<< "$_ss_out"; then
             log_error "Port $port_check/udp is not listening!"
             ok=0
         fi
     fi
 
     # AWG 2.0 parameter check
-    if timeout 10 awg show awg0 2>/dev/null | grep -q "jc:"; then
+    _show_awg0=$(timeout 10 awg show awg0 2>/dev/null) || _show_awg0=""
+    if grep -qF -- "jc:" <<< "$_show_awg0"; then
         log "AWG 2.0 parameters active."
     else
         log_warn "AWG 2.0 parameters not detected in awg show."

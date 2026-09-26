@@ -3701,7 +3701,13 @@ check_service_status() {
 
     # timeout: перезапуск установщика поверх сервера с раздутыми вручную
     # I1-I5 иначе повис бы здесь навсегда (#228). Отказ ниже и так громкий.
-    if ! timeout 10 awg show 2>/dev/null | grep -q "interface: awg0"; then
+    # Вывод awg show (и ss ниже) читаем из переменной, а не через конвейер:
+    # grep -q выходит на первом совпадении, строка interface печатается первой,
+    # и при сотнях пиров следующая запись awg получает SIGPIPE - под pipefail
+    # проверка отказывала на работающем интерфейсе.
+    local _show_all _show_awg0 _ss_out
+    _show_all=$(timeout 10 awg show 2>/dev/null) || _show_all=""
+    if ! grep -qF -- "interface: awg0" <<< "$_show_all"; then
         log_error "awg show не видит интерфейс!"
         ok=0
     fi
@@ -3714,14 +3720,16 @@ check_service_status() {
         port_check=${port_check:-0}
     fi
     if [[ "$port_check" -ne 0 ]]; then
-        if ! ss -lunp | grep -q ":${port_check} "; then
+        _ss_out=$(ss -lunp) || _ss_out=""
+        if ! grep -qF -- ":${port_check} " <<< "$_ss_out"; then
             log_error "Порт $port_check/udp не прослушивается!"
             ok=0
         fi
     fi
 
     # Проверка AWG 2.0 параметров
-    if timeout 10 awg show awg0 2>/dev/null | grep -q "jc:"; then
+    _show_awg0=$(timeout 10 awg show awg0 2>/dev/null) || _show_awg0=""
+    if grep -qF -- "jc:" <<< "$_show_awg0"; then
         log "AWG 2.0 параметры активны."
     else
         log_warn "AWG 2.0 параметры не обнаружены в awg show."
