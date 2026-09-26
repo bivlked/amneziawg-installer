@@ -146,7 +146,9 @@ EOF
 @test "v5.18.1 parity: dual DNS + ::/0 present in RU+EN" {
     local p
     for p in awg_common.sh awg_common_en.sh; do
-        grep -qF 'DNS = 1.1.1.1, 1.0.0.1' "${BATS_TEST_DIRNAME}/../$p"
+        # Since Sep 2026 the default comes from awg_client_dns (CLIENT_DNS can
+        # override it), not from a literal in the template.
+        grep -qF "printf '%s' \"1.1.1.1, 1.0.0.1\"" "${BATS_TEST_DIRNAME}/../$p"
         # v5.31.0 moved the decision out of a string comparison into a
         # predicate over the route set; the ::/0 itself is appended there.
         grep -qF "printf '%s, ::/0'" "${BATS_TEST_DIRNAME}/../$p"

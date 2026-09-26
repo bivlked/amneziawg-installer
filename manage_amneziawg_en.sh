@@ -1028,36 +1028,15 @@ modify_client() {
 
     case "$param" in
         DNS)
-            # Structural validation of the DNS list. The old charset-only regex
-            # ^[0-9a-fA-F.:,\ ]+$ let garbage through ('abc' - a-f letters;
-            # '999.999.999.999' - out of range). DNS is IP-only by contract (no
-            # FQDN), so each element must be a bare IPv4 or IPv6, like Endpoint/AllowedIPs.
-            case "$value" in
-                *$'\n'*|*$'\r'*|*\\*|*\"*|*\'*|"")
-                    log_error "Invalid DNS: '$value'"
-                    return 1 ;;
-            esac
-            case "$value" in
-                ,*|*,|*,,*)
-                    log_error "Invalid DNS '$value': empty list element (stray comma)"
-                    return 1 ;;
-            esac
-            local _dns_tok _dns_ifs="$IFS"
-            IFS=','
-            for _dns_tok in $value; do
-                _dns_tok="${_dns_tok//[[:space:]]/}"
-                if [[ -z "$_dns_tok" ]]; then
-                    IFS="$_dns_ifs"
-                    log_error "Invalid DNS '$value': empty list element (stray comma)"
-                    return 1
-                fi
-                if ! _valid_ipv4 "$_dns_tok" && ! _valid_ipv6 "$_dns_tok"; then
-                    IFS="$_dns_ifs"
-                    log_error "Invalid DNS '$value': '$_dns_tok' is not a valid IPv4/IPv6 address"
-                    return 1
-                fi
-            done
-            IFS="$_dns_ifs"
+            # Structural validation of the DNS list: IPv4/IPv6 only, comma-separated,
+            # no FQDN. Lives in the library's awg_validate_dns_list and is shared with
+            # CLIENT_DNS from awgsetup_cfg.init: two inline copies drift, and the old
+            # loop here expanded globs against the current directory.
+            command -v awg_validate_dns_list >/dev/null 2>&1 || {
+                log_error "awg_common.sh is outdated: awg_validate_dns_list is missing. Update both halves to the same version."
+                return 1
+            }
+            awg_validate_dns_list "$value" || return 1
             ;;
         PersistentKeepalive)
             if ! [[ "$value" =~ ^[0-9]+$ ]] || [[ "$value" -gt 65535 ]]; then

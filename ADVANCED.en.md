@@ -470,7 +470,7 @@ Then re-import the new `.conf` on the device. A plain `regen` will not help here
 You can run an ad blocker or your own resolver on the VPN server itself and give clients the server's tunnel address as their DNS. The installer does not set such a service up, and it does not get in its way either. Skip anything from the list below and the setup will not work, without a single error:
 
 1. **The service listens on the server's tunnel address, taken from the configuration.** It is `10.9.9.1` by default, but with `--subnet` the address is different. `ip -4 addr show awg0` or the `Address` line in `/etc/amnezia/amneziawg/awg0.conf` shows yours. Use it instead of `10.9.9.1` in the commands below.
-2. **Clients get this address as their DNS:** `sudo bash /root/awg/manage_amneziawg.sh modify <name> DNS "10.9.9.1"` for every client. New clients get the default DNS (`1.1.1.1, 1.0.0.1`), so repeat the command for them.
+2. **Clients get this address as their DNS:** `sudo bash /root/awg/manage_amneziawg.sh modify <name> DNS "10.9.9.1"` for every client. To give new clients this address from the start, set `CLIENT_DNS` in `awgsetup_cfg.init`, see [Changing Default Settings](#change-defaults-adv).
 3. **The address is inside the client's `AllowedIPs`.** A full tunnel (`0.0.0.0/0` in the `AllowedIPs` line of the client config, the default mode since v5.34.0) covers it. The mode 2 list sends private networks around the tunnel on purpose, and your own mode 3 list does not have the address unless you add it. That holds with client isolation on, which is also the default. Then the query goes around the tunnel and never reaches the server, and the device may be left without DNS or quietly ask the provider's DNS: the blocking looks configured but does nothing. The simplest fix is adding the server's address to the client's list:
 
    ```bash
@@ -488,7 +488,17 @@ After changing a client, import its config on the device again. These pitfalls w
 <a id="change-defaults-adv"></a>
 ### Changing Default Settings
 
-To change the default DNS or PersistentKeepalive for **new** clients, edit the `render_client_config()` function in `awg_common.sh` **before** the first run.
+**The DNS of new clients** is set by the line `export CLIENT_DNS='...'` in `/root/awg/awgsetup_cfg.init`. The installer writes it there empty; put the value between the quotes, for example `export CLIENT_DNS='10.9.9.1'`. Installs older than this version have no such line; add it at the end of the file.
+
+The value is IP addresses separated by commas. Clients created after the edit (`manage add`) get it, and so does a client whose config `regen` rebuilds from scratch. Configs already handed out do not change: `regen` keeps their DNS, and `modify <name> DNS ...` changes it. An invalid value is not silently replaced: `add` and the installer refuse and say what is wrong, while `regen` of existing clients works as before. An empty value means `1.1.1.1, 1.0.0.1`. A `--force` reinstall keeps the line.
+
+**PersistentKeepalive** has no such setting: new clients get 33, and a client's value is changed like this:
+
+```bash
+sudo bash /root/awg/manage_amneziawg.sh modify <name> PersistentKeepalive 25
+```
+
+Editing the `awg_common.sh` library itself is pointless: the installer at step 5 and a script update overwrite it with their own copy.
 
 ---
 
@@ -779,6 +789,7 @@ Options:
   --jmin=N              Set Jmin manually (0-1280, overrides preset)
   --jmax=N              Set Jmax manually (0-1280, overrides preset, must be >= Jmin)
   --no-cps              Disable CPS (the I1 parameter) - for desktop clients that do not support it (e.g. macOS)
+  --no-prebuilt         On ARM, do not install the prebuilt module package from the arm-packages release; build the module with DKMS
   -y, --yes             Non-interactive mode (all confirmations auto-yes)
   -f, --force           Reinstall over a working AWG (ENV: AWG_FORCE_REINSTALL=1)
   --no-tweaks           Skip the system cleanup, the optimization and the hardening
@@ -1131,7 +1142,7 @@ chmod 700 /root/awg/manage_amneziawg.sh /root/awg/awg_common.sh
 
 <details>
   <summary><strong>Q: How do I change DNS for all existing clients?</strong></summary>
-  <b>A:</b> Use the <code>modify</code> command for each client: <code>sudo bash /root/awg/manage_amneziawg.sh modify &lt;name&gt; DNS "8.8.8.8,1.0.0.1"</code>. Then regenerate configs: <code>sudo bash /root/awg/manage_amneziawg.sh regen</code>. To change the default DNS for new clients, edit <code>awg_common.sh</code>.
+  <b>A:</b> Use the <code>modify</code> command for each client: <code>sudo bash /root/awg/manage_amneziawg.sh modify &lt;name&gt; DNS "8.8.8.8,1.0.0.1"</code>. Then regenerate configs: <code>sudo bash /root/awg/manage_amneziawg.sh regen</code>. The DNS for new clients is set by a <code>CLIENT_DNS</code> line in <code>awgsetup_cfg.init</code>, see <a href="#change-defaults-adv">Changing Default Settings</a>.
 </details>
 
 <details>
@@ -1935,6 +1946,7 @@ Starting with v5.9.0, the installer works on ARM systems alongside x86_64.
 1. The installer detects the kernel version and architecture automatically.
 2. If a prebuilt `amneziawg.ko` package matching your kernel exists in the [arm-packages release](https://github.com/bivlked/amneziawg-installer/releases/tag/arm-packages), it is downloaded and installed via `dpkg`. This takes 2-3 minutes.
 3. If no prebuilt package matches, the installer falls back to DKMS compilation from source. This works on any kernel but takes longer (10-30 min depending on hardware).
+4. You can skip the prebuilt package altogether: with `--no-prebuilt` the module is built with DKMS right away. The prebuilt packages are built by this project's CI, and the installer checks them only against a SHA256 file from the same release; they are not signed. Note that this changes the module too: the prebuilt packages are built from the pinned AmneziaWG 2.0 source, while on kernels 6.7 and newer DKMS installs `amneziawg-dkms` from the PPA, the same third-line module an x86 server gets. The client profiles are second generation either way.
 
 > **Prebuilt ARM coverage:** prebuilt packages are built for Raspberry Pi (3/4/5), Ubuntu 24.04/25.10 ARM64 and Debian 12/13 ARM64. Ubuntu 26.04 ARM64 has no prebuilt yet - the module is built from source via DKMS (slower on first install, then works normally).
 

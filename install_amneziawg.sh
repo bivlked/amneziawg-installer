@@ -55,11 +55,11 @@ AWG2_PIN_TAG="v1.0.20260725"
 AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
 
 # Флаги CLI
-UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; KEEP_PACKAGES=""
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PREBUILT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""
-CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_KEEP_PACKAGES=0
+CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PREBUILT=0; CLI_KEEP_PACKAGES=0
 CLI_ALLOW_IPV6_TUNNEL=0
 CLI_ISOLATION="default"
 CLI_SERVER_NAME=""
@@ -281,6 +281,7 @@ while [[ $# -gt 0 ]]; do
         --yes|-y)        AUTO_YES=1 ;;
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
         --no-cps)        NO_CPS=1; CLI_NO_CPS=1 ;;
+        --no-prebuilt)   NO_PREBUILT=1; CLI_NO_PREBUILT=1 ;;
         --keep-packages) KEEP_PACKAGES=1; CLI_KEEP_PACKAGES=1 ;;
         --force|-f)      FORCE_REINSTALL=1 ;;
         --preset=*)      CLI_PRESET="${1#*=}" ;;
@@ -510,6 +511,8 @@ show_help() {
   --jmax=N             Задать Jmax вручную (0-1280, поверх preset, должно быть >= Jmin)
   --no-cps              Отключить CPS (параметр I1) - нужно, если десктопный
                         AmneziaVPN на macOS виснет при подключении (issue #159)
+  --no-prebuilt         На ARM не ставить готовый пакет модуля из релиза
+                        arm-packages, а собрать модуль через DKMS
 
 Примеры:
   sudo bash install_amneziawg.sh                             # Интерактивная установка
@@ -1622,8 +1625,8 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
-                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME)
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PREBUILT|KEEP_PACKAGES|\
+                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS)
                     export "$key=$value"
                     ;;
             esac
@@ -2033,6 +2036,29 @@ validate_endpoint() {
         [[ "${BASH_REMATCH[1]}" -le 255 && "${BASH_REMATCH[2]}" -le 255 && \
            "${BASH_REMATCH[3]}" -le 255 && "${BASH_REMATCH[4]}" -le 255 ]] || return 1
     fi
+    return 0
+}
+
+# _client_dns_shape_ok <список>: грубая проверка CLIENT_DNS на шаге 0, пока
+# библиотеки ещё нет. Без пустых элементов, каждый элемент - IPv4 с октетами 0-255
+# или похож на IPv6 (hex и двоеточия). Полную проверку делает awg_client_dns на
+# шаге 6; здесь ловим то, что иначе всплыло бы только после шагов 1-5.
+_client_dns_shape_ok() {
+    local v="${1// /}" tok o
+    local -a toks
+    case "$v" in ""|,*|*,|*,,*) return 1 ;; esac
+    IFS=',' read -r -a toks <<< "$v"
+    for tok in "${toks[@]}"; do
+        if [[ "$tok" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+            for o in "${BASH_REMATCH[@]:1}"; do
+                (( 10#$o <= 255 )) || return 1
+            done
+        elif [[ "$tok" == *:* && "$tok" =~ ^[0-9a-fA-F:]+$ ]]; then
+            :
+        else
+            return 1
+        fi
+    done
     return 0
 }
 
@@ -4257,6 +4283,9 @@ initialize_setup() {
     # Маркер поколения сбрасывается так же: `AWG_PROTOCOL=3.1 bash install.sh`
     # не должен пометить установку третьей линией мимо файла.
     AWG_PROTOCOL=""
+    # CLIENT_DNS тоже только из файла: CLIENT_DNS=... bash install.sh не должен молча
+    # попасть в init. Задаётся строкой в awgsetup_cfg.init.
+    CLIENT_DNS=""
 
     # Загрузка конфига
     if [[ -f "$CONFIG_FILE" ]]; then
@@ -4552,6 +4581,28 @@ initialize_setup() {
         log "CPS (I1) отключён (--no-cps / сохранённый NO_CPS=1): десктопный AmneziaVPN на macOS не поддерживает CPS."
     fi
 
+    # --no-prebuilt: флаг включает, сохранённый NO_PREBUILT=1 держится между
+    # перезагрузками (шаг 2 идёт в другом процессе). Снять - удалить строку из init.
+    # Флаг ради безопасности: "true" или "yes" в файле при -eq 1 дали бы "нет", и молча
+    # встал бы неподписанный пакет. Только 0 или 1. Проверяем значение из файла ДО
+    # флага: --no-prebuilt ниже перезаписал бы испорченную строку единицей и спрятал её.
+    case "${NO_PREBUILT:-0}" in
+        0|1) ;;
+        *) die "NO_PREBUILT='$NO_PREBUILT' в $CONFIG_FILE не валиден (допустимо 0 или 1)." ;;
+    esac
+    if [[ "${CLI_NO_PREBUILT:-0}" -eq 1 ]]; then
+        NO_PREBUILT=1
+    fi
+    # CLIENT_DNS пишется в init в одинарных кавычках: символ вне набора IP-адресов
+    # сломал бы файл. Форму проверяем тут же, полную проверку делает awg_client_dns
+    # на шаге 6.
+    if [[ -n "${CLIENT_DNS:-}" ]]; then
+        [[ "$CLIENT_DNS" =~ ^[0-9a-fA-F.:,\ ]+$ ]] \
+            || die "CLIENT_DNS в $CONFIG_FILE содержит недопустимые символы ('$CLIENT_DNS'). Укажите IP через запятую или удалите строку."
+        _client_dns_shape_ok "$CLIENT_DNS" \
+            || die "CLIENT_DNS в $CONFIG_FILE невалиден ('$CLIENT_DNS'): нужны IP-адреса через запятую, без пустых элементов."
+    fi
+
     # Сохранение конфигурации
     log "Сохранение настроек в $CONFIG_FILE..."
     # temp в каталоге итогового конфига -> mv = атомарный rename на той же ФС
@@ -4598,6 +4649,9 @@ export AWG_PRESET='${AWG_PRESET:-default}'
 export NO_TWEAKS=${NO_TWEAKS}
 export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
 export NO_CPS=${NO_CPS}
+export NO_PREBUILT=${NO_PREBUILT:-0}
+# DNS для НОВЫХ клиентов (IP через запятую). Пусто - 1.1.1.1, 1.0.0.1.
+export CLIENT_DNS='${CLIENT_DNS:-}'
 export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
 export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
 export IPV6_SUBNET='${IPV6_SUBNET}'
@@ -5344,7 +5398,18 @@ PPASRC
     local arch
     arch="$(uname -m)"
     if [[ "$arch" == "aarch64" || "$arch" == "armv7l" ]]; then
-        if _try_install_prebuilt_arm; then
+        if [[ "${NO_PREBUILT:-0}" -eq 1 ]]; then
+            # --no-prebuilt: готовый .deb из релиза arm-packages проверяется только по
+            # sha256 из того же релиза и не подписан; кому это важно, тот собирает сам.
+            log "Готовый пакет модуля пропущен (--no-prebuilt), модуль соберётся через DKMS."
+            # Готовый пакет, поставленный прошлым прогоном, сам не уйдёт: рядом встанет
+            # DKMS-модуль, и в системе окажутся два дерева amneziawg.
+            local _kmod
+            _kmod=$(dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '$NF != "not-installed" && $NF != "config-files" {print $1}' | paste -sd' ' -)
+            if [[ -n "$_kmod" ]]; then
+                die "Уже установлен готовый пакет модуля: $_kmod. С --no-prebuilt рядом собрался бы второй модуль. Удалите готовый: sudo apt-get purge -y $_kmod, затем запустите установщик снова."
+            fi
+        elif _try_install_prebuilt_arm; then
             log "Модуль ядра установлен из предсобранного пакета. Установка утилит из PPA..."
             # 🔴 Hold ОБЯЗАТЕЛЕН и здесь, НЕЗАВИСИМО от версии ядра. Выше он
             # ставится только на пиновом пути (ядро < 6.7), а в ветке >= 6.7
@@ -5391,8 +5456,9 @@ PPASRC
             _boot_critical_guard
             # request_reboot всегда завершает процесс (exit), сюда не вернёмся.
             request_reboot 3
+        else
+            log "Совпадений не найдено - откат на DKMS."
         fi
-        log "Совпадений не найдено — откат на DKMS."
     fi
 
     # Пакеты: на пиновом пути (ядро < 6.7) amneziawg-dkms НЕ ставим (это был бы
@@ -6024,6 +6090,11 @@ step6_generate_configs() {
     fi
     # shellcheck source=/dev/null
     source "$COMMON_SCRIPT_PATH"
+
+    # CLIENT_DNS проверяем до создания клиентов. Шаг 0 проверил только набор символов,
+    # а на пути 2.0 отказ generate_client даёт лишь предупреждение: опечатка вроде
+    # '10.9.9.1,' оставила бы установку без клиентов по умолчанию почти молча.
+    awg_client_dns >/dev/null || die "CLIENT_DNS в $CONFIG_FILE невалиден ('${CLIENT_DNS:-}'). Исправьте значение (IP через запятую) или удалите строку и запустите установщик снова."
 
     # Установка 3.1: профиль годен только комплектом. Инструменты для комплекта и
     # остатки файлов клиентов проверяются ДО первого изменения, в том числе до

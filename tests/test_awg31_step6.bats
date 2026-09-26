@@ -69,6 +69,9 @@ awg_client_artifacts_check() { _call "artifacts $1"; [[ "$1" != "${STUB_FAIL_ART
 validate_awg_config() { _call validate; [[ -z "${STUB_FAIL_VALIDATE:-}" ]]; }
 secure_files() { _call secure; }
 awg_mktemp() { mktemp -p "$1"; }
+# Step 6 checks CLIENT_DNS up front (Sep 2026). Not logged via _call on purpose:
+# the recorded call sequence these tests assert stays as it was.
+awg_client_dns() { printf '%s' "1.1.1.1, 1.0.0.1"; }
 EOF
     # The real remover: the test must see what it actually deletes.
     awk '/^_remove_client_files\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../awg_common.sh" >> "$stub"

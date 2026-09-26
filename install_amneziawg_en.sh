@@ -58,11 +58,11 @@ AWG2_PIN_TAG="v1.0.20260725"
 AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
 
 # CLI flags
-UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; KEEP_PACKAGES=""
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PREBUILT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""
-CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_KEEP_PACKAGES=0
+CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PREBUILT=0; CLI_KEEP_PACKAGES=0
 CLI_ALLOW_IPV6_TUNNEL=0
 CLI_ISOLATION="default"
 CLI_SERVER_NAME=""
@@ -294,6 +294,7 @@ while [[ $# -gt 0 ]]; do
         --yes|-y)        AUTO_YES=1 ;;
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
         --no-cps)        NO_CPS=1; CLI_NO_CPS=1 ;;
+        --no-prebuilt)   NO_PREBUILT=1; CLI_NO_PREBUILT=1 ;;
         --keep-packages) KEEP_PACKAGES=1; CLI_KEEP_PACKAGES=1 ;;
         --force|-f)      FORCE_REINSTALL=1 ;;
         --preset=*)      CLI_PRESET="${1#*=}" ;;
@@ -528,6 +529,8 @@ Options:
   --jmax=N             Set Jmax manually (0-1280, overrides preset, must be >= Jmin)
   --no-cps              Disable CPS (the I1 parameter) - needed if the desktop
                         AmneziaVPN on macOS hangs on connect (issue #159)
+  --no-prebuilt         On ARM, do not install the prebuilt module package from
+                        the arm-packages release; build the module with DKMS
 
 Examples:
   sudo bash install_amneziawg_en.sh                             # Interactive installation
@@ -1681,8 +1684,8 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
-                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME)
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PREBUILT|KEEP_PACKAGES|\
+                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS)
                     export "$key=$value"
                     ;;
             esac
@@ -2101,6 +2104,29 @@ validate_endpoint() {
         [[ "${BASH_REMATCH[1]}" -le 255 && "${BASH_REMATCH[2]}" -le 255 && \
            "${BASH_REMATCH[3]}" -le 255 && "${BASH_REMATCH[4]}" -le 255 ]] || return 1
     fi
+    return 0
+}
+
+# _client_dns_shape_ok <list>: a rough CLIENT_DNS check at step 0, before the
+# library is available. No empty items, and every item is IPv4 with octets 0-255
+# or looks like IPv6 (hex and colons). awg_client_dns does the full check at step
+# 6; this catches what would otherwise surface only after steps 1-5.
+_client_dns_shape_ok() {
+    local v="${1// /}" tok o
+    local -a toks
+    case "$v" in ""|,*|*,|*,,*) return 1 ;; esac
+    IFS=',' read -r -a toks <<< "$v"
+    for tok in "${toks[@]}"; do
+        if [[ "$tok" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+            for o in "${BASH_REMATCH[@]:1}"; do
+                (( 10#$o <= 255 )) || return 1
+            done
+        elif [[ "$tok" == *:* && "$tok" =~ ^[0-9a-fA-F:]+$ ]]; then
+            :
+        else
+            return 1
+        fi
+    done
     return 0
 }
 
@@ -4354,6 +4380,9 @@ initialize_setup() {
     # The generation marker is reset the same way: `AWG_PROTOCOL=3.1 bash install.sh`
     # must not mark an install as third-line behind the file's back.
     AWG_PROTOCOL=""
+    # CLIENT_DNS comes only from the file too: CLIENT_DNS=... bash install.sh must not
+    # land in init silently. It is set by a line in awgsetup_cfg.init.
+    CLIENT_DNS=""
 
     # Load config
     if [[ -f "$CONFIG_FILE" ]]; then
@@ -4656,6 +4685,29 @@ initialize_setup() {
         log "CPS (I1) disabled (--no-cps / persisted NO_CPS=1): the desktop AmneziaVPN on macOS does not support CPS."
     fi
 
+    # --no-prebuilt: the flag turns it on, a persisted NO_PREBUILT=1 survives the
+    # reboots (step 2 runs in another process). To undo, delete the line from init.
+    # A safety flag: "true" or "yes" in the file would read as "no" under -eq 1, and
+    # an unsigned package would go in silently. Only 0 or 1. The file's value is
+    # checked BEFORE the flag: --no-prebuilt below would overwrite a broken line
+    # with 1 and hide it.
+    case "${NO_PREBUILT:-0}" in
+        0|1) ;;
+        *) die "NO_PREBUILT='$NO_PREBUILT' in $CONFIG_FILE is invalid (0 or 1 allowed)." ;;
+    esac
+    if [[ "${CLI_NO_PREBUILT:-0}" -eq 1 ]]; then
+        NO_PREBUILT=1
+    fi
+    # CLIENT_DNS is written to init in single quotes: a character outside the IP
+    # address set would break the file. The shape is checked here too; awg_client_dns
+    # does the full check at step 6.
+    if [[ -n "${CLIENT_DNS:-}" ]]; then
+        [[ "$CLIENT_DNS" =~ ^[0-9a-fA-F.:,\ ]+$ ]] \
+            || die "CLIENT_DNS in $CONFIG_FILE contains characters that are not allowed ('$CLIENT_DNS'). Use IPs separated by commas or delete the line."
+        _client_dns_shape_ok "$CLIENT_DNS" \
+            || die "CLIENT_DNS in $CONFIG_FILE is invalid ('$CLIENT_DNS'): IP addresses separated by commas are needed, with no empty items."
+    fi
+
     # Save configuration
     log "Saving settings to $CONFIG_FILE..."
     # temp in the target config's directory -> mv = atomic rename on the same
@@ -4702,6 +4754,9 @@ export AWG_PRESET='${AWG_PRESET:-default}'
 export NO_TWEAKS=${NO_TWEAKS}
 export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
 export NO_CPS=${NO_CPS}
+export NO_PREBUILT=${NO_PREBUILT:-0}
+# DNS for NEW clients (IPs separated by commas). Empty means 1.1.1.1, 1.0.0.1.
+export CLIENT_DNS='${CLIENT_DNS:-}'
 export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
 export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
 export IPV6_SUBNET='${IPV6_SUBNET}'
@@ -5465,7 +5520,19 @@ PPASRC
     local arch
     arch="$(uname -m)"
     if [[ "$arch" == "aarch64" || "$arch" == "armv7l" ]]; then
-        if _try_install_prebuilt_arm; then
+        if [[ "${NO_PREBUILT:-0}" -eq 1 ]]; then
+            # --no-prebuilt: the prebuilt .deb from the arm-packages release is checked
+            # only against a sha256 from the same release and is not signed; whoever
+            # cares about that builds it themselves.
+            log "Prebuilt module package skipped (--no-prebuilt), the module will be built with DKMS."
+            # A prebuilt package installed by an earlier run does not go away by itself:
+            # a DKMS module would land next to it, leaving two amneziawg trees.
+            local _kmod
+            _kmod=$(dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '$NF != "not-installed" && $NF != "config-files" {print $1}' | paste -sd' ' -)
+            if [[ -n "$_kmod" ]]; then
+                die "A prebuilt module package is already installed: $_kmod. With --no-prebuilt a second module would be built next to it. Remove the prebuilt one: sudo apt-get purge -y $_kmod, then run the installer again."
+            fi
+        elif _try_install_prebuilt_arm; then
             log "Prebuilt kernel module installed. Installing userspace tools from PPA..."
             # 🔴 The hold is REQUIRED here too, REGARDLESS of the kernel version.
             # Above it is set only on the pinned path (kernel < 6.7), while the
@@ -5514,8 +5581,9 @@ PPASRC
             _boot_critical_guard
             # request_reboot always terminates the process (exit), we never return here.
             request_reboot 3
+        else
+            log "No matching prebuilt - falling back to DKMS build."
         fi
-        log "No matching prebuilt — falling back to DKMS build."
     fi
 
     # Packages: on the pinned path (kernel < 6.7) we do NOT install amneziawg-dkms
@@ -6151,6 +6219,12 @@ step6_generate_configs() {
     fi
     # shellcheck source=/dev/null
     source "$COMMON_SCRIPT_PATH"
+
+    # CLIENT_DNS is checked before any client is created. Step 0 checked only the
+    # character set, and on the 2.0 path a generate_client failure is just a warning:
+    # a typo such as '10.9.9.1,' would leave the install without its default clients
+    # almost silently.
+    awg_client_dns >/dev/null || die "CLIENT_DNS in $CONFIG_FILE is invalid ('${CLIENT_DNS:-}'). Fix the value (IPs separated by commas) or delete the line and run the installer again."
 
     # 3.1 install: a profile is only usable as a complete set. The tools for the
     # set and client leftovers are checked BEFORE the first change, including
