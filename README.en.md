@@ -615,12 +615,12 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
   <b>A:</b> No server reinstall is needed: replacing the two scripts in <code>/root/awg/</code> is enough. Download them into a temporary directory, verify the signatures, and only then replace the files (this needs <code>minisign</code>: <code>sudo apt install minisign</code>). A plain <code>wget -O</code> over the working file would leave an empty file if the download failed.
   <pre>
   cd "$(mktemp -d)"
-  BASE=https://github.com/bivlked/amneziawg-installer/releases/latest/download
   KEY=RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN
   M=manage_amneziawg_en.sh C=awg_common_en.sh   # Russian version: M=manage_amneziawg.sh C=awg_common.sh
   ok=1
   for f in "$M" "$C"; do
-    wget -q -O "$f" "$BASE/$f" && wget -q -O "$f.minisig" "$BASE/$f.minisig" \
+    wget -q -O "$f"         "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f" \
+      && wget -q -O "$f.minisig" "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f.minisig" \
       && minisign -V -P "$KEY" -m "$f" -x "$f.minisig" || { echo "NOT VERIFIED: $f"; ok=0; break; }
   done
   [ "$ok" = 1 ] && sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
