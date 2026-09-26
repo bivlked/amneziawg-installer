@@ -33,7 +33,7 @@ body:
     id: version
     attributes:
       label: Installer version
-      description: "Run `sudo bash /root/awg/manage_amneziawg.sh help` - the version is in the first lines."
+      description: "Run `sudo bash /root/awg/manage_amneziawg.sh help` - the version is in the first lines. If the install stopped before that file appeared, run `grep -m1 SCRIPT_VERSION= install_amneziawg*.sh` in the folder you started the installer from."
       placeholder: "e.g., 5.x.y"
     validations:
       required: false

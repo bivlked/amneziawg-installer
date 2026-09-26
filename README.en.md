@@ -622,16 +622,21 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
   cd "$(mktemp -d)"
   KEY=RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN
   M=manage_amneziawg_en.sh C=awg_common_en.sh   # Russian version: M=manage_amneziawg.sh C=awg_common.sh
-  ok=1
+  ok=1 tag=
   for f in "$M" "$C"; do
     wget -q -O "$f"         "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f" \
       && wget -q -O "$f.minisig" "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f.minisig" \
-      && minisign -V -P "$KEY" -m "$f" -x "$f.minisig" || { echo "NOT VERIFIED: $f"; ok=0; break; }
+      && t=$(minisign -V -P "$KEY" -m "$f" -x "$f.minisig" | sed -n "s/^Trusted comment: amneziawg-installer \(v[0-9.]*\) $f\$/\1/p") \
+      && [ -n "$t" ] && [ "${tag:-$t}" = "$t" ] || { echo "NOT VERIFIED: $f"; ok=0; break; }
+    tag=$t
   done
-  [ "$ok" = 1 ] && sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
+  old=$(sudo sed -n 's/^SCRIPT_VERSION="\(.*\)"/v\1/p' /root/awg/manage_amneziawg.sh 2>/dev/null)
+  [ "$ok" = 1 ] && [ "$(printf '%s\n' "$old" "$tag" | sort -V | tail -1)" != "$tag" ] \
+    && { echo "NOT VERIFIED: release $tag is older than the installed $old"; ok=0; }
+  [ "$ok" = 1 ] && echo "Verified release $tag" && sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
     && sudo install -m 700 "$C" /root/awg/awg_common.sh
   </pre>
-  If the script printed "NOT VERIFIED", the working files are untouched.
+  If the script printed "NOT VERIFIED", the working files are untouched. The block only accepts a pair of files from one release that is not older than the installed one, so a tampered "latest release" pointer cannot roll the scripts back to older signed versions. It prints the verified release number: compare it with the <a href="https://github.com/bivlked/amneziawg-installer/releases">releases page</a>.
   <br><br>
   Since v5.21.0 the script pair is protected against drift: if you update manage but forget awg_common (or the other way around) and the versions diverge, the script stops and shows the exact commands to fetch the other half, instead of throwing strange errors halfway through.
 </details>

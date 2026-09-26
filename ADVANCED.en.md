@@ -1024,17 +1024,22 @@ To update the management and shared library scripts **without reinstalling the s
 cd "$(mktemp -d)"
 KEY=RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN
 M=manage_amneziawg_en.sh C=awg_common_en.sh   # Russian version: M=manage_amneziawg.sh C=awg_common.sh
-ok=1
+ok=1 tag=
 for f in "$M" "$C"; do
   wget -q -O "$f"         "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f" \
     && wget -q -O "$f.minisig" "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f.minisig" \
-    && minisign -V -P "$KEY" -m "$f" -x "$f.minisig" || { echo "NOT VERIFIED: $f"; ok=0; break; }
+    && t=$(minisign -V -P "$KEY" -m "$f" -x "$f.minisig" | sed -n "s/^Trusted comment: amneziawg-installer \(v[0-9.]*\) $f\$/\1/p") \
+    && [ -n "$t" ] && [ "${tag:-$t}" = "$t" ] || { echo "NOT VERIFIED: $f"; ok=0; break; }
+  tag=$t
 done
-[ "$ok" = 1 ] && sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
+old=$(sudo sed -n 's/^SCRIPT_VERSION="\(.*\)"/v\1/p' /root/awg/manage_amneziawg.sh 2>/dev/null)
+[ "$ok" = 1 ] && [ "$(printf '%s\n' "$old" "$tag" | sort -V | tail -1)" != "$tag" ] \
+  && { echo "NOT VERIFIED: release $tag is older than the installed $old"; ok=0; }
+[ "$ok" = 1 ] && echo "Verified release $tag" && sudo install -m 700 "$M" /root/awg/manage_amneziawg.sh \
   && sudo install -m 700 "$C" /root/awg/awg_common.sh
 ```
 
-If the script printed "NOT VERIFIED", the working files are untouched. A plain `wget -O` over the working file would leave an empty file if the download failed. How the signature works: [Verifying a release](README.en.md#verifying-a-release).
+If the script printed "NOT VERIFIED", the working files are untouched. The block only accepts a pair of files from one release that is not older than the installed one, so a tampered "latest release" pointer cannot roll the scripts back to older signed versions. It prints the verified release number: compare it with the [releases page](https://github.com/bivlked/amneziawg-installer/releases). A plain `wget -O` over the working file would leave an empty file if the download failed. How the signature works: [Verifying a release](README.en.md#verifying-a-release).
 
 > **Note:** Reinstalling `install_amneziawg.sh` is **not required** for management updates. A reinstallation is only necessary when switching protocol versions.
 
