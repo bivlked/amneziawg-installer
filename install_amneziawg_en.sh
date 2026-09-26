@@ -1632,6 +1632,18 @@ configure_ipv6_tunnel() {
         ALLOW_IPV6_TUNNEL=0
     fi
     : "${IPV6_SUBNET:=fddd:2c4:2c4:2c4::/64}"
+    # The routing mode 2 IPv6 sink prefix (AWG_V6_SINK_PREFIX in awg_common.sh;
+    # the library is not there yet at step 0, a test checks the copies match). A
+    # tunnel subnet inside it would make real client addresses indistinguishable
+    # from sinks.
+    local sink_prefix="fddd:2c4:2c4:ffff"
+    if [[ "$ALLOW_IPV6_TUNNEL" -eq 1 ]]; then
+        local _v6p="${IPV6_SUBNET%%::*}"
+        _v6p="${_v6p,,}"
+        if [[ "$_v6p" == "$sink_prefix" || "$_v6p" == "${sink_prefix}:"* ]]; then
+            die "IPV6_SUBNET ($IPV6_SUBNET) overlaps ${sink_prefix}::/64, which the installer keeps for routing mode 2. Set another ULA subnet in $CONFIG_FILE."
+        fi
+    fi
     # The IPv6 tunnel requires host IPv6 enabled. Override --disallow-ipv6 AND
     # actively re-enable IPv6 at runtime BEFORE detection/render: on an upgrade
     # from a default past install (IPv6 was runtime-disabled), the kernel hides

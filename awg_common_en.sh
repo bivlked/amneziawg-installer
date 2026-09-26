@@ -385,6 +385,17 @@ _is_v6_sink_addr() {
     [[ -n "$a" && "$a" == "${AWG_V6_SINK_PREFIX}:"* ]]
 }
 
+# _ipv6_subnet_hits_sink <IPV6_SUBNET> : addresses from this subnet would fall
+# into the sink prefix. A client address is built as "prefix::N", and a sink is
+# recognised by text, case-insensitively (_is_v6_sink_addr), so the check is
+# textual too: regen and modify would take a client's real IPv6 from such a
+# subnet for a sink.
+_ipv6_subnet_hits_sink() {
+    local p="${1%%::*}"
+    p="${p,,}"
+    [[ "$p" == "$AWG_V6_SINK_PREFIX" || "$p" == "${AWG_V6_SINK_PREFIX}:"* ]]
+}
+
 # _aip_tokens <list> : the AllowedIPs elements one per line, without spaces.
 # Newline and comma separate elements, a carriage return is not meaningful.
 _aip_tokens() {
@@ -3495,6 +3506,10 @@ get_next_client_ipv6() {
     local subnet="${IPV6_SUBNET:-fddd:2c4:2c4:2c4::/64}"
     local prefix="${subnet%%::*}"
     [[ "$prefix" == *:* ]] || { log_error "get_next_client_ipv6: IPV6_SUBNET does not contain :: (value: $subnet)"; return 1; }
+    if _ipv6_subnet_hits_sink "$subnet"; then
+        log_error "get_next_client_ipv6: IPV6_SUBNET ($subnet) overlaps the sink prefix ${AWG_V6_SINK_PREFIX}::/64 - choose another ULA subnet."
+        return 1
+    fi
     echo "${prefix}::${suffix}"
     return 0
 }
