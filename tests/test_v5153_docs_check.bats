@@ -58,13 +58,19 @@ TMPL_STALE_RE='placeholder:[[:space:]]*"e\.g\.,[[:space:]]*[0-9]+\.[0-9]+\.[0-9]
         "split routing (modes 2 and 3, mode 2 being the default)" \
         "по умолчанию, российские сайты идут мимо туннеля" \
         "а в режиме раздельной маршрутизации (по умолчанию) ::/0 в конфиг не попадает" \
-        "and in split routing (the default) ::/0 never reaches the client config"; do
+        "and in split routing (the default) ::/0 never reaches the client config" \
+        "изоляция была побочным эффектом: split-режимы (2/3) изолировали клиентов" \
+        "isolation was a side effect of the mode: split modes (2/3) isolated clients" \
+        "это и есть прежнее поведение split-режимов по умолчанию" \
+        "that is the previous default behavior of split modes"; do
         echo "$bad" | grep -qE "$re" || { echo "missed: $bad"; false; }
     done
     # ...and the wording the release actually ships is not flagged.
     for ok in \
         "раздельная маршрутизация (режим 3, свой список сетей через --route-custom)" \
-        "split routing (mode 3, your own network list via --route-custom)"; do
+        "split routing (mode 3, your own network list via --route-custom)" \
+        "перехватывать весь IPv6 в split-режиме нельзя, это сломало бы раздельную маршрутизацию" \
+        "capturing all IPv6 in split mode would break split routing"; do
         echo "$ok" | grep -qE "$re" && { echo "false positive: $ok"; false; }
     done
     # The pattern under test is the one the script actually runs.
@@ -85,6 +91,8 @@ TMPL_STALE_RE='placeholder:[[:space:]]*"e\.g\.,[[:space:]]*[0-9]+\.[0-9]+\.[0-9]
     echo '      placeholder: "e.g., 5.15.0"' | grep -qE "$TMPL_STALE_RE"
     echo '      placeholder: "e.g., 5.x.y"'  | grep -qE "$TMPL_STALE_RE" && { echo "neutral flagged"; false; }
     # The kernel placeholder must not false-positive (version has a suffix).
+    # The Q&A discussion template asks for the same version and is scanned too.
+    grep -qF '.github/DISCUSSION_TEMPLATE/q-a.yml' "$SCRIPT"
     echo '      placeholder: "e.g., 6.8.0-51-generic"' | grep -qE "$TMPL_STALE_RE" && { echo "kernel flagged"; false; }
     return 0
 }

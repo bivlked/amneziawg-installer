@@ -115,8 +115,9 @@ All parameters are generated automatically during installation and saved to `/ro
 | `I2`-`I5` | Extra CPS / special-junk packets, optional (carried to clients since v5.18.0) | Tags `<r N>` / `<b 0xHEX>` / `<c>` / `<t>` | `<b 0xf1>` |
 
 **Critical constraints:**
-* H1-H4 ranges **must not overlap** (guaranteed by the generation algorithm).
+* H1-H4 ranges **must not overlap** (guaranteed by the generation algorithm); the generator picks them at random within 5..2147483647.
 * `S1 + 56 ≠ S2` — prevents init and response messages from having the same size.
+* `S3 ≠ S2 + 28` - keeps the response and cookie messages from having the same size.
 * `S1`-`S4` and `H1`-`H4` **must** match on the server and the clients: the receiver strips that padding and checks those headers. In 2.0, `H1`-`H4` are ranges - the same ranges on both sides.
 * `Jc`/`Jmin`/`Jmax` and `I1`-`I5` **do not** have to match: they are separate decoy packets, the other side discards them, and a node without `I1` simply never sends them.
 
@@ -530,7 +531,7 @@ File: `/etc/sysctl.d/99-amneziawg-security.conf`. Includes:
 
 * Automatically installed and configured for SSH protection.
 * **Settings:** Ban via `ufw`, 5 attempts → 1-hour ban.
-* **Debian:** Automatically uses `backend = systemd` (journald). Ubuntu uses `backend = auto`.
+* **Backend:** `systemd` (journald) on both Ubuntu and Debian; on Debian the installer also installs `python3-systemd`.
 * **Check:** `sudo fail2ban-client status sshd`.
 
 #### Safe Configuration Loading (v5.7.2)
@@ -681,6 +682,8 @@ I1 = <r 2><b 0x858000010002000000001c><rc 28><b 0x0463646e730669636c6f756403636f
 PublicKey = [CLIENT_PUBLIC_KEY]
 AllowedIPs = 10.9.9.2/32
 ```
+
+The `PostUp` and `PostDown` lines are shortened here: a real config also carries the MSS clamp and client isolation rules.
 </details>
 
 <details>
@@ -713,7 +716,7 @@ Notes for manual setups:
 - **I1-I5** (CPS / special-junk packets) are optional. Without `I1` the AWG client falls back to AWG 1.0 mode; for full AWG 2.0 obfuscation add `I1 = <r 128>` (random 128 bytes) or `I1 = <b 0xHEX>` (binary). ⚠️ The `<r 128>` example shows the FORMAT, not a recommended value: by the September 2026 measurement a packet of random bytes is dropped on some cellular networks and the handshake never completes. If the tunnel does not come up on cellular, see [the handshake never completes on cellular](#no-hs-mobile-adv). Since v5.18.0 all five (`I1`-`I5`) are carried into client configs, not just `I1`: set `I2`-`I5` in the `[Interface]` section of `awg0.conf`, restart the service (`sudo systemctl restart awg-quick@awg0`), and distribute to clients with `sudo bash /root/awg/manage_amneziawg.sh regen <name>` - the values flow into the `.conf`, QR, and `vpn://`. Ready-made sets come from, e.g., the VoidWaifu list; tag formats: `<r N>`, `<b 0xHEX>`, `<c>`, `<t>`. These values do not have to match the server: the receiver never validates them, and a node without `I1` simply sends no concealment packets. Case does matter - uppercase only. Unset `I2`-`I5` are simply not emitted.
 - **MTU**, **PostUp/PostDown** are optional and depend on the setup (see the `amneziawg-go` LXC section on `iptables` MASQUERADE).
 
-After creating such an `awg0.conf`, `manage_amneziawg.sh` also needs `/root/awg/server_public.key` (compute it with `awg pubkey < /etc/amnezia/amneziawg/server_private.key > /root/awg/server_public.key`) and a minimal `/root/awg/awgsetup_cfg.init` containing at least `AWG_PORT`, `AWG_TUNNEL_SUBNET`, `AWG_ENDPOINT`.
+After creating such an `awg0.conf`, `manage_amneziawg.sh` also needs a minimal `/root/awg/awgsetup_cfg.init` containing at least `AWG_PORT`, `AWG_TUNNEL_SUBNET`, `AWG_ENDPOINT`. If `/root/awg/server_public.key` is missing, `manage` derives it from the `PrivateKey` in `awg0.conf`.
 
 </details>
 
@@ -724,7 +727,7 @@ After creating such an `awg0.conf`, `manage_amneziawg.sh` also needs `/root/awg/
 [Interface]
 PrivateKey = [CLIENT_PRIVATE_KEY]
 Address = 10.9.9.2/32
-DNS = 1.1.1.1
+DNS = 1.1.1.1, 1.0.0.1
 MTU = 1280
 Jc = 6
 Jmin = 55
@@ -742,7 +745,7 @@ I1 = <r 2><b 0x858000010002000000001c><rc 28><b 0x0463646e730669636c6f756403636f
 [Peer]
 PublicKey = [SERVER_PUBLIC_KEY]
 Endpoint = 203.0.113.1:39743
-AllowedIPs = 1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6, 8.0.0.0/7, ...
+AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 33
 ```
 </details>
@@ -854,7 +857,7 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 * **`check` / `status`:** Check server status (service, port, AWG 2.0 parameters).
 * **`show`:** Run `awg show`.
 * **`restart`:** Restart the AmneziaWG service.
-* **`diagnose [--carrier=NAME]`:** Self-troubleshooting: checks the kernel module, sysctl and UFW; with `--carrier` it compares AWG parameters against a mobile carrier profile.
+* **`diagnose [--carrier=NAME]`:** Self-troubleshooting: checks the kernel module, sysctl and UFW; with `--carrier=NAME` it compares AWG parameters against a mobile carrier profile. Names: `beeline_msk`, `yota_msk`, `tele2_msk`, `tele2_krasnoyarsk`, `tattelecom`, `megafon_regions`, `tmobile_us` (the last name is historical: it is the Russian T-Mobile, Moscow and region).
 * **`repair-module`:** Rebuild/restore the amneziawg kernel module (DKMS) after a server kernel upgrade.
 * **`help`:** Show help.
 * **`stats [--json]`:** Per-client traffic statistics. With `--json` — machine-readable format for integration.
@@ -999,10 +1002,10 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 
 #### Version-Pinned URLs (v5.7.2)
 
-The installer downloads `awg_common.sh` and `manage_amneziawg.sh` from URLs pinned to the specific version tag:
+The installer downloads `awg_common_en.sh` and `manage_amneziawg_en.sh` (the Russian installer: `awg_common.sh` and `manage_amneziawg.sh`) from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.36.2/awg_common.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.36.2/awg_common_en.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -1010,8 +1013,10 @@ This provides **supply chain pinning**: downloaded scripts match the installer v
 For development, you can override the branch:
 
 ```bash
-AWG_BRANCH=my-feature-branch sudo bash ./install_amneziawg_en.sh
+sudo AWG_BRANCH=my-feature-branch bash ./install_amneziawg_en.sh
 ```
+
+Put the variable after `sudo`, otherwise sudo resets the environment. With a branch other than the version tag, the SHA256 check of the downloaded scripts is skipped (the log shows a warning), so this is for development only.
 
 ---
 
@@ -1050,6 +1055,7 @@ If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULL
 <a id="faq-advanced-adv"></a>
 ## ❓ FAQ (Additional Questions)
 
+<a id="faq-yellow-adv"></a>
 <details>
   <summary><strong>Q: Why is my config highlighted yellow in the Amnezia app?</strong></summary>
   <b>A:</b> The yellow mark reports the profile generation, not an error: that is how the Amnezia app marks second-line AmneziaWG configurations. On its own the mark does not say anything is wrong with the connection, and nothing needs redoing because of it. As of 31 August 2026 the installer issues a second-line profile, so the mark is expected on any server it sets up.
@@ -1110,6 +1116,7 @@ If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULL
   <b>A:</b> After the install, in the <code>[Interface]</code> section of the server config <code>/etc/amnezia/amneziawg/awg0.conf</code>. That file is the source of truth: <code>regen</code> reads the values for client configs from there. A copy of the parameters (AWG_Jc, AWG_S1..S4, AWG_H1..H4, AWG_I1..I5) also lives in <code>/root/awg/awgsetup_cfg.init</code>, but that file is read for them only during a first install, so editing it afterwards never reaches clients - change <code>awg0.conf</code> instead (the next question has the steps). Since v5.22.0 <code>manage</code> prints a warning when it spots such a disagreement.
 </details>
 
+<a id="faq-change-params-adv"></a>
 <details>
   <summary><strong>Q: Can I change AWG 2.0 parameters after installation?</strong></summary>
   <b>A:</b> Yes. This is useful if your ISP started fingerprinting your server by static obfuscation parameters (e.g. Russian DPI blocked specific H1-H4 ranges). Workflow as of v5.8.0:
@@ -1210,11 +1217,13 @@ sudo systemctl restart awg-quick@awg0</pre>
   <b>A:</b> 1. On the old server: <code>sudo bash /root/awg/manage_amneziawg.sh backup</code>. 2. Copy the archive: <code>scp root@old_server:/root/awg/backups/awg_backup_*.tar.gz .</code>. 3. Install AmneziaWG on the new server. 4. Copy the backup: <code>scp awg_backup_*.tar.gz root@new_server:/root/awg/backups/</code>. 5. Restore: <code>sudo bash /root/awg/manage_amneziawg.sh restore</code> (interactive selection, or specify the full archive path). 6. Check what came over from the old server: the <code>PostUp</code>/<code>PostDown</code> lines in <code>/etc/amnezia/amneziawg/awg0.conf</code> carry the old machine's network interface name (<code>-o eth0</code> and so on). If the new server names it differently (<code>ip route get 1.1.1.1</code>), replace the name and restart the service (<code>sudo systemctl restart awg-quick@awg0</code>). <code>ListenPort</code> must match the port open in UFW. If <code>/root/awg/awgsetup_cfg.init</code> sets <code>AWG_ENDPOINT</code>, put the new address there or leave it empty for auto-detection. 7. Regenerate configs with new IP: <code>sudo bash /root/awg/manage_amneziawg.sh regen</code>. 8. Distribute new configs to clients.
 </details>
 
+<a id="faq-mobile-iphone-adv"></a>
 <details>
   <summary><strong>Q: Smartphone doesn't connect over cellular / doesn't work on iPhone</strong></summary>
   <b>A:</b> Add <code>MTU = 1280</code> to the <code>[Interface]</code> section of both server and client configs. Cellular networks have lower MTU than the default 1420, and iOS is strict about PMTU. See <a href="#mtu-mobile-adv">MTU and Mobile Clients</a> for details.
 </details>
 
+<a id="faq-iphone-10s-adv"></a>
 <details>
   <summary><strong>Q: iPhone connects but traffic stops after ~10 seconds (the tunnel "hangs")</strong></summary>
   <b>A:</b> Fixed in v5.16.1. The routing mode that was default back then (mode 2, "Amnezia List + DNS") started with the <code>0.0.0.0/5</code> range, which covers the reserved <code>0.0.0.0/8</code>. The iOS kernel chokes on that block and never reaches the rest of the routes, so the tunnel comes up and then stalls after ~10 seconds (easy to mistake for DPI). Traced and fixed by @LiaNdrY (Issue #42). In v5.16.1 the first range is split into <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code> - the same coverage without the problematic zero block, and private networks still stay outside the tunnel.
@@ -1222,6 +1231,7 @@ sudo systemctl restart awg-quick@awg0</pre>
   <b>On an existing server (before v5.16.1)</b> the stored list lives in <code>/root/awg/awgsetup_cfg.init</code> and a plain <code>--force</code> reinstall does not change it (it is read back from the config). So: (1) quick per-client fix - replace the <code>AllowedIPs = ...</code> line in the iOS client config with <code>AllowedIPs = 0.0.0.0/0</code>; (2) keep the "Amnezia" mode list - edit <code>/root/awg/awgsetup_cfg.init</code>, replace the leading <code>0.0.0.0/5</code> with <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code>, then recreate the client (<code>remove</code> + <code>add</code>); (3) or a clean reinstall (<code>--uninstall</code>, then install v5.16.1) regenerates the list correctly.
 </details>
 
+<a id="faq-mobile-unstable-adv"></a>
 <details>
   <summary><strong>Q: VPN connects over cellular only on the third attempt / unstable</strong></summary>
   <b>A:</b> If the handshake never completes on cellular at all, start with <a href="#no-hs-mobile-adv">The handshake never completes on cellular</a>: the September 2026 measurement on MTS Moscow shows that the shape of the <code>I1</code> concealment packet decides the handshake, while the number and size of junk packets (<code>Jc</code>, <code>Jmin</code>, <code>Jmax</code>) do not affect it. If the connection is merely unstable, try the <code>--preset=mobile</code> flag (since v5.10.0): it sends fewer and smaller junk packets (Jc=3). In Discussion #38 (@elvaleto), on Tattelecom (Letai) with Jc=4-8 it took multiple attempts to connect, and after setting <code>Jc = 3</code> it worked immediately.
@@ -1250,7 +1260,7 @@ sudo systemctl restart awg-quick@awg0</pre>
   <tr><td>Beeline</td><td>default</td><td><code>--preset=default</code></td><td>✅</td></tr>
   <tr><td>Megafon (Moscow)</td><td>Jc=3, Jmin=80, Jmax=268</td><td><code>--preset=mobile</code></td><td>🔄 testing</td></tr>
   <tr><td>Megafon (regions)</td><td><b>I1=absent</b></td><td><code>--preset=mobile</code> + remove <code>I1</code></td><td>✅</td></tr>
-  <tr><td>T-Mobile (Moscow)</td><td>narrow profile (like the Amnezia app): Jc=6, Jmin=10, Jmax=50, DNS-mimic I1=&lt;r 2&gt;&lt;b 0x8580...&gt; (full value in the routers section below); full tunnel <code>0.0.0.0/0, ::/0</code></td><td>manual parameters; the <code>diagnose --carrier=tmobile_us</code> profile checks Jc/Jmin/Jmax and that I1 is binary; <code>--preset=mobile</code> does not fit here</td><td>✅</td></tr>
+  <tr><td>T-Mobile (Moscow and region)</td><td>narrow profile (like the Amnezia app): Jc=6, Jmin=10, Jmax=50, DNS-mimic I1=&lt;r 2&gt;&lt;b 0x8580...&gt; (full value in the routers section below); full tunnel <code>0.0.0.0/0, ::/0</code></td><td>manual parameters; the <code>diagnose --carrier=tmobile_us</code> profile (the name is historical, the profile is for this carrier) checks Jc/Jmin/Jmax and that I1 is binary; <code>--preset=mobile</code> does not fit here</td><td>✅</td></tr>
   <tr><td>Tele2 + Megafon (Kemerovo, region 42)</td><td>random I1 (&lt;r N&gt;) stopped passing after 2+ days; works with QUIC-mimicry I1=&lt;b 0xc3...&gt; or I1=absent</td><td><code>--preset=mobile</code> + I1=&lt;b 0xc3...&gt; (QUIC) or remove <code>I1</code></td><td>✅</td></tr>
   </table>
   <br>
@@ -1359,16 +1369,23 @@ The report (`--diagnostic`) includes the following sections:
 
 | Section | Description |
 |---------|-------------|
-| OS | OS and kernel version |
+| OS | OS and kernel version (`uname -a`) |
 | Hardware | RAM, CPU, Swap |
-| Configuration | Contents of `awgsetup_cfg.init` |
-| Server Config | `awg0.conf` (private key hidden) |
-| Service Status | Systemd service status |
+| Configuration | Contents of `awgsetup_cfg.init` (secrets hidden) |
+| Server Config | `awg0.conf` (keys hidden) |
+| Service Status | `systemctl status awg-quick@awg0` |
 | AWG Status | Output of `awg show` |
-| Network | Interfaces, ports, routes |
-| Firewall | UFW rules |
-| Journal | Last 50 lines of service log |
-| DKMS | Kernel module status |
+| AWG Version | Output of `awg --version` |
+| Network Interfaces | Output of `ip a` |
+| Listening Ports | Output of `ss -lunp` |
+| Firewall Status | `ufw status verbose` |
+| Routing Table | Output of `ip route` |
+| Cascade / Split Routing | The `awg-routing` unit, the `ip rule` by mark, table 100, `ipset` sets, the cascade `mangle` and `nat` rules; "not configured" when there is no cascade |
+| Kernel Params | `net.ipv4.ip_forward`, `net.ipv6.conf.all.disable_ipv6` |
+| AWG Journal (last 50) | Last 50 lines of the `awg-quick@awg0` journal |
+| Client List | Client names |
+| DKMS Status | Output of `dkms status` |
+| Module Info | Details of the loaded `amneziawg` module |
 
 ---
 
@@ -1602,11 +1619,15 @@ sudo bash /root/awg/manage_amneziawg.sh stats
 ```
 
 ```
-Client          Received        Sent            Latest handshake
-───────────────────────────────────────────────────────────────────
-my_phone        1.24 GiB        356.7 MiB       2 minutes ago
-laptop          892.3 MiB       128.4 MiB       15 seconds ago
-guest           0 B             0 B             (none)
+[2026-09-26 14:05:02] INFO: Client traffic statistics:
+
+Name            | IP              | Received     | Sent         | Last handshake      | Status
+-----------------------------------------------------------------------------------------------
+my_phone        | 10.9.9.2        | 1.24 GiB     | 356.69 MiB   | 2026-09-26 14:02:11 | Active
+my_laptop       | 10.9.9.3        | 892.30 MiB   | 128.40 MiB   | 2026-09-26 14:04:30 | Active
+guest           | 10.9.9.4        | 0 B          | 0 B          | never               | Inactive
+
+[2026-09-26 14:05:02] INFO: Total: Received 2.11 GiB, Sent 485.09 MiB
 ```
 
 **JSON output:**
@@ -1687,8 +1708,7 @@ sudo bash /root/awg/manage_amneziawg.sh list --json
 
 > When the marker EXISTS on the server but no value could be obtained from it, `expires_at` stays
 > `null` and `expires_at_error` becomes `"unreadable"`. That covers an empty file, corrupted
-> content, a directory in place of the file, and a file that cannot be read because of its
-> read. Note that a PERMISSION denial is not one of them in practice: the script runs as root
+> content, a directory in place of the file, and a failed read. Note that a PERMISSION denial is not one of them in practice: the script runs as root
 > and root bypasses permission checks - measured on a stand, `chmod 000` on a marker did not hide
 > its value. What remains is an I/O error, a security module refusing the read, and a truncated
 > read. On its own, `expires_at: null` would read as "permanent by design", while an
@@ -1747,7 +1767,7 @@ Add `MTU = 1280` to the `[Interface]` section of both server and client configs 
 sudo systemctl restart awg-quick@awg0
 ```
 
-> vpn:// URIs for Amnezia Client have always included MTU = 1280 in all script versions.
+> The vpn:// link carries the MTU from the client `.conf`, 1280 by default.
 
 ### Automatic MSS clamp (since v5.17.0)
 
@@ -1769,7 +1789,7 @@ If the tunnel does not come up at all on cellular (the handshake never completes
 
 ⚠️ Do not assume the port by default. In our September 2026 measurement on MTS (Moscow) a non-standard UDP port passed freely and the cause was entirely `I1`. Look at the server first, change the port second.
 
-Set the port at install time - `sudo bash install_amneziawg.sh --port=443 ...`. On an already running server, change the port without reinstalling:
+Set the port at install time - `sudo bash install_amneziawg_en.sh --port=443 ...`. On an already running server, change the port without reinstalling:
 
 ```bash
 sudo sed -i 's/^ListenPort = .*/ListenPort = 443/' /etc/amnezia/amneziawg/awg0.conf
@@ -1867,7 +1887,7 @@ Clients move every few days, so each row carries a date: it says when that versi
 | amneziawg-mikrotik-c (third-party) | third line | v1.2.8 | 26 Aug 2026 | project releases page |
 | AmneziaWG-MikroTik (third-party) | third line | Containers_3.1 | 30 Aug 2026 | project releases page |
 
-⚠️ **The Google Play row is an inference, not an observation.** Google Play does not show a
+⚠️ **The Google Play row is an inference, not an observation.** The Google Play
 app page no longer carries a separate current-version field: the only number on it is
 `AmneziaWG 2.0.1` inside the release-notes text, which the developer writes by hand and which
 can lag what is actually being served. So the generation is inferred from dates: the listing was
@@ -1932,7 +1952,7 @@ In late July 2026 the Amnezia team released **AmneziaWG 3.0** and switched the `
 
 The installer still keeps the **pinned last AmneziaWG 2.0 module** (tag `v1.0.20260725`, verified by commit hash) on such kernels: starting with **v5.23.0**, if the kernel is older than 6.7, the module is not taken from the PPA but built from source via DKMS. That is now a deliberate choice rather than a way around a broken build: in its first days the 3.0 line managed to break and then fix the build on old kernels specifically, so that is where it is least proven. The `amneziawg-tools` userland still comes from the PPA - the 3.0 tools work correctly with a 2.0 module, that part is verified. You do not need to install anything by hand; it all happens at step 2. On kernels 6.7 and newer (Ubuntu 24.04/25.10/26.04, Debian 13 trixie) the behaviour is unchanged - the module is installed from the PPA.
 
-If you specifically want the third AmneziaWG line on Debian 12, the simplest route is to deploy the server afresh on Debian 13 / Ubuntu 24.04+. The other route is to install a 6.7+ kernel from `bookworm-backports` and **reboot into it**: the installer looks at the running kernel, not at the installed one, so after the reboot it follows the normal path. On a server that is already set up, do not install on top: back it up (`sudo bash /root/awg/manage_amneziawg.sh backup`), remove the current install (`sudo bash install_amneziawg.sh --uninstall`) and install again - otherwise the pinned 2.0 module stays registered in DKMS under the same name as the PPA package. Support for the 3.0 features themselves (header protection, timing randomization) in the installer is planned separately and will land once the 3.0 stack and the client apps stabilize.
+If you specifically want the third AmneziaWG line on Debian 12, the simplest route is to deploy the server afresh on Debian 13 / Ubuntu 24.04+. The other route is to install a 6.7+ kernel from `bookworm-backports` and **reboot into it**: the installer looks at the running kernel, not at the installed one, so after the reboot it follows the normal path. On a server that is already set up, do not install on top: back it up (`sudo bash /root/awg/manage_amneziawg.sh backup`), remove the current install (`sudo bash install_amneziawg_en.sh --uninstall`) and install again - otherwise the pinned 2.0 module stays registered in DKMS under the same name as the PPA package. Support for the 3.0 features themselves (header protection, timing randomization) in the installer is planned separately and will land once the 3.0 stack and the client apps stabilize.
 
 ---
 
@@ -1978,7 +1998,7 @@ Raspberry Pi 3 has 1 GB RAM and 4 cores at 1.2 GHz. Kernel module compilation ca
 
 <details>
 <summary><strong>Q: How do I check if the prebuilt module was used?</strong></summary>
-Look for <code>Prebuilt module installed</code> in the install log (<code>/root/awg/install_amneziawg.log</code>). If DKMS was used instead, you'll see <code>dkms install</code> output.
+Look for <code>Prebuilt installed</code> in the install log (<code>/root/awg/install_amneziawg.log</code>); the Russian installer writes <code>Предсобранный пакет установлен</code>. If it is not there, the module was built with DKMS: on the fallback the log says <code>falling back to DKMS build</code>.
 </details>
 
 ---
@@ -2261,7 +2281,7 @@ it as a target.
 
 * **Single AWG protocol version per server.** All clients share the same obfuscation parameters. You cannot have some clients on AWG 1.x and others on 2.0 simultaneously.
 
-* **Ubuntu 25.10 / 26.04 / Debian 13:** The PPA may not have prebuilt packages for the latest non-LTS releases. The installer remaps the PPA codename to `noble` automatically (since v5.13.0) and builds the kernel module from source via DKMS, which takes longer on first install.
+* **Ubuntu other than `noble`, `jammy` and `focal` (for example 25.10 and 26.04):** the installer requests `dists/<codename>/Release` from the PPA, and if there is no answer (a 404 or the PPA is unreachable), switches the PPA codename to `noble` (since v5.13.0). Debian is always mapped to the nearest Ubuntu release: 12 -> `focal`, 13 -> `noble`. The module still comes from the PPA DKMS package and is built for your kernel, except on ARM systems with a prebuilt module.
 
 * **IPv6 Dual-Stack Tunnel - rolling back `ALLOW_IPV6_TUNNEL=0`:** Setting `ALLOW_IPV6_TUNNEL=0` in `awgsetup_cfg.init` (or re-running without `--allow-ipv6-tunnel`) does **not** remove existing dual-stack `AllowedIPs = ..., fddd::.../128` entries from `[Peer]` blocks already written to `awg0.conf`. The entries remain and the kernel keeps IPv6 routes for those peers. `manage_amneziawg.sh regen <name>` (or the full path `/root/awg/manage_amneziawg.sh regen <name>`) after disabling the flag rebuilds only the client `.conf` - it becomes IPv4-only, since `regenerate_client` reads `ALLOW_IPV6_TUNNEL`. But `regen` does **not** remove the IPv6 `AllowedIPs` from the server `[Peer]` block. To clear the server side too, use the sed cleanup across all peers: `awg-quick down awg0; sed -i 's|, fddd:[^/]*/[0-9]*||g' /etc/amnezia/amneziawg/awg0.conf; awg-quick up awg0`, or `manage_amneziawg.sh remove <name>` + `add <name>`.
 

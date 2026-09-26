@@ -54,7 +54,7 @@ Before submitting a PR, ensure:
 
    > Note: these two loops cover the six runtime scripts as a quick local shortcut. CI (`shellcheck.yml`) and `scripts/preflight-check.sh` check a wider scope - all tracked `*.sh`, including `scripts/*.sh` and `tests/`. The full local gate is `BASE_REF=origin/main bash scripts/preflight-check.sh`.
 
-3. **Unit tests (bats-core)** pass. The suite grows every release, so there is no fixed count to match - run `bats tests/` and make sure the full suite is green before opening a PR.
+3. **Unit tests (bats-core)** pass. The suite grows every release, so there is no fixed count to match - run `bats tests/` and make sure the full suite is green before opening a PR. Install `bats`, `qrencode` and `jq` first, as CI does: without the last two some tests are skipped locally, so a green local run does not cover what CI checks.
    ```bash
    bats tests/
    ```
@@ -69,7 +69,7 @@ Before submitting a PR, ensure:
 4. **VPS testing** (for script changes): test on a clean server (Ubuntu 24.04 LTS or Debian 12/13 minimal). The full test matrix includes:
    - Fresh install on clean Ubuntu 24.04 LTS
    - Fresh install on clean Ubuntu 25.10 (noble fallback path)
-   - Fresh install on clean Ubuntu 26.04 (noble fallback path)
+   - Fresh install on clean Ubuntu 26.04 (the installer probes the PPA for `resolute` and falls back to `noble` if it does not answer)
    - All management commands: add, remove, list, regen, check, restart
    - Reboot-resume between critical installer steps
    - Client connectivity (handshake, ping, DNS resolution)
@@ -120,6 +120,9 @@ The same mirror rule applies to user-facing markdown documents:
 - `README.md` ↔ `README.en.md`
 - `ADVANCED.md` ↔ `ADVANCED.en.md`
 - `CHANGELOG.md` ↔ `CHANGELOG.en.md`
+- `INSTALL_VPS.md` (English is the source) ↔ `INSTALL_VPS.ru.md`
+- `CASCADE.md` ↔ `CASCADE.en.md`
+- `WARP-RU.md` ↔ `WARP-RU.en.md`
 
 When updating any of them, keep the following in sync between the two versions:
 
@@ -157,7 +160,7 @@ docs: update CHANGELOG for v5.5
 1. Fill in the PR template completely
 2. Ensure CI checks pass: ShellCheck, syntax (`bash -n`), the bats test suite, documentation consistency (`scripts/check-docs-consistency.sh`), and commit hygiene. The last one fails a PR that adds an en or em dash to the diff (use a plain hyphen), a `Co-authored-by` trailer to a commit message, or a tool marker (the list is in `scripts/check-markers.sh`) to a commit message, the diff, or the PR title and body. The quickest way to clear the bar locally is the full gate: `BASE_REF=origin/main bash scripts/preflight-check.sh`
 3. **If your PR adds or modifies a GitHub Actions workflow** (`.github/workflows/*.yml`) or a build script (`scripts/*.sh`), run the workflow on your fork and confirm it passes **before** requesting review. `arm-build.yml` supports `workflow_dispatch` for manual triggering; other workflows run automatically on push. This catches environment-specific failures that local testing cannot.
-4. Update **both** `CHANGELOG.md` and `CHANGELOG.en.md` if applicable
+4. Update **both** `CHANGELOG.md` and `CHANGELOG.en.md` if applicable: add your entry under `## [Unreleased]`, in the matching section (Fixed, Added, Documentation and so on)
 5. Update `[Unreleased]` comparator link in both CHANGELOGs when bumping version
 6. Request a review from `@bivlked`
 7. Address review feedback

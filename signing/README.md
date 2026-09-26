@@ -20,17 +20,16 @@ bytes.
 ## Producing them
 
 ```bash
-TAG=v5.29.0                                   # the tag about to be pushed
-KEY=~/.minisign/amneziawg-installer.key
-mkdir -p signing
-for f in $(bash scripts/signed-file-list.sh); do
-  minisign -Sm "$f" -s "$KEY" -x "signing/$f.minisig" \
-           -t "amneziawg-installer $TAG $f"
-done
-bash scripts/verify-signatures.sh "$TAG"      # confirm before committing
+bash scripts/sign-release.sh vX.Y.Z          # the tag about to be pushed
+bash scripts/verify-signatures.sh vX.Y.Z     # confirm before committing
 ```
 
-The `-t` trusted comment is not decoration. A signature proves that some bytes
+`scripts/sign-release.sh` signs every file from `scripts/signed-file-list.sh`
+with the trusted comment `amneziawg-installer <TAG> <file>`, asks for the key
+password once and refuses to run without a terminal. It replaced a hand-written loop that failed silently
+without one; see [docs/RELEASE_PROCESS.md](../docs/RELEASE_PROCESS.md).
+
+That trusted comment is not decoration. A signature proves that some bytes
 were signed, not that they were signed *for this release*: an old file with its
 own old signature verifies perfectly well. Binding the comment to tag and
 filename is what makes a rollback or a swapped file detectable, and
@@ -38,15 +37,18 @@ filename is what makes a rollback or a swapped file detectable, and
 
 ## Verifying as a user
 
-Everything needed is attached to each release, so nothing has to be trusted
-from a second place at verification time:
+Everything needed except the key is attached to each release:
 
 ```bash
-minisign -V -p KEYS.txt -m install_amneziawg.sh -x install_amneziawg.sh.minisig
+# files downloaded from a release
+minisign -V -P RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN -m install_amneziawg.sh -x install_amneziawg.sh.minisig
+# a git checkout of the tag
+minisign -V -P RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN -m install_amneziawg.sh -x signing/install_amneziawg.sh.minisig
 ```
 
-⚠️ Fetching `KEYS.txt` from this repository in the same session as the script
-gives no protection against a compromise of the repository itself - an attacker
-able to replace one can replace all three. The key is worth pinning once from a
-source outside GitHub and reusing it afterwards; that is what turns the
+The key in these commands is only as trustworthy as the place you copied it
+from. Taken from this repository in the same session as the script, it gives no
+protection against a compromise of the repository: an attacker able to replace
+the script can replace its signature and the key as well. Pin the key once from
+a source outside GitHub and pass it with `-P` afterwards; that is what turns the
 signature into a real check rather than a ritual.

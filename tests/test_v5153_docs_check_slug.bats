@@ -25,9 +25,16 @@ setup() {
     [ "$out" = "дорожная-карта" ]
 }
 
-@test ".4 _slug_stream: emoji and punctuation stripped, Cyrillic kept" {
+@test ".4 _slug_stream: emoji and punctuation stripped, Cyrillic kept, leading hyphen kept like GitHub" {
+    # GitHub drops the emoji but keeps the space after it, which becomes a hyphen:
+    # "## ✨ Features" is #-features on github.com. This test used to expect the
+    # hyphen trimmed, which accepted a broken #features link and rejected a working one.
     out=$(printf '%s\n' '🗺️ Дорожная карта и публичный бэклог' | _slug_stream)
-    [ "$out" = "дорожная-карта-и-публичный-бэклог" ]
+    [ "$out" = "-дорожная-карта-и-публичный-бэклог" ]
+    out=$(printf '%s\n' '✨ Features' | _slug_stream)
+    [ "$out" = "-features" ]
+    out=$(printf '%s\n' 'Features ✨' | _slug_stream)
+    [ "$out" = "features-" ]
 }
 
 @test ".4 _slug_stream: slugs several headings in a single pass" {

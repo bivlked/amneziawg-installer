@@ -6,9 +6,9 @@
 скрипт каскадного сплит-роутинга `awg-routing.sh` (см. [CASCADE.md](../CASCADE.md)).
 
 При каждом запуске скрипт скачивает актуальный список с ipdeny.com. Этот снимок в
-репозитории - запасной вариант: если на свежем сервере ipdeny.com недоступен (а
-локальной копии ещё нет), скрипт берёт файл отсюда через `raw.githubusercontent.com`,
-и каскад всё равно поднимается с рабочим списком RU-сетей.
+репозитории - запасной вариант: если ipdeny.com недоступен или отдал не список сетей,
+скрипт берёт файл отсюда через `raw.githubusercontent.com`, а если не удалось и это -
+оставляет копию, уже лежащую на сервере. Так каскад поднимается с рабочим списком RU-сетей и на свежем сервере.
 
 - Источник: https://www.ipdeny.com/ipblocks/ (агрегированная зона `ru-aggregated.zone`)
 - Дата снимка: 2026-07-06
@@ -33,9 +33,9 @@ curl -fsS -o cascade/ru.zone https://www.ipdeny.com/ipblocks/data/aggregated/ru-
 by the cascade split-routing script `awg-routing.sh` (see [CASCADE.en.md](../CASCADE.en.md)).
 
 The script downloads the live list from ipdeny.com on every run. This bundled snapshot is
-a fallback: if ipdeny.com is unreachable on a fresh server (with no locally cached copy yet),
-the script fetches this file over `raw.githubusercontent.com`, so the cascade still comes up
-with a working RU network list.
+a fallback: if ipdeny.com is unreachable or returns something that is not a network list,
+the script fetches this file over `raw.githubusercontent.com`, and only if that fails too
+does it keep the copy already on the server. That way the cascade comes up with a working RU network list even on a fresh server.
 
 - Source: https://www.ipdeny.com/ipblocks/ (aggregated zone `ru-aggregated.zone`)
 - Snapshot date: 2026-07-06

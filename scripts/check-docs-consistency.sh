@@ -47,6 +47,11 @@
 #  10. Установочные/update wget-сниппеты качают install_amneziawg*.sh через -O
 #      (голый wget <url> пишет .1 при повторном запуске, и chmod/bash берут
 #      старый файл; злейший кейс - update-флоу с --force).
+#  16. Межфайловые ссылки ](файл.md#x) и HTML-ссылки href="...#x" резолвятся
+#      (проверка 1 видит только ](#x) внутри одного файла).
+#  17. Явные якоря в парах ADVANCED, CASCADE, WARP-RU совпадают между RU и EN.
+#  18. Две ссылки, которые резолвились, но вели в чужой раздел (C-09, C-10),
+#      не вернулись в прежний вид.
 
 set -o pipefail
 
@@ -54,6 +59,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || { echo "ОШИБКА: не удалось перейти в $REPO_ROOT" >&2; exit 2; }
 command -v perl >/dev/null 2>&1 || { echo "ОШИБКА: нужен perl (slug-генерация якорей)" >&2; exit 2; }
+# Якоря и ссылки извлекаются через grep -P. grep без PCRE не находит ничего, и
+# проверки 1, 16 и 17 без этой строки зеленели бы, ничего не проверив.
+printf 'x\n' | grep -qP 'x' 2>/dev/null || { echo "ОШИБКА: нужен grep с поддержкой -P (PCRE)" >&2; exit 2; }
 
 PASS=0
 FAIL=0
@@ -90,7 +98,9 @@ echo "=== check-docs-consistency ==="
 # из-за чего RU-заголовки давали пустой slug. Читает заголовки построчно из
 # stdin, печатает по slug на строку: Unicode-lowercase, оставить буквы/цифры/
 # пробел/подчёркивание/дефис (кириллица сохраняется, как у GitHub), пробелы ->
-# дефисы, срезать крайние дефисы (их даёт, например, emoji в начале заголовка).
+# дефисы. Крайние дефисы НЕ срезаются: GitHub их оставляет, и заголовок с эмодзи в
+# начале получает якорь с ведущим дефисом (## ✨ Features -> #-features). Прежняя
+# версия срезала их, принимала битую ссылку #features и отвергала рабочую.
 _slug_stream() {
     perl -CSD -ne '
         chomp;
@@ -98,7 +108,6 @@ _slug_stream() {
         $_ = lc;
         s/[^\p{L}\p{N} _-]//g;
         s/ /-/g;
-        s/^-+//; s/-+$//;
         print "$_\n";
     '
 }
@@ -108,7 +117,10 @@ _slug_stream() {
 # (`...`). Иначе документированный в backticks пример вида `](#anchor)` дал бы
 # ложный FAIL.
 _strip_code() {
-    awk '/^```/ { infence = !infence; next } !infence { print }' "$1" \
+    # Ограда блока допускает до трёх пробелов отступа (CommonMark). Незакрытый блок -
+    # ошибка: иначе всё до конца файла молча выпадало бы из проверок.
+    awk -v f="$1" '/^ ? ? ?```/ { infence = !infence; next } !infence { print }
+        END { if (infence) { print "  " f ": незакрытый блок кода" > "/dev/stderr"; exit 3 } }' "$1" \
         | sed 's/`[^`]*`//g'
 }
 
@@ -627,7 +639,12 @@ if [[ "$ipv6_phrase_fail" -eq 0 ]]; then _ok "ADVANCED: нет устаревш�
 # IPv4, то есть по смыслу это полный туннель, и с v5.31.0 он получает ::/0 - а
 # прежняя формулировка учила бы читателя, что утечка IPv6 в дефолте нормальна.
 # Ловим именно связку 'режимы 2 и 3' / 'modes 2 and 3': вне этих строк она в
-# документации не встречается.
+# документации не встречается. С аудита 2026-09 (C-05) сюда же входят формы
+# «split-режимы (2/3)» и «поведение split-режимов по умолчанию»: голое слово
+# «split-режим» ловить НЕЛЬЗЯ, оно законно описывает --route-custom. Окончание
+# слова берётся как [^[:space:]]*, а не диапазоном [а-я]: в локали C диапазон
+# кириллицы невалиден, grep падает с кодом 2, и if молча читает это как «нет
+# совпадения» - проверка стала бы зелёной, ничего не проверив.
 ipv6_mode2_fail=0
 # Список файлов шире, чем кажется нужным, и это осознанно: устаревшая
 # формулировка пережила правку именно в WARP-RU и INSTALL_VPS.ru.md, потому что
@@ -637,9 +654,12 @@ ipv6_mode2_files=(ADVANCED.md ADVANCED.en.md README.md README.en.md
                   INSTALL_VPS.md INSTALL_VPS.ru.md
                   WARP-RU.md WARP-RU.en.md CASCADE.md CASCADE.en.md)
 for f in "${ipv6_mode2_files[@]}"; do
-    [[ -f "$f" ]] || continue
-    if grep -qE 'режим(ы|ах|ов) 2 и 3|modes 2 and 3|российские сайты идут мимо туннеля|в режиме раздельной маршрутизации \(по умолчанию\)|in split routing \(the default\)' "$f"; then
+    [[ -f "$f" ]] || { echo "  $f: нет файла - проверка 7b по нему НЕ ВЫПОЛНЕНА" >&2; ipv6_mode2_fail=1; continue; }
+    if grep -qE 'режим(ы|ах|ов) 2 и 3|modes 2 and 3|российские сайты идут мимо туннеля|в режиме раздельной маршрутизации \(по умолчанию\)|in split routing \(the default\)|split-режим[^[:space:]]* \(2/3\)|split modes? \(2/3\)|поведение split-режимов по умолчанию|default behavior of split modes' "$f"; then
         echo "  $f: дефолтный режим назван раздельной маршрутизацией (с v5.31.0 это полный туннель с ::/0)" >&2
+        ipv6_mode2_fail=1
+    elif [[ $? -gt 1 ]]; then
+        echo "  $f: grep не смог выполнить шаблон - проверка НЕ ВЫПОЛНЕНА" >&2
         ipv6_mode2_fail=1
     fi
 done
@@ -649,13 +669,14 @@ if [[ "$ipv6_mode2_fail" -eq 0 ]]; then _ok "дефолтный режим ни�
 # bug_report.yml не должен фиксировать конкретный X.Y.Z в placeholder версии -
 # он устаревает с каждым релизом. Нейтральный вид: "5.x.y".
 tmpl_fail=0
-bug_tmpl=".github/ISSUE_TEMPLATE/bug_report.yml"
-if [[ -f "$bug_tmpl" ]]; then
+# Шаблон обсуждения Q&A спрашивает ту же версию и протухал так же (аудит 2026-09, U-08).
+for bug_tmpl in .github/ISSUE_TEMPLATE/bug_report.yml .github/DISCUSSION_TEMPLATE/q-a.yml; do
+    [[ -f "$bug_tmpl" ]] || { echo "  нет $bug_tmpl - проверка по нему НЕ ВЫПОЛНЕНА" >&2; tmpl_fail=1; continue; }
     if grep -qE 'placeholder:[[:space:]]*"e\.g\.,[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+"' "$bug_tmpl"; then
         echo "  $bug_tmpl: конкретный X.Y.Z в placeholder версии (протухает; используйте 5.x.y)" >&2
         tmpl_fail=1
     fi
-fi
+done
 if [[ "$tmpl_fail" -eq 0 ]]; then _ok "issue-template: placeholder версии нейтральный"; else _bad "issue-template: протухающий placeholder версии"; fi
 
 # --- 9. Матрица OS×arch×prebuilt-target: ARM prebuilt-покрытие согласовано ---
@@ -787,6 +808,165 @@ else
         fi
     fi
 fi
+
+# --- 16. Межфайловые ссылки и HTML-форма href резолвятся ---
+# Проверка 1 видит только форму ](#x) внутри того же файла. Без этой проверки
+# README.md -> ADVANCED.md#json-api-adv с удалённым якорем проходил CI, как и
+# ссылка формой <a href="#x"> (её в документах десятки, в FAQ и подвалах).
+# Цель: ](путь.md#x) и href="путь.md#x" с путём относительно файла ссылки, плюс
+# href="#x" внутри того же файла. Якоря цели собираются тем же способом, что в
+# проверке 1: явные <a id>/<a name> и slug-и заголовков. Внешние URL не трогаем.
+_anchor_set() {  # $1 - файл; печатает его якоря по одному на строку
+    local stripped
+    stripped="$(_strip_code "$1")"
+    printf '%s\n' "$stripped" | grep -oiP '<a\s+(id|name)="\K[^"]+'
+    printf '%s\n' "$stripped" | grep -E '^#{1,6}[[:space:]]' | sed -E 's/^#{1,6}[[:space:]]+//' | _slug_stream
+}
+declare -A XREF_ANCH=()
+declare -A XREF_SEEN=()
+_xref_load() {  # $1 - путь к файлу-цели относительно корня
+    [[ -n "${XREF_SEEN[$1]:-}" ]] && return 0
+    XREF_SEEN["$1"]=1
+    local a
+    while IFS= read -r a; do
+        [[ -n "$a" ]] && XREF_ANCH["$1|$a"]=1
+    done < <(_anchor_set "$1")
+}
+xref_fail=0
+xref_count=0
+for f in "${DOC_FILES[@]}"; do
+    [[ -f "$f" ]] || continue
+    fdir="$(dirname "$f")"
+    if ! stripped="$(_strip_code "$f")"; then
+        echo "  $f: не прочитан - проверка ссылок НЕ ВЫПОЛНЕНА" >&2
+        xref_fail=1
+        continue
+    fi
+    while IFS= read -r ref; do
+        [[ -z "$ref" ]] && continue
+        path="${ref%%#*}"
+        frag="${ref#*#}"
+        # Процент-кодировку во фрагменте раскрываем: GitHub сравнивает раскрытый вид.
+        frag="$(printf '%s' "$frag" | perl -pe 's/%([0-9A-Fa-f]{2})/chr(hex($1))/ge')"
+        if [[ -z "$path" ]]; then
+            target="$f"
+        else
+            target="$(realpath -m --relative-to=. "$fdir/$path" 2>/dev/null)"
+        fi
+        if [[ -z "$target" || ! -f "$target" ]]; then
+            echo "  $f: ссылка на несуществующий файл: ${path}#${frag}" >&2
+            xref_fail=1
+            continue
+        fi
+        _xref_load "$target"
+        xref_count=$((xref_count + 1))
+        if [[ -z "${XREF_ANCH[$target|$frag]:-}" ]]; then
+            echo "  $f: битая межфайловая или HTML-ссылка: ${path:-(этот файл)}#${frag}" >&2
+            xref_fail=1
+        fi
+    done < <(
+        printf '%s\n' "$stripped" | grep -oP '\]\(\K(?![A-Za-z][A-Za-z0-9+.-]*:)[^)#\s]+\.md#[^)\s]+'
+        printf '%s\n' "$stripped" | grep -oP 'href="\K(?![A-Za-z][A-Za-z0-9+.-]*:)[^"#]*#[^"]+' | grep -E '^(#|[^#]*\.md#)'
+    )
+done
+# Формы, которые разбор выше не видит, запрещены: иначе битая ссылка в такой форме
+# проходила бы молча. Их переписывают в канон ](файл.md#x) или href="файл.md#x".
+# Внешние URL (со схемой) не трогаем ни в одной форме: их этот сторож не проверяет.
+# href считается атрибутом, только если перед ним пробел или начало строки: иначе ?href= внутри
+# чужого URL принимался бы за ссылку.
+SCH='(?![A-Za-z][A-Za-z0-9+.-]*:)'
+FORMS_RE='^\s*\[[^]]+\]:\s*(?!<?[A-Za-z][A-Za-z0-9+.-]*:)\S*\.[mM][dD]#'  # сноска [r]: файл.md#x, в т.ч. <...>
+FORMS_RE+='|(?:^|(?<=\s))href\s*=\s*\x27'"$SCH"'[^\x27]*#'                 # href='...#x'
+FORMS_RE+='|(?:^|(?<=\s))href\s+=\s*["\x27]'"$SCH"'[^"\x27]*#'             # href ="...#x"
+FORMS_RE+='|(?:^|(?<=\s))href=\s+["\x27]'"$SCH"'[^"\x27]*#'                # href= "...#x"
+FORMS_RE+='|(?:^|(?<=\s))href=(?!["\x27\s])'"$SCH"'[^\s>]*#'                # href=...#x без кавычек
+FORMS_RE+='|(?:^|(?<=\s))(?!href)[hH][rR][eE][fF]\s*=\s*["\x27]?'"$SCH"'[^"\x27\s>]*#'  # HREF, Href
+FORMS_RE+='|\]\('"$SCH"'[^)\s]*\.(?!md#)[mM][dD]#'                   # ](файл.MD#x)
+FORMS_RE+='|\]\(\s+'"$SCH"'[^)\s]*\.[mM][dD]#'                       # ]( файл.md#x)
+for f in "${DOC_FILES[@]}"; do
+    [[ -f "$f" ]] || continue
+    if ! fs="$(_strip_code "$f")"; then
+        echo "  $f: не прочитан - проверка форм ссылок НЕ ВЫПОЛНЕНА" >&2
+        xref_fail=1
+        continue
+    fi
+    bad_forms="$(printf '%s\n' "$fs" | grep -nP "$FORMS_RE")"; frc=$?
+    if [[ $frc -gt 1 ]]; then
+        echo "  $f: grep форм ссылок не отработал - проверка НЕ ВЫПОЛНЕНА" >&2
+        xref_fail=1
+    elif [[ -n "$bad_forms" ]]; then
+        echo "  $f: неканоническая форма ссылки (перепишите в ](файл.md#x) или href=\"файл.md#x\"):" >&2
+        printf '%s\n' "$bad_forms" | sed 's/^/    /' >&2
+        xref_fail=1
+    fi
+done
+# Положительная сторона: проверка, которая не нашла ни одной ссылки, ничего не
+# доказывает. На этом репозитории ссылок сотни, ноль значит, что сломан разбор.
+if [[ "$xref_count" -eq 0 ]]; then
+    _bad "межфайловые ссылки НЕ ПРОВЕРЕНЫ: разбор не нашёл ни одной"
+elif [[ "$xref_fail" -eq 0 ]]; then
+    _ok "межфайловые и HTML-ссылки на якоря резолвятся ($xref_count)"
+else
+    _bad "битые межфайловые или HTML-ссылки на якоря"
+fi
+
+# --- 17. Наборы явных якорей в парах RU/EN совпадают ---
+# Ссылки из одного языка ведут на тот же якорь в другом (ADVANCED.md#x и
+# ADVANCED.en.md#x), поэтому якорь, добавленный или удалённый только в одном
+# файле пары, ломает ссылку на другом языке. README в этот список не входит:
+# там якоря локализованы сознательно (решение владельца, аудит 2026-09).
+pair_fail=0
+for pair in "ADVANCED.md ADVANCED.en.md" "CASCADE.md CASCADE.en.md" "WARP-RU.md WARP-RU.en.md"; do
+    read -r pa pb <<< "$pair"
+    [[ -f "$pa" && -f "$pb" ]] || { echo "  нет файла пары: $pair" >&2; pair_fail=1; continue; }
+    ea="$(_strip_code "$pa" | grep -oiP '<a\s+(id|name)="\K[^"]+' | sort -u)"
+    eb="$(_strip_code "$pb" | grep -oiP '<a\s+(id|name)="\K[^"]+' | sort -u)"
+    # Пустой набор - это не совпадение, а несработавшее извлечение.
+    if [[ -z "$ea" || -z "$eb" ]]; then
+        echo "  $pair: явные якоря не извлечены - сравнивать нечего" >&2
+        pair_fail=1
+        continue
+    fi
+    da="$(diff <(printf '%s\n' "$ea") <(printf '%s\n' "$eb"))"
+    if [[ $? -gt 1 ]]; then
+        echo "  $pair: diff не отработал" >&2
+        pair_fail=1
+    elif [[ -n "$da" ]]; then
+        echo "  $pa / $pb: наборы якорей расходятся:" >&2
+        printf '%s\n' "$da" | grep -E '^[<>]' | sed 's/^/    /' >&2
+        pair_fail=1
+    fi
+done
+if [[ "$pair_fail" -eq 0 ]]; then _ok "явные якоря в парах RU/EN совпадают"; else _bad "явные якоря в парах RU/EN разошлись"; fi
+
+# --- 18. Ссылки, которые резолвятся, но вели не туда, не вернулись ---
+# Проверка 16 видит только существование якоря. Две ссылки аудита 2026-09
+# существовали и при этом вели в чужой раздел (C-09, C-10): их прежний вид
+# держим здесь поимённо, чтобы откат правки не прошёл молча.
+misroute_fail=0
+# Ключ - ЦЕЛЬ ссылки, а не её текст: откат якоря с другим текстом ссылки тоже
+# должен ловиться. Законных ссылок на эти цели в этом файле нет.
+while IFS='|' read -r mf mpat mwhy; do
+    [[ -z "$mf" ]] && continue
+    [[ -f "$mf" ]] || { echo "  нет $mf - проверка по нему НЕ ВЫПОЛНЕНА" >&2; misroute_fail=1; continue; }
+    # Цель ищется в любой обёртке - ](...), ](./...), ](/...), ](<...>), с заголовком,
+    # href="..." - и вне блоков кода: ссылка, приведённая в коде как пример, откатом
+    # не является. %XX раскрываются, как их раскрывает GitHub.
+    ms="$(_strip_code "$mf" | perl -pe 's/%([0-9A-Fa-f]{2})/chr(hex($1))/ge')" \
+        || { echo "  $mf: не прочитан - проверка НЕ ВЫПОЛНЕНА" >&2; misroute_fail=1; continue; }
+    printf '%s\n' "$ms" | grep -qP "$mpat"; mrc=$?
+    if [[ $mrc -eq 0 ]]; then
+        echo "  $mf: $mwhy" >&2
+        misroute_fail=1
+    elif [[ $mrc -gt 1 ]]; then
+        echo "  $mf: grep не отработал - проверка НЕ ВЫПОЛНЕНА" >&2
+        misroute_fail=1
+    fi
+done <<'MISROUTE'
+INSTALL_VPS.ru.md|(?<![^(<"\x27])\s*(\.?/)?README\.md#posle-ustanovki[)>"\x27\s]|ссылка на README.md#posle-ustanovki: «управление клиентами» живёт в README.md#upravlenie
+INSTALL_VPS.ru.md|(?<![^(<"\x27])\s*(\.?/)?ADVANCED\.md#client-compat-adv[)>"\x27\s]|ссылка на ADVANCED.md#client-compat-adv: про два QR-кода нужен ADVANCED.md#vpnuri-adv
+MISROUTE
+if [[ "$misroute_fail" -eq 0 ]]; then _ok "исправленные ссылки не вернулись в чужие разделы"; else _bad "ссылка снова ведёт в чужой раздел"; fi
 
 echo ""
 echo "=== docs-consistency summary: $PASS passed, $FAIL failed ==="

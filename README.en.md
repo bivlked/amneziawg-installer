@@ -59,7 +59,7 @@ sudo bash ./install_amneziawg_en.sh
 
 > 📘 Full deployment guide: [Install AmneziaWG VPN server on Ubuntu/Debian VPS](INSTALL_VPS.md) - covers VPS choice, ARM, troubleshooting, and uninstall.
 
-> 🔐 Integrity: the installer is downloaded over HTTPS from the latest GitHub release. You can check it before running with its minisign signature: [Verifying a release](#verifying-a-release). The helper scripts it fetches itself (`awg_common`, `manage`) come from the tag of its own version and are checked against SHA256 hashes built into it, so the installer's signature covers them too (unless you override `AWG_BRANCH`). Threat model: [SECURITY.md](SECURITY.md) and [docs/SIGNING_DESIGN.md](docs/SIGNING_DESIGN.md).
+> 🔐 Integrity: the installer is downloaded over HTTPS from the latest GitHub release. You can check it before running with its minisign signature: [Verifying a release](#verifying-a-release). The helper scripts it fetches itself (`awg_common`, `manage`) come from the tag of its own version and are checked against SHA256 hashes built into it, so the installer's signature covers them too (unless you override `AWG_BRANCH`). Threat model: [docs/SIGNING_DESIGN.md](docs/SIGNING_DESIGN.md#threat-model); how to report a vulnerability: [SECURITY.md](SECURITY.md).
 
 <details>
 <summary><strong>What the installer changes on your server (transparency)</strong></summary>
@@ -78,7 +78,7 @@ The script runs as root. Below are the main changes it makes to the system.
 - **Reboots.** There are two: after the system update and after the module install. After each one, run the same command again.
 - **Rollback**: `--uninstall` removes its own module, configs, sysctl files, cron jobs, the VPN-port UFW allow rule and the `awg0` UFW route rule. It disables UFW and purges Fail2Ban only if it enabled/installed them itself; if UFW was already active before install, the SSH rate-limit rule it added stays. It does not restore swap settings or removed packages, and the dependency packages it added (dkms, the compiler, kernel headers) stay. By default, `--yes` included, it first creates the archive `/root/awg_uninstall_backup_*.tar.gz` with the configs and private keys; it stays on the server, so delete it yourself once you no longer need it.
 
-`--no-tweaks` leaves packages, swap, sysctl hardening, UFW and Fail2Ban alone. Forwarding is enabled anyway, in `/etc/sysctl.d/99-amneziawg-forwarding.conf`, and the same file turns host IPv6 off unless you pass `--allow-ipv6`; the system update runs as usual. What stays after an uninstall is in [INSTALL_VPS.md](INSTALL_VPS.md#uninstall), the threat model in [SECURITY.md](SECURITY.md), signature verification in [Verifying a release](#verifying-a-release).
+`--no-tweaks` leaves packages, swap, sysctl hardening, UFW and Fail2Ban alone. Forwarding is enabled anyway, in `/etc/sysctl.d/99-amneziawg-forwarding.conf`, and the same file turns host IPv6 off unless you pass `--allow-ipv6`; the system update runs as usual. What stays after an uninstall is in [INSTALL_VPS.md](INSTALL_VPS.md#uninstall), the threat model in [docs/SIGNING_DESIGN.md](docs/SIGNING_DESIGN.md#threat-model), signature verification in [Verifying a release](#verifying-a-release).
 </details>
 
 <details>
@@ -98,7 +98,7 @@ All parameters are accepted automatically. Details: [ADVANCED.en.md#cli-params-a
 | Plain cheap VPS, you just need a VPN | Nothing - the command above already does it |
 | Mobile data, DPI cuts the link (TSPU, Iran, school or office) | During install, add `--mobile` - the obfuscation preset plus port 443/udp in one go ([tested carriers](#carriers)) |
 | ARM: Raspberry Pi, Oracle Ampere, Hetzner CAX | Same command - ready-made ARM kernel modules are selected automatically ([details](INSTALL_VPS.md)) |
-| Time-limited access for a friend or guest | After install: `manage_amneziawg.sh add guest --expires=7d` |
+| Time-limited access for a friend or guest | After install: `sudo bash /root/awg/manage_amneziawg.sh add guest --expires=7d` |
 
 ---
 
@@ -232,7 +232,7 @@ The official Amnezia app is the official graphical client: you install the app, 
 * **Fine control over the obfuscation.** A mobile-network preset (`--preset=mobile`), direct access to the AmneziaWG 2.0 parameters, and field data on carriers and DPI - you can tune it for a specific network or carrier.
 * **Headless and scriptable.** One SSH command, every parameter as a flag, CLI client management, time-limited guests (`--expires`), QR or `vpn://` import, and prebuilt modules for ARM.
 
-The protocol and the DPI resistance are the same - it is the same AmneziaWG 2.0 underneath. The code is open under the MIT license, it is readable bash you can review before running, and it has 1100+ automated tests. It installs the same upstream AmneziaWG - this is automation and server tuning, not a fork of the protocol.
+The protocol and the DPI resistance are the same - it is the same AmneziaWG 2.0 underneath. The code is open under the MIT license, it is readable bash you can review before running, and it has 2000+ automated tests. It installs the same upstream AmneziaWG - this is automation and server tuning, not a fork of the protocol.
 
 Detailed comparison: [amneziawg-installer vs the official Amnezia app](https://bivlked.github.io/amneziawg-installer/compare/).
 
@@ -281,7 +281,7 @@ The installer tunes AmneziaWG 2.0 obfuscation for mobile networks with DPI: `--m
 
 Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work - open a thread in [Discussions](https://github.com/bivlked/amneziawg-installer/discussions) or [Issues](https://github.com/bivlked/amneziawg-installer/issues) and I'll add the entry.
 
-> Full operator parameter table (Jc, Jmin, Jmax, I1) - in [ADVANCED.en.md → FAQ "connects over cellular only on the third attempt"](ADVANCED.en.md#faq-advanced-adv). Per-flag overrides via `--jc`/`--jmin`/`--jmax` - in [ADVANCED.en.md → Presets](ADVANCED.en.md#presets-adv).
+> Full operator parameter table (Jc, Jmin, Jmax, I1) - in [ADVANCED.en.md → FAQ "connects over cellular only on the third attempt"](ADVANCED.en.md#faq-mobile-unstable-adv). Per-flag overrides via `--jc`/`--jmin`/`--jmax` - in [ADVANCED.en.md → Presets](ADVANCED.en.md#presets-adv).
 
 ---
 
@@ -300,9 +300,9 @@ Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work - o
 |----|----------|----------------|-------|
 | Ubuntu 24.04 LTS | ✅ default pick | until 2029-05-31 | The best-tested platform |
 | Debian 13 (trixie) | ✅ default pick | until 2028-08-09 | Tested. PPA via codename mapping to noble, DEB822 |
-| Ubuntu 26.04 | ✅ fine to use | until 2031-05-29 | PPA `noble` fallback applied automatically since v5.13.0 |
+| Ubuntu 26.04 | ✅ fine to use | until 2031-05-29 | The installer checks whether the PPA answers for the release codename and switches to `noble` itself if it does not (since v5.13.0) |
 | Debian 12 (bookworm) | ⚠️ for migration | regular ended 2026-07-11, Debian LTS until 2028-06-30 | Works and is tested, security updates continue through Debian LTS. PPA via codename mapping to focal. For a new server prefer Debian 13 |
-| Ubuntu 25.10 (questing) | ⚠️ for migration | ended 2026-07-01, no extension | Works, PPA `noble` fallback since v5.13.0. Receives no security updates of any kind, so do not pick it for a new server |
+| Ubuntu 25.10 (questing) | ⚠️ for migration | ended 2026-07-01, no extension | Works: if the PPA does not answer for `questing`, the installer switches to `noble` itself (since v5.13.0). Receives no security updates of any kind, so do not pick it for a new server |
 
 **Architecture support (v5.10.0+):**
 
@@ -675,7 +675,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: iPhone connects but traffic stops after ~10 seconds</strong></summary>
-  <b>A:</b> Fixed in v5.16.1 (Issue #42, thanks to @LiaNdrY). The routing mode that was default back then (mode 2, Amnezia List) started with <code>0.0.0.0/5</code>, and on iOS that block broke the whole route list, so the tunnel stalled after about 10 seconds. On an existing server the simplest fix is to set <code>AllowedIPs = 0.0.0.0/0</code> in the iOS client config (a plain <code>--force</code> reinstall keeps the stored list). A precise split-tunnel-preserving edit is in <a href="ADVANCED.en.md#faq-advanced-adv">ADVANCED.en.md</a>.
+  <b>A:</b> Fixed in v5.16.1 (Issue #42, thanks to @LiaNdrY). The routing mode that was default back then (mode 2, Amnezia List) started with <code>0.0.0.0/5</code>, and on iOS that block broke the whole route list, so the tunnel stalled after about 10 seconds. On an existing server the simplest fix is to set <code>AllowedIPs = 0.0.0.0/0</code> in the iOS client config (a plain <code>--force</code> reinstall keeps the stored list). A precise split-tunnel-preserving edit is in <a href="ADVANCED.en.md#faq-iphone-10s-adv">ADVANCED.en.md</a>.
 </details>
 
 <details>
@@ -715,7 +715,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: Why is my AmneziaWG config marked yellow in the Amnezia app?</strong></summary>
-  <b>A:</b> It is not an error: the Amnezia app marks second-line AmneziaWG configs in yellow, and those are what the installer issues. The mark on its own does not mean anything is wrong with the connection, and nothing needs redoing because of it. More in the <a href="ADVANCED.en.md#faq-advanced-adv">ADVANCED.en.md FAQ</a>.
+  <b>A:</b> It is not an error: the Amnezia app marks second-line AmneziaWG configs in yellow, and those are what the installer issues. The mark on its own does not mean anything is wrong with the connection, and nothing needs redoing because of it. More in the <a href="ADVANCED.en.md#faq-yellow-adv">ADVANCED.en.md FAQ</a>.
 </details>
 
 <details>

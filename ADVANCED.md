@@ -4,7 +4,7 @@
 
 # AmneziaWG 2.0 Installer: Дополнительная информация и настройки
 
-Это дополнение к основному [README.md](README.md), содержащее более глубокие технические детали, пояснения и продвинутые опции для скриптов установки и управления AmneziaWG 2.0. Пошаговый гайд по развёртыванию на VPS - в [INSTALL_VPS.md](INSTALL_VPS.md).
+Это дополнение к основному [README.md](README.md), содержащее более глубокие технические детали, пояснения и продвинутые опции для скриптов установки и управления AmneziaWG 2.0. Пошаговый гайд по развёртыванию на VPS - в [INSTALL_VPS.ru.md](INSTALL_VPS.ru.md).
 
 ## Оглавление
 
@@ -115,8 +115,9 @@
 | `I2`-`I5` | Доп. CPS / special-junk пакеты, опциональны (с v5.18.0 переносятся в клиентов) | Теги `<r N>` / `<b 0xHEX>` / `<c>` / `<t>` | `<b 0xf1>` |
 
 **Критические ограничения:**
-* H1-H4 диапазоны **не должны пересекаться** (гарантируется алгоритмом генерации).
+* H1-H4 диапазоны **не должны пересекаться** (гарантируется алгоритмом генерации); генератор выбирает их случайно в пределах 5..2147483647.
 * `S1 + 56 ≠ S2` — предотвращает одинаковый размер init и response сообщений.
+* `S3 ≠ S2 + 28` - не даёт совпасть размерам response- и cookie-сообщений.
 * Совпадать на сервере и клиентах **обязаны** `S1`-`S4` и `H1`-`H4`: приёмник срезает этот паддинг и проверяет эти заголовки. В 2.0 `H1`-`H4` задаются диапазонами - диапазоны должны быть одинаковыми с обеих сторон.
 * А `Jc`/`Jmin`/`Jmax` и `I1`-`I5` совпадать **не обязаны**: это отдельные пакеты-обманки, вторая сторона их отбрасывает, а узел без `I1` просто не шлёт их вовсе.
 
@@ -526,7 +527,7 @@ sudo bash /root/awg/manage_amneziawg.sh modify <имя> PersistentKeepalive 25
 
 * Автоматически устанавливается и настраивается для защиты SSH.
 * **Настройки:** Бан через `ufw`, 5 попыток -> бан на 1 час.
-* **Debian:** Автоматически используется `backend = systemd` (journald). На Ubuntu — `backend = auto`.
+* **Backend:** `systemd` (journald) и на Ubuntu, и на Debian; на Debian установщик дополнительно ставит `python3-systemd`.
 * **Проверка:** `sudo fail2ban-client status sshd`.
 
 #### Безопасная загрузка конфигурации (v5.7.2)
@@ -677,6 +678,8 @@ I1 = <r 2><b 0x858000010002000000001c><rc 28><b 0x0463646e730669636c6f756403636f
 PublicKey = [CLIENT_PUBLIC_KEY]
 AllowedIPs = 10.9.9.2/32
 ```
+
+Строки `PostUp` и `PostDown` здесь сокращены: в настоящем конфиге там ещё правила MSS-clamp и изоляции клиентов.
 </details>
 
 <details>
@@ -709,7 +712,7 @@ H4 = 4567890
 - **I1-I5** (CPS / special-junk пакеты) опциональны. Без `I1` AWG-клиент работает в AWG 1.0 fallback режиме; для полной AWG 2.0 обфускации добавьте `I1 = <r 128>` (random 128 байт) или `I1 = <b 0xHEX>` (binary). ⚠️ Пример `<r 128>` показывает ФОРМАТ, а не рекомендуемое значение: по замеру сентября 2026 пакет из случайных байт на части мобильных сетей режется, и рукопожатие не собирается. Если туннель не поднимается на сотовой сети, см. [рукопожатие не собирается на мобильном интернете](#no-hs-mobile-adv). С версии 5.18.0 в клиентские конфиги переносятся все пять (`I1`-`I5`), а не только `I1`: пропишите `I2`-`I5` в секции `[Interface]` файла `awg0.conf`, перезапустите сервис (`sudo systemctl restart awg-quick@awg0`) и раздайте клиентам через `sudo bash /root/awg/manage_amneziawg.sh regen <имя>` - значения разойдутся в `.conf`, QR и `vpn://`. Готовые наборы берут, например, из списка VoidWaifu; форматы тегов: `<r N>`, `<b 0xHEX>`, `<c>`, `<t>`. Совпадать с сервером эти значения не обязаны: приёмник их не валидирует, а узел без `I1` просто не шлёт маскирующие пакеты. Регистр важен - только верхний. Незаданные `I2`-`I5` просто не выводятся.
 - **MTU**, **PostUp/PostDown** — опциональны, зависят от сетапа (см. `amneziawg-go` секцию про iptables MASQUERADE в LXC).
 
-После создания такого `awg0.conf` `manage_amneziawg.sh` требует ещё два файла: `/root/awg/server_public.key` (вычисляется: `awg pubkey < /etc/amnezia/amneziawg/server_private.key > /root/awg/server_public.key`) и минимальный `/root/awg/awgsetup_cfg.init` с `AWG_PORT`, `AWG_TUNNEL_SUBNET`, `AWG_ENDPOINT`.
+После создания такого `awg0.conf` для `manage_amneziawg.sh` нужен ещё минимальный `/root/awg/awgsetup_cfg.init` с `AWG_PORT`, `AWG_TUNNEL_SUBNET`, `AWG_ENDPOINT`. Файл `/root/awg/server_public.key` при отсутствии `manage` вычислит сам из `PrivateKey` в `awg0.conf`.
 
 </details>
 
@@ -720,7 +723,7 @@ H4 = 4567890
 [Interface]
 PrivateKey = [CLIENT_PRIVATE_KEY]
 Address = 10.9.9.2/32
-DNS = 1.1.1.1
+DNS = 1.1.1.1, 1.0.0.1
 MTU = 1280
 Jc = 6
 Jmin = 55
@@ -738,7 +741,7 @@ I1 = <r 2><b 0x858000010002000000001c><rc 28><b 0x0463646e730669636c6f756403636f
 [Peer]
 PublicKey = [SERVER_PUBLIC_KEY]
 Endpoint = 203.0.113.1:39743
-AllowedIPs = 1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6, 8.0.0.0/7, ...
+AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 33
 ```
 </details>
@@ -849,7 +852,7 @@ PersistentKeepalive = 33
 * **`check` / `status`:** Проверить состояние сервера (сервис, порт, AWG 2.0 параметры).
 * **`show`:** Выполнить `awg show`.
 * **`restart`:** Перезапустить сервис AmneziaWG.
-* **`diagnose [--carrier=NAME]`:** Self-troubleshooting: проверка модуля ядра, sysctl, UFW; с `--carrier` - сравнение AWG-параметров с профилем мобильного оператора.
+* **`diagnose [--carrier=NAME]`:** Self-troubleshooting: проверка модуля ядра, sysctl, UFW; с `--carrier=ИМЯ` - сравнение AWG-параметров с профилем мобильного оператора. Имена: `beeline_msk`, `yota_msk`, `tele2_msk`, `tele2_krasnoyarsk`, `tattelecom`, `megafon_regions`, `tmobile_us` (последнее имя историческое: это российский Т-Мобайл, Москва и область).
 * **`repair-module`:** Восстановить/пересобрать модуль ядра amneziawg (DKMS) после обновления ядра сервера.
 * **`help`:** Показать справку.
 * **`stats [--json]`:** Статистика трафика по клиентам. С `--json` — машиночитаемый формат для интеграции.
@@ -1005,8 +1008,10 @@ https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.36.2/awg_common
 Для разработки можно переопределить ветку:
 
 ```bash
-AWG_BRANCH=my-feature-branch sudo bash ./install_amneziawg.sh
+sudo AWG_BRANCH=my-feature-branch bash ./install_amneziawg.sh
 ```
+
+Переменную ставьте после `sudo`, иначе sudo сбросит окружение. С веткой, отличной от тега версии, проверка SHA256 скачанных скриптов пропускается (в журнале будет предупреждение), так что это режим только для разработки.
 
 ---
 
@@ -1045,6 +1050,7 @@ done
 <a id="faq-advanced-adv"></a>
 ## ❓ FAQ (Дополнительные вопросы)
 
+<a id="faq-yellow-adv"></a>
 <details>
   <summary><strong>В: Почему мой конфиг подсвечен жёлтым в приложении Amnezia?</strong></summary>
   <b>О:</b> Жёлтая метка означает поколение профиля, а не ошибку: так приложение Amnezia помечает конфигурации второй линии AmneziaWG. Сама по себе метка не говорит, что с соединением что-то не так, и переделывать из-за неё ничего не нужно. Установщик на 31 августа 2026 выдаёт профиль второй линии, поэтому метка ожидаема на любом поставленном им сервере.
@@ -1105,6 +1111,7 @@ done
   **О:** После установки - в секции `[Interface]` серверного конфига `/etc/amnezia/amneziawg/awg0.conf`. Он источник истины: именно оттуда `regen` берёт значения для клиентских конфигов. Копия параметров (AWG_Jc, AWG_S1..S4, AWG_H1..H4, AWG_I1..I5) лежит и в `/root/awg/awgsetup_cfg.init`, но этот файл читается для них только при первой установке, поэтому правка в нём после установки до клиентов не доходит - менять нужно `awg0.conf` (порядок действий в следующем вопросе). С v5.22.0 `manage` печатает предупреждение, если заметит такое расхождение.
 </details>
 
+<a id="faq-change-params-adv"></a>
 <details>
   <summary><strong>В: Можно ли изменить параметры AWG 2.0 после установки?</strong></summary>
   <b>О:</b> Да. Это полезно если оператор начал детектировать ваш сервер по статическим параметрам обфускации (например, ТСПУ заблокировал определённые H1-H4 диапазоны). Порядок действий с v5.8.0:
@@ -1205,11 +1212,13 @@ sudo systemctl restart awg-quick@awg0</pre>
   **О:** 1. На старом сервере: <code>sudo bash /root/awg/manage_amneziawg.sh backup</code>. 2. Скопируйте архив: <code>scp root@старый_сервер:/root/awg/backups/awg_backup_*.tar.gz .</code>. 3. На новом сервере установите AmneziaWG. 4. Скопируйте бэкап: <code>scp awg_backup_*.tar.gz root@новый_сервер:/root/awg/backups/</code>. 5. Восстановите: <code>sudo bash /root/awg/manage_amneziawg.sh restore</code> (интерактивный выбор, или укажите полный путь к архиву). 6. Проверьте то, что приехало со старого сервера: в <code>/etc/amnezia/amneziawg/awg0.conf</code> строки <code>PostUp</code>/<code>PostDown</code> содержат имя сетевого интерфейса старой машины (<code>-o eth0</code> и т.п.). Если у нового сервера он называется иначе (<code>ip route get 1.1.1.1</code>), замените имя и перезапустите сервис (<code>sudo systemctl restart awg-quick@awg0</code>). <code>ListenPort</code> должен совпадать с портом, открытым в UFW. Если в <code>/root/awg/awgsetup_cfg.init</code> задан <code>AWG_ENDPOINT</code>, впишите туда новый адрес или оставьте пустым для автоопределения. 7. Перегенерируйте конфиги с новым IP: <code>sudo bash /root/awg/manage_amneziawg.sh regen</code>. 8. Раздайте новые конфиги клиентам.
 </details>
 
+<a id="faq-mobile-iphone-adv"></a>
 <details>
   <summary><strong>В: Не подключается смартфон через мобильную сеть / не работает на iPhone</strong></summary>
   <b>О:</b> Добавьте <code>MTU = 1280</code> в секцию <code>[Interface]</code> серверного и клиентского конфигов. Сотовые сети имеют MTU ниже стандартных 1420, а iOS строго обрабатывает PMTU. Подробнее — в разделе <a href="#mtu-mobile-adv">MTU и мобильные клиенты</a>.
 </details>
 
+<a id="faq-iphone-10s-adv"></a>
 <details>
   <summary><strong>В: iPhone подключается, но через ~10 секунд трафик пропадает (туннель «висит»)</strong></summary>
   <b>О:</b> Исправлено в v5.16.1. Причина - тогдашний режим маршрутизации по умолчанию (mode 2, «Список Amnezia+DNS») начинался с диапазона <code>0.0.0.0/5</code>, который включает служебный <code>0.0.0.0/8</code>. Ядро iOS спотыкается на этом блоке и не доходит до остальных маршрутов, поэтому туннель поднимается и через ~10 секунд встаёт (симптом легко спутать с DPI). Разобрался и предложил фикс @LiaNdrY (Issue #42). В v5.16.1 первый диапазон списка разбит на <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code> - это тот же охват без проблемного нулевого блока, частные сети по-прежнему остаются вне туннеля.
@@ -1217,6 +1226,7 @@ sudo systemctl restart awg-quick@awg0</pre>
   <b>На уже установленном сервере (до v5.16.1)</b> сохранённый список лежит в <code>/root/awg/awgsetup_cfg.init</code> и обычной переустановкой с <code>--force</code> не меняется (берётся из конфига). Поэтому: (1) быстрый разовый фикс - в конфиге iOS-клиента заменить строку <code>AllowedIPs = ...</code> на <code>AllowedIPs = 0.0.0.0/0</code>; (2) сохранить список режима «Amnezia» - отредактировать <code>/root/awg/awgsetup_cfg.init</code>, заменив начальный <code>0.0.0.0/5</code> на <code>1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6</code>, затем пересоздать клиента (<code>remove</code> + <code>add</code>); (3) либо чистая установка заново (<code>--uninstall</code>, затем установка v5.16.1) - тогда список сгенерируется корректно.
 </details>
 
+<a id="faq-mobile-unstable-adv"></a>
 <details>
   <summary><strong>В: Подключается через мобильную сеть только с третьего раза / нестабильно</strong></summary>
   <b>О:</b> Если на мобильной сети рукопожатие не собирается вовсе, начните с разбора <a href="#no-hs-mobile-adv">Рукопожатие не собирается на мобильном интернете</a>: по замеру сентября 2026 на МТС Москва рукопожатие решает форма маскирующего пакета <code>I1</code>, а количество и размер junk-пакетов (<code>Jc</code>, <code>Jmin</code>, <code>Jmax</code>) на него не влияют. Если же подключение просто нестабильно, попробуйте флаг <code>--preset=mobile</code> (с v5.10.0): у него junk-пакетов меньше и они мельче (Jc=3). В Discussion #38 (@elvaleto) на Таттелеком (Летай) с Jc=4-8 подключалось раза с третьего, а после снижения <code>Jc = 3</code> заработало сразу.
@@ -1245,7 +1255,7 @@ sudo systemctl restart awg-quick@awg0</pre>
   <tr><td>Beeline</td><td>дефолт</td><td><code>--preset=default</code></td><td>✅</td></tr>
   <tr><td>Megafon (Москва)</td><td>Jc=3, Jmin=80, Jmax=268</td><td><code>--preset=mobile</code></td><td>🔄 тестируется</td></tr>
   <tr><td>Megafon (регионы)</td><td><b>I1=отсутствует</b></td><td><code>--preset=mobile</code> + удалить <code>I1</code></td><td>✅</td></tr>
-  <tr><td>Т-Мобайл (Москва)</td><td>узкий профиль (как в приложении Amnezia): Jc=6, Jmin=10, Jmax=50, DNS-мимик I1=&lt;r 2&gt;&lt;b 0x8580...&gt; (полный вид в разделе про роутеры ниже); полный туннель <code>0.0.0.0/0, ::/0</code></td><td>ручные параметры; профиль в <code>diagnose --carrier=tmobile_us</code> (сверяет Jc/Jmin/Jmax и что I1 бинарного вида); <code>--preset=mobile</code> здесь не подходит</td><td>✅</td></tr>
+  <tr><td>Т-Мобайл (Москва и область)</td><td>узкий профиль (как в приложении Amnezia): Jc=6, Jmin=10, Jmax=50, DNS-мимик I1=&lt;r 2&gt;&lt;b 0x8580...&gt; (полный вид в разделе про роутеры ниже); полный туннель <code>0.0.0.0/0, ::/0</code></td><td>ручные параметры; профиль в <code>diagnose --carrier=tmobile_us</code> (имя историческое, профиль относится к этому оператору; сверяет Jc/Jmin/Jmax и что I1 бинарного вида); <code>--preset=mobile</code> здесь не подходит</td><td>✅</td></tr>
   <tr><td>Tele2 + Мегафон (Кемерово, 42)</td><td>случайный I1 (&lt;r N&gt;) перестал держаться через 2+ дня; работает QUIC-мимикрия I1=&lt;b 0xc3...&gt; либо I1=отсутствует</td><td><code>--preset=mobile</code> + I1=&lt;b 0xc3...&gt; (QUIC) либо удалить <code>I1</code></td><td>✅</td></tr>
   </table>
   <br>
@@ -1354,16 +1364,23 @@ sudo ufw reload</pre>
 
 | Секция | Описание |
 |--------|----------|
-| OS | Версия ОС и ядра |
+| OS | Версия ОС и ядра (`uname -a`) |
 | Hardware | RAM, CPU, Swap |
-| Configuration | Содержимое `awgsetup_cfg.init` |
-| Server Config | `awg0.conf` (приватный ключ скрыт) |
-| Service Status | Статус systemd сервиса |
+| Configuration | Содержимое `awgsetup_cfg.init` (секреты скрыты) |
+| Server Config | `awg0.conf` (ключи скрыты) |
+| Service Status | `systemctl status awg-quick@awg0` |
 | AWG Status | Вывод `awg show` |
-| Network | Интерфейсы, порты, маршруты |
-| Firewall | Правила UFW |
-| Journal | Последние 50 строк лога сервиса |
-| DKMS | Статус модуля ядра |
+| AWG Version | Вывод `awg --version` |
+| Network Interfaces | Вывод `ip a` |
+| Listening Ports | Вывод `ss -lunp` |
+| Firewall Status | `ufw status verbose` |
+| Routing Table | Вывод `ip route` |
+| Cascade / Split Routing | Юнит `awg-routing`, правило `ip rule` по метке, таблица 100, наборы `ipset`, правила `mangle` и `nat` каскада; «не настроен», если каскада нет |
+| Kernel Params | `net.ipv4.ip_forward`, `net.ipv6.conf.all.disable_ipv6` |
+| AWG Journal (last 50) | Последние 50 строк журнала `awg-quick@awg0` |
+| Client List | Имена клиентов |
+| DKMS Status | Вывод `dkms status` |
+| Module Info | Сведения о загруженном модуле `amneziawg` |
 
 ---
 
@@ -1597,11 +1614,15 @@ sudo bash /root/awg/manage_amneziawg.sh stats
 ```
 
 ```
-Клиент          Получено        Отправлено      Последний handshake
-───────────────────────────────────────────────────────────────────
-my_phone        1.24 GiB        356.7 MiB       2 minutes ago
-laptop          892.3 MiB       128.4 MiB       15 seconds ago
-guest           0 B             0 B             (none)
+[2026-09-26 14:05:02] INFO: Статистика трафика клиентов:
+
+Имя          | IP              | Получено | Отправлено | Последний handshake | Статус
+-----------------------------------------------------------------------------------------------
+my_phone        | 10.9.9.2        | 1.24 GiB     | 356.69 MiB   | 2026-09-26 14:02:11 | Активен
+my_laptop       | 10.9.9.3        | 892.30 MiB   | 128.40 MiB   | 2026-09-26 14:04:30 | Активен
+guest           | 10.9.9.4        | 0 B          | 0 B          | никогда      | Неактивен
+
+[2026-09-26 14:05:02] INFO: Итого: Получено 2.11 GiB, Отправлено 485.09 MiB
 ```
 
 **JSON-вывод:**
@@ -1742,7 +1763,7 @@ sudo bash /root/awg/manage_amneziawg.sh list --json
 sudo systemctl restart awg-quick@awg0
 ```
 
-> В vpn:// URI для Amnezia Client MTU = 1280 установлен во всех версиях скрипта.
+> В ссылку vpn:// попадает MTU из клиентского `.conf`, по умолчанию 1280.
 
 ### Автоматический MSS-clamp (с v5.17.0)
 
@@ -1863,8 +1884,8 @@ AWG 2.0 поддерживается не всеми клиентами. Пер�
 | amneziawg-mikrotik-c (сторонний) | третья линия | v1.2.8 | 26 авг 2026 | страница релизов проекта |
 | AmneziaWG-MikroTik (сторонний) | третья линия | Containers_3.1 | 30 авг 2026 | страница релизов проекта |
 
-⚠️ **Строка Google Play - это вывод, а не наблюдение.** Google Play не показывает номер версии
-на странице приложения отдельного поля с текущей версией больше нет: единственный номер там -
+⚠️ **Строка Google Play - это вывод, а не наблюдение.** На странице приложения в Google Play
+отдельного поля с текущей версией больше нет: единственный номер там -
 это `AmneziaWG 2.0.1` в тексте заметок к выпуску, а заметки пишет разработчик, и отставать от
 того, что реально раздаётся, они могут. Поэтому поколение выводится из дат: листинг обновлён
 12 июня 2026, а сборка третьей линии вышла 14 августа 2026, то есть уже после последнего
@@ -1973,7 +1994,7 @@ Raspberry Pi 3 имеет 1 ГБ RAM и 4 ядра на 1.2 ГГц. Компил
 
 <details>
 <summary><strong>В: Как узнать, был ли использован готовый модуль?</strong></summary>
-Ищите <code>Prebuilt module installed</code> в логе установки (<code>/root/awg/install_amneziawg.log</code>). Если использовался DKMS, вы увидите вывод <code>dkms install</code>.
+Ищите в логе установки (<code>/root/awg/install_amneziawg.log</code>) строку <code>Предсобранный пакет установлен</code> (английский установщик пишет <code>Prebuilt installed</code>). Если её нет, модуль собран через DKMS: при откате на сборку журнал пишет <code>откат на DKMS</code>.
 </details>
 
 ---
@@ -2252,7 +2273,7 @@ DSM в поддерживаемые платформы не входит: уст
 
 * **Один протокол AWG на сервере.** Все клиенты используют одинаковые параметры обфускации. Нельзя иметь часть клиентов на AWG 1.x и часть на 2.0 одновременно.
 
-* **Ubuntu 25.10 / 26.04 / Debian 13:** PPA может не содержать готовых пакетов для свежих non-LTS-релизов. Инсталлятор автоматически переключает codename PPA на `noble` (с v5.13.0) и собирает модуль из исходников через DKMS - это занимает больше времени при первой установке.
+* **Ubuntu вне `noble`, `jammy` и `focal` (например, 25.10 и 26.04):** установщик запрашивает у PPA файл `dists/<кодовое имя>/Release`, и если ответа нет (404 или PPA недоступен), переключает codename PPA на `noble` (с v5.13.0). Debian отображается на ближайший выпуск Ubuntu всегда: 12 -> `focal`, 13 -> `noble`. Модуль при этом ставится DKMS-пакетом из PPA и собирается под ваше ядро, кроме ARM-систем с готовым модулем.
 
 * **IPv6 Dual-Stack Tunnel - откат `ALLOW_IPV6_TUNNEL=0`:** Установка `ALLOW_IPV6_TUNNEL=0` в `awgsetup_cfg.init` (или повторный запуск без `--allow-ipv6-tunnel`) **не удаляет** dual-stack `AllowedIPs = ..., fddd::.../128` из уже существующих записей `[Peer]` в `awg0.conf`. Записи остаются, ядро продолжает держать IPv6-маршруты для этих клиентов. `manage_amneziawg.sh regen <имя>` (или полный путь `/root/awg/manage_amneziawg.sh regen <имя>`) после отключения флага пересобирает только клиентский `.conf` - он станет IPv4-only, так как `regenerate_client` читает `ALLOW_IPV6_TUNNEL`. Но `regen` **не** убирает IPv6 `AllowedIPs` из блока `[Peer]` на сервере. Чтобы очистить и серверную сторону, используйте sed-очистку всех пиров: `awg-quick down awg0; sed -i 's|, fddd:[^/]*/[0-9]*||g' /etc/amnezia/amneziawg/awg0.conf; awg-quick up awg0`, либо `manage_amneziawg.sh remove <имя>` + `add <имя>`.
 
