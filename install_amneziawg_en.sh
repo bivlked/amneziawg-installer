@@ -2130,6 +2130,20 @@ _client_dns_shape_ok() {
     return 0
 }
 
+# _check_client_dns: the full CLIENT_DNS check at step 6, after the library is
+# sourced. The installer takes the library from tag v${SCRIPT_VERSION}, so an
+# installer from main between releases gets the previous one, which has no
+# awg_client_dns yet: a direct call died with exit code 127 and a false "CLIENT_DNS
+# is invalid". Such a library needs nothing for an empty CLIENT_DNS, but would
+# silently ignore a set one, so that is a refusal.
+_check_client_dns() {
+    if declare -F awg_client_dns >/dev/null; then
+        awg_client_dns >/dev/null || die "CLIENT_DNS in $CONFIG_FILE is invalid ('${CLIENT_DNS:-}'). Fix the value (IPs separated by commas) or delete the line and run the installer again."
+    elif [[ -n "${CLIENT_DNS:-}" ]]; then
+        die "CLIENT_DNS is set in $CONFIG_FILE, but the loaded awg_common.sh (${AWG_BRANCH:-?}) does not support it. Delete the line or run the installer from a release that supports CLIENT_DNS."
+    fi
+}
+
 validate_cidr_list() {
     local input="$1" cidr o nospace
     input="${input//$'\r'/}"
@@ -6224,7 +6238,7 @@ step6_generate_configs() {
     # character set, and on the 2.0 path a generate_client failure is just a warning:
     # a typo such as '10.9.9.1,' would leave the install without its default clients
     # almost silently.
-    awg_client_dns >/dev/null || die "CLIENT_DNS in $CONFIG_FILE is invalid ('${CLIENT_DNS:-}'). Fix the value (IPs separated by commas) or delete the line and run the installer again."
+    _check_client_dns
 
     # 3.1 install: a profile is only usable as a complete set. The tools for the
     # set and client leftovers are checked BEFORE the first change, including
