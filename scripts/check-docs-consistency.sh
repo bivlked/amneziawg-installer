@@ -59,6 +59,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || { echo "ОШИБКА: не удалось перейти в $REPO_ROOT" >&2; exit 2; }
 command -v perl >/dev/null 2>&1 || { echo "ОШИБКА: нужен perl (slug-генерация якорей)" >&2; exit 2; }
+# Якоря и ссылки извлекаются через grep -P. grep без PCRE не находит ничего, и
+# проверки 1, 16 и 17 без этой строки зеленели бы, ничего не проверив.
+printf 'x\n' | grep -qP 'x' 2>/dev/null || { echo "ОШИБКА: нужен grep с поддержкой -P (PCRE)" >&2; exit 2; }
 
 PASS=0
 FAIL=0
@@ -95,7 +98,9 @@ echo "=== check-docs-consistency ==="
 # из-за чего RU-заголовки давали пустой slug. Читает заголовки построчно из
 # stdin, печатает по slug на строку: Unicode-lowercase, оставить буквы/цифры/
 # пробел/подчёркивание/дефис (кириллица сохраняется, как у GitHub), пробелы ->
-# дефисы, срезать крайние дефисы (их даёт, например, emoji в начале заголовка).
+# дефисы. Крайние дефисы НЕ срезаются: GitHub их оставляет, и заголовок с эмодзи в
+# начале получает якорь с ведущим дефисом (## ✨ Features -> #-features). Прежняя
+# версия срезала их, принимала битую ссылку #features и отвергала рабочую.
 _slug_stream() {
     perl -CSD -ne '
         chomp;
@@ -103,7 +108,6 @@ _slug_stream() {
         $_ = lc;
         s/[^\p{L}\p{N} _-]//g;
         s/ /-/g;
-        s/^-+//; s/-+$//;
         print "$_\n";
     '
 }
@@ -651,6 +655,9 @@ for f in "${ipv6_mode2_files[@]}"; do
     if grep -qE 'режим(ы|ах|ов) 2 и 3|modes 2 and 3|российские сайты идут мимо туннеля|в режиме раздельной маршрутизации \(по умолчанию\)|in split routing \(the default\)|split-режим[^[:space:]]* \(2/3\)|split modes? \(2/3\)|поведение split-режимов по умолчанию|default behavior of split modes' "$f"; then
         echo "  $f: дефолтный режим назван раздельной маршрутизацией (с v5.31.0 это полный туннель с ::/0)" >&2
         ipv6_mode2_fail=1
+    elif [[ $? -gt 1 ]]; then
+        echo "  $f: grep не смог выполнить шаблон - проверка НЕ ВЫПОЛНЕНА" >&2
+        ipv6_mode2_fail=1
     fi
 done
 if [[ "$ipv6_mode2_fail" -eq 0 ]]; then _ok "дефолтный режим нигде не назван раздельной маршрутизацией"; else _bad "дефолтный режим снова назван раздельной маршрутизацией"; fi
@@ -661,7 +668,7 @@ if [[ "$ipv6_mode2_fail" -eq 0 ]]; then _ok "дефолтный режим ни�
 tmpl_fail=0
 # Шаблон обсуждения Q&A спрашивает ту же версию и протухал так же (аудит 2026-09, U-08).
 for bug_tmpl in .github/ISSUE_TEMPLATE/bug_report.yml .github/DISCUSSION_TEMPLATE/q-a.yml; do
-    [[ -f "$bug_tmpl" ]] || continue
+    [[ -f "$bug_tmpl" ]] || { echo "  нет $bug_tmpl - проверка по нему НЕ ВЫПОЛНЕНА" >&2; tmpl_fail=1; continue; }
     if grep -qE 'placeholder:[[:space:]]*"e\.g\.,[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+"' "$bug_tmpl"; then
         echo "  $bug_tmpl: конкретный X.Y.Z в placeholder версии (протухает; используйте 5.x.y)" >&2
         tmpl_fail=1
@@ -851,9 +858,20 @@ for f in "${DOC_FILES[@]}"; do
             xref_fail=1
         fi
     done < <(
-        printf '%s\n' "$stripped" | grep -oP '\]\(\K(?![a-z]+:)[^)#\s]+\.md#[^)\s]+'
-        printf '%s\n' "$stripped" | grep -oP 'href="\K(?![a-z]+:)[^"#]*#[^"]+' | grep -E '^(#|[^#]*\.md#)'
+        printf '%s\n' "$stripped" | grep -oP '\]\(\K(?![A-Za-z][A-Za-z0-9+.-]*:)[^)#\s]+\.md#[^)\s]+'
+        printf '%s\n' "$stripped" | grep -oP 'href="\K(?![A-Za-z][A-Za-z0-9+.-]*:)[^"#]*#[^"]+' | grep -E '^(#|[^#]*\.md#)'
     )
+done
+# Формы, которые разбор выше не видит, запрещены: иначе битая ссылка в такой форме
+# проходила бы молча. Их переписывают в канон ](файл.md#x) или href="файл.md#x".
+for f in "${DOC_FILES[@]}"; do
+    [[ -f "$f" ]] || continue
+    bad_forms="$(_strip_code "$f" | grep -nP '^\s*\[[^]]+\]:\s*\S*\.[mM][dD]#|href\s*=\s*\x27|href\s+=|href=\s+"|(?<![A-Za-z])(?!href)[hH][rR][eE][fF]\s*=|\]\([^)\s]*\.(?!md#)[mM][dD]#')"
+    if [[ -n "$bad_forms" ]]; then
+        echo "  $f: неканоническая форма ссылки (перепишите в ](файл.md#x) или href=\"файл.md#x\"):" >&2
+        printf '%s\n' "$bad_forms" | sed 's/^/    /' >&2
+        xref_fail=1
+    fi
 done
 # Положительная сторона: проверка, которая не нашла ни одной ссылки, ничего не
 # доказывает. На этом репозитории ссылок сотни, ноль значит, что сломан разбор.
@@ -874,9 +892,19 @@ pair_fail=0
 for pair in "ADVANCED.md ADVANCED.en.md" "CASCADE.md CASCADE.en.md" "WARP-RU.md WARP-RU.en.md"; do
     read -r pa pb <<< "$pair"
     [[ -f "$pa" && -f "$pb" ]] || { echo "  нет файла пары: $pair" >&2; pair_fail=1; continue; }
-    da="$(diff <(_strip_code "$pa" | grep -oiP '<a\s+(id|name)="\K[^"]+' | sort -u) \
-               <(_strip_code "$pb" | grep -oiP '<a\s+(id|name)="\K[^"]+' | sort -u))"
-    if [[ -n "$da" ]]; then
+    ea="$(_strip_code "$pa" | grep -oiP '<a\s+(id|name)="\K[^"]+' | sort -u)"
+    eb="$(_strip_code "$pb" | grep -oiP '<a\s+(id|name)="\K[^"]+' | sort -u)"
+    # Пустой набор - это не совпадение, а несработавшее извлечение.
+    if [[ -z "$ea" || -z "$eb" ]]; then
+        echo "  $pair: явные якоря не извлечены - сравнивать нечего" >&2
+        pair_fail=1
+        continue
+    fi
+    da="$(diff <(printf '%s\n' "$ea") <(printf '%s\n' "$eb"))"
+    if [[ $? -gt 1 ]]; then
+        echo "  $pair: diff не отработал" >&2
+        pair_fail=1
+    elif [[ -n "$da" ]]; then
         echo "  $pa / $pb: наборы якорей расходятся:" >&2
         printf '%s\n' "$da" | grep -E '^[<>]' | sed 's/^/    /' >&2
         pair_fail=1
@@ -889,15 +917,22 @@ if [[ "$pair_fail" -eq 0 ]]; then _ok "явные якоря в парах RU/EN
 # существовали и при этом вели в чужой раздел (C-09, C-10): их прежний вид
 # держим здесь поимённо, чтобы откат правки не прошёл молча.
 misroute_fail=0
+# Ключ - ЦЕЛЬ ссылки, а не её текст: откат якоря с другим текстом ссылки тоже
+# должен ловиться. Законных ссылок на эти цели в этом файле нет.
 while IFS='|' read -r mf mpat mwhy; do
     [[ -z "$mf" ]] && continue
-    if [[ -f "$mf" ]] && grep -qF "$mpat" "$mf"; then
+    [[ -f "$mf" ]] || { echo "  нет $mf - проверка по нему НЕ ВЫПОЛНЕНА" >&2; misroute_fail=1; continue; }
+    grep -qF "$mpat" "$mf"; mrc=$?
+    if [[ $mrc -eq 0 ]]; then
         echo "  $mf: $mwhy" >&2
+        misroute_fail=1
+    elif [[ $mrc -gt 1 ]]; then
+        echo "  $mf: grep не отработал - проверка НЕ ВЫПОЛНЕНА" >&2
         misroute_fail=1
     fi
 done <<'MISROUTE'
-INSTALL_VPS.ru.md|[README, управление клиентами](README.md#posle-ustanovki)|«управление клиентами» ведёт в «После установки», нужно README.md#upravlenie
-INSTALL_VPS.ru.md|[ADVANCED, импорт клиентов](ADVANCED.md#client-compat-adv)|про два QR ведёт в таблицу совместимости, нужно ADVANCED.md#vpnuri-adv
+INSTALL_VPS.ru.md|](README.md#posle-ustanovki)|ссылка на README.md#posle-ustanovki: «управление клиентами» живёт в README.md#upravlenie
+INSTALL_VPS.ru.md|](ADVANCED.md#client-compat-adv)|ссылка на ADVANCED.md#client-compat-adv: про два QR-кода нужен ADVANCED.md#vpnuri-adv
 MISROUTE
 if [[ "$misroute_fail" -eq 0 ]]; then _ok "исправленные ссылки не вернулись в чужие разделы"; else _bad "ссылка снова ведёт в чужой раздел"; fi
 
