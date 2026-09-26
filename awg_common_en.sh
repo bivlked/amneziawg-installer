@@ -1182,6 +1182,10 @@ ensure_amneziawg_kernel_module() {
 safe_load_config() {
     local config_file="${1:-$CONFIG_FILE}"
     if [[ ! -f "$config_file" ]]; then return 1; fi
+    # CLIENT_DNS lives only in the file: without this reset a variable from root's
+    # environment (CLIENT_DNS=... manage add) would silently reach new clients on
+    # installs whose file has no such line yet.
+    unset CLIENT_DNS
 
     local line key value first_line=1
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -2516,8 +2520,15 @@ render_client_config() {
 
     # DNS of the new client: CLIENT_DNS or the default. Computed BEFORE the tmpfile,
     # so an invalid CLIENT_DNS never leaves a half-written config behind.
+    # regenerate_client with a live .conf passes the client's DNS in _AWG_KEEP_DNS:
+    # CLIENT_DNS is then not needed and not checked, so a typo in it cannot block
+    # regen of clients it does not concern.
     local client_dns
-    client_dns=$(awg_client_dns) || return 1
+    if [[ -n "${_AWG_KEEP_DNS:-}" ]]; then
+        client_dns="$_AWG_KEEP_DNS"
+    else
+        client_dns=$(awg_client_dns) || return 1
+    fi
 
     local conf_file="$AWG_DIR/${name}.conf"
     # Route base: the client's own override (CLIENT_ALLOWED_IPS, Issue #253)
@@ -4578,7 +4589,10 @@ regenerate_client() {
         return 1
     fi
 
-    # Config regeneration (pass client_ipv6 if dual-stack)
+    # Config regeneration (pass client_ipv6 if dual-stack). A live client's DNS goes
+    # to render directly (see _AWG_KEEP_DNS there): it is restored below anyway.
+    local _AWG_KEEP_DNS=""
+    [[ "$_had_conf" -eq 1 && -n "$current_dns" ]] && _AWG_KEEP_DNS="$current_dns"
     render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" || {
         exec {lock_fd}>&-
         unset CLIENT_PSK
@@ -4657,7 +4671,9 @@ regenerate_client() {
         fi
         current_allowed_ips="$_aip_new"
     fi
-    [[ "$current_dns" == "1.1.1.1" ]] && current_dns="1.1.1.1, 1.0.0.1"
+    # A lone 1.1.1.1 from older versions becomes the pair, but not when it is a
+    # deliberate choice through CLIENT_DNS='1.1.1.1'.
+    [[ "$current_dns" == "1.1.1.1" && "$(awg_normalize_csv "${CLIENT_DNS:-}")" != "1.1.1.1" ]] && current_dns="1.1.1.1, 1.0.0.1"
 
     # Restore user settings (escape & and \ for sed replacement)
     local _dns _ka _aip

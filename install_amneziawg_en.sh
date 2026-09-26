@@ -4357,6 +4357,9 @@ initialize_setup() {
     # The generation marker is reset the same way: `AWG_PROTOCOL=3.1 bash install.sh`
     # must not mark an install as third-line behind the file's back.
     AWG_PROTOCOL=""
+    # CLIENT_DNS comes only from the file too: CLIENT_DNS=... bash install.sh must not
+    # land in init silently. It is set by a line in awgsetup_cfg.init.
+    CLIENT_DNS=""
 
     # Load config
     if [[ -f "$CONFIG_FILE" ]]; then
@@ -4664,6 +4667,12 @@ initialize_setup() {
     if [[ "${CLI_NO_PREBUILT:-0}" -eq 1 ]]; then
         NO_PREBUILT=1
     fi
+    # A safety flag: "true" or "yes" in the file would read as "no" under -eq 1, and
+    # an unsigned package would go in silently. Only 0 or 1.
+    case "${NO_PREBUILT:-0}" in
+        0|1) ;;
+        *) die "NO_PREBUILT='$NO_PREBUILT' in $CONFIG_FILE is invalid (0 or 1 allowed)." ;;
+    esac
     # CLIENT_DNS is written to init in single quotes: a character outside the IP
     # address set would break the file. awg_client_dns does the full check when a
     # client is created.
@@ -5488,6 +5497,13 @@ PPASRC
             # only against a sha256 from the same release and is not signed; whoever
             # cares about that builds it themselves.
             log "Prebuilt module package skipped (--no-prebuilt), the module will be built with DKMS."
+            # A prebuilt package installed by an earlier run does not go away by itself:
+            # a DKMS module would land next to it, leaving two amneziawg trees.
+            local _kmod
+            _kmod=$(dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '/ok installed$/{print $1}' | paste -sd' ' -)
+            if [[ -n "$_kmod" ]]; then
+                die "A prebuilt module package is already installed: $_kmod. With --no-prebuilt a second module would be built next to it. Remove the prebuilt one: sudo apt-get purge -y $_kmod, then run the installer again."
+            fi
         elif _try_install_prebuilt_arm; then
             log "Prebuilt kernel module installed. Installing userspace tools from PPA..."
             # 🔴 The hold is REQUIRED here too, REGARDLESS of the kernel version.
@@ -6175,6 +6191,12 @@ step6_generate_configs() {
     fi
     # shellcheck source=/dev/null
     source "$COMMON_SCRIPT_PATH"
+
+    # CLIENT_DNS is checked before any client is created. Step 0 checked only the
+    # character set, and on the 2.0 path a generate_client failure is just a warning:
+    # a typo such as '10.9.9.1,' would leave the install without its default clients
+    # almost silently.
+    awg_client_dns >/dev/null || die "CLIENT_DNS in $CONFIG_FILE is invalid ('${CLIENT_DNS:-}'). Fix the value (IPs separated by commas) or delete the line and run the installer again."
 
     # 3.1 install: a profile is only usable as a complete set. The tools for the
     # set and client leftovers are checked BEFORE the first change, including

@@ -488,13 +488,9 @@ After changing a client, import its config on the device again. These pitfalls w
 <a id="change-defaults-adv"></a>
 ### Changing Default Settings
 
-**The DNS of new clients** is set by a line in `/root/awg/awgsetup_cfg.init`:
+**The DNS of new clients** is set by the line `export CLIENT_DNS='...'` in `/root/awg/awgsetup_cfg.init`. The installer writes it there empty; put the value between the quotes, for example `export CLIENT_DNS='10.9.9.1'`. Installs older than this version have no such line; add it at the end of the file.
 
-```bash
-echo "export CLIENT_DNS='10.9.9.1'" | sudo tee -a /root/awg/awgsetup_cfg.init
-```
-
-The value is IP addresses separated by commas. Clients created after the edit (`manage add`) get it, and so does a client whose config `regen` rebuilds from scratch. Configs already handed out do not change: `regen` keeps their DNS, and `modify <name> DNS ...` changes it. An invalid value is not silently replaced: `add` refuses and says what is wrong. A `--force` reinstall keeps the line. Without it new clients get `1.1.1.1, 1.0.0.1`.
+The value is IP addresses separated by commas. Clients created after the edit (`manage add`) get it, and so does a client whose config `regen` rebuilds from scratch. Configs already handed out do not change: `regen` keeps their DNS, and `modify <name> DNS ...` changes it. An invalid value is not silently replaced: `add` and the installer refuse and say what is wrong, while `regen` of existing clients works as before. An empty value means `1.1.1.1, 1.0.0.1`. A `--force` reinstall keeps the line.
 
 **PersistentKeepalive** has no such setting: new clients get 33, and a client's value is changed like this:
 
@@ -1950,7 +1946,7 @@ Starting with v5.9.0, the installer works on ARM systems alongside x86_64.
 1. The installer detects the kernel version and architecture automatically.
 2. If a prebuilt `amneziawg.ko` package matching your kernel exists in the [arm-packages release](https://github.com/bivlked/amneziawg-installer/releases/tag/arm-packages), it is downloaded and installed via `dpkg`. This takes 2-3 minutes.
 3. If no prebuilt package matches, the installer falls back to DKMS compilation from source. This works on any kernel but takes longer (10-30 min depending on hardware).
-4. You can skip the prebuilt package altogether: with --no-prebuilt the module is built with DKMS right away. The prebuilt packages are built by this project's CI, and the installer checks them only against a SHA256 file from the same release; they are not signed.
+4. You can skip the prebuilt package altogether: with `--no-prebuilt` the module is built with DKMS right away. The prebuilt packages are built by this project's CI, and the installer checks them only against a SHA256 file from the same release; they are not signed. Note that this changes the module too: the prebuilt packages are built from the pinned AmneziaWG 2.0 source, while on kernels 6.7 and newer DKMS installs `amneziawg-dkms` from the PPA, the same third-line module an x86 server gets. The client profiles are second generation either way.
 
 > **Prebuilt ARM coverage:** prebuilt packages are built for Raspberry Pi (3/4/5), Ubuntu 24.04/25.10 ARM64 and Debian 12/13 ARM64. Ubuntu 26.04 ARM64 has no prebuilt yet - the module is built from source via DKMS (slower on first install, then works normally).
 

@@ -1164,6 +1164,10 @@ ensure_amneziawg_kernel_module() {
 safe_load_config() {
     local config_file="${1:-$CONFIG_FILE}"
     if [[ ! -f "$config_file" ]]; then return 1; fi
+    # CLIENT_DNS живёт только в файле: без сброса переменная из окружения root
+    # (CLIENT_DNS=... manage add) молча ушла бы в новых клиентов на установках,
+    # где строки в файле ещё нет.
+    unset CLIENT_DNS
 
     local line key value first_line=1
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -2473,9 +2477,15 @@ render_client_config() {
     load_awg_params || return 1
 
     # DNS нового клиента: CLIENT_DNS или значение по умолчанию. Считаем ДО tmpfile,
-    # чтобы невалидный CLIENT_DNS не оставил недописанного конфига.
+    # чтобы невалидный CLIENT_DNS не оставил недописанного конфига. regenerate_client
+    # с живым .conf передаёт DNS клиента в _AWG_KEEP_DNS: тогда CLIENT_DNS не нужен
+    # и не проверяется, и опечатка в нём не блокирует regen чужих клиентов.
     local client_dns
-    client_dns=$(awg_client_dns) || return 1
+    if [[ -n "${_AWG_KEEP_DNS:-}" ]]; then
+        client_dns="$_AWG_KEEP_DNS"
+    else
+        client_dns=$(awg_client_dns) || return 1
+    fi
 
     local conf_file="$AWG_DIR/${name}.conf"
     # База маршрутов: индивидуальный override клиента (CLIENT_ALLOWED_IPS,
@@ -4525,7 +4535,10 @@ regenerate_client() {
         return 1
     fi
 
-    # Перегенерация конфига (передаём client_ipv6 если dual-stack)
+    # Перегенерация конфига (передаём client_ipv6 если dual-stack). DNS живого клиента
+    # отдаём render напрямую (см. _AWG_KEEP_DNS там): его всё равно восстановим ниже.
+    local _AWG_KEEP_DNS=""
+    [[ "$_had_conf" -eq 1 && -n "$current_dns" ]] && _AWG_KEEP_DNS="$current_dns"
     render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" || {
         exec {lock_fd}>&-
         unset CLIENT_PSK
@@ -4602,7 +4615,9 @@ regenerate_client() {
         fi
         current_allowed_ips="$_aip_new"
     fi
-    [[ "$current_dns" == "1.1.1.1" ]] && current_dns="1.1.1.1, 1.0.0.1"
+    # Одиночный 1.1.1.1 от старых версий становится парой, но не когда это
+    # осознанный выбор через CLIENT_DNS='1.1.1.1'.
+    [[ "$current_dns" == "1.1.1.1" && "$(awg_normalize_csv "${CLIENT_DNS:-}")" != "1.1.1.1" ]] && current_dns="1.1.1.1, 1.0.0.1"
 
     # Восстанавливаем пользовательские настройки (экранируем & и \ для sed replacement)
     local _dns _ka _aip

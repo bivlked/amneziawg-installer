@@ -286,6 +286,101 @@ _setup_regen_stubs() {
     done
 }
 
+@test "client dns: an invalid CLIENT_DNS does not block regen of a client with a live config (both libraries)" {
+    require_flock
+    for lib in "${LIBS[@]}"; do
+        _use_lib "$lib"
+        _make_server_conf_with_peer "tom" "10.9.9.4"
+        _setup_regen_stubs
+        echo "TOM_PRIV" > "$KEYS_DIR/tom.private"
+        printf '[Interface]\nPrivateKey = TOM_PRIV\nAddress = 10.9.9.4/32\nDNS = 9.9.9.9\nMTU = 1280\nPersistentKeepalive = 33\n[Peer]\nPublicKey = SERVER_PUB\nEndpoint = 203.0.113.1:39743\nAllowedIPs = 0.0.0.0/0\n' \
+            > "$AWG_DIR/tom.conf"
+        export CLIENT_DNS="10.9.9.1,"
+        unset AWG_REGEN_RESET_ROUTES
+        run regenerate_client "tom"
+        [ "$status" -eq 0 ] || { echo "$lib: regen blocked: $output" >&2; return 1; }
+        grep -qxF "DNS = 9.9.9.9" "$AWG_DIR/tom.conf"
+        unset CLIENT_DNS
+    done
+}
+
+@test "client dns: the installer checks CLIENT_DNS in step 6 before creating clients (both languages)" {
+    for f in "${INSTALLERS[@]}"; do
+        body=$(sed -n '/^step6_generate_configs() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../$f")
+        # The check exists, dies, and comes before the first generate_client.
+        local chk gen
+        chk=$(echo "$body" | grep -nE 'awg_client_dns >/dev/null \|\| die ' | head -1 | cut -d: -f1)
+        gen=$(echo "$body" | grep -nE 'generate_client "\$client_name"' | head -1 | cut -d: -f1)
+        [ -n "$chk" ] || { echo "$f: no CLIENT_DNS check in step 6" >&2; return 1; }
+        [ -n "$gen" ] || { echo "$f: generate_client call not found in step 6" >&2; return 1; }
+        [ "$chk" -lt "$gen" ] || { echo "$f: CLIENT_DNS check comes after generate_client" >&2; return 1; }
+    done
+}
+
+@test "client dns: the installer resets CLIENT_DNS from the environment before loading the config (both languages)" {
+    for f in "${INSTALLERS[@]}"; do
+        grep -qE '^[[:space:]]+CLIENT_DNS=""$' "$BATS_TEST_DIRNAME/../$f" \
+            || { echo "$f: CLIENT_DNS is not reset before config load" >&2; return 1; }
+    done
+}
+
+@test "no-prebuilt: stops when a prebuilt module package is already installed (both languages)" {
+    for f in "${INSTALLERS[@]}"; do
+        body=$(sed -n '/^step2_install_amnezia() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../$f")
+        echo "$body" | grep -qF "dpkg-query -W -f='\${Package} \${Status}\n' 'amneziawg-kmod-*'" \
+            || { echo "$f: no check for an installed prebuilt package" >&2; return 1; }
+        echo "$body" | grep -qE 'die .*apt-get purge -y \$_kmod' \
+            || { echo "$f: no stop with the purge command" >&2; return 1; }
+    done
+}
+
+@test "no-prebuilt: a NO_PREBUILT other than 0 or 1 stops the installer (both languages)" {
+    for f in "${INSTALLERS[@]}"; do
+        # Extract the validation block and run it with a few values.
+        blk=$(sed -n '/^    case "\${NO_PREBUILT:-0}" in$/,/^    esac$/p' "$BATS_TEST_DIRNAME/../$f")
+        [ -n "$blk" ] || { echo "$f: no NO_PREBUILT validation" >&2; return 1; }
+        for v in 0 1; do
+            NO_PREBUILT="$v" CONFIG_FILE=x bash -c 'die(){ echo DIE; exit 1; }; eval "$1"; echo OK' _ "$blk" | grep -qx OK \
+                || { echo "$f: rejected valid NO_PREBUILT=$v" >&2; return 1; }
+        done
+        for v in yes true "1 # c" 2; do
+            if NO_PREBUILT="$v" CONFIG_FILE=x bash -c 'die(){ echo DIE; exit 1; }; eval "$1"; echo OK' _ "$blk" | grep -qx OK; then
+                echo "$f: accepted NO_PREBUILT='$v'" >&2
+                return 1
+            fi
+        done
+    done
+}
+
+@test "client dns: a CLIENT_DNS from the environment is dropped when the file has no such line (both libraries)" {
+    for lib in "${LIBS[@]}"; do
+        _use_lib "$lib"
+        create_init_config
+        export CLIENT_DNS="6.6.6.6"
+        safe_load_config "$CONFIG_FILE"
+        [ -z "${CLIENT_DNS:-}" ] || { echo "$lib kept env CLIENT_DNS='$CLIENT_DNS'" >&2; return 1; }
+    done
+}
+
+@test "client dns: regen does not widen a deliberate CLIENT_DNS='1.1.1.1' into the pair (both libraries)" {
+    require_flock
+    for lib in "${LIBS[@]}"; do
+        _use_lib "$lib"
+        _make_server_conf_with_peer "una" "10.9.9.5"
+        _setup_regen_stubs
+        echo "UNA_PRIV" > "$KEYS_DIR/una.private"
+        printf '[Interface]\nPrivateKey = UNA_PRIV\nAddress = 10.9.9.5/32\nDNS = 1.1.1.1\nMTU = 1280\nPersistentKeepalive = 33\n[Peer]\nPublicKey = SERVER_PUB\nEndpoint = 203.0.113.1:39743\nAllowedIPs = 0.0.0.0/0\n' \
+            > "$AWG_DIR/una.conf"
+        export CLIENT_DNS="1.1.1.1"
+        unset AWG_REGEN_RESET_ROUTES
+        run regenerate_client "una"
+        [ "$status" -eq 0 ] || { echo "$lib: $output" >&2; return 1; }
+        grep -qxF "DNS = 1.1.1.1" "$AWG_DIR/una.conf" \
+            || { echo "$lib:"; grep '^DNS' "$AWG_DIR/una.conf"; return 1; } >&2
+        unset CLIENT_DNS
+    done
+}
+
 @test "client dns: regen keeps an existing client's own DNS even with CLIENT_DNS set (both libraries)" {
     require_flock
     for lib in "${LIBS[@]}"; do
