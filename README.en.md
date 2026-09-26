@@ -392,7 +392,7 @@ Installing AmneziaWG on Ubuntu or Debian comes down to three commands: download 
     ```bash
     sudo bash ./install_amneziawg_en.sh
     ```
-    The script resumes from where it left off, and earlier questions are not asked again. One new question comes in the third run: "Enable UFW? [y/N]". Answer `y`: pressing Enter leaves the firewall off, and the server stays without one. With `--yes`, UFW is enabled without asking.
+    The script resumes from where it left off, and earlier questions are not asked again. If UFW is not on yet, one new question comes in the third run: "Enable UFW? [y/N]". Answer `y`: pressing Enter leaves the firewall off, and the server stays without one. With `--yes`, UFW is enabled without asking.
 
 8.  **Completion:** After the second reboot and the third script run, you will see the message:
     `AmneziaWG 2.0 installation and configuration completed SUCCESSFULLY!`
@@ -416,9 +416,9 @@ minisign -V -P RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN \
 
 Expected: `Signature and comment signature verified`, and on the next line `Trusted comment: amneziawg-installer vX.Y.Z install_amneziawg_en.sh`. The tag must match the latest release on the [releases page](https://github.com/bivlked/amneziawg-installer/releases), and the name must match the file you downloaded. If the check fails, download both files again, since a new release may have come out between the two downloads. If it fails again, do not run the script.
 
-**Compare the whole key.** The project public key is `RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN`. The same key is in `KEYS.txt` at the repository root and in every release. `3E598A1C01907E17` is the key ID, not a fingerprint: another key can carry the same ID, so it proves nothing on its own. Keep your own copy of the key and use it next time.
+**Compare the whole key.** The project public key is `RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN`. The same key is in `KEYS.txt` at the repository root and in every signed release (v5.29.0 and later). `3E598A1C01907E17` is the key ID, not a fingerprint: another key can carry the same ID, so it proves nothing on its own. Keep your own copy of the key and use it next time.
 
-**What the signature covers.** You verify the installer itself. The scripts it fetches later (`awg_common_en.sh`, `manage_amneziawg_en.sh`) are checked against SHA256 hashes built into it, so a signed installer covers them too. Not covered:
+**What the signature covers.** You verify the installer itself. The scripts it fetches later (`awg_common_en.sh`, `manage_amneziawg_en.sh`) are checked against SHA256 hashes built into it, so a signed installer covers them too, as long as `AWG_BRANCH` is left at its default. Not covered:
 - prebuilt ARM module packages from the `arm-packages` release: their hash sits next to them and only catches a broken download;
 - packages from the Amnezia PPA: apt checks them with the PPA key;
 - scripts you replace by hand: repeat the command above with their names.

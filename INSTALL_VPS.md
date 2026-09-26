@@ -63,7 +63,7 @@ flowchart LR
     C --> D["VPN ready"]
 ```
 
-Two questions are easy to miss. At the start the script lists the packages it would remove (snapd, unattended-upgrades and others) and asks first; answer `n` or pass `--keep-packages` to keep them. In the third run it asks "Enable UFW? [y/N]": answer `y`, because pressing Enter leaves the server without a firewall.
+Two questions are easy to miss. At the start the script lists the packages it would remove (snapd, unattended-upgrades and others) and asks first; answer `n` or pass `--keep-packages` to keep them. If UFW is not on yet, the third run asks "Enable UFW? [y/N]": answer `y`, because pressing Enter leaves the server without a firewall.
 
 For a non-interactive run pass `--yes`: `sudo bash ./install_amneziawg_en.sh --yes`. The routing mode then falls back to the default, the packages are removed and UFW is enabled without asking.
 
@@ -88,7 +88,7 @@ sudo bash /root/awg/manage_amneziawg.sh add my_iphone
 The client import files land in `/root/awg/`:
 
 - `<name>.conf` for desktop AmneziaWG clients, Linux `wg-quick`, and routers.
-- `<name>.png` QR code of the `.conf` itself, for AmneziaWG and other WireGuard-compatible clients. Do not scan it in the Amnezia VPN app.
+- `<name>.png` QR code of the `.conf` itself, for AmneziaWG clients (a plain WireGuard client cannot import it). Do not scan it in the Amnezia VPN app.
 - `<name>.vpnuri` and `<name>.vpnuri.png` for one-tap import into the Amnezia VPN app via clipboard or scanned QR.
 
 Pull files down with `scp`:
@@ -137,7 +137,7 @@ The uninstall path is symmetric: it removes the AmneziaWG service, the kernel mo
 
 - **PPA 404 on Ubuntu 25.10 or 26.04.** Automatic fallback to noble since v5.13.0. If you are still on v5.12.x, upgrade the installer.
 - **DKMS build fails on stale kernel headers** (typical after `do-release-upgrade` 24.04 to 25.10). v5.13.0 detects stale headers (kernel version differs from the running kernel) and installs gcc-13 as a fallback compiler so DKMS autoinstall succeeds across the version mismatch. If DKMS still fails, `sudo bash /root/awg/manage_amneziawg.sh repair-module` forces a rebuild.
-- **Mobile carrier unstable or only connects on the third attempt.** On a new server install with `--mobile` - it enables the mobile obfuscation preset and moves the port to 443/udp in one flag (carriers often drop unfamiliar UDP ports; an explicit `--port` wins if you pass both). On a running server that is a `--force --mobile` reinstall, after which every client config has to be reissued with `regen`; if the handshake never completes at all, read [the walkthrough](ADVANCED.en.md#no-hs-mobile-adv) first. Tested carriers (Russia): Yota (Moscow), Tele2 (Moscow), Tattelecom / Letai (Tatarstan), Beeline (default preset). Tele2 (Krasnoyarsk) and Megafon (regional networks) additionally need the I1 parameter removed. Full per-carrier table and the underlying Jc / Jmin / Jmax mechanics are in [ADVANCED.en.md FAQ](ADVANCED.en.md#faq-advanced-adv).
+- **Mobile carrier unstable or only connects on the third attempt.** On a new server, install with `--mobile` - it enables the mobile obfuscation preset and moves the port to 443/udp in one flag (carriers often drop unfamiliar UDP ports; an explicit `--port` wins if you pass both). On a running server that is a `--force --mobile` reinstall, after which every client config has to be reissued with `regen`; if the handshake never completes at all, read [the walkthrough](ADVANCED.en.md#no-hs-mobile-adv) first. Tested carriers (Russia): Yota (Moscow), Tele2 (Moscow), Tattelecom / Letai (Tatarstan), Beeline (default preset). Tele2 (Krasnoyarsk) and Megafon (regional networks) additionally need the I1 parameter removed. Full per-carrier table and the underlying Jc / Jmin / Jmax mechanics are in [ADVANCED.en.md FAQ](ADVANCED.en.md#faq-advanced-adv).
 - **Handshake completes but no packets flow.** Almost always the AllowedIPs gotcha on a custom split-tunnel config. Cover the server subnet too, not just the destinations you want. See [ADVANCED.en.md AllowedIPs](ADVANCED.en.md#allowedips-adv).
 - **iPhone does not connect over cellular.** MTU issue. The installer sets `MTU = 1280` by default since v5.7.4; older configs need the line added manually. See [MTU and Mobile Clients](ADVANCED.en.md#mtu-mobile-adv).
 - **ARM prebuilt unavailable for your kernel.** The installer falls back to DKMS automatically since v5.12.1. If both fail, file an issue with `sudo bash ./install_amneziawg_en.sh --diagnostic` output.

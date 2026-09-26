@@ -130,7 +130,9 @@ sudo apt install minisign           # Ubuntu/Debian
 # or:
 brew install minisign                # macOS
 
-# 2. Fetch the public key from the repository (one time):
+# 2. Keep a copy of the public key (one time). It is the second line of
+#    KEYS.txt; step 4 passes it whole with -P, so later checks do not depend
+#    on fetching KEYS.txt from the same place as the script:
 curl -O https://raw.githubusercontent.com/bivlked/amneziawg-installer/main/KEYS.txt
 
 # 3. Fetch the installer + signature:
