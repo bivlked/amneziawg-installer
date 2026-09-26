@@ -17,7 +17,7 @@
 - [ ] `bats tests/` passes (add a test for new behaviour)
 - [ ] `scripts/check-docs-consistency.sh` passes (if docs or metadata changed)
 - [ ] Tested on clean Ubuntu 24.04 LTS VPS (if script changes)
-- [ ] Tested on Ubuntu 25.10/26.04 (noble fallback path, if PPA/install logic changes)
+- [ ] Tested on Ubuntu 25.10 (noble fallback) / 26.04 (if PPA/install logic changes)
 - [ ] Tested on Debian 12/13 (if OS-specific changes)
 - [ ] CHANGELOG.md **and** CHANGELOG.en.md updated (including `[Unreleased]` comparator link), or not applicable (internal/test-only change)
 - [ ] SCRIPT_VERSION, AWG_COMMON_VERSION and the six `# Version:` / `# Версия:` headers updated (if releasing)

@@ -72,7 +72,7 @@
       "vendor_lts_eol": "2036-04-23",
       "lifecycle": "supported",
       "project_policy": "allowed",
-      "ppa_suite": "noble",
+      "ppa_suite": "resolute",
       "arm_prebuilt_targets": []
     },
     {
