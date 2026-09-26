@@ -362,7 +362,7 @@ ip route show table 200        # empty
 
 Your `amneziawg-installer` setup is unaffected: clients keep working and all traffic goes back to the direct exit.
 
-If you are removing the installer too (`--uninstall`), do the steps above first: the installer only stops `awg0`, and `warp.conf` lives in `/etc/amnezia`, which it deletes as a whole, so `awg-quick@warp` would be left enabled with no config.
+If you are removing the installer too (`--uninstall`), do the steps above first: the installer only stops `awg0`, and `warp.conf` lives in `/etc/amnezia`, which it deletes as a whole, so `awg-quick@warp` would be left enabled with no config, and the module will not unload while `warp` is up.
 
 ---
 

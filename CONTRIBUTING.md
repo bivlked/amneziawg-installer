@@ -155,7 +155,7 @@ docs: update CHANGELOG for v5.5
 ## Pull Request Workflow
 
 1. Fill in the PR template completely
-2. Ensure CI checks pass: ShellCheck, syntax (`bash -n`), the bats test suite, documentation consistency (`scripts/check-docs-consistency.sh`), and commit hygiene. The last one fails a PR that adds an en or em dash (use a plain hyphen), a `Co-authored-by` trailer, or a tool marker (the list is in `scripts/check-markers.sh`), whether in a commit message, the diff, or the PR title and body. The quickest way to clear the bar locally is the full gate: `BASE_REF=origin/main bash scripts/preflight-check.sh`
+2. Ensure CI checks pass: ShellCheck, syntax (`bash -n`), the bats test suite, documentation consistency (`scripts/check-docs-consistency.sh`), and commit hygiene. The last one fails a PR that adds an en or em dash to the diff (use a plain hyphen), a `Co-authored-by` trailer to a commit message, or a tool marker (the list is in `scripts/check-markers.sh`) to a commit message, the diff, or the PR title and body. The quickest way to clear the bar locally is the full gate: `BASE_REF=origin/main bash scripts/preflight-check.sh`
 3. **If your PR adds or modifies a GitHub Actions workflow** (`.github/workflows/*.yml`) or a build script (`scripts/*.sh`), run the workflow on your fork and confirm it passes **before** requesting review. `arm-build.yml` supports `workflow_dispatch` for manual triggering; other workflows run automatically on push. This catches environment-specific failures that local testing cannot.
 4. Update **both** `CHANGELOG.md` and `CHANGELOG.en.md` if applicable
 5. Update `[Unreleased]` comparator link in both CHANGELOGs when bumping version

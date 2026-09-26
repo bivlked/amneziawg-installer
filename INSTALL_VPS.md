@@ -132,7 +132,7 @@ Per-command output formats and the compatibility promise: [ADVANCED.en.md JSON i
 
 - Add or remove people: `add <name>`, `remove <name>`, `list`, `stats`.
 - Time-limited access: `add guest --expires=7d`.
-- Reissue a leaked or lost config: `regen <name>`.
+- Reissue a lost config: `regen <name>` (the keys stay the same). If a config leaked, revoke it instead: `remove <name>`, then `add <name>` and hand out the new file.
 - Back up before experiments: `backup`, and `restore` to go back.
 - Check server health: `check`.
 
@@ -157,11 +157,15 @@ A normal `apt-get upgrade` will pull a new kernel from time to time. For DKMS-ba
 
 ## Uninstall
 
+🔴 **The irreversible part first.** Uninstalling wipes `/root/awg/` entirely, and with it the server keys and every client config. Clients you handed files to stop connecting. If you may need the server later, make a copy **before** uninstalling and take it off the machine: run `sudo bash /root/awg/manage_amneziawg.sh backup` on the server, then `scp root@SERVER_ADDRESS:/root/awg/backups/*.tar.gz .` on your own computer. The uninstaller also offers a backup and makes one by default, but it can be declined or fail (the uninstall then continues), and it stays on the same server.
+
+If the server runs the cascade or WARP, remove them first, following their own guides: [cascade](CASCADE.en.md#uninstall), [WARP](WARP-RU.en.md#uninstall).
+
+Then uninstall:
+
 ```bash
 sudo bash ./install_amneziawg_en.sh --uninstall
 ```
-
-🔴 **The irreversible part first.** Uninstalling wipes `/root/awg/` entirely, and with it the server keys and every client config. Clients you handed files to stop connecting. If you may need the server later, make a copy **before** uninstalling and take it off the machine: run `sudo bash /root/awg/manage_amneziawg.sh backup` on the server, then `scp root@SERVER_ADDRESS:/root/awg/backups/*.tar.gz .` on your own computer. The uninstaller also offers a backup and makes one by default, but it can be declined or fail (the uninstall then continues), and it stays on the same server.
 
 What `--uninstall` does:
 - stops and disables `awg-quick@awg0`, unloads the module, and removes the `amneziawg-ensure-module` unit, hook and log;
@@ -178,7 +182,7 @@ What stays:
 - the SSH rule in UFW if UFW was active before the install, and rules you added yourself;
 - the sysctl values, until the next reboot.
 
-If the server runs the cascade or WARP, remove them first, following their own guides. Re-installing later starts from a clean slate.
+Re-installing later starts from a clean slate.
 
 ## Troubleshooting
 

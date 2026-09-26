@@ -11,7 +11,7 @@ that is tracked separately and is not done by this document.
 
 ## Why
 
-Modern open-source security practice (NixOS, signify-based tools, libsodium ecosystem) ships releases with detached cryptographic signatures so users can verify a downloaded script has not been tampered with on the path from GitHub to their server. Right now `install_amneziawg.sh` is fetched over HTTPS from the latest GitHub release assets, which means trust is rooted in GitHub's TLS chain + GitHub's account security alone. Adding a maintainer-controlled signature gives an independent verification path - with the important caveat below.
+Modern open-source security practice (NixOS, signify-based tools, libsodium ecosystem) ships releases with detached cryptographic signatures so users can verify a downloaded script has not been tampered with on the path from GitHub to their server. Without a signature, trust in a script fetched over HTTPS from the latest GitHub release assets rests on GitHub's TLS chain and GitHub's account security alone. Adding a maintainer-controlled signature gives an independent verification path - with the important caveat below.
 
 - TLS only proves "the bytes came from GitHub". A signature proves "the bytes were signed by the holder of the private key", which lives offline on the maintainer's machine and is never exposed to GitHub Actions.
 - The protection is asymmetric. If a user already has the correct maintainer public key pinned (e.g. saved from an earlier verified release, or fetched from an out-of-band channel - personal blog post, mastodon profile, signed git tag predating the compromise), then a malicious replacement script fails verification because the attacker cannot forge a signature without the offline secret key. **However**, a first-time user who fetches `KEYS.txt` and the installer from the same compromised GitHub account in the same session is exposed to a TOFU window: the attacker can atomically replace `KEYS.txt`, the script, and the signature, and the verification will succeed against the attacker's key. This is not a flaw of minisign - it is the general TOFU limitation of any public-key-on-the-same-domain scheme. To narrow the window, the maintainer should also publish the whole public key via at least one independent out-of-band channel.
@@ -59,15 +59,15 @@ Generated files:
 
 ## Signing flow
 
-Per release, after the last change to the six scripts and before `git tag`: the signatures are committed under `signing/` so they land in the tagged commit. Each signature carries a trusted comment binding it to the tag and filename, so an old signature paired with a different file or a different release fails to verify (rollback / misbinding protection):
+Per release, after the last change to the six scripts and before `git tag`: the signatures are committed under `signing/` so they land in the tagged commit. Each signature carries a trusted comment binding it to the tag and filename, so `scripts/verify-signatures.sh`, and a user who reads the `Trusted comment:` line, rejects a signature made for a different file or release (rollback / misbinding protection). `minisign -V` alone does not compare the comment with the tag:
 
 ```bash
 bash scripts/sign-release.sh vX.Y.Z
 ```
 
-Verifiers should glance at the `Trusted comment:` line that `minisign -V` prints and ensure it matches the file they actually downloaded for the tag they intended.
-
 It writes the `.minisig` files under `signing/`, asks for the key password once, and refuses to run without a terminal. `release.yml` attaches the signatures to the release.
+
+Verifiers should glance at the `Trusted comment:` line that `minisign -V` prints and ensure it matches the file they actually downloaded for the tag they intended.
 
 ## Workflow integration (history)
 

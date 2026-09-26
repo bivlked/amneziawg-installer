@@ -489,29 +489,30 @@ One thing to expect: with `RemainAfterExit=no`, `systemctl status awg-routing` s
 <a id="uninstall"></a>
 ## Removing the cascade
 
-On AWG0, fill in your own values from the top of `/root/awg/awg-routing.sh`: `CLIENT_SUBNET` and `AWG1_ENDPOINT`, plus `TABLE_ID` and `FWMARK` if you changed them. Then run:
+On AWG0, fill in your own values from the top of `/root/awg/awg-routing.sh`: `CLIENT_SUBNET` and `AWG1_ENDPOINT`, plus `AWG1_IF`, `TABLE_ID` and `FWMARK` if you changed them. Then run:
 
 ```bash
 CLIENT_SUBNET="172.16.17.0/24"
+AWG1_IF="awg1"
 AWG1_ENDPOINT="AWG1_PUBLIC_IP"
 TABLE_ID=100
 FWMARK="0x1"
 
 systemctl disable --now awg-routing.timer 2>/dev/null
-systemctl disable --now awg-routing awg-quick@awg1
+systemctl disable --now awg-routing "awg-quick@$AWG1_IF"
 rm -f /etc/systemd/system/awg-routing.service /etc/systemd/system/awg-routing.timer /etc/cron.d/awg-routing-refresh
 systemctl daemon-reload
 
 iptables -t mangle -D PREROUTING -i awg0 -s "$CLIENT_SUBNET" -m set --match-set ru dst -j RETURN
 iptables -t mangle -D PREROUTING -i awg0 -s "$CLIENT_SUBNET" -j MARK --set-mark "$FWMARK"
-iptables -t nat -D POSTROUTING -s "$CLIENT_SUBNET" -o awg1 -j MASQUERADE
+iptables -t nat -D POSTROUTING -s "$CLIENT_SUBNET" -o "$AWG1_IF" -j MASQUERADE
 ip rule del fwmark "$FWMARK" table "$TABLE_ID" 2>/dev/null
-ip route flush table "$TABLE_ID" 2>/dev/null
+ip route del default dev "$AWG1_IF" table "$TABLE_ID" 2>/dev/null
 ip route del "$AWG1_ENDPOINT" 2>/dev/null
 ipset destroy ru_tmp 2>/dev/null
 ipset destroy ru
 
-rm -f /etc/amnezia/amneziawg/awg1.conf /root/awg/awg-routing.sh /root/awg/ru.zone /root/awg/awg-routing.lock
+rm -f "/etc/amnezia/amneziawg/$AWG1_IF.conf" /root/awg/awg-routing.sh /root/awg/ru.zone /root/awg/ru.zone.tmp /root/awg/awg-routing.lock
 ```
 
 The `iptables` rules go before `ipset destroy`: a set cannot be removed while a rule still refers to it. The `ru_tmp` line removes the temporary set in case the script was ever interrupted halfway. The timer and cron lines are harmless if you only used one of the two. If you added rules of your own on top of the script, for example for Google from [Troubleshooting](#trouble), remove those too.
@@ -522,7 +523,7 @@ On AWG1, remove the client you issued for AWG0:
 bash /root/awg/manage_amneziawg.sh remove ru_host
 ```
 
-If you are going to remove the installer itself afterwards (`--uninstall`), do the steps above first. The installer only stops `awg0` and knows nothing about `awg1` or the cascade unit and timer, while it deletes `/etc/amnezia` and `/root/awg` as a whole, so after a reboot the enabled cascade units would be left without their files.
+If you are going to remove the installer itself afterwards (`--uninstall`), do the steps above first. The installer only stops `awg0` and knows nothing about `awg1` or the cascade unit and timer, while it deletes `/etc/amnezia` and `/root/awg` as a whole. While `awg1` is up the module will not unload, and after a reboot the enabled cascade units would be left without their files.
 
 <a id="limits"></a>
 ## Limitations and notes

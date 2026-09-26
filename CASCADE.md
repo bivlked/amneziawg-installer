@@ -486,29 +486,30 @@ systemctl list-timers awg-routing.timer
 <a id="uninstall"></a>
 ## Как убрать каскад
 
-На AWG0 подставьте свои значения из начала `/root/awg/awg-routing.sh`: `CLIENT_SUBNET` и `AWG1_ENDPOINT`, а если меняли, то и `TABLE_ID` с `FWMARK`. Затем выполните:
+На AWG0 подставьте свои значения из начала `/root/awg/awg-routing.sh`: `CLIENT_SUBNET` и `AWG1_ENDPOINT`, а если меняли, то и `AWG1_IF`, `TABLE_ID`, `FWMARK`. Затем выполните:
 
 ```bash
 CLIENT_SUBNET="172.16.17.0/24"
+AWG1_IF="awg1"
 AWG1_ENDPOINT="ВНЕШНИЙ_IP_AWG1"
 TABLE_ID=100
 FWMARK="0x1"
 
 systemctl disable --now awg-routing.timer 2>/dev/null
-systemctl disable --now awg-routing awg-quick@awg1
+systemctl disable --now awg-routing "awg-quick@$AWG1_IF"
 rm -f /etc/systemd/system/awg-routing.service /etc/systemd/system/awg-routing.timer /etc/cron.d/awg-routing-refresh
 systemctl daemon-reload
 
 iptables -t mangle -D PREROUTING -i awg0 -s "$CLIENT_SUBNET" -m set --match-set ru dst -j RETURN
 iptables -t mangle -D PREROUTING -i awg0 -s "$CLIENT_SUBNET" -j MARK --set-mark "$FWMARK"
-iptables -t nat -D POSTROUTING -s "$CLIENT_SUBNET" -o awg1 -j MASQUERADE
+iptables -t nat -D POSTROUTING -s "$CLIENT_SUBNET" -o "$AWG1_IF" -j MASQUERADE
 ip rule del fwmark "$FWMARK" table "$TABLE_ID" 2>/dev/null
-ip route flush table "$TABLE_ID" 2>/dev/null
+ip route del default dev "$AWG1_IF" table "$TABLE_ID" 2>/dev/null
 ip route del "$AWG1_ENDPOINT" 2>/dev/null
 ipset destroy ru_tmp 2>/dev/null
 ipset destroy ru
 
-rm -f /etc/amnezia/amneziawg/awg1.conf /root/awg/awg-routing.sh /root/awg/ru.zone /root/awg/awg-routing.lock
+rm -f "/etc/amnezia/amneziawg/$AWG1_IF.conf" /root/awg/awg-routing.sh /root/awg/ru.zone /root/awg/ru.zone.tmp /root/awg/awg-routing.lock
 ```
 
 Правила `iptables` удаляются до `ipset destroy`: пока на набор `ru` ссылается правило, удалить его нельзя. Строка с `ru_tmp` убирает временный набор, если скрипт когда-то прервали на середине. Строки для таймера и cron безвредны, если у вас был только один из вариантов. Если вы добавляли свои правила сверх скрипта, например для Google из раздела [Диагностика](#trouble), уберите и их.
@@ -519,7 +520,7 @@ rm -f /etc/amnezia/amneziawg/awg1.conf /root/awg/awg-routing.sh /root/awg/ru.zon
 bash /root/awg/manage_amneziawg.sh remove ru_host
 ```
 
-Если потом собираетесь удалять и сам установщик (`--uninstall`), сначала выполните шаги выше. Установщик останавливает только `awg0`, про `awg1`, юнит и таймер каскада он не знает, а `/etc/amnezia` и `/root/awg` удаляет целиком, так что после перезагрузки включённые юниты каскада остались бы без своих файлов.
+Если потом собираетесь удалять и сам установщик (`--uninstall`), сначала выполните шаги выше. Установщик останавливает только `awg0`, про `awg1`, юнит и таймер каскада он не знает, а `/etc/amnezia` и `/root/awg` удаляет целиком. Пока поднят `awg1`, модуль не выгрузится, а после перезагрузки включённые юниты каскада остались бы без своих файлов.
 
 <a id="limits"></a>
 ## Ограничения и нюансы

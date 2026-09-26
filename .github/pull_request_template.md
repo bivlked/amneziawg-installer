@@ -20,7 +20,7 @@
 - [ ] Tested on Ubuntu 25.10/26.04 (noble fallback path, if PPA/install logic changes)
 - [ ] Tested on Debian 12/13 (if OS-specific changes)
 - [ ] CHANGELOG.md **and** CHANGELOG.en.md updated (including `[Unreleased]` comparator link), or not applicable (internal/test-only change)
-- [ ] SCRIPT_VERSION, AWG_COMMON_VERSION and the six `# Version:` headers updated (if releasing)
+- [ ] SCRIPT_VERSION, AWG_COMMON_VERSION and the six `# Version:` / `# Версия:` headers updated (if releasing)
 - [ ] SHA pins recomputed and verified (`scripts/update-sha-pins.sh --verify`) (if `awg_common*`/`manage_amneziawg*` changed)
 - [ ] Version badge in README.md and README.en.md updated (if version bump)
 - [ ] Documentation updated (if applicable)
