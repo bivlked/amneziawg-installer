@@ -2565,11 +2565,11 @@ case $COMMAND in
             # старой метки. Для --expires метка ставится ниже, после generate_client.
             # Неудавшееся удаление метки - отказ по этому клиенту: иначе он
             # создался бы с чужим сроком, а ответ рапортовал бы бессрочного.
-            rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png"
-            # Метку снимаем под .awg_config.lock с повторной проверкой имени:
-            # иначе параллельный add того же имени мог успеть создать клиента со
-            # сроком, и мы сняли бы его свежую метку. Блокировку отпускаем до
-            # generate_client: он берёт её сам, а flock не реентерабелен.
+            # Файлы и метку снимаем под .awg_config.lock с повторной проверкой
+            # имени: иначе параллельный add того же имени или restore мог успеть
+            # создать клиента, и мы стёрли бы его свежие QR, vpn:// и срок.
+            # Блокировку отпускаем до generate_client: он берёт её сам, а flock
+            # не реентерабелен.
             _stale_stamp="${EXPIRY_DIR:-$AWG_DIR/expiry}/${_cname}"
             _stamp_state=ok
             exec {_stamp_lock_fd}>"${AWG_DIR}/.awg_config.lock"
@@ -2577,8 +2577,11 @@ case $COMMAND in
                 _stamp_state=lock
             elif grep -qxF "#_Name = ${_cname}" "$SERVER_CONF_FILE"; then
                 _stamp_state=exists
-            elif ! rm -f "$_stale_stamp" 2>/dev/null || [[ -e "$_stale_stamp" || -L "$_stale_stamp" ]]; then
-                _stamp_state=stuck
+            else
+                rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png"
+                if ! rm -f "$_stale_stamp" 2>/dev/null || [[ -e "$_stale_stamp" || -L "$_stale_stamp" ]]; then
+                    _stamp_state=stuck
+                fi
             fi
             exec {_stamp_lock_fd}>&-
             case "$_stamp_state" in

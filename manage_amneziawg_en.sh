@@ -2599,12 +2599,11 @@ case $COMMAND in
             # stamp. For --expires the stamp is set below, after generate_client.
             # A failed stamp removal refuses this client: otherwise it would be
             # created with someone else's deadline while the reply said permanent.
-            rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png"
-            # The stamp is removed under .awg_config.lock with the name checked
-            # again: otherwise a parallel add of the same name could have created
-            # a client with a deadline, and we would remove its fresh stamp. The
-            # lock is released before generate_client: it takes it itself, and
-            # flock is not re-entrant.
+            # The files and the stamp are removed under .awg_config.lock with the
+            # name checked again: otherwise a parallel add of the same name or a
+            # restore could have created the client, and we would erase its fresh
+            # QR, vpn:// and deadline. The lock is released before
+            # generate_client: it takes it itself, and flock is not re-entrant.
             _stale_stamp="${EXPIRY_DIR:-$AWG_DIR/expiry}/${_cname}"
             _stamp_state=ok
             exec {_stamp_lock_fd}>"${AWG_DIR}/.awg_config.lock"
@@ -2612,8 +2611,11 @@ case $COMMAND in
                 _stamp_state=lock
             elif grep -qxF "#_Name = ${_cname}" "$SERVER_CONF_FILE"; then
                 _stamp_state=exists
-            elif ! rm -f "$_stale_stamp" 2>/dev/null || [[ -e "$_stale_stamp" || -L "$_stale_stamp" ]]; then
-                _stamp_state=stuck
+            else
+                rm -f "$AWG_DIR/${_cname}.png" "$AWG_DIR/${_cname}.vpnuri" "$AWG_DIR/${_cname}.vpnuri.png"
+                if ! rm -f "$_stale_stamp" 2>/dev/null || [[ -e "$_stale_stamp" || -L "$_stale_stamp" ]]; then
+                    _stamp_state=stuck
+                fi
             fi
             exec {_stamp_lock_fd}>&-
             case "$_stamp_state" in

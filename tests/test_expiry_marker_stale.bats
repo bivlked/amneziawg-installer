@@ -399,6 +399,11 @@ _scenario_restore_stamp_stuck() {
 _scenario_add_race() {
     local s="$1" fd pid blocked=0 rc=0
     _lib_for "$s"
+    # The parallel client's QR and vpn:// are already on disk while its name is
+    # not yet in awg0.conf: removing them before the locked re-check would erase
+    # them.
+    : > "$TEST_DIR/awg/guest.png"
+    : > "$TEST_DIR/awg/guest.vpnuri"
     exec {fd}>"$TEST_DIR/awg/.awg_config.lock"
     flock -x "$fd"
     # {fd}>&-: the child must not inherit the held lock descriptor.
@@ -422,6 +427,9 @@ _scenario_add_race() {
     jq -e '.results[0].status == "exists"' "$TEST_DIR/race.out" >/dev/null
     if [ "$(cat "$EXP/guest" 2>/dev/null)" != "1999999999" ]; then
         echo "the parallel client's fresh stamp was removed" >&2; return 1
+    fi
+    if [ ! -e "$TEST_DIR/awg/guest.png" ] || [ ! -e "$TEST_DIR/awg/guest.vpnuri" ]; then
+        echo "the parallel client's QR or vpn:// file was removed" >&2; return 1
     fi
 }
 
