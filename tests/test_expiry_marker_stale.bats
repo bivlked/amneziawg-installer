@@ -60,6 +60,9 @@ echo "systemctl \$*" >> "$TEST_DIR/systemctl.log"
 if [[ "\$1" == "start" && -e "$TEST_DIR/fail_start" ]]; then exit 1; fi
 exit 0
 STUB
+    # ip: awg0 absent. restore refuses to replace files while awg0 is still
+    # present after stop, and a host with a real awg0 (a stand) must not decide.
+    printf '#!/bin/bash\ncase "$*" in *"link show"*awg0*) exit 1 ;; esac\nexit 0\n' > "$TEST_DIR/bin/ip"
     # No network: endpoint comes from AWG_ENDPOINT, any curl/wget call is logged.
     for c in curl wget; do
         printf '#!/bin/bash\necho "%s $*" >> "%s/net.log"\nexit 1\n' "$c" "$TEST_DIR" > "$TEST_DIR/bin/$c"

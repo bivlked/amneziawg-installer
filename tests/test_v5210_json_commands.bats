@@ -260,6 +260,13 @@ _stub_systemctl() {
     chmod +x "$TEST_DIR/bin/systemctl"
 }
 
+# restore refuses to replace files while awg0 is still present after stop; a
+# host that has a real awg0 (a stand) must not decide the result.
+_stub_ip_no_awg0() {
+    printf '#!/bin/bash\ncase "$*" in *"link show"*awg0*) exit 1 ;; esac\nexit 0\n' > "$TEST_DIR/bin/ip"
+    chmod +x "$TEST_DIR/bin/ip"
+}
+
 _stub_lsmod() {
     printf '#!/bin/bash\necho "amneziawg 40960 0"\n' > "$TEST_DIR/bin/lsmod"
     chmod +x "$TEST_DIR/bin/lsmod"
@@ -299,6 +306,7 @@ _stub_lsmod() {
 @test "restore: success envelope with source, restored counters" {
     require_jq
     _stub_systemctl
+    _stub_ip_no_awg0
     run --separate-stderr bash "$SCRIPT" backup --json "${MOCK_ARGS[@]}"
     bpath=$(printf '%s' "$output" | jq -re '.path')
     run --separate-stderr bash "$SCRIPT" restore "$bpath" --json --yes "${MOCK_ARGS[@]}"

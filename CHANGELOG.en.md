@@ -16,6 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **IPv4 through the tunnel, the device's IPv6 directly.** The installer flag `--client-ipv6-direct` (the `CLIENT_IPV6_DIRECT=1` key in `awgsetup_cfg.init`) together with the "Amnezia" mode (`--route-amnezia`) drops the `2000::/3` IPv6 route and the service IPv6 address from clients: IPv4 goes through the tunnel, the device's IPv6 goes directly through the provider, and the local network stays reachable. The installer names the cost out loud: sites reached over IPv6 see the device's real address. The key is refused in the "All traffic" mode, because without `::/0` iOS AmneziaVPN does not bring the tunnel up, and with `--allow-ipv6-tunnel`. A plain `manage regen` takes the route away from clients already issued and leaves hand-made routes alone. Requested in [PR #260](https://github.com/bivlked/amneziawg-installer/pull/260).
 
+### Changed
+
+- **`restore` checks the backup before stopping the service.** The server config from the archive is checked while the VPN is still up, and the reason for a refusal is printed to the console; before, the check ran after the files had been replaced, silently, and ended in a rollback. If the service does not stop, or the `awg0` interface is still there after the stop, the restore is cancelled before any file is replaced. Rollback brings client configs and keys to exactly the set from before `restore` instead of laying the snapshot over them: a client from the archive that did not exist before the restore no longer stays after the rollback.
+- **Backup and `restore` for a third-line installation.** A backup of a 3.1 installation carries the header protection key (`server_hpk.key`, mode 600) and refuses, with the reason named, when the key file disagrees with `HeaderProtectionKey` in `awg0.conf`. `restore` checks the generation marker, the key in the config and the key file FROM THE ARCHIVE before stopping the service; restoring a 2.0 installation over 3.1 does not delete the previous key but moves it to `/root/awg/archive/<time>-3.1/`. The pre-restore snapshot takes the key file as it is, so restoring from a backup stays a way to repair a damaged key. A new installation still sets up 2.0.
+
 ## [5.37.0] - 2026-09-27
 
 **v5.37.0** - client DNS in the config, --no-prebuilt for ARM, and a docs review.

@@ -181,7 +181,7 @@ extract_func() {
     # — rollback only meaningful once state is actually modified.
     # Use a pattern matching only code lines (not comments).
     local sline dline
-    sline=$(grep -nE '^[[:space:]]+systemctl stop awg-quick@awg0' <<< "$body" | head -1 | cut -d: -f1)
+    sline=$(grep -nE '^[[:space:]]+(if ! )?systemctl stop awg-quick@awg0' <<< "$body" | head -1 | cut -d: -f1)
     dline=$(grep -nE '^[[:space:]]+_destructive_ops_started=1$' <<< "$body" | head -1 | cut -d: -f1)
     [ -n "$sline" ]
     [ -n "$dline" ]
@@ -192,7 +192,7 @@ extract_func() {
     local body
     body=$(extract_func "$MANAGE_EN" "restore_backup")
     local sline dline
-    sline=$(grep -nE '^[[:space:]]+systemctl stop awg-quick@awg0' <<< "$body" | head -1 | cut -d: -f1)
+    sline=$(grep -nE '^[[:space:]]+(if ! )?systemctl stop awg-quick@awg0' <<< "$body" | head -1 | cut -d: -f1)
     dline=$(grep -nE '^[[:space:]]+_destructive_ops_started=1$' <<< "$body" | head -1 | cut -d: -f1)
     [ -n "$sline" ]
     [ -n "$dline" ]

@@ -462,11 +462,18 @@ _backup_configs_nolock() {
     # pre-restore snapshot: otherwise, with 10 backups already present, prune
     # would drop the oldest one, which may be exactly the backup selected for
     # restore (it lives in the same $AWG_DIR/backups directory).
-    local no_prune=0
-    if [[ "${1:-}" == "--no-prune" ]]; then
-        no_prune=1
+    # --snapshot: the pre-restore snapshot. The header protection key file is
+    # taken as it is, without the consistency check: rollback must return exactly
+    # what was there, and restore must stay a way to repair a damaged key.
+    local no_prune=0 snapshot=0
+    while [[ "${1:-}" == --* ]]; do
+        case "$1" in
+            --no-prune) no_prune=1 ;;
+            --snapshot) snapshot=1 ;;
+            *) break ;;
+        esac
         shift
-    fi
+    done
     log "Creating backup..."
     local bd="$AWG_DIR/backups"
     mkdir -p "$bd" || die "mkdir error $bd"
@@ -545,6 +552,34 @@ _backup_configs_nolock() {
             log_error "Failed to save server_public.key to backup."
             rm -rf "$td"
             return 1
+        fi
+    fi
+
+    # Header protection key (3.1). On a 3.1 installation it is mandatory: without
+    # it the backup cannot be restored into a working server. awg_hpk_ensure checks
+    # the file against awg0.conf and restores a lost file from the config; a
+    # mismatch refuses the backup with the reason named. The pre-restore snapshot
+    # takes the file as it is (see --snapshot).
+    local _hpk _hpk_gen
+    if ! _hpk=$(awg_hpk_path); then
+        log_error "AWG_DIR is not set: the header protection key would be missing from the backup."
+        rm -rf "$td"
+        return 1
+    fi
+    if (( snapshot )); then
+        if [[ -f "$_hpk" && ! -L "$_hpk" ]] && ! cp -a "$_hpk" "$td/"; then
+            log_error "Failed to save $_hpk to the snapshot."
+            rm -rf "$td"
+            return 1
+        fi
+    else
+        _hpk_gen=$(_awg_generation_from_init "$CONFIG_FILE") || _hpk_gen=""
+        if [[ "$_hpk_gen" == "3.1" ]]; then
+            if ! awg_hpk_ensure manage || ! cp -a "$_hpk" "$td/"; then
+                log_error "3.1 installation: the header protection key ($_hpk) was not saved - backup not created."
+                rm -rf "$td"
+                return 1
+            fi
         fi
     fi
 
@@ -641,11 +676,36 @@ _restore_do_rollback() {
     fi
     local _scdir
     _scdir=$(dirname "$SERVER_CONF_FILE")
+    # Client files and keys are brought to exactly the snapshot, not laid over:
+    # restore has already replaced them with the archived set, and a client from
+    # the archive that did not exist before restore would otherwise stay next to
+    # the previous ones (on a generation change - a profile of the other
+    # generation). The snapshot takes these sets whole.
+    if [[ -d "$_rtd/clients" ]]; then
+        rm -f "$AWG_DIR"/*.conf "$AWG_DIR"/*.png "$AWG_DIR"/*.vpnuri 2>/dev/null
+    fi
+    if [[ -d "$_rtd/keys" ]]; then
+        rm -f "$KEYS_DIR"/* 2>/dev/null
+    fi
     [[ -d "$_rtd/server" ]] && cp -a "$_rtd/server/"* "$_scdir/" 2>/dev/null
     [[ -d "$_rtd/clients" ]] && cp -a "$_rtd/clients/"* "$AWG_DIR/" 2>/dev/null
     [[ -d "$_rtd/keys" ]] && cp -a "$_rtd/keys/"* "$KEYS_DIR/" 2>/dev/null
     [[ -f "$_rtd/server_private.key" ]] && cp -a "$_rtd/server_private.key" "$AWG_DIR/" 2>/dev/null
     [[ -f "$_rtd/server_public.key" ]] && cp -a "$_rtd/server_public.key" "$AWG_DIR/" 2>/dev/null
+    # Header protection key file: as in the snapshot. Missing there - restore put
+    # it in place, so it goes; present - it comes back with mode 600, without
+    # following a link at the destination.
+    local _hpk
+    if _hpk=$(awg_hpk_path 2>/dev/null); then
+        if [[ -f "$_rtd/server_hpk.key" ]]; then
+            if ! ( umask 077; cp --remove-destination "$_rtd/server_hpk.key" "$_hpk" ) 2>/dev/null \
+                || ! chmod 600 "$_hpk" 2>/dev/null; then
+                log_error "Rollback: the header protection key was not returned to $_hpk. It is in the snapshot $_snap."
+            fi
+        elif [[ -f "$_hpk" || -L "$_hpk" ]]; then
+            rm -f "$_hpk" 2>/dev/null || log_error "Rollback: could not remove $_hpk placed by restore."
+        fi
+    fi
     # Expiry stamps are brought back to exactly the snapshot. restore may have
     # put stamps from the archive in place, and such a stamp on a client that
     # was permanent before restore would have cron delete it at the archived
@@ -692,6 +752,25 @@ _restore_do_rollback() {
 _path_has_parent_component() {
     local p="$1"
     [[ "$p" == ".." || "$p" == "../"* || "$p" == *"/../"* || "$p" == *"/.." ]]
+}
+
+# _restore_check_candidate <unpacked backup> : check the restore candidate on ITS
+# paths, in a subshell with CONFIG_FILE, SERVER_CONF_FILE and AWG_DIR overridden,
+# not on the live ones. The key rules are those of awg_hpk_ensure: the marker from
+# the backup init (no init in the backup - the marker stays live, as it does after
+# restore), the key in its awg0.conf and the key file at the backup root agree; a
+# lost file is restored from the config inside the unpacked directory. Then
+# validate_awg_config on the candidate config; the checks print their own reasons.
+_restore_check_candidate() {
+    local td="$1" init
+    init="$td/clients/awgsetup_cfg.init"
+    [[ -f "$init" ]] || init="$CONFIG_FILE"
+    (
+        CONFIG_FILE="$init"
+        SERVER_CONF_FILE="$td/server/$(basename "$SERVER_CONF_FILE")"
+        AWG_DIR="$td"
+        awg_hpk_ensure manage && validate_awg_config
+    )
 }
 
 restore_backup() {
@@ -805,7 +884,7 @@ restore_backup() {
     log "Backing up current config..."
     # --no-prune: the backup selected for restore ($bf) lives in the same
     # backups dir; pruning after the pre-restore snapshot could delete it.
-    if ! _backup_configs_nolock --no-prune; then
+    if ! _backup_configs_nolock --no-prune --snapshot; then
         log_error "Failed to create backup of current configuration."
         return 1
     fi
@@ -901,8 +980,30 @@ restore_backup() {
         log_warn "awg_common.sh is outdated: awg_restore_generation_notice is missing, the generation check on restore was skipped. Update the scripts (section 'How to Update Scripts' in ADVANCED.en.md)."
     fi
 
+    # The whole candidate is checked BEFORE the service stops: the marker, the key
+    # in the config and the key file agree, the config passes validation. A
+    # refusal stops nothing and rewrites nothing.
+    if ! _restore_check_candidate "$td"; then
+        log_error "The backup failed the check (reason above) - restore cancelled, the service was not stopped, no files were changed."
+        return 1
+    fi
+    local _cand_init="$td/clients/awgsetup_cfg.init" _cand_gen _hpk
+    [[ -f "$_cand_init" ]] || _cand_init="$CONFIG_FILE"
+    _cand_gen=$(_awg_generation_from_init "$_cand_init") || _cand_gen=""
+    _hpk=$(awg_hpk_path) || { log_error "AWG_DIR is not set - restore cancelled."; return 1; }
+
     log "Stopping service..."
-    systemctl stop awg-quick@awg0 || log_warn "Service not stopped."
+    if ! systemctl stop awg-quick@awg0; then
+        log_error "Service not stopped - restore cancelled, no files were changed. Check: systemctl status awg-quick@awg0"
+        return 1
+    fi
+    # Device parameters, the header protection key among them, stick on a live
+    # interface, so restore works only by recreating awg0. An interface left
+    # after the stop is a refusal before any file is replaced.
+    if ip link show awg0 >/dev/null 2>&1; then
+        log_error "Interface awg0 is still present after the service stopped - restore cancelled, no files were changed. Take it down (awg-quick down awg0) and run restore again."
+        return 1
+    fi
 
     # From here on destructive ops. All error paths → trap _restore_cleanup → rollback.
     _destructive_ops_started=1
@@ -983,6 +1084,15 @@ restore_backup() {
         fi
         chmod 600 "$AWG_DIR/server_public.key" 2>/dev/null || true
     fi
+    # Header protection key: only for a 3.1 candidate, the file is already
+    # checked against its awg0.conf. Mode 600 from creation, a link at the
+    # destination is replaced rather than written through.
+    if [[ "$_cand_gen" == "3.1" ]]; then
+        if ! ( umask 077; cp --remove-destination "$td/server_hpk.key" "$_hpk" ) || ! chmod 600 "$_hpk"; then
+            log_error "Error copying the header protection key to $_hpk - restore aborted (triggering rollback)."
+            return 1
+        fi
+    fi
 
     if [[ -d "$td/expiry" ]]; then
         log "Restoring expiry data..."
@@ -1049,6 +1159,20 @@ restore_backup() {
 
     # Success — rollback not needed, trap only performs cleanup
     _restore_ok=1
+    # The restored installation is not 3.1, and the key file of the previous 3.1
+    # is still here: it is not deleted but moved to archive/<time>-3.1/, so the
+    # way back to 3.1 stays open. The move is after a successful start, so
+    # rollback never has to undo it.
+    if [[ "$_cand_gen" != "3.1" ]] && [[ -e "$_hpk" || -L "$_hpk" ]]; then
+        local _arch
+        _arch="$AWG_DIR/archive/$(date +%F_%H-%M-%S.%3N)-3.1"
+        if mkdir -p "$AWG_DIR/archive" && chmod 700 "$AWG_DIR/archive" && mkdir -m 700 "$_arch" \
+            && mv -n "$_hpk" "$_arch/" && [[ ! -e "$_hpk" && ! -L "$_hpk" ]]; then
+            log "The header protection key of the previous 3.1 installation moved to $_arch/"
+        else
+            log_warn "Could not move $_hpk to the archive: the ${_cand_gen:-2.0} installation does not use it, the file can be removed by hand."
+        fi
+    fi
     # The restore replaced awg0.conf and recreated the interface, so the
     # device-parameter snapshot has to be taken again: it must describe what is
     # on the live interface NOW, not what was there before the restore.

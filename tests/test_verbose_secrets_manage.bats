@@ -48,9 +48,18 @@ if [[ "\$1" == status ]]; then
     echo "  awg-quick[1]: Line unrecognized: PrivateKey=$SRV_PRIV"
     echo "  Active: failed (Result: exit-code)"
 fi
+# awg0 disappears on stop and comes back on start, as with the real unit:
+# restore refuses to replace files while awg0 is still present after stop.
+[[ "\$1" == stop ]] && : > "$bin/.awg0_down"
+[[ "\$1" == start || "\$1" == restart ]] && rm -f "$bin/.awg0_down"
 exit 0
 EOF
-    printf '#!/usr/bin/env bash\necho "5: awg0: <POINTOPOINT,UP> mtu 1280"\necho "    inet 10.9.9.1/24 scope global awg0"\n' > "$bin/ip"
+    cat > "$bin/ip" <<EOF
+#!/usr/bin/env bash
+[[ "\$*" == *"link show"*awg0* && -e "$bin/.awg0_down" ]] && exit 1
+echo "5: awg0: <POINTOPOINT,UP> mtu 1280"
+echo "    inet 10.9.9.1/24 scope global awg0"
+EOF
     printf '#!/usr/bin/env bash\necho "UNCONN 0 0 0.0.0.0:39743 0.0.0.0:*"\n' > "$bin/ss"
     printf '#!/usr/bin/env bash\necho 1\n' > "$bin/sysctl"
     printf '#!/usr/bin/env bash\necho "amneziawg 155648 0"\n' > "$bin/lsmod"
@@ -217,6 +226,8 @@ for a in "\$@"; do
             exit 0
             ;;
         start|restart) exit 1 ;;
+        # awg0 is gone after stop (see the ip stub in _stubs)
+        stop) : > "$d/bin/.awg0_down"; exit 0 ;;
     esac
 done
 exit 0

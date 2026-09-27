@@ -2027,8 +2027,9 @@ _awg_hpk_file_refuse() {
 #     key; a differing file is refused and left alone;
 #   - a new key is created only in install mode and only while the server config does
 #     not exist yet (first install); never over an existing config.
-# Limits: the live interface is not checked (the key sticks to it), and manage
-# restore is not protected by this check.
+# Limits: the live interface is not checked (the key sticks to it). manage restore
+# applies this check to the unpacked backup rather than to the live paths
+# (_restore_check_candidate), manage backup to a live 3.1 installation.
 awg_hpk_ensure() {
     _awg_xtrace_guard _awg_hpk_ensure_body "$@"
 }

@@ -254,7 +254,12 @@ prepare_backup_sandbox() {
     # v5.21.2: manage_mktempdir_var writes the path to a named var (no $() so
     # the parent's cleanup array registration survives).
     manage_mktempdir_var() { local d; d=$(mktemp -d "$BATS_TMP/mktd-XXXXXX") || return 1; printf -v "$1" '%s' "$d"; }
-    export -f log log_warn log_error log_debug die manage_mktempdir_var
+    # Library functions the backup calls for the header protection key; the
+    # sandbox is a 2.0 installation, so the key branch is not taken. The 3.1
+    # branch runs against the real library in test_awg31_backup_restore.bats.
+    awg_hpk_path() { printf '%s\n' "$AWG_DIR/server_hpk.key"; }
+    _awg_generation_from_init() { echo 2.0; }
+    export -f log log_warn log_error log_debug die manage_mktempdir_var awg_hpk_path _awg_generation_from_init
 }
 
 dynamic_teardown() {
