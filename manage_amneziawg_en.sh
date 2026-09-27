@@ -1244,8 +1244,15 @@ modify_client() {
             # check_dependencies calls _check_common_compat BEFORE the command
             # dispatch and dies on a MAJOR.MINOR mismatch, so "a fresh manage
             # next to an old library" never reaches this point.
+            # With CLIENT_IPV6_DIRECT=1 a mode-2 list without IPv6 is the chosen setup,
+            # nothing to warn about; 0.0.0.0/0 needs ::/0 even with the key (iOS).
+            # The init file is not loaded before modify, so the key is read here, in a subshell.
+            local _v6d=""
+            if [[ "$param" == "AllowedIPs" && "$value" != *:* ]] && ! _aip_has_token "$value" "0.0.0.0/0"; then
+                _v6d=$(safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${CLIENT_IPV6_DIRECT:-}")
+            fi
             if [[ "$param" == "AllowedIPs" && "$value" != *:* ]] \
-               && _is_full_tunnel "$value"; then
+               && _is_full_tunnel "$value" && ! CLIENT_IPV6_DIRECT="$_v6d" _client_ipv6_direct; then
                 log_warn "AllowedIPs of client '$name' is a full tunnel without an IPv6 route - the device's IPv6 will go around the tunnel with its real address. To restore the route: regen '$name'."
             fi
             ;;

@@ -58,11 +58,11 @@ AWG2_PIN_TAG="v1.0.20260725"
 AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
 
 # CLI flags
-UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PREBUILT=0; KEEP_PACKAGES=""
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""; CLI_SSH_PORT_SET=0
-CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PREBUILT=0; CLI_KEEP_PACKAGES=0
+CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PREBUILT=0; CLI_CLIENT_IPV6_DIRECT=0; CLI_KEEP_PACKAGES=0
 CLI_ALLOW_IPV6_TUNNEL=0
 CLI_ISOLATION="default"
 CLI_SERVER_NAME=""
@@ -295,6 +295,7 @@ while [[ $# -gt 0 ]]; do
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
         --no-cps)        NO_CPS=1; CLI_NO_CPS=1 ;;
         --no-prebuilt)   NO_PREBUILT=1; CLI_NO_PREBUILT=1 ;;
+        --client-ipv6-direct) CLI_CLIENT_IPV6_DIRECT=1 ;;
         --keep-packages) KEEP_PACKAGES=1; CLI_KEEP_PACKAGES=1 ;;
         --force|-f)      FORCE_REINSTALL=1 ;;
         --preset=*)      CLI_PRESET="${1#*=}" ;;
@@ -496,6 +497,8 @@ Options:
   --allow-ipv6-tunnel   Enable dual-stack IPv6 inside the tunnel (ULA, opt-in)
   --route-all           'All traffic' mode (0.0.0.0/0) - chosen by default
   --route-amnezia       'Amnezia' mode - public IPv4 into the tunnel, private networks outside
+  --client-ipv6-direct  With --route-amnezia: the device's IPv6 goes directly, around
+                        the VPN (IPv4 through the tunnel, the LAN stays reachable)
   --route-custom=NETS   'Custom' mode: only the listed networks go into the tunnel
   --isolation=on|off    Isolate VPN clients from each other (default on).
                         off: the tunnel subnet is added to client AllowedIPs
@@ -1722,7 +1725,7 @@ safe_load_config() {
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
                 AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PREBUILT|KEEP_PACKAGES|\
-                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS)
+                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT)
                     export "$key=$value"
                     ;;
                 *)
@@ -3151,6 +3154,37 @@ _user_snaps() {
 # questions already live: everything after that should run without a human present.
 # The answer is stored in awgsetup_cfg.init so a repeated or resumed run does not ask
 # again and, more importantly, does not read silence as consent.
+# configure_client_ipv6_direct : the CLIENT_IPV6_DIRECT key (flag --client-ipv6-direct,
+# PR #260) - IPv4 through the tunnel, the device's IPv6 directly, the LAN reachable.
+# Mode 2 only: in mode 1 iOS AmneziaVPN does not bring the tunnel up without ::/0,
+# and in mode 3 there is no IPv6 route anyway. With --allow-ipv6-tunnel the key
+# contradicts itself. The flag switches it on, a saved value survives runs; to
+# switch it off write CLIENT_IPV6_DIRECT=0 in init. The value from the file is
+# checked BEFORE the flag: otherwise the flag would overwrite a broken line with 1
+# and hide it (as with NO_PREBUILT).
+configure_client_ipv6_direct() {
+    case "${CLIENT_IPV6_DIRECT:-0}" in
+        0|1) ;;
+        *) die "CLIENT_IPV6_DIRECT='$CLIENT_IPV6_DIRECT' in $CONFIG_FILE is not valid (use 0 or 1)." ;;
+    esac
+    [[ "${CLI_CLIENT_IPV6_DIRECT:-0}" -eq 1 ]] && CLIENT_IPV6_DIRECT=1
+    if [[ "${CLIENT_IPV6_DIRECT:-0}" -ne 1 ]]; then
+        CLIENT_IPV6_DIRECT=0
+        return 0
+    fi
+    if [[ "${ALLOW_IPV6_TUNNEL:-0}" -eq 1 ]]; then
+        die "--client-ipv6-direct does not go with --allow-ipv6-tunnel: the first sends the devices' IPv6 around the tunnel, the second carries it through the tunnel. Pick one; a saved key is switched off with CLIENT_IPV6_DIRECT=0 in $CONFIG_FILE."
+    fi
+    case "${ALLOWED_IPS_MODE:-}" in
+        1) die "--client-ipv6-direct works in mode 2 (--route-amnezia). In mode 1 iOS AmneziaVPN needs the ::/0 route: without it the tunnel does not come up. Run with --route-amnezia or switch the key off with CLIENT_IPV6_DIRECT=0 in $CONFIG_FILE." ;;
+        3) log_warn "--client-ipv6-direct changes nothing in mode 3: a custom list of networks gets no IPv6 route anyway." ;;
+    esac
+    log_warn "CLIENT_IPV6_DIRECT=1: the IPv6 of client devices will go around the VPN, directly through the provider. Sites opened over IPv6 will see the device's real address, and a resource blocked by the provider and reachable over IPv6 stays blocked."
+    if [[ "${config_exists:-0}" -eq 1 ]]; then
+        log_warn "Clients already issued lose the IPv6 route with a plain regen: sudo bash $MANAGE_SCRIPT_PATH regen, then import the profiles again."
+    fi
+}
+
 configure_package_cleanup() {
     [[ "$NO_TWEAKS" -eq 1 ]] && return 0
     # The decision already exists: a command line flag or a record from an earlier run.
@@ -4809,6 +4843,7 @@ initialize_setup() {
     if [[ "${CLI_NO_PREBUILT:-0}" -eq 1 ]]; then
         NO_PREBUILT=1
     fi
+    configure_client_ipv6_direct
     # CLIENT_DNS is written to init in single quotes: a character outside the IP
     # address set would break the file. The shape is checked here too; awg_client_dns
     # does the full check at step 6.
@@ -4868,6 +4903,8 @@ export NO_TWEAKS=${NO_TWEAKS}
 export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
 export NO_CPS=${NO_CPS}
 export NO_PREBUILT=${NO_PREBUILT:-0}
+# Client devices' IPv6 directly, around the tunnel (mode 2 only). 0 - through the tunnel.
+export CLIENT_IPV6_DIRECT=${CLIENT_IPV6_DIRECT:-0}
 # DNS for NEW clients (IPs separated by commas). Empty means 1.1.1.1, 1.0.0.1.
 export CLIENT_DNS='${CLIENT_DNS:-}'
 export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
@@ -4961,7 +4998,7 @@ EOF
         || [[ "${CLI_ALLOW_IPV6_TUNNEL:-0}" -eq 1 ]] || [[ -n "${CLI_PRESET:-}" ]] \
         || [[ -n "${CLI_JC:-}" ]] || [[ -n "${CLI_JMIN:-}" ]] || [[ -n "${CLI_JMAX:-}" ]] \
         || [[ "${CLI_ISOLATION:-default}" != "default" ]] \
-        || [[ "${CLI_NO_CPS:-0}" -eq 1 ]]; }; then
+        || [[ "${CLI_NO_CPS:-0}" -eq 1 ]] || [[ "${CLI_CLIENT_IPV6_DIRECT:-0}" -eq 1 ]]; }; then
         log_warn "Unfinished install (step $current_step) + configuration CLI flags: rolling back to step 4 so the firewall and configs are regenerated with the new values."
         current_step=4
         update_state 4

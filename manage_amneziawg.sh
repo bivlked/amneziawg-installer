@@ -1222,8 +1222,15 @@ modify_client() {
             # check_dependencies зовёт _check_common_compat ДО диспетчера
             # команд, и расхождение MAJOR.MINOR приводит к die, поэтому «свежий
             # manage рядом со старой библиотекой» до этого места не доживает.
+            # С CLIENT_IPV6_DIRECT=1 список режима 2 без IPv6 - выбранная схема, и
+            # предупреждать о ней нечего; у 0.0.0.0/0 ::/0 нужен и с ключом (iOS).
+            # init до modify не загружен, поэтому ключ читается здесь, в подоболочке.
+            local _v6d=""
+            if [[ "$param" == "AllowedIPs" && "$value" != *:* ]] && ! _aip_has_token "$value" "0.0.0.0/0"; then
+                _v6d=$(safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${CLIENT_IPV6_DIRECT:-}")
+            fi
             if [[ "$param" == "AllowedIPs" && "$value" != *:* ]] \
-               && _is_full_tunnel "$value"; then
+               && _is_full_tunnel "$value" && ! CLIENT_IPV6_DIRECT="$_v6d" _client_ipv6_direct; then
                 log_warn "AllowedIPs клиента '$name' задан полным туннелем без IPv6-маршрута - IPv6 устройства пойдёт мимо туннеля со своим настоящим адресом. Вернуть маршрут: regen '$name'."
             fi
             ;;

@@ -443,6 +443,11 @@ _aip_wants_v6_sink() {
 #
 # Идемпотентность обязательна: regen выполняется многократно и в том числе
 # поверх dual-stack клиента, чья IPv6-часть уже сформирована.
+#
+# CLIENT_IPV6_DIRECT=1 (флаг установки --client-ipv6-direct) оставляет списку
+# режима 2 только IPv4: IPv6 устройства идёт напрямую, мимо туннеля (PR #260).
+# 0.0.0.0/0 свой ::/0 сохраняет и с ключом: без него iOS AmneziaVPN не поднимает
+# туннель, установщик такое сочетание не допускает.
 _append_ipv6_full_tunnel_route() {
     local list="$1"
     # Решение принимается по нормализованной копии, поэтому и печатать надо её.
@@ -457,6 +462,8 @@ _append_ipv6_full_tunnel_route() {
         if _is_full_tunnel "$list"; then
             if _aip_has_token "$list" "0.0.0.0/0"; then
                 printf '%s, ::/0' "$list"
+            elif _client_ipv6_direct; then
+                printf '%s' "$list"
             else
                 printf '%s, 2000::/3' "$list"
             fi
@@ -466,6 +473,48 @@ _append_ipv6_full_tunnel_route() {
         return 0
     fi
     printf '%s' "$list"
+}
+
+# _client_ipv6_direct : включён ли CLIENT_IPV6_DIRECT (IPv6 клиентов напрямую).
+# Допустимо 0 или 1. Другое значение называется и читается как 0: маршрут
+# остаётся, то есть ошибка в ключе не выпускает IPv6 мимо туннеля молча.
+_client_ipv6_direct() {
+    case "${CLIENT_IPV6_DIRECT:-0}" in
+        1) return 0 ;;
+        0) return 1 ;;
+        *)
+            log_warn "CLIENT_IPV6_DIRECT='${CLIENT_IPV6_DIRECT}' в ${CONFIG_FILE:-awgsetup_cfg.init} не валиден (допустимо 0 или 1) - IPv6-маршрут клиентам оставляю."
+            return 1
+            ;;
+    esac
+}
+
+# _aip_drop_our_v6 <список клиента> <список сервера> : при CLIENT_IPV6_DIRECT=1
+# печатает список без НАШЕГО IPv6-маршрута, иначе список как есть. Наш - это
+# ровно один IPv6-элемент, 2000::/3 (с v5.36.2) или ::/0 (v5.31.0-v5.36.1), рядом
+# с IPv4-частью, совпадающей со списком сервера набором маршрутов, а сам список
+# сервера - полный туннель без 0.0.0.0/0 (режим 2). Всё остальное - выбор человека
+# (--allowed-ips, modify), его regen не трогает. Порядок IPv4-части сохраняется.
+_aip_drop_our_v6() {
+    local list="$1" base="$2" toks v6 mine srv tok out="" rc
+    toks=$(_aip_tokens "$list") || return 1
+    # Код 1 у grep - «строк нет», это ответ; 2 и выше - отказ.
+    v6=$(grep -F ':' <<< "$toks"); rc=$?
+    (( rc > 1 )) && return 1
+    if [[ ( "$v6" != "::/0" && "$v6" != "2000::/3" ) || -z "$base" || "$base" == *:* ]] \
+       || _aip_has_token "$base" "0.0.0.0/0" || ! _is_full_tunnel "$base"; then
+        printf '%s' "$list"
+        return 0
+    fi
+    mine=$(grep -vF ':' <<< "$toks"); rc=$?
+    (( rc > 1 )) && return 1
+    [[ -n "$mine" ]] || { printf '%s' "$list"; return 0; }
+    srv=$(_aip_tokens "$base" | LC_ALL=C sort -u) || return 1
+    [[ "$(LC_ALL=C sort -u <<< "$mine")" == "$srv" ]] || { printf '%s' "$list"; return 0; }
+    while IFS= read -r tok; do
+        out+="${out:+, }${tok}"
+    done <<< "$mine"
+    printf '%s' "$out"
 }
 
 # _aip_migrate_legacy_v6 <список клиента> <список сервера> : печатает список,
@@ -1173,10 +1222,10 @@ ensure_amneziawg_kernel_module() {
 # Парсит только разрешённые ключи формата KEY=VALUE или export KEY=VALUE
 safe_load_config() {
     local config_file="${1:-$CONFIG_FILE}"
-    # CLIENT_DNS живёт только в файле: без сброса переменная из окружения root
-    # (CLIENT_DNS=... manage add) молча ушла бы в новых клиентов на установках,
-    # где строки в файле ещё нет.
-    unset CLIENT_DNS
+    # CLIENT_DNS и CLIENT_IPV6_DIRECT живут только в файле: без сброса переменная
+    # из окружения root (CLIENT_DNS=... manage add) молча ушла бы в новых клиентов
+    # на установках, где строки в файле ещё нет.
+    unset CLIENT_DNS CLIENT_IPV6_DIRECT
     if [[ ! -f "$config_file" ]]; then return 1; fi
 
     local line key value first_line=1
@@ -1204,7 +1253,7 @@ safe_load_config() {
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
                 AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
-                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS)
+                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT)
                     export "$key=$value"
                     ;;
                 *)
@@ -4612,7 +4661,20 @@ regenerate_client() {
         # Наш прежний ::/0 у списка режима 2 (v5.31.0-v5.36.1) отрезает на
         # Windows локальную сеть; обычный regen должен доставить замену. У
         # dual-stack клиента ::/0 - его собственная схема, её не трогаем.
-        if [[ -z "$client_ipv6" ]]; then
+        # С CLIENT_IPV6_DIRECT=1 IPv6 устройства идёт напрямую: наш маршрут
+        # снимается, а замена ::/0 на 2000::/3 и её предупреждения не нужны.
+        if [[ -z "$client_ipv6" ]] && _client_ipv6_direct; then
+            _aip_new=$(_aip_drop_our_v6 "$current_allowed_ips" "${ALLOWED_IPS:-}") && [[ -n "$_aip_new" ]] || {
+                log_error "Не удалось вычислить AllowedIPs для клиента '$name'. Конфиг уже перегенерирован из текущего режима маршрутизации, но индивидуальные настройки НЕ восстановлены - проверьте $AWG_DIR/${name}.conf."
+                exec {lock_fd}>&-
+                unset CLIENT_PSK
+                return 1
+            }
+            if [[ "$_aip_new" != "$current_allowed_ips" ]]; then
+                log "Клиент '$name': IPv6-маршрут снят (CLIENT_IPV6_DIRECT=1) - IPv6 устройства идёт напрямую, мимо туннеля."
+                current_allowed_ips="$_aip_new"
+            fi
+        elif [[ -z "$client_ipv6" ]]; then
             _aip_new=$(_aip_migrate_legacy_v6 "$current_allowed_ips" "${ALLOWED_IPS:-}") && [[ -n "$_aip_new" ]] || {
                 log_error "Не удалось вычислить AllowedIPs для клиента '$name'. Конфиг уже перегенерирован из текущего режима маршрутизации, но индивидуальные настройки НЕ восстановлены - проверьте $AWG_DIR/${name}.conf."
                 exec {lock_fd}>&-

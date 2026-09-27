@@ -55,11 +55,11 @@ AWG2_PIN_TAG="v1.0.20260725"
 AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
 
 # Флаги CLI
-UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PREBUILT=0; KEEP_PACKAGES=""
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""; CLI_SSH_PORT_SET=0
-CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PREBUILT=0; CLI_KEEP_PACKAGES=0
+CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PREBUILT=0; CLI_CLIENT_IPV6_DIRECT=0; CLI_KEEP_PACKAGES=0
 CLI_ALLOW_IPV6_TUNNEL=0
 CLI_ISOLATION="default"
 CLI_SERVER_NAME=""
@@ -282,6 +282,7 @@ while [[ $# -gt 0 ]]; do
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
         --no-cps)        NO_CPS=1; CLI_NO_CPS=1 ;;
         --no-prebuilt)   NO_PREBUILT=1; CLI_NO_PREBUILT=1 ;;
+        --client-ipv6-direct) CLI_CLIENT_IPV6_DIRECT=1 ;;
         --keep-packages) KEEP_PACKAGES=1; CLI_KEEP_PACKAGES=1 ;;
         --force|-f)      FORCE_REINSTALL=1 ;;
         --preset=*)      CLI_PRESET="${1#*=}" ;;
@@ -480,6 +481,8 @@ show_help() {
   --allow-ipv6-tunnel   Включить dual-stack IPv6 внутри туннеля (ULA, opt-in)
   --route-all           Режим 'Весь трафик' (0.0.0.0/0) - выбирается по умолчанию
   --route-amnezia       Режим 'Amnezia' - публичный IPv4 в туннель, частные сети мимо
+  --client-ipv6-direct  С --route-amnezia: IPv6 устройств идёт напрямую, мимо VPN
+                        (IPv4 через туннель, локальная сеть доступна)
   --route-custom=СЕТИ   Режим 'Пользовательский': в туннель идут только указанные сети
   --isolation=on|off    Изоляция клиентов VPN друг от друга (по умолчанию on).
                         off: подсеть туннеля добавляется в AllowedIPs клиентов
@@ -1662,7 +1665,7 @@ safe_load_config() {
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
                 AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PREBUILT|KEEP_PACKAGES|\
-                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS)
+                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT)
                     export "$key=$value"
                     ;;
                 *)
@@ -3064,6 +3067,36 @@ _user_snaps() {
 # задаются остальные вопросы: дальше установка должна идти без участия человека.
 # Ответ сохраняется в awgsetup_cfg.init, чтобы повторный или возобновлённый запуск не
 # спрашивал заново и, главное, не считал молчание согласием.
+# configure_client_ipv6_direct : ключ CLIENT_IPV6_DIRECT (флаг --client-ipv6-direct,
+# PR #260) - IPv4 через туннель, IPv6 устройства напрямую, локальная сеть доступна.
+# Только режим 2: в режиме 1 без ::/0 iOS AmneziaVPN не поднимает туннель, в режиме
+# 3 IPv6-маршрута нет и так. С --allow-ipv6-tunnel ключ противоречит сам себе.
+# Флаг включает, сохранённое значение держится между запусками; снять - строка
+# CLIENT_IPV6_DIRECT=0 в init. Значение из файла проверяется ДО флага: иначе флаг
+# перезаписал бы испорченную строку единицей и спрятал её (как у NO_PREBUILT).
+configure_client_ipv6_direct() {
+    case "${CLIENT_IPV6_DIRECT:-0}" in
+        0|1) ;;
+        *) die "CLIENT_IPV6_DIRECT='$CLIENT_IPV6_DIRECT' в $CONFIG_FILE не валиден (допустимо 0 или 1)." ;;
+    esac
+    [[ "${CLI_CLIENT_IPV6_DIRECT:-0}" -eq 1 ]] && CLIENT_IPV6_DIRECT=1
+    if [[ "${CLIENT_IPV6_DIRECT:-0}" -ne 1 ]]; then
+        CLIENT_IPV6_DIRECT=0
+        return 0
+    fi
+    if [[ "${ALLOW_IPV6_TUNNEL:-0}" -eq 1 ]]; then
+        die "--client-ipv6-direct несовместим с --allow-ipv6-tunnel: первый выпускает IPv6 устройств мимо туннеля, второй ведёт его через туннель. Выберите одно; сохранённый ключ снимается строкой CLIENT_IPV6_DIRECT=0 в $CONFIG_FILE."
+    fi
+    case "${ALLOWED_IPS_MODE:-}" in
+        1) die "--client-ipv6-direct работает в режиме 2 (--route-amnezia). В режиме 1 маршрут ::/0 нужен iOS AmneziaVPN: без него туннель не поднимается. Запустите с --route-amnezia или снимите ключ строкой CLIENT_IPV6_DIRECT=0 в $CONFIG_FILE." ;;
+        3) log_warn "--client-ipv6-direct в режиме 3 ничего не меняет: собственный список сетей IPv6-маршрута и так не получает." ;;
+    esac
+    log_warn "CLIENT_IPV6_DIRECT=1: IPv6 устройств клиентов пойдёт мимо VPN, напрямую через провайдера. Сайты, открытые по IPv6, увидят настоящий адрес устройства, а ресурс, заблокированный у провайдера и доступный по IPv6, останется заблокированным."
+    if [[ "${config_exists:-0}" -eq 1 ]]; then
+        log_warn "Выданным клиентам IPv6-маршрут снимет обычный перевыпуск: sudo bash $MANAGE_SCRIPT_PATH regen, затем профили нужно импортировать заново."
+    fi
+}
+
 configure_package_cleanup() {
     [[ "$NO_TWEAKS" -eq 1 ]] && return 0
     # Решение уже есть: флаг командной строки или запись из прошлого запуска.
@@ -4700,6 +4733,7 @@ initialize_setup() {
     if [[ "${CLI_NO_PREBUILT:-0}" -eq 1 ]]; then
         NO_PREBUILT=1
     fi
+    configure_client_ipv6_direct
     # CLIENT_DNS пишется в init в одинарных кавычках: символ вне набора IP-адресов
     # сломал бы файл. Форму проверяем тут же, полную проверку делает awg_client_dns
     # на шаге 6.
@@ -4759,6 +4793,8 @@ export NO_TWEAKS=${NO_TWEAKS}
 export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
 export NO_CPS=${NO_CPS}
 export NO_PREBUILT=${NO_PREBUILT:-0}
+# IPv6 устройств клиентов напрямую, мимо туннеля (только режим 2). 0 - через туннель.
+export CLIENT_IPV6_DIRECT=${CLIENT_IPV6_DIRECT:-0}
 # DNS для НОВЫХ клиентов (IP через запятую). Пусто - 1.1.1.1, 1.0.0.1.
 export CLIENT_DNS='${CLIENT_DNS:-}'
 export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
@@ -4852,7 +4888,7 @@ EOF
         || [[ "${CLI_ALLOW_IPV6_TUNNEL:-0}" -eq 1 ]] || [[ -n "${CLI_PRESET:-}" ]] \
         || [[ -n "${CLI_JC:-}" ]] || [[ -n "${CLI_JMIN:-}" ]] || [[ -n "${CLI_JMAX:-}" ]] \
         || [[ "${CLI_ISOLATION:-default}" != "default" ]] \
-        || [[ "${CLI_NO_CPS:-0}" -eq 1 ]]; }; then
+        || [[ "${CLI_NO_CPS:-0}" -eq 1 ]] || [[ "${CLI_CLIENT_IPV6_DIRECT:-0}" -eq 1 ]]; }; then
         log_warn "Незавершённая установка (шаг $current_step) + CLI-параметры конфигурации: возврат к шагу 4, чтобы firewall и конфиги были перегенерированы с новыми значениями."
         current_step=4
         update_state 4
