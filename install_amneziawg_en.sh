@@ -32,7 +32,7 @@ BOOT_CRITICAL_SNAPSHOT_FILE="$AWG_DIR/boot-critical.pkgs"
 LOG_FILE="$AWG_DIR/install_amneziawg.log"
 KEYS_DIR="$AWG_DIR/keys"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
-# Kernel network devices: _awg_install_state sees a live awg0 here without ip or netlink.
+# Kernel network devices: a visible awg0 here adds a trace in _awg_install_state; its absence proves nothing.
 SYS_NET_DIR="/sys/class/net"
 AWG_BRANCH="${AWG_BRANCH:-v${SCRIPT_VERSION}}"
 COMMON_SCRIPT_URL="https://raw.githubusercontent.com/bivlked/amneziawg-installer/${AWG_BRANCH}/awg_common_en.sh"
