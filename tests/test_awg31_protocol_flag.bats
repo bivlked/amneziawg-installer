@@ -54,7 +54,8 @@ build_harness() {
         echo 'log() { echo "LOG: $*"; }'
         echo 'log_warn() { echo "WARN: $*"; }'
         echo 'SCRIPT_VERSION="0.0.0-test"'
-        echo 'CONFIG_FILE="/tmp/awgsetup_cfg.init"'
+        # init under the test directory: the refusal text depends on whether it exists
+        echo "CONFIG_FILE='$TEST_DIR/awgsetup_cfg.init'"
         echo "PROTOCOL_DEFAULT=\"$(declared_default "$script")\""
         func_from "$script" _awg31_host_arch
         func_from "$script" _awg31_blocker_message
@@ -74,11 +75,12 @@ build_harness() {
 source "$HARNESS"
 _awg31_resolve_protocol "$1"
 echo "RESULT: $AWG_PROTOCOL"
+echo "SWITCHED: ${AWG_GEN_SWITCHED-unset}"
 RUNNER
 }
 
 # Run _awg31_resolve_protocol and print the generation it settled on.
-# Arg $1: config_exists (0 or 1). Env: CLI_PROTOCOL, AWG_PROTOCOL, BLOCKER_CODE.
+# Arg $1: install state (0 new, 1 existing, 2 unfinished). Env: CLI_PROTOCOL, AWG_PROTOCOL, BLOCKER_CODE.
 run_resolve() {
     HARNESS="$TEST_DIR/harness.sh" run bash "$TEST_DIR/run.sh" "$1"
 }
@@ -345,6 +347,9 @@ run_argparse() {
     # Carrying on with the old generation would hand the operator something OTHER
     # than what they asked for, and the warning would drown in a long install log.
     # The refusal names both generations so the message is actionable on its own.
+    # (With an init: without one the marker is only how a missing file reads,
+    # and the refusal says that instead - a separate test below.)
+    : > "$TEST_DIR/awgsetup_cfg.init"
     CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" run_resolve 1
     [ "$status" -eq 1 ]
     [[ "$output" == *"DIE:"* ]]
@@ -423,6 +428,126 @@ run_argparse() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"DIE:"* ]]
     [ ! -s "$GATE_LOG" ]
+}
+
+@test "an install state outside 0, 1 and 2 is an internal error" {
+    local script st
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        for st in 3 -1 x " 2"; do
+            CLI_PROTOCOL="" CLI_PROTOCOL_SET=0 AWG_PROTOCOL="2.0" run_resolve "$st"
+            [ "$status" -eq 1 ] || { echo "$script: state [$st] accepted"; return 1; }
+            [[ "$output" == *"DIE:"* ]]
+        done
+    done
+}
+
+# ------------------------------------------ an install that has not reached step 6
+# Every case here runs on both installers: the twins are edited by hand, and a
+# resolver change made in one of them only would otherwise pass unnoticed.
+
+@test "without the flag an existing or unfinished install keeps its marker" {
+    # 🔴 A resume after reboot never repeats the flag. Reading the absent flag
+    # as "take the default" would turn an unfinished 3.1 install into the
+    # default generation behind the operator's back. 9.9 is not the default,
+    # so the marker has to be kept for this to pass.
+    local script st
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        for st in 1 2; do
+            CLI_PROTOCOL="" CLI_PROTOCOL_SET=0 AWG_PROTOCOL="9.9" run_resolve "$st"
+            [ "$status" -eq 0 ]
+            [[ "$output" == *"RESULT: 9.9"* ]] || { echo "$script state $st: $output"; return 1; }
+            [[ "$output" == *"SWITCHED: 0"* ]]
+        done
+    done
+}
+
+@test "a resume of an unfinished 3.1 install without the flag goes through the gate" {
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        CLI_PROTOCOL="" CLI_PROTOCOL_SET=0 AWG_PROTOCOL="3.1" BLOCKER_CODE="not_implemented_yet" run_resolve 2
+        [ "$status" -eq 1 ]
+        [ "$(cat "$GATE_LOG")" = "pre" ] || { echo "$script: gate log [$(cat "$GATE_LOG")]"; return 1; }
+        [[ "$output" == *"--protocol=2.0"* ]]
+    done
+}
+
+@test "an unfinished 3.1 install switches to 2.0 by the flag, without the gate" {
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        CLI_PROTOCOL="2.0" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="3.1" run_resolve 2
+        [ "$status" -eq 0 ] || { echo "$script: $output"; return 1; }
+        [[ "$output" == *"RESULT: 2.0"* ]]
+        [[ "$output" == *"SWITCHED: 1"* ]] || { echo "$script: $output"; return 1; }
+        [[ "$output" == *"WARN:"*"3.1"*"2.0"* ]] || { echo "$script: no loud warning naming both: $output"; return 1; }
+        [ ! -s "$GATE_LOG" ]
+    done
+}
+
+@test "an unfinished 2.0 install switches to 3.1 by the flag and meets the gate" {
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" BLOCKER_CODE="" run_resolve 2
+        [ "$status" -eq 0 ] || { echo "$script: $output"; return 1; }
+        [[ "$output" == *"RESULT: 3.1"* ]]
+        [[ "$output" == *"SWITCHED: 1"* ]] || { echo "$script: $output"; return 1; }
+        [ "$(cat "$GATE_LOG")" = "pre" ]
+    done
+}
+
+@test "the same generation on an unfinished install is not a switch" {
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        CLI_PROTOCOL="2.0" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" run_resolve 2
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"SWITCHED: 0"* ]] || { echo "$script: $output"; return 1; }
+        [[ "$output" != *"WARN:"* ]]
+    done
+}
+
+@test "the switch flag never leaks in from the environment" {
+    local script st
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        for st in 0 1 2; do
+            AWG_GEN_SWITCHED=1 CLI_PROTOCOL="" CLI_PROTOCOL_SET=0 AWG_PROTOCOL="2.0" run_resolve "$st"
+            [[ "$output" == *"SWITCHED: 0"* ]] || { echo "$script state $st: $output"; return 1; }
+        done
+    done
+}
+
+@test "the refusal on an existing install names the uninstall path with the flag asked for" {
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        : > "$TEST_DIR/awgsetup_cfg.init"
+        CLI_PROTOCOL="2.0" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="3.1" run_resolve 1
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"--uninstall"* ]] || { echo "$script: $output"; return 1; }
+        [[ "$output" == *"--protocol=2.0"* ]] || { echo "$script: $output"; return 1; }
+        [[ "$output" != *"RESULT:"* ]]
+    done
+}
+
+@test "an existing install without its init says so instead of quoting a marker" {
+    # State 1 also covers traces of an install whose init is gone. The marker
+    # then reads as 2.0 only because the file is absent, and quoting it as
+    # "marked 2.0 in the init" would describe a file that does not exist.
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        rm -f "$TEST_DIR/awgsetup_cfg.init"
+        CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" run_resolve 1
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"--uninstall"* ]] || { echo "$script: $output"; return 1; }
+        [[ "$output" != *"AWG_PROTOCOL"* ]] || { echo "$script quotes a marker of a missing file: $output"; return 1; }
+        [ ! -s "$GATE_LOG" ]
+    done
 }
 
 # -------------------------------------------------------- argument parsing
@@ -589,7 +714,7 @@ run_step3() {
     local script
     for script in "$INSTALL_RU" "$INSTALL_EN"; do
         sed -n '/^initialize_setup() {/,/^}/p' "$script" \
-            | grep -q '_awg31_resolve_protocol "\$config_exists"' \
+            | grep -q '_awg31_resolve_protocol "\$install_state"' \
             || { echo "no resolver call inside initialize_setup of $script"; return 1; }
     done
 }

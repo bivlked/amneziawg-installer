@@ -296,19 +296,18 @@ render_init() {
     [ "$output" = "2.0" ]
 }
 
-@test "installer RU/EN: a 3.1 marker is refused while the 3.1 path is closed" {
-    local f body assign_line guard_line
+@test "installer RU/EN: the marker is read before the generation is resolved" {
+    # Step 0 no longer refuses a 3.1 marker by itself: the environment gate in
+    # the resolver decides (and answers not_implemented_yet until the 3.1 path
+    # opens). What must hold is the order - the resolver keeps or compares the
+    # marker, so it has to be read first.
+    local f body assign_line resolve_line
     for f in "$INSTALL_RU" "$INSTALL_EN"; do
         body=$(initialize_setup_body "$f")
         assign_line=$(echo "$body" | grep -n 'AWG_PROTOCOL=\$(awg_installed_protocol "\$CONFIG_FILE") || die ' | head -1 | cut -d: -f1)
-        guard_line=$(echo "$body" | grep -n '^[[:space:]]*if \[\[ "\$AWG_PROTOCOL" == "3.1" \]\]; then$' | head -1 | cut -d: -f1)
-        [ -n "$guard_line" ] || { echo "$f: no 3.1 refusal"; false; }
-        [ "$guard_line" -gt "$assign_line" ] || { echo "$f: refusal before the assignment"; false; }
-        echo "$body" | sed -n "$((guard_line+1))p" | grep -q '^[[:space:]]*die "' || { echo "$f: refusal does not die"; false; }
-        # The refusal speaks about this version only and does not send the
-        # reader to a version "that supports 3.1", which it cannot promise.
-        echo "$body" | sed -n "$((guard_line+1))p" | grep -q '2\.0' || { echo "$f: refusal does not say this version does 2.0"; false; }
-        ! echo "$body" | sed -n "$((guard_line+1))p" | grep -qiE 'поддерживает 3\.1|supports 3\.1' || { echo "$f: refusal points to a version that supports 3.1"; false; }
+        resolve_line=$(echo "$body" | grep -n '_awg31_resolve_protocol "\$install_state"' | head -1 | cut -d: -f1)
+        [ -n "$assign_line" ] && [ -n "$resolve_line" ] || { echo "$f: assign=$assign_line resolve=$resolve_line"; false; }
+        [ "$resolve_line" -gt "$assign_line" ] || { echo "$f: resolver before the marker is read"; false; }
     done
 }
 
@@ -390,11 +389,13 @@ initialize_setup_body() {
 }
 
 @test "installer RU/EN: nothing else in the whole installer assigns AWG_PROTOCOL" {
-    # Exactly five lines may assign the marker: the hard reset, the guarded
+    # Exactly six lines may assign the marker: the hard reset, the guarded
     # assignment from the function, the heredoc line that writes it back, and
-    # the two lines in _awg31_resolve_protocol that settle the generation of a
-    # NEW install - one from the flag, one from the phase default. The last two
-    # were added with the --protocol flag; they are matched EXACTLY, so the
+    # the three lines in _awg31_resolve_protocol - the generation of a NEW
+    # install from the flag and from the phase default, and the flag switching
+    # an UNFINISHED install (one that has not reached step 6; the flag line is
+    # the same text, so it counts twice). The resolver lines are matched
+    # EXACTLY, so the
     # guard still fails on any other assignment. Widening this test is the
     # deliberate part of adding a writer: the count going up must be noticed.
     # The printf -v pattern allows one non-word character before the name: the
@@ -427,7 +428,7 @@ initialize_setup_body() {
                 extra+="$line"$'\n'
             fi
         done < "$f"
-        [ "$n" -eq 5 ] || { echo "$f: expected the 5 known assignment lines, matched $n"; false; }
+        [ "$n" -eq 6 ] || { echo "$f: expected the 6 known assignment lines, matched $n"; false; }
         [ -z "$extra" ] || { echo "$f: extra assignment(s):"; echo "$extra"; false; }
     done
     # The management script must not assign the marker at all (backup/restore
