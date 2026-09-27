@@ -1629,7 +1629,7 @@ _awg31_resolve_protocol() {
     fi
 
     if (( AWG_GEN_SWITCHED )); then
-        log_warn "The installation is not finished (step 6 not started, no profiles yet): the generation changes ${_gen_from} -> ${AWG_PROTOCOL} by the --protocol flag. The obfuscation parameters will be generated anew, and the installation resumes from step 3 (or from an earlier step if it has not got that far)."
+        log_warn "The installation is not finished (step 6 has not produced anything yet: no server keys, no profiles): the generation changes ${_gen_from} -> ${AWG_PROTOCOL} by the --protocol flag. The obfuscation parameters will be generated anew, and the installation resumes from step 3 (or from an earlier step if it has not got that far)."
     fi
 }
 
