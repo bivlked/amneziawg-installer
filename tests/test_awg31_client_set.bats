@@ -105,7 +105,8 @@ _hide() {
     mkdir -p "$TEST_DIR/sysbin"
     IFS=: read -ra dirs <<< "$_ORIG_PATH"
     for d in "${dirs[@]}"; do
-        [[ -d "$d" ]] || continue
+        # Windows directories a WSL PATH carries: thousands of files, none needed
+        [[ -d "$d" && "$d" != /mnt/* ]] || continue
         for f in "$d"/*; do
             [[ -x "$f" && ! -e "$TEST_DIR/sysbin/${f##*/}" ]] || continue
             ln -s "$f" "$TEST_DIR/sysbin/${f##*/}"
@@ -115,6 +116,13 @@ _hide() {
     export PATH="$TEST_DIR/bin:$TEST_DIR/sysbin"
     if command -v "$name" >/dev/null 2>&1; then echo "_hide: $name still reachable" >&2; return 1; fi
     return 0
+}
+
+# The refusal itself, not the "qrencode not found" warning check_dependencies
+# prints for any command once qrencode is hidden: that warning alone would let a
+# failure for some other reason pass.
+_refused_for_qrencode() {
+    [[ "$output$stderr" == *"3.1 profile needs qrencode"* || "$output$stderr" == *"профиля 3.1 нужен qrencode"* ]]
 }
 
 _lib_for() {
@@ -190,7 +198,7 @@ _add_no_qrencode() {
     : > "$TEST_DIR/awg.log"
     _m "$s" add alice
     _fail
-    [[ "$output$stderr" == *qrencode* ]]
+    _refused_for_qrencode
     _no_trace alice
     # refused BEFORE any change: no key was even generated (a create-then-undo
     # would leave no trace either, so this is what tells the two apart)
@@ -230,6 +238,7 @@ _add_20_no_qrencode() {
     _ok
     grep -qxF "#_Name = alice" "$SC"
     [ -f "$A/alice.conf" ]
+    [ ! -e "$A/alice.png" ]
 }
 @test "add on 2.0 without qrencode still creates the client (unchanged)" { _both _add_20_no_qrencode; }
 
@@ -279,7 +288,7 @@ _regen_no_qrencode() {
     _hide qrencode
     _m "$s" regen alice
     _fail
-    [[ "$output$stderr" == *qrencode* ]]
+    _refused_for_qrencode
     [ "$(_files alice)" = "$before" ]
     # refused BEFORE any change: the .conf was never rewritten (a restore from
     # the copy would bring the same bytes back under a new inode)
