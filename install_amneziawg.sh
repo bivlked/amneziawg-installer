@@ -851,7 +851,8 @@ _awg31_module_probe() (
     # --verbose и общий формат журнала.
     _probe_say() {
         if type log_debug >/dev/null 2>&1; then
-            log_debug "проба модуля: $1"
+            # >&2: в manage log_debug пишет в stdout, а stdout пробы - вердикт
+            log_debug "проба модуля: $1" >&2
         else
             printf 'проба модуля: %s\n' "$1" >&2
         fi

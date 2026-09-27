@@ -882,7 +882,8 @@ _awg31_module_probe() (
     # Through log_debug when it exists, to respect --verbose and the log format.
     _probe_say() {
         if type log_debug >/dev/null 2>&1; then
-            log_debug "module probe: $1"
+            # >&2: in manage log_debug writes to stdout, and the probe's stdout is the verdict
+            log_debug "module probe: $1" >&2
         else
             printf 'module probe: %s\n' "$1" >&2
         fi

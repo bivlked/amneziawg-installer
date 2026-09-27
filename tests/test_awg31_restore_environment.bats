@@ -61,8 +61,8 @@ _blocker() {
 @test "restore blocker: codes and their order, both languages" {
     local lib
     for lib in "$R/awg_common.sh" "$R/awg_common_en.sh"; do
-        [ "$(_blocker "$lib" amd64 6.8.0)" = "" ]
-        [ "$(_blocker "$lib" x86_64 6.8.0)" = "" ]
+        [ "$(_blocker "$lib" amd64 6.8.0)" = pass ]
+        [ "$(_blocker "$lib" x86_64 6.8.0)" = pass ]
         [ "$(_blocker "$lib" "" 6.8.0)" = arch_unknown ]
         [ "$(_blocker "$lib" arm64 6.8.0)" = arm ]
         [ "$(_blocker "$lib" aarch64 6.8.0)" = arm ]
@@ -83,7 +83,7 @@ _blocker() {
     local lib code txt seen
     for lib in "$R/awg_common.sh" "$R/awg_common_en.sh"; do
         seen=""
-        for code in arch_unknown arm arch_unsupported kernel tools_old module_line2 module_probe_failed; do
+        for code in arch_unknown arm arch_unsupported kernel tools_old module_line2 module_probe_failed ""; do
             txt=$(timeout 30 bash -c 'log(){ :; }; log_warn(){ :; }; log_error(){ :; }; log_debug(){ :; }; source "$1" >/dev/null 2>&1; _awg31_restore_blocker_reason "$2"' _ "$lib" "$code")
             [ -n "$txt" ] || { echo "$lib: no text for $code"; return 1; }
             [[ "$txt" != *"'$code'"* ]] || { echo "$lib: $code falls to the unknown branch"; return 1; }

@@ -1525,7 +1525,8 @@ _awg31_module_probe() (
     # Through log_debug when it exists, to respect --verbose and the log format.
     _probe_say() {
         if type log_debug >/dev/null 2>&1; then
-            log_debug "module probe: $1"
+            # >&2: in manage log_debug writes to stdout, and the probe's stdout is the verdict
+            log_debug "module probe: $1" >&2
         else
             printf 'module probe: %s\n' "$1" >&2
         fi
@@ -1845,8 +1846,9 @@ _awg31_module_probe() (
     exit 0
 )
 
-# awg31_restore_blocker : empty when the third line will come up on this host;
-# otherwise a reason CODE - the same codes and the same order of checks as the
+# awg31_restore_blocker : pass when the third line will come up on this host;
+# otherwise a reason CODE. Success is an EXPLICIT word, not silence: the empty
+# answer of a killed subprocess must not read as a pass - the same codes and the same order of checks as the
 # post stage of the installer's awg31_environment_blocker, but without
 # not_implemented_yet: restore brings back an existing 3.1 installation, it does
 # not issue a new one. Not knowing (architecture, probe) is a refusal, not a pass.
@@ -1869,6 +1871,7 @@ awg31_restore_blocker() {
         1) printf 'module_line2'; return 0 ;;
         *) printf 'module_probe_failed'; return 0 ;;
     esac
+    printf 'pass'
     return 0
 }
 
@@ -1879,9 +1882,10 @@ _awg31_restore_blocker_reason() {
         arm)                 printf '%s' "the third line is not issued on ARM yet: the architecture has not been measured for it" ;;
         arch_unsupported)    printf '%s' "architecture '$(_awg31_host_arch)' has not been measured for the third line, the 3.1 profile needs x86_64" ;;
         kernel)              printf '%s' "kernel $(uname -r) is older than 6.7, a second-line module is installed on it" ;;
-        tools_old)           printf '%s' "the installed awg tools do not understand the third-line parameters; the fix: apt-get update && apt-get install --only-upgrade amneziawg-tools" ;;
+        tools_old)           printf '%s' "the awg tools are missing or do not understand the third-line parameters (the awg and timeout commands are needed); the fix: apt-get update && apt-get install amneziawg-tools, then apt-get install --only-upgrade amneziawg-tools" ;;
         module_line2)        printf '%s' "the loaded kernel module does not understand the third-line parameters; the fix: apt-get update && apt-get install --only-upgrade amneziawg-dkms, then a reboot" ;;
         module_probe_failed) printf '%s' "could not check whether the loaded module understands the third line (where the probe stopped is in the log with --verbose)" ;;
+        "")                  printf '%s' "the environment check gave no answer (the subprocess was cut short)" ;;
         *)                   printf '%s' "unknown reason '${1-}'" ;;
     esac
 }

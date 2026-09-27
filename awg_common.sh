@@ -1497,7 +1497,8 @@ _awg31_module_probe() (
     # --verbose и общий формат журнала.
     _probe_say() {
         if type log_debug >/dev/null 2>&1; then
-            log_debug "проба модуля: $1"
+            # >&2: в manage log_debug пишет в stdout, а stdout пробы - вердикт
+            log_debug "проба модуля: $1" >&2
         else
             printf 'проба модуля: %s\n' "$1" >&2
         fi
@@ -1799,8 +1800,9 @@ _awg31_module_probe() (
     exit 0
 )
 
-# awg31_restore_blocker : пусто, если на этом хосте третья линия поднимется;
-# иначе КОД причины - те же коды и тот же порядок проверок, что у стадии post
+# awg31_restore_blocker : pass, если на этом хосте третья линия поднимется;
+# иначе КОД причины. Успех - ЯВНОЕ слово, а не пустота: пустой ответ убитого
+# подпроцесса не должен читаться как разрешение - те же коды и тот же порядок проверок, что у стадии post
 # awg31_environment_blocker установщика, но без not_implemented_yet: restore
 # возвращает уже существующую установку 3.1, а не выдаёт новую. Неизвестность
 # (архитектура, проба) - отказ, а не разрешение.
@@ -1823,6 +1825,7 @@ awg31_restore_blocker() {
         1) printf 'module_line2'; return 0 ;;
         *) printf 'module_probe_failed'; return 0 ;;
     esac
+    printf 'pass'
     return 0
 }
 
@@ -1833,9 +1836,10 @@ _awg31_restore_blocker_reason() {
         arm)                 printf '%s' "на ARM третья линия пока не выдаётся: архитектура под неё не мерена" ;;
         arch_unsupported)    printf '%s' "архитектура '$(_awg31_host_arch)' под третью линию не мерена, профиль 3.1 требует x86_64" ;;
         kernel)              printf '%s' "ядро $(uname -r) старее 6.7, на нём ставится модуль второй линии" ;;
-        tools_old)           printf '%s' "установленные инструменты awg не понимают параметры третьей линии; лечится так: apt-get update && apt-get install --only-upgrade amneziawg-tools" ;;
+        tools_old)           printf '%s' "инструменты awg не найдены или не понимают параметры третьей линии (нужны команды awg и timeout); лечится так: apt-get update && apt-get install amneziawg-tools, затем apt-get install --only-upgrade amneziawg-tools" ;;
         module_line2)        printf '%s' "загруженный модуль ядра не понимает параметры третьей линии; лечится так: apt-get update && apt-get install --only-upgrade amneziawg-dkms, затем перезагрузка" ;;
         module_probe_failed) printf '%s' "не удалось проверить, понимает ли загруженный модуль третью линию (на чём остановилась проба - в журнале с --verbose)" ;;
+        "")                  printf '%s' "проверка окружения не дала ответа (подпроцесс оборвался)" ;;
         *)                   printf '%s' "неизвестная причина '${1-}'" ;;
     esac
 }

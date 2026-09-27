@@ -68,6 +68,13 @@ _manage_cleanup() {
         [[ -d "$d" ]] && rm -rf "$d"
     done
     type _awg_cleanup &>/dev/null && _awg_cleanup
+    # The third-line module probe (restore into 3.1) cleans up after itself and
+    # leaves a record only when the temporary interface could not be removed.
+    # Parsing a record from the shared directory is not attempted here, but a
+    # possible leftover on a working server must not go unmentioned either.
+    if [[ -e "${TMPDIR:-/tmp}/awg31probe.$$.iface" ]]; then
+        log_warn "The module probe may have left a temporary interface: find it with ip link show type amneziawg | grep awgp$$ and remove it with ip link del <name>. Probe record: ${TMPDIR:-/tmp}/awg31probe.$$.iface"
+    fi
 }
 # On INT/TERM the cleanup used to run but the script did NOT exit - execution
 # continued past the interrupted command and cleanup ran again on EXIT. A signal
@@ -918,8 +925,8 @@ restore_backup() {
             _restore_do_rollback "$_rollback_snap" || true
         fi
         [[ -n "$td" && -d "$td" ]] && rm -rf "$td"
-        [[ -n "${config_lock_fd:-}" ]] && exec {config_lock_fd}>&- 2>/dev/null
-        [[ -n "${backup_lock_fd:-}" ]] && exec {backup_lock_fd}>&- 2>/dev/null
+        [[ -n "${config_lock_fd:-}" ]] && { exec {config_lock_fd}>&-; } 2>/dev/null
+        [[ -n "${backup_lock_fd:-}" ]] && { exec {backup_lock_fd}>&-; } 2>/dev/null
         return $_rc
     }
     trap _restore_cleanup RETURN
@@ -1044,9 +1051,15 @@ restore_backup() {
     # would start and clients could not connect. The check is the one the
     # installer runs at step 3 (decision Р6, 27 sep 2026).
     if [[ "$_cand_gen" == "3.1" ]]; then
-        local _blk
-        _blk=$(awg31_restore_blocker)
-        if [[ -n "$_blk" ]]; then
+        local _blk=""
+        # A library without the check (a new manage with an older awg_common.sh of
+        # the same MAJOR.MINOR) is a refusal, not a pass: not knowing means no here.
+        if ! declare -F awg31_restore_blocker >/dev/null || ! declare -F _awg31_restore_blocker_reason >/dev/null; then
+            log_error "awg_common.sh is outdated: it lacks the third-line environment check, and a 3.1 backup is not restored without it. Update the scripts (section 'How to Update Scripts' in ADVANCED.en.md). Restore cancelled, the service was not stopped, no files were changed."
+            return 1
+        fi
+        _blk=$(awg31_restore_blocker) || :
+        if [[ "$_blk" != pass ]]; then
             log_error "A 3.1 backup cannot be restored on this server: $(_awg31_restore_blocker_reason "$_blk"). The service would come up and clients could not connect. Restore cancelled, the service was not stopped, no files were changed."
             return 1
         fi

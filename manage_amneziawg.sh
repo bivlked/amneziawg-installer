@@ -67,6 +67,13 @@ _manage_cleanup() {
         [[ -d "$d" ]] && rm -rf "$d"
     done
     type _awg_cleanup &>/dev/null && _awg_cleanup
+    # Проба модуля третьей линии (restore в 3.1) убирает за собой сама и
+    # оставляет запись, только если снять временный интерфейс не удалось.
+    # Разбирать запись из общего каталога здесь не берёмся, но и промолчать о
+    # возможном остатке на рабочем сервере нельзя.
+    if [[ -e "${TMPDIR:-/tmp}/awg31probe.$$.iface" ]]; then
+        log_warn "Проба модуля могла оставить временный интерфейс: найдите его так - ip link show type amneziawg | grep awgp$$ - и уберите: ip link del <имя>. Запись пробы: ${TMPDIR:-/tmp}/awg31probe.$$.iface"
+    fi
 }
 # На INT/TERM раньше cleanup срабатывал, но скрипт НЕ завершался - выполнение шло
 # дальше после прерванной команды, и cleanup повторялся на EXIT. Теперь сигнал =
@@ -904,8 +911,8 @@ restore_backup() {
             _restore_do_rollback "$_rollback_snap" || true
         fi
         [[ -n "$td" && -d "$td" ]] && rm -rf "$td"
-        [[ -n "${config_lock_fd:-}" ]] && exec {config_lock_fd}>&- 2>/dev/null
-        [[ -n "${backup_lock_fd:-}" ]] && exec {backup_lock_fd}>&- 2>/dev/null
+        [[ -n "${config_lock_fd:-}" ]] && { exec {config_lock_fd}>&-; } 2>/dev/null
+        [[ -n "${backup_lock_fd:-}" ]] && { exec {backup_lock_fd}>&-; } 2>/dev/null
         return $_rc
     }
     trap _restore_cleanup RETURN
@@ -1027,9 +1034,15 @@ restore_backup() {
     # стартовал, а клиенты не подключились бы. Проверка - та же, что у
     # установщика на шаге 3 (решение Р6, 27 sep 2026).
     if [[ "$_cand_gen" == "3.1" ]]; then
-        local _blk
-        _blk=$(awg31_restore_blocker)
-        if [[ -n "$_blk" ]]; then
+        local _blk=""
+        # Библиотека без проверки (новый manage при старой awg_common.sh той же
+        # MAJOR.MINOR) - отказ, а не проход: неизвестность здесь значит запрет.
+        if ! declare -F awg31_restore_blocker >/dev/null || ! declare -F _awg31_restore_blocker_reason >/dev/null; then
+            log_error "awg_common.sh устарела: в ней нет проверки окружения третьей линии, а без неё бэкап 3.1 не восстанавливается. Обновите скрипты (раздел «Как обновить скрипты» в ADVANCED.md). Восстановление отменено, сервис не остановлен, файлы не менялись."
+            return 1
+        fi
+        _blk=$(awg31_restore_blocker) || :
+        if [[ "$_blk" != pass ]]; then
             log_error "Бэкап поколения 3.1 на этом сервере не восстановить: $(_awg31_restore_blocker_reason "$_blk"). Сервис поднялся бы, а клиенты не подключились бы. Восстановление отменено, сервис не остановлен, файлы не менялись."
             return 1
         fi

@@ -129,7 +129,7 @@ STUB
 #!/bin/bash
 echo "ip \$*" >> "$TEST_DIR/ip.log"
 if [[ "\$1 \$2" == "link add" ]]; then : > "$TEST_DIR/if_\$3"; exit 0; fi
-if [[ "\$1 \$2" == "link del" ]]; then exec /bin/rm -f "$TEST_DIR/if_\$3"; fi
+if [[ "\$1 \$2" == "link del" ]]; then [[ -e "$TEST_DIR/fail_del" ]] && exit 1; exec /bin/rm -f "$TEST_DIR/if_\$3"; fi
 if [[ "\$1 \$2" == "link show" && "\$3" == awgp* ]]; then [[ -e "$TEST_DIR/if_\$3" ]]; exit; fi
 if [[ "\$*" == *"link show"*"awg0"* ]]; then
     [[ -e "$TEST_DIR/awg0_left" ]] && { echo "5: awg0: <POINTOPOINT,UP> mtu 1280"; exit 0; }
@@ -801,6 +801,58 @@ _r_env_probe_clean() {
 }
 @test "restore of a 3.1 backup probes the module and leaves no temporary interface" { _both _r_env_probe_clean; }
 
+# manage prints DEBUG lines to stdout under --verbose; the probe hands its
+# verdict back on stdout, so its own diagnostics must not land there, or a
+# healthy third-line module reads as "could not check".
+_r_env_verbose() {
+    local s="$1" b
+    _make_31 "$K1"
+    b=$(_backup "$s")
+    _make_31 "$K2"
+    _m "$s" restore "$b" --verbose
+    _ok
+    [ "$(cat "$A/server_hpk.key")" = "$K1" ]
+    # the probe really spoke under --verbose (so the case is not vacuous)
+    [[ "$output$stderr" == *"вердикт: третья линия"* || "$output$stderr" == *"verdict: third line"* ]] \
+        || { printf 'probe diagnostics not seen:\n%s\n%s\n' "$output" "$stderr" >&2; return 1; }
+}
+@test "restore of a 3.1 backup works under --verbose: probe diagnostics do not corrupt the verdict" { _both _r_env_verbose; }
+
+# A new manage with an older library of the same MAJOR.MINOR: the check is
+# missing, and missing must mean "no", not a silent pass.
+_r_env_old_library() {
+    local s="$1" b before
+    _make_31 "$K1"
+    b=$(_backup "$s")
+    _make_31 "$K2"
+    : > "$TEST_DIR/systemctl.log"
+    _lib_for "$s"
+    sed -i '/^awg31_restore_blocker() {$/,/^}$/d' "$A/awg_common.sh"
+    grep -q '^awg31_restore_blocker() {' "$A/awg_common.sh" && return 1
+    # the library copy is itself a file in the sandbox: fingerprint after editing it
+    before=$(_state)
+    run --separate-stderr timeout 60 bash "$s" restore "$b" --yes "${MOCK_ARGS[@]}"
+    _fail
+    [[ "$output$stderr" == *awg_common.sh* ]]
+    _nope 'grep -q "^systemctl stop" "$TEST_DIR/systemctl.log"'
+    [ "$(_state)" = "$before" ]
+}
+@test "restore of a 3.1 backup is refused when the library lacks the environment check" { _both _r_env_old_library; }
+
+# The probe could not remove its temporary interface: manage says so on exit.
+_r_env_probe_leftover_warned() {
+    local s="$1" b
+    _make_31 "$K1"
+    b=$(_backup "$s")
+    _make_31 "$K2"
+    : > "$TEST_DIR/fail_del"
+    _m "$s" restore "$b"
+    [[ "$output$stderr" == *"ip link show type amneziawg | grep awgp"* ]] \
+        || { printf 'no leftover warning:\n%s\n%s\nTMPDIR=%s\n' "$output" "$stderr" "${TMPDIR:-}" >&2; ls -la "${TMPDIR:-/tmp}"/awg31probe* >&2 2>&1; cat "$TEST_DIR/ip.log" >&2; return 1; }
+    /bin/rm -f "$TEST_DIR/fail_del" "$TEST_DIR"/if_* "${TMPDIR:-/tmp}"/awg31probe.*.iface 2>/dev/null || :
+}
+@test "a probe interface that could not be removed is reported when manage exits" { _both _r_env_probe_leftover_warned; }
+
 _r_env_not_for_20() {
     local s="$1" b
     _make_20
@@ -820,6 +872,18 @@ _r_env_not_for_20() {
 # all and the sandbox sets AWG_SKIP_APPLY, so the source check below is the pin.
 
 # ------------------------------------------------------------------ no syncconf
+
+# `exec {fd}>&- 2>/dev/null` without a command applies BOTH redirections to the
+# shell for good: after restore every later stderr line of manage went to
+# /dev/null. The dynamic side of this is the probe-leftover case above (its
+# warning is printed on exit, after the restore cleanup).
+@test "no bare exec with a stderr redirection in any script (it would mute the shell)" {
+    local s hits
+    for s in "$BATS_TEST_DIRNAME"/../*.sh; do
+        hits=$(grep -nE '(^|[;&|[:space:]])exec( +[0-9{][^ ;]*)+ +2>' "$s" | grep -vE '^\s*[0-9]+:\s*#' || true)
+        [ -z "$hits" ] || { echo "$s: $hits"; return 1; }
+    done
+}
 
 @test "neither restore nor its rollback calls syncconf (source, both twins)" {
     local s f body
