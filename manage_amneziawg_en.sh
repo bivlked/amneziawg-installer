@@ -462,7 +462,8 @@ _backup_configs_nolock() {
     # pre-restore snapshot: otherwise, with 10 backups already present, prune
     # would drop the oldest one, which may be exactly the backup selected for
     # restore (it lives in the same $AWG_DIR/backups directory).
-    # --snapshot: the pre-restore snapshot. The header protection key file is
+    # --snapshot: the pre-restore snapshot. The header protection key file (a
+    # regular file; restore refuses a link or a directory before the snapshot) is
     # taken as it is, without the consistency check: rollback must return exactly
     # what was there, and restore must stay a way to repair a damaged key.
     local no_prune=0 snapshot=0
@@ -575,7 +576,7 @@ _backup_configs_nolock() {
     else
         _hpk_gen=$(_awg_generation_from_init "$CONFIG_FILE") || _hpk_gen=""
         if [[ "$_hpk_gen" == "3.1" ]]; then
-            if ! awg_hpk_ensure manage || ! cp -a "$_hpk" "$td/"; then
+            if ! awg_hpk_ensure manage || ! cp -a "$_hpk" "$td/" || ! chmod 600 "$td/server_hpk.key"; then
                 log_error "3.1 installation: the header protection key ($_hpk) was not saved - backup not created."
                 rm -rf "$td"
                 return 1
@@ -681,6 +682,10 @@ _restore_do_rollback() {
     # the archive that did not exist before restore would otherwise stay next to
     # the previous ones (on a generation change - a profile of the other
     # generation). The snapshot takes these sets whole.
+    # The snapshot takes client configs and keys whole (a copy failure fails the
+    # snapshot), QR codes and vpnuri files where it can, they are reissued from
+    # the configs. A copy failure after the removal is said out loud: otherwise
+    # rollback would silently leave an empty set with rolled_back=true.
     if [[ -d "$_rtd/clients" ]]; then
         rm -f "$AWG_DIR"/*.conf "$AWG_DIR"/*.png "$AWG_DIR"/*.vpnuri 2>/dev/null
     fi
@@ -688,13 +693,19 @@ _restore_do_rollback() {
         rm -f "$KEYS_DIR"/* 2>/dev/null
     fi
     [[ -d "$_rtd/server" ]] && cp -a "$_rtd/server/"* "$_scdir/" 2>/dev/null
-    [[ -d "$_rtd/clients" ]] && cp -a "$_rtd/clients/"* "$AWG_DIR/" 2>/dev/null
-    [[ -d "$_rtd/keys" ]] && cp -a "$_rtd/keys/"* "$KEYS_DIR/" 2>/dev/null
+    if compgen -G "$_rtd/clients/*" >/dev/null && ! cp -a "$_rtd/clients/"* "$AWG_DIR/" 2>/dev/null; then
+        log_error "Rollback: client files were not returned to $AWG_DIR. They are in the snapshot $_snap (directory clients/)."
+    fi
+    if compgen -G "$_rtd/keys/*" >/dev/null && ! cp -a "$_rtd/keys/"* "$KEYS_DIR/" 2>/dev/null; then
+        log_error "Rollback: client keys were not returned to $KEYS_DIR. They are in the snapshot $_snap (directory keys/)."
+    fi
     [[ -f "$_rtd/server_private.key" ]] && cp -a "$_rtd/server_private.key" "$AWG_DIR/" 2>/dev/null
     [[ -f "$_rtd/server_public.key" ]] && cp -a "$_rtd/server_public.key" "$AWG_DIR/" 2>/dev/null
-    # Header protection key file: as in the snapshot. Missing there - restore put
-    # it in place, so it goes; present - it comes back with mode 600, without
-    # following a link at the destination.
+    # Header protection key file: as in the snapshot. restore does not start when
+    # a link or a directory stands where the key belongs, so here it is either a
+    # regular file or absent. Missing from the snapshot - restore put it in place,
+    # so it goes; present - it comes back with mode 600, without following a link
+    # at the destination.
     local _hpk
     if _hpk=$(awg_hpk_path 2>/dev/null); then
         if [[ -f "$_rtd/server_hpk.key" ]]; then
@@ -702,7 +713,7 @@ _restore_do_rollback() {
                 || ! chmod 600 "$_hpk" 2>/dev/null; then
                 log_error "Rollback: the header protection key was not returned to $_hpk. It is in the snapshot $_snap."
             fi
-        elif [[ -f "$_hpk" || -L "$_hpk" ]]; then
+        elif [[ -f "$_hpk" && ! -L "$_hpk" ]]; then
             rm -f "$_hpk" 2>/dev/null || log_error "Rollback: could not remove $_hpk placed by restore."
         fi
     fi
@@ -881,16 +892,6 @@ restore_backup() {
     trap '_restore_cleanup; exit 130' INT
     trap '_restore_cleanup; exit 143' TERM
 
-    log "Backing up current config..."
-    # --no-prune: the backup selected for restore ($bf) lives in the same
-    # backups dir; pruning after the pre-restore snapshot could delete it.
-    if ! _backup_configs_nolock --no-prune --snapshot; then
-        log_error "Failed to create backup of current configuration."
-        return 1
-    fi
-    # Capture rollback snapshot (set by _backup_configs_nolock)
-    _rollback_snap="${LAST_BACKUP_PATH:-}"
-
     manage_mktempdir_var td || {
         log_error "Failed to create temp directory"
         return 1
@@ -980,9 +981,10 @@ restore_backup() {
         log_warn "awg_common.sh is outdated: awg_restore_generation_notice is missing, the generation check on restore was skipped. Update the scripts (section 'How to Update Scripts' in ADVANCED.en.md)."
     fi
 
-    # The whole candidate is checked BEFORE the service stops: the marker, the key
-    # in the config and the key file agree, the config passes validation. A
-    # refusal stops nothing and rewrites nothing.
+    # The whole candidate is checked BEFORE the snapshot and BEFORE the service
+    # stops: the marker, the key in the config and the key file agree, the config
+    # passes validation. A refusal here stops nothing, rewrites nothing and leaves
+    # no snapshot behind.
     if ! _restore_check_candidate "$td"; then
         log_error "The backup failed the check (reason above) - restore cancelled, the service was not stopped, no files were changed."
         return 1
@@ -991,17 +993,41 @@ restore_backup() {
     [[ -f "$_cand_init" ]] || _cand_init="$CONFIG_FILE"
     _cand_gen=$(_awg_generation_from_init "$_cand_init") || _cand_gen=""
     _hpk=$(awg_hpk_path) || { log_error "AWG_DIR is not set - restore cancelled."; return 1; }
+    # A link or a directory where the key file belongs: the snapshot and rollback
+    # cannot return it exactly, and a key write would miss. That is a manual edit,
+    # a person sorts it out.
+    if [[ -L "$_hpk" || ( -e "$_hpk" && ! -f "$_hpk" ) ]]; then
+        log_error "$_hpk is not a regular file (a link or a directory): restore cancelled, the service was not stopped, no files were changed. Remove it by hand and run restore again."
+        return 1
+    fi
+
+    log "Backing up current config..."
+    # --no-prune: the backup selected for restore ($bf) lives in the same
+    # backups dir; pruning after the pre-restore snapshot could delete it.
+    if ! _backup_configs_nolock --no-prune --snapshot; then
+        log_error "Failed to create backup of current configuration."
+        return 1
+    fi
+    # Capture rollback snapshot (set by _backup_configs_nolock)
+    _rollback_snap="${LAST_BACKUP_PATH:-}"
 
     log "Stopping service..."
     if ! systemctl stop awg-quick@awg0; then
-        log_error "Service not stopped - restore cancelled, no files were changed. Check: systemctl status awg-quick@awg0"
+        log_error "Service not stopped - restore cancelled, no files were changed (snapshot of the current state: ${_rollback_snap}). Check: systemctl status awg-quick@awg0"
         return 1
     fi
     # Device parameters, the header protection key among them, stick on a live
     # interface, so restore works only by recreating awg0. An interface left
-    # after the stop is a refusal before any file is replaced.
+    # after the stop is a refusal before any file is replaced. The service is
+    # already stopped, so it is started again and the outcome is said plainly.
     if ip link show awg0 >/dev/null 2>&1; then
-        log_error "Interface awg0 is still present after the service stopped - restore cancelled, no files were changed. Take it down (awg-quick down awg0) and run restore again."
+        log_error "Interface awg0 is still present after the service stopped - restore cancelled, no files were changed."
+        if systemctl start awg-quick@awg0; then
+            log_warn "The service is running again on the previous files. Take awg0 down (awg-quick down awg0) and run restore again."
+        else
+            log_error "The service did not start again: it is stopped and awg0 is still there. Take awg0 down (awg-quick down awg0), then systemctl start awg-quick@awg0 or run restore again."
+            _log_service_status
+        fi
         return 1
     fi
 
@@ -1168,7 +1194,7 @@ restore_backup() {
         _arch="$AWG_DIR/archive/$(date +%F_%H-%M-%S.%3N)-3.1"
         if mkdir -p "$AWG_DIR/archive" && chmod 700 "$AWG_DIR/archive" && mkdir -m 700 "$_arch" \
             && mv -n "$_hpk" "$_arch/" && [[ ! -e "$_hpk" && ! -L "$_hpk" ]]; then
-            log "The header protection key of the previous 3.1 installation moved to $_arch/"
+            log "The header protection key file moved to $_arch/: the restored ${_cand_gen:-2.0} installation does not use it."
         else
             log_warn "Could not move $_hpk to the archive: the ${_cand_gen:-2.0} installation does not use it, the file can be removed by hand."
         fi

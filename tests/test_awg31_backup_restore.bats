@@ -10,21 +10,27 @@
 #     with a named reason, when the key file and awg0.conf disagree; a key file
 #     lost next to a key in awg0.conf is restored from the config first;
 #   - restore checks the CANDIDATE (marker from the archive init, key in the
-#     archive awg0.conf, archive key file) and validates the candidate config
-#     BEFORE the service is stopped; any refusal leaves the service running and
-#     every live file untouched;
+#     archive awg0.conf, archive key file; a 3.1 archive without the key file
+#     gets it from its own config) and validates the candidate config BEFORE the
+#     snapshot and the stop; such a refusal leaves the service running, every
+#     live file untouched and no snapshot behind; so does a live key path that
+#     is a link or a directory;
 #   - an archive without an init keeps the live marker (old backups);
 #   - a failed stop, or awg0 still present after stop, is fatal before any
-#     file is replaced;
-#   - restore of 2.0 over 3.1 moves the live key into archive/<date>-3.1/;
+#     file is replaced; with awg0 left the service is started again;
+#   - restore of 2.0 over 3.1 moves the live key into archive/<time>-3.1/
+#     (directories 700);
 #   - the pre-restore snapshot takes the live key file as it is (a damaged key
 #     must not block restore as a repair), and rollback returns the key file,
 #     the marker and the client files to exactly the pre-restore set;
+#   - both layouts: awg0.conf inside the working directory (the sandbox
+#     default) and outside it, as on a real server (/etc/amnezia/amneziawg);
+#   - a refused restore answers --json with ok=false and rolled_back=false;
 #   - neither restore nor rollback calls syncconf: a generation change needs
-#     the interface recreated.
+#     the interface recreated (pinned on the source; restore has no apply step).
 #
 # Harness: the real manage scripts end-to-end in a sandbox, stubbed awg,
-# systemctl, ip, curl and wget. backup reads and restore writes
+# awg-quick, systemctl, ip, curl and wget. backup reads and restore writes
 # /etc/cron.d/awg-expiry by a literal path, so the file skips when the host has
 # one, and teardown checks the host /etc/cron.d is unchanged.
 
@@ -112,9 +118,20 @@ export AWG_H4='100000000-800000000'
 export AWG_APPLY_MODE='syncconf'
 export AWG_ENDPOINT='203.0.113.5'
 CONF
+    SC="$A/awg0.conf"
     _write_conf ""
-    MOCK_ARGS=(--conf-dir="$A" --server-conf="$A/awg0.conf")
+    MOCK_ARGS=(--conf-dir="$A" --server-conf="$SC")
     export AWG_SKIP_APPLY=1
+}
+
+# _etc_layout : move the server config out of the working directory, as on a
+# real server. In the default layout awg0.conf also matches $AWG_DIR/*.conf and
+# rides in clients/ of every archive, which would mask the server/ copy.
+_etc_layout() {
+    mkdir -p "$TEST_DIR/etc"
+    mv "$SC" "$TEST_DIR/etc/awg0.conf"
+    SC="$TEST_DIR/etc/awg0.conf"
+    MOCK_ARGS=(--conf-dir="$A" --server-conf="$SC")
 }
 
 teardown() {
@@ -136,8 +153,8 @@ _write_conf() {
         printf 'Address = 10.9.9.1/24\nMTU = 1280\nListenPort = 39743\n'
         printf 'Jc = 6\nJmin = 55\nJmax = 380\nS1 = %s\nS2 = 56\nS3 = 32\nS4 = 16\n' "$s1"
         printf 'H1 = 100000-800000\nH2 = 1000000-8000000\nH3 = 10000000-80000000\nH4 = 100000000-800000000\n'
-    } > "$A/awg0.conf"
-    chmod 600 "$A/awg0.conf"
+    } > "$SC"
+    chmod 600 "$SC"
 }
 
 # _make_31 <key> : turn the sandbox into a consistent 3.1 installation
@@ -195,7 +212,11 @@ _retar() {
 _state() {
     ( cd "$A" && find . -path ./backups -prune -o -path ./archive -prune -o -type f ! -name '*.log' -print \
         | LC_ALL=C sort | while IFS= read -r f; do printf '%s %s\n' "$f" "$(cksum < "$f")"; done )
+    # the server config in either layout
+    printf 'SC %s\n' "$(cksum < "$SC")"
 }
+
+_nbackups() { find "$A/backups" -name 'awg_backup_*' 2>/dev/null | wc -l; }
 
 _mode() { stat -c %a "$1"; }
 
@@ -238,6 +259,8 @@ _ru() { [[ "$1" != *_en.sh ]]; }
 _b_31_carries_key() {
     local s="$1" b
     _make_31 "$K1"
+    # a hand chmod on the live key must not widen the copy in the archive
+    chmod 644 "$A/server_hpk.key"
     b=$(_backup "$s")
     [ -n "$b" ]
     local d; d=$(mktemp -d "$TEST_DIR/x-XXXXXX")
@@ -291,7 +314,7 @@ _r_31_roundtrip() {
     _make_31 "$K2"
     _m "$s" restore "$b"
     _ok
-    grep -qxF "HeaderProtectionKey = $K1" "$A/awg0.conf"
+    grep -qxF "HeaderProtectionKey = $K1" "$SC"
     [ "$(cat "$A/server_hpk.key")" = "$K1" ]
     [ "$(_mode "$A/server_hpk.key")" = 600 ]
     [ ! -L "$A/server_hpk.key" ]
@@ -324,8 +347,10 @@ _r_20_over_31_archives_key() {
     [ "$(printf '%s\n' "$arch" | grep -c .)" -eq 1 ]
     [ "$(cat "$arch")" = "$K1" ]
     [ "$(_mode "$arch")" = 600 ]
+    [ "$(_mode "$A/archive")" = 700 ]
+    [ "$(_mode "${arch%/*}")" = 700 ]
 }
-@test "restore 2.0 over 3.1 moves the live key into archive/<date>-3.1/" { _both _r_20_over_31_archives_key; }
+@test "restore 2.0 over 3.1 moves the live key into archive/<time>-3.1/, directories 700" { _both _r_20_over_31_archives_key; }
 
 _r_candidate_mismatch() {
     local s="$1" b bad before
@@ -334,12 +359,15 @@ _r_candidate_mismatch() {
     bad="$TEST_DIR/bad.tar.gz"
     _retar "$b" "$bad" "printf '%s\n' '$K2' > server_hpk.key"
     before=$(_state)
+    nb=$(_nbackups)
     : > "$TEST_DIR/systemctl.log"
     _m "$s" restore "$bad"
     _fail
     [[ "$output$stderr" == *"server_hpk.key"* ]]
     _nope 'grep -q "^systemctl stop" "$TEST_DIR/systemctl.log"'
     [ "$(_state)" = "$before" ]
+    # the check runs before the snapshot: a refused restore leaves no archive behind
+    [ "$(_nbackups)" -eq "$nb" ]
 }
 @test "restore refuses a candidate whose key file disagrees with its config, before stop" { _both _r_candidate_mismatch; }
 
@@ -372,6 +400,7 @@ _r_no_init_keeps_live_marker_31() {
     _m "$s" restore "$bad"
     # live marker stays 3.1, the archived config has no key: refused before stop
     _fail
+    [[ "$output$stderr" == *HeaderProtectionKey* ]]
     _nope 'grep -q "^systemctl stop" "$TEST_DIR/systemctl.log"'
     [ "$(_state)" = "$before" ]
 }
@@ -416,8 +445,11 @@ _r_awg0_left() {
     _fail
     [[ "$output$stderr" == *awg0* ]]
     [ "$(_state)" = "$before" ]
+    # the service was stopped, so it is started again on the previous files
+    grep -q '^systemctl stop' "$TEST_DIR/systemctl.log"
+    grep -q '^systemctl start' "$TEST_DIR/systemctl.log"
 }
-@test "awg0 still present after stop is fatal before any file is replaced" { _both _r_awg0_left; }
+@test "awg0 still present after stop is fatal before any file is replaced, the service is started again" { _both _r_awg0_left; }
 
 _r_damaged_live_key_repairable() {
     local s="$1" b
@@ -480,21 +512,111 @@ _rb_31_over_31() {
 }
 @test "rollback of 3.1 over 3.1 returns the previous key" { _both _rb_31_over_31; }
 
-# ------------------------------------------------------------------ no syncconf
+# ------------------------------------------------------------------ more restore cases
 
-_no_syncconf_dyn() {
-    local s="$1" b
-    _make_20
-    b=$(_backup "$s")
+_r_31_archive_without_keyfile() {
+    local s="$1" b bad
     _make_31 "$K1"
+    b=$(_backup "$s")
+    bad="$TEST_DIR/nokey.tar.gz"
+    _retar "$b" "$bad" "rm -f server_hpk.key"
+    _make_31 "$K2"
+    _m "$s" restore "$bad"
+    _ok
+    [ "$(cat "$A/server_hpk.key")" = "$K1" ]
+    [ "$(_mode "$A/server_hpk.key")" = 600 ]
+}
+@test "a 3.1 archive without the key file gets it from its own config" { _both _r_31_archive_without_keyfile; }
+
+_r_json_refusal() {
+    local s="$1" b bad
+    _make_31 "$K1"
+    b=$(_backup "$s")
+    bad="$TEST_DIR/bad.tar.gz"
+    _retar "$b" "$bad" "printf '%s\n' '$K2' > server_hpk.key"
+    _m "$s" restore "$bad" --json
+    _fail
+    printf '%s' "$output" | jq -e '.command == "restore" and .ok == false and .applied == false and .rolled_back == false' >/dev/null
+}
+@test "a refused restore answers --json with ok=false, applied=false, rolled_back=false" { _both _r_json_refusal; }
+
+_r_live_key_link_refused() {
+    local s="$1" b nb
+    _make_31 "$K1"
+    b=$(_backup "$s")
+    printf 'bait\n' > "$TEST_DIR/bait"
+    rm -f "$A/server_hpk.key"
+    ln -s "$TEST_DIR/bait" "$A/server_hpk.key"
+    nb=$(_nbackups)
+    : > "$TEST_DIR/systemctl.log"
+    _m "$s" restore "$b"
+    _fail
+    [[ "$output$stderr" == *server_hpk.key* ]]
+    # nothing written through the link, the link itself kept, nothing stopped
+    [ "$(cat "$TEST_DIR/bait")" = bait ]
+    [ -L "$A/server_hpk.key" ]
+    _nope 'grep -q "^systemctl stop" "$TEST_DIR/systemctl.log"'
+    [ "$(_nbackups)" -eq "$nb" ]
+}
+@test "a live key path that is a link is refused before the snapshot and the stop" { _both _r_live_key_link_refused; }
+
+_r_live_key_dir_refused() {
+    local s="$1" b
+    _make_31 "$K1"
+    b=$(_backup "$s")
+    rm -f "$A/server_hpk.key"
+    mkdir "$A/server_hpk.key"
+    : > "$TEST_DIR/systemctl.log"
+    _m "$s" restore "$b"
+    _fail
+    [ -d "$A/server_hpk.key" ]
+    [ -z "$(ls -A "$A/server_hpk.key")" ]
+    _nope 'grep -q "^systemctl stop" "$TEST_DIR/systemctl.log"'
+}
+@test "a live key path that is a directory is refused before the stop" { _both _r_live_key_dir_refused; }
+
+# ------------------------------------------------------------------ config outside AWG_DIR
+
+_etc_roundtrip() {
+    local s="$1" b
+    _etc_layout
+    _make_31 "$K1"
+    b=$(_backup "$s")
+    # the server config rides only in server/, nothing masks that copy
+    _nope 'tar -tzf "$b" | grep -qE "(^|/)clients/awg0\.conf$"'
+    _make_31 "$K2"
     _m "$s" restore "$b"
     _ok
+    grep -qxF "HeaderProtectionKey = $K1" "$SC"
+    [ "$(cat "$A/server_hpk.key")" = "$K1" ]
+    [ ! -e "$A/awg0.conf" ]
+}
+@test "config outside the working directory: 3.1 roundtrip restores the server config from server/" { _both _etc_roundtrip; }
+
+_etc_rollback() {
+    local s="$1" b before
+    _etc_layout
+    _make_31 "$K1"
+    _m "$s" add alice
+    _ok
+    b=$(_backup "$s")
+    _make_20
+    rm -f "$A"/alice.* "$A/keys"/alice*
+    before=$(_state)
     touch "$TEST_DIR/fail_start"
     _m "$s" restore "$b"
     _fail
-    _nope 'grep -q syncconf "$TEST_DIR/awg.log" 2>/dev/null'
+    [ ! -e "$A/server_hpk.key" ]
+    [ ! -e "$A/alice.conf" ]
+    [ ! -e "$A/awg0.conf" ]
+    [ "$(_state)" = "$before" ]
 }
-@test "neither restore nor its rollback calls syncconf (dynamic)" { _both _no_syncconf_dyn; }
+@test "config outside the working directory: rollback of 3.1 over 2.0 is exact" { _both _etc_rollback; }
+
+# A dynamic "no syncconf" case cannot fail here: restore has no apply step at
+# all and the sandbox sets AWG_SKIP_APPLY, so the source check below is the pin.
+
+# ------------------------------------------------------------------ no syncconf
 
 @test "neither restore nor its rollback calls syncconf (source, both twins)" {
     local s f body
