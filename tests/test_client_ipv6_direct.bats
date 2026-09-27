@@ -112,6 +112,24 @@ render_mode1_kept() {
     both render_mode1_kept
 }
 
+render_only_server_list() {
+    local lib="$1" out
+    # mode 3 with a list that happens to be a full tunnel: the key is for mode 2 only
+    out=$(lr "$lib" "0.0.0.0/1, 128.0.0.0/1" "$ON
+export ALLOWED_IPS_MODE=3" 'render_client_config c1 10.9.9.2 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+    [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
+    [ "$(conf_line "$lib" AllowedIPs c1)" = "AllowedIPs = 0.0.0.0/1, 128.0.0.0/1, 2000::/3" ] || { echo "mode 3 lost the route ($lib): $(conf_line "$lib" AllowedIPs c1)"; return 1; }
+    # a hand-made full tunnel through --allowed-ips on a mode 2 server keeps the route
+    out=$(lr "$lib" "$(mode2_list)" "$ON" '
+        export CLIENT_ALLOWED_IPS="0.0.0.0/1, 128.0.0.0/1"
+        render_client_config c1 10.9.9.3 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+    [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
+    [ "$(conf_line "$lib" AllowedIPs c1)" = "AllowedIPs = 0.0.0.0/1, 128.0.0.0/1, 2000::/3" ] || { echo "hand-made list lost the route ($lib): $(conf_line "$lib" AllowedIPs c1)"; return 1; }
+}
+@test "render: the key touches only the server's mode 2 list, not mode 3 or a hand-made full tunnel, both twins" {
+    both render_only_server_list
+}
+
 render_env_ignored() {
     local lib="$1" list out
     list=$(mode2_list)
@@ -166,7 +184,8 @@ regen_strips_ours() {
     local lib="$1" list out v6
     list=$(mode2_list)
     for v6 in "2000::/3" "::/0"; do
-        out=$(regen_run "$lib" "$ON" "$list, $v6" "10.9.9.20/32, ${SINK_PREFIX}::a09:914/128")
+        # as in production: regen gets the key from the init file itself (load_awg_params), not from the caller
+        out=$(regen_run "$lib" "$ON" "$list, $v6" "10.9.9.20/32, ${SINK_PREFIX}::a09:914/128" 'unset CLIENT_IPV6_DIRECT ALLOWED_IPS_MODE ALLOWED_IPS')
         [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib, $v6): $out"; return 1; }
         [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = $list" ] || { echo "route kept ($lib, $v6): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
         [ "$(conf_line "$lib" Address r1)" = "Address = 10.9.9.20/32" ] || { echo "sink kept ($lib, $v6): $(conf_line "$lib" Address r1)"; return 1; }
@@ -189,9 +208,16 @@ regen_keeps_hand_made() {
     out=$(regen_run "$lib" "$ON" "0.0.0.0/1, 128.0.0.0/1, ::/0" "10.9.9.20/32")
     [[ "$out" == *"RC=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = 0.0.0.0/1, 128.0.0.0/1, ::/0" ] || { echo "hand-made full tunnel touched ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
+    # kept, but a route of our shape next to a list that is not the server one is named
+    [[ "$out" == *"WARN:"*"reset-routes"* ]] || { echo "kept silently ($lib): $out"; return 1; }
+    # the server list plus a tunnel subnet (isolation changed later) and 2000::/3: kept and named
+    out=$(regen_run "$lib" "$ON" "$list, 10.9.9.0/24, 2000::/3" "10.9.9.20/32")
+    [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = $list, 10.9.9.0/24, 2000::/3" ] || { echo "not-ours stripped ($lib)"; return 1; }
+    [[ "$out" == *"WARN:"*"reset-routes"* ]] || { echo "kept silently ($lib): $out"; return 1; }
     # a real split
     out=$(regen_run "$lib" "$ON" "10.0.0.0/8" "10.9.9.20/32")
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = 10.0.0.0/8" ] || { echo "split touched ($lib)"; return 1; }
+    [[ "$out" != *"reset-routes"* ]] || { echo "split warned about ($lib): $out"; return 1; }
 }
 @test "regen: with the key, hand-made routes stay as they are, both twins" {
     require_flock
@@ -265,11 +291,14 @@ EOF
         # manage does not load the init file before modify: the key must be read there
         unset CLIENT_IPV6_DIRECT
         modify_client m1 AllowedIPs "'"$list"'"; echo "RC=$?"
-        modify_client m1 AllowedIPs "0.0.0.0/0"; echo "RC1=$?"')
+        modify_client m1 AllowedIPs "0.0.0.0/0"; echo "RC1=$?"
+        modify_client m1 AllowedIPs "0.0.0.0/1, 128.0.0.0/1"; echo "RC2=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "modify failed ($lib): $out"; return 1; }
     [[ "$out" == *"RC1=0"* ]] || { echo "modify to 0.0.0.0/0 failed ($lib): $out"; return 1; }
-    # the mode-2 list: the chosen setup, no warning; 0.0.0.0/0 still warns (iOS)
-    [ "$(grep -c "WARN:.*regen" <<< "$out")" -eq 1 ] || { echo "warnings ($lib): $out"; return 1; }
+    [[ "$out" == *"RC2=0"* ]] || { echo "modify to a hand-made list failed ($lib): $out"; return 1; }
+    # the mode-2 list: the chosen setup, no warning; 0.0.0.0/0 still warns (iOS),
+    # and so does a hand-made full tunnel, which the key does not cover
+    [ "$(grep -c "WARN:.*regen" <<< "$out")" -eq 2 ] || { echo "warnings ($lib): $out"; return 1; }
     [[ "${out%%RC=*}" != *"WARN:"*"regen"* ]] || { echo "warns about the chosen setup ($lib): $out"; return 1; }
 }
 @test "modify: with the key, the server list without IPv6 is the chosen setup, no warning, both twins" {
@@ -335,5 +364,37 @@ inst() {
     done
     for s in awg_common.sh awg_common_en.sh; do
         sed -n '/^safe_load_config() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../$s" | grep -q 'CLIENT_IPV6_DIRECT' || { echo "$s: not read from init"; return 1; }
+    done
+}
+
+@test "parsers: an unrecognised CLIENT_IPV6_DIRECT line is named, not skipped (libraries and installers)" {
+    local src form err
+    for src in awg_common.sh awg_common_en.sh install_amneziawg.sh install_amneziawg_en.sh; do
+        eval "$(sed -n '/^safe_load_config() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../$src")"
+        log_warn() { printf 'WARN:%s\n' "$1" >&2; }
+        for form in 'CLIENT_IPV6_DIRECT = 0' '  export CLIENT_IPV6_DIRECT=0' 'client_ipv6_direct=0'; do
+            printf 'export AWG_PORT=39743\n%s\n' "$form" > "$BATS_TEST_TMPDIR/init"
+            safe_load_config "$BATS_TEST_TMPDIR/init" 2>"$BATS_TEST_TMPDIR/err"
+            err=$(cat "$BATS_TEST_TMPDIR/err")
+            [[ "$err" == *WARN:*CLIENT_IPV6_DIRECT* ]] || { echo "$src: no warning for '$form'"; return 1; }
+        done
+        printf 'export AWG_PORT=39743\nexport CLIENT_IPV6_DIRECT=1\n' > "$BATS_TEST_TMPDIR/init"
+        safe_load_config "$BATS_TEST_TMPDIR/init" 2>"$BATS_TEST_TMPDIR/err"
+        [ ! -s "$BATS_TEST_TMPDIR/err" ] || { echo "$src: warning on the canonical line: $(cat "$BATS_TEST_TMPDIR/err")"; return 1; }
+        [ "${CLIENT_IPV6_DIRECT:-}" = "1" ] || { echo "$src: canonical line not read"; return 1; }
+    done
+}
+
+@test "installer: the step 0 check runs after the routing mode and the IPv6 tunnel are final, and the flag returns an unfinished install to step 4, both twins" {
+    local s f body call tun mode
+    for s in "${INSTALLERS[@]}"; do
+        f="$BATS_TEST_DIRNAME/../$s"
+        body=$(sed -n '/^initialize_setup() {/,/^}/p' "$f")
+        call=$(grep -n '^[[:space:]]*configure_client_ipv6_direct$' <<< "$body" | head -1 | cut -d: -f1)
+        tun=$(grep -n '^[[:space:]]*configure_ipv6_tunnel$' <<< "$body" | head -1 | cut -d: -f1)
+        mode=$(grep -n 'if \[\[ -z "\$ALLOWED_IPS" \]\]; then configure_routing_mode; fi' <<< "$body" | tail -1 | cut -d: -f1)
+        [ -n "$call" ] && [ -n "$tun" ] && [ -n "$mode" ] || { echo "$s: anchors not found ($call/$tun/$mode)"; return 1; }
+        [ "$call" -gt "$tun" ] && [ "$call" -gt "$mode" ] || { echo "$s: check at $call runs before the tunnel ($tun) or mode ($mode) is final"; return 1; }
+        grep -qF '|| [[ "${CLI_CLIENT_IPV6_DIRECT:-0}" -eq 1 ]]; }; then' "$f" || { echo "$s: flag does not return an unfinished install to step 4"; return 1; }
     done
 }

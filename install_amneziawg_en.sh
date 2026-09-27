@@ -1732,10 +1732,15 @@ safe_load_config() {
                     # A CLIENT_DNS line the parser did not recognise is named: otherwise
                     # new clients would silently get the default DNS.
                     if [[ "${key^^}" == CLIENT_DNS ]]; then log_warn "CLIENT_DNS line in $config_file not parsed: '$line'. Use the form export CLIENT_DNS='10.9.9.1' with no indent and no spaces around =. New clients will get the default DNS."; fi
+                    # The same for CLIENT_IPV6_DIRECT: otherwise the line that switches the key
+                    # off would silently not be read, and client IPv6 would keep going around the tunnel.
+                    if [[ "${key^^}" == CLIENT_IPV6_DIRECT ]]; then log_warn "CLIENT_IPV6_DIRECT line in $config_file not parsed: '$line'. Use the form export CLIENT_IPV6_DIRECT=1 (or =0) with no indent and no spaces around =."; fi
                     ;;
             esac
         elif [[ "${line^^}" == *CLIENT_DNS* ]]; then
             log_warn "CLIENT_DNS line in $config_file not parsed: '$line'. Use the form export CLIENT_DNS='10.9.9.1' with no indent and no spaces around =. New clients will get the default DNS."
+        elif [[ "${line^^}" == *CLIENT_IPV6_DIRECT* ]]; then
+            log_warn "CLIENT_IPV6_DIRECT line in $config_file not parsed: '$line'. Use the form export CLIENT_IPV6_DIRECT=1 (or =0) with no indent and no spaces around =."
         fi
     done < "$config_file"
 }
@@ -3150,10 +3155,6 @@ _user_snaps() {
     done | sort -u
 }
 
-# Consent for removing system packages (issue #213). Asked at STEP 0, where the other
-# questions already live: everything after that should run without a human present.
-# The answer is stored in awgsetup_cfg.init so a repeated or resumed run does not ask
-# again and, more importantly, does not read silence as consent.
 # configure_client_ipv6_direct : the CLIENT_IPV6_DIRECT key (flag --client-ipv6-direct,
 # PR #260) - IPv4 through the tunnel, the device's IPv6 directly, the LAN reachable.
 # Mode 2 only: in mode 1 iOS AmneziaVPN does not bring the tunnel up without ::/0,
@@ -3185,6 +3186,10 @@ configure_client_ipv6_direct() {
     fi
 }
 
+# Consent for removing system packages (issue #213). Asked at STEP 0, where the other
+# questions already live: everything after that should run without a human present.
+# The answer is stored in awgsetup_cfg.init so a repeated or resumed run does not ask
+# again and, more importantly, does not read silence as consent.
 configure_package_cleanup() {
     [[ "$NO_TWEAKS" -eq 1 ]] && return 0
     # The decision already exists: a command line flag or a record from an earlier run.

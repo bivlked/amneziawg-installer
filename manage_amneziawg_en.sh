@@ -1249,10 +1249,10 @@ modify_client() {
             # The init file is not loaded before modify, so the key is read here, in a subshell.
             local _v6d=""
             if [[ "$param" == "AllowedIPs" && "$value" != *:* ]] && ! _aip_has_token "$value" "0.0.0.0/0"; then
-                _v6d=$(safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${CLIENT_IPV6_DIRECT:-}")
+                _v6d=$(safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; _aip_direct_applies "$value" && printf yes)
             fi
             if [[ "$param" == "AllowedIPs" && "$value" != *:* ]] \
-               && _is_full_tunnel "$value" && ! CLIENT_IPV6_DIRECT="$_v6d" _client_ipv6_direct; then
+               && _is_full_tunnel "$value" && [[ "$_v6d" != "yes" ]]; then
                 log_warn "AllowedIPs of client '$name' is a full tunnel without an IPv6 route - the device's IPv6 will go around the tunnel with its real address. To restore the route: regen '$name'."
             fi
             ;;

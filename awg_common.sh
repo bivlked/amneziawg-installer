@@ -462,7 +462,7 @@ _append_ipv6_full_tunnel_route() {
         if _is_full_tunnel "$list"; then
             if _aip_has_token "$list" "0.0.0.0/0"; then
                 printf '%s, ::/0' "$list"
-            elif _client_ipv6_direct; then
+            elif _aip_direct_applies "$list"; then
                 printf '%s' "$list"
             else
                 printf '%s, 2000::/3' "$list"
@@ -489,6 +489,25 @@ _client_ipv6_direct() {
     esac
 }
 
+# _aip_same_set <список> <список> : одинаковый набор маршрутов (порядок и
+# пробелы не важны). Пустой список ни с чем не совпадает.
+_aip_same_set() {
+    local a b
+    a=$(_aip_tokens "$1" | LC_ALL=C sort -u) || return 1
+    b=$(_aip_tokens "$2" | LC_ALL=C sort -u) || return 1
+    [[ -n "$a" && "$a" == "$b" ]]
+}
+
+# _aip_direct_applies <список> : CLIENT_IPV6_DIRECT касается этого списка -
+# сервер в режиме 2, список совпадает с его списком, ключ включён. Режим 3 и
+# полный туннель, расписанный вручную (--allowed-ips, modify), ключ не трогает:
+# он про выбранный сервером режим, а не про любой список такой формы.
+_aip_direct_applies() {
+    [[ "${ALLOWED_IPS_MODE:-}" == "2" ]] || return 1
+    _aip_same_set "$1" "${ALLOWED_IPS:-}" || return 1
+    _client_ipv6_direct
+}
+
 # _aip_drop_our_v6 <список клиента> <список сервера> : при CLIENT_IPV6_DIRECT=1
 # печатает список без НАШЕГО IPv6-маршрута, иначе список как есть. Наш - это
 # ровно один IPv6-элемент, 2000::/3 (с v5.36.2) или ::/0 (v5.31.0-v5.36.1), рядом
@@ -497,6 +516,7 @@ _client_ipv6_direct() {
 # (--allowed-ips, modify), его regen не трогает. Порядок IPv4-части сохраняется.
 _aip_drop_our_v6() {
     local list="$1" base="$2" toks v6 mine srv tok out="" rc
+    [[ "${ALLOWED_IPS_MODE:-}" == "2" ]] || { printf '%s' "$list"; return 0; }
     toks=$(_aip_tokens "$list") || return 1
     # Код 1 у grep - «строк нет», это ответ; 2 и выше - отказ.
     v6=$(grep -F ':' <<< "$toks"); rc=$?
@@ -1260,10 +1280,15 @@ safe_load_config() {
                     # Строка CLIENT_DNS, которую разбор не узнал, называется: иначе новые
                     # клиенты молча получали бы DNS по умолчанию.
                     if [[ "${key^^}" == CLIENT_DNS ]]; then log_warn "Строка CLIENT_DNS в $config_file не разобрана: '$line'. Нужен вид export CLIENT_DNS='10.9.9.1' без отступа и без пробелов вокруг =. Новые клиенты получат DNS по умолчанию."; fi
+                    # То же для CLIENT_IPV6_DIRECT: иначе строка, которой ключ выключают, молча
+                    # не читалась бы, и IPv6 клиентов шёл бы мимо туннеля дальше.
+                    if [[ "${key^^}" == CLIENT_IPV6_DIRECT ]]; then log_warn "Строка CLIENT_IPV6_DIRECT в $config_file не разобрана: '$line'. Нужен вид export CLIENT_IPV6_DIRECT=1 (или =0) без отступа и без пробелов вокруг =."; fi
                     ;;
             esac
         elif [[ "${line^^}" == *CLIENT_DNS* ]]; then
             log_warn "Строка CLIENT_DNS в $config_file не разобрана: '$line'. Нужен вид export CLIENT_DNS='10.9.9.1' без отступа и без пробелов вокруг =. Новые клиенты получат DNS по умолчанию."
+        elif [[ "${line^^}" == *CLIENT_IPV6_DIRECT* ]]; then
+            log_warn "Строка CLIENT_IPV6_DIRECT в $config_file не разобрана: '$line'. Нужен вид export CLIENT_IPV6_DIRECT=1 (или =0) без отступа и без пробелов вокруг =."
         fi
     done < "$config_file"
 }
@@ -4673,6 +4698,14 @@ regenerate_client() {
             if [[ "$_aip_new" != "$current_allowed_ips" ]]; then
                 log "Клиент '$name': IPv6-маршрут снят (CLIENT_IPV6_DIRECT=1) - IPv6 устройства идёт напрямую, мимо туннеля."
                 current_allowed_ips="$_aip_new"
+            elif [[ "${ALLOWED_IPS_MODE:-}" == "2" ]] \
+                 && { _aip_has_token "$current_allowed_ips" "2000::/3" || _aip_has_token "$current_allowed_ips" "::/0"; } \
+                 && ! _aip_has_token "$current_allowed_ips" "0.0.0.0/0" \
+                 && _is_full_tunnel "$current_allowed_ips"; then
+                # Маршрут нашей формы, но IPv4-часть не равна списку сервера (клиент
+                # выдан до смены изоляции или подсети либо поправлен вручную): чей
+                # он, доказать нельзя, поэтому остаётся - но молча нельзя.
+                log_warn "Клиент '$name': IPv6-маршрут оставлен - IPv4-маршруты клиента не совпадают со списком сервера, и чей это маршрут, не определить. Если маршруты клиента не настраивались вручную, снимите его: regen --reset-routes '$name'."
             fi
         elif [[ -z "$client_ipv6" ]]; then
             _aip_new=$(_aip_migrate_legacy_v6 "$current_allowed_ips" "${ALLOWED_IPS:-}") && [[ -n "$_aip_new" ]] || {

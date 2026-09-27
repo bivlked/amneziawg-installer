@@ -468,7 +468,7 @@ _append_ipv6_full_tunnel_route() {
         if _is_full_tunnel "$list"; then
             if _aip_has_token "$list" "0.0.0.0/0"; then
                 printf '%s, ::/0' "$list"
-            elif _client_ipv6_direct; then
+            elif _aip_direct_applies "$list"; then
                 printf '%s' "$list"
             else
                 printf '%s, 2000::/3' "$list"
@@ -495,6 +495,25 @@ _client_ipv6_direct() {
     esac
 }
 
+# _aip_same_set <list> <list> : the same set of routes (order and spaces do
+# not matter). An empty list matches nothing.
+_aip_same_set() {
+    local a b
+    a=$(_aip_tokens "$1" | LC_ALL=C sort -u) || return 1
+    b=$(_aip_tokens "$2" | LC_ALL=C sort -u) || return 1
+    [[ -n "$a" && "$a" == "$b" ]]
+}
+
+# _aip_direct_applies <list> : CLIENT_IPV6_DIRECT covers this list - the server
+# is in mode 2, the list equals its list, and the key is on. Mode 3 and a full
+# tunnel written by hand (--allowed-ips, modify) are left alone: the key is
+# about the mode the server chose, not about any list of that shape.
+_aip_direct_applies() {
+    [[ "${ALLOWED_IPS_MODE:-}" == "2" ]] || return 1
+    _aip_same_set "$1" "${ALLOWED_IPS:-}" || return 1
+    _client_ipv6_direct
+}
+
 # _aip_drop_our_v6 <client list> <server list> : with CLIENT_IPV6_DIRECT=1
 # prints the list without OUR IPv6 route, otherwise the list as is. Ours is
 # exactly one IPv6 element, 2000::/3 (since v5.36.2) or ::/0 (v5.31.0-v5.36.1),
@@ -504,6 +523,7 @@ _client_ipv6_direct() {
 # the IPv4 part is kept.
 _aip_drop_our_v6() {
     local list="$1" base="$2" toks v6 mine srv tok out="" rc
+    [[ "${ALLOWED_IPS_MODE:-}" == "2" ]] || { printf '%s' "$list"; return 0; }
     toks=$(_aip_tokens "$list") || return 1
     # Code 1 from grep is "no lines", an answer; 2 and above is a failure.
     v6=$(grep -F ':' <<< "$toks"); rc=$?
@@ -1280,10 +1300,15 @@ safe_load_config() {
                     # A CLIENT_DNS line the parser did not recognise is named: otherwise
                     # new clients would silently get the default DNS.
                     if [[ "${key^^}" == CLIENT_DNS ]]; then log_warn "CLIENT_DNS line in $config_file not parsed: '$line'. Use the form export CLIENT_DNS='10.9.9.1' with no indent and no spaces around =. New clients will get the default DNS."; fi
+                    # The same for CLIENT_IPV6_DIRECT: otherwise the line that switches the key
+                    # off would silently not be read, and client IPv6 would keep going around the tunnel.
+                    if [[ "${key^^}" == CLIENT_IPV6_DIRECT ]]; then log_warn "CLIENT_IPV6_DIRECT line in $config_file not parsed: '$line'. Use the form export CLIENT_IPV6_DIRECT=1 (or =0) with no indent and no spaces around =."; fi
                     ;;
             esac
         elif [[ "${line^^}" == *CLIENT_DNS* ]]; then
             log_warn "CLIENT_DNS line in $config_file not parsed: '$line'. Use the form export CLIENT_DNS='10.9.9.1' with no indent and no spaces around =. New clients will get the default DNS."
+        elif [[ "${line^^}" == *CLIENT_IPV6_DIRECT* ]]; then
+            log_warn "CLIENT_IPV6_DIRECT line in $config_file not parsed: '$line'. Use the form export CLIENT_IPV6_DIRECT=1 (or =0) with no indent and no spaces around =."
         fi
     done < "$config_file"
 }
@@ -4728,6 +4753,14 @@ regenerate_client() {
             if [[ "$_aip_new" != "$current_allowed_ips" ]]; then
                 log "Client '$name': IPv6 route removed (CLIENT_IPV6_DIRECT=1) - the device's IPv6 goes directly, around the tunnel."
                 current_allowed_ips="$_aip_new"
+            elif [[ "${ALLOWED_IPS_MODE:-}" == "2" ]] \
+                 && { _aip_has_token "$current_allowed_ips" "2000::/3" || _aip_has_token "$current_allowed_ips" "::/0"; } \
+                 && ! _aip_has_token "$current_allowed_ips" "0.0.0.0/0" \
+                 && _is_full_tunnel "$current_allowed_ips"; then
+                # A route of our shape, but the IPv4 part is not the server list (the
+                # client was issued before an isolation or subnet change, or edited by
+                # hand): whose it is cannot be proven, so it stays - but not silently.
+                log_warn "Client '$name': IPv6 route kept - the client's IPv4 routes do not match the server list, so whose route it is cannot be told. If the client's routes were not set by hand, remove it: regen --reset-routes '$name'."
             fi
         elif [[ -z "$client_ipv6" ]]; then
             _aip_new=$(_aip_migrate_legacy_v6 "$current_allowed_ips" "${ALLOWED_IPS:-}") && [[ -n "$_aip_new" ]] || {
