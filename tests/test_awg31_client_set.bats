@@ -19,6 +19,8 @@
 bats_require_minimum_version 1.5.0
 
 K1='BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA='
+# PATH as bats started with it: every twin starts from here, whatever _hide did.
+_ORIG_PATH="$PATH"
 
 setup() {
     [[ -e /etc/cron.d/awg-expiry ]] && skip "host has /etc/cron.d/awg-expiry"
@@ -53,7 +55,7 @@ STUB
     printf '#!/bin/bash\nexit 1\n' > "$TEST_DIR/bin/ip"
     for c in curl wget; do printf '#!/bin/bash\nexit 1\n' > "$TEST_DIR/bin/$c"; done
     chmod +x "$TEST_DIR/bin/"*
-    export PATH="$TEST_DIR/bin:$PATH"
+    export PATH="$TEST_DIR/bin:$_ORIG_PATH"
     cat > "$A/awgsetup_cfg.init" << 'CONF'
 export AWG_PORT=39743
 export AWG_TUNNEL_SUBNET='10.9.9.1/24'
@@ -68,6 +70,8 @@ CONF
 }
 
 teardown() {
+    # first: _hide may have pointed PATH into the directory removed below
+    export PATH="$_ORIG_PATH"
     unset AWG_SKIP_APPLY
     [[ -n "${TEST_DIR:-}" ]] && rm -rf "$TEST_DIR"
 }
@@ -89,6 +93,28 @@ _gen() {
     else
         rm -f "$A/server_hpk.key"
     fi
+}
+
+# _hide <command> : the command is absent for manage even when the host has it
+# (CI runners carry qrencode in /usr/bin, so deleting the stub alone hides
+# nothing there and the case cannot fail). PATH becomes the stub directory plus
+# a directory of links to every host command except that one.
+_hide() {
+    local name="$1" d f
+    local -a dirs
+    mkdir -p "$TEST_DIR/sysbin"
+    IFS=: read -ra dirs <<< "$_ORIG_PATH"
+    for d in "${dirs[@]}"; do
+        [[ -d "$d" ]] || continue
+        for f in "$d"/*; do
+            [[ -x "$f" && ! -e "$TEST_DIR/sysbin/${f##*/}" ]] || continue
+            ln -s "$f" "$TEST_DIR/sysbin/${f##*/}"
+        done
+    done
+    /bin/rm -f "$TEST_DIR/sysbin/$name" "$TEST_DIR/bin/$name"
+    export PATH="$TEST_DIR/bin:$TEST_DIR/sysbin"
+    if command -v "$name" >/dev/null 2>&1; then echo "_hide: $name still reachable" >&2; return 1; fi
+    return 0
 }
 
 _lib_for() {
@@ -160,7 +186,7 @@ _add_ok() {
 _add_no_qrencode() {
     local s="$1"
     _gen 3.1
-    /bin/rm -f "$TEST_DIR/bin/qrencode"
+    _hide qrencode
     : > "$TEST_DIR/awg.log"
     _m "$s" add alice
     _fail
@@ -199,7 +225,7 @@ _add_incomplete_others_kept() {
 _add_20_no_qrencode() {
     local s="$1"
     _gen 2.0
-    /bin/rm -f "$TEST_DIR/bin/qrencode"
+    _hide qrencode
     _m "$s" add alice
     _ok
     grep -qxF "#_Name = alice" "$SC"
@@ -250,7 +276,7 @@ _regen_no_qrencode() {
     _ok
     before=$(_files alice)
     inode=$(stat -c %i "$A/alice.conf")
-    /bin/rm -f "$TEST_DIR/bin/qrencode"
+    _hide qrencode
     _m "$s" regen alice
     _fail
     [[ "$output$stderr" == *qrencode* ]]
