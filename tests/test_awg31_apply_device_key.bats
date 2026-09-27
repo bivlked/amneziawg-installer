@@ -157,6 +157,25 @@ c_unreadable() {
 }
 @test "the device cannot be read: restart, not syncconf" { require_flock; _libs c_unreadable; }
 
+c_unreadable_20() {
+    _state "" ""
+    : > "$AWG_DIR/.showconf_fail"
+    _apply "$1"
+    # nothing to judge on 2.0: the usual strip and syncconf path, no restart
+    _synced
+    _nope _restarted
+}
+@test "2.0 with a device that cannot be read: syncconf as before, no needless restart" { require_flock; _libs c_unreadable_20; }
+
+c_dev_zero_key() {
+    # the device line carries an all-zero key: that is "no key", as the file says
+    _state "" "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    _apply "$1"
+    _synced
+    _nope _restarted
+}
+@test "an all-zero key on the device reads as no key: 2.0 keeps syncconf" { require_flock; _libs c_dev_zero_key; }
+
 c_no_leak() {
     _state "$K2" "$K1"
     ( set -x; _apply "$1" ) 2> "$TEST_DIR/trace" || true

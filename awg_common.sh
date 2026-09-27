@@ -3775,15 +3775,29 @@ _awg_hpk_device_state() {
 _awg_hpk_device_state_body() {
     local _hs_any=0 _hs_if=0 _hs_out=0 _hs_val="" dev="" line dev_key="" dev_has=0 file_has=0
     if [[ -r "$SERVER_CONF_FILE" ]]; then
-        _awg_hpk_conf_scan "$SERVER_CONF_FILE" || { printf 'unreadable'; return 0; }
+        _awg_hpk_conf_scan "$SERVER_CONF_FILE" || { printf 'badfile'; return 0; }
         (( _hs_if > 0 )) && file_has=1
     fi
-    dev=$(timeout 10 awg showconf awg0 </dev/null 2>/dev/null) || { printf 'unreadable'; return 0; }
+    # Не прочитать awg0 - повод для перезапуска, только если ключ есть в файле. На
+    # 2.0 без ключа судить не о чем, а временный сбой showconf не должен рвать
+    # соединения: прежний путь strip и syncconf сам уходит в перезапуск при отказе.
+    if ! dev=$(timeout 10 awg showconf awg0 </dev/null 2>/dev/null); then
+        if (( file_has )); then printf 'unreadable'; else printf 'same'; fi
+        return 0
+    fi
     while IFS= read -r line; do
         if [[ "$line" =~ ^[[:space:]]*[Hh][Ee][Aa][Dd][Ee][Rr][Pp][Rr][Oo][Tt][Ee][Cc][Tt][Ii][Oo][Nn][Kk][Ee][Yy][[:space:]]*=[[:space:]]*(.*)$ ]]; then
             dev_has=1
             dev_key="${BASH_REMATCH[1]}"
             dev_key="${dev_key%"${dev_key##*[![:space:]]}"}"
+            # Пустое или нулевое значение - это «ключа нет». Замер 2026 года: без
+            # ключа модуль 3.1 строку не печатает вовсе, но у соседнего
+            # ContentPaddingAddition имя с нулём есть и до установки, и так же может
+            # повести себя будущая сборка инструментов.
+            if [[ -z "$dev_key" || "$dev_key" =~ ^A{43}=$ ]]; then
+                dev_has=0
+                dev_key=""
+            fi
         fi
     done <<< "$dev"
     if (( file_has != dev_has )) || [[ "$file_has" == 1 && "$_hs_val" != "$dev_key" ]]; then
@@ -3921,7 +3935,9 @@ apply_config() {
     local _dev_state
     _dev_state=$(_awg_hpk_device_state)
     if [[ "$_dev_state" != same ]]; then
-        if [[ "$_dev_state" == differ ]]; then
+        if [[ "$_dev_state" == badfile ]]; then
+            log_warn "Не удалось разобрать $SERVER_CONF_FILE, чтобы сверить ключ защиты заголовков с живым интерфейсом awg0 - применяю перезапуском, а не syncconf."
+        elif [[ "$_dev_state" == differ ]]; then
             log_warn "Ключ защиты заголовков (HeaderProtectionKey) на живом интерфейсе awg0 расходится с $SERVER_CONF_FILE - интерфейс пересоздаётся перезапуском, а не syncconf."
         else
             log_warn "Состояние живого интерфейса awg0 не прочитать (awg showconf) - применяю перезапуском, а не syncconf."
@@ -4169,6 +4185,23 @@ remove_peer_from_server() {
         log_error "Пир '$name' не найден в конфиге"
         exec {lock_fd}>&-
         return 1
+    fi
+    # Необязательный ожидаемый открытый ключ (откат generate_client): удаляется
+    # только тот пир, который создала эта операция. Сверка под этой же
+    # блокировкой: клиента с тем же именем мог пересоздать другой процесс.
+    if [[ -n "${2:-}" ]]; then
+        local _pk
+        _pk=$(awk -v target="$name" '
+            /^\[Peer\]/ { p = 1; f = 0; next }
+            /^\[/ { p = 0; f = 0 }
+            p && $0 == "#_Name = " target { f = 1; next }
+            p && f && /^PublicKey[ \t]*=/ { sub(/^PublicKey[ \t]*=[ \t]*/, ""); sub(/[ \t\r]+$/, ""); print; exit }
+        ' "$SERVER_CONF_FILE" 2>/dev/null)
+        if [[ "$_pk" != "$2" ]]; then
+            log_error "Пир '$name' в конфиге уже не тот, что создавала эта операция - не удаляю"
+            exec {lock_fd}>&-
+            return 1
+        fi
     fi
 
     # temp в каталоге серверного конфига -> финальный mv = атомарный rename.
@@ -4668,7 +4701,8 @@ _awg31_need_client_tools() {
 # чей перевыпуск оборвался после перезаписи .conf, возвращает прежний набор ровно
 # (файл, которого не было, снова убирается). Копии - временные файлы в AWG_DIR,
 # рядом с оригиналами: права сохраняются, приватный ключ клиента из .conf
-# каталог не покидает, а реестр временных файлов уберёт их и при обрыве.
+# каталог не покидает, а реестр временных файлов уберёт их и при обрыве
+# (прежний набор при обрыве НЕ возвращается: возврат делает только сам перевыпуск).
 # Состояние - в глобальном массиве: вызывать БЕЗ $( ), иначе он потеряется.
 _AWG31_SET_SNAP=()
 
@@ -4701,7 +4735,16 @@ _awg31_set_restore() {
         f="${e%%$'\t'*}"
         tmp="${e#*$'\t'}"
         if [[ -n "$tmp" ]]; then
-            mv -f "$tmp" "$f" || { log_error "Не удалось вернуть $f из копии $tmp."; rc=1; }
+            if ! mv -f "$tmp" "$f"; then
+                # Копия - временный файл и при выходе будет удалена, поэтому
+                # сохраняется жёсткой ссылкой под постоянным именем.
+                if ln -f "$tmp" "${f}.before-regen" 2>/dev/null; then
+                    log_error "Не удалось вернуть $f; прежний файл сохранён как ${f}.before-regen."
+                else
+                    log_error "Не удалось вернуть $f, и прежний файл сохранить не удалось."
+                fi
+                rc=1
+            fi
         elif [[ -e "$f" || -L "$f" ]]; then
             rm -f "$f" || { log_error "Не удалось убрать $f, которого до перевыпуска не было."; rc=1; }
         fi
@@ -4720,6 +4763,43 @@ _awg31_set_restore_noted() {
     else
         log_error "Установка 3.1: прежний комплект клиента '$1' вернулся не целиком (подробности выше)."
     fi
+    return 0
+}
+
+# _awg31_undo_client <имя> <открытый ключ> : снять клиента, созданного этой
+# операцией, после неполного комплекта. Блокировка конфига к этому моменту
+# отпущена, и клиента с тем же именем мог пересоздать другой процесс, поэтому
+# снимается ТОЛЬКО свой: файлы - если открытый ключ в keys/ наш (сверка и
+# удаление под блокировкой), пир - через remove_peer_from_server с ожидаемым
+# ключом (сверка под её блокировкой).
+_awg31_undo_client() {
+    local name="$1" pub="$2" lock_fd pk="" f
+    exec {lock_fd}>"${AWG_DIR}/.awg_config.lock"
+    if ! flock -x -w 30 "$lock_fd"; then
+        exec {lock_fd}>&-
+        log_error "Блокировка конфига не получена: клиент '$name' с неполным комплектом не снят - удалите его: manage remove $name"
+        return 1
+    fi
+    [[ -f "$KEYS_DIR/${name}.public" ]] && IFS= read -r pk < "$KEYS_DIR/${name}.public"
+    if [[ -z "$pub" || "$pk" != "$pub" ]]; then
+        exec {lock_fd}>&-
+        log_error "Клиента '$name' за это время изменила другая операция - откат его не трогает. Проверьте: manage list"
+        return 1
+    fi
+    _remove_client_files "$name"
+    local _left=""
+    for f in "$AWG_DIR/${name}.conf" "$AWG_DIR/${name}.png" "$AWG_DIR/${name}.vpnuri" \
+             "$AWG_DIR/${name}.vpnuri.png" "$KEYS_DIR/${name}.private" "$KEYS_DIR/${name}.public"; do
+        [[ -e "$f" || -L "$f" ]] && _left+=" $f"
+    done
+    exec {lock_fd}>&-
+    [[ -z "$_left" ]] || log_error "Файлы клиента '$name' не удалены:${_left}"
+    if ! remove_peer_from_server "$name" "$pub"; then
+        log_error "Пир '$name' не снят из $SERVER_CONF_FILE (причина выше) - удалите его: manage remove $name"
+        return 1
+    fi
+    [[ -z "$_left" ]] || return 1
+    log "Клиент '$name' снят: пир и файлы убраны."
     return 0
 }
 
@@ -5042,10 +5122,8 @@ generate_client() {
     # На 3.1 комплект - всё или ничего: неполный комплект снимает клиента
     # целиком - пира из серверного конфига и все его файлы.
     if ! _awg31_client_set_ok "$name" "$_set_fail"; then
-        log_error "Комплект клиента '$name' неполон (причина выше): клиент не создан, пир и файлы убраны."
-        remove_peer_from_server "$name" \
-            || log_error "Пир '$name' остался в $SERVER_CONF_FILE без файлов клиента - удалите его: manage remove $name"
-        _remove_client_files "$name"
+        log_error "Комплект клиента '$name' неполон (причина выше): клиент не создан."
+        _awg31_undo_client "$name" "$client_pubkey"
         return 1
     fi
 
@@ -5277,7 +5355,7 @@ regenerate_client() {
 
     # Перегенерация конфига (передаём client_ipv6 если dual-stack). DNS живого клиента
     # отдаём render напрямую (8-й аргумент): его всё равно восстановим ниже.
-    local _keep_dns=""
+    local _keep_dns="" _regen_sum=""
     [[ "$_had_conf" -eq 1 && -n "$current_dns" ]] && _keep_dns="$current_dns"
     # На 3.1 копия комплекта снимается под той же блокировкой, под которой
     # переписывается .conf, и возвращается на любом отказе ниже.
@@ -5441,6 +5519,10 @@ regenerate_client() {
         return 1
     fi
 
+    # Отпечаток нашего .conf: финальный возврат комплекта не должен затереть
+    # правку, сделанную другой операцией после отпуска блокировки.
+    _regen_sum=$(cksum < "$_client_conf" 2>/dev/null)
+
     # Освобождаем блокировку — конфиг записан, дальше некритичные операции
     exec {lock_fd}>&-
 
@@ -5463,9 +5545,18 @@ regenerate_client() {
     # На 3.1 комплект - всё или ничего: неполный набор после перевыпуска
     # заменяется прежним, под блокировкой конфига.
     if ! _awg31_client_set_ok "$name" "$_set_fail"; then
+        # Возврат только под блокировкой и только если .conf не менялся после нашей
+        # записи: иначе он затёр бы правку параллельной операции (modify, remove).
         exec {lock_fd}>"$lockfile"
-        flock -x -w 10 "$lock_fd" || log_warn "Блокировка конфига не получена - возвращаю прежний комплект '$name' без неё."
-        if _awg31_set_restore; then
+        if ! flock -x -w 30 "$lock_fd"; then
+            log_error "Комплект клиента '$name' после перевыпуска неполон, а блокировка конфига не получена: прежний набор не возвращён, чтобы не затереть параллельную операцию. Повторите: manage regen $name"
+            _awg31_set_drop
+        elif [[ "$(cksum < "$AWG_DIR/${name}.conf" 2>/dev/null)" != "$_regen_sum" ]]; then
+            log_error "Комплект клиента '$name' после перевыпуска неполон, но его конфиг уже изменила другая операция: прежний набор не возвращён. Проверьте клиента и повторите: manage regen $name"
+            _awg31_set_drop
+        elif (( ${#_AWG31_SET_SNAP[@]} == 0 )); then
+            log_error "Комплект клиента '$name' после перевыпуска неполон, а копии прежнего набора нет (маркер поколения при снятии копии не читался): набор не возвращён. Повторите: manage regen $name"
+        elif _awg31_set_restore; then
             log_error "Комплект клиента '$name' после перевыпуска неполон (причина выше): прежний набор файлов возвращён."
         else
             log_error "Комплект клиента '$name' после перевыпуска неполон, и прежний набор вернулся не целиком (подробности выше)."

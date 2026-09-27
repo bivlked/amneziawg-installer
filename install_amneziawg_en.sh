@@ -6470,8 +6470,9 @@ step6_generate_configs() {
         fi
     done
 
-    # On 3.1 generate_client does not treat a failed QR code or vpn:// link as an
-    # error, so the set is checked as a whole for EVERY default client in the
+    # On 3.1 generate_client takes a NEW client with an incomplete set off by
+    # itself, but it does not touch clients carried over from the previous config,
+    # so the set is checked as a whole for EVERY default client in the
     # config, not only the ones created now: after a step 6 cut off by a signal or
     # a crash the config may carry a client without files, and a rerun would
     # accept it quietly.

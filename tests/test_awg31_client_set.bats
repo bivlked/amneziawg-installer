@@ -129,7 +129,8 @@ _files() {
 
 # _no_trace <name> : nothing of the client is left anywhere
 _no_trace() {
-    _nope 'grep -qxF "#_Name = $1" "$SC"'
+    # not through _nope: inside its eval "$1" would be _nope's own argument
+    if grep -qxF "#_Name = $1" "$SC"; then echo "peer $1 left in $SC" >&2; return 1; fi
     [ "$(_files "$1" | grep -vc ' absent$')" -eq 0 ] || { _files "$1" >&2; return 1; }
 }
 
@@ -280,6 +281,93 @@ _regen_no_qrencode() {
             || { echo "$lib: $n_ret failure returns, $n_rest restoring + $n_final final"; return 1; }
     done
 }
+
+# A concurrent operation changes the client .conf in the window between the
+# regen releasing the lock and its final check (the qrencode stub does it, then
+# fails). The previous set must NOT come back over that change.
+_regen_concurrent_change_kept() {
+    local s="$1"
+    _gen 3.1
+    _m "$s" add alice
+    _ok
+    cat > "$TEST_DIR/bin/qrencode" << STUB
+#!/bin/bash
+cat >/dev/null
+echo "# changed by another operation" >> "$A/alice.conf"
+exit 1
+STUB
+    chmod +x "$TEST_DIR/bin/qrencode"
+    sed -i "s/^export AWG_ENDPOINT=.*/export AWG_ENDPOINT='203.0.113.9'/" "$A/awgsetup_cfg.init"
+    _m "$s" regen alice
+    _fail
+    grep -qxF "# changed by another operation" "$A/alice.conf"
+    [[ "$output$stderr" == *"regen alice"* ]]
+}
+@test "regen does not put the previous set back over a concurrent change of the client config" { _both _regen_concurrent_change_kept; }
+
+# The config lock cannot be taken again for the final put-back: nothing is
+# restored without it (flock starts failing from the moment QR building begins).
+_regen_no_lock_no_restore() {
+    local s="$1" real_flock
+    _gen 3.1
+    _m "$s" add alice
+    _ok
+    real_flock=$(PATH=/usr/bin:/bin command -v flock)
+    cat > "$TEST_DIR/bin/flock" << STUB
+#!/bin/bash
+[[ -e "$TEST_DIR/flock_fail" ]] && exit 1
+exec "$real_flock" "\$@"
+STUB
+    cat > "$TEST_DIR/bin/qrencode" << STUB
+#!/bin/bash
+cat >/dev/null
+: > "$TEST_DIR/flock_fail"
+exit 1
+STUB
+    chmod +x "$TEST_DIR/bin/flock" "$TEST_DIR/bin/qrencode"
+    sed -i "s/^export AWG_ENDPOINT=.*/export AWG_ENDPOINT='203.0.113.9'/" "$A/awgsetup_cfg.init"
+    _m "$s" regen alice
+    _fail
+    # the regenerated .conf (new endpoint) stays: no put-back without the lock
+    grep -q '203.0.113.9' "$A/alice.conf"
+    [[ "$output$stderr" == *"regen alice"* ]]
+}
+@test "regen does not put the previous set back without the config lock" { _both _regen_no_lock_no_restore; }
+
+# ------------------------------------------------------------------ only our own client is undone
+
+# _lib <library> <code> : run code with the library sourced, in the sandbox
+_lib() {
+    AWG_DIR="$A" CONFIG_FILE="$A/awgsetup_cfg.init" SERVER_CONF_FILE="$SC" KEYS_DIR="$A/keys" \
+        timeout 60 bash -c '
+            log() { :; }; log_warn() { :; }; log_error() { echo "ERR: $*" >&2; }; log_debug() { :; }
+            source "$1" >/dev/null 2>&1
+            eval "$2"
+        ' _ "$1" "$2"
+}
+
+_undo_foreign_left() {
+    local s="$1" lib before server
+    lib="${s/manage_amneziawg/awg_common}"
+    _gen 3.1
+    _m "$s" add alice
+    _ok
+    before=$(_files alice)
+    server=$(cksum < "$SC")
+    # another process recreated "alice": her key is not the one we created
+    run _lib "$lib" '_awg31_undo_client alice NOTOURKEYNOTOURKEYNOTOURKEYNOTOURKEYNOTOUA='
+    _fail
+    [ "$(_files alice)" = "$before" ]
+    [ "$(cksum < "$SC")" = "$server" ]
+    run _lib "$lib" 'remove_peer_from_server alice NOTOURKEYNOTOURKEYNOTOURKEYNOTOURKEYNOTOUA='
+    _fail
+    [ "$(cksum < "$SC")" = "$server" ]
+    # and with our own key it does take the client off (the check is not vacuous)
+    run _lib "$lib" "_awg31_undo_client alice \"\$(cat '$A/keys/alice.public')\""
+    _ok
+    _no_trace alice
+}
+@test "the rollback of add takes off only its own client: a foreign key leaves files and peer alone" { _both _undo_foreign_left; }
 
 _regen_ok() {
     local s="$1"
