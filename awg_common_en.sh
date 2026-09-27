@@ -1424,6 +1424,468 @@ awg_restore_generation_notice() {
     return 0
 }
 
+# ── Third-line environment check for restore (Р6) ────────────────────────────
+# Restoring a 3.1 backup onto a host whose module or tools do not understand the
+# third line would bring the service up while clients could not connect (a
+# second-line module silently accepts the header protection key). So restore
+# into 3.1 checks the environment with THE SAME code the installer runs at step 3.
+# 🔴 The functions below are VERBATIM copies from install_amneziawg_en.sh: the
+# installer needs the probe at step 3, and this library arrives at step 5, it
+# cannot be sourced earlier. A test pins the copies as equal
+# (test_awg31_restore_environment.bats); edit both copies together. The reasoning
+# lives in the comments above the functions in the installer.
+
+_kernel_supports_awg3() {
+    # Returns 0 if the kernel version is >= 6.7 - there we take the module from the
+    # PPA as is. Returns 1 if the kernel is older than 6.7 - there we go the pinned
+    # 2.0 route.
+    # ⚠️ The name is historical, do not read it literally. The 6.7 threshold comes
+    # from 30-31 jul 2026: the 3.0 code called nla_put_uint, absent before mainline
+    # v6.7, and on 6.1 (Debian 12) the build died with 'implicit declaration of
+    # nla_put_uint'. Upstream fixed that on 31 jul (v3.0.20260731-04), and the 3.0
+    # module DOES build on 6.1 now - verified on a stand on 1 aug. The threshold is
+    # kept deliberately: within a day the 3.0 line managed to break and fix the
+    # build on old kernels specifically, so that is where it is least proven, while
+    # the pinned 2.0 is checked against an immutable commit. Drop the threshold
+    # after validating 3.0, not because the build passes again.
+    # Arg $1: kernel release (default uname -r). An unparseable version is treated
+    # as "NOT supported" -> pinned 2.0 (it builds on ANY of our kernels, so the
+    # conservative choice never breaks connectivity, it only withholds 3.0 features
+    # which H0 does not ship anyway).
+    # Pure function with no external deps (bats: extracted via sed-range + source).
+    local kver="${1:-$(uname -r)}" kmaj kmin
+    local min_maj=6 min_min=7
+    if [[ "$kver" =~ ^([0-9]+)\.([0-9]+) ]]; then
+        kmaj=${BASH_REMATCH[1]}; kmin=${BASH_REMATCH[2]}
+    else
+        return 1
+    fi
+    if (( kmaj > min_maj || (kmaj == min_maj && kmin >= min_min) )); then
+        return 0
+    fi
+    return 1
+}
+
+_awg31_host_arch() {
+    local a=""
+    a=$(dpkg --print-architecture 2>/dev/null) || a=""
+    [[ -z "$a" ]] && a=$(uname -m 2>/dev/null)
+    printf '%s' "$a"
+}
+
+awg31_tools_support() {
+    local usage="" rc=0
+    command -v awg >/dev/null 2>&1 || return 1
+    # 🔴 -k IS REQUIRED, not decoration. Without it timeout sends TERM and
+    # WAITS: a wrapper that ignores the signal is not bounded at all, and
+    # step 3 hangs forever without printing a thing. The verdict would stay
+    # correct (124 is not 1, so tools_old), but an unattended install would
+    # stall. Found by review of this pull request.
+    # </dev/null for the same reason every read in this project uses
+    # /dev/tty: the probe must not eat the rest of a script fed through a
+    # pipe.
+    usage=$(timeout -k 1 5 awg set </dev/null 2>&1); rc=$?
+    (( rc == 1 )) || return 1
+    # 🔴 BOTH names, not one. The probe sends the header protection key and the
+    # padding range in a single command. A tools build that knows only the first
+    # would pass this gate and then run into the probe, whose text talks about
+    # permissions and netlink - while the cure is a tools upgrade, for which
+    # tools_old already carries the right advice. Measured 19 sep 2026: the
+    # usage of real 3.1 tools (ee0f0a9, tag v3.1.20260812) prints both names
+    # next to each other, so this does not turn away a healthy build.
+    [[ "$usage" == *header-protection-key* && "$usage" == *content-padding-addition* ]]
+}
+
+awg31_module_support() {
+    local verdict=""
+    verdict=$(_awg31_module_probe)
+    case "$verdict" in
+        ok)    return 0 ;;
+        line2) return 1 ;;
+        *)     return 2 ;;
+    esac
+}
+
+_awg31_module_probe() (
+    case $- in *x*) set +x ;; esac
+    umask 077
+    # 🔴 The probe can refuse for a good many different reasons, and until this
+    # was added a person learned none of them. There is deliberately NO number
+    # here: it has already drifted from the code twice, and the second time it
+    # was raised to the count of the PREVIOUS commit - the very commit that had
+    # added another reason. The code can be asked (`grep -c '_probe_say "'` over
+    # the function body), while a written number rots in silence. What matters
+    # is not the count but the invariant: no refusal is silent on any path the
+    # probe chooses ITSELF - the signal handler below is silent on purpose, and
+    # that is the only exception.
+    # Why none of them were learned before: the verdict goes to stdout and
+    # everything else was thrown away. stdout is taken, but stderr is free and
+    # is not captured. The key never reaches it: the module is handed a PATH to
+    # a file, and the showconf output does not go into diagnostics at all.
+    # Through log_debug when it exists, to respect --verbose and the log format.
+    _probe_say() {
+        if type log_debug >/dev/null 2>&1; then
+            log_debug "module probe: $1"
+        else
+            printf 'module probe: %s\n' "$1" >&2
+        fi
+    }
+    local ifn="" kf="" rec="" key="" out="" line="" ctl="" rc=0 arc=0 i=0 made=0 cleaned=0
+    local klines=() kraw="" kbytes="" krc=0
+    local seen=0 hpk=0 cpa=0 hpk_name=0 cpa_name=0
+    command -v ip >/dev/null 2>&1  || { _probe_say "the ip command was not found"; printf 'failed'; exit 0; }
+    command -v awg >/dev/null 2>&1 || { _probe_say "the awg command was not found"; printf 'failed'; exit 0; }
+
+    kf=$(mktemp "${TMPDIR:-/tmp}/awg31probe.$$.XXXXXX" 2>/dev/null) || { _probe_say "a temporary file could not be created in ${TMPDIR:-/tmp}"; printf 'failed'; exit 0; }
+    # 🔴 The name of the interface goes into a FILE, not into a variable. The
+    # installer cleanup lives in the parent shell, the probe is called through
+    # $( ), and anything assigned inside is lost with the subshell. A file
+    # outlives both the subshell and a SIGKILL of the probe itself, which is also
+    # what makes it the marker for "a probe happened here". ⚠️ If the whole
+    # installer gets a SIGKILL, the record and the interface stay until a reboot:
+    # the next run only looks for records of its own $$.
+    rec="${TMPDIR:-/tmp}/awg31probe.$$.iface"
+    # The cleanup has to survive both an ordinary exit and a signal: the machine
+    # must not keep an interface of ours after the probe.
+    _probe_cleanup() {
+        # Idempotent, following _install_cleanup: on a signal the cleanup runs
+        # from the handler and then once more on EXIT, and the second call has
+        # to be a no-op. Otherwise Ctrl-C costs another `ip link del` against an
+        # interface that is already gone - up to five more seconds of silence in
+        # exactly the wedged-netlink state the probe exists to refuse over.
+        [[ "$cleaned" -eq 1 ]] && return 0
+        cleaned=1
+        rm -f "$kf" 2>/dev/null
+        if [[ "$made" -eq 1 ]]; then
+            # The record is dropped ONLY after a delete that worked. If it
+            # did not, the record stays, the installer cleanup picks the
+            # interface up and says so out loud. Saying it from here is not
+            # possible: stdout carries the verdict.
+            if timeout -k 1 5 ip link del "$ifn" >/dev/null 2>&1; then
+                rm -f "$rec" 2>/dev/null
+            fi
+        fi
+    }
+    # 🔴 A signal needs an EXPLICIT exit, not just the cleanup. Without it the
+    # body carries on after the interrupted command - sending awg set and
+    # showconf to an interface the trap has just removed - and the cleanup runs
+    # a second time on EXIT. The same class that is already fixed for the
+    # installer itself above.
+    trap '_probe_cleanup' EXIT
+    trap '_probe_cleanup; printf "failed"; exit 0' INT TERM HUP
+
+    timeout -k 1 5 awg genkey </dev/null > "$kf" 2>/dev/null || { _probe_say "awg genkey did not produce a key"; printf 'failed'; exit 0; }
+    # 🔴 But BOTH lines have to be read. `read` takes only the first, while the
+    # module is handed the WHOLE file: a file with a correct first line and junk
+    # behind it would pass the shape check, the tool would refuse it, and the
+    # refusal at control step 2 would call a healthy module second line - exactly
+    # the defect this probe exists to prevent. The old `tr` joined the whole file
+    # and caught such a tail; the library (_awg_hpk_file_valid) also checks the
+    # size of the file.
+    # 🔴 The FILE itself is validated, not a cleaned copy of it. This is the
+    # FOURTH visit to this one place, and the root was the same all four times:
+    # I compared what I had READ and normalised, while the tool is handed the
+    # file AS IT IS.
+    # 🔴 This one was worse than the three before it. The checks CITED the rule
+    # that the library demands exactly 45 bytes, and then never counted a byte:
+    # the expected string was rebuilt out of data bash had already normalised
+    # and compared with itself. Measured 20 sep 2026: a 46-byte file shaped
+    # `<44 base64><NUL><LF>` passed ALL THREE checks, because `mapfile` and
+    # `read -N` both drop a NUL. The tool then refused the file, the refusal at
+    # control step 2 called a healthy module second line, and its owner went off
+    # to rebuild a module that was fine - the exact defect this probe exists to
+    # prevent.
+    # 🔴 So the size is measured the way the library measures it
+    # (_awg_hpk_file_valid): with `wc -c`. Builtins CANNOT do this - bash cannot
+    # hold a NUL in a variable at all, so every reader loses it in silence. The
+    # old promise that the key path runs no external command is withdrawn
+    # DELIBERATELY: the key VALUE still never leaves the file - it is fed on
+    # stdin, only a number comes back, and without counting the bytes that
+    # promise was costing a verdict.
+    # ⚠️ Exactly about the PATH, because the previous wording promised more than
+    # it kept: the path DOES reach argv, both here in `timeout`/`sh` and below in
+    # `awg set`, which is handed it on purpose. It is not a secret: it is a random
+    # name from `mktemp` whose only job is to make a race hard, not to hide.
+    # What each check catches (measured 20 sep 2026, one file per corrupt
+    # genkey stub; again NO number here, for the same reason):
+    #   not 45 bytes          -> a NUL, and any byte the readers cannot see;
+    #   not one line          -> two lines and junk; it gives the better message;
+    #   file is not line + \n -> no trailing newline;
+    #   shape is wrong        -> a carriage return, junk inside the line.
+    # 🔴 The checks overlap ON PURPOSE, and "one each" would be untrue: two
+    # lines are caught by the first and by the second alike. Removing one of two
+    # overlapping guards leaves the verdict where it was - measured by mutation,
+    # not asserted.
+    # 🔴 The TRIPLE first, and it answers WITHOUT OPENING the file. That is not
+    # decoration: a `timeout` around `wc` does NOT bound the open, because the
+    # redirection `< "$kf"` is performed by the CALLING shell before `timeout`
+    # ever runs. Measured 21 sep 2026: `timeout -k 1 5 wc -c < FIFO` NEVER
+    # returns, while the same command with the redirection INSIDE the bounded
+    # process honestly gives 124 after five seconds. So a planted FIFO hung the
+    # probe for good, and silently - the exact state it was written to avoid.
+    # Both things are done here: the triple answers first and cheaply, and the
+    # redirection moved inside the bound, which closes the race between the test
+    # and the open. The same trap is described above for `read -t`, in `_install_cleanup`.
+    [[ -f "$kf" && ! -L "$kf" && -r "$kf" ]] || { _probe_say "the key file is not a regular readable file"; printf 'failed'; exit 0; }
+    kbytes=$(timeout -k 1 5 sh -c 'wc -c < "$0"' "$kf" 2>/dev/null)
+    krc=$?
+    # 🔴 Only BLANKS are stripped - spaces and tabs, `[[:blank:]]` - and the
+    # exit status is read. Not `[[:space:]]`: a newline is whitespace too, so
+    # `4\n5` would collapse into "45", the very joining this was moved away from. The first
+    # form threw away every non-digit (`${kbytes//[^0-9]/}`) and ignored the
+    # status: a `wc` that printed `4x5` and failed then collapsed into "45" and
+    # opened a path to a WRONG verdict - the guard put there to catch an extra
+    # byte let that byte through itself. Whitespace still has to go: not every
+    # `wc` prints the number without padding.
+    kbytes="${kbytes//[[:blank:]]/}"
+    # The comparison is EXACT precisely because the right-hand side is a literal:
+    # put a variable or a pattern there and the exactness disappears in silence,
+    # with no test noticing.
+    [[ $krc -eq 0 && "$kbytes" == 45 ]] || { _probe_say "the key file is not exactly 45 bytes (code $krc, bytes: ${kbytes:-unknown})"; printf 'failed'; exit 0; }
+    mapfile -t klines 2>/dev/null < "$kf" || :
+    (( ${#klines[@]} == 1 )) || { _probe_say "the key file is not exactly one line (lines: ${#klines[@]})"; printf 'failed'; exit 0; }
+    key="${klines[0]}"
+    IFS= read -r -N 46 kraw < "$kf" 2>/dev/null || :
+    [[ "$kraw" == "$key"$'\n' ]] || { _probe_say "the key file is not exactly one line plus a newline"; printf 'failed'; exit 0; }
+    # The key shape is judged by the same measure the library uses
+    # (_awg_hpk_file_valid): 44 base64 characters. "Not empty" is not enough - a
+    # genkey that exits zero and prints rubbish would pass it, control step 2
+    # would then refuse over the KEY FILE, and we would call a healthy module
+    # second line and send its owner to rebuild it for nothing.
+    [[ "$key" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]] || { _probe_say "the key is not of the shape the library requires"; printf 'failed'; exit 0; }
+
+    # A name shorter than 15 characters and never awg0: the probe has no
+    # business touching the working interface. The protection here is the SHAPE
+    # of the name (`awgp<pid>x<n>` cannot equal awg0), and a test pins it; there
+    # is deliberately no separate awg0 check, which would be an unreachable line
+    # reading like a live guard. A taken name means the next one, never a write
+    # into someone else's device.
+    for i in 1 2 3 4 5; do
+        ifn="awgp$$x$i"
+        # A hanging ip is "do not know", not "the name is free": going on and
+        # creating an interface under an unread name would be writing blind.
+        timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1
+        rc=$?
+        (( rc == 0 )) && continue
+        if (( rc == 124 || rc == 125 || rc == 137 )); then _probe_say "checking the name $ifn did not answer within the bound (code $rc)"; printf 'failed'; exit 0; fi
+        # 🔴 The record is laid down BEFORE anything is created, not after. A
+        # signal fits between a successful `ip link add` and the write, and then
+        # the interface is on the machine with nothing to find it by - exactly
+        # the silent loss this record exists to prevent. If the write fails,
+        # NOTHING is created: an honest refusal beats a trace nobody knows of.
+        # 🔴 set -C (O_EXCL) is required: the path is predictable, the installer
+        # runs as root, and a plain `>` would follow a symlink planted there and
+        # overwrite somebody else's file.
+        rm -f "$rec" 2>/dev/null
+        ( set -C; printf '%s\n' "$ifn" > "$rec" ) 2>/dev/null || { _probe_say "the interface name could not be written to $rec"; printf 'failed'; exit 0; }
+        timeout -k 1 5 ip link add "$ifn" type amneziawg >/dev/null 2>&1
+        rc=$?
+        if (( rc == 0 )); then made=1; break; fi
+        # 🔴 The PRESENCE OF THE DEVICE decides, not the exit code. The command
+        # may have been cut short after the kernel had already created the
+        # interface: a timeout, a signal from outside, a delayed netlink
+        # acknowledgement. The previous form caught only the three timeout codes
+        # and, on any other, dropped the record and took the next name - measured
+        # at five interfaces on the machine and not one record naming them. The
+        # name is built from OUR pid, so it cannot be anyone else's: a device
+        # found here is ours, and the record of it has to stay.
+        timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1
+        arc=$?
+        if (( arc != 1 )); then
+            _probe_say "creating the interface $ifn was not confirmed (code $rc), but the device is there or could not be checked (code $arc); the record is left for the cleanup"
+            printf 'failed'; exit 0
+        fi
+        # No device: the creation really did fail, and the same reason will
+        # repeat on the other names, so there is nothing to walk to.
+        rm -f "$rec" 2>/dev/null
+        _probe_say "the interface $ifn was not created (code $rc), and the reason will repeat on the other names"
+        printf 'failed'; exit 0
+    done
+    [[ "$made" -eq 1 ]] || { _probe_say "all five temporary names are taken"; printf 'failed'; exit 0; }
+
+    timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 \
+        header-protection-key "$kf" content-padding-addition 32-128 </dev/null >/dev/null 2>&1
+    rc=$?
+    if (( rc != 0 )); then
+        # A timeout is not a verdict about the module: no answer came back. 124
+        # is timeout firing, 125 is timeout itself failing, 137 is the KILL that
+        # -k sends. The control steps cannot help here: they say WHAT was
+        # rejected, and after a hang nothing was rejected at all, so their answer
+        # would describe another command rather than the one that never replied.
+        if (( rc == 124 || rc == 125 || rc == 137 )); then _probe_say "the main awg set did not answer within the bound (code $rc)"; printf 'failed'; exit 0; fi
+        # The control takes TWO steps, because the refused command carried two
+        # different third-line parameters at once.
+        # Step 1: the same padding sizes without the third-line parameters. A
+        # refusal here means they are not the reason, and the module cannot be
+        # judged.
+        timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 </dev/null >/dev/null 2>&1
+        ctl=$?
+        if (( ctl != 0 )); then _probe_say "control step 1 refused (code $ctl): the third-line parameters are not the reason"; printf 'failed'; exit 0; fi
+        # Step 2: the same plus the header protection key ALONE. A refusal here
+        # is a module that does not understand the third line. If the key was
+        # taken and the refusal was about the padding, the line cannot be named
+        # from that refusal: "update the module" would be wrong advice, so saying
+        # the check could not be made is the honest answer.
+        # 🔴 Step 2 judges by exit code 1, and `awg set` returns one on ANY
+        # error, a key file it cannot read included. If the file went away
+        # between the shape check and this step, the refusal would be about the
+        # FILE, and we would call a healthy module second line.
+        # 🔴 The SAME thing is checked here as at validation: a regular file,
+        # not a symlink, readable, and exactly 45 bytes. ⚠️ Only the SIZE half
+        # is held behaviourally, by the case where the file grows between the
+        # shape check and this step.
+        # 🔴 But the -f/! -L/-r triple is NOT redundant, and the previous wording
+        # of this comment lied by saying it had no case of its own. Its case is a
+        # file whose size CANNOT be measured: a FIFO can be planted at that path,
+        # and `wc -c` on one sits there rather than answering. ⚠️ The previous
+        # wording credited the `timeout` with stopping that, and it was WRONG: a
+        # bound does not cover the open when the redirection is performed by the
+        # calling shell (the measurement and the reasoning are at the first size
+        # check). What stops a FIFO here is the TRIPLE: `-f` on one is false and
+        # answers without opening. It also sees a symlink to a perfectly good
+        # file, which the size cannot see at all. ⚠️ The `! -L` half DOES have a test - the case that
+        # swaps the key file for a symlink. What is left without one is `-f` and
+        # `-r`: neither a FIFO at that path nor an unreadable file can be made on
+        # the development host. The old `-s` form asked
+        # only "not empty" and let through precisely the file it was put there
+        # to stop - one replaced between the validation and this step.
+        [[ -f "$kf" && ! -L "$kf" && -r "$kf" ]] || { _probe_say "the key file is not a regular readable file before control step 2"; printf 'failed'; exit 0; }
+        kbytes=$(timeout -k 1 5 sh -c 'wc -c < "$0"' "$kf" 2>/dev/null)
+        krc=$?
+        kbytes="${kbytes//[[:blank:]]/}"
+        [[ $krc -eq 0 && "$kbytes" == 45 ]] || { _probe_say "the key file is not exactly 45 bytes before control step 2 (code $krc, bytes: ${kbytes:-unknown})"; printf 'failed'; exit 0; }
+        timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 \
+            header-protection-key "$kf" </dev/null >/dev/null 2>&1
+        ctl=$?
+        # Only a REAL refusal from the tool (code 1) is a verdict about the
+        # module. A timeout, a missing binary or any other code cannot be: a hung
+        # command would otherwise declare a healthy module second line and send a
+        # person to rebuild it for nothing - the same thing the timeout check on
+        # the main command guards against.
+        if (( ctl == 1 )); then
+            # 🔴 A one from `awg set` means "any error", not "the module said
+            # no". An interface that went away, or became unreachable, returns
+            # the same one. What is checked is the device itself, not the text
+            # of the error: the wording of a tool changes between versions, the
+            # presence of a device does not.
+            timeout -k 1 5 ip link show "$ifn" >/dev/null 2>&1 || { _probe_say "the refusal on step 2 came from a vanished interface, not from the module"; printf 'failed'; exit 0; }
+            _probe_say "verdict: second line - the tool refused the key ALONE on step 2 and the interface is still there"
+            printf 'line2'
+        else
+            _probe_say "step 2 returned code $ctl, and only 1 counts as a verdict about the module"
+            printf 'failed'
+        fi
+        exit 0
+    fi
+
+    out=$(timeout -k 1 5 awg showconf "$ifn" </dev/null 2>/dev/null) || { _probe_say "awg showconf refused"; printf 'failed'; exit 0; }
+    # 🔴 The parsing uses no external command, and that is not a matter of
+    # style but of three reasons.
+    # 1. The key must not reach the argv of ANY command: argv is visible to
+    #    anyone through /proc/<pid>/cmdline. The previous version built a
+    #    pattern out of the key and handed it to grep, which made the promise
+    #    "it never appears in a command line" untrue, in the comment and in the
+    #    changelog alike.
+    # 2. A failure of grep or sed themselves (a missing binary, a pattern error)
+    #    landed in the second-line branch, so a person was told to rebuild a
+    #    healthy module because a utility was missing.
+    # 3. The escaping disappears: a random base64 key carries '+' or '/' about
+    #    three times in four, and that branch was never once tested with one.
+    #    A whole-line comparison has nothing to escape.
+    # Measured on a stand, 19 sep 2026: the key is read back VERBATIM (checked
+    # with two different random keys) and the range exactly as it was set.
+    while IFS= read -r line; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        case "$line" in
+            "[Interface]")                     seen=1 ;;
+            "HeaderProtectionKey = $key")      hpk=1; hpk_name=1 ;;
+            "ContentPaddingAddition = 32-128") cpa=1; cpa_name=1 ;;
+            "HeaderProtectionKey"*)            hpk_name=1 ;;
+            "ContentPaddingAddition"*)         cpa_name=1 ;;
+        esac
+    done <<< "$out"
+    # The answer has to be a config. `awg showconf` on an interface that exists
+    # always prints at least the [Interface] line (same measurement), so a zero
+    # exit with empty or unrecognisable output speaks about the environment and
+    # not about the generation: a substituted binary, a truncated pipe, a device
+    # that vanished.
+    (( seen == 1 )) || { _probe_say "the awg showconf answer does not look like a config"; printf 'failed'; exit 0; }
+    # 🔴 A verdict says what it rests on as well. Only the refusals used to
+    # speak, and the three verdicts were silent - so a wrong "second line",
+    # which costs its owner a module rebuild and a reboot, arrived WITH NO
+    # EVIDENCE, `--verbose` included. The most expensive answer has to be the
+    # most traceable one.
+    if (( hpk == 1 && cpa == 1 )); then
+        _probe_say "verdict: third line - both parameters came back with the values we set"
+        printf 'ok'
+    elif (( hpk_name == 0 && cpa_name == 0 )); then
+        # 🔴 A silent acceptance is when the answer carries NOT EVEN THE NAMES of
+        # the two parameters: an older module passes unknown netlink attributes
+        # over without a word. What is compared here is the presence of the NAME,
+        # not a matching value. Otherwise an answer where the module took
+        # everything and gave everything back, only in another shape - an extra
+        # space, a masked value, a differently written range - would land in
+        # "second line" and its owner would be told to rebuild a healthy module.
+        # The output shape rests on a single bench measurement, and a drift in it
+        # has to lead to "could not check", never to a confident verdict.
+        _probe_say "verdict: second line - the tool took everything in silence and the answer carries NEITHER NAME"
+        printf 'line2'
+    else
+        # 🔴 Everything else lands here: one of the two came back, or the names
+        # are there and the values are not ours. Neither is the second line.
+        # Upstream shipped the third-line parameters at different times, so an
+        # intermediate build knows the key but not the padding; and a value that
+        # does not match means we simply did not understand the answer. The
+        # second-line text would be false in both of its clauses, and its advice
+        # to rebuild the module would be a guess.
+        _probe_say "only part of the values came back (key: $hpk, padding: $cpa), the generation cannot be named"
+        printf 'failed'
+    fi
+    exit 0
+)
+
+# awg31_restore_blocker : empty when the third line will come up on this host;
+# otherwise a reason CODE - the same codes and the same order of checks as the
+# post stage of the installer's awg31_environment_blocker, but without
+# not_implemented_yet: restore brings back an existing 3.1 installation, it does
+# not issue a new one. Not knowing (architecture, probe) is a refusal, not a pass.
+awg31_restore_blocker() {
+    local arch kver
+    arch=$(_awg31_host_arch)
+    arch="${arch//[[:space:]]/}"
+    kver=$(uname -r)
+    [[ -n "$arch" ]] || { printf 'arch_unknown'; return 0; }
+    case "$arch" in
+        amd64|x86_64) : ;;
+        arm*|aarch64*) printf 'arm'; return 0 ;;
+        *) printf 'arch_unsupported'; return 0 ;;
+    esac
+    _kernel_supports_awg3 "$kver" || { printf 'kernel'; return 0; }
+    awg31_tools_support || { printf 'tools_old'; return 0; }
+    awg31_module_support
+    case $? in
+        0) : ;;
+        1) printf 'module_line2'; return 0 ;;
+        *) printf 'module_probe_failed'; return 0 ;;
+    esac
+    return 0
+}
+
+# _awg31_restore_blocker_reason <code> : the restore refusal reason as human text.
+_awg31_restore_blocker_reason() {
+    case "${1-}" in
+        arch_unknown)        printf '%s' "the machine architecture could not be determined, and not knowing it is not the same as knowing it fits" ;;
+        arm)                 printf '%s' "the third line is not issued on ARM yet: the architecture has not been measured for it" ;;
+        arch_unsupported)    printf '%s' "architecture '$(_awg31_host_arch)' has not been measured for the third line, the 3.1 profile needs x86_64" ;;
+        kernel)              printf '%s' "kernel $(uname -r) is older than 6.7, a second-line module is installed on it" ;;
+        tools_old)           printf '%s' "the installed awg tools do not understand the third-line parameters; the fix: apt-get update && apt-get install --only-upgrade amneziawg-tools" ;;
+        module_line2)        printf '%s' "the loaded kernel module does not understand the third-line parameters; the fix: apt-get update && apt-get install --only-upgrade amneziawg-dkms, then a reboot" ;;
+        module_probe_failed) printf '%s' "could not check whether the loaded module understands the third line (where the probe stopped is in the log with --verbose)" ;;
+        *)                   printf '%s' "unknown reason '${1-}'" ;;
+    esac
+}
+
 # Parser for the live AmneziaWG server config (source of truth for AWG_*).
 # Reads the [Interface] section of awg0.conf and exports AWG_* variables
 # ATOMICALLY: either all 11 required parameters (Jc/Jmin/Jmax/S1-S4/H1-H4)

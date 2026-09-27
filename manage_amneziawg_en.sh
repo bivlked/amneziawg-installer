@@ -1039,6 +1039,18 @@ restore_backup() {
         log_error "$_hpk is not a regular file (a link or a directory): restore cancelled, the service was not stopped, no files were changed. Remove it by hand and run restore again."
         return 1
     fi
+    # A 3.1 backup goes back only where the third line will come up: a
+    # second-line module silently accepts the header protection key, the service
+    # would start and clients could not connect. The check is the one the
+    # installer runs at step 3 (decision Р6, 27 sep 2026).
+    if [[ "$_cand_gen" == "3.1" ]]; then
+        local _blk
+        _blk=$(awg31_restore_blocker)
+        if [[ -n "$_blk" ]]; then
+            log_error "A 3.1 backup cannot be restored on this server: $(_awg31_restore_blocker_reason "$_blk"). The service would come up and clients could not connect. Restore cancelled, the service was not stopped, no files were changed."
+            return 1
+        fi
+    fi
 
     log "Backing up current config..."
     # --no-prune: the backup selected for restore ($bf) lives in the same
