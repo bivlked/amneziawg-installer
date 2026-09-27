@@ -158,7 +158,7 @@ render_bad_value() {
 # regen_run <lib> <init extra> <client AllowedIPs> <client Address> [extra snippet]
 regen_run() {
     local lib="$1" initx="$2" caips="$3" caddr="$4" extra="${5:-}"
-    lr "$lib" "$(mode2_list)" "$initx" '
+    lr "$lib" "${REGEN_SLIST:-$(mode2_list)}" "$initx" '
         printf "\n[Peer]\n#_Name = r1\nPublicKey = PUBr1\nAllowedIPs = 10.9.9.20/32\n" >> "$SERVER_CONF_FILE"
         printf "FAKEPRIV" > "$KEYS_DIR/r1.private"
         cat > "$AWG_DIR/r1.conf" << EOF
@@ -236,6 +236,24 @@ regen_without_key() {
 @test "regen: without the key or with 0 nothing changes, both twins" {
     require_flock
     both regen_without_key
+}
+
+regen_mode3_untouched() {
+    local lib="$1" out
+    # a key left over after moving the server to mode 3: regen behaves as without it
+    out=$(REGEN_SLIST="0.0.0.0/1, 128.0.0.0/1" regen_run "$lib" "$ON
+export ALLOWED_IPS_MODE=3" "0.0.0.0/1, 128.0.0.0/1, ::/0" "10.9.9.20/32")
+    [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
+    [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = 0.0.0.0/1, 128.0.0.0/1, 2000::/3" ] || { echo "mode 3 regen changed by the key ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
+    # a full tunnel that is not the server list keeps ::/0 with the usual Windows warning
+    out=$(REGEN_SLIST="0.0.0.0/1, 128.0.0.0/1" regen_run "$lib" "$ON
+export ALLOWED_IPS_MODE=3" "0.0.0.0/2, 64.0.0.0/2, 128.0.0.0/1, ::/0" "10.9.9.20/32")
+    [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = 0.0.0.0/2, 64.0.0.0/2, 128.0.0.0/1, ::/0" ] || { echo "routes ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
+    [[ "$out" == *"WARN:"*"::/0"*"Windows"* ]] || { echo "the Windows warning is gone in mode 3 ($lib): $out"; return 1; }
+}
+@test "regen: a key left over in mode 3 changes nothing, the old ::/0 is still swapped for 2000::/3, both twins" {
+    require_flock
+    both regen_mode3_untouched
 }
 
 regen_turned_off() {

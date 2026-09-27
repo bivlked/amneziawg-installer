@@ -523,7 +523,6 @@ _aip_direct_applies() {
 # the IPv4 part is kept.
 _aip_drop_our_v6() {
     local list="$1" base="$2" toks v6 mine srv tok out="" rc
-    [[ "${ALLOWED_IPS_MODE:-}" == "2" ]] || { printf '%s' "$list"; return 0; }
     toks=$(_aip_tokens "$list") || return 1
     # Code 1 from grep is "no lines", an answer; 2 and above is a failure.
     v6=$(grep -F ':' <<< "$toks"); rc=$?
@@ -4743,7 +4742,7 @@ regenerate_client() {
         # dual-stack client ::/0 is its own scheme and stays.
         # With CLIENT_IPV6_DIRECT=1 the device's IPv6 goes directly: our route is
         # taken away, and the ::/0 to 2000::/3 swap with its warnings is not needed.
-        if [[ -z "$client_ipv6" ]] && _client_ipv6_direct; then
+        if [[ -z "$client_ipv6" && "${ALLOWED_IPS_MODE:-}" == "2" ]] && _client_ipv6_direct; then
             _aip_new=$(_aip_drop_our_v6 "$current_allowed_ips" "${ALLOWED_IPS:-}") && [[ -n "$_aip_new" ]] || {
                 log_error "Could not compute AllowedIPs for client '$name'. The config has already been regenerated from the current routing mode, but individual settings were NOT restored - check $AWG_DIR/${name}.conf."
                 exec {lock_fd}>&-

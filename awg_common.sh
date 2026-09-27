@@ -516,7 +516,6 @@ _aip_direct_applies() {
 # (--allowed-ips, modify), его regen не трогает. Порядок IPv4-части сохраняется.
 _aip_drop_our_v6() {
     local list="$1" base="$2" toks v6 mine srv tok out="" rc
-    [[ "${ALLOWED_IPS_MODE:-}" == "2" ]] || { printf '%s' "$list"; return 0; }
     toks=$(_aip_tokens "$list") || return 1
     # Код 1 у grep - «строк нет», это ответ; 2 и выше - отказ.
     v6=$(grep -F ':' <<< "$toks"); rc=$?
@@ -4688,7 +4687,7 @@ regenerate_client() {
         # dual-stack клиента ::/0 - его собственная схема, её не трогаем.
         # С CLIENT_IPV6_DIRECT=1 IPv6 устройства идёт напрямую: наш маршрут
         # снимается, а замена ::/0 на 2000::/3 и её предупреждения не нужны.
-        if [[ -z "$client_ipv6" ]] && _client_ipv6_direct; then
+        if [[ -z "$client_ipv6" && "${ALLOWED_IPS_MODE:-}" == "2" ]] && _client_ipv6_direct; then
             _aip_new=$(_aip_drop_our_v6 "$current_allowed_ips" "${ALLOWED_IPS:-}") && [[ -n "$_aip_new" ]] || {
                 log_error "Не удалось вычислить AllowedIPs для клиента '$name'. Конфиг уже перегенерирован из текущего режима маршрутизации, но индивидуальные настройки НЕ восстановлены - проверьте $AWG_DIR/${name}.conf."
                 exec {lock_fd}>&-
