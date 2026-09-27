@@ -2029,7 +2029,7 @@ _awg_hpk_file_refuse() {
 #     not exist yet (first install); never over an existing config.
 # Limits: the live interface is not checked (the key sticks to it). manage restore
 # applies this check to the unpacked backup rather than to the live paths
-# (_restore_check_candidate), manage backup to a live 3.1 installation.
+# (_restore_check_candidate), manage backup to the live installation under any marker.
 awg_hpk_ensure() {
     _awg_xtrace_guard _awg_hpk_ensure_body "$@"
 }

@@ -677,6 +677,42 @@ STUB
 _rb_json_partial_clients() { _rb_json_partial "$1" "$A/" /clients/; }
 @test "a partial rollback of the client files answers --json with rollback_complete=false" { _both _rb_json_partial_clients; }
 
+# rm of the client files fails during rollback: the archived client stays, so
+# the rollback is not complete. (The cron file copy is counted the same way; it
+# is not exercised here because the sandbox never touches the host /etc/cron.d.)
+_rb_json_partial_prune() {
+    local s="$1" b real_rm
+    _make_31 "$K1"
+    _m "$s" add alice
+    _ok
+    b=$(_backup "$s")
+    _make_20
+    rm -f "$A"/alice.* "$A/keys"/alice*
+    real_rm=$(PATH=/usr/bin:/bin command -v rm)
+    cat > "$TEST_DIR/bin/rm" << STUB
+#!/bin/bash
+if [[ -e "$TEST_DIR/fail_rm_clients" ]]; then
+    for a in "\$@"; do [[ "\$a" == "$A/alice.conf" ]] && exit 1; done
+fi
+exec "$real_rm" "\$@"
+STUB
+    chmod +x "$TEST_DIR/bin/rm"
+    # arm the failing rm only once restore is past its own prune: the start fails,
+    # rollback runs its prune with the flag set
+    cat > "$TEST_DIR/bin/systemctl" << STUB
+#!/bin/bash
+echo "systemctl \$*" >> "$TEST_DIR/systemctl.log"
+if [[ "\$1" == "start" ]]; then touch "$TEST_DIR/fail_rm_clients"; exit 1; fi
+exit 0
+STUB
+    chmod +x "$TEST_DIR/bin/systemctl"
+    _m "$s" restore "$b" --json
+    _fail
+    printf '%s' "$output" | jq -e '.rolled_back == true and .rollback_complete == false' >/dev/null \
+        || { printf 'envelope: %s\nstderr: %s\n' "$output" "$stderr" >&2; return 1; }
+}
+@test "a rollback that cannot remove an archived client answers --json with rollback_complete=false" { _both _rb_json_partial_prune; }
+
 # A dynamic "no syncconf" case cannot fail here: restore has no apply step at
 # all and the sandbox sets AWG_SKIP_APPLY, so the source check below is the pin.
 

@@ -696,9 +696,18 @@ _restore_do_rollback() {
     # rollback would silently leave an empty set with rolled_back=true.
     if [[ -d "$_rtd/clients" ]]; then
         rm -f "$AWG_DIR"/*.conf "$AWG_DIR"/*.png "$AWG_DIR"/*.vpnuri 2>/dev/null
+        if compgen -G "$AWG_DIR/*.conf" >/dev/null || compgen -G "$AWG_DIR/*.png" >/dev/null \
+            || compgen -G "$AWG_DIR/*.vpnuri" >/dev/null; then
+            log_error "Rollback: could not remove the archived client files in $AWG_DIR - extra files stay next to the ones from the snapshot."
+            _inc=1
+        fi
     fi
     if [[ -d "$_rtd/keys" ]]; then
         rm -f "$KEYS_DIR"/* 2>/dev/null
+        if compgen -G "$KEYS_DIR/*" >/dev/null; then
+            log_error "Rollback: could not remove the archived client keys in $KEYS_DIR."
+            _inc=1
+        fi
     fi
     if compgen -G "$_rtd/server/*" >/dev/null && ! cp -a "$_rtd/server/"* "$_scdir/" 2>/dev/null; then
         log_error "Rollback: the server config was not returned to $_scdir. It is in the snapshot $_snap (directory server/)."
@@ -760,7 +769,10 @@ _restore_do_rollback() {
             _inc=1
         fi
     fi
-    [[ -f "$_rtd/awg-expiry" ]] && cp -a "$_rtd/awg-expiry" /etc/cron.d/awg-expiry 2>/dev/null
+    if [[ -f "$_rtd/awg-expiry" ]] && ! cp -a "$_rtd/awg-expiry" /etc/cron.d/awg-expiry 2>/dev/null; then
+        log_error "Rollback: /etc/cron.d/awg-expiry was not returned - without it expired clients are not removed. It is in the snapshot $_snap."
+        _inc=1
+    fi
     rm -rf "$_rtd"
     # Rollback files are in place - the JSON envelope reports rolled_back=true
     # even if the service below fails to start (FS state is already pre-restore).

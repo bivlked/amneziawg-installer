@@ -687,9 +687,18 @@ _restore_do_rollback() {
     # оставил бы пустой набор при rolled_back=true.
     if [[ -d "$_rtd/clients" ]]; then
         rm -f "$AWG_DIR"/*.conf "$AWG_DIR"/*.png "$AWG_DIR"/*.vpnuri 2>/dev/null
+        if compgen -G "$AWG_DIR/*.conf" >/dev/null || compgen -G "$AWG_DIR/*.png" >/dev/null \
+            || compgen -G "$AWG_DIR/*.vpnuri" >/dev/null; then
+            log_error "Откат: не удалось убрать клиентские файлы из архива в $AWG_DIR - рядом с файлами из снимка остались лишние."
+            _inc=1
+        fi
     fi
     if [[ -d "$_rtd/keys" ]]; then
         rm -f "$KEYS_DIR"/* 2>/dev/null
+        if compgen -G "$KEYS_DIR/*" >/dev/null; then
+            log_error "Откат: не удалось убрать ключи клиентов из архива в $KEYS_DIR."
+            _inc=1
+        fi
     fi
     if compgen -G "$_rtd/server/*" >/dev/null && ! cp -a "$_rtd/server/"* "$_scdir/" 2>/dev/null; then
         log_error "Откат: серверный конфиг не возвращён в $_scdir. Он есть в снимке $_snap (каталог server/)."
@@ -749,7 +758,10 @@ _restore_do_rollback() {
             _inc=1
         fi
     fi
-    [[ -f "$_rtd/awg-expiry" ]] && cp -a "$_rtd/awg-expiry" /etc/cron.d/awg-expiry 2>/dev/null
+    if [[ -f "$_rtd/awg-expiry" ]] && ! cp -a "$_rtd/awg-expiry" /etc/cron.d/awg-expiry 2>/dev/null; then
+        log_error "Откат: /etc/cron.d/awg-expiry не возвращён - без него клиенты с истёкшим сроком не удаляются. Он есть в снимке $_snap."
+        _inc=1
+    fi
     rm -rf "$_rtd"
     # Файлы отката скопированы - для JSON-конверта rolled_back=true даже если
     # сервис ниже не стартует (состояние ФС уже возвращено к pre-restore).

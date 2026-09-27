@@ -1995,7 +1995,7 @@ _awg_hpk_file_refuse() {
 #     ещё нет (первая установка); поверх существующего конфига - никогда.
 # Граница: живой интерфейс не проверяется (ключ на нём залипает). manage restore
 # применяет эту проверку к распакованному бэкапу, а не к живым путям
-# (_restore_check_candidate), manage backup - к живой установке 3.1.
+# (_restore_check_candidate), manage backup - к живой установке при любом маркере.
 awg_hpk_ensure() {
     _awg_xtrace_guard _awg_hpk_ensure_body "$@"
 }
