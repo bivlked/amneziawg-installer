@@ -336,7 +336,8 @@ STUB
     _m "$s" regen alice
     _fail
     grep -qxF "# changed by another operation" "$A/alice.conf"
-    [[ "$output$stderr" == *"regen alice"* ]]
+    # this branch of the three "not put back" messages, not just any of them
+    [[ "$output$stderr" == *"another operation has already changed its config"* || "$output$stderr" == *"уже изменила другая операция"* ]]
 }
 @test "regen does not put the previous set back over a concurrent change of the client config" { _both _regen_concurrent_change_kept; }
 
@@ -365,7 +366,7 @@ STUB
     _fail
     # the regenerated .conf (new endpoint) stays: no put-back without the lock
     grep -q '203.0.113.9' "$A/alice.conf"
-    [[ "$output$stderr" == *"regen alice"* ]]
+    [[ "$output$stderr" == *"the config lock was not acquired"* || "$output$stderr" == *"блокировка конфига не получена"* ]]
 }
 @test "regen does not put the previous set back without the config lock" { _both _regen_no_lock_no_restore; }
 
