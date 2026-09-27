@@ -1066,14 +1066,16 @@ H1 = 7"
     [ "$ru" = "$en" ]
 }
 
-@test "parity: apply_config calls the warning EXACTLY three times" {
-    # Not ">= 4" but exactly one per branch: explicit restart plus two fallbacks.
-    # The loose count let a deleted call slip through.
+@test "parity: apply_config calls the warning EXACTLY four times" {
+    # Not ">= N" but exactly one per branch: explicit restart, the restart when the
+    # header protection key on the live interface differs from the file (or the
+    # interface cannot be read, slice C2), plus two fallbacks. The loose count let
+    # a deleted call slip through.
     local f
     for f in "$BATS_TEST_DIRNAME/../awg_common.sh" "$BATS_TEST_DIRNAME/../awg_common_en.sh"; do
         awk '/^apply_config\(\) \{$/,/^}$/' "$f" | grep -v '^[[:space:]]*#' > "$TEST_DIR/body.txt"
         run grep -c 'awg_warn_interface_disruption' "$TEST_DIR/body.txt"
-        [ "$output" = "3" ]
+        [ "$output" = "4" ]
     done
 }
 

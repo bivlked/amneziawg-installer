@@ -3833,6 +3833,35 @@ awg_record_device_params() {
     _awg_save_device_params "$state" "$fp"
 }
 
+# _awg_hpk_device_state : the header protection key in SERVER_CONF_FILE against
+# the key on the live awg0. Prints same, differ or unreadable. Presence and
+# value are compared; the value is never printed - the body runs with tracing off.
+_awg_hpk_device_state() {
+    _awg_xtrace_guard _awg_hpk_device_state_body
+}
+
+_awg_hpk_device_state_body() {
+    local _hs_any=0 _hs_if=0 _hs_out=0 _hs_val="" dev="" line dev_key="" dev_has=0 file_has=0
+    if [[ -r "$SERVER_CONF_FILE" ]]; then
+        _awg_hpk_conf_scan "$SERVER_CONF_FILE" || { printf 'unreadable'; return 0; }
+        (( _hs_if > 0 )) && file_has=1
+    fi
+    dev=$(timeout 10 awg showconf awg0 </dev/null 2>/dev/null) || { printf 'unreadable'; return 0; }
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*[Hh][Ee][Aa][Dd][Ee][Rr][Pp][Rr][Oo][Tt][Ee][Cc][Tt][Ii][Oo][Nn][Kk][Ee][Yy][[:space:]]*=[[:space:]]*(.*)$ ]]; then
+            dev_has=1
+            dev_key="${BASH_REMATCH[1]}"
+            dev_key="${dev_key%"${dev_key##*[![:space:]]}"}"
+        fi
+    done <<< "$dev"
+    if (( file_has != dev_has )) || [[ "$file_has" == 1 && "$_hs_val" != "$dev_key" ]]; then
+        printf 'differ'
+    else
+        printf 'same'
+    fi
+    return 0
+}
+
 # ==============================================================================
 # Config application (syncconf)
 # ==============================================================================
@@ -3952,6 +3981,30 @@ apply_config() {
         log_warn "  not do it for you. If you have already restarted the service by hand, this"
         log_warn "  warning can be ignored: after a successful apply the snapshot is"
         log_warn "  refreshed and this line will not appear on later runs."
+    fi
+
+    # 🔴 The header protection key on the live interface must match the file:
+    # syncconf only adds device parameters, and profiles are issued from the
+    # file. The key is in the file and not on awg0 (or the other way round, or
+    # the values differ) - the interface is recreated with a restart, not a
+    # syncconf. awg0 cannot be read - a restart too: there is nothing to judge by.
+    local _dev_state
+    _dev_state=$(_awg_hpk_device_state)
+    if [[ "$_dev_state" != same ]]; then
+        if [[ "$_dev_state" == differ ]]; then
+            log_warn "The header protection key (HeaderProtectionKey) on the live interface awg0 differs from $SERVER_CONF_FILE - the interface is recreated with a restart, not a syncconf."
+        else
+            log_warn "The state of the live interface awg0 cannot be read (awg showconf) - applying with a restart, not a syncconf."
+        fi
+        awg_warn_interface_disruption
+        systemctl restart awg-quick@awg0 2>/dev/null; rc=$?
+        if [[ $rc -ne 0 ]]; then
+            log_warn "Restart error."
+        else
+            awg_record_device_params
+        fi
+        exec {apply_fd}>&-
+        return $rc
     fi
 
     local strip_out
@@ -4663,6 +4716,109 @@ _awg31_refuse_client_leftovers() {
     return 0
 }
 
+# _awg31_need_client_tools : on a 3.1 installation - the same tools step 6
+# checks (_awg31_require_client_tools), before any change. On 2.0 and with an
+# unreadable marker it requires nothing: an unreadable marker without a key
+# behaves as 2.0 (the awg_hpk_ensure rule), and with a key it never gets here -
+# load_awg_params stops it.
+_awg31_need_client_tools() {
+    local gen
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || return 0
+    [[ "$gen" == "3.1" ]] || return 0
+    _awg31_require_client_tools
+}
+
+# A copy of the client set for the time of a regen (slice C2). On a 3.1
+# installation the set is all or nothing: a regenerate_client whose set comes
+# out incomplete, or which breaks off after rewriting the .conf, puts the
+# previous set back exactly (a file that did not exist is removed again). The
+# copies are temporary files in AWG_DIR, next to the originals: modes are kept,
+# the client private key from the .conf does not leave the directory, and the
+# temp file registry removes them even on an abort.
+# The state lives in a global array: call WITHOUT $( ), or it is lost.
+_AWG31_SET_SNAP=()
+
+# _awg31_set_snapshot <name> : take the copy (does nothing on 2.0).
+_awg31_set_snapshot() {
+    local name="$1" gen f tmp
+    _AWG31_SET_SNAP=()
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || return 0
+    [[ "$gen" == "3.1" ]] || return 0
+    for f in "$AWG_DIR/${name}.conf" "$AWG_DIR/${name}.png" "$AWG_DIR/${name}.vpnuri" "$AWG_DIR/${name}.vpnuri.png"; do
+        if [[ -e "$f" || -L "$f" ]]; then
+            if ! tmp=$(awg_mktemp "$AWG_DIR") || ! cp -a "$f" "$tmp"; then
+                log_error "Could not save a copy of $f before regenerating client '$name' - the regen did not start."
+                _awg31_set_drop
+                return 1
+            fi
+            _AWG31_SET_SNAP+=("$f"$'\t'"$tmp")
+        else
+            _AWG31_SET_SNAP+=("$f"$'\t')
+        fi
+    done
+    return 0
+}
+
+# _awg31_set_restore : put the set back from the copy. Returns 1 when any file
+# did not come back; each such file is named.
+_awg31_set_restore() {
+    local e f tmp rc=0
+    for e in "${_AWG31_SET_SNAP[@]}"; do
+        f="${e%%$'\t'*}"
+        tmp="${e#*$'\t'}"
+        if [[ -n "$tmp" ]]; then
+            mv -f "$tmp" "$f" || { log_error "Could not return $f from the copy $tmp."; rc=1; }
+        elif [[ -e "$f" || -L "$f" ]]; then
+            rm -f "$f" || { log_error "Could not remove $f, which did not exist before the regen."; rc=1; }
+        fi
+    done
+    _AWG31_SET_SNAP=()
+    return "$rc"
+}
+
+# _awg31_set_restore_noted <name> : put the set back on a regen failure path.
+# The message above the call speaks of a rewritten .conf; on 3.1 that is no
+# longer true after the restore, so this says the set came back. On 2.0 there is
+# no copy - it says nothing.
+_awg31_set_restore_noted() {
+    (( ${#_AWG31_SET_SNAP[@]} > 0 )) || return 0
+    if _awg31_set_restore; then
+        log_warn "3.1 installation: the previous set of client '$1' was put back, the regen is cancelled as a whole."
+    else
+        log_error "3.1 installation: the previous set of client '$1' did not come back whole (details above)."
+    fi
+    return 0
+}
+
+# _awg31_set_drop : discard the copy after a successful regen.
+_awg31_set_drop() {
+    local e tmp
+    for e in "${_AWG31_SET_SNAP[@]}"; do
+        tmp="${e#*$'\t'}"
+        [[ -n "$tmp" ]] && rm -f "$tmp"
+    done
+    _AWG31_SET_SNAP=()
+    return 0
+}
+
+# _awg31_client_set_ok <name> [step failed 0|1] : on a 3.1 installation - the client set check
+# (awg_client_artifacts_check); on 2.0 and with an unreadable marker without a
+# key - 0.
+_awg31_client_set_ok() {
+    local gen
+    gen=$(_awg_generation_from_init "$CONFIG_FILE") || return 0
+    [[ "$gen" == "3.1" ]] || return 0
+    # A failed build step is an incomplete set even when the file is there: the
+    # generators write through a temporary file and leave the previous one alone,
+    # and the previous QR shows the previous config. A check of the files cannot
+    # see that.
+    if [[ "${2:-0}" == 1 ]]; then
+        log_error "Client set '$1': one of the build steps failed (the config QR, the vpn:// link or its QR); a previous file with the previous config may have stayed in place"
+        return 1
+    fi
+    awg_client_artifacts_check "$1"
+}
+
 # awg_client_artifacts_check <name> : the client's set of files, as a set.
 # A client is handed four files - the .conf, its QR code, the vpn:// link and
 # the link's QR code. Different steps produce them, and a failure in one used to
@@ -4828,6 +4984,9 @@ generate_client() {
 
     # Load parameters
     load_awg_params || return 1
+    # On 3.1 without the tools for the set (qrencode, perl) the client would come
+    # out incomplete: refuse before the keys and before the peer.
+    _awg31_need_client_tools || return 1
 
     # Optional PresharedKey: "auto" -> `awg genpsk`, otherwise use the
     # given value as-is. Empty/unset -> no PSK.
@@ -4942,16 +5101,30 @@ generate_client() {
     exec {lock_fd}>&-
 
     # QR code (optional, failure is non-fatal)
+    local _set_fail=0
     if ! generate_qr "$name"; then
+        _set_fail=1
         log_warn "QR code not created. Config: $AWG_DIR/${name}.conf"
     fi
 
     # vpn:// URI and QR for Amnezia VPN app (optional).
     # QR vpn:// is attempted only if URI was generated successfully — no source otherwise.
     if ! generate_vpn_uri "$name"; then
+        _set_fail=1
         log_warn "vpn:// URI not created for '$name'."
     elif ! generate_qr_vpnuri "$name"; then
+        _set_fail=1
         log_warn "vpn:// QR not created for '$name'."
+    fi
+
+    # On 3.1 the set is all or nothing: an incomplete set takes the client off
+    # whole - the peer from the server config and all its files.
+    if ! _awg31_client_set_ok "$name" "$_set_fail"; then
+        log_error "The set of client '$name' is incomplete (reason above): the client was not created, the peer and the files were removed."
+        remove_peer_from_server "$name" \
+            || log_error "Peer '$name' stayed in $SERVER_CONF_FILE without the client files - remove it: manage remove $name"
+        _remove_client_files "$name"
+        return 1
     fi
 
     log "Client '$name' created (IP: $client_ip)."
@@ -5008,6 +5181,9 @@ regenerate_client() {
     fi
 
     load_awg_params || { exec {lock_fd}>&-; return 1; }
+    # On 3.1 without the tools for the set a regen would leave the client with an
+    # incomplete set: refuse before any change.
+    _awg31_need_client_tools || { exec {lock_fd}>&-; return 1; }
 
     # Hygiene (Issue #253): CLIENT_ALLOWED_IPS is a contract for generating a
     # NEW client (manage add --allowed-ips); regen must never see it. Without
@@ -5185,7 +5361,11 @@ regenerate_client() {
     # to render directly (8th argument): it is restored below anyway.
     local _keep_dns=""
     [[ "$_had_conf" -eq 1 && -n "$current_dns" ]] && _keep_dns="$current_dns"
+    # On 3.1 the copy of the set is taken under the same lock the .conf is
+    # rewritten under, and it comes back on any failure below.
+    _awg31_set_snapshot "$name" || { exec {lock_fd}>&-; unset CLIENT_PSK; return 1; }
     render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" "$_keep_dns" || {
+        _awg31_set_restore_noted "$name"
         exec {lock_fd}>&-
         unset CLIENT_PSK
         return 1
@@ -5213,6 +5393,7 @@ regenerate_client() {
         if [[ -z "$client_ipv6" && "${ALLOWED_IPS_MODE:-}" == "2" ]] && _client_ipv6_direct; then
             _aip_new=$(_aip_drop_our_v6 "$current_allowed_ips" "${ALLOWED_IPS:-}") && [[ -n "$_aip_new" ]] || {
                 log_error "Could not compute AllowedIPs for client '$name'. The config has already been regenerated from the current routing mode, but individual settings were NOT restored - check $AWG_DIR/${name}.conf."
+                _awg31_set_restore_noted "$name"
                 exec {lock_fd}>&-
                 unset CLIENT_PSK
                 return 1
@@ -5233,6 +5414,7 @@ regenerate_client() {
         elif [[ -z "$client_ipv6" ]]; then
             _aip_new=$(_aip_migrate_legacy_v6 "$current_allowed_ips" "${ALLOWED_IPS:-}") && [[ -n "$_aip_new" ]] || {
                 log_error "Could not compute AllowedIPs for client '$name'. The config has already been regenerated from the current routing mode, but individual settings were NOT restored - check $AWG_DIR/${name}.conf."
+                _awg31_set_restore_noted "$name"
                 exec {lock_fd}>&-
                 unset CLIENT_PSK
                 return 1
@@ -5265,6 +5447,7 @@ regenerate_client() {
             # is worse than the failure it replaced: the operator would have no
             # reason to look at the file.
             log_error "Could not compute AllowedIPs for client '$name'. The config has already been regenerated from the current routing mode, but individual settings were NOT restored - check $AWG_DIR/${name}.conf."
+            _awg31_set_restore_noted "$name"
             exec {lock_fd}>&-
             unset CLIENT_PSK
             return 1
@@ -5298,6 +5481,7 @@ regenerate_client() {
     if [[ -n "$current_dns" ]]; then
         if ! sed -i "s/^DNS = .*/DNS = ${_dns}/" "$_client_conf"; then
             log_error "sed error writing DNS to $_client_conf"
+            _awg31_set_restore_noted "$name"
             exec {lock_fd}>&-
             unset CLIENT_PSK
             return 1
@@ -5305,6 +5489,7 @@ regenerate_client() {
     fi
     if ! sed -i "s/^PersistentKeepalive = .*/PersistentKeepalive = ${_ka}/" "$_client_conf"; then
         log_error "sed error writing PersistentKeepalive to $_client_conf"
+        _awg31_set_restore_noted "$name"
         exec {lock_fd}>&-
         unset CLIENT_PSK
         return 1
@@ -5325,6 +5510,7 @@ regenerate_client() {
         log "Client '$name' had no config - AllowedIPs taken from the current routing mode."
     elif ! sed -i "s/^AllowedIPs = .*/AllowedIPs = ${_aip}/" "$_client_conf"; then
         log_error "sed error writing AllowedIPs to $_client_conf"
+        _awg31_set_restore_noted "$name"
         exec {lock_fd}>&-
         unset CLIENT_PSK
         return 1
@@ -5333,6 +5519,7 @@ regenerate_client() {
     # custom partial list on a server in mode 2).
     if ! _sync_v6_sink_address "$_client_conf"; then
         log_error "Could not bring the Address of client '$name' in line with its AllowedIPs: the routes in $_client_conf are already written, and the IPv6 sink address may not match them; QR and vpn:// were not rebuilt. Fix the cause and run regen '$name' again."
+        _awg31_set_restore_noted "$name"
         exec {lock_fd}>&-
         unset CLIENT_PSK
         return 1
@@ -5342,18 +5529,35 @@ regenerate_client() {
     exec {lock_fd}>&-
 
     # QR code
-    generate_qr "$name"
+    local _set_fail=0
+    generate_qr "$name" || _set_fail=1
 
     # vpn:// URI and QR for Amnezia VPN app (best-effort).
     # QR vpn:// is attempted only if URI was regenerated successfully.
     if generate_vpn_uri "$name"; then
-        generate_qr_vpnuri "$name" || log_warn "vpn:// QR not updated for '$name'."
+        generate_qr_vpnuri "$name" || { log_warn "vpn:// QR not updated for '$name'."; _set_fail=1; }
     else
         log_warn "vpn:// URI not updated for '$name'."
+        _set_fail=1
     fi
 
     # Hygiene: do not let PSK leak into later operations in the same shell
     unset CLIENT_PSK
+
+    # On 3.1 the set is all or nothing: an incomplete set after the regen is
+    # replaced with the previous one, under the config lock.
+    if ! _awg31_client_set_ok "$name" "$_set_fail"; then
+        exec {lock_fd}>"$lockfile"
+        flock -x -w 10 "$lock_fd" || log_warn "The config lock was not acquired - returning the previous set of '$name' without it."
+        if _awg31_set_restore; then
+            log_error "The set of client '$name' is incomplete after the regen (reason above): the previous set of files was put back."
+        else
+            log_error "The set of client '$name' is incomplete after the regen, and the previous set did not come back whole (details above)."
+        fi
+        exec {lock_fd}>&-
+        return 1
+    fi
+    _awg31_set_drop
 
     log "Client config for '$name' regenerated."
     return 0

@@ -137,6 +137,18 @@ if [[ "\$*" == *"link show"*"awg0"* ]]; then
 fi
 exit 0
 STUB
+    # qrencode: a 3.1 client set needs both QR codes, add refuses without it.
+    cat > "$TEST_DIR/bin/qrencode" << 'STUB'
+#!/bin/bash
+out=""
+while [ $# -gt 0 ]; do
+    if [ "$1" = "-o" ]; then out="$2"; shift; fi
+    shift
+done
+cat >/dev/null
+[ -n "$out" ] && printf 'PNG' > "$out"
+exit 0
+STUB
     for c in curl wget; do
         printf '#!/bin/bash\necho "%s $*" >> "%s/net.log"\nexit 1\n' "$c" "$TEST_DIR" > "$TEST_DIR/bin/$c"
     done
