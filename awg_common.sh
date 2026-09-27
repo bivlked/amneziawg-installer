@@ -3766,8 +3766,10 @@ awg_record_device_params() {
 }
 
 # _awg_hpk_device_state : ключ защиты заголовков в SERVER_CONF_FILE против ключа
-# на живом awg0. Печатает same, differ или unreadable. Сравниваются наличие и
-# значение; значение не печатается - тело идёт с выключенной трассировкой.
+# на живом awg0. Печатает same, differ, unreadable (awg0 не прочитать, а ключ в
+# файле есть; без ключа в файле это same) или badfile (не разобрать сам файл).
+# Сравниваются наличие и значение; значение не печатается - тело идёт с
+# выключенной трассировкой.
 _awg_hpk_device_state() {
     _awg_xtrace_guard _awg_hpk_device_state_body
 }

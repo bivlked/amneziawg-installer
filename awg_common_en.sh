@@ -3834,8 +3834,10 @@ awg_record_device_params() {
 }
 
 # _awg_hpk_device_state : the header protection key in SERVER_CONF_FILE against
-# the key on the live awg0. Prints same, differ or unreadable. Presence and
-# value are compared; the value is never printed - the body runs with tracing off.
+# the key on the live awg0. Prints same, differ, unreadable (awg0 cannot be read
+# and the file carries a key; without a key in the file it is same) or badfile
+# (the file itself cannot be parsed). Presence and value are compared; the value
+# is never printed - the body runs with tracing off.
 _awg_hpk_device_state() {
     _awg_xtrace_guard _awg_hpk_device_state_body
 }
