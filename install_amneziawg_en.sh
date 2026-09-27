@@ -32,6 +32,8 @@ BOOT_CRITICAL_SNAPSHOT_FILE="$AWG_DIR/boot-critical.pkgs"
 LOG_FILE="$AWG_DIR/install_amneziawg.log"
 KEYS_DIR="$AWG_DIR/keys"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
+# Kernel network devices: _awg_install_state sees a live awg0 here without ip or netlink.
+SYS_NET_DIR="/sys/class/net"
 AWG_BRANCH="${AWG_BRANCH:-v${SCRIPT_VERSION}}"
 COMMON_SCRIPT_URL="https://raw.githubusercontent.com/bivlked/amneziawg-installer/${AWG_BRANCH}/awg_common_en.sh"
 COMMON_SCRIPT_PATH="$AWG_DIR/awg_common.sh"
@@ -1399,21 +1401,24 @@ _awg31_blocker_message() {
 
 # _awg_install_state <config_exists> : which state the installation is in, for
 # deciding whether a flag may change its generation. Prints:
-#   0 - new: no init and no trace of an earlier installation;
+#   0 - new: no init, no setup_state and no trace of an earlier installation;
 #   1 - existing: the generation is locked;
 #   2 - unfinished: init present, setup_state 1 to 6, no traces.
 # A trace is anything that appears at step 6 or later or tells of a live install:
 # the server config and its backups, the server keys and the header protection
-# key, any entry in $KEYS_DIR, client files in $AWG_DIR, a live awg0. Files of
-# steps 0-5 (log, lock, init, setup_state, downloaded scripts, boot marks) are not
+# key (step 6 creates them first, before any profile), any entry in $KEYS_DIR,
+# client files in $AWG_DIR, a live awg0. Files of steps 0-5 (for example the log,
+# lock, init, setup_state, downloaded scripts, boot and firewall marks) are not
 # traces: otherwise an unfinished install could never switch.
-# 🔴 Any doubt means 1. A trace that could not be read, and an `ip` that failed
-# for a reason other than "no such device", mean "profiles may exist", and a
-# generation change under them would void other people's configs. No init but a
-# trace is 1 as well, not 0: the init may have been lost with profiles alive.
+# 🔴 Any doubt means 1. A trace that could not be read, and a live awg0 that
+# could not be ruled out, mean "profiles may exist", and a generation change
+# under them would void other people's configs. No init but a trace is 1 as
+# well, not 0: the init may have been lost with profiles alive. No init but a
+# setup_state is 1 too: the install has started, and it cannot go on as a new
+# one - the loop would resume from the saved step past the step 3 gate.
 # Exit code 1 with no output - a bad argument.
 _awg_install_state() {
-    local config_exists="${1-}" f rc st="" trace=0
+    local config_exists="${1-}" f rc ip_err st="" trace=0
     case "$config_exists" in
         0|1) : ;;
         *) return 1 ;;
@@ -1431,17 +1436,23 @@ _awg_install_state() {
             trace=1
         fi
     fi
-    # ip: 0 - awg0 exists; 1 - no such device; 127 - no ip command at all, and
-    # awg-quick cannot bring the interface up without it. Anything else - unknown.
+    # A live awg0. $SYS_NET_DIR is looked at first: it needs neither PATH nor
+    # netlink. ip only when that directory is missing, and "no interface" only
+    # from its own answer that the device does not exist: it exits 1 on a netlink
+    # failure too, and 127 means "not in PATH", not "no interface".
     if (( ! trace )); then
-        ip link show awg0 >/dev/null 2>&1; rc=$?
-        case "$rc" in
-            1|127) : ;;
-            *) trace=1 ;;
-        esac
+        if [[ -d "$SYS_NET_DIR" ]]; then
+            [[ -e "$SYS_NET_DIR/awg0" || -L "$SYS_NET_DIR/awg0" ]] && trace=1
+        else
+            ip_err=$(ip link show awg0 2>&1 >/dev/null); rc=$?
+            [[ "$rc" -eq 1 && "$ip_err" == *"does not exist"* ]] || trace=1
+        fi
     fi
     if (( trace )); then echo 1; return 0; fi
-    if (( config_exists == 0 )); then echo 0; return 0; fi
+    if (( config_exists == 0 )); then
+        if [[ -e "$STATE_FILE" || -L "$STATE_FILE" ]]; then echo 1; else echo 0; fi
+        return 0
+    fi
     [[ -f "$STATE_FILE" ]] && st=$(cat "$STATE_FILE" 2>/dev/null)
     if [[ "$st" =~ ^[1-6]$ ]]; then echo 2; else echo 1; fi
 }
@@ -1451,11 +1462,11 @@ _awg_install_state() {
 # environment gate for 3.1, steps 4-6 run again with the new parameters; steps
 # 1-2 (packages, module, sysctl) do not depend on the generation and are not
 # repeated. At step 3 or earlier the step is left alone: 1 and 2 must still run.
-# 🔴 Called BEFORE the init with the new marker is written. The other order left
-# a window: a crash after the marker is written and before the rewind would carry
-# on without the flag on the NEW generation from step 5, and a switch to 3.1
-# would bypass the step 3 gate. A crash in this order is harmless: the marker is
-# still the old one, and only steps 3-6 repeat.
+# 🔴 Called BEFORE the init with the new marker is written. The other order
+# would leave a window: a crash after the marker is written and before the
+# rewind would carry on without the flag on the NEW generation from the saved
+# step (4-6), and a switch to 3.1 would bypass the step 3 gate. A crash in this
+# order is harmless: the marker is still the old one, and only steps 3-6 repeat.
 _awg_gen_switch_rewind() {
     [[ "${AWG_GEN_SWITCHED:-0}" -eq 1 ]] || return 0
     local st=""
@@ -1470,8 +1481,10 @@ _awg_gen_switch_rewind() {
 # when an unfinished install changes its generation. generate_awg_params takes
 # the preset only from CLI_PRESET and falls back to default, so the preset saved
 # in the init (mobile, say) is lent to the call by a TEMPORARY assignment. It must
-# not be written into CLI_PRESET: the --no-cps logic below reads CLI_PRESET as
-# "the operator set a preset" and would bring CPS back despite a saved NO_CPS=1.
+# not be written into CLI_PRESET: the --no-cps logic in initialize_setup reads
+# CLI_PRESET as "the operator set a preset" and would bring CPS back despite a
+# saved NO_CPS=1. Saved Jc/Jmin/Jmax are not carried over: the set is generated
+# anew from the preset, and explicit --jc/--jmin/--jmax of this run apply as usual.
 _awg_switch_params() {
     CLI_PRESET="${CLI_PRESET:-${AWG_PRESET:-default}}" generate_awg_params
 }
@@ -1494,7 +1507,7 @@ _awg_switch_params() {
 # new - that is, allowing a generation change where profiles are already handed
 # out.
 _awg31_resolve_protocol() {
-    local install_state="${1-}"
+    local install_state="${1-}" _gen_from="${AWG_PROTOCOL:-}"
     # Only from here: the switch mark is never inherited from the environment.
     AWG_GEN_SWITCHED=0
 
@@ -1517,10 +1530,10 @@ _awg31_resolve_protocol() {
             # The install has not reached step 6: there is no server config, no
             # keys and no profiles, nothing to hand out again. A generation change
             # here means regenerating the parameters and repeating the steps from
-            # the third, not reissuing other people's configs. Loudly: the person
-            # must see that the flag changed an install already under way.
+            # the third, not reissuing other people's configs. Loudly, but AFTER
+            # the gate (at the end of the function): announcing a change the gate
+            # then refuses would be wrong.
             if [[ "$CLI_PROTOCOL" != "$AWG_PROTOCOL" ]]; then
-                log_warn "The installation is not finished (step 6 not passed, no profiles yet): the generation changes ${AWG_PROTOCOL} -> ${CLI_PROTOCOL} by the --protocol flag. The obfuscation parameters will be generated anew, and the installation continues from step 3 at the latest."
                 AWG_PROTOCOL="$CLI_PROTOCOL"
                 AWG_GEN_SWITCHED=1
             else
@@ -1541,13 +1554,31 @@ _awg31_resolve_protocol() {
             # installation log. That is exactly the silent substitution the
             # rest of this code exists to prevent.
             if [[ "$CLI_PROTOCOL" != "$AWG_PROTOCOL" ]]; then
+                local _why _way _blk _blk_rc
                 # Without the init, state 1 means "traces of an earlier install are
                 # left", and 2.0 in AWG_PROTOCOL is then only how a missing file
                 # reads: quoting a marker in it would describe a file that is not there.
                 if [[ -f "$CONFIG_FILE" ]]; then
-                    die "--protocol=${CLI_PROTOCOL} cannot be carried out on this server: the installation is marked as generation ${AWG_PROTOCOL} (the AWG_PROTOCOL marker in $CONFIG_FILE), and the generation of an install that has reached handing out profiles does not change in place - that means reissuing EVERY client profile and handing them out again. Drop the flag to continue on ${AWG_PROTOCOL}, or remove the installation (sudo bash $0 --uninstall) and install again with --protocol=${CLI_PROTOCOL}."
+                    _why="the installation is marked as generation ${AWG_PROTOCOL} (the AWG_PROTOCOL marker in $CONFIG_FILE) and has already reached step 6 (server keys, a server config, profiles or a live awg0 exist), or that could not be ruled out. The generation of such an install does not change in place: if profiles are handed out, it means reissuing EVERY client profile and handing them out again"
+                    _way="Drop the flag to continue on ${AWG_PROTOCOL}, or remove the installation (sudo bash $0 --uninstall) and install again with --protocol=${CLI_PROTOCOL}."
+                else
+                    _why="the settings file $CONFIG_FILE is missing, but traces of an earlier installation are left (the state file, a server config, keys, client files or a live awg0 interface) or their absence could not be confirmed, and the installer cannot tell which profiles were already handed out"
+                    _way="Remove the installation (sudo bash $0 --uninstall) and install again with --protocol=${CLI_PROTOCOL}."
                 fi
-                die "--protocol=${CLI_PROTOCOL} cannot be carried out on this server: the settings file $CONFIG_FILE is missing, but traces of an earlier installation are left (server config, keys, client files or a live awg0 interface), and the installer cannot tell which profiles were already handed out from them. Remove the installation (sudo bash $0 --uninstall) and install again with --protocol=${CLI_PROTOCOL}."
+                # Advising to remove the installation for 3.1 is honest only if 3.1
+                # is reachable here at all. Stage pre has no side effects
+                # (architecture, kernel, whether the third-line path is open), so
+                # asking it before the refusal is cheap; otherwise the person would
+                # wipe a working server and the new install would be refused by
+                # the same gate.
+                if [[ "$CLI_PROTOCOL" == "3.1" ]]; then
+                    _blk=$(awg31_environment_blocker pre); _blk_rc=$?
+                    if [[ -n "$_blk" || "$_blk_rc" -ne 0 ]]; then
+                        [[ -n "$_blk" ]] || _blk="internal_error"
+                        _way="There is no need to remove the installation for 3.1: $(_awg31_blocker_message "$_blk")"
+                    fi
+                fi
+                die "--protocol=${CLI_PROTOCOL} cannot be carried out on this server: ${_why}. ${_way}"
             else
                 log "The requested generation ${CLI_PROTOCOL} matches the generation of this installation."
             fi
@@ -1556,9 +1587,10 @@ _awg31_resolve_protocol() {
             log "Generation for the new installation set by flag: ${AWG_PROTOCOL}."
         fi
     elif [[ "$install_state" -eq 0 ]]; then
-        # States 1 and 2 without the flag keep the marker from the init: a resume
-        # after reboot does not repeat the flag, and an unfinished 3.1 install
-        # would silently become the default generation.
+        # States 1 and 2 without the flag keep the generation read by
+        # awg_installed_protocol: a resume after reboot does not repeat the flag,
+        # and an unfinished 3.1 install would silently become the default
+        # generation.
         # 🔴 The default of a NEW install and the rule for reading the marker are
         # DIFFERENT things and must not share a line. awg_installed_protocol has
         # to read a missing marker as 2.0 forever: that is how every install made
@@ -1594,6 +1626,10 @@ _awg31_resolve_protocol() {
         if (( _awg31_rc != 0 )); then
             die "The environment gate could not determine whether this machine fits the AmneziaWG 3.1 profile (exit code ${_awg31_rc}, no reason given). Without an answer we do not ship the third line. Install with --protocol=2.0 and report this."
         fi
+    fi
+
+    if (( AWG_GEN_SWITCHED )); then
+        log_warn "The installation is not finished (step 6 not passed, no profiles yet): the generation changes ${_gen_from} -> ${AWG_PROTOCOL} by the --protocol flag. The obfuscation parameters will be generated anew, and the installation resumes from step 3 (or from an earlier step if it has not got that far)."
     fi
 }
 
@@ -4627,6 +4663,10 @@ initialize_setup() {
     # The generation marker is reset the same way: `AWG_PROTOCOL=3.1 bash install.sh`
     # must not mark an install as third-line behind the file's back.
     AWG_PROTOCOL=""
+    # The preset too: a generation change takes it from the init, and a value
+    # from the environment would stand in for the saved one where the init lacks
+    # the line.
+    AWG_PRESET=""
     # CLIENT_DNS comes only from the file too: CLIENT_DNS=... bash install.sh must not
     # land in init silently. It is set by a line in awgsetup_cfg.init.
     CLIENT_DNS=""
@@ -4695,8 +4735,9 @@ initialize_setup() {
     AWG_PROTOCOL=$(awg_installed_protocol "$CONFIG_FILE") || die "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read (value '${_proto_raw}'; 2.0 and 3.1 are allowed, the line must look like export AWG_PROTOCOL='2.0'; found: $(grep -niE '^[[:space:]]*(export[[:space:]]+)?AWG_PROTOCOL' "$CONFIG_FILE" 2>/dev/null | head -3 | tr '\n' ' ')). Fix the file by hand, stating the generation the server actually runs."
     # A 3.1 marker is no longer a refusal here by itself: the environment gate in
     # the resolver decides (while the third-line path is closed it answers
-    # not_implemented_yet). A refusal in this place would also block resuming an
-    # unfinished 3.1 install and switching it to 2.0.
+    # not_implemented_yet). A refusal in this place would block switching an
+    # unfinished 3.1 install to 2.0, and, once the path opens, resuming it after
+    # a reboot.
 
     # The installation generation and, when the third line is requested, the
     # environment gate. The body lives in _awg31_resolve_protocol - see there.
@@ -4897,7 +4938,8 @@ initialize_setup() {
 
     # AWG 2.0 parameter generation
     # Regenerate if: first run, a generation change of an unfinished install
-    # (3.1 has its own S3/S4 and H) OR explicit CLI override (--preset/--jc/--jmin/--jmax)
+    # (3.1 has its own S3/S4 lower bounds, H and ContentPaddingAddition) OR
+    # explicit CLI override (--preset/--jc/--jmin/--jmax)
     if [[ -z "${AWG_Jc:-}" ]] || [[ "${AWG_GEN_SWITCHED:-0}" -eq 1 ]] || [[ -n "${CLI_PRESET:-}" ]] || [[ -n "${CLI_JC:-}" ]] \
         || [[ -n "${CLI_JMIN:-}" ]] || [[ -n "${CLI_JMAX:-}" ]]; then
         # generate_awg_params regenerates the WHOLE set (S1-S4, H1-H4, I1),
@@ -4939,7 +4981,8 @@ initialize_setup() {
         NO_CPS=0
     fi
     if [[ "${NO_CPS:-0}" -eq 1 ]]; then
-        if [[ -n "${AWG_I1:-}" && "$config_exists" -eq 1 ]]; then
+        # On a generation change there are no clients yet, nobody to reissue.
+        if [[ -n "${AWG_I1:-}" && "$config_exists" -eq 1 && "${AWG_GEN_SWITCHED:-0}" -ne 1 ]]; then
             log_warn "WARNING: --no-cps drops the I1 (CPS) parameter. Existing client configs that still carry I1 will stop connecting - reissue them: sudo bash $MANAGE_SCRIPT_PATH regen"
         fi
         AWG_I1=''
@@ -6304,8 +6347,8 @@ step3_check_module() {
     # from the memory of an earlier run.
     #
     # ⚠️ THE BRANCH COMES ALIVE IN PHASE 5, when the 3.1 path opens to people.
-    # Today a 3.1 marker never reaches here: the flag is refused by stage pre at
-    # step 0, and a config carrying a 3.1 marker is refused there too. It stands
+    # Today a 3.1 marker never reaches here: stage pre at step 0 refuses both the
+    # flag and a 3.1 marker in the config (not_implemented_yet). It stands
     # here in advance for one reason: forgetting it in phase 5 would mean
     # shipping the third line on tools that cannot parse it, and hearing about it
     # from a user whose handshake silently never happens. A test calls it

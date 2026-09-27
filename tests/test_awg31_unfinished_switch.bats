@@ -31,10 +31,13 @@ setup() {
     export STATE_FILE="$AWG_DIR/setup_state"
     export CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
     export SERVER_CONF_FILE="$TEST_DIR/etc/awg0.conf"
-    mkdir -p "$AWG_DIR" "$TEST_DIR/etc" "$TEST_DIR/bin"
-    printf '#!/bin/bash\nexit "${IP_RC:-1}"\n' > "$TEST_DIR/bin/ip"
+    export SYS_NET_DIR="$TEST_DIR/sys-class-net"
+    mkdir -p "$AWG_DIR" "$TEST_DIR/etc" "$TEST_DIR/bin" "$SYS_NET_DIR"
+    # ip is the fallback when the sysfs directory is missing; it answers with
+    # its own exit code and error text, as iproute2 does.
+    printf '#!/bin/bash\n[[ -n "${IP_ERR:-}" ]] && echo "$IP_ERR" >&2\nexit "${IP_RC:-1}"\n' > "$TEST_DIR/bin/ip"
     chmod +x "$TEST_DIR/bin/ip"
-    export IP_RC=1
+    export IP_RC=1 IP_ERR='Device "awg0" does not exist.'
 }
 
 teardown() {
@@ -49,8 +52,9 @@ _state() {
 
 # Empty work and config directories again (the loops reuse one test dir).
 _fresh() {
-    rm -rf "${AWG_DIR:?}" "${TEST_DIR:?}/etc"
-    mkdir -p "$AWG_DIR" "$TEST_DIR/etc"
+    rm -rf "${AWG_DIR:?}" "${TEST_DIR:?}/etc" "${SYS_NET_DIR:?}"
+    mkdir -p "$AWG_DIR" "$TEST_DIR/etc" "$SYS_NET_DIR"
+    export IP_RC=1 IP_ERR='Device "awg0" does not exist.'
 }
 
 # A work directory as steps 0-5 of an unfinished install leave it.
@@ -85,9 +89,14 @@ mkdir -p "$KEYS_DIR" && : > "$KEYS_DIR/.half-written"
 mkdir -p "$KEYS_DIR" && ln -s "$TEST_DIR/nowhere" "$KEYS_DIR/dangling"
 : > "$KEYS_DIR"
 mkdir -p "$TEST_DIR/empty-elsewhere" && ln -s "$TEST_DIR/empty-elsewhere" "$KEYS_DIR"
-export IP_RC=0
-export IP_RC=2
-export IP_RC=255
+mkdir -p "$SYS_NET_DIR/awg0"
+ln -s "$TEST_DIR/nowhere" "$SYS_NET_DIR/awg0"
+rm -rf "$SYS_NET_DIR"; export IP_RC=0 IP_ERR=
+rm -rf "$SYS_NET_DIR"; export IP_RC=1 IP_ERR="Cannot open netlink socket: Permission denied"
+rm -rf "$SYS_NET_DIR"; export IP_RC=127 IP_ERR="ip: command not found"
+rm -rf "$SYS_NET_DIR"; export IP_RC=2 IP_ERR=
+rm -rf "$SYS_NET_DIR"; export IP_RC=255 IP_ERR=
+rm -rf "$SYS_NET_DIR"; export IP_RC=2 IP_ERR='Device "awg0" does not exist.'
 T
 }
 
@@ -121,43 +130,74 @@ T
     [ "$output" = "2" ]
 }
 
-@test "no ip command at all is not a live interface" {
-    # awg-quick cannot bring awg0 up without ip either.
-    _steps_0_to_5 4
-    export IP_RC=127
-    _state "$INSTALL_RU" 1
-    [ "$output" = "2" ]
-    _state "$INSTALL_EN" 1
-    [ "$output" = "2" ]
+@test "the sysfs directory decides about awg0 when it exists, whatever ip says" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _fresh
+        _steps_0_to_5 4
+        export IP_RC=0 IP_ERR=
+        _state "$s" 1
+        [ "$output" = "2" ] || { echo "$s: $output"; return 1; }
+    done
+}
+
+@test "without the sysfs directory only ip's own no-such-device answer rules awg0 out" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _fresh
+        _steps_0_to_5 4
+        rm -rf "$SYS_NET_DIR"
+        _state "$s" 1
+        [ "$output" = "2" ] || { echo "$s: $output"; return 1; }
+    done
 }
 
 @test "every trace of step 6 or a live interface makes an unfinished install existing" {
     local s t
+    local n=0
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         while IFS= read -r t; do
             _fresh
-            export IP_RC=1
             _steps_0_to_5 4
             eval "$t"
             _state "$s" 1
             [ "$status" -eq 0 ]
             [ "$output" = "1" ] || { echo "$s: trace [$t] gave $output"; return 1; }
+            n=$((n + 1))
         done < <(_traces)
     done
+    # an empty trace list would pass every loop above
+    [ "$n" -eq $(( 2 * $(_traces | wc -l) )) ] && [ "$n" -ge 40 ] || { echo "ran $n trace cases"; return 1; }
 }
 
 @test "a trace without an init file is an existing install, not a new one" {
     # The init may be lost while awg0.conf, keys or profiles stay. Treating that
     # as new would let a flag rewrite the generation under handed-out profiles.
-    local s t
+    local s t n=0
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         while IFS= read -r t; do
             _fresh
-            export IP_RC=1
             eval "$t"
             _state "$s" 0
             [ "$output" = "1" ] || { echo "$s: trace [$t] without init gave $output"; return 1; }
+            n=$((n + 1))
         done < <(_traces)
+    done
+    [ "$n" -ge 40 ] || { echo "ran $n trace cases"; return 1; }
+}
+
+@test "a state file without an init is an existing install, not a new one" {
+    # An install whose init was lost at step 5 would otherwise go on as new:
+    # a flag would set the generation, nothing would rewind, and the loop would
+    # resume at step 5 past the step 3 gate.
+    local s v
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        for v in 5 3 1 99 garbage ""; do
+            _fresh
+            printf '%s\n' "$v" > "$STATE_FILE"
+            _state "$s" 0
+            [ "$output" = "1" ] || { echo "$s: state [$v] without init gave $output"; return 1; }
+        done
     done
 }
 
@@ -297,23 +337,30 @@ _line() { grep -n -m1 -- "$2" <<< "$1" | cut -d: -f1; }
     local s b
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         b=$(_body "$s")
-        grep -q 'install_state=$(_awg_install_state "$config_exists")' <<< "$b" || { echo "$s: no classification"; return 1; }
-        grep -q '_awg31_resolve_protocol "$install_state"' <<< "$b" || { echo "$s: resolver not given the state"; return 1; }
+        [ -n "$b" ] || { echo "$s: no initialize_setup"; return 1; }
+        grep -q '^[[:space:]]*install_state=$(_awg_install_state "$config_exists")' <<< "$b" || { echo "$s: no classification"; return 1; }
+        # a plain call, not inside $( ): the resolver's globals must survive
+        grep -q '^[[:space:]]*_awg31_resolve_protocol "$install_state"$' <<< "$b" || { echo "$s: resolver not given the state"; return 1; }
     done
 }
 
-@test "step 0 rewinds BEFORE the init with the new marker is written" {
-    # The other order leaves a window: a crash after the new marker is saved
-    # and before the rewind resumes without the flag on the NEW generation from
-    # step 5, and a switch to 3.1 would skip the step 3 post gate.
-    local s b rew save
+@test "step 0 rewinds BEFORE the init with the new marker is written and before the step is read" {
+    # The other order would leave a window: a crash after the new marker is
+    # saved and before the rewind resumes without the flag on the NEW
+    # generation from the saved step (4-6), and a switch to 3.1 would skip the
+    # step 3 post gate. The step the loop runs is read from the state file, so
+    # the rewind must also come before that read, or this very run goes on
+    # from the old step.
+    local s b rew save cur
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         b=$(_body "$s")
         rew=$(_line "$b" '^[[:space:]]*_awg_gen_switch_rewind$')
         # the heredoc line at column 0, not the sample inside an error text
         save=$(_line "$b" "^export AWG_PROTOCOL='")
-        [ -n "$rew" ] && [ -n "$save" ] || { echo "$s: rewind=$rew save=$save"; return 1; }
+        cur=$(_line "$b" 'current_step=$(cat "$STATE_FILE")')
+        [ -n "$rew" ] && [ -n "$save" ] && [ -n "$cur" ] || { echo "$s: rewind=$rew save=$save read=$cur"; return 1; }
         [ "$rew" -lt "$save" ] || { echo "$s: rewind after the init write"; return 1; }
+        [ "$rew" -lt "$cur" ] || { echo "$s: rewind after the step is read"; return 1; }
     done
 }
 
@@ -327,15 +374,148 @@ _line() { grep -n -m1 -- "$2" <<< "$1" | cut -d: -f1; }
     done
 }
 
-@test "a 3.1 marker is no longer refused by step 0 itself" {
-    # The environment gate decides now: until the path opens it answers
-    # not_implemented_yet, and a step 0 die in front of it would also block the
-    # resume of an unfinished 3.1 install.
+@test "a switch does not tell anyone to reissue clients that do not exist" {
+    # Both "reissue every client" warnings (a regenerated set, --no-cps) are
+    # about handed-out profiles; a switch happens before step 6, so there are
+    # none, and the switch has its own warning.
     local s b
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         b=$(_body "$s")
-        if grep -q '^[[:space:]]*if \[\[ "\$AWG_PROTOCOL" == "3.1" \]\]; then$' <<< "$b"; then
-            echo "$s: step 0 still refuses a 3.1 marker"; return 1
+        grep -F 'if [[ "$config_exists" -eq 1 && -n "${AWG_Jc:-}"' <<< "$b" | grep -qF 'AWG_GEN_SWITCHED' \
+            || { echo "$s: the regeneration warning fires on a switch"; return 1; }
+        grep -F 'if [[ -n "${AWG_I1:-}" && "$config_exists" -eq 1' <<< "$b" | grep -qF 'AWG_GEN_SWITCHED' \
+            || { echo "$s: the --no-cps warning fires on a switch"; return 1; }
+    done
+}
+
+@test "the saved preset a switch uses comes from the init, not from the environment" {
+    # AWG_PRESET=mobile in the environment would otherwise stand in for an init
+    # that lacks the line, and the switch would regenerate on the wrong preset.
+    local s b reset load
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        b=$(_body "$s")
+        reset=$(_line "$b" '^[[:space:]]*AWG_PRESET=""$')
+        load=$(_line "$b" 'safe_load_config "$CONFIG_FILE"')
+        [ -n "$reset" ] && [ -n "$load" ] || { echo "$s: reset=$reset load=$load"; return 1; }
+        [ "$reset" -lt "$load" ] || { echo "$s: the reset comes after the load"; return 1; }
+    done
+}
+
+@test "a 3.1 marker is no longer refused by step 0 itself" {
+    # The environment gate decides now (see the behavioural resume case below).
+    local s b
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        b=$(_body "$s")
+        [ -n "$b" ] || { echo "$s: no initialize_setup"; return 1; }
+        if grep -q 'AWG_PROTOCOL" == "3.1"' <<< "$b"; then
+            echo "$s: step 0 still tests the 3.1 marker itself"; return 1
         fi
+    done
+}
+
+# ------------------------------------------------------------ step 0, end to end
+# The real lines of initialize_setup from reading the marker to the rewind, run
+# as they are: the classification feeds the resolver, the switch mark survives
+# into the rewind, and the refusals leave the state file alone.
+
+_step0() {
+    local s="$1" fn
+    {
+        echo 'die() { echo "DIE: $*" >&2; exit 1; }'
+        echo 'log() { echo "LOG: $*"; }'
+        echo 'log_warn() { echo "WARN: $*"; }'
+        echo 'update_state() { echo "$1" > "$STATE_FILE"; }'
+        echo 'SCRIPT_VERSION="0.0.0-test"'
+        echo 'PROTOCOL_DEFAULT="2.0"'
+        echo 'awg31_environment_blocker() { echo "$1" >> "$GATE_LOG"; printf "%s" "${BLOCKER_CODE-}"; return ${GATE_RC:-0}; }'
+        for fn in awg_installed_protocol _awg_install_state _awg31_host_arch _awg31_blocker_message _awg31_resolve_protocol _awg_gen_switch_rewind; do
+            func_from "$s" "$fn"
+        done
+        echo 'step0_slice() {'
+        echo '    local config_exists=0'
+        echo '    AWG_PROTOCOL=""'
+        echo '    if [[ -f "$CONFIG_FILE" ]]; then config_exists=1; source "$CONFIG_FILE"; fi'
+        _body "$s" | sed -n '/^    local _proto_raw=/,/^    _awg_gen_switch_rewind$/p'
+        echo '}'
+        echo 'step0_slice'
+        echo 'echo "PROTO=$AWG_PROTOCOL SW=$AWG_GEN_SWITCHED STATE=$(cat "$STATE_FILE")"'
+    } > "$TEST_DIR/step0.sh"
+    run env PATH="$TEST_DIR/bin:$PATH" bash "$TEST_DIR/step0.sh"
+}
+
+# _begun <generation> <step> : an install stopped before step 6.
+_begun() {
+    _fresh
+    printf "export AWG_PROTOCOL='%s'\n" "$1" > "$CONFIG_FILE"
+    echo "$2" > "$STATE_FILE"
+    export GATE_LOG="$TEST_DIR/gate.log"
+    : > "$GATE_LOG"
+}
+
+@test "end to end: 2.0 at step 5 switched to 3.1 rewinds to step 3 after the gate" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _begun 2.0 5
+        CLI_PROTOCOL=3.1 CLI_PROTOCOL_SET=1 BLOCKER_CODE="" _step0 "$s"
+        [ "$status" -eq 0 ] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"PROTO=3.1 SW=1 STATE=3"* ]] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"WARN:"* ]]
+        [ "$(cat "$GATE_LOG")" = "pre" ]
+    done
+}
+
+@test "end to end: the resume of that install without the flag keeps 3.1 and meets the gate" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _begun 3.1 3
+        CLI_PROTOCOL="" CLI_PROTOCOL_SET=0 BLOCKER_CODE="not_implemented_yet" _step0 "$s"
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"DIE:"*"--protocol=2.0"* ]] || { echo "$s: $output"; return 1; }
+        [ "$(cat "$GATE_LOG")" = "pre" ]
+        [ "$(cat "$STATE_FILE")" = "3" ]
+    done
+}
+
+@test "end to end: 3.1 at step 5 switched to 2.0 rewinds without the gate" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _begun 3.1 5
+        CLI_PROTOCOL=2.0 CLI_PROTOCOL_SET=1 _step0 "$s"
+        [ "$status" -eq 0 ] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"PROTO=2.0 SW=1 STATE=3"* ]] || { echo "$s: $output"; return 1; }
+        [ ! -s "$GATE_LOG" ]
+    done
+}
+
+@test "end to end: a switch at step 2 keeps step 2" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _begun 3.1 2
+        CLI_PROTOCOL=2.0 CLI_PROTOCOL_SET=1 _step0 "$s"
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"PROTO=2.0 SW=1 STATE=2"* ]] || { echo "$s: $output"; return 1; }
+    done
+}
+
+@test "end to end: a refused switch leaves the step alone" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _begun 2.0 5
+        CLI_PROTOCOL=3.1 CLI_PROTOCOL_SET=1 BLOCKER_CODE="kernel" _step0 "$s"
+        [ "$status" -eq 1 ]
+        [ "$(cat "$STATE_FILE")" = "5" ] || { echo "$s: state moved on a refusal"; return 1; }
+        [[ "$output" != *"WARN:"* ]]
+    done
+}
+
+@test "end to end: a server config makes the same switch a refusal with the uninstall path" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _begun 2.0 5
+        : > "$SERVER_CONF_FILE"
+        CLI_PROTOCOL=3.1 CLI_PROTOCOL_SET=1 BLOCKER_CODE="" _step0 "$s"
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"--uninstall"* ]] || { echo "$s: $output"; return 1; }
+        [ "$(cat "$STATE_FILE")" = "5" ]
     done
 }

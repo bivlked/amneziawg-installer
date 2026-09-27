@@ -357,18 +357,37 @@ run_argparse() {
     [[ "$output" == *"2.0"* ]]
 }
 
-@test "on an existing install the gate is not called at all" {
-    build_harness
-    CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" run_resolve 1
-    [ ! -s "$GATE_LOG" ]
+@test "on an existing install the gate is asked only about a 3.1 target, and only at pre" {
+    # The refusal stands either way. The pre stage is asked for a 3.1 target
+    # only to tell whether advising an uninstall is honest (see the tests on
+    # the refusal text below); stage post, the tools probe, is never run here.
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        : > "$TEST_DIR/awgsetup_cfg.init"
+        CLI_PROTOCOL="2.0" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="3.1" run_resolve 1
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"DIE:"* ]]
+        [ ! -s "$GATE_LOG" ] || { echo "$script: gate asked for a 2.0 target"; return 1; }
+        : > "$GATE_LOG"
+        CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" BLOCKER_CODE="" run_resolve 1
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"DIE:"* ]]
+        [ "$(cat "$GATE_LOG")" = "pre" ] || { echo "$script: gate log [$(cat "$GATE_LOG")]"; return 1; }
+    done
 }
 
 @test "the refusal on an existing install never rewrites the marker" {
-    build_harness
     # The marker is what says which generation the running server actually is.
     # A refusal that changed it on the way out would be worse than no refusal.
-    CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" run_resolve 1
-    [[ "$output" != *"RESULT: 3.1"* ]]
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" BLOCKER_CODE="" run_resolve 1
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"DIE:"* ]]
+        [[ "$output" != *"RESULT:"* ]]
+    done
 }
 
 @test "a flag matching the existing generation is accepted quietly" {
@@ -434,7 +453,7 @@ run_argparse() {
     local script st
     for script in "$INSTALL_RU" "$INSTALL_EN"; do
         build_harness "$script"
-        for st in 3 -1 x " 2"; do
+        for st in 3 -1 x " 2" ""; do
             CLI_PROTOCOL="" CLI_PROTOCOL_SET=0 AWG_PROTOCOL="2.0" run_resolve "$st"
             [ "$status" -eq 1 ] || { echo "$script: state [$st] accepted"; return 1; }
             [[ "$output" == *"DIE:"* ]]
@@ -542,11 +561,67 @@ run_argparse() {
     for script in "$INSTALL_RU" "$INSTALL_EN"; do
         build_harness "$script"
         rm -f "$TEST_DIR/awgsetup_cfg.init"
-        CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" run_resolve 1
+        CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" BLOCKER_CODE="" run_resolve 1
         [ "$status" -eq 1 ]
         [[ "$output" == *"--uninstall"* ]] || { echo "$script: $output"; return 1; }
+        [[ "$output" == *"--protocol=3.1"* ]] || { echo "$script: $output"; return 1; }
         [[ "$output" != *"AWG_PROTOCOL"* ]] || { echo "$script quotes a marker of a missing file: $output"; return 1; }
-        [ ! -s "$GATE_LOG" ]
+    done
+}
+
+@test "an existing install is not told to uninstall for a 3.1 the gate would refuse" {
+    # Advising "remove the installation and install with --protocol=3.1" when
+    # the new install would be refused by the same gate means wiping a working
+    # server for nothing. The refusal then names the gate's reason instead.
+    local script code
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        : > "$TEST_DIR/awgsetup_cfg.init"
+        for code in not_implemented_yet kernel arm; do
+            : > "$GATE_LOG"
+            CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" BLOCKER_CODE="$code" run_resolve 1
+            [ "$status" -eq 1 ]
+            [[ "$output" != *"--uninstall"* ]] || { echo "$script/$code advises an uninstall: $output"; return 1; }
+            [[ "$output" == *"$(bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message '$code'")"* ]] \
+                || { echo "$script/$code does not carry the gate's text: $output"; return 1; }
+            [ "$(cat "$GATE_LOG")" = "pre" ]
+        done
+    done
+}
+
+@test "a gate that cannot answer is not read as 3.1 being reachable on an existing install" {
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        : > "$TEST_DIR/awgsetup_cfg.init"
+        CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" BLOCKER_CODE="" GATE_RC=1 run_resolve 1
+        [ "$status" -eq 1 ]
+        [[ "$output" != *"--uninstall"* ]] || { echo "$script: $output"; return 1; }
+    done
+}
+
+@test "the same generation 3.1 on an unfinished install is not a switch and still meets the gate" {
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="3.1" BLOCKER_CODE="" run_resolve 2
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"SWITCHED: 0"* ]] || { echo "$script: $output"; return 1; }
+        [[ "$output" != *"WARN:"* ]]
+        [ "$(cat "$GATE_LOG")" = "pre" ]
+    done
+}
+
+@test "a switch the gate refuses is never announced as a change" {
+    # The warning comes after the gate: a log that says "the generation
+    # changes" and then dies would describe something that did not happen.
+    local script
+    for script in "$INSTALL_RU" "$INSTALL_EN"; do
+        build_harness "$script"
+        CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" BLOCKER_CODE="kernel" run_resolve 2
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"DIE:"* ]]
+        [[ "$output" != *"WARN:"* ]] || { echo "$script announced a refused switch: $output"; return 1; }
     done
 }
 
