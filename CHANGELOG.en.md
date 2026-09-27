@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **IPv4 through the tunnel, the device's IPv6 directly.** The installer flag `--client-ipv6-direct` (the `CLIENT_IPV6_DIRECT=1` key in `awgsetup_cfg.init`) together with the "Amnezia" mode (`--route-amnezia`) drops the `2000::/3` IPv6 route and the service IPv6 address from clients: IPv4 goes through the tunnel, the device's IPv6 goes directly through the provider, and the local network stays reachable. The installer names the cost out loud: sites reached over IPv6 see the device's real address. The key is refused in the "All traffic" mode, because without `::/0` iOS AmneziaVPN does not bring the tunnel up, and with `--allow-ipv6-tunnel`. A plain `manage regen` takes the route away from clients already issued and leaves hand-made routes alone. Requested in [PR #260](https://github.com/bivlked/amneziawg-installer/pull/260).
+
 ## [5.37.0] - 2026-09-27
 
 **v5.37.0** - client DNS in the config, --no-prebuilt for ARM, and a docs review.

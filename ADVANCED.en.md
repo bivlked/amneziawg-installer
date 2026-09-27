@@ -343,6 +343,7 @@ Defines which traffic the **client** routes through the VPN tunnel.
 - **a full tunnel** without `--allow-ipv6-tunnel`: mode 1 gets `::/0`, mode 2 gets `2000::/3` and a service IPv6 address. The device's IPv6 goes into the tunnel, gets no further, and the device falls back to IPv4. While the VPN is on, resources reachable only over IPv6 do not open; in mode 1 the home network's local IPv6 is out of reach too, in mode 2 it stays reachable;
 - **your own network list** (mode 3, `--route-custom`) does not get `::/0` unless it covers all public IPv4. The device's IPv6 goes around the tunnel with its own address;
 - **with `--allow-ipv6-tunnel`** the rules differ: a full tunnel gets `::/0` only when the server has native IPv6, and then the device's IPv6 goes through the VPN. Without native IPv6 the client gets only the tunnel subnet, and the device's global IPv6 goes around the tunnel again. Details in [IPv6 Dual-Stack Tunnel](#ipv6-tunnel-adv).
+- **mode 2 with `--client-ipv6-direct`** (the `CLIENT_IPV6_DIRECT=1` key in `awgsetup_cfg.init`): no IPv6 route and no service address. IPv4 goes through the tunnel, the device's IPv6 goes directly through the provider, and the local network stays reachable. The cost: sites opened over IPv6 see the device's real address, and a resource blocked by the provider and reachable over IPv6 stays blocked. The key is not allowed in mode 1 (without `::/0` iOS AmneziaVPN does not bring the tunnel up) or together with `--allow-ipv6-tunnel`, and in mode 3 it changes nothing. A plain `manage regen` takes the route away from clients already issued and leaves hand-made routes alone; import the profiles again after it. To switch it off: the line `CLIENT_IPV6_DIRECT=0` in `awgsetup_cfg.init` and `regen` again.
 
 `manage regen` also adds an IPv6 route to already issued full-tunnel profiles whose `AllowedIPs` hold no IPv6 route, including lists edited through `modify`, and replaces `::/0` with `2000::/3` in mode-2 profiles issued with `::/0`. How this looks from a site's side and how to check from the device is covered in [What a site can see when traffic is split by destination](#split-detect-adv).
 
@@ -773,6 +774,7 @@ Options:
   --allow-ipv6-tunnel   Enable dual-stack IPv6 inside the tunnel (ULA, opt-in)
   --route-all           Mode: All traffic (0.0.0.0/0) (default)
   --route-amnezia       Mode: Amnezia List + DNS (private networks stay outside)
+  --client-ipv6-direct  With --route-amnezia: the devices' IPv6 directly, around the VPN
   --route-custom=NETS   Mode: Only specified networks
   --isolation=on|off    Isolate clients from each other (default on)
   --endpoint=ADDR       External server endpoint: FQDN, IPv4 or [IPv6] (NAT)

@@ -212,6 +212,20 @@ regen_without_key() {
     both regen_without_key
 }
 
+regen_turned_off() {
+    local lib="$1" list out
+    list=$(mode2_list)
+    # the key back at 0: a plain regen gives the route and the sink back
+    out=$(regen_run "$lib" "export CLIENT_IPV6_DIRECT=0" "$list" "10.9.9.20/32")
+    [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
+    [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = $list, 2000::/3" ] || { echo "route not back ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
+    [ "$(conf_line "$lib" Address r1)" = "Address = 10.9.9.20/32, ${SINK_PREFIX}::a09:914/128" ] || { echo "sink not back ($lib): $(conf_line "$lib" Address r1)"; return 1; }
+}
+@test "regen: switching the key back to 0 gives the route and the sink back with a plain regen, both twins" {
+    require_flock
+    both regen_turned_off
+}
+
 regen_reset_routes() {
     local lib="$1" list out
     list=$(mode2_list)
