@@ -91,6 +91,8 @@ mkdir -p "$KEYS_DIR" && ln -s "$TEST_DIR/nowhere" "$KEYS_DIR/dangling"
 mkdir -p "$TEST_DIR/empty-elsewhere" && ln -s "$TEST_DIR/empty-elsewhere" "$KEYS_DIR"
 mkdir -p "$SYS_NET_DIR/awg0"
 ln -s "$TEST_DIR/nowhere" "$SYS_NET_DIR/awg0"
+export IP_RC=0 IP_ERR=
+export IP_RC=1 IP_ERR="Cannot open netlink socket: Permission denied"
 rm -rf "$SYS_NET_DIR"; export IP_RC=0 IP_ERR=
 rm -rf "$SYS_NET_DIR"; export IP_RC=1 IP_ERR="Cannot open netlink socket: Permission denied"
 rm -rf "$SYS_NET_DIR"; export IP_RC=127 IP_ERR="ip: command not found"
@@ -130,18 +132,17 @@ T
     [ "$output" = "2" ]
 }
 
-@test "the sysfs directory decides about awg0 when it exists, whatever ip says" {
+@test "sysfs without awg0 and ip's own no-such-device answer together rule awg0 out" {
     local s
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         _fresh
         _steps_0_to_5 4
-        export IP_RC=0 IP_ERR=
         _state "$s" 1
         [ "$output" = "2" ] || { echo "$s: $output"; return 1; }
     done
 }
 
-@test "without the sysfs directory only ip's own no-such-device answer rules awg0 out" {
+@test "without the sysfs directory ip's own no-such-device answer is enough" {
     local s
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         _fresh

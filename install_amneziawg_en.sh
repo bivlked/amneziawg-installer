@@ -1436,17 +1436,16 @@ _awg_install_state() {
             trace=1
         fi
     fi
-    # A live awg0. $SYS_NET_DIR is looked at first: it needs neither PATH nor
-    # netlink. ip only when that directory is missing, and "no interface" only
-    # from its own answer that the device does not exist: it exits 1 on a netlink
-    # failure too, and 127 means "not in PATH", not "no interface".
+    # A live awg0. ip decides: only it sees the network namespace of whoever ran
+    # the installer, and "no interface" is only its own answer that the device
+    # does not exist (it exits 1 on a netlink failure too, and 127 means "not in
+    # PATH", not "no interface"). $SYS_NET_DIR can only ADD a trace: sysfs shows
+    # the namespace of whoever mounted /sys and may be unreadable, so its "no"
+    # proves nothing, while its "yes" is a trace.
     if (( ! trace )); then
-        if [[ -d "$SYS_NET_DIR" ]]; then
-            [[ -e "$SYS_NET_DIR/awg0" || -L "$SYS_NET_DIR/awg0" ]] && trace=1
-        else
-            ip_err=$(ip link show awg0 2>&1 >/dev/null); rc=$?
-            [[ "$rc" -eq 1 && "$ip_err" == *"does not exist"* ]] || trace=1
-        fi
+        [[ -e "$SYS_NET_DIR/awg0" || -L "$SYS_NET_DIR/awg0" ]] && trace=1
+        ip_err=$(ip link show awg0 2>&1 >/dev/null); rc=$?
+        [[ "$rc" -eq 1 && "$ip_err" == *"does not exist"* ]] || trace=1
     fi
     if (( trace )); then echo 1; return 0; fi
     if (( config_exists == 0 )); then
@@ -1575,7 +1574,8 @@ _awg31_resolve_protocol() {
                     _blk=$(awg31_environment_blocker pre); _blk_rc=$?
                     if [[ -n "$_blk" || "$_blk_rc" -ne 0 ]]; then
                         [[ -n "$_blk" ]] || _blk="internal_error"
-                        _way="There is no need to remove the installation for 3.1: $(_awg31_blocker_message "$_blk")"
+                        log "3.1 environment gate (pre) on the existing-install refusal: reason code '${_blk}', exit code ${_blk_rc}."
+                        _way="Do not remove the installation for 3.1: $(_awg31_blocker_message "$_blk")"
                     fi
                 fi
                 die "--protocol=${CLI_PROTOCOL} cannot be carried out on this server: ${_why}. ${_way}"
@@ -1629,7 +1629,7 @@ _awg31_resolve_protocol() {
     fi
 
     if (( AWG_GEN_SWITCHED )); then
-        log_warn "The installation is not finished (step 6 not passed, no profiles yet): the generation changes ${_gen_from} -> ${AWG_PROTOCOL} by the --protocol flag. The obfuscation parameters will be generated anew, and the installation resumes from step 3 (or from an earlier step if it has not got that far)."
+        log_warn "The installation is not finished (step 6 not started, no profiles yet): the generation changes ${_gen_from} -> ${AWG_PROTOCOL} by the --protocol flag. The obfuscation parameters will be generated anew, and the installation resumes from step 3 (or from an earlier step if it has not got that far)."
     fi
 }
 
