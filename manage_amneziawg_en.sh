@@ -574,9 +574,17 @@ _backup_configs_nolock() {
             return 1
         fi
     else
+        # Checked under any marker: a broken marker, or marker 2.0 with a key in
+        # awg0.conf, would give an archive that restore then refuses. Without a key
+        # awg_hpk_ensure only warns, and the backup goes on as before.
+        if ! awg_hpk_ensure manage; then
+            log_error "The header protection key does not match the installation (reason above) - backup not created: such an archive would not restore."
+            rm -rf "$td"
+            return 1
+        fi
         _hpk_gen=$(_awg_generation_from_init "$CONFIG_FILE") || _hpk_gen=""
         if [[ "$_hpk_gen" == "3.1" ]]; then
-            if ! awg_hpk_ensure manage || ! cp -a "$_hpk" "$td/" || ! chmod 600 "$td/server_hpk.key"; then
+            if ! cp -a "$_hpk" "$td/" || ! chmod 600 "$td/server_hpk.key"; then
                 log_error "3.1 installation: the header protection key ($_hpk) was not saved - backup not created."
                 rm -rf "$td"
                 return 1
@@ -675,13 +683,13 @@ _restore_do_rollback() {
         log_error "Failed to unpack rollback snapshot ($_snap). Manual recovery: tar -xzf $_snap -C <target dir>"
         return 1
     fi
-    local _scdir
+    local _scdir _inc=0
     _scdir=$(dirname "$SERVER_CONF_FILE")
     # Client files and keys are brought to exactly the snapshot, not laid over:
     # restore has already replaced them with the archived set, and a client from
     # the archive that did not exist before restore would otherwise stay next to
     # the previous ones (on a generation change - a profile of the other
-    # generation). The snapshot takes these sets whole.
+    # generation).
     # The snapshot takes client configs and keys whole (a copy failure fails the
     # snapshot), QR codes and vpnuri files where it can, they are reissued from
     # the configs. A copy failure after the removal is said out loud: otherwise
@@ -692,15 +700,25 @@ _restore_do_rollback() {
     if [[ -d "$_rtd/keys" ]]; then
         rm -f "$KEYS_DIR"/* 2>/dev/null
     fi
-    [[ -d "$_rtd/server" ]] && cp -a "$_rtd/server/"* "$_scdir/" 2>/dev/null
+    if compgen -G "$_rtd/server/*" >/dev/null && ! cp -a "$_rtd/server/"* "$_scdir/" 2>/dev/null; then
+        log_error "Rollback: the server config was not returned to $_scdir. It is in the snapshot $_snap (directory server/)."
+        _inc=1
+    fi
     if compgen -G "$_rtd/clients/*" >/dev/null && ! cp -a "$_rtd/clients/"* "$AWG_DIR/" 2>/dev/null; then
         log_error "Rollback: client files were not returned to $AWG_DIR. They are in the snapshot $_snap (directory clients/)."
+        _inc=1
     fi
     if compgen -G "$_rtd/keys/*" >/dev/null && ! cp -a "$_rtd/keys/"* "$KEYS_DIR/" 2>/dev/null; then
         log_error "Rollback: client keys were not returned to $KEYS_DIR. They are in the snapshot $_snap (directory keys/)."
+        _inc=1
     fi
-    [[ -f "$_rtd/server_private.key" ]] && cp -a "$_rtd/server_private.key" "$AWG_DIR/" 2>/dev/null
-    [[ -f "$_rtd/server_public.key" ]] && cp -a "$_rtd/server_public.key" "$AWG_DIR/" 2>/dev/null
+    local _kf
+    for _kf in server_private.key server_public.key; do
+        if [[ -f "$_rtd/$_kf" ]] && ! cp -a "$_rtd/$_kf" "$AWG_DIR/" 2>/dev/null; then
+            log_error "Rollback: $_kf was not returned to $AWG_DIR. It is in the snapshot $_snap."
+            _inc=1
+        fi
+    done
     # Header protection key file: as in the snapshot. restore does not start when
     # a link or a directory stands where the key belongs, so here it is either a
     # regular file or absent. Missing from the snapshot - restore put it in place,
@@ -712,9 +730,10 @@ _restore_do_rollback() {
             if ! ( umask 077; cp --remove-destination "$_rtd/server_hpk.key" "$_hpk" ) 2>/dev/null \
                 || ! chmod 600 "$_hpk" 2>/dev/null; then
                 log_error "Rollback: the header protection key was not returned to $_hpk. It is in the snapshot $_snap."
+                _inc=1
             fi
         elif [[ -f "$_hpk" && ! -L "$_hpk" ]]; then
-            rm -f "$_hpk" 2>/dev/null || log_error "Rollback: could not remove $_hpk placed by restore."
+            rm -f "$_hpk" 2>/dev/null || { log_error "Rollback: could not remove $_hpk placed by restore."; _inc=1; }
         fi
     fi
     # Expiry stamps are brought back to exactly the snapshot. restore may have
@@ -730,6 +749,7 @@ _restore_do_rollback() {
             rm -f "$_ef" 2>/dev/null
             if [[ -e "$_ef" || -L "$_ef" ]]; then
                 log_error "Rollback: could not remove the archived expiry stamp $_ef - cron may delete client '${_ef##*/}' at the archived deadline. Remove the stamp by hand."
+                _inc=1
             fi
         done
     fi
@@ -737,6 +757,7 @@ _restore_do_rollback() {
         mkdir -p "$_edir"
         if compgen -G "$_rtd/expiry/*" >/dev/null && ! cp -a "$_rtd/expiry"/* "$_edir/" 2>/dev/null; then
             log_error "Rollback: expiry stamps from the snapshot were not restored to $_edir - check client deadlines (manage list)."
+            _inc=1
         fi
     fi
     [[ -f "$_rtd/awg-expiry" ]] && cp -a "$_rtd/awg-expiry" /etc/cron.d/awg-expiry 2>/dev/null
@@ -744,6 +765,12 @@ _restore_do_rollback() {
     # Rollback files are in place - the JSON envelope reports rolled_back=true
     # even if the service below fails to start (FS state is already pre-restore).
     _RESTORE_ROLLED_BACK=1
+    # A partial rollback is told apart in the JSON envelope: rollback_complete=false.
+    _RESTORE_ROLLBACK_COMPLETE=1
+    if (( _inc )); then
+        _RESTORE_ROLLBACK_COMPLETE=0
+        log_error "Rollback incomplete (reasons above): the missing files are in the snapshot $_snap."
+    fi
 
     log "Rollback done — attempting to start service..."
     if systemctl start awg-quick@awg0; then
@@ -3116,7 +3143,12 @@ case $COMMAND in
             # happened. error is human-readable text; decide by ok/rc.
             if [[ "$JSON_OUTPUT" -eq 1 ]]; then
                 _jrb=false; [[ "${_RESTORE_ROLLED_BACK:-0}" == "1" ]] && _jrb=true
-                json_out "{\"command\":\"restore\",\"ok\":false,\"error\":\"$(json_escape "${_JSON_ERR:-restore failed (see stderr)}")\",\"source\":\"$(json_escape "${_RESTORE_SOURCE:-}")\",\"applied\":false,\"rolled_back\":$_jrb,\"rc\":1}"
+                _jrc=""
+                if [[ "$_jrb" == true ]]; then
+                    _jrc=',"rollback_complete":true'
+                    [[ "${_RESTORE_ROLLBACK_COMPLETE:-1}" == "1" ]] || _jrc=',"rollback_complete":false'
+                fi
+                json_out "{\"command\":\"restore\",\"ok\":false,\"error\":\"$(json_escape "${_JSON_ERR:-restore failed (see stderr)}")\",\"source\":\"$(json_escape "${_RESTORE_SOURCE:-}")\",\"applied\":false,\"rolled_back\":$_jrb${_jrc},\"rc\":1}"
             fi
         fi
         ;;

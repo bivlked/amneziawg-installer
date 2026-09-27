@@ -353,7 +353,7 @@ _r_20_over_31_archives_key() {
 @test "restore 2.0 over 3.1 moves the live key into archive/<time>-3.1/, directories 700" { _both _r_20_over_31_archives_key; }
 
 _r_candidate_mismatch() {
-    local s="$1" b bad before
+    local s="$1" b bad before nb
     _make_31 "$K1"
     b=$(_backup "$s")
     bad="$TEST_DIR/bad.tar.gz"
@@ -612,6 +612,70 @@ _etc_rollback() {
     [ "$(_state)" = "$before" ]
 }
 @test "config outside the working directory: rollback of 3.1 over 2.0 is exact" { _both _etc_rollback; }
+
+# ------------------------------------------------------------------ loud where it used to be quiet
+
+_b_refused_key_without_31() {
+    local s="$1" marker="$2" nb
+    _make_31 "$K1"
+    sed -i '/AWG_PROTOCOL/d' "$A/awgsetup_cfg.init"
+    printf "export AWG_PROTOCOL='%s'\n" "$marker" >> "$A/awgsetup_cfg.init"
+    nb=$(_nbackups)
+    _m "$s" backup
+    _fail
+    [[ "$output$stderr" == *HeaderProtectionKey* || "$output$stderr" == *AWG_PROTOCOL* ]]
+    [ "$(_nbackups)" -eq "$nb" ]
+}
+_b_refused_broken_marker() { _b_refused_key_without_31 "$1" 9.9; }
+_b_refused_marker_20() { _b_refused_key_without_31 "$1" 2.0; }
+@test "backup refuses a key in awg0.conf under a broken marker: the archive would not restore" { _both _b_refused_broken_marker; }
+@test "backup refuses a key in awg0.conf under marker 2.0: the archive would not restore" { _both _b_refused_marker_20; }
+
+_rb_json_complete() {
+    local s="$1" b
+    _make_20
+    b=$(_backup "$s")
+    _make_31 "$K1"
+    touch "$TEST_DIR/fail_start"
+    _m "$s" restore "$b" --json
+    _fail
+    printf '%s' "$output" | jq -e '.rolled_back == true and .rollback_complete == true' >/dev/null
+}
+@test "a full rollback answers --json with rolled_back=true and rollback_complete=true" { _both _rb_json_complete; }
+
+# cp into the client key directory fails: restore goes to rollback, and the
+# rollback cannot put the client keys back either.
+_rb_json_partial() {
+    local s="$1" target="${2:-$A/keys/}" src="${3:-}" b real_cp
+    _make_31 "$K1"
+    _m "$s" add alice
+    _ok
+    b=$(_backup "$s")
+    real_cp=$(PATH=/usr/bin:/bin command -v cp)
+    cat > "$TEST_DIR/bin/cp" << STUB
+#!/bin/bash
+if [[ -e "$TEST_DIR/fail_cp_keys" ]]; then
+    # fails only the copy into the target, and with a source filter only when a source matches it
+    hit=0; tgt=0
+    for a in "\$@"; do
+        [[ "\$a" == "$target" ]] && tgt=1
+        [[ -z "$src" || "\$a" == *"$src"* ]] && hit=1
+    done
+    (( tgt && hit )) && exit 1
+fi
+exec "$real_cp" "\$@"
+STUB
+    chmod +x "$TEST_DIR/bin/cp"
+    touch "$TEST_DIR/fail_cp_keys"
+    _m "$s" restore "$b" --json
+    _fail
+    printf '%s' "$output" | jq -e '.rolled_back == true and .rollback_complete == false' >/dev/null \
+        || { printf 'envelope: %s\nstderr: %s\n' "$output" "$stderr" >&2; return 1; }
+    [[ "$stderr" == *"${target%/}"* ]]
+}
+@test "a partial rollback answers --json with rollback_complete=false and names the snapshot" { _both _rb_json_partial; }
+_rb_json_partial_clients() { _rb_json_partial "$1" "$A/" /clients/; }
+@test "a partial rollback of the client files answers --json with rollback_complete=false" { _both _rb_json_partial_clients; }
 
 # A dynamic "no syncconf" case cannot fail here: restore has no apply step at
 # all and the sandbox sets AWG_SKIP_APPLY, so the source check below is the pin.

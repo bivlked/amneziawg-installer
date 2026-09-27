@@ -568,9 +568,17 @@ _backup_configs_nolock() {
             return 1
         fi
     else
+        # Проверка при любом маркере: испорченный маркер или маркер 2.0 при ключе в
+        # awg0.conf дали бы архив, который restore потом отвергнет. Без ключа
+        # awg_hpk_ensure только предупреждает, и бэкап идёт как раньше.
+        if ! awg_hpk_ensure manage; then
+            log_error "Ключ защиты заголовков не согласован с установкой (причина выше) - бэкап не создан: такой архив не восстановился бы."
+            rm -rf "$td"
+            return 1
+        fi
         _hpk_gen=$(_awg_generation_from_init "$CONFIG_FILE") || _hpk_gen=""
         if [[ "$_hpk_gen" == "3.1" ]]; then
-            if ! awg_hpk_ensure manage || ! cp -a "$_hpk" "$td/" || ! chmod 600 "$td/server_hpk.key"; then
+            if ! cp -a "$_hpk" "$td/" || ! chmod 600 "$td/server_hpk.key"; then
                 log_error "Установка 3.1: ключ защиты заголовков ($_hpk) в бэкап не сохранён - бэкап не создан."
                 rm -rf "$td"
                 return 1
@@ -667,12 +675,12 @@ _restore_do_rollback() {
         log_error "Не удалось распаковать rollback snapshot ($_snap). Ручное восстановление: tar -xzf $_snap -C <нужная папка>"
         return 1
     fi
-    local _scdir
+    local _scdir _inc=0
     _scdir=$(dirname "$SERVER_CONF_FILE")
     # Клиентские файлы и ключи приводятся ровно к снимку, а не накладываются
     # поверх: restore уже заменил их набором из архива, и клиент из архива,
     # которого до restore не было, иначе остался бы рядом с прежними (при смене
-    # поколения - профиль чужого поколения). Снимок снят с этих наборов целиком.
+    # поколения - профиль чужого поколения).
     # Конфиги и ключи клиентов снимок берёт целиком (сбой копирования - отказ
     # снимка), QR и vpnuri - по возможности, они перевыпускаются из конфигов.
     # Сбой копирования после удаления называется вслух: иначе откат молча
@@ -683,15 +691,25 @@ _restore_do_rollback() {
     if [[ -d "$_rtd/keys" ]]; then
         rm -f "$KEYS_DIR"/* 2>/dev/null
     fi
-    [[ -d "$_rtd/server" ]] && cp -a "$_rtd/server/"* "$_scdir/" 2>/dev/null
+    if compgen -G "$_rtd/server/*" >/dev/null && ! cp -a "$_rtd/server/"* "$_scdir/" 2>/dev/null; then
+        log_error "Откат: серверный конфиг не возвращён в $_scdir. Он есть в снимке $_snap (каталог server/)."
+        _inc=1
+    fi
     if compgen -G "$_rtd/clients/*" >/dev/null && ! cp -a "$_rtd/clients/"* "$AWG_DIR/" 2>/dev/null; then
         log_error "Откат: клиентские файлы не возвращены в $AWG_DIR. Они есть в снимке $_snap (каталог clients/)."
+        _inc=1
     fi
     if compgen -G "$_rtd/keys/*" >/dev/null && ! cp -a "$_rtd/keys/"* "$KEYS_DIR/" 2>/dev/null; then
         log_error "Откат: ключи клиентов не возвращены в $KEYS_DIR. Они есть в снимке $_snap (каталог keys/)."
+        _inc=1
     fi
-    [[ -f "$_rtd/server_private.key" ]] && cp -a "$_rtd/server_private.key" "$AWG_DIR/" 2>/dev/null
-    [[ -f "$_rtd/server_public.key" ]] && cp -a "$_rtd/server_public.key" "$AWG_DIR/" 2>/dev/null
+    local _kf
+    for _kf in server_private.key server_public.key; do
+        if [[ -f "$_rtd/$_kf" ]] && ! cp -a "$_rtd/$_kf" "$AWG_DIR/" 2>/dev/null; then
+            log_error "Откат: $_kf не возвращён в $AWG_DIR. Он есть в снимке $_snap."
+            _inc=1
+        fi
+    done
     # Файл ключа защиты заголовков: как в снимке. restore не начинается, если на
     # месте ключа ссылка или каталог, поэтому здесь он либо обычный файл, либо его
     # нет. Нет в снимке - его положил restore, и он убирается; есть - возвращается
@@ -702,9 +720,10 @@ _restore_do_rollback() {
             if ! ( umask 077; cp --remove-destination "$_rtd/server_hpk.key" "$_hpk" ) 2>/dev/null \
                 || ! chmod 600 "$_hpk" 2>/dev/null; then
                 log_error "Откат: ключ защиты заголовков не возвращён в $_hpk. Он есть в снимке $_snap."
+                _inc=1
             fi
         elif [[ -f "$_hpk" && ! -L "$_hpk" ]]; then
-            rm -f "$_hpk" 2>/dev/null || log_error "Откат: не удалось убрать $_hpk, положенный restore."
+            rm -f "$_hpk" 2>/dev/null || { log_error "Откат: не удалось убрать $_hpk, положенный restore."; _inc=1; }
         fi
     fi
     # Метки срока приводятся ровно к снимку. restore мог положить метки из
@@ -719,6 +738,7 @@ _restore_do_rollback() {
             rm -f "$_ef" 2>/dev/null
             if [[ -e "$_ef" || -L "$_ef" ]]; then
                 log_error "Откат: не удалось удалить метку срока $_ef из архива - клиент '${_ef##*/}' может быть удалён cron в срок из архива. Удалите метку вручную."
+                _inc=1
             fi
         done
     fi
@@ -726,6 +746,7 @@ _restore_do_rollback() {
         mkdir -p "$_edir"
         if compgen -G "$_rtd/expiry/*" >/dev/null && ! cp -a "$_rtd/expiry"/* "$_edir/" 2>/dev/null; then
             log_error "Откат: метки срока из снимка не восстановлены в $_edir - проверьте сроки клиентов (manage list)."
+            _inc=1
         fi
     fi
     [[ -f "$_rtd/awg-expiry" ]] && cp -a "$_rtd/awg-expiry" /etc/cron.d/awg-expiry 2>/dev/null
@@ -733,6 +754,12 @@ _restore_do_rollback() {
     # Файлы отката скопированы - для JSON-конверта rolled_back=true даже если
     # сервис ниже не стартует (состояние ФС уже возвращено к pre-restore).
     _RESTORE_ROLLED_BACK=1
+    # Неполный откат отличается в JSON-конверте: rollback_complete=false.
+    _RESTORE_ROLLBACK_COMPLETE=1
+    if (( _inc )); then
+        _RESTORE_ROLLBACK_COMPLETE=0
+        log_error "Откат неполный (причины выше): недостающие файлы есть в снимке $_snap."
+    fi
 
     log "Откат завершён — пытаюсь запустить сервис..."
     if systemctl start awg-quick@awg0; then
@@ -3074,7 +3101,12 @@ case $COMMAND in
             # человекочитаемый текст, машинные решения по ok/rc.
             if [[ "$JSON_OUTPUT" -eq 1 ]]; then
                 _jrb=false; [[ "${_RESTORE_ROLLED_BACK:-0}" == "1" ]] && _jrb=true
-                json_out "{\"command\":\"restore\",\"ok\":false,\"error\":\"$(json_escape "${_JSON_ERR:-restore failed (see stderr)}")\",\"source\":\"$(json_escape "${_RESTORE_SOURCE:-}")\",\"applied\":false,\"rolled_back\":$_jrb,\"rc\":1}"
+                _jrc=""
+                if [[ "$_jrb" == true ]]; then
+                    _jrc=',"rollback_complete":true'
+                    [[ "${_RESTORE_ROLLBACK_COMPLETE:-1}" == "1" ]] || _jrc=',"rollback_complete":false'
+                fi
+                json_out "{\"command\":\"restore\",\"ok\":false,\"error\":\"$(json_escape "${_JSON_ERR:-restore failed (see stderr)}")\",\"source\":\"$(json_escape "${_RESTORE_SOURCE:-}")\",\"applied\":false,\"rolled_back\":$_jrb${_jrc},\"rc\":1}"
             fi
         fi
         ;;
