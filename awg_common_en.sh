@@ -1848,10 +1848,11 @@ _awg31_module_probe() (
 
 # awg31_restore_blocker : pass when the third line will come up on this host;
 # otherwise a reason CODE. Success is an EXPLICIT word, not silence: the empty
-# answer of a killed subprocess must not read as a pass - the same codes and the same order of checks as the
-# post stage of the installer's awg31_environment_blocker, but without
-# not_implemented_yet: restore brings back an existing 3.1 installation, it does
-# not issue a new one. Not knowing (architecture, probe) is a refusal, not a pass.
+# answer of a killed subprocess must not read as a pass.
+# The codes and the order of checks are those of the post stage of the
+# installer's awg31_environment_blocker, but without not_implemented_yet:
+# restore brings back an existing 3.1 installation, it does not issue a new one.
+# Not knowing (architecture, probe) is a refusal, not a pass.
 awg31_restore_blocker() {
     local arch kver
     arch=$(_awg31_host_arch)
