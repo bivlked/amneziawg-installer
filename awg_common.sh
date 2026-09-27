@@ -4699,6 +4699,7 @@ regenerate_client() {
                 current_allowed_ips="$_aip_new"
             elif [[ "${ALLOWED_IPS_MODE:-}" == "2" ]] \
                  && { _aip_has_token "$current_allowed_ips" "2000::/3" || _aip_has_token "$current_allowed_ips" "::/0"; } \
+                 && [[ "$(grep -c ':' <<< "$(_aip_tokens "$current_allowed_ips")")" == "1" ]] \
                  && ! _aip_has_token "$current_allowed_ips" "0.0.0.0/0" \
                  && _is_full_tunnel "$current_allowed_ips"; then
                 # Маршрут нашей формы, но IPv4-часть не равна списку сервера (клиент

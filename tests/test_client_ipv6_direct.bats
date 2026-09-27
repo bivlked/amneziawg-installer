@@ -214,6 +214,10 @@ regen_keeps_hand_made() {
     out=$(regen_run "$lib" "$ON" "$list, 10.9.9.0/24, 2000::/3" "10.9.9.20/32")
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = $list, 10.9.9.0/24, 2000::/3" ] || { echo "not-ours stripped ($lib)"; return 1; }
     [[ "$out" == *"WARN:"*"reset-routes"* ]] || { echo "kept silently ($lib): $out"; return 1; }
+    # 2000::/3 next to a second, hand-made IPv6 route: not our shape, kept without the reset advice
+    out=$(regen_run "$lib" "$ON" "$list, 2000::/3, fd00::/8" "10.9.9.20/32")
+    [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = $list, 2000::/3, fd00::/8" ] || { echo "two IPv6 routes touched ($lib)"; return 1; }
+    [[ "$out" != *"reset-routes"* ]] || { echo "reset advice would erase fd00::/8 ($lib): $out"; return 1; }
     # a real split
     out=$(regen_run "$lib" "$ON" "10.0.0.0/8" "10.9.9.20/32")
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = 10.0.0.0/8" ] || { echo "split touched ($lib)"; return 1; }
