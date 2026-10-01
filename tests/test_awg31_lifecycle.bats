@@ -98,7 +98,7 @@ echo "ip \$*" >> "$TEST_DIR/ip.log"
 if [[ "\$1 \$2" == "link add" ]]; then : > "$TEST_DIR/if_\$3"; exit 0; fi
 if [[ "\$1 \$2" == "link del" ]]; then exec /bin/rm -f "$TEST_DIR/if_\$3"; fi
 if [[ "\$1 \$2" == "link show" && "\$3" == awgp* ]]; then [[ -e "$TEST_DIR/if_\$3" ]]; exit; fi
-if [[ "\$*" == *"link show"*"awg0"* ]]; then exit 1; fi
+if [[ "\$*" == *"link show"*"awg0"* ]]; then echo 'Device "awg0" does not exist.' >&2; exit 1; fi
 exit 0
 STUB
     cat > "$TEST_DIR/bin/qrencode" << 'STUB'
@@ -138,6 +138,8 @@ export AWG_H4='100000000-800000000'
 export AWG_APPLY_MODE='syncconf'
 export AWG_ENDPOINT='203.0.113.5'
 CONF
+    # a real install keeps the init private
+    chmod 600 "$A/awgsetup_cfg.init"
     SC="$TEST_DIR/etc/awg0.conf"
     MOCK_ARGS=(--conf-dir="$A" --server-conf="$SC")
     export AWG_SKIP_APPLY=1
@@ -229,10 +231,12 @@ _diff_only() {
 # _kept <before> : every fact of the saved fingerprint is still there unchanged;
 # only new init keys may have appeared
 _kept() {
-    local now="$TEST_DIR/now.print" added
+    local now="$TEST_DIR/now.print" added d rc=0
     _print "$now" || return 1
-    if diff "$1" "$now" | grep '^<' >&2; then echo "facts changed or gone" >&2; return 1; fi
-    added=$(diff "$1" "$now" | grep '^>' || true)
+    d=$(diff "$1" "$now") || rc=$?
+    (( rc <= 1 )) || { echo "diff failed ($rc)" >&2; return 1; }
+    if grep '^<' <<<"$d" >&2; then echo "facts changed or gone" >&2; return 1; fi
+    added=$(grep '^>' <<<"$d" || true)
     if grep -v '^> init|' <<<"$added" | grep . >&2; then echo "facts outside the init appeared" >&2; return 1; fi
 }
 
@@ -270,14 +274,15 @@ _fp_20_full() {
     _both _fp_20_full
 }
 
-# _refused <command> : after the command the fingerprint must refuse
+# _refused <command> <reason> : after the command the fingerprint must refuse,
+# for that reason (a refusal for another reason would hide a dead check)
 _refused() {
     eval "$1"
     if _gen_print "$A" "$SC" >/dev/null 2>"$TEST_DIR/fp.err"; then
         echo "fingerprint accepted: $1" >&2
         return 1
     fi
-    grep -q '^gen_print: ' "$TEST_DIR/fp.err"
+    grep -qF -- "$2" "$TEST_DIR/fp.err" || { echo "refused, but not for '$2':" >&2; cat "$TEST_DIR/fp.err" >&2; return 1; }
 }
 
 _fp_controls() {
@@ -288,18 +293,23 @@ _fp_controls() {
     cp -a "$A" "$snap"; cp "$SC" "$TEST_DIR/sc.snap"
     _restore_snap() { rm -rf "$A"; cp -a "$snap" "$A"; cp "$TEST_DIR/sc.snap" "$SC"; }
 
-    _refused 'rm "$A/alice.vpnuri"';                                    _restore_snap
-    _refused 'sed -i "s|^HeaderProtectionKey = .*|HeaderProtectionKey = $K2|" "$A/bob.conf"'; _restore_snap
-    _refused 'sed -i "/^HeaderProtectionKey/p" "$SC"';                   _restore_snap
-    _refused 'sed -i "s|^S2 = .*|S2 = 57|" "$A/alice.conf"';            _restore_snap
-    _refused 'printf "vpn://AAAA\n" > "$A/bob.vpnuri"';                 _restore_snap
-    _refused 'printf "%s\n" "$K2" > "$A/server_hpk.key"';               _restore_snap
-    _refused 'sed -i "/AWG_PROTOCOL/d" "$A/awgsetup_cfg.init"';         _restore_snap
-    _refused 'rm "$A/keys/alice.private"';                              _restore_snap
-    # accepted but different: a parameter that need not match the server
-    sed -i 's|^ContentPaddingAddition = .*|ContentPaddingAddition = 40-128|' "$A/alice.conf"
+    _refused 'rm "$A/alice.vpnuri"' 'no .vpnuri';                        _restore_snap
+    _refused 'sed -i "s|^HeaderProtectionKey = .*|HeaderProtectionKey = $K2|" "$A/bob.conf"' 'header protection key differs'; _restore_snap
+    _refused 'sed -i "/^HeaderProtectionKey/p" "$SC"' 'duplicate HeaderProtectionKey'; _restore_snap
+    _refused 'sed -i "/^HeaderProtectionKey/d" "$SC"' '3.1 server config without HeaderProtectionKey'; _restore_snap
+    _refused 'sed -i "s|^S2 = .*|S2 = 57|" "$A/alice.conf"' "S2 '57' vs server"; _restore_snap
+    _refused 'printf "vpn://AAAA\n" > "$A/bob.vpnuri"' 'link does not decode'; _restore_snap
+    _refused 'printf "%s\n" "$K2" > "$A/server_hpk.key"' 'header protection key differs'; _restore_snap
+    _refused 'sed -i "/AWG_PROTOCOL/d" "$A/awgsetup_cfg.init"' 'marker AWG_PROTOCOL'; _restore_snap
+    _refused 'rm "$A/keys/alice.private"' 'PrivateKey differs from keys/alice.private'; _restore_snap
+    _refused 'cp "$A/alice.vpnuri" "$A/ghost.vpnuri"' 'ghost.vpnuri without ghost.conf'; _restore_snap
+    _refused 'chmod 644 "$A/server_hpk.key"' 'a secret must be 600';   _restore_snap
+    _refused 'rm "$A/server_public.key"' 'no server_public.key';         _restore_snap
+    # accepted but different: a fact no check ties to another one
+    sed -i "s|^export AWG_ENDPOINT=.*|export AWG_ENDPOINT='203.0.113.9'|" "$A/awgsetup_cfg.init"
     run _same "$base"
     [ "$status" -ne 0 ]
+    [[ "$output$stderr" == *"fingerprint changed"* && "$output$stderr" != *"refused"* ]]
     _restore_snap
     _same "$base"
 }
@@ -310,14 +320,42 @@ _fp_controls() {
 # ---------- G2.5: manage operations keep the key ----------
 
 _e1_regen_one() {
-    local s="$1" base="$TEST_DIR/base.print"
-    _inst "$s" 3.1
+    local s="$1" gen="$2" base="$TEST_DIR/base.print"
+    _inst "$s" "$gen"
     _print "$base"
     _m "$s" regen alice; _ok
     _same "$base"
 }
+_e1_regen_one_31() { _e1_regen_one "$1" 3.1; }
+_e1_regen_one_20() { _e1_regen_one "$1" 2.0; }
 @test "lifecycle E1: regen of one client changes nothing in the fingerprint (3.1)" {
-    _both _e1_regen_one
+    _both _e1_regen_one_31
+}
+@test "lifecycle E1: regen of one client changes nothing in the fingerprint (2.0)" {
+    _both _e1_regen_one_20
+}
+
+# restart goes through apply_config for real here (AWG_SKIP_APPLY off): the
+# configs on disk stay as they were
+_e_restart() {
+    local s="$1" gen="$2" base="$TEST_DIR/base.print"
+    _inst "$s" "$gen"
+    _print "$base"
+    # the module counts as loaded, or restart would start its repair path
+    printf '#!/bin/bash\necho "amneziawg 123456 0"\n' > "$TEST_DIR/bin/lsmod"
+    chmod +x "$TEST_DIR/bin/lsmod"
+    unset AWG_SKIP_APPLY
+    _m "$s" restart; _ok
+    export AWG_SKIP_APPLY=1
+    _same "$base"
+}
+_e_restart_31() { _e_restart "$1" 3.1; }
+_e_restart_20() { _e_restart "$1" 2.0; }
+@test "lifecycle: restart leaves the installation as it was (3.1)" {
+    _both _e_restart_31
+}
+@test "lifecycle: restart leaves the installation as it was (2.0)" {
+    _both _e_restart_20
 }
 
 _e1_regen_all() {
@@ -341,7 +379,9 @@ _e2_modify() {
     _inst "$s" "$gen"
     _print "$base"
     _m "$s" modify alice DNS 9.9.9.9; _ok
-    _diff_only "$base" '(client|uri):alice\|Interface\|DNS\||urimeta:alice\|[^|]*dns|urilast:alice\|'
+    _diff_only "$base" '(client|uri):alice\|Interface\|DNS\||urimeta:alice\|\.dns[12]\|'
+    _print | grep -qx 'client:alice|Interface|DNS|9.9.9.9'
+    _print | grep -qx 'uri:alice|Interface|DNS|9.9.9.9'
 }
 _e2_modify_31() { _e2_modify "$1" 3.1; }
 _e2_modify_20() { _e2_modify "$1" 2.0; }
@@ -357,7 +397,7 @@ _e_add_remove() {
     _inst "$s" "$gen"
     _print "$base"
     _m "$s" add carol; _ok
-    _diff_only "$base" '(client|uri|urilast|urimeta):carol\||srv\|peer:carol\||keys\|carol\.'
+    _diff_only "$base" '(client|uri|urilast|urimeta):carol\||srv\|peer:carol\||keys\|carol\.|mode\|(keys/)?carol\.'
     _m "$s" remove carol; _ok
     _same "$base"
 }
@@ -403,8 +443,9 @@ _e_manual_params() {
     # live install awg0.conf is the source of the parameters, the key stays
     sed -i 's|^S1 = .*|S1 = 80|; s|^Jc = .*|Jc = 4|' "$SC"
     _m "$s" regen; _ok
-    _diff_only "$base" '(srv|client:[a-z]+|uri:[a-z]+)\|Interface\|(S1|Jc)\||urilast:[a-z]+\||urimeta:[a-z]+\|'
-    _print | grep -q '^client:alice|Interface|S1|80$'
+    _diff_only "$base" '(srv|client:[a-z]+|uri:[a-z]+)\|Interface\|(S1|Jc)\||urilast:[a-z]+\|(S1|Jc)\|'
+    _print | grep -qx 'client:alice|Interface|S1|80'
+    _print | grep -qx 'client:bob|Interface|Jc|4'
 }
 _e_manual_params_31() { _e_manual_params "$1" 3.1; }
 _e_manual_params_20() { _e_manual_params "$1" 2.0; }
@@ -438,14 +479,15 @@ _s6() {
         eval "$(awk "/^_check_loaded_library\\(\\) \\{/,/^\\}/" "$1")"
         eval "$(awk "/^_step6_undo_31\\(\\) \\{/,/^\\}/" "$1")"
         eval "$(awk "/^step6_generate_configs\\(\\) \\{/,/^\\}/" "$1")"
-        declare -F step6_generate_configs _check_loaded_library >/dev/null || { echo NO_STEP6; exit 7; }
+        declare -F step6_generate_configs _check_loaded_library _step6_undo_31 >/dev/null || { echo NO_STEP6; exit 7; }
         step6_generate_configs
         echo "RC=$?"
     ' _ "$BATS_TEST_DIRNAME/../$inst"
 }
 
 _s6_ok() {
-    [[ "$status" -eq 0 && "$output" == *"RC=0"* && "$output" != *"DIE:"* ]] && return 0
+    # an error that step 6 only logs (a 2.0 client that failed) is a failure too
+    [[ "$status" -eq 0 && "$output" == *"RC=0"* && "$output" != *"DIE:"* && "$output" != *"ERR:"* ]] && return 0
     printf 'step 6 failed, rc %s\n--- stdout\n%s\n--- stderr\n%s\n' "$status" "$output" "$stderr" >&2
     return 1
 }
@@ -504,6 +546,9 @@ _e5b() {
     # the key that was there is the key everywhere: file, config, both default
     # clients, both links twice
     [ "$(_hpk_count "$K2")" -eq 8 ]
+    # and the server keys made before the break are the ones in use
+    [ "$(cat "$A/server_private.key")" = "$priv" ]
+    _print | grep -qxF "srv|Interface|PrivateKey|$priv"
 }
 @test "lifecycle E5b: step 6 after a break right after the key keeps that key" {
     _bothi _e5b
@@ -544,11 +589,14 @@ _inst_run() {
     sed -e "s|^AWG_DIR=\"/root/awg\"\$|AWG_DIR=\"$A\"|" \
         -e "s|^SERVER_CONF_FILE=\"/etc/amnezia/amneziawg/awg0.conf\"\$|SERVER_CONF_FILE=\"$SC\"|" \
         -e "s|^SYS_NET_DIR=\"/sys/class/net\"\$|SYS_NET_DIR=\"$TEST_DIR/sysnet\"|" \
+        -e "s|/etc/amnezia|$TEST_DIR/etc-amnezia|g" \
         -e '/^while (( current_step < 99 )); do$/,$d' "$inst" > "$copy"
     # every substitution must have happened, or the run would touch the host
+    # (secure_files in step 6 chmods /etc/amnezia by literal path)
     n=$(grep -cxF -e "AWG_DIR=\"$A\"" -e "SERVER_CONF_FILE=\"$SC\"" -e "SYS_NET_DIR=\"$TEST_DIR/sysnet\"" "$copy")
     [ "$n" -eq 3 ] || { echo "path substitution failed ($n of 3)" >&2; return 1; }
-    ! grep -q '^while (( current_step < 99 ))' "$copy"
+    if grep -q '/etc/amnezia' "$copy"; then echo "/etc/amnezia left in the copy" >&2; return 1; fi
+    if grep -q '^while (( current_step < 99 ))' "$copy"; then echo "main loop not cut" >&2; return 1; fi
     # UNLOCK31=1: the locally unblocked copy the plan prescribes until phase F5,
     # made by removing exactly the two lines F5 removes from the gate
     if [[ "${UNLOCK31:-0}" == 1 ]]; then
@@ -557,8 +605,8 @@ _inst_run() {
     fi
     cat >> "$copy" << 'TAIL'
 echo "STEP0_DONE step=$current_step"
-if [[ -n "${AWG_TEST_STEP3:-}" ]]; then step3_check_module; echo "STEP3_DONE"; fi
-if [[ -n "${AWG_TEST_STEP6:-}" ]]; then step6_generate_configs; echo "STEP6_DONE"; fi
+if [[ -n "${AWG_TEST_STEP3:-}" ]]; then step3_check_module || { echo "STEP3_RC=$?"; exit 1; }; echo "STEP3_DONE"; fi
+if [[ -n "${AWG_TEST_STEP6:-}" ]]; then step6_generate_configs || { echo "STEP6_RC=$?"; exit 1; }; echo "STEP6_DONE"; fi
 exit 0
 TAIL
     run --separate-stderr env AWG_MAIN_NIC=eth0 timeout 120 bash "$copy" "$@"
@@ -594,6 +642,8 @@ _finished() {
     local inst="$1" gen="$2"
     _fresh "$gen"
     _s6 "$inst"; _s6_ok
+    # on 2.0 a failed default client is only a warning: make sure both exist
+    [[ -f "$A/my_phone.conf" && -f "$A/my_laptop.conf" ]]
 }
 
 _e6_force() {
@@ -601,9 +651,11 @@ _e6_force() {
     _inst_stubs
     _finished "$inst" "$gen"
     _print "$base"
-    # without --force the live install is left alone
+    # without --force the live install is left alone: the guard exits 0 and
+    # names --force
     _inst_run "$inst" --yes --ssh-port=22
-    [[ "$output" != *STEP0_DONE* ]]
+    [ "$status" -eq 0 ]
+    [[ "$output" != *STEP0_DONE* && "$output$stderr" == *--force* ]]
     _same "$base"
     AWG_TEST_STEP6=1 _inst_run "$inst" --force --yes --ssh-port=22
     _run_ok
@@ -652,11 +704,15 @@ _e9_two_resumes() {
     _inst_stubs
     : > "$TEST_DIR/inactive"
     _fresh "$gen"
-    # first run: a new install, up to the end of step 0
+    init_before=$(cat "$A/awgsetup_cfg.init")
+    # first run: an install with a 3.1 or 2.0 init, up to the end of step 0
     _inst_run "$inst" --yes --ssh-port=22 --protocol="$gen"
     if [[ "$gen" == 3.1 && "${UNLOCK31:-0}" != 1 ]]; then
-        # the 3.1 path is closed until F5: the gate refuses a new 3.1 install
+        # the 3.1 path is closed until F5: the pre gate refuses, by its reason
+        # code, before step 0 writes anything
         [ "$status" -ne 0 ]
+        [[ "$output" != *STEP0_DONE* && "$output$stderr" == *not_implemented_yet* ]]
+        [[ "$(cat "$A/awgsetup_cfg.init")" == "$init_before" ]]
         return 0
     fi
     _run_ok
@@ -672,7 +728,7 @@ _e9_two_resumes() {
 _e9_20() { _e9_two_resumes "$1" 2.0; }
 _e9_31_locked() { _e9_two_resumes "$1" 3.1; }
 _e9_31() { UNLOCK31=1 _e9_two_resumes "$1" 3.1; }
-@test "lifecycle E9: a new 3.1 install is refused while the path is closed" {
+@test "lifecycle E9: an install with a 3.1 init is refused while the path is closed" {
     _bothi _e9_31_locked
 }
 @test "lifecycle E9: two resumes without flags keep the init as written (3.1, unblocked copy)" {
@@ -685,8 +741,11 @@ _e9_31() { UNLOCK31=1 _e9_two_resumes "$1" 3.1; }
 # _hpk_of : the key of the current installation, from its fingerprint
 _hpk_of() { _print | sed -n 's/^hpkfile|//p'; }
 
+# _e_force_preset <installer> <flags...> : --force with flags that regenerate
+# the parameter set
 _e_force_preset() {
     local inst="$1" man=manage_amneziawg.sh base="$TEST_DIR/base.print" key
+    shift
     [[ "$inst" == *_en.sh ]] && man=manage_amneziawg_en.sh
     _inst_stubs
     _finished "$inst" 3.1
@@ -696,13 +755,22 @@ _e_force_preset() {
     [[ -n "$key" ]]
     # --preset regenerates the whole parameter set: the server moves at once,
     # the clients follow by regen, as the installer says; the key never moves
-    AWG_TEST_STEP6=1 _inst_run "$inst" --force --preset=mobile --yes --ssh-port=22; _run_ok
+    AWG_TEST_STEP6=1 _inst_run "$inst" --force "$@" --yes --ssh-port=22; _run_ok
     _m "$BATS_TEST_DIRNAME/../$man" regen; _ok
-    _diff_only "$base" 'init\|AWG_(Jc|Jmin|Jmax|S[1-4]|H[1-4]|I[1-5]|PRESET)\||(srv|client:[a-z_]+|uri:[a-z_]+)\|Interface\|(Jc|Jmin|Jmax|S[1-4]|H[1-4]|I[1-5])\||urilast:[a-z_]+\||urimeta:[a-z_]+\|'
+    local params='(Jc|Jmin|Jmax|S[1-4]|H[1-4]|I[1-5])'
+    _diff_only "$base" "init\\|AWG_(Jc|Jmin|Jmax|S[1-4]|H[1-4]|I[1-5]|PRESET)\\||(srv|client:[a-z_]+|uri:[a-z_]+)\\|Interface\\|$params\\||urilast:[a-z_]+\\|$params\\|"
+    # the new set did reach the server (fresh H ranges), and the clients follow
+    # it (gen_print refuses any S/H mismatch between a client and the server)
+    [[ "$(grep '^srv|Interface|H1|' "$base")" != "$(_print | grep '^srv|Interface|H1|')" ]]
     [ "$(_hpk_count "$key")" -eq 8 ]
 }
+_e_force_preset_mobile() { _e_force_preset "$1" --preset=mobile; }
+_e_force_preset_jc() { _e_force_preset "$1" --jc=5; _print | grep -qx 'srv|Interface|Jc|5'; }
 @test "lifecycle: --force --preset regenerates the parameters but never the key (3.1, unblocked copy)" {
-    UNLOCK31=1 _bothi _e_force_preset
+    UNLOCK31=1 _bothi _e_force_preset_mobile
+}
+@test "lifecycle: --force --jc regenerates the parameters but never the key (3.1, unblocked copy)" {
+    UNLOCK31=1 _bothi _e_force_preset_jc
 }
 
 _e_force_no_cps() {
@@ -715,7 +783,10 @@ _e_force_no_cps() {
     AWG_TEST_STEP6=1 _inst_run "$inst" --force --no-cps --yes --ssh-port=22; _run_ok
     # I1 leaves the server and the init; nothing else moves, the key included
     _diff_only "$base" 'init\|(AWG_I1|NO_CPS)\||srv\|Interface\|I1\|'
-    ! _print | grep -q '^srv|Interface|I1|'
+    _print > "$TEST_DIR/after.print"
+    if grep -q '^srv|Interface|I1|' "$TEST_DIR/after.print"; then echo "I1 still on the server" >&2; return 1; fi
+    grep -qx 'init|NO_CPS|1' "$TEST_DIR/after.print"
+    if grep -q '^init|AWG_I1|.' "$TEST_DIR/after.print"; then echo "AWG_I1 still in the init" >&2; return 1; fi
 }
 _e_force_no_cps_31() { UNLOCK31=1 _e_force_no_cps "$1" 3.1; }
 _e_force_no_cps_20() { _e_force_no_cps "$1" 2.0; }
@@ -759,17 +830,30 @@ _e8_post_refused() {
 # steps 2-7 never ran. A state file means an install is under way: the resume
 # must carry on, and without a state file the guard still protects.
 _e11_resume_force() {
-    local inst="$1"
+    local inst="$1" st
     _inst_stubs
     _finished "$inst" 2.0
-    printf '2\n' > "$A/setup_state"
-    _inst_run "$inst" --yes --ssh-port=22
-    _run_ok
-    [[ "$output" == *"STEP0_DONE step=2"* ]]
-    rm "$A/setup_state"
-    _inst_run "$inst" --yes --ssh-port=22
-    [ "$status" -eq 0 ]
-    [[ "$output" != *STEP0_DONE* ]]
+    # the two states a reboot asked for by the installer leaves: the resume
+    # carries on without the flag
+    for st in 2 3; do
+        printf '%s\n' "$st" > "$A/setup_state"
+        _inst_run "$inst" --yes --ssh-port=22
+        _run_ok
+        [[ "$output" == *"STEP0_DONE step=$st"* ]]
+    done
+    # anything else on a live server is not a resume: the guard stands, exits 0
+    # and names --force (a stuck 7 or 99, garbage, an empty file, no file)
+    for st in 7 99 junk empty none; do
+        case "$st" in
+            empty) : > "$A/setup_state" ;;
+            none)  rm -f "$A/setup_state" ;;
+            *)     printf '%s\n' "$st" > "$A/setup_state" ;;
+        esac
+        _inst_run "$inst" --yes --ssh-port=22
+        [ "$status" -eq 0 ] || { echo "state $st: rc $status" >&2; return 1; }
+        [[ "$output" != *STEP0_DONE* ]] || { echo "state $st: the install ran" >&2; return 1; }
+        [[ "$output$stderr" == *--force* ]] || { echo "state $st: no guard text" >&2; return 1; }
+    done
 }
 @test "lifecycle E11: a resume after the reboot of a --force run carries on without the flag" {
     _bothi _e11_resume_force
@@ -829,4 +913,30 @@ _e4_20_onto_31()   { _e3 "$1" 2.0 "" 3.1 "$K2"; }
 }
 @test "lifecycle E4: restore of a 2.0 archive onto 3.1 leaves no key in any config or link" {
     _both _e4_20_onto_31
+}
+_e3_20_onto_20() { _e3 "$1" 2.0 "" 2.0 ""; }
+@test "lifecycle E3: restore of a 2.0 archive onto 2.0 brings back the archive exactly" {
+    _both _e3_20_onto_20
+}
+
+# An archive without clients/ at all (made by hand or by an old version):
+# restore has nothing to put back for the clients, and the live client files
+# stay. (An EMPTY clients/ is a different, documented case: a server without
+# client files, and restore clears them.)
+_e3_no_clients() {
+    local s="$1" base="$TEST_DIR/base.print" path d
+    _inst "$s" 3.1
+    _print "$base"
+    path=$(_backup "$s")
+    [[ -f "$path" ]]
+    d=$(mktemp -d "$TEST_DIR/retar-XXXXXX")
+    tar -xzf "$path" -C "$d"
+    [[ -d "$d/clients" ]]
+    find "$d/clients" -delete
+    tar -czf "$TEST_DIR/noclients.tar.gz" -C "$d" .
+    _m "$s" restore "$TEST_DIR/noclients.tar.gz"; _ok
+    _same "$base"
+}
+@test "lifecycle E3: restore of an archive without client files keeps the live clients" {
+    _both _e3_no_clients
 }

@@ -132,6 +132,8 @@ if HPK in iface:
     hpk_values.append(("awg0.conf", iface[HPK]))
     if gen == "2.0":
         fail("2.0 server config carries HeaderProtectionKey")
+elif gen == "3.1":
+    fail("3.1 server config without HeaderProtectionKey")
 
 # --- keys
 keys = {}
@@ -141,9 +143,13 @@ for f in sorted(os.listdir(kdir)) if os.path.isdir(kdir) else []:
     out.append(f"keys|{f}|{keys[f]}")
 for f in ("server_private.key", "server_public.key"):
     p = os.path.join(awg_dir, f)
-    if os.path.exists(p):
-        keys[f] = read(p).strip()
-        out.append(f"keys|{f}|{keys[f]}")
+    if not os.path.exists(p):
+        fail(f"no {f} next to a server config")
+        continue
+    keys[f] = read(p).strip()
+    out.append(f"keys|{f}|{keys[f]}")
+if "server_private.key" in keys and keys["server_private.key"] != iface.get("PrivateKey"):
+    fail("server_private.key differs from PrivateKey in the server config")
 
 # --- clients and links
 def decode_uri(path, label):
@@ -173,6 +179,21 @@ clients = sorted(
     f[:-5] for f in os.listdir(awg_dir)
     if f.endswith(".conf") and os.path.realpath(os.path.join(awg_dir, f)) != srv_conf_real
 )
+# a link, a QR or an expiry mark without its .conf is a leftover
+for f in sorted(os.listdir(awg_dir)):
+    for suf in (".vpnuri.png", ".vpnuri", ".png"):
+        if f.endswith(suf):
+            if f[:-len(suf)] not in clients:
+                fail(f"{f} without {f[:-len(suf)]}.conf")
+            break
+edir = os.path.join(awg_dir, "expiry")
+for f in sorted(os.listdir(edir)) if os.path.isdir(edir) else []:
+    out.append(f"expiry|{f}|{read(os.path.join(edir, f)).strip()}")
+    if f not in clients:
+        fail(f"expiry/{f} without {f}.conf")
+
+shapes = {}
+CPA = "ContentPaddingAddition"
 for name in clients:
     label = f"client:{name}"
     csec = parse_conf(read(os.path.join(awg_dir, name + ".conf")), label)
@@ -236,6 +257,43 @@ for name in clients:
             fail(f"urilast:{name}: 2.0 link carries HeaderProtectionKey")
     elif gen == "3.1":
         fail(f"urilast:{name}: 3.1 link without HeaderProtectionKey field")
+    # the fields of last_config the client reads on their own must agree with
+    # the config text: a client that trusts them would get another key or peer
+    def lv(k):
+        v = last_obj.get(k)
+        return "" if v is None else str(v)
+    def addr(v):
+        return (v or "").split(",")[0].strip().split("/")[0]
+    pairs = [("client_priv_key", ci.get("PrivateKey", "")),
+             ("server_pub_key", cp.get("PublicKey", "")),
+             ("psk_key", cp.get("PresharedKey", "")),
+             ("mtu", ci.get("MTU", "")),
+             ("persistent_keep_alive", cp.get("PersistentKeepalive", ""))]
+    for k, want in pairs:
+        if lv(k) != want:
+            fail(f"urilast:{name}: {k} {lv(k)!r} vs the config {want!r}")
+    if addr(lv("client_ip")) != addr(ci.get("Address")):
+        fail(f"urilast:{name}: client_ip {lv('client_ip')!r} vs Address {ci.get('Address')!r}")
+    ep = cp.get("Endpoint", "")
+    host, _, port = ep.rpartition(":")
+    host = host.strip("[]")
+    if lv("hostName") != host or lv("port") != port:
+        fail(f"urilast:{name}: hostName/port {lv('hostName')!r}:{lv('port')!r} vs Endpoint {ep!r}")
+    for k in ("Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4",
+              "I1", "I2", "I3", "I4", "I5", "ContentPaddingAddition"):
+        if lv(k) != ci.get(k, ""):
+            fail(f"urilast:{name}: {k} {lv(k)!r} vs the config {ci.get(k, '')!r}")
+    dns = [d.strip() for d in ci.get("DNS", "").split(",") if d.strip()]
+    for i, key in enumerate(("dns1", "dns2")):
+        want = dns[i] if i < len(dns) else ""
+        # with one DNS the link repeats it as dns2
+        ok = {want} | ({dns[0]} if i == 1 and len(dns) == 1 else set())
+        if str(outer.get(key, "")) not in ok:
+            fail(f"urimeta:{name}: {key} {outer.get(key)!r} vs DNS {ci.get('DNS')!r}")
+    # every client and every link has the same set of fields as the others
+    shape = (tuple(sorted((s, k) for s, b in csec for k in b)),
+             tuple(sorted(k for k in last_obj if k != "config")))
+    shapes.setdefault(shape, []).append(name)
     usec = parse_conf(inner_text, f"uri:{name}")
     for sec, body in usec:
         for k in body:
@@ -253,6 +311,44 @@ for name in clients:
     flatten("", outer, acc)
     for p, v in acc:
         out.append(f"urimeta:{name}|{p}|{v}")
+
+# ContentPaddingAddition: everywhere on 3.1, nowhere (non-empty) on 2.0
+cpa_places = [("srv", iface.get(CPA, ""))]
+for line in out:
+    m = re.match(r"(client|uri):([^|]+)\|Interface\|ContentPaddingAddition\|(.*)$", line)
+    if m:
+        cpa_places.append((f"{m.group(1)}:{m.group(2)}", m.group(3)))
+if gen == "3.1":
+    have = {p for p, v in cpa_places if v}
+    for name in clients:
+        for p in (f"client:{name}", f"uri:{name}"):
+            if p not in have:
+                fail(f"{p}: 3.1 without ContentPaddingAddition")
+    if "srv" not in have:
+        fail("srv: 3.1 without ContentPaddingAddition")
+elif gen == "2.0":
+    for p, v in cpa_places:
+        if v:
+            fail(f"{p}: 2.0 carries ContentPaddingAddition")
+if len(shapes) > 1:
+    fail("clients differ in their set of fields: " + "; ".join(",".join(v) for v in shapes.values()))
+
+# file modes: secrets must stay 600
+def mode_of(path):
+    return oct(os.stat(path).st_mode & 0o777)[2:]
+for root, dirs, files in os.walk(awg_dir):
+    dirs[:] = sorted(d for d in dirs if d not in ("backups", "archive"))
+    for f in sorted(files):
+        # logs, locks, the scripts, the state file and the dot files (temp registries,
+        # cached device parameters) are runtime state, not the installation
+        if f.endswith((".log", ".lock")) or f.startswith(".") or f in ("awg_common.sh", "manage_amneziawg.sh", "setup_state"):
+            continue
+        p = os.path.join(root, f)
+        rel = os.path.relpath(p, awg_dir)
+        out.append(f"mode|{rel}|{mode_of(p)}")
+        if (f in ("server_hpk.key", "server_private.key") or f.endswith(".private")) and mode_of(p) != "600":
+            fail(f"{rel} has mode {mode_of(p)}, a secret must be 600")
+out.append(f"mode|<server conf>|{mode_of(srv_conf)}")
 
 if gen == "3.1":
     vals = {v for _, v in hpk_values}

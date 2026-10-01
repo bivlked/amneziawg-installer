@@ -85,22 +85,25 @@
 
 # ---------- functional: guard decision matrix ----------
 
-# Helper: replicate the v5.13.0 guard. Returns 0 if installer should
-# proceed (and lets the caller run install), or echoes "skip" and
-# returns 1 if the guard would abort.
+# Helper: replicate the guard. Returns 0 if installer should proceed (and
+# lets the caller run install), or echoes "skip" and returns 1 if the guard
+# would abort. Since Oct 2026 a state file of 2 or 3 (a resume after the
+# installer's own reboot) lets it pass; the real installer runs for that in
+# test_awg31_lifecycle.bats (E11).
 run_guard() {
     local SERVER_CONF_FILE="$1"
     local SERVICE_ACTIVE="$2"   # 0/1
     local FORCE_REINSTALL="$3"  # 0/1
     local AWG_FORCE_REINSTALL="${4:-0}"
+    local RESUME_STATE="${5:-}"
 
     # Emulate the env-var → flag bridge
     if [[ "$AWG_FORCE_REINSTALL" == "1" ]]; then
         FORCE_REINSTALL=1
     fi
 
-    if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ -f "$SERVER_CONF_FILE" ]] \
-       && [[ "$SERVICE_ACTIVE" == "1" ]]; then
+    if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$RESUME_STATE" != 2 && "$RESUME_STATE" != 3 ]] \
+       && [[ -f "$SERVER_CONF_FILE" ]] && [[ "$SERVICE_ACTIVE" == "1" ]]; then
         echo "skip"
         return 1
     fi
@@ -147,6 +150,27 @@ run_guard() {
     # Strict =1 check — "yes" should not bypass
     [ "$result" = "skip" ]
     rm -f "$tmp"
+}
+
+@test "force-guard: configured + active + resume state 2 => proceed" {
+    tmp=$(mktemp)
+    result=$(run_guard "$tmp" 1 0 0 2)
+    [ "$result" = "proceed" ]
+    rm -f "$tmp"
+}
+
+@test "force-guard: configured + active + stuck state 99 => skip" {
+    tmp=$(mktemp)
+    result=$(run_guard "$tmp" 1 0 0 99) || true
+    [ "$result" = "skip" ]
+    rm -f "$tmp"
+}
+
+@test "force-guard: both installers let only resume states 2 and 3 pass" {
+    local f
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        grep -qF '[[ "$_resume_state" != 2 && "$_resume_state" != 3 ]]' "$BATS_TEST_DIRNAME/../$f"
+    done
 }
 
 # ---------- structural parity ----------
