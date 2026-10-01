@@ -225,6 +225,16 @@ _diff_only() {
     fi
 }
 
+# _kept <before> : every fact of the saved fingerprint is still there unchanged;
+# only new init keys may have appeared
+_kept() {
+    local now="$TEST_DIR/now.print" added
+    _print "$now" || return 1
+    if diff "$1" "$now" | grep '^<' >&2; then echo "facts changed or gone" >&2; return 1; fi
+    added=$(diff "$1" "$now" | grep '^>' || true)
+    if grep -v '^> init|' <<<"$added" | grep . >&2; then echo "facts outside the init appeared" >&2; return 1; fi
+}
+
 _hpk_count() { _print | grep -c "HeaderProtectionKey|$1\$\|^hpkfile|$1\$" || true; }
 
 # 🔴 Case bodies run as plain commands, never under `||` or `if` (bash turns
@@ -445,6 +455,9 @@ _fresh() {
     printf "export AWG_PROTOCOL='%s'\n" "$1" >> "$A/awgsetup_cfg.init"
     # step 0 writes the padding range into the init on 3.1 (generate_awg_params)
     [[ "$1" == 3.1 ]] && printf "export AWG_CPA='32-128'\n" >> "$A/awgsetup_cfg.init"
+    # a CPS packet, as step 0 makes by default
+    sed -i '/AWG_I1=/d' "$A/awgsetup_cfg.init"
+    printf "export AWG_I1='<r 32>'\n" >> "$A/awgsetup_cfg.init"
     rm -f "$SC"
 }
 
@@ -511,6 +524,239 @@ _e5c() {
 }
 @test "lifecycle E5c: a lost key file comes back from the config, in step 6 and in manage" {
     _bothi _e5c
+}
+
+# ---------- G2.15: the whole installer, step 0 and step 6 ----------
+#
+# _inst_run <installer> <args...> : the real installer from a copy where only
+# the paths point into the sandbox and the main loop is cut after step 0
+# (AWG_TEST_STEP3=1 runs step 3 after it, AWG_TEST_STEP6=1 step 6). Everything else is the real script:
+# argument parsing, the --force guard, initialize_setup with the real init
+# heredoc and state file. `id -u` answers 0; systemctl answers is-active with
+# success unless $TEST_DIR/inactive exists (a resume after reboot).
+_inst_run() {
+    local inst="$BATS_TEST_DIRNAME/../$1" copy="$TEST_DIR/inst.sh" lib=awg_common.sh n
+    shift
+    [[ "$inst" == *_en.sh ]] && lib=awg_common_en.sh
+    cp "$BATS_TEST_DIRNAME/../$lib" "$A/awg_common.sh"
+    mkdir -p "$TEST_DIR/sysnet"
+    sed -e "s|^AWG_DIR=\"/root/awg\"\$|AWG_DIR=\"$A\"|" \
+        -e "s|^SERVER_CONF_FILE=\"/etc/amnezia/amneziawg/awg0.conf\"\$|SERVER_CONF_FILE=\"$SC\"|" \
+        -e "s|^SYS_NET_DIR=\"/sys/class/net\"\$|SYS_NET_DIR=\"$TEST_DIR/sysnet\"|" \
+        -e '/^while (( current_step < 99 )); do$/,$d' "$inst" > "$copy"
+    # every substitution must have happened, or the run would touch the host
+    n=$(grep -cxF -e "AWG_DIR=\"$A\"" -e "SERVER_CONF_FILE=\"$SC\"" -e "SYS_NET_DIR=\"$TEST_DIR/sysnet\"" "$copy")
+    [ "$n" -eq 3 ] || { echo "path substitution failed ($n of 3)" >&2; return 1; }
+    ! grep -q '^while (( current_step < 99 ))' "$copy"
+    # UNLOCK31=1: the locally unblocked copy the plan prescribes until phase F5,
+    # made by removing exactly the two lines F5 removes from the gate
+    if [[ "${UNLOCK31:-0}" == 1 ]]; then
+        sed -i "/^    printf 'not_implemented_yet'\$/{N;/\n    return 0\$/d}" "$copy"
+        ! grep -q "^    printf 'not_implemented_yet'\$" "$copy" || { echo "unlock failed" >&2; return 1; }
+    fi
+    cat >> "$copy" << 'TAIL'
+echo "STEP0_DONE step=$current_step"
+if [[ -n "${AWG_TEST_STEP3:-}" ]]; then step3_check_module; echo "STEP3_DONE"; fi
+if [[ -n "${AWG_TEST_STEP6:-}" ]]; then step6_generate_configs; echo "STEP6_DONE"; fi
+exit 0
+TAIL
+    run --separate-stderr env AWG_MAIN_NIC=eth0 timeout 120 bash "$copy" "$@"
+}
+
+_inst_stubs() {
+    printf '#!/bin/bash\nif [[ "$1" == -u ]]; then echo 0; exit 0; fi\nexec /usr/bin/id "$@"\n' > "$TEST_DIR/bin/id"
+    cat > "$TEST_DIR/bin/systemctl" << STUB
+#!/bin/bash
+echo "systemctl \$*" >> "$TEST_DIR/systemctl.log"
+if [[ "\$1" == is-active ]]; then [[ ! -e "$TEST_DIR/inactive" ]]; exit; fi
+exit 0
+STUB
+    printf '#!/bin/bash\nexit 0\n' > "$TEST_DIR/bin/ss"
+    # the test host may be a container (WSL, a CI runner); the install target is not
+    printf '#!/bin/bash\necho none\n' > "$TEST_DIR/bin/systemd-detect-virt"
+    printf '#!/bin/bash\nexit 0\n' > "$TEST_DIR/bin/chown"
+    chmod +x "$TEST_DIR/bin/id" "$TEST_DIR/bin/systemctl" "$TEST_DIR/bin/ss" "$TEST_DIR/bin/chown" "$TEST_DIR/bin/systemd-detect-virt"
+}
+
+_run_ok() {
+    [[ "$status" -eq 0 && "$output" == *"STEP0_DONE"* ]] && return 0
+    printf 'installer run failed, rc %s\n--- stdout\n%s\n--- stderr\n%s\n' "$status" "$output" "$stderr" >&2
+    return 1
+}
+
+# a finished install of that generation, made by the real step 6
+_finished() {
+    local inst="$1" gen="$2"
+    _fresh "$gen"
+    _s6 "$inst"; _s6_ok
+}
+
+_e6_force() {
+    local inst="$1" gen="$2" base="$TEST_DIR/base.print"
+    _inst_stubs
+    _finished "$inst" "$gen"
+    _print "$base"
+    # without --force the live install is left alone
+    _inst_run "$inst" --yes --ssh-port=22
+    [[ "$output" != *STEP0_DONE* ]]
+    _same "$base"
+    AWG_TEST_STEP6=1 _inst_run "$inst" --force --yes --ssh-port=22
+    _run_ok
+    [[ "$output" == *STEP6_DONE* ]]
+    # the first real run writes the full init: keys may be added, none of the
+    # facts before may change or go
+    _kept "$base"
+    # from then on a repeat changes nothing at all
+    _print "$base"
+    AWG_TEST_STEP6=1 _inst_run "$inst" --force --yes --ssh-port=22
+    _run_ok
+    _same "$base"
+}
+_e6_force_31() { UNLOCK31=1 _e6_force "$1" 3.1; }
+_e6_force_20() { _e6_force "$1" 2.0; }
+@test "lifecycle E6: the real installer with --force keeps the generation, init and key (3.1)" {
+    _bothi _e6_force_31
+}
+@test "lifecycle E6: the real installer with --force keeps the generation and init (2.0)" {
+    _bothi _e6_force_20
+}
+
+_e7_refuse_down() {
+    local inst="$1" base="$TEST_DIR/base.print" sums="$TEST_DIR/sums"
+    _inst_stubs
+    _finished "$inst" 3.1
+    AWG_TEST_STEP6=1 _inst_run "$inst" --force --yes --ssh-port=22; _run_ok
+    _print "$base"
+    ( cd "$A" && find . -type f ! -name '*.log' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) > "$sums"
+    sha256sum "$SC" >> "$sums"
+    AWG_TEST_STEP6=1 _inst_run "$inst" --force --protocol=2.0 --yes --ssh-port=22
+    [ "$status" -ne 0 ]
+    [[ "$output$stderr" == *--uninstall* && "$output$stderr" == *--protocol=2.0* ]]
+    _same "$base"
+    # byte for byte, not only the fingerprint
+    ( cd "$A" && find . -type f ! -name '*.log' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) > "$sums.after"
+    sha256sum "$SC" >> "$sums.after"
+    diff "$sums" "$sums.after"
+}
+@test "lifecycle E7: --force --protocol=2.0 on a 3.1 install refuses and changes no byte" {
+    UNLOCK31=1 _bothi _e7_refuse_down
+}
+
+_e9_two_resumes() {
+    local inst="$1" gen="$2" init_before
+    _inst_stubs
+    : > "$TEST_DIR/inactive"
+    _fresh "$gen"
+    # first run: a new install, up to the end of step 0
+    _inst_run "$inst" --yes --ssh-port=22 --protocol="$gen"
+    if [[ "$gen" == 3.1 && "${UNLOCK31:-0}" != 1 ]]; then
+        # the 3.1 path is closed until F5: the gate refuses a new 3.1 install
+        [ "$status" -ne 0 ]
+        return 0
+    fi
+    _run_ok
+    printf '3\n' > "$A/setup_state"
+    init_before=$(grep -v '^#' "$A/awgsetup_cfg.init")
+    # two resumes after reboot, no flags: the init is read back and written again
+    _inst_run "$inst" --yes --ssh-port=22; _run_ok
+    [[ "$output" == *"STEP0_DONE step=3"* ]]
+    _inst_run "$inst" --yes --ssh-port=22; _run_ok
+    [[ "$output" == *"STEP0_DONE step=3"* ]]
+    diff <(printf '%s\n' "$init_before") <(grep -v '^#' "$A/awgsetup_cfg.init")
+}
+_e9_20() { _e9_two_resumes "$1" 2.0; }
+_e9_31_locked() { _e9_two_resumes "$1" 3.1; }
+_e9_31() { UNLOCK31=1 _e9_two_resumes "$1" 3.1; }
+@test "lifecycle E9: a new 3.1 install is refused while the path is closed" {
+    _bothi _e9_31_locked
+}
+@test "lifecycle E9: two resumes without flags keep the init as written (3.1, unblocked copy)" {
+    _bothi _e9_31
+}
+@test "lifecycle E9: two resumes without flags keep the init as written (2.0)" {
+    _bothi _e9_20
+}
+
+# _hpk_of : the key of the current installation, from its fingerprint
+_hpk_of() { _print | sed -n 's/^hpkfile|//p'; }
+
+_e_force_preset() {
+    local inst="$1" man=manage_amneziawg.sh base="$TEST_DIR/base.print" key
+    [[ "$inst" == *_en.sh ]] && man=manage_amneziawg_en.sh
+    _inst_stubs
+    _finished "$inst" 3.1
+    AWG_TEST_STEP6=1 _inst_run "$inst" --force --yes --ssh-port=22; _run_ok
+    _print "$base"
+    key=$(_hpk_of)
+    [[ -n "$key" ]]
+    # --preset regenerates the whole parameter set: the server moves at once,
+    # the clients follow by regen, as the installer says; the key never moves
+    AWG_TEST_STEP6=1 _inst_run "$inst" --force --preset=mobile --yes --ssh-port=22; _run_ok
+    _m "$BATS_TEST_DIRNAME/../$man" regen; _ok
+    _diff_only "$base" 'init\|AWG_(Jc|Jmin|Jmax|S[1-4]|H[1-4]|I[1-5]|PRESET)\||(srv|client:[a-z_]+|uri:[a-z_]+)\|Interface\|(Jc|Jmin|Jmax|S[1-4]|H[1-4]|I[1-5])\||urilast:[a-z_]+\||urimeta:[a-z_]+\|'
+    [ "$(_hpk_count "$key")" -eq 8 ]
+}
+@test "lifecycle: --force --preset regenerates the parameters but never the key (3.1, unblocked copy)" {
+    UNLOCK31=1 _bothi _e_force_preset
+}
+
+_e_force_no_cps() {
+    local inst="$1" gen="$2" base="$TEST_DIR/base.print"
+    _inst_stubs
+    _finished "$inst" "$gen"
+    AWG_TEST_STEP6=1 _inst_run "$inst" --force --yes --ssh-port=22; _run_ok
+    _print "$base"
+    grep -q '^srv|Interface|I1|' "$base"
+    AWG_TEST_STEP6=1 _inst_run "$inst" --force --no-cps --yes --ssh-port=22; _run_ok
+    # I1 leaves the server and the init; nothing else moves, the key included
+    _diff_only "$base" 'init\|(AWG_I1|NO_CPS)\||srv\|Interface\|I1\|'
+    ! _print | grep -q '^srv|Interface|I1|'
+}
+_e_force_no_cps_31() { UNLOCK31=1 _e_force_no_cps "$1" 3.1; }
+_e_force_no_cps_20() { _e_force_no_cps "$1" 2.0; }
+@test "lifecycle: --force --no-cps drops I1 and nothing else (3.1, unblocked copy)" {
+    _bothi _e_force_no_cps_31
+}
+@test "lifecycle: --force --no-cps drops I1 and nothing else (2.0)" {
+    _bothi _e_force_no_cps_20
+}
+
+_e8_post_refused() {
+    local inst="$1" sums="$TEST_DIR/sums"
+    _inst_stubs
+    : > "$TEST_DIR/inactive"
+    _fresh 3.1
+    # an unfinished 3.1 install resumed at step 3: init and state, nothing else
+    printf '3\n' > "$A/setup_state"
+    ( cd "$A" && find . -type f ! -name '*.log' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) > "$sums"
+    AWG_TEST_STEP3=1 _inst_run "$inst" --yes --ssh-port=22
+    [ "$status" -ne 0 ]
+    [[ "$output" != *STEP3_DONE* ]]
+    [ "$(cat "$A/setup_state")" = 3 ]
+    [[ ! -e "$SC" && ! -e "$A/server_hpk.key" && ! -e "$A/server_private.key" ]]
+    # the harness copies the library in before the run; the run itself writes
+    # nothing but its log and lock
+    ( cd "$A" && find . -type f ! -name '*.log' ! -name '.install.lock' ! -name awg_common.sh -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) > "$sums.after"
+    grep -v -e '\.install\.lock$' -e '\./awg_common\.sh$' "$sums" | diff - "$sums.after"
+}
+@test "lifecycle E8: a refused post check at step 3 leaves the install as it was" {
+    _bothi _e8_post_refused
+}
+
+_e10_legacy_init() {
+    local inst="$1" base="$TEST_DIR/base.print"
+    _inst_stubs
+    _finished "$inst" 2.0
+    AWG_TEST_STEP6=1 _inst_run "$inst" --force --yes --ssh-port=22; _run_ok
+    _print "$base"
+    # scripts updated on a server whose init predates the marker
+    sed -i '/AWG_PROTOCOL/d' "$A/awgsetup_cfg.init"
+    AWG_TEST_STEP6=1 _inst_run "$inst" --force --yes --ssh-port=22; _run_ok
+    grep -qx "export AWG_PROTOCOL='2.0'" "$A/awgsetup_cfg.init"
+    _same "$base"
+}
+@test "lifecycle E10: an init without the marker stays 2.0 through --force and step 6" {
+    _bothi _e10_legacy_init
 }
 
 # ---------- G2.5 / G2.15f: backup and restore bring back the archive ----------
