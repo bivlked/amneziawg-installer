@@ -6822,6 +6822,9 @@ _resume_state=""
 if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state" != 3 ]] && [[ -f "$SERVER_CONF_FILE" ]] \
    && systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then
     log_error "AmneziaWG is already installed and running."
+    if [[ "$_resume_state" =~ ^[0-9]+$ ]]; then
+        log_error "The previous run did not finish: $STATE_FILE holds step $_resume_state. With --force the install carries on from that step, not from step 1."
+    fi
     log_error "To reinstall — pass --force (or AWG_FORCE_REINSTALL=1)."
     log_error "WARNING: a reinstall will rerun Step 1 (sysctl/swap/BBR) and Step 7 (service restart)."
     log_error "         Obfuscation parameters (Jc/Jmin/Jmax/H1-H4/I1) survive UNLESS you pass"

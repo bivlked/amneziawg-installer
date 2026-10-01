@@ -128,6 +128,16 @@ for name in sorted(peers):
     for k in peers[name]:
         if k != "#_Name":
             out.append(f"srv|peer:{name}|{k}|{peers[name][k]}")
+# required fields: a check that compares two sides passes when a field is gone
+# from both, so presence is checked on its own
+OBF = ("Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4")
+def require(body, keys, label):
+    for k in keys:
+        if not body.get(k):
+            fail(f"{label}: no {k}")
+require(iface, ("PrivateKey", "Address", "ListenPort") + OBF, "srv")
+for name in sorted(peers):
+    require(peers[name], ("PublicKey", "AllowedIPs"), f"srv|peer:{name}")
 if HPK in iface:
     hpk_values.append(("awg0.conf", iface[HPK]))
     if gen == "2.0":
@@ -201,6 +211,8 @@ for name in clients:
         for k in body:
             out.append(f"{label}|{sec}|{k}|{body[k]}")
     ci, cp = one(csec, "Interface", label), one(csec, "Peer", label)
+    require(ci, ("PrivateKey", "Address", "DNS", "MTU") + OBF, label)
+    require(cp, ("PublicKey", "Endpoint", "AllowedIPs"), label)
     if HPK in ci:
         hpk_values.append((label, ci[HPK]))
         if gen == "2.0":
@@ -279,6 +291,19 @@ for name in clients:
     host = host.strip("[]")
     if lv("hostName") != host or lv("port") != port:
         fail(f"urilast:{name}: hostName/port {lv('hostName')!r}:{lv('port')!r} vs Endpoint {ep!r}")
+    try:
+        o_host = str(outer.get("hostName", ""))
+        o_port = str(outer["containers"][0]["awg"].get("port", ""))
+    except (KeyError, IndexError, TypeError):
+        o_host, o_port = "", ""
+    if o_host != host or o_port != port:
+        fail(f"urimeta:{name}: hostName/port {o_host!r}:{o_port!r} vs Endpoint {ep!r}")
+    def toks(v):
+        # the link keeps a JSON list, the config a comma-separated line
+        items = v if isinstance(v, list) else (v or "").split(",")
+        return sorted(str(t).strip() for t in items if str(t).strip())
+    if toks(last_obj.get("allowed_ips")) != toks(cp.get("AllowedIPs")):
+        fail(f"urilast:{name}: allowed_ips {lv('allowed_ips')!r} vs AllowedIPs {cp.get('AllowedIPs')!r}")
     for k in ("Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4",
               "I1", "I2", "I3", "I4", "I5", "ContentPaddingAddition"):
         if lv(k) != ci.get(k, ""):
@@ -286,9 +311,10 @@ for name in clients:
     dns = [d.strip() for d in ci.get("DNS", "").split(",") if d.strip()]
     for i, key in enumerate(("dns1", "dns2")):
         want = dns[i] if i < len(dns) else ""
-        # with one DNS the link repeats it as dns2
-        ok = {want} | ({dns[0]} if i == 1 and len(dns) == 1 else set())
-        if str(outer.get(key, "")) not in ok:
+        # with one DNS the link repeats it as dns2 (awg_common.sh, generate_vpn_uri)
+        if i == 1 and len(dns) == 1:
+            want = dns[0]
+        if str(outer.get(key, "")) != want:
             fail(f"urimeta:{name}: {key} {outer.get(key)!r} vs DNS {ci.get('DNS')!r}")
     # every client and every link has the same set of fields as the others
     shape = (tuple(sorted((s, k) for s, b in csec for k in b)),
@@ -346,9 +372,20 @@ for root, dirs, files in os.walk(awg_dir):
         p = os.path.join(root, f)
         rel = os.path.relpath(p, awg_dir)
         out.append(f"mode|{rel}|{mode_of(p)}")
-        if (f in ("server_hpk.key", "server_private.key") or f.endswith(".private")) and mode_of(p) != "600":
+        # everything that carries a private key: the key files, the client configs,
+        # their links and both QR codes
+        secret = (f in ("server_hpk.key", "server_private.key") or f.endswith((".private", ".conf", ".vpnuri", ".png")))
+        if secret and f != "awgsetup_cfg.init" and mode_of(p) != "600":
             fail(f"{rel} has mode {mode_of(p)}, a secret must be 600")
 out.append(f"mode|<server conf>|{mode_of(srv_conf)}")
+if mode_of(srv_conf) != "600":
+    fail(f"the server config has mode {mode_of(srv_conf)}, a secret must be 600")
+
+# the init agrees with the server about the padding and the CPS packet
+if "AWG_CPA" in init and init["AWG_CPA"] != iface.get(CPA, ""):
+    fail(f"init AWG_CPA {init['AWG_CPA']!r} vs server {iface.get(CPA, '')!r}")
+if init.get("NO_CPS") == "1" and iface.get("I1"):
+    fail("init NO_CPS=1 but the server carries I1")
 
 if gen == "3.1":
     vals = {v for _, v in hpk_values}

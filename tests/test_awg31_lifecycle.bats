@@ -285,13 +285,31 @@ _refused() {
     grep -qF -- "$2" "$TEST_DIR/fp.err" || { echo "refused, but not for '$2':" >&2; cat "$TEST_DIR/fp.err" >&2; return 1; }
 }
 
+# _relink <uri file> <python statement> : re-encode a vpn:// link after changing
+# it; the statement sees `outer` (the link JSON) and `last` (its last_config)
+_relink() {
+    python3 - "$1" "$2" <<'PY'
+import base64, json, struct, sys, zlib
+path, stmt = sys.argv[1], sys.argv[2]
+s = open(path, encoding="utf-8").read().strip().replace("vpn://", "")
+raw = base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+outer = json.loads(zlib.decompress(raw[4:]))
+last = json.loads(outer["containers"][0]["awg"]["last_config"])
+exec(stmt)
+outer["containers"][0]["awg"]["last_config"] = json.dumps(last)
+data = json.dumps(outer).encode()
+blob = struct.pack(">I", len(data)) + zlib.compress(data)
+open(path, "w", encoding="utf-8").write("vpn://" + base64.urlsafe_b64encode(blob).decode().rstrip("=") + "\n")
+PY
+}
+
 _fp_controls() {
     local s="$1" base="$TEST_DIR/base.print"
     _inst "$s" 3.1
     _print "$base"
     local snap="$TEST_DIR/snap"
-    cp -a "$A" "$snap"; cp "$SC" "$TEST_DIR/sc.snap"
-    _restore_snap() { rm -rf "$A"; cp -a "$snap" "$A"; cp "$TEST_DIR/sc.snap" "$SC"; }
+    cp -a "$A" "$snap"; cp -p "$SC" "$TEST_DIR/sc.snap"
+    _restore_snap() { rm -rf "$A"; cp -a "$snap" "$A"; cp -p "$TEST_DIR/sc.snap" "$SC"; }
 
     _refused 'rm "$A/alice.vpnuri"' 'no .vpnuri';                        _restore_snap
     _refused 'sed -i "s|^HeaderProtectionKey = .*|HeaderProtectionKey = $K2|" "$A/bob.conf"' 'header protection key differs'; _restore_snap
@@ -305,16 +323,48 @@ _fp_controls() {
     _refused 'cp "$A/alice.vpnuri" "$A/ghost.vpnuri"' 'ghost.vpnuri without ghost.conf'; _restore_snap
     _refused 'chmod 644 "$A/server_hpk.key"' 'a secret must be 600';   _restore_snap
     _refused 'rm "$A/server_public.key"' 'no server_public.key';         _restore_snap
+    # the checks added after review, each with a corruption of its own
+    _refused '_relink "$A/alice.vpnuri" "last[\"mtu\"] = \"1420\""' 'urilast:alice: mtu'; _restore_snap
+    _refused '_relink "$A/alice.vpnuri" "last[\"server_pub_key\"] = \"X\" + last[\"server_pub_key\"]"' 'urilast:alice: server_pub_key'; _restore_snap
+    _refused '_relink "$A/alice.vpnuri" "last[\"client_priv_key\"] = \"X\" + last[\"client_priv_key\"]"' 'urilast:alice: client_priv_key'; _restore_snap
+    _refused '_relink "$A/alice.vpnuri" "last[\"allowed_ips\"] = [\"0.0.0.0/0\"]"' 'urilast:alice: allowed_ips'; _restore_snap
+    _refused '_relink "$A/alice.vpnuri" "last[\"S3\"] = \"33\""' "urilast:alice: S3"; _restore_snap
+    _refused '_relink "$A/alice.vpnuri" "outer[\"containers\"][0][\"awg\"][\"port\"] = \"1\""' 'urimeta:alice: hostName/port'; _restore_snap
+    _refused '_relink "$A/alice.vpnuri" "outer[\"dns2\"] = \"\""' 'urimeta:alice: dns2'; _restore_snap
+    _refused 'sed -i "/^ContentPaddingAddition/d" "$A/bob.conf"' 'client:bob: 3.1 without ContentPaddingAddition'; _restore_snap
+    _refused 'sed -i "s|^MTU = 1280|MTU = 1280\nFoo = 1|" "$A/bob.conf"' 'clients differ in their set of fields'; _restore_snap
+    _refused 'mkdir -p "$A/expiry"; printf "1\n" > "$A/expiry/ghost"' 'expiry/ghost without ghost.conf'; _restore_snap
+    _refused 'printf "%s\n" "$K2" > "$A/server_private.key"' 'server_private.key differs'; _restore_snap
+    _refused 'sed -i "/^S1 = /d" "$SC"' 'srv: no S1';                   _restore_snap
+    _refused 'chmod 644 "$A/alice.conf"' 'alice.conf has mode 644';     _restore_snap
+    _refused 'chmod 644 "$SC"' 'the server config has mode 644';        _restore_snap
+    _refused 'printf "export AWG_CPA=%s\n" "40-128" >> "$A/awgsetup_cfg.init"' 'init AWG_CPA'; _restore_snap
     # accepted but different: a fact no check ties to another one
     sed -i "s|^export AWG_ENDPOINT=.*|export AWG_ENDPOINT='203.0.113.9'|" "$A/awgsetup_cfg.init"
     run _same "$base"
     [ "$status" -ne 0 ]
-    [[ "$output$stderr" == *"fingerprint changed"* && "$output$stderr" != *"refused"* ]]
+    [[ "$output" == *"fingerprint changed"* && "$output" != *"refused"* ]]
     _restore_snap
     _same "$base"
 }
 @test "lifecycle: the fingerprint refuses or tells apart a one-place corruption" {
     _both _fp_controls
+}
+
+# the 2.0 side of the generation rules: a key or a padding range anywhere is refused
+_fp_controls_20() {
+    local s="$1" snap="$TEST_DIR/snap"
+    _inst "$s" 2.0
+    _print > /dev/null
+    cp -a "$A" "$snap"; cp -p "$SC" "$TEST_DIR/sc.snap"
+    _restore_snap() { rm -rf "$A"; cp -a "$snap" "$A"; cp -p "$TEST_DIR/sc.snap" "$SC"; }
+    _refused 'sed -i "s|^MTU = 1280|MTU = 1280\nHeaderProtectionKey = $K1|" "$SC"' '2.0 server config carries HeaderProtectionKey'; _restore_snap
+    _refused 'sed -i "s|^MTU = 1280|MTU = 1280\nContentPaddingAddition = 32-128|" "$SC"' 'srv: 2.0 carries ContentPaddingAddition'; _restore_snap
+    _refused '_relink "$A/alice.vpnuri" "last[\"HeaderProtectionKey\"] = \"$K1\""' 'urilast:alice: 2.0 link carries HeaderProtectionKey'; _restore_snap
+    _print > /dev/null
+}
+@test "lifecycle: the fingerprint refuses a key or a padding range on 2.0" {
+    _both _fp_controls_20
 }
 
 # ---------- G2.5: manage operations keep the key ----------
@@ -347,6 +397,8 @@ _e_restart() {
     unset AWG_SKIP_APPLY
     _m "$s" restart; _ok
     export AWG_SKIP_APPLY=1
+    # restart did restart the service, it is not a no-op
+    grep -q 'restart awg-quick@awg0' "$TEST_DIR/systemctl.log"
     _same "$base"
 }
 _e_restart_31() { _e_restart "$1" 3.1; }
@@ -548,6 +600,7 @@ _e5b() {
     [ "$(_hpk_count "$K2")" -eq 8 ]
     # and the server keys made before the break are the ones in use
     [ "$(cat "$A/server_private.key")" = "$priv" ]
+    [ "$(cat "$A/server_public.key")" = "$(printf '%s' "$priv" | awg pubkey)" ]
     _print | grep -qxF "srv|Interface|PrivateKey|$priv"
 }
 @test "lifecycle E5b: step 6 after a break right after the key keeps that key" {
@@ -760,7 +813,8 @@ _e_force_preset() {
     local params='(Jc|Jmin|Jmax|S[1-4]|H[1-4]|I[1-5])'
     _diff_only "$base" "init\\|AWG_(Jc|Jmin|Jmax|S[1-4]|H[1-4]|I[1-5]|PRESET)\\||(srv|client:[a-z_]+|uri:[a-z_]+)\\|Interface\\|$params\\||urilast:[a-z_]+\\|$params\\|"
     # the new set did reach the server (fresh H ranges), and the clients follow
-    # it (gen_print refuses any S/H mismatch between a client and the server)
+    # it in S1-S4/H1-H4, which must match (gen_print refuses a mismatch); Jc and
+    # the other junk parameters need not match the server
     [[ "$(grep '^srv|Interface|H1|' "$base")" != "$(_print | grep '^srv|Interface|H1|')" ]]
     [ "$(_hpk_count "$key")" -eq 8 ]
 }
@@ -827,8 +881,9 @@ _e8_post_refused() {
 # Found on the stand 1 oct 2026: --force runs step 1, which reboots; after the
 # reboot the service is up again, and a resume run without --force met the
 # "already installed, add --force" guard, exited 0 and left setup_state=2, so
-# steps 2-7 never ran. A state file means an install is under way: the resume
-# must carry on, and without a state file the guard still protects.
+# steps 2-7 never ran. A state file of 2 or 3 (a reboot the installer asked for)
+# is a resume and must carry on; any other state, or none, leaves the guard
+# standing.
 _e11_resume_force() {
     local inst="$1" st
     _inst_stubs
@@ -853,6 +908,15 @@ _e11_resume_force() {
         [ "$status" -eq 0 ] || { echo "state $st: rc $status" >&2; return 1; }
         [[ "$output" != *STEP0_DONE* ]] || { echo "state $st: the install ran" >&2; return 1; }
         [[ "$output$stderr" == *--force* ]] || { echo "state $st: no guard text" >&2; return 1; }
+        # a numeric leftover is named, with the step --force carries on from
+        case "$st" in
+            7|99)
+                [[ "$output$stderr" == *"setup_state"*" $st."* ]] \
+                    || { echo "state $st: the unfinished step is not named" >&2; return 1; } ;;
+            *)
+                [[ "$output$stderr" != *"не завершился"* && "$output$stderr" != *"did not finish"* ]] \
+                    || { echo "state $st: a step named for a non-numeric state" >&2; return 1; } ;;
+        esac
     done
 }
 @test "lifecycle E11: a resume after the reboot of a --force run carries on without the flag" {
