@@ -68,7 +68,8 @@ case "\$1" in
         exit 0 ;;
     showconf)
         echo "[Interface]"
-        if [[ -s "$TEST_DIR/probe_hpk" ]]; then
+        # module_line2: a second-line module ignores the key (the step 3 post check fails)
+        if [[ ! -e "$TEST_DIR/module_line2" && -s "$TEST_DIR/probe_hpk" ]]; then
             echo "HeaderProtectionKey = \$(cat "$TEST_DIR/probe_hpk")"
             echo "ContentPaddingAddition = 32-128"
         fi
@@ -572,10 +573,14 @@ if [[ "\$1" == is-active ]]; then [[ ! -e "$TEST_DIR/inactive" ]]; exit; fi
 exit 0
 STUB
     printf '#!/bin/bash\nexit 0\n' > "$TEST_DIR/bin/ss"
+    # step 3: the module counts as loaded (so nothing goes to /etc/modules-load.d)
+    printf '#!/bin/bash\necho "amneziawg 123456 0"\n' > "$TEST_DIR/bin/lsmod"
+    printf '#!/bin/bash\necho "vermagic:       6.8.0-45-generic SMP preempt mod_unload"\n' > "$TEST_DIR/bin/modinfo"
+    printf '#!/bin/bash\necho "modprobe $*" >> "%s/awg.log"\nexit 1\n' "$TEST_DIR" > "$TEST_DIR/bin/modprobe"
     # the test host may be a container (WSL, a CI runner); the install target is not
     printf '#!/bin/bash\necho none\n' > "$TEST_DIR/bin/systemd-detect-virt"
     printf '#!/bin/bash\nexit 0\n' > "$TEST_DIR/bin/chown"
-    chmod +x "$TEST_DIR/bin/id" "$TEST_DIR/bin/systemctl" "$TEST_DIR/bin/ss" "$TEST_DIR/bin/chown" "$TEST_DIR/bin/systemd-detect-virt"
+    chmod +x "$TEST_DIR/bin/id" "$TEST_DIR/bin/systemctl" "$TEST_DIR/bin/ss" "$TEST_DIR/bin/chown" "$TEST_DIR/bin/systemd-detect-virt" "$TEST_DIR/bin/lsmod" "$TEST_DIR/bin/modinfo" "$TEST_DIR/bin/modprobe"
 }
 
 _run_ok() {
@@ -725,22 +730,27 @@ _e8_post_refused() {
     local inst="$1" sums="$TEST_DIR/sums"
     _inst_stubs
     : > "$TEST_DIR/inactive"
+    # the pre gate passes (unblocked copy), the module turns out second line
+    : > "$TEST_DIR/module_line2"
     _fresh 3.1
     # an unfinished 3.1 install resumed at step 3: init and state, nothing else
     printf '3\n' > "$A/setup_state"
-    ( cd "$A" && find . -type f ! -name '*.log' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) > "$sums"
+    # one step-0-only resume first: it writes the full init the real run keeps
+    _inst_run "$inst" --yes --ssh-port=22; _run_ok
+    ( cd "$A" && find . -type f ! -name '*.log' ! -name '*.lock' ! -name awg_common.sh -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) > "$sums"
     AWG_TEST_STEP3=1 _inst_run "$inst" --yes --ssh-port=22
     [ "$status" -ne 0 ]
-    [[ "$output" != *STEP3_DONE* ]]
+    # step 0 passed: the refusal is the post check of step 3, not the pre gate
+    [[ "$output" == *STEP0_DONE* && "$output" != *STEP3_DONE* ]]
+    [[ "$output$stderr" == *module_line2* ]]
     [ "$(cat "$A/setup_state")" = 3 ]
     [[ ! -e "$SC" && ! -e "$A/server_hpk.key" && ! -e "$A/server_private.key" ]]
-    # the harness copies the library in before the run; the run itself writes
-    # nothing but its log and lock
-    ( cd "$A" && find . -type f ! -name '*.log' ! -name '.install.lock' ! -name awg_common.sh -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) > "$sums.after"
-    grep -v -e '\.install\.lock$' -e '\./awg_common\.sh$' "$sums" | diff - "$sums.after"
+    # the run itself writes nothing but its log and lock files
+    ( cd "$A" && find . -type f ! -name '*.log' ! -name '*.lock' ! -name awg_common.sh -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) > "$sums.after"
+    diff "$sums" "$sums.after"
 }
 @test "lifecycle E8: a refused post check at step 3 leaves the install as it was" {
-    _bothi _e8_post_refused
+    UNLOCK31=1 _bothi _e8_post_refused
 }
 
 _e10_legacy_init() {
