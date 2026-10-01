@@ -359,6 +359,51 @@ _e_add_remove_20() { _e_add_remove "$1" 2.0; }
     _both _e_add_remove_20
 }
 
+_e_expiry() {
+    local s="$1" gen="$2" base="$TEST_DIR/base.print"
+    _inst "$s" "$gen"
+    _print "$base"
+    _m "$s" add carol; _ok
+    # an expiry mark long past; the check runs as the cron line runs it, with the
+    # cron file pointed away from the host
+    mkdir -p "$A/expiry"
+    printf '1\n' > "$A/expiry/carol"
+    run --separate-stderr env AWG_DIR="$A" CONFIG_FILE="$A/awgsetup_cfg.init" \
+        SERVER_CONF_FILE="$SC" EXPIRY_CRON="$TEST_DIR/awg-expiry" \
+        timeout 60 /bin/bash -c 'source "$AWG_DIR/awg_common.sh" || exit 1; trap _awg_cleanup EXIT; check_expired_clients'
+    _ok
+    [[ ! -e "$A/carol.conf" && ! -e "$A/keys/carol.private" ]]
+    _same "$base"
+}
+_e_expiry_31() { _e_expiry "$1" 3.1; }
+_e_expiry_20() { _e_expiry "$1" 2.0; }
+@test "lifecycle: an expired client goes, the rest of the installation stays (3.1)" {
+    _both _e_expiry_31
+}
+@test "lifecycle: an expired client goes, the rest of the installation stays (2.0)" {
+    _both _e_expiry_20
+}
+
+_e_manual_params() {
+    local s="$1" gen="$2" base="$TEST_DIR/base.print"
+    _inst "$s" "$gen"
+    _print "$base"
+    # a hand edit of the live server config, then regen of every client: on a
+    # live install awg0.conf is the source of the parameters, the key stays
+    sed -i 's|^S1 = .*|S1 = 80|; s|^Jc = .*|Jc = 4|' "$SC"
+    _m "$s" regen; _ok
+    _diff_only "$base" '(srv|client:[a-z]+|uri:[a-z]+)\|Interface\|(S1|Jc)\||urilast:[a-z]+\||urimeta:[a-z]+\|'
+    _print | grep -q '^client:alice|Interface|S1|80$'
+}
+_e_manual_params_31() { _e_manual_params "$1" 3.1; }
+_e_manual_params_20() { _e_manual_params "$1" 2.0; }
+@test "lifecycle: a hand-edited server parameter reaches the clients by regen, the key stays (3.1)" {
+    _both _e_manual_params_31
+}
+@test "lifecycle: a hand-edited server parameter reaches the clients by regen (2.0)" {
+    _both _e_manual_params_20
+}
+
 # ---------- G2.5: step 6 of the installer, real step and real library ----------
 #
 # _s6 <installer> : run the installer's step6_generate_configs with the real
