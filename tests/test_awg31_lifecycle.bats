@@ -897,8 +897,9 @@ _e11_resume_force() {
         [[ "$output" == *"STEP0_DONE step=$st"* ]]
     done
     # anything else on a live server is not a resume: the guard stands, exits 0
-    # and names --force (a stuck 7 or 99, garbage, an empty file, no file)
-    for st in 7 99 junk empty none; do
+    # and names --force (a stuck 1, 7 or 99, a value the installer never writes,
+    # garbage, an empty file, no file)
+    for st in 1 7 99 8 junk empty none; do
         case "$st" in
             empty) : > "$A/setup_state" ;;
             none)  rm -f "$A/setup_state" ;;
@@ -908,14 +909,20 @@ _e11_resume_force() {
         [ "$status" -eq 0 ] || { echo "state $st: rc $status" >&2; return 1; }
         [[ "$output" != *STEP0_DONE* ]] || { echo "state $st: the install ran" >&2; return 1; }
         [[ "$output$stderr" == *--force* ]] || { echo "state $st: no guard text" >&2; return 1; }
-        # a numeric leftover is named, with the step --force carries on from
+        # a step the installer itself leaves is named, and the general warning
+        # "a reinstall reruns steps 1 and 7" is not printed (it would be untrue);
+        # anything else keeps the general message
         case "$st" in
-            7|99)
+            1|7|99)
                 [[ "$output$stderr" == *"setup_state"*" $st."* ]] \
-                    || { echo "state $st: the unfinished step is not named" >&2; return 1; } ;;
+                    || { echo "state $st: the unfinished step is not named" >&2; return 1; }
+                [[ "$output$stderr" != *"ВНИМАНИЕ"* && "$output$stderr" != *"WARNING: a reinstall"* ]] \
+                    || { echo "state $st: the general warning is printed" >&2; return 1; } ;;
             *)
                 [[ "$output$stderr" != *"не завершился"* && "$output$stderr" != *"did not finish"* ]] \
-                    || { echo "state $st: a step named for a non-numeric state" >&2; return 1; } ;;
+                    || { echo "state $st: a step named for state $st" >&2; return 1; }
+                [[ "$output$stderr" == *"ВНИМАНИЕ"* || "$output$stderr" == *"WARNING: a reinstall"* ]] \
+                    || { echo "state $st: the general warning is missing" >&2; return 1; } ;;
         esac
     done
 }
