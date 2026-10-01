@@ -6673,7 +6673,11 @@ if [[ "$VERBOSE" -eq 1 ]]; then set -x; fi
 if [[ "${AWG_FORCE_REINSTALL:-0}" == "1" ]]; then
     FORCE_REINSTALL=1
 fi
-if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ -f "$SERVER_CONF_FILE" ]] \
+# Файл состояния значит, что установка уже идёт: --force прогоняет шаг 1, тот
+# перезагружает машину, и после перезагрузки сервис снова работает. Без этого
+# условия возобновление без флага упиралось бы в эту защиту, выходило с кодом 0
+# и оставляло шаги 2-7 невыполненными.
+if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ ! -f "$STATE_FILE" ]] && [[ -f "$SERVER_CONF_FILE" ]] \
    && systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then
     log_error "AmneziaWG уже установлен и запущен."
     log_error "Чтобы переустановить — добавьте --force (или AWG_FORCE_REINSTALL=1)."

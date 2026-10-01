@@ -6811,7 +6811,10 @@ if [[ "$VERBOSE" -eq 1 ]]; then set -x; fi
 if [[ "${AWG_FORCE_REINSTALL:-0}" == "1" ]]; then
     FORCE_REINSTALL=1
 fi
-if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ -f "$SERVER_CONF_FILE" ]] \
+# A state file means an install is under way: --force runs step 1, which reboots,
+# and after the reboot the service is up again. Without this condition a resume
+# without the flag would hit this guard, exit 0 and leave steps 2-7 undone.
+if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ ! -f "$STATE_FILE" ]] && [[ -f "$SERVER_CONF_FILE" ]] \
    && systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then
     log_error "AmneziaWG is already installed and running."
     log_error "To reinstall — pass --force (or AWG_FORCE_REINSTALL=1)."

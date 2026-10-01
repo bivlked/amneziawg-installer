@@ -753,6 +753,28 @@ _e8_post_refused() {
     UNLOCK31=1 _bothi _e8_post_refused
 }
 
+# Found on the stand 1 oct 2026: --force runs step 1, which reboots; after the
+# reboot the service is up again, and a resume run without --force met the
+# "already installed, add --force" guard, exited 0 and left setup_state=2, so
+# steps 2-7 never ran. A state file means an install is under way: the resume
+# must carry on, and without a state file the guard still protects.
+_e11_resume_force() {
+    local inst="$1"
+    _inst_stubs
+    _finished "$inst" 2.0
+    printf '2\n' > "$A/setup_state"
+    _inst_run "$inst" --yes --ssh-port=22
+    _run_ok
+    [[ "$output" == *"STEP0_DONE step=2"* ]]
+    rm "$A/setup_state"
+    _inst_run "$inst" --yes --ssh-port=22
+    [ "$status" -eq 0 ]
+    [[ "$output" != *STEP0_DONE* ]]
+}
+@test "lifecycle E11: a resume after the reboot of a --force run carries on without the flag" {
+    _bothi _e11_resume_force
+}
+
 _e10_legacy_init() {
     local inst="$1" base="$TEST_DIR/base.print"
     _inst_stubs
