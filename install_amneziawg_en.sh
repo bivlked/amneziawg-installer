@@ -22,6 +22,21 @@ set -o pipefail
 # on "jc:"). Nothing here needs colour from the tools, so it is off for the whole
 # script.
 export WG_COLOR_MODE=never
+# su without "-" (Debian) and cron leave PATH without the sbin directories, and
+# then dkms, reboot, ufw, sysctl and modprobe, which the script calls by name, are
+# not found: the install died on "dkms: command not found". The missing
+# directories are appended, so the order the user chose is not overridden.
+_awg_ensure_sbin_path() {
+    local d
+    for d in /usr/local/sbin /usr/sbin /sbin; do
+        case ":${PATH}:" in
+            *":${d}:"*) ;;
+            *) PATH="${PATH:+${PATH}:}${d}" ;;
+        esac
+    done
+    export PATH
+}
+_awg_ensure_sbin_path
 
 SCRIPT_VERSION="5.37.0"
 

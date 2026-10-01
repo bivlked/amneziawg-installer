@@ -27,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The installer and `manage` find system tools from `su` without "-" too.** Such a shell, like cron, leaves `PATH` without the `sbin` directories, so `dkms`, `reboot`, `ufw`, `sysctl` and `modprobe` were not found by name: the install stopped at step 2. The scripts now append the missing `/usr/local/sbin`, `/usr/sbin` and `/sbin` to the end of `PATH` themselves; the order the user chose does not change. Logging in with `su -` or `sudo` already worked.
 - **`manage` messages on stderr are no longer lost after `restore`.** Releasing the locks at the end of a restore redirected stderr of the whole script to `/dev/null`, so everything `manage` printed there afterwards (errors and warnings on exit) never reached the person. The redirection now covers only closing the lock.
 
 ## [5.37.0] - 2026-09-27

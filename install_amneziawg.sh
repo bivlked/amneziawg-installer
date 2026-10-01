@@ -21,6 +21,21 @@ set -o pipefail
 # находит «interface: awg0» и ложно проваливается (на «jc:» ложно предупреждает).
 # Цвет инструментам здесь не нужен, поэтому он выключен для всего скрипта.
 export WG_COLOR_MODE=never
+# su без дефиса (Debian) и cron оставляют PATH без каталогов sbin, и тогда dkms,
+# reboot, ufw, sysctl и modprobe, которые скрипт зовёт по имени, не находятся:
+# установка падала на «dkms: command not found». Недостающие каталоги дописываются
+# в конец, чтобы не перебить порядок, выбранный пользователем.
+_awg_ensure_sbin_path() {
+    local d
+    for d in /usr/local/sbin /usr/sbin /sbin; do
+        case ":${PATH}:" in
+            *":${d}:"*) ;;
+            *) PATH="${PATH:+${PATH}:}${d}" ;;
+        esac
+    done
+    export PATH
+}
+_awg_ensure_sbin_path
 
 SCRIPT_VERSION="5.37.0"
 AWG_DIR="/root/awg"
