@@ -359,6 +359,115 @@ _e_add_remove_20() { _e_add_remove "$1" 2.0; }
     _both _e_add_remove_20
 }
 
+# ---------- G2.5: step 6 of the installer, real step and real library ----------
+#
+# _s6 <installer> : run the installer's step6_generate_configs with the real
+# library of the same language. Stubbed: the system commands (PATH stubs from
+# setup), the log, update_state, die and secure_files (absolute /etc paths).
+_s6() {
+    local inst="$1" lib=awg_common.sh
+    [[ "$inst" == *_en.sh ]] && lib=awg_common_en.sh
+    cp "$BATS_TEST_DIRNAME/../$lib" "$A/awg_common.sh"
+    local ver
+    ver=$(sed -n 's/^SCRIPT_VERSION="\(.*\)"$/\1/p' "$BATS_TEST_DIRNAME/../$inst")
+    run --separate-stderr env AWG_DIR="$A" KEYS_DIR="$A/keys" SERVER_CONF_FILE="$SC" \
+        SCRIPT_VERSION="$ver" AWG_MAIN_NIC=eth0 \
+        CONFIG_FILE="$A/awgsetup_cfg.init" COMMON_SCRIPT_PATH="$A/awg_common.sh" \
+        MANAGE_SCRIPT_PATH="$A/manage_amneziawg.sh" LOG_FILE="$TEST_DIR/s6.log" \
+        timeout 120 bash -c '
+        log() { :; }; log_warn() { echo "WARN: $*"; }; log_error() { echo "ERR: $*"; }; log_debug() { :; }
+        die() { echo "DIE: $*"; exit 1; }
+        update_state() { :; }
+        secure_files() { :; }
+        eval "$(awk "/^_check_loaded_library\\(\\) \\{/,/^\\}/" "$1")"
+        eval "$(awk "/^_step6_undo_31\\(\\) \\{/,/^\\}/" "$1")"
+        eval "$(awk "/^step6_generate_configs\\(\\) \\{/,/^\\}/" "$1")"
+        declare -F step6_generate_configs _check_loaded_library >/dev/null || { echo NO_STEP6; exit 7; }
+        step6_generate_configs
+        echo "RC=$?"
+    ' _ "$BATS_TEST_DIRNAME/../$inst"
+}
+
+_s6_ok() {
+    [[ "$status" -eq 0 && "$output" == *"RC=0"* && "$output" != *"DIE:"* ]] && return 0
+    printf 'step 6 failed, rc %s\n--- stdout\n%s\n--- stderr\n%s\n' "$status" "$output" "$stderr" >&2
+    return 1
+}
+
+# _fresh <2.0|3.1> : the state step 6 meets on a first install
+_fresh() {
+    sed -i '/AWG_PROTOCOL/d; /AWG_CPA/d' "$A/awgsetup_cfg.init"
+    printf "export AWG_PROTOCOL='%s'\n" "$1" >> "$A/awgsetup_cfg.init"
+    # step 0 writes the padding range into the init on 3.1 (generate_awg_params)
+    [[ "$1" == 3.1 ]] && printf "export AWG_CPA='32-128'\n" >> "$A/awgsetup_cfg.init"
+    rm -f "$SC"
+}
+
+_bothi() {
+    local s
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        echo "# twin: $s" >&3
+        "$1" "$s"
+        teardown; setup
+    done
+}
+
+_e5a() {
+    local inst="$1" gen="$2" base="$TEST_DIR/base.print" man=manage_amneziawg.sh
+    [[ "$inst" == *_en.sh ]] && man=manage_amneziawg_en.sh
+    _fresh "$gen"
+    _s6 "$inst"; _s6_ok
+    # a client added after the install must survive the repeat as well
+    _m "$BATS_TEST_DIRNAME/../$man" add alice; _ok
+    _print "$base"
+    _s6 "$inst"; _s6_ok
+    _same "$base"
+}
+_e5a_31() { _e5a "$1" 3.1; }
+_e5a_20() { _e5a "$1" 2.0; }
+@test "lifecycle E5a: step 6 again on a finished install (the --force path) changes nothing (3.1)" {
+    _bothi _e5a_31
+}
+@test "lifecycle E5a: step 6 again on a finished install changes nothing (2.0)" {
+    _bothi _e5a_20
+}
+
+_e5b() {
+    local inst="$1" priv
+    _fresh 3.1
+    # step 6 broke off right after the key: server keys and server_hpk.key only
+    priv=$(head -c32 /dev/urandom | base64)
+    ( umask 077
+      printf '%s\n' "$priv" > "$A/server_private.key"
+      printf '%s' "$priv" | awg pubkey > "$A/server_public.key"
+      printf '%s\n' "$K2" > "$A/server_hpk.key" )
+    _s6 "$inst"; _s6_ok
+    # the key that was there is the key everywhere: file, config, both default
+    # clients, both links twice
+    [ "$(_hpk_count "$K2")" -eq 8 ]
+}
+@test "lifecycle E5b: step 6 after a break right after the key keeps that key" {
+    _bothi _e5b
+}
+
+_e5c() {
+    local inst="$1" base="$TEST_DIR/base.print" man=manage_amneziawg.sh
+    [[ "$inst" == *_en.sh ]] && man=manage_amneziawg_en.sh
+    _fresh 3.1
+    _s6 "$inst"; _s6_ok
+    _print "$base"
+    rm "$A/server_hpk.key"
+    _s6 "$inst"; _s6_ok
+    _same "$base"
+    # the manage side restores a lost key file the same way
+    rm "$A/server_hpk.key"
+    _m "$BATS_TEST_DIRNAME/../$man" regen my_phone; _ok
+    _same "$base"
+}
+@test "lifecycle E5c: a lost key file comes back from the config, in step 6 and in manage" {
+    _bothi _e5c
+}
+
 # ---------- G2.5 / G2.15f: backup and restore bring back the archive ----------
 
 _backup() {
