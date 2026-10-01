@@ -22,10 +22,11 @@ set -o pipefail
 # on "jc:"). Nothing here needs colour from the tools, so it is off for the whole
 # script.
 export WG_COLOR_MODE=never
-# su without "-" (Debian) and cron leave PATH without the sbin directories, and
-# then dkms, reboot, ufw, sysctl and modprobe, which the script calls by name, are
-# not found: the install died on "dkms: command not found". The missing
-# directories are appended, so the order the user chose is not overridden.
+# On Debian su without "-", like a run from cron, leaves PATH without the sbin
+# directories. Then reboot, dkms, sysctl, ufw and modprobe, which the script calls
+# by name, are not found: the reboot at the end of step 1 did not happen and the
+# install stalled. The missing directories are appended, so the order the user
+# chose is not overridden.
 _awg_ensure_sbin_path() {
     local d
     for d in /usr/local/sbin /usr/sbin /sbin; do
@@ -6097,6 +6098,19 @@ PPASRC
 # (StandardOutput=journal, StandardError=journal in the unit file).
 
 set -euo pipefail
+
+# The installer's PATH does not reach this helper: apt runs it as a hook with
+# the caller's environment, and an apt started from su without "-" (Debian)
+# brings a PATH without sbin, where "command -v dkms" below would report dkms
+# missing and exit 0. Append the missing sbin directories first.
+for _d in /usr/local/sbin /usr/sbin /sbin; do
+    case ":${PATH}:" in
+        *":${_d}:"*) ;;
+        *) PATH="${PATH:+${PATH}:}${_d}" ;;
+    esac
+done
+unset _d
+export PATH
 
 MODE="${1:-}"
 case "$MODE" in

@@ -25,9 +25,9 @@ set -o pipefail
 # passes. Nothing here needs colour from the tools, so it is off for the whole
 # script.
 export WG_COLOR_MODE=never
-# su without "-" (Debian) and cron leave PATH without the sbin directories, and
-# then dkms, reboot, ufw, sysctl and modprobe, which the script calls by name, are
-# not found: the install died on "dkms: command not found". The missing
+# On Debian su without "-", like a run from cron, leaves PATH without the sbin
+# directories. Then sysctl and ufw, which the script calls by name, are not found,
+# and check falsely reports IP forwarding off and UFW not installed. The missing
 # directories are appended, so the order the user chose is not overridden.
 _awg_ensure_sbin_path() {
     local d

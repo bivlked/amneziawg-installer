@@ -21,10 +21,11 @@ set -o pipefail
 # находит «interface: awg0» и ложно проваливается (на «jc:» ложно предупреждает).
 # Цвет инструментам здесь не нужен, поэтому он выключен для всего скрипта.
 export WG_COLOR_MODE=never
-# su без дефиса (Debian) и cron оставляют PATH без каталогов sbin, и тогда dkms,
-# reboot, ufw, sysctl и modprobe, которые скрипт зовёт по имени, не находятся:
-# установка падала на «dkms: command not found». Недостающие каталоги дописываются
-# в конец, чтобы не перебить порядок, выбранный пользователем.
+# В Debian su без дефиса, как и запуск из cron, оставляет PATH без каталогов sbin.
+# Тогда reboot, dkms, sysctl, ufw и modprobe, которые скрипт зовёт по имени, не
+# находятся: перезагрузка в конце шага 1 не выполнялась, и установка вставала.
+# Недостающие каталоги дописываются в конец, чтобы не перебить порядок,
+# выбранный пользователем.
 _awg_ensure_sbin_path() {
     local d
     for d in /usr/local/sbin /usr/sbin /sbin; do
@@ -5963,6 +5964,19 @@ PPASRC
 # (StandardOutput=journal, StandardError=journal in the unit file).
 
 set -euo pipefail
+
+# The installer's PATH does not reach this helper: apt runs it as a hook with
+# the caller's environment, and an apt started from su without "-" (Debian)
+# brings a PATH without sbin, where "command -v dkms" below would report dkms
+# missing and exit 0. Append the missing sbin directories first.
+for _d in /usr/local/sbin /usr/sbin /sbin; do
+    case ":${PATH}:" in
+        *":${_d}:"*) ;;
+        *) PATH="${PATH:+${PATH}:}${_d}" ;;
+    esac
+done
+unset _d
+export PATH
 
 MODE="${1:-}"
 case "$MODE" in
