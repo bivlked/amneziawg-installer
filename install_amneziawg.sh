@@ -5966,10 +5966,11 @@ PPASRC
 
 set -euo pipefail
 
-# The installer's PATH does not reach this helper: apt runs it as a hook with
-# the caller's environment, and an apt started from su without "-" (Debian)
-# brings a PATH without sbin, where "command -v dkms" below would report dkms
-# missing and exit 0. Append the missing sbin directories first.
+# A later apt run does not pass through the installer's guard: apt runs this
+# helper as a hook with the caller's environment, and an apt started from su
+# without "-" (Debian) brings a PATH without sbin, where "command -v dkms"
+# below would report dkms missing and exit 0. Append the missing sbin
+# directories first.
 for _d in /usr/local/sbin /usr/sbin /sbin; do
     case ":${PATH}:" in
         *":${_d}:"*) ;;

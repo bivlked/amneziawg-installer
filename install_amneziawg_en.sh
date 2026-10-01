@@ -25,8 +25,9 @@ export WG_COLOR_MODE=never
 # On Debian su without "-", like a run from cron, leaves PATH without the sbin
 # directories. Then dpkg refuses to install packages (it cannot find ldconfig and
 # start-stop-daemon), and reboot, dkms, sysctl, ufw and modprobe, which the script
-# calls by name, are not found: the install stalled already in step 1. The missing directories are appended, so the order the user
-# chose is not overridden.
+# calls by name, are not found: the install stalled already in step 1. The
+# missing directories are appended, so the order the user chose is not
+# overridden.
 _awg_ensure_sbin_path() {
     local d
     for d in /usr/local/sbin /usr/sbin /sbin; do
@@ -6099,10 +6100,11 @@ PPASRC
 
 set -euo pipefail
 
-# The installer's PATH does not reach this helper: apt runs it as a hook with
-# the caller's environment, and an apt started from su without "-" (Debian)
-# brings a PATH without sbin, where "command -v dkms" below would report dkms
-# missing and exit 0. Append the missing sbin directories first.
+# A later apt run does not pass through the installer's guard: apt runs this
+# helper as a hook with the caller's environment, and an apt started from su
+# without "-" (Debian) brings a PATH without sbin, where "command -v dkms"
+# below would report dkms missing and exit 0. Append the missing sbin
+# directories first.
 for _d in /usr/local/sbin /usr/sbin /sbin; do
     case ":${PATH}:" in
         *":${_d}:"*) ;;

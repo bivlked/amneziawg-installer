@@ -5,9 +5,9 @@
 # /usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games), and cron runs jobs
 # with /usr/bin:/bin. There dpkg refuses to install packages (no ldconfig or
 # start-stop-daemon in PATH) and reboot, dkms, sysctl, ufw and modprobe are not
-# found by name, so the install stalled in step 1; manage check reported IP
-# forwarding off and UFW missing. Each entry point now
-# appends the missing sbin directories to PATH before it does anything else.
+# found by name, so the install stalled already in step 1; manage check reported
+# IP forwarding off and UFW missing. Each entry point now appends the missing
+# sbin directories to PATH before it does anything else.
 #
 # The scripts are not sourceable as a whole, so the cases below run the real
 # head of each script, from line 1 to the guard call, in a clean environment.
