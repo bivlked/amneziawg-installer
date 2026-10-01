@@ -3,9 +3,10 @@
 #
 # On Debian "su" without "-" keeps the caller's PATH (for example
 # /usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games), and cron runs jobs
-# with /usr/bin:/bin. The installer calls reboot, dkms, sysctl, ufw and modprobe
-# by name, so from such a shell the reboot at the end of step 1 was not found;
-# manage check reported IP forwarding off and UFW missing. Each entry point now
+# with /usr/bin:/bin. There dpkg refuses to install packages (no ldconfig or
+# start-stop-daemon in PATH) and reboot, dkms, sysctl, ufw and modprobe are not
+# found by name, so the install stalled in step 1; manage check reported IP
+# forwarding off and UFW missing. Each entry point now
 # appends the missing sbin directories to PATH before it does anything else.
 #
 # The scripts are not sourceable as a whole, so the cases below run the real

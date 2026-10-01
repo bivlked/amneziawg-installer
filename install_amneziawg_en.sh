@@ -23,9 +23,9 @@ set -o pipefail
 # script.
 export WG_COLOR_MODE=never
 # On Debian su without "-", like a run from cron, leaves PATH without the sbin
-# directories. Then reboot, dkms, sysctl, ufw and modprobe, which the script calls
-# by name, are not found: the reboot at the end of step 1 did not happen and the
-# install stalled. The missing directories are appended, so the order the user
+# directories. Then dpkg refuses to install packages (it cannot find ldconfig and
+# start-stop-daemon), and reboot, dkms, sysctl, ufw and modprobe, which the script
+# calls by name, are not found: the install stalled already in step 1. The missing directories are appended, so the order the user
 # chose is not overridden.
 _awg_ensure_sbin_path() {
     local d
