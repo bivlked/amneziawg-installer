@@ -1699,7 +1699,7 @@ install_packages() {
         if [[ "${_AWG_KMOD_T1:-0}" -eq 1 && -x "$AWG_ENSURE_HELPER" ]] \
                 && _pkg_present amneziawg-dkms; then
             log_warn "apt install не завершился - восстанавливаю модуль AmneziaWG (исходник и сборка)..."
-            local _hout _hrc _frc=1 _bad
+            local _hout _hrc _frc=1 _bad _stuck
             if _hout="$(mktemp)"; then
                 _install_temp_files+=("$_hout")
             else
@@ -1717,16 +1717,26 @@ install_packages() {
                 { echo "--- amneziawg-ensure-module ---"; cat "$_hout"; } >> "$LOG_FILE" 2>/dev/null || true
             fi
             _bad=$(sed -n 's/.*kernel \([^ :]*\): NOT built.*/\1/p' "$_hout" 2>/dev/null | sort -u | tr '\n' ' ')
-            if [[ "$_hrc" -eq 1 && -n "$_bad" ]]; then
-                log_warn "Модуль собран для текущего ядра, но не для: ${_bad}- после перезагрузки в такое ядро туннеля не будет."
+            if [[ "$_hrc" -eq 1 ]]; then
+                if [[ -n "$_bad" ]]; then
+                    log_warn "Модуль собран для текущего ядра, но не для: ${_bad}- после перезагрузки в такое ядро туннеля не будет."
+                else
+                    log_warn "Модуль для текущего ядра есть, но помощник сообщил о сбое (правка исходника или depmod), подробности выше: будущее обновление ядра может снова не собрать модуль."
+                fi
             fi
             if [[ "$_hrc" -le 1 && "$_frc" -eq 0 ]] && _pkgs_installed_ok "${to_install[@]}"; then
                 log "Модуль собран для $(uname -r), пакеты донастроены."
                 log "Пакеты установлены."
                 return 0
             fi
+            # The known issue is the reason only when the running kernel got no
+            # module (exit 2); otherwise something else stopped the install.
             _bad=$(sed -n 's/.*kernel \([^ :]*\): NOT built \[known-issue:kernel-70-udp-tunnel\].*/\1/p' "$_hout" 2>/dev/null | sort -u | tr '\n' ' ')
-            if [[ -n "$_bad" ]]; then
+            _stuck=$(sed -n 's/.*unfinished kernel(s) without the AmneziaWG module: //p' "$_hout" 2>/dev/null | tail -n 1)
+            if [[ "$_hrc" -le 1 && "$_frc" -ne 0 && -n "$_stuck" ]]; then
+                die "Пакеты не донастроены: донастройка сделала бы загрузочным ядро без модуля AmneziaWG (${_stuck}). Поставьте заголовки для этого ядра (linux-headers-<версия>) или удалите его, затем запустите: sudo bash $0 --repair-module"
+            fi
+            if [[ "$_hrc" -eq 2 && -n "$_bad" ]]; then
                 die "Модуль AmneziaWG не собрался под ядро ${_bad% }: в ядре изменилась функция setup_udp_tunnel_sock, а этот исходник модуля её не учитывает. Правка, которую накладывает помощник, к нему не применилась; почему - в строках source выше (исходник отличается от проверенного, правка отключена через --revert или не наложилась). Что можно сделать: ядро без этого изменения (на Ubuntu 24.04 - обычное linux-generic вместо HWE) или исправленный модуль в PPA. Подробности: ADVANCED.md, раздел kernel-70-backport-adv."
             fi
         fi
@@ -4625,7 +4635,7 @@ step_uninstall() {
 # пиновый 2.0 и ARM-пребилт), регистрация в DKMS одна и указывает на исходник
 # пакета, apt не работает. Любой отказ - до каких-либо изменений.
 repair_module_cmd() {
-    local rc=0 hrc=0 frc=0 ver owner src
+    local rc=0 hrc=0 frc=0 ver owner src out
     local -a reg=()
     if [[ "$(id -u)" -ne 0 ]]; then log_error "Запустите от root: sudo bash $0 --repair-module"; exit 1; fi
     log "### Восстановление модуля ядра AmneziaWG (--repair-module) ###"
@@ -4662,10 +4672,11 @@ repair_module_cmd() {
     fi
     _awg_deploy_ensure_helper
     if ! _awg_deploy_ensure_units; then rc=1; log_error "Обвязка помощника развёрнута не полностью, подробности выше."; fi
-    "$AWG_ENSURE_HELPER" --repair 2>&1 | tee -a "$LOG_FILE"
+    if ! out="$(mktemp)"; then out=/dev/null; else _install_temp_files+=("$out"); fi
+    "$AWG_ENSURE_HELPER" --repair 2>&1 | tee -a "$LOG_FILE" "$out"
     hrc=${PIPESTATUS[0]}
     if [[ "$hrc" -eq 0 ]]; then
-        "$AWG_ENSURE_HELPER" --finish 2>&1 | tee -a "$LOG_FILE"
+        "$AWG_ENSURE_HELPER" --finish 2>&1 | tee -a "$LOG_FILE" "$out"
         frc=${PIPESTATUS[0]}
     else
         frc=1
@@ -4674,6 +4685,9 @@ repair_module_cmd() {
     log "Время проверки: $(date '+%Y-%m-%d %H:%M:%S'). Изменения apt после этого момента отчёт не учитывает."
     if [[ "$rc" -eq 0 && "$hrc" -eq 0 && "$frc" -eq 0 ]]; then
         log "Готово: модуль на диске у всех ядер с заголовками, недонастроенных пакетов нет (dpkg --audit пуст). Перезагрузку скрипт не делает."
+        # То, что не мешает донастройке, но важно перед перезагрузкой.
+        grep -E 'already configured kernel\(s\) without|headers link .* is broken' "$out" 2>/dev/null \
+            | while IFS= read -r line; do log_warn "Перед перезагрузкой: ${line#*] }"; done
         if [[ ! -d /sys/module/amneziawg ]]; then
             log_warn "Модуль сейчас не загружен, туннель не работает. Перезагрузите сервер или выполните: sudo modprobe amneziawg && sudo systemctl restart awg-quick@awg0"
         fi
@@ -6208,7 +6222,7 @@ export PATH
 
 MODE="${1:-}"
 case "$MODE" in
-    --hook|--systemd|--repair|--prepare|--finish|--revert|--enable) ;;
+    --hook|--systemd|--repair|--prepare|--prepare-locked|--finish|--revert|--enable) ;;
     --version) echo "amneziawg-ensure-module 2"; exit 0 ;;
     --help|-h) echo "Usage: $0 --hook | --systemd | --repair | --prepare | --finish | --revert | --enable | --version"; exit 0 ;;
     *) echo "amneziawg-ensure-module: missing or unknown mode (see --help)" >&2; exit 2 ;;
@@ -6408,6 +6422,8 @@ BOOT_DIR=/boot
 PROC_DIR=/proc
 DPKG_DIR=/var/lib/dpkg
 SYS_MODULE_DIR=/sys/module
+# The boot path's time budget, seconds (the unit allows 300).
+BOOT_BUDGET=280
 STAMP_FILE="${STAMP_DIR}/ensure-module.stamp"
 DISABLED_MARK="${STAMP_DIR}/kmod-fix.disabled"
 KNOWN_ISSUE="[known-issue:kernel-70-udp-tunnel]"
@@ -6425,8 +6441,9 @@ has_module() { # kernel -> 0 if a non-empty amneziawg.ko* file is on disk
 
 # Serializes the helper's own modes (hook, boot, repair, prepare, revert,
 # enable) around the module source, the builds and the stamp. dpkg and the
-# kernel's own DKMS hooks do not take it. 0 locked, 1 busy (or flock
-# refused), 2 the lock cannot be used at all.
+# kernel's own DKMS hooks do not take it. 0 locked, 1 busy (another holder,
+# or the wait ran out), 2 the lock cannot be used at all (flock -E gives the
+# conflict its own exit code, so any other flock failure lands here).
 LOCK_FD=""
 kmod_lock() { # seconds to wait (0 = do not wait)
     local f="${LOCK_DIR}/kmod.lock"
@@ -6437,12 +6454,13 @@ kmod_lock() { # seconds to wait (0 = do not wait)
     fi
     if [[ -L "$f" ]] || { [[ -e "$f" ]] && [[ ! -f "$f" ]]; }; then return 2; fi
     if ! { command exec {LOCK_FD}>>"$f"; } 2>/dev/null; then LOCK_FD=""; return 2; fi
+    local rc=0
     if [[ "$1" -eq 0 ]]; then
-        flock -n "$LOCK_FD" && return 0
+        flock -E 75 -n "$LOCK_FD" || rc=$?
     else
-        flock -w "$1" "$LOCK_FD" && return 0
+        flock -E 75 -w "$1" "$LOCK_FD" || rc=$?
     fi
-    return 1
+    case "$rc" in 0) return 0 ;; 75) return 1 ;; *) return 2 ;; esac
 }
 lock_unusable() {
     log_line "ERROR: cannot use ${LOCK_DIR}/kmod.lock (flock missing, or the path is a symlink or not a directory/regular file); nothing done" >&2
@@ -6458,9 +6476,13 @@ dpkg_busy() {
     [[ -n "$p" ]] || return 2
     p=$(find "$PROC_DIR"/[0-9]*/fd -maxdepth 0 -type d ! -readable -print -quit 2>/dev/null || true)
     [[ -z "$p" ]] || return 2
-    p=$(find "$PROC_DIR"/[0-9]*/fd -mindepth 1 -maxdepth 1 \
-            \( -lname "${DPKG_DIR}/lock-frontend" -o -lname "${DPKG_DIR}/lock" \) -print -quit 2>/dev/null || true)
-    [[ -n "$p" ]] && return 0
+    # Matches and errors together: a process that exits during the scan
+    # ("No such file") is fine, but "Permission denied" on an fd means that
+    # fd was never looked at.
+    p=$(LC_ALL=C find "$PROC_DIR"/[0-9]*/fd -mindepth 1 -maxdepth 1 \
+            \( -lname "${DPKG_DIR}/lock-frontend" -o -lname "${DPKG_DIR}/lock" \) -print 2>&1 || true)
+    if grep -q "^${PROC_DIR}/[0-9]*/fd/" <<<"$p"; then return 0; fi
+    [[ "$p" == *"Permission denied"* ]] && return 2
     return 1
 }
 require_dpkg_idle() {
@@ -6573,19 +6595,35 @@ collect_targets() {
     done
 }
 
+# Fingerprints of every make.log under the module version: path, mtime,
+# size, content hash. DKMS reuses one build directory for every kernel, so a
+# log from the previous kernel's attempt sits in the same place.
+log_prints() {
+    local f
+    while IFS= read -r -d '' f; do
+        printf '%s\t%s\t%s\n' "$f" "$(stat -c '%y %s' -- "$f" 2>/dev/null || true)" \
+            "$(sha256sum -- "$f" 2>/dev/null | cut -d' ' -f1 || true)"
+    done < <(find "${DKMS_DIR}/amneziawg/${SRC_VER}" -name make.log -print0 2>/dev/null || true)
+}
+
 # Build the module for one kernel. 0 built and on disk, 1 not.
-# A make.log counts as this attempt's only if it was modified after the
-# second before the attempt started: filesystem timestamps can be coarser
-# than the gap between starting dkms and its first write.
+# A make.log counts as this attempt's only if it is new or changed (time,
+# size or content) since just before the attempt: neither a log of an
+# earlier attempt nor one of another kernel in this run is blamed.
 build_kernel() { # kernel [timeout-seconds] [--force]
-    local k="$1" limit="${2:-0}" force="${3:-}" t0 log="" rc=0
+    local k="$1" limit="${2:-0}" force="${3:-}" before after log="" rc=0 line
     local -a cmd=(dkms install -m amneziawg -v "$SRC_VER" -k "$k")
     [[ -n "$force" ]] && cmd+=(--force)
     [[ "$limit" -gt 0 ]] && cmd=(timeout -k 5 "$limit" "${cmd[@]}")
-    t0=$(( $(date +%s) - 1 ))
+    before=$(log_prints)
     log_line "dkms install -m amneziawg -v ${SRC_VER} -k ${k}${force:+ --force}"
     if "${cmd[@]}"; then rc=0; else rc=$?; fi
-    log=$(find "${DKMS_DIR}/amneziawg/${SRC_VER}" -name make.log -newermt "@${t0}" -print -quit 2>/dev/null || true)
+    after=$(log_prints)
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        grep -qxF -- "$line" <<<"$before" && continue
+        log="${line%%$'\t'*}"; break
+    done <<<"$after"
     if [[ "$rc" -eq 0 ]] && has_module "$k"; then
         log_line "kernel ${k}: module built"
         return 0
@@ -6597,7 +6635,7 @@ build_kernel() { # kernel [timeout-seconds] [--force]
     elif [[ -n "$log" ]]; then
         log_line "kernel ${k}: NOT built (dkms rc=${rc}); log: ${log}" >&2
     else
-        log_line "kernel ${k}: NOT built (dkms rc=${rc}); dkms wrote no make.log in this attempt" >&2
+        log_line "kernel ${k}: NOT built (dkms rc=${rc}); no new or changed make.log found for this attempt" >&2
     fi
     if has_module "$k"; then
         log_line "kernel ${k}: a module from an earlier build is still on disk" >&2
@@ -6649,7 +6687,8 @@ prepare_source() {
     PREP_FAILED=0
     # Strip the deprecated REMAKE_INITRD directive (noisy on modern DKMS).
     for cfg in "${DKMS_DIR}"/amneziawg/*/source/dkms.conf; do
-        [[ -f "$cfg" ]] && sed -i '/^REMAKE_INITRD=/d' "$cfg" 2>/dev/null || true
+        [[ -f "$cfg" ]] || continue
+        sed -i '/^REMAKE_INITRD=/d' "$cfg" 2>/dev/null || log_line "WARN: cannot edit ${cfg} (REMAKE_INITRD left in place)" >&2
     done
     kmod_prepare || PREP_FAILED=1
 }
@@ -6724,7 +6763,7 @@ mode_systemd() {
     local k deadline left lrc=0 built=0 before="" after=""
     PROBE_RAN=0
     k=$(uname -r)
-    deadline=$((SECONDS + 280))
+    deadline=$((SECONDS + BOOT_BUDGET))
     # 0 loaded; 1 modprobe ran and the module is not loaded; 3 no time left.
     try_load() {
         left=$((deadline - SECONDS))
@@ -6733,8 +6772,11 @@ mode_systemd() {
         fi
         PROBE_RAN=1
         log_line "modprobe amneziawg"
-        if timeout -k 5 "$left" modprobe amneziawg 2>&1 && [[ -d "${SYS_MODULE_DIR}/amneziawg" ]]; then
-            return 0
+        local prc=0
+        timeout -k 5 "$left" modprobe amneziawg 2>&1 || prc=$?
+        if [[ "$prc" -eq 0 && -d "${SYS_MODULE_DIR}/amneziawg" ]]; then return 0; fi
+        if [[ "$prc" -eq 124 || "$prc" -eq 137 ]]; then
+            PROBE_RAN=0; log_line "ERROR: modprobe did not finish within ${left} s" >&2
         fi
         return 1
     }
@@ -6774,10 +6816,16 @@ mode_systemd() {
     fi
     left=$((deadline - SECONDS))
     if [[ "$left" -ge 60 ]]; then
-        kmod_prepare || :
+        # A child under timeout (it normally takes well under a second), so a
+        # stalled step cannot eat the budget; it runs under this process's
+        # lock and does not take it again.
+        if ! timeout -k 5 20 "$0" --prepare-locked; then
+            log_line "WARN: preparing the source failed or did not finish within 20 s" >&2
+        fi
     else
         log_line "WARN: not enough of the boot time budget left to prepare the source" >&2
     fi
+    if ! require_dpkg_idle; then try_load || :; finish_boot; fi
     before=$(snapshot)
     left=$((deadline - SECONDS - 15))
     if has_module "$k"; then
@@ -6854,6 +6902,14 @@ mode_repair() {
     exit 0
 }
 
+# Internal (the boot path's child under timeout): fix the source under the
+# lock the parent holds. Not for direct use.
+mode_prepare_locked() {
+    kmod_source 1 || exit 1
+    kmod_prepare || exit 1
+    exit 0
+}
+
 # Outside apt: fix the source only, no build. 0 done or nothing to fix.
 mode_prepare() {
     local rc=0 lrc=0
@@ -6877,13 +6933,15 @@ mode_prepare() {
 # anyway and are only reported. The owner of each /boot/vmlinuz-* is asked
 # from dpkg; an image dpkg does not know is not touched by configuring.
 mode_finish() {
-    local audit f rel own st pkg pending_n=0
+    local audit f rel own st pkg line imgs lst state pending_n=0
     local -a missing=() idle=()
+    local -A seen=()
     require_dpkg_idle || exit 1
     # dpkg --audit prints the problems and still exits 0; non-zero means the
     # audit itself did not run.
     if ! audit=$(dpkg --audit 2>/dev/null); then
-        log_line "ERROR: dpkg --audit failed; cannot tell which packages are unfinished" >&2; exit 1
+        log_line "ERROR: dpkg --audit failed ($(LC_ALL=C dpkg --audit 2>&1 >/dev/null | tail -n 2 | tr '\n' ' ')); cannot tell which packages are unfinished" >&2
+        exit 1
     fi
     if [[ -z "$audit" ]]; then log_line "packages: nothing left to configure (dpkg --audit is empty)"; exit 0; fi
     log_line "packages: dpkg --audit reports unfinished packages"
@@ -6892,16 +6950,28 @@ mode_finish() {
     fi
     for f in "${BOOT_DIR}"/vmlinuz-*; do
         [[ -e "$f" ]] || continue
-        rel="${f##*/vmlinuz-}"
-        own=$(dpkg -S "$f" 2>/dev/null | grep -v '^diversion by' || true)
-        if [[ -z "$own" ]]; then
-            log_line "kernel ${rel}: image not owned by a package; configuring does not change it"
-            continue
+        rel="${f##*/vmlinuz-}"; seen["$rel"]=1
+        # dpkg -S exits 1 both for "no owner" and for a failed lookup; only
+        # its own "no path found" message means the image is not packaged.
+        if ! own=$(LC_ALL=C dpkg -S "$f" 2>&1); then
+            if [[ "$own" == *"no path found matching pattern"* ]]; then
+                log_line "kernel ${rel}: image not owned by a package; configuring does not change it"
+                continue
+            fi
+            log_line "ERROR: cannot ask dpkg who owns ${f}: ${own}; dpkg --configure -a not run" >&2
+            exit 1
         fi
+        # One record per line: "pkg[:arch][, pkg[:arch]...]: <path>", plus
+        # diversion records that name no owner.
         st=installed
-        for pkg in $(printf '%s\n' "${own%%:*}" | tr ',' ' '); do
-            [[ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)" == *" installed" ]] || st=pending
-        done
+        while IFS= read -r line; do
+            case "$line" in "diversion by "*|"local diversion "*|"") continue ;; esac
+            [[ "$line" == *": $f" ]] || continue
+            line="${line%": $f"}"
+            for pkg in ${line//,/ }; do
+                [[ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)" == *" installed" ]] || st=pending
+            done
+        done <<<"$own"
         if [[ "$st" == pending ]]; then
             pending_n=$((pending_n + 1))
             if has_module "$rel"; then
@@ -6913,6 +6983,37 @@ mode_finish() {
             idle+=("$rel")
         fi
     done
+    # The same question from dpkg's side, so an unfinished image that the
+    # directory does not show (say, a /boot mounted over the one the package
+    # was unpacked to) is not missed: every linux-image-* package that is not
+    # configured and ships a /boot/vmlinuz-* file. Metapackages ship none.
+    if ! imgs=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'linux-image-*' 2>&1); then
+        if [[ "$imgs" == *"no packages found matching"* ]]; then
+            imgs=""
+        else
+            log_line "ERROR: cannot list the kernel image packages: ${imgs}; dpkg --configure -a not run" >&2
+            exit 1
+        fi
+    fi
+    while read -r pkg _ _ state; do
+        [[ -n "$pkg" ]] || continue
+        case "$state" in installed|not-installed|config-files) continue ;; esac
+        if ! lst=$(dpkg -L "$pkg" 2>/dev/null); then
+            log_line "ERROR: cannot list the files of ${pkg}; dpkg --configure -a not run" >&2
+            exit 1
+        fi
+        f=$(grep -m1 '^/boot/vmlinuz-' <<<"$lst" || true)
+        [[ -n "$f" ]] || continue
+        rel="${f##*/vmlinuz-}"
+        [[ -z "${seen[$rel]:-}" ]] || continue
+        seen["$rel"]=1
+        pending_n=$((pending_n + 1))
+        if has_module "$rel"; then
+            log_line "kernel ${rel} (to be configured, not seen in ${BOOT_DIR}): AmneziaWG module on disk"
+        else
+            missing+=("$rel")
+        fi
+    done <<<"$imgs"
     if [[ ${#idle[@]} -gt 0 ]]; then
         log_line "WARN: already configured kernel(s) without the AmneziaWG module: ${idle[*]}; booting one of them leaves the server without the tunnel" >&2
     fi
@@ -6926,7 +7027,8 @@ mode_finish() {
         log_line "ERROR: dpkg --configure -a failed; see the messages above" >&2; exit 1
     fi
     if ! audit=$(dpkg --audit 2>/dev/null); then
-        log_line "ERROR: dpkg --audit failed after dpkg --configure -a" >&2; exit 1
+        log_line "ERROR: dpkg --audit failed after dpkg --configure -a ($(LC_ALL=C dpkg --audit 2>&1 >/dev/null | tail -n 2 | tr '\n' ' '))" >&2
+        exit 1
     fi
     if [[ -n "$audit" ]]; then
         log_line "ERROR: packages are still unfinished after dpkg --configure -a:" >&2
@@ -6984,6 +7086,7 @@ case "$MODE" in
     --systemd) mode_systemd ;;
     --repair) mode_repair ;;
     --prepare) mode_prepare ;;
+    --prepare-locked) mode_prepare_locked ;;
     --finish) mode_finish ;;
     --revert) mode_revert ;;
     --enable) mode_enable ;;

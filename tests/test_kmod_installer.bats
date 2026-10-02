@@ -149,6 +149,42 @@ _t1_driver() {
     done
 }
 
+@test "T1: helper exit 1 with no kernel named still warns (the source fix or depmod failed)" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _reset; _st amneziawg-dkms "install ok unpacked"; echo 1 > "$T/helper.rc.--repair"
+        _t1_driver "$f" 1
+        run bash "$T/drv.sh" amneziawg-dkms
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
+        grep -q '^WARN: .*(.*depmod)' <<<"$output" || { echo "$f: $output"; return 1; }
+    done
+}
+
+@test "T1: a --finish refusal over an unfinished kernel names it and the way out" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _reset; _st amneziawg-dkms "install ok unpacked"; echo 1 > "$T/helper.rc.--finish"
+        echo "[ts] [--finish] unfinished kernel(s) without the AmneziaWG module: 7.0.0-39-generic" > "$T/helper.out.--finish"
+        _t1_driver "$f" 1
+        run bash "$T/drv.sh" amneziawg-dkms
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"DIE: "*"7.0.0-39-generic"*"--repair-module"* ]] || { echo "$f: $output"; return 1; }
+    done
+}
+
+@test "T1: the known issue of another kernel is not given as the reason when packages failed" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _reset; _st amneziawg-dkms "install ok unpacked"; _st qrencode "unknown ok not-installed"; : > "$T/st/qrencode.keep"
+        echo 1 > "$T/helper.rc.--repair"
+        echo "[ts] [--repair] kernel 7.0.0-39-generic: NOT built [known-issue:kernel-70-udp-tunnel]: ..." > "$T/helper.out.--repair"
+        _t1_driver "$f" 1
+        run bash "$T/drv.sh" amneziawg-dkms qrencode
+        [ "$status" -eq 1 ]
+        [[ "$output" != *"DIE: "*"setup_udp_tunnel_sock"* ]] || { echo "$f: $output"; return 1; }
+    done
+}
+
 @test "T1: configure succeeded but a requested package is still missing: failure" {
     local f
     for f in "${INSTALLERS[@]}"; do
@@ -163,9 +199,10 @@ _t1_driver() {
 @test "T1: the flag is reset at start, so the environment cannot switch the fallback on" {
     local f
     for f in "${INSTALLERS[@]}"; do
-        grep -qx '_AWG_KMOD_T1=0' "$BATS_TEST_DIRNAME/../$f"
-        [ "$(grep -n -m1 -x '_AWG_KMOD_T1=0' "$BATS_TEST_DIRNAME/../$f" | cut -d: -f1)" -lt \
-          "$(grep -n -m1 '^install_packages() {$' "$BATS_TEST_DIRNAME/../$f" | cut -d: -f1)" ]
+        _head_through_check "$f"
+        run env _AWG_KMOD_T1=1 timeout 20 bash "$T/head.sh" --repair-module </dev/null
+        [ "$status" -eq 0 ] || { echo "$f: $status $output"; return 1; }
+        [[ "$output" == *"PASSED-CHECK repair=1 verbose=0 t1=0"* ]] || { echo "$f: $output"; return 1; }
     done
 }
 
@@ -236,6 +273,7 @@ _busy() { # installer -> exit code of _awg_dpkg_busy with the fake /proc
 }
 
 @test "_awg_dpkg_busy: idle, busy on either lock file, and 'cannot check' counts as busy" {
+    [[ $EUID -ne 0 ]] || skip "root reads a mode-000 directory anyway"
     local f l
     for f in "${INSTALLERS[@]}"; do
         rm -rf "$T/proc"; mkdir -p "$T/proc/1/fd"
@@ -274,7 +312,12 @@ _head_through_check() { # installer -> $T/head.sh
     awk '{print} /^if \[\[ "\$REPAIR_MODULE" -eq 1 \]\]; then$/ {c=1} c && /^fi$/ {exit}' \
         "$BATS_TEST_DIRNAME/../$1" > "$T/head.sh"
     grep -q '^    unset _a$' "$T/head.sh" || { echo "$1: the check block was not found"; return 1; }
-    printf '%s\n' 'echo "PASSED-CHECK repair=$REPAIR_MODULE verbose=$VERBOSE"; trap - EXIT; exit 0' >> "$T/head.sh"
+    # If the anchor ever stopped matching, awk would copy the WHOLE installer;
+    # refuse to run anything that contains its functions.
+    ! grep -q '^repair_module_cmd() {$\|^step_uninstall() {$\|^initialize_setup() {$' "$T/head.sh" \
+        || { echo "$1: the head copy reaches into the installer body"; return 1; }
+    [ "$(wc -l < "$T/head.sh")" -lt 600 ] || { echo "$1: the head copy is too long"; return 1; }
+    printf '%s\n' 'echo "PASSED-CHECK repair=$REPAIR_MODULE verbose=$VERBOSE t1=$_AWG_KMOD_T1"; trap - EXIT; exit 0' >> "$T/head.sh"
 }
 
 @test "--repair-module refuses any other argument before doing anything" {
@@ -354,6 +397,18 @@ _rm_server() {
         [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
         [ "$(_calls | tr '\n' ' ')" = "deploy-helper deploy-units helper --repair helper --finish " ] || { echo "$f: $(_calls)"; return 1; }
         grep -q 'kernel x: module on disk' "$T/log"
+    done
+}
+
+@test "repair-module: success repeats what matters before a reboot" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _rm_server
+        echo "[ts] [--finish] WARN: already configured kernel(s) without the AmneziaWG module: 6.8.0-31-generic; booting ..." > "$T/helper.out.--finish"
+        _rm_driver "$f"
+        run bash "$T/drv.sh"
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
+        grep -q '^WARN: .*6\.8\.0-31-generic' <<<"$output" || { echo "$f: $output"; return 1; }
     done
 }
 

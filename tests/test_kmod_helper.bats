@@ -31,9 +31,11 @@ _mk_helper() {
         -e "s#^PROC_DIR=/proc\$#PROC_DIR=$T/proc#" \
         -e "s#^DPKG_DIR=/var/lib/dpkg\$#DPKG_DIR=$T/var/lib/dpkg#" \
         -e "s#^SYS_MODULE_DIR=/sys/module\$#SYS_MODULE_DIR=$T/sys/module#" \
+        -e "s#^BOOT_BUDGET=280\$#BOOT_BUDGET=${BUDGET:-280}#" \
         "$T/helper.raw" > "$T/helper"
     n=$(grep -c "^[A-Z_]*_DIR=$T/\|^SRC_PREFIX=$T/" "$T/helper")
     [ "$n" -eq 9 ] || { echo "path constants rewritten: $n of 9"; return 1; }
+    grep -qx "BOOT_BUDGET=${BUDGET:-280}" "$T/helper" || { echo "BOOT_BUDGET not rewritten"; return 1; }
     chmod +x "$T/helper"
     H="$T/helper"
 }
@@ -63,9 +65,22 @@ _src() { printf '%s' "$T/usr/src/amneziawg-1.0.0/compat/compat.h"; }
 _calls() { cat "$T/calls" 2>/dev/null || true; }
 _stamp() { printf '%s' "$T/var/lib/amneziawg/ensure-module.stamp"; }
 _hold_lock() { mkdir -p "$T/run/amneziawg"; exec {LFD}>>"$T/run/amneziawg/kmod.lock"; flock -n "$LFD"; }
+# Deterministic lock races, no timing guesses: a flock wrapper marks the
+# moment the helper starts WAITING (flock -w); the holder acts only after
+# that mark ($1, then it releases). Every wait loop is bounded.
+_signal_flock() { _stub flock "case \" \$* \" in *' -w '*) : > \"$T/flock.waiting\" ;; esac
+exec \"$REAL_FLOCK\" \"\$@\""; }
+_wait_file() { local i=0; while [ ! -e "$1" ] && [ "$i" -lt 400 ]; do sleep 0.05; i=$((i + 1)); done; }
+_holder() {
+    mkdir -p "$T/run/amneziawg"
+    ( exec 9>>"$T/run/amneziawg/kmod.lock"; "$REAL_FLOCK" 9; : > "$T/held"
+      _wait_file "$T/flock.waiting"; eval "${1:-:}"; sleep 0.3 ) 3>&- &
+    _wait_file "$T/held"
+}
 
 setup() {
     T=$(mktemp -d); export T FIXED_SHA
+    REAL_FLOCK=$(command -v flock || true)
     # What every real system has: /boot, /run, a process table.
     mkdir -p "$T/bin" "$T/boot" "$T/run" "$T/proc/1/fd" "$T/sys/module"
     command -v flock >/dev/null || { [[ -z "${CI:-}" ]] || return 1; skip "flock not available (not Linux)"; }
@@ -80,11 +95,18 @@ k=$(uname -r)
 mkdir -p "$T/sys/module/amneziawg"'
     # Status per package from $T/st/<pkg>; amneziawg-dkms has a version too.
     _stub dpkg-query 'p="${*: -1}"
+[[ -e "$T/dq.fail" ]] && { echo "dpkg-query: error: database locked" >&2; exit 2; }
+if [[ "$p" == *"*"* ]]; then
+  n=0; for f in "$T"/st/${p}; do [[ -f "$f" ]] || continue; echo "${f##*/} $(cat "$f")"; n=1; done
+  [[ $n = 1 ]] || { echo "dpkg-query: no packages found matching $p" >&2; exit 1; }; exit 0
+fi
 if [[ -f "$T/st/$p" ]]; then cat "$T/st/$p"
 elif [[ "$p" == amneziawg-dkms ]]; then echo "1.0.0-0~202609061402+4569c4c install ok installed"
-else echo "install ok installed"; fi'
+else echo "unknown ok not-installed"; fi'
     _stub dpkg 'case "$1" in
-  -S) f="$T/own/${2##*/}"; [[ -f "$f" ]] && cat "$f" && exit 0; echo "dpkg-query: no path found matching pattern $2" >&2; exit 1 ;;
+  -S) [[ -e "$T/S.fail" ]] && { echo "dpkg-query: error: cannot read the database" >&2; exit 2; }
+      f="$T/own/${2##*/}"; [[ -f "$f" ]] && cat "$f" && exit 0; echo "dpkg-query: no path found matching pattern $2" >&2; exit 1 ;;
+  -L) r="${2#linux-image-}"; r="${r%%:*}"; [[ -f "$T/st/$2" ]] || exit 1; echo "/boot/vmlinuz-$r"; echo "/lib/modules/$r/modules.order"; exit 0 ;;
 esac
 echo "dpkg $*" >> "$T/calls"
 case "$1" in
@@ -98,7 +120,8 @@ while [[ $# -gt 0 ]]; do case "$1" in -k) k="$2"; shift ;; -v) v="$2"; shift ;; 
 date +%s > "$T/dkms.start"
 [[ -e "$T/dkms.side" ]] && bash "$T/dkms.side"
 d="$T/var/lib/dkms/amneziawg/$v/build"; mkdir -p "$d"
-[[ -e "$T/dkms.quietfail" ]] && exit 10
+[[ -e "$T/dkms.quietfail" || -e "$T/dkms.quietfail.$k" ]] && exit 10
+[[ -e "$T/dkms.rc124" ]] && exit 124
 if [[ "$k" == 7.0.0-38* && "$(sha256sum < "$T/usr/src/amneziawg-$v/compat/compat.h" | cut -d" " -f1)" != "$FIXED_SHA" ]]; then
   echo "compat/compat.h:1449:31: error: passing argument 2 of '"'"'setup_udp_tunnel_sock'"'"' from incompatible pointer type [-Werror=incompatible-pointer-types]" > "$d/make.log"
   [[ -e "$T/dkms.after" ]] && bash "$T/dkms.after"
@@ -211,6 +234,7 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
 }
 
 @test "repair: an empty process table or an unreadable fd list counts as unknown, not as idle" {
+    [[ $EUID -ne 0 ]] || skip "root reads a mode-000 directory anyway"
     _mk_server "$OLD"
     rm -rf "$T/proc"; mkdir -p "$T/proc"
     run "$H" --repair
@@ -267,7 +291,7 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
     touch -d '-1 hour' "$T/var/lib/dkms/amneziawg/1.0.0/build/make.log"
     : > "$T/dkms.quietfail"
     run "$H" --repair
-    [[ "$output" == *"kernel $NEW: NOT built (dkms rc=10); dkms wrote no make.log in this attempt"* ]]
+    [[ "$output" == *"kernel $NEW: NOT built (dkms rc=10); no new or changed make.log found for this attempt"* ]]
     [[ "$output" != *"known-issue"* ]]
 }
 
@@ -336,23 +360,19 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
 
 @test "repair: waits for a lock that another job releases" {
     _mk_server "$OLD"
-    mkdir -p "$T/run/amneziawg"
-    # fd 3 closed: bats waits for every holder of its output descriptor.
-    ( exec 9>>"$T/run/amneziawg/kmod.lock"; flock 9; sleep 2 ) 3>&- &
-    sleep 0.5
+    _signal_flock; _holder
     run timeout 60 "$H" --repair
     wait
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [ -e "$T/flock.waiting" ]
     [ -s "$(_ko "$OLD")" ]
 }
 
 @test "repair: apt that starts while it waits for the lock stops it before anything changes" {
     _mk_server "$OLD"
-    mkdir -p "$T/run/amneziawg"
-    # Holds the lock, "starts apt" (opens a dpkg lock file) half way, releases.
-    ( exec 9>>"$T/run/amneziawg/kmod.lock"; flock 9; sleep 1
-      ln -s "$T/var/lib/dpkg/lock-frontend" "$T/proc/1/fd/7"; sleep 1 ) 3>&- &
-    sleep 0.3
+    # The holder "starts apt" (a dpkg lock file held open) only once the
+    # helper is already waiting, i.e. after its first check, then releases.
+    _signal_flock; _holder 'ln -s "$T/var/lib/dpkg/lock-frontend" "$T/proc/1/fd/7"'
     run timeout 60 "$H" --repair
     wait
     [ "$status" -eq 2 ] || { echo "$output"; return 1; }
@@ -513,12 +533,11 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
 @test "systemd: waits for a lock that another job releases, then builds and loads" {
     echo "$NEW" > "$T/uname"
     _mk_server "$NEW"
-    mkdir -p "$T/run/amneziawg"
-    ( exec 9>>"$T/run/amneziawg/kmod.lock"; flock 9; sleep 2 ) 3>&- &
-    sleep 0.3
+    _signal_flock; _holder
     run timeout 60 "$H" --systemd
     wait
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [ -e "$T/flock.waiting" ]
     [ -s "$(_ko "$NEW")" ]
 }
 
@@ -679,7 +698,7 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
     _mk_server "$OLD"
     "$H" --repair >/dev/null 2>&1
     echo "unfinished" > "$T/audit"
-    _stub dpkg '[[ "$1" == -S ]] && exit 1; echo "dpkg $*" >> "$T/calls"; [[ "$1" == --audit ]] && echo still; exit 0'
+    _stub dpkg '[[ "$1" == -S ]] && { echo "dpkg-query: no path found matching pattern $2" >&2; exit 1; }; echo "dpkg $*" >> "$T/calls"; [[ "$1" == --audit ]] && echo still; exit 0'
     run "$H" --finish
     [ "$status" -eq 1 ]
     [[ "$output" == *"still unfinished"* ]]
@@ -717,6 +736,240 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
     run "$H" --revert
     [ "$status" -eq 1 ]
     [[ "$output" == *"nothing to revert"* ]]
+}
+
+# ---------- review round 2: failures that must not pass as answers ----------
+
+@test "lock: a flock failure other than a conflict is 'unusable', not 'another job'" {
+    _mk_server "$OLD"
+    _stub flock 'exit 65'
+    run "$H" --hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"cannot use"* ]]
+    [[ "$output" != *"another AmneziaWG module job"* ]]
+}
+
+@test "dpkg check: a permission error on an fd link means 'cannot tell'" {
+    _mk_server "$OLD"
+    # find itself reports one fd it could not read, as it would in a
+    # restricted container; everything else is the real find.
+    local real; real=$(command -v find)
+    _stub find "case \"\$*\" in *-lname*) \"$real\" \"\$@\"; echo \"find: '$T/proc/1/fd/9': Permission denied\" >&2; exit 1 ;; esac
+exec \"$real\" \"\$@\""
+    run "$H" --repair
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"cannot tell whether apt or dpkg is running"* ]]
+    [[ "$(_calls)" != *"dkms install"* ]]
+}
+
+@test "build: a log another kernel wrote in this run is not blamed on the next one" {
+    local third=7.1.0-5-generic
+    _mk_server "$OLD" "$NEW" "$third"
+    echo '/* local edit */' >> "$(_src)"
+    : > "$T/dkms.quietfail.$third"
+    run "$H" --repair
+    [[ "$output" == *"kernel $NEW: NOT built [known-issue:kernel-70-udp-tunnel]"* ]]
+    [[ "$output" == *"kernel $third: NOT built (dkms rc=10); no new or changed make.log found for this attempt"* ]] || { echo "$output"; return 1; }
+}
+
+@test "finish: a failed ownership lookup is a refusal, not an unpackaged image" {
+    _mk_server "$OLD"
+    _mk_image "$NEW" "install ok unpacked"
+    echo "unfinished" > "$T/audit"; : > "$T/S.fail"
+    run "$H" --finish
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"cannot ask dpkg who owns"* ]]
+    [[ "$(_calls)" != *"--configure"* ]]
+}
+
+@test "finish: diversion records and arch-qualified owners are read per line" {
+    local old2=6.8.0-31-generic
+    _mk_server "$OLD"
+    "$H" --repair >/dev/null 2>&1
+    # a configured kernel without the module, with diversion records around its owner
+    _mk_image "$old2"
+    printf '%s\n' "local diversion from: $T/boot/vmlinuz-$old2" \
+        "diversion by foo to: $T/boot/vmlinuz-$old2.real" \
+        "linux-image-$old2:amd64: $T/boot/vmlinuz-$old2" > "$T/own/vmlinuz-$old2"
+    echo "install ok installed" > "$T/st/linux-image-$old2:amd64"
+    echo "unfinished" > "$T/audit"
+    run "$H" --finish
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"already configured kernel(s) without the AmneziaWG module: $old2"* ]]
+    # the same owner unfinished blocks
+    "$H" --repair >/dev/null 2>&1 || :
+    echo "install ok unpacked" > "$T/st/linux-image-$old2:amd64"; echo "unfinished" > "$T/audit"
+    run "$H" --finish
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"unfinished kernel(s) without the AmneziaWG module: $old2"* ]]
+}
+
+@test "systemd: preparing the source runs in a child that does not take the held lock" {
+    _mk_server "$OLD"
+    _hold_lock
+    run timeout 30 "$H" --prepare-locked
+    [ "$status" -eq 0 ]
+    [ "$(_sha "$(_src)")" = "$FIXED_SHA" ]
+}
+
+@test "systemd: apt that starts while the source is prepared stops the build" {
+    echo "$NEW" > "$T/uname"
+    _mk_server "$NEW"
+    local real; real=$(command -v patch)
+    _stub patch "ln -sfn \"$T/var/lib/dpkg/lock\" \"$T/proc/1/fd/8\"; exec \"$real\" \"\$@\""
+    run "$H" --systemd
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"apt or dpkg is running"* ]]
+    [[ "$(_calls)" != *"dkms install"* ]]
+}
+
+# ---------- review round 2: branches that had no test ----------
+
+@test "finish: a running apt stops it before the audit" {
+    _mk_server "$OLD"
+    echo "unfinished" > "$T/audit"
+    ln -s "$T/var/lib/dpkg/lock" "$T/proc/1/fd/7"
+    run "$H" --finish
+    [ "$status" -eq 1 ]
+    [[ "$(_calls)" != *"dpkg --audit"* && "$(_calls)" != *"--configure"* ]]
+}
+
+@test "finish: a kernel on hold that is configured counts as configured" {
+    local old2=6.8.0-31-generic
+    _mk_server "$OLD"
+    "$H" --repair >/dev/null 2>&1
+    _mk_image "$old2" "hold ok installed"
+    echo "unfinished" > "$T/audit"
+    run "$H" --finish
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"already configured kernel(s) without the AmneziaWG module: $old2"* ]]
+}
+
+@test "finish: every unfinished kernel without the module is named" {
+    _mk_server "$OLD"
+    "$H" --repair >/dev/null 2>&1
+    _mk_image 7.0.0-38-generic "install ok unpacked"; _mk_image 7.0.0-39-generic "install ok half-configured"
+    echo "unfinished" > "$T/audit"
+    run "$H" --finish
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"without the AmneziaWG module: "*7.0.0-38-generic*7.0.0-39-generic* || "$output" == *"without the AmneziaWG module: "*7.0.0-39-generic*7.0.0-38-generic* ]]
+}
+
+@test "finish: an unfinished image dpkg knows but /boot does not show still blocks" {
+    _mk_server "$OLD"
+    "$H" --repair >/dev/null 2>&1
+    echo "install ok unpacked" > "$T/st/linux-image-$NEW"
+    echo "unfinished" > "$T/audit"
+    run "$H" --finish
+    [ "$status" -eq 1 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"unfinished kernel(s) without the AmneziaWG module: $NEW"* ]]
+    [[ "$(_calls)" != *"--configure"* ]]
+}
+
+@test "finish: a failed package query is a refusal" {
+    _mk_server "$OLD"
+    echo "unfinished" > "$T/audit"
+    : > "$T/dq.fail"
+    run "$H" --finish
+    [ "$status" -eq 1 ]
+    [[ "$(_calls)" != *"--configure"* ]]
+}
+
+@test "finish: a failed configure says so" {
+    _mk_server "$OLD"
+    echo "amneziawg-tools unfinished" > "$T/audit"; : > "$T/configure.fail"
+    run "$H" --finish
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dpkg --configure -a failed"* ]]
+}
+
+@test "systemd: a source change during its build is not trusted" {
+    echo "$NEW" > "$T/uname"
+    _mk_server "$NEW"
+    echo 'echo "/* unpacked */" >> "$T/usr/src/amneziawg-1.0.0/compat/compat.h"' > "$T/dkms.side"
+    run "$H" --systemd
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"changed during the build"* ]]
+}
+
+@test "systemd: after a build it refreshes the module index of that kernel" {
+    echo "$NEW" > "$T/uname"
+    _mk_server "$NEW"
+    run "$H" --systemd
+    [ "$status" -eq 0 ]
+    [[ "$(_calls)" == *"depmod -a $NEW"* ]]
+}
+
+@test "systemd: a budget that is used up skips modprobe and says so" {
+    BUDGET=3 _mk_helper install_amneziawg.sh
+    _mk_server "$OLD"; _put_ko "$OLD"
+    sleep 1
+    run "$H" --systemd
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"budget is used up; modprobe not attempted"* ]] || { echo "$output"; return 1; }
+    [[ "$(_calls)" != *modprobe* ]]
+}
+
+@test "systemd: too little budget left to build: no build, says so" {
+    BUDGET=40 _mk_helper install_amneziawg.sh
+    echo "$NEW" > "$T/uname"
+    _mk_server "$NEW"
+    run "$H" --systemd
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not enough of the boot time budget left to build"* ]] || { echo "$output"; return 1; }
+    [[ "$(_calls)" != *"dkms install"* ]]
+}
+
+@test "systemd: a build that runs out of time is named as such, under a timeout" {
+    echo "$NEW" > "$T/uname"
+    _mk_server "$NEW"; : > "$T/dkms.rc124"
+    _stub timeout 'echo "timeout $*" >> "$T/calls"; shift 3; exec "$@"'
+    run "$H" --systemd
+    [ "$status" -eq 1 ] || { echo "status $status: $output"; return 1; }
+    [[ "$output" == *"did not finish within"* ]] || { echo "$output"; return 1; }
+    [[ "$(_calls)" == *"timeout -k 5 "*" dkms install"* ]]
+}
+
+@test "prepare and revert: a running apt stops them" {
+    _mk_server "$OLD"
+    ln -s "$T/var/lib/dpkg/lock" "$T/proc/1/fd/7"
+    run "$H" --prepare
+    [ "$status" -eq 1 ]; [ "$(_sha "$(_src)")" = "$BASE_SHA" ]
+    run "$H" --revert
+    [ "$status" -eq 1 ]
+}
+
+@test "hook: a failed source fix is exit 1 and leaves no stamp" {
+    sed -i '/^AWG_KMOD_PR218_EOF$/i +/* tampered */' "$H"
+    _mk_server "$OLD"
+    run "$H" --hook
+    [ "$status" -eq 1 ]
+    [ ! -e "$(_stamp)" ]
+}
+
+@test "hook: two registrations remove an old stamp" {
+    _mk_server "$OLD"
+    "$H" --hook >/dev/null 2>&1; [ -s "$(_stamp)" ]
+    mkdir -p "$T/usr/src/amneziawg-1.0.1" "$T/var/lib/dkms/amneziawg/1.0.1"
+    ln -s "$T/usr/src/amneziawg-1.0.1" "$T/var/lib/dkms/amneziawg/1.0.1/source"
+    run "$H" --hook
+    [ "$status" -eq 1 ]
+    [ ! -e "$(_stamp)" ]
+}
+
+@test "helper: not root is refused before anything" {
+    _mk_server "$OLD"
+    _stub id 'echo 1000'
+    run "$H" --repair
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"root privileges required"* ]]
+    [ -z "$(_calls)" ]
+}
+
+@test "repair: no registered source is exit 2 (so --finish is never reached)" {
+    run "$H" --repair
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"no AmneziaWG DKMS source is registered"* ]]
 }
 
 # ---------- arguments ----------
