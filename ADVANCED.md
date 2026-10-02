@@ -2288,9 +2288,9 @@ DSM в поддерживаемые платформы не входит: уст
      set -e
      cd /usr/src/amneziawg-1.0.0
      echo 'b14346040ce0188c47e2db2baad1a4f21aa784510f6c95bbb4aa58d5bbe691c9  compat/compat.h' | sha256sum -c -
-     curl -fsSL -o /tmp/pr218.diff https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/commit/62189503fa51bc049d826e226fdb49ee683f53f2.diff
+     curl -fsSL -o /root/pr218.diff https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/commit/62189503fa51bc049d826e226fdb49ee683f53f2.diff
      cp -p compat/compat.h /root/compat.h.orig
-     patch -p2 --forward < /tmp/pr218.diff
+     patch -p2 --forward < /root/pr218.diff
      echo '8d47a358b4df0b2187788ce6f88ad63128218de1be22c78b263ef3e5d770c26b  compat/compat.h' | sha256sum -c -
      )
      ```
