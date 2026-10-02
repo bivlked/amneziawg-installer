@@ -1036,20 +1036,25 @@ _sanitize_awg_dkms_conf() {
 # Stdout always carries one word, patch output goes to stderr. If
 # compat.h.awg-base is a symlink, a directory or a FIFO, apply on base and
 # revert on patched stop with error:backup; the backup type is checked again
-# before each read and replacement of it. All intermediate files live in a
-# temporary directory inside compat/; the hash of compat.h is checked again
-# right before it is replaced, and the swap is mv -T from that directory
-# into compat/ (same filesystem, so the rename is atomic). Mode and owner
-# come from the current compat.h (on apply and on revert). If the temporary
-# directory cannot be removed, the result stays as is (the swap is done), a
-# warning goes to stderr, and the next apply or revert removes leftover
-# .awg-kmod.* directories.
+# before each read of it, and it is written with mv -T, which never puts a
+# file into a directory and replaces a symlink without following it. All
+# intermediate files live in a temporary directory .awg-kmod.XXXXXX inside
+# compat/; the hash of compat.h is checked again right before it is
+# replaced, and the swap is mv -T from that directory into compat/ (same
+# filesystem, so the rename is atomic). Mode and owner come from the current
+# compat.h (on apply and on revert). The temporary directory is removed at
+# the end of the call; if that fails, the word and the exit code stay as
+# they are (a successful swap is not rolled back) and a warning goes to
+# stderr. Under the lock, apply and revert try to remove abandoned
+# directories of exactly that form (not symlinks).
 # Only apply and revert take the lock: flock on $AWG_KMOD_LOCK (default
 # /run/lock/amneziawg-kmod.lock; a symlink or a non-regular file is
-# error:lock), waiting $AWG_KMOD_LOCK_WAIT seconds (0-99999, default 0 - do
-# not wait; any other value is error:usage). A caller that already
-# holds this lock sets AWG_KMOD_LOCK_HELD=1 for that call only: a second
-# descriptor on the same file in one process would get error:busy. dpkg
+# error:lock), waiting $AWG_KMOD_LOCK_WAIT seconds: 0 or an integer 1-99999
+# without leading zeros, unset or empty means 0 (do not wait), anything else
+# is error:usage; check ignores it. A caller that already holds this lock
+# and serialises its own calls sets AWG_KMOD_LOCK_HELD=1 for that call only:
+# a second descriptor on the same file in one process would get error:busy
+# at once or after the wait. dpkg
 # does not take this lock, so the hash re-check narrows the race with a
 # package unpack but does not remove it.
 # The function body is byte-identical in awg_common.sh, awg_common_en.sh and
@@ -1084,8 +1089,10 @@ awg_kmod_compat_fix() {
                 out='error:busy'; break
             fi
         fi
-        if [[ "$mode" != check && -d "${src}/compat" ]]; then
-            rm -rf -- "${src}/compat/".awg-kmod.* 2>/dev/null || :
+        if [[ "$mode" != check && -d "${src}/compat" ]] \
+                && ! find "${src}/compat" -mindepth 1 -maxdepth 1 -type d -name '.awg-kmod.??????' \
+                    -exec rm -rf -- {} + 2>/dev/null; then
+            printf 'awg_kmod_compat_fix: cannot remove leftovers in %s\n' "${src}/compat" >&2 || :
         fi
         if [[ -L "$f" ]]; then
             cls=unsafe
