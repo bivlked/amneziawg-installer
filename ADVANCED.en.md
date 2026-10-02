@@ -2303,7 +2303,7 @@ it as a target.
      )
      ```
 
-     If the very first check prints `FAILED`, you have a different source, and this fix is not for it.
+     If the very first check prints `FAILED`, check the second hash (from the same directory): `echo '8d47a358b4df0b2187788ce6f88ad63128218de1be22c78b263ef3e5d770c26b  compat/compat.h' | sha256sum -c -`. If it matches, the fix is already applied; go to step 3. If not, you have a different source, and this fix is not for it.
   3. Build the module for the new kernel. Its full name is in the DKMS error and in `ls /lib/modules`, for example `7.0.0-38-generic`. Do not use `uname -r`, that is the current kernel:
 
      ```bash
