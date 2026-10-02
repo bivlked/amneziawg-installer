@@ -52,6 +52,9 @@ SYS_NET_DIR="/sys/class/net"
 # Регистрации и исходники DKMS (для --repair-module; тесты подменяют).
 DKMS_STATE_DIR="/var/lib/dkms"
 DKMS_SRC_PREFIX="/usr/src"
+# Таблица процессов и каталог dpkg (для _awg_dpkg_busy; тесты подменяют).
+AWG_PROC_DIR="/proc"
+AWG_DPKG_DIR="/var/lib/dpkg"
 AWG_BRANCH="${AWG_BRANCH:-v${SCRIPT_VERSION}}"
 COMMON_SCRIPT_URL="https://raw.githubusercontent.com/bivlked/amneziawg-installer/${AWG_BRANCH}/awg_common.sh"
 COMMON_SCRIPT_PATH="$AWG_DIR/awg_common.sh"
@@ -80,6 +83,7 @@ AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
 UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 REPAIR_MODULE=0
+_AWG_KMOD_T1=0
 # Помощник модуля ядра; тесты подменяют путь.
 AWG_ENSURE_HELPER=/usr/local/sbin/amneziawg-ensure-module
 _APT_UPDATED=0
@@ -322,9 +326,9 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-# --repair-module работает только сам по себе: с --uninstall, --force, --yes,
-# параметрами настройки и прочим он не сочетается (например, с --uninstall
-# --yes он иначе ушёл бы в удаление). Проверка до любой диспетчеризации.
+# --repair-module работает только сам по себе: другие флаги (кроме --verbose и
+# --no-color) он не выполняет, и чтобы человек не думал, что они действуют,
+# такое сочетание отклоняется. Проверка до любой диспетчеризации.
 if [[ "$REPAIR_MODULE" -eq 1 ]]; then
     for _a in "${_AWG_ARGV[@]}"; do
         case "$_a" in
@@ -1686,25 +1690,44 @@ install_packages() {
         # и новее (исходник модуля из PPA не учитывает бэкпорт udp_tunnel,
         # помощник накладывает правку #218), либо после in-place upgrade с 24.04
         # остались заголовки 6.8 под gcc-13 (v5.13.0). Помощник правит исходник
-        # и собирает модуль; дальше донастройка dpkg и проверка, что каждый
-        # запрошенный пакет действительно стоит: успешный configure этого не
-        # доказывает (apt мог упасть до скачивания).
+        # и собирает модуль (--repair); код 1 - у текущего ядра модуль есть, а у
+        # другого нет (сценарий v5.13.0), установка продолжается с
+        # предупреждением. Донастройку делает --finish: он не даст сделать
+        # загрузочным недонастроенное ядро без модуля. Потом проверка, что
+        # каждый запрошенный пакет действительно стоит: успешная донастройка
+        # этого не доказывает (apt мог упасть до скачивания).
         if [[ "${_AWG_KMOD_T1:-0}" -eq 1 && -x "$AWG_ENSURE_HELPER" ]] \
                 && _pkg_present amneziawg-dkms; then
             log_warn "apt install не завершился - восстанавливаю модуль AmneziaWG (исходник и сборка)..."
-            local _hout _hrc
-            _hout="$(mktemp)" && _install_temp_files+=("$_hout") || _hout=/dev/null
+            local _hout _hrc _frc=1 _bad
+            if _hout="$(mktemp)"; then
+                _install_temp_files+=("$_hout")
+            else
+                log_warn "Не удалось создать временный файл: точную причину отказа модуля назвать не получится."
+                _hout=/dev/null
+            fi
             "$AWG_ENSURE_HELPER" --repair 2>&1 | tee "$_hout"
             _hrc=${PIPESTATUS[0]}
-            if [[ "$_hrc" -le 1 ]] \
-               && DEBIAN_FRONTEND=noninteractive dpkg --configure -a \
-               && _pkgs_installed_ok "${to_install[@]}"; then
-                log "Модуль собран для $(uname -r), dpkg сконфигурирован."
+            if [[ "$_hrc" -le 1 ]]; then
+                "$AWG_ENSURE_HELPER" --finish 2>&1 | tee -a "$_hout"
+                _frc=${PIPESTATUS[0]}
+            fi
+            # Вывод помощника - и в журнал установки: на экране он уедет вверх.
+            if [[ "$_hout" != /dev/null ]]; then
+                { echo "--- amneziawg-ensure-module ---"; cat "$_hout"; } >> "$LOG_FILE" 2>/dev/null || true
+            fi
+            _bad=$(sed -n 's/.*kernel \([^ :]*\): NOT built.*/\1/p' "$_hout" 2>/dev/null | sort -u | tr '\n' ' ')
+            if [[ "$_hrc" -eq 1 && -n "$_bad" ]]; then
+                log_warn "Модуль собран для текущего ядра, но не для: ${_bad}- после перезагрузки в такое ядро туннеля не будет."
+            fi
+            if [[ "$_hrc" -le 1 && "$_frc" -eq 0 ]] && _pkgs_installed_ok "${to_install[@]}"; then
+                log "Модуль собран для $(uname -r), пакеты донастроены."
                 log "Пакеты установлены."
                 return 0
             fi
-            if grep -qF '[known-issue:kernel-70-udp-tunnel]' "$_hout" 2>/dev/null; then
-                die "Модуль AmneziaWG не собирается под ядро $(uname -r): в ядре изменилась функция setup_udp_tunnel_sock, а исходник модуля из PPA этого не учитывает, и проверенная правка к этому исходнику не подходит (он отличается от известного). Что можно сделать: поставить ядро без этого изменения (на Ubuntu 24.04 - обычное linux-generic вместо HWE) или дождаться исправленного модуля в PPA. Подробности: ADVANCED.md, раздел про ядро 7.0 (kernel-70-backport-adv)."
+            _bad=$(sed -n 's/.*kernel \([^ :]*\): NOT built \[known-issue:kernel-70-udp-tunnel\].*/\1/p' "$_hout" 2>/dev/null | sort -u | tr '\n' ' ')
+            if [[ -n "$_bad" ]]; then
+                die "Модуль AmneziaWG не собрался под ядро ${_bad% }: в ядре изменилась функция setup_udp_tunnel_sock, а этот исходник модуля её не учитывает. Правка, которую накладывает помощник, к нему не применилась; почему - в строках source выше (исходник отличается от проверенного, правка отключена через --revert или не наложилась). Что можно сделать: ядро без этого изменения (на Ubuntu 24.04 - обычное linux-generic вместо HWE) или исправленный модуль в PPA. Подробности: ADVANCED.md, раздел kernel-70-backport-adv."
             fi
         fi
         die "Ошибка установки пакетов."
@@ -2950,16 +2973,19 @@ _awg_kmod_prebuilt_present() {
         | awk '$NF != "not-installed" && $NF != "config-files" {print $1}')" ]]
 }
 
-# _awg_dpkg_busy : 0, если apt или dpkg работают ИЛИ это не удалось проверить;
-# 1, если точно свободно. Держателя файлов блокировки dpkg ищем по /proc, а не
-# через fuser: psmisc может не стоять, и fuser ... || true тогда молча
-# отвечал бы «свободно».
+# _awg_dpkg_busy : 0, если apt или dpkg работают ИЛИ это не удалось проверить
+# (нет таблицы процессов, чей-то список дескрипторов не читается); 1, если
+# точно свободно. Держателя файлов блокировки dpkg ищем по /proc, а не через
+# fuser: psmisc может не стоять, и fuser ... || true тогда молча отвечал бы
+# «свободно».
 _awg_dpkg_busy() {
     local p
-    p=$(find /proc -mindepth 1 -maxdepth 1 -name '[0-9]*' -print -quit 2>/dev/null)
+    p=$(find "$AWG_PROC_DIR" -mindepth 1 -maxdepth 1 -name '[0-9]*' -print -quit 2>/dev/null)
     [[ -n "$p" ]] || return 0
-    p=$(find /proc/[0-9]*/fd -mindepth 1 -maxdepth 1 \
-            \( -lname /var/lib/dpkg/lock-frontend -o -lname /var/lib/dpkg/lock \) -print -quit 2>/dev/null)
+    p=$(find "$AWG_PROC_DIR"/[0-9]*/fd -maxdepth 0 -type d ! -readable -print -quit 2>/dev/null)
+    [[ -z "$p" ]] || return 0
+    p=$(find "$AWG_PROC_DIR"/[0-9]*/fd -mindepth 1 -maxdepth 1 \
+            \( -lname "$AWG_DPKG_DIR/lock-frontend" -o -lname "$AWG_DPKG_DIR/lock" \) -print -quit 2>/dev/null)
     [[ -n "$p" ]]
 }
 
@@ -3137,7 +3163,7 @@ _die_upgrade_failed() {
         die "Обновление системы не прошло, и dpkg-lock занят процессами:${lock_holder}. Дождитесь их завершения либо выполните: systemctl stop unattended-upgrades; dpkg --configure -a - и запустите скрипт снова."
     fi
     if _pkg_present amneziawg-dkms; then
-        log_warn "На этом сервере уже стоит модуль AmneziaWG. Если обновление ядра (7.0.0-38 и новее) оставило пакеты недонастроенными, модуль и apt чинит: sudo bash $0 --repair-module"
+        log_warn "На этом сервере уже стоит модуль AmneziaWG. Если обновление ядра (7.0.0-38 и новее) оставило пакеты недонастроенными, модуль собирает и недонастроенные пакеты донастраивает: sudo bash $0 --repair-module"
     fi
     # Холостой прогон (-s) спрашивает apt, сходится ли план. Чаще всего его
     # отказ означает зависимости, но не только: непарсимый sources.list,
@@ -4585,22 +4611,21 @@ step_uninstall() {
     exit 0
 }
 
-# ==============================================================================
-# ШАГ 0: Инициализация
-# ==============================================================================
-
 # --repair-module: лечение модуля ядра на УЖЕ установленном сервере (трек K,
 # ядро 7.0.0-38 и новее). Машину состояний не трогает и ни одной транзакции apt
 # не делает: обычный повтор установщика здесь не годится, потому что шаг 1
 # начинается с apt-get upgrade, а он на таком сервере падает раньше, чем
 # появится новый помощник. Разворачивает новый помощник и его обвязку, затем
-# помощник правит исходник и собирает модуль для всех ядер с заголовками
-# (--repair), и только если это удалось - донастраивает пакеты, когда модуль
-# есть у каждого ядра, которое может загрузиться (--finish). Не перезагружает.
+# помощник правит исходник и собирает модуль для ядер с заголовками, где его
+# нет (--repair), и только если это удалось - донастраивает пакеты
+# (dpkg --configure -a через --finish; тот не даёт сделать загрузочным
+# недонастроенное ядро без модуля). Модуль не загружает, туннель не
+# перезапускает, не перезагружает.
 # Допуск положительный: пакет amneziawg-dkms есть, не в hold (hold ставят
-# пиновый 2.0 и ARM-пребилт), исходник принадлежит пакету, регистрация одна.
+# пиновый 2.0 и ARM-пребилт), регистрация в DKMS одна и указывает на исходник
+# пакета, apt не работает. Любой отказ - до каких-либо изменений.
 repair_module_cmd() {
-    local rc=0 hrc=0 frc=0 ver owner
+    local rc=0 hrc=0 frc=0 ver owner src
     local -a reg=()
     if [[ "$(id -u)" -ne 0 ]]; then log_error "Запустите от root: sudo bash $0 --repair-module"; exit 1; fi
     log "### Восстановление модуля ядра AmneziaWG (--repair-module) ###"
@@ -4615,34 +4640,52 @@ repair_module_cmd() {
     fi
     if ! command -v dkms >/dev/null 2>&1; then log_error "dkms не установлен."; exit 1; fi
     shopt -s nullglob; reg=("$DKMS_STATE_DIR"/amneziawg/*/source); shopt -u nullglob
-    if [[ ${#reg[@]} -ne 1 ]]; then
+    if [[ ${#reg[@]} -eq 0 ]]; then
+        log_error "Пакет amneziawg-dkms стоит, но модуль не зарегистрирован в DKMS. Ничего не меняю; ручной путь - ADVANCED.md, раздел kernel-70-backport-adv."; exit 1
+    fi
+    if [[ ${#reg[@]} -gt 1 ]]; then
         log_error "Регистраций amneziawg в DKMS: ${#reg[@]}, ожидалась одна. Ничего не меняю."; exit 1
     fi
     ver="${reg[0]%/source}"; ver="${ver##*/}"
-    owner=$(dpkg -S "${DKMS_SRC_PREFIX}/amneziawg-${ver}/dkms.conf" 2>/dev/null || true)
+    src=$(readlink -f -- "${reg[0]}" 2>/dev/null || true)
+    if [[ -z "$src" || ! -d "$src" || "$src" != "${DKMS_SRC_PREFIX}/amneziawg-${ver}" ]]; then
+        log_error "Регистрация amneziawg/${ver} в DKMS указывает на ${src:-<неразрешимый путь>}, а не на каталог ${DKMS_SRC_PREFIX}/amneziawg-${ver}. Ничего не меняю."; exit 1
+    fi
+    if ! owner=$(dpkg -S "${src}/dkms.conf" 2>/dev/null); then
+        log_error "dpkg не знает пакета, которому принадлежит ${src}/dkms.conf. Ничего не меняю."; exit 1
+    fi
     if [[ "${owner%%:*}" != amneziawg-dkms ]]; then
-        log_error "Исходник ${DKMS_SRC_PREFIX}/amneziawg-${ver} не принадлежит пакету amneziawg-dkms. Ничего не меняю."; exit 1
+        log_error "Исходник ${src} принадлежит пакету ${owner%%:*}, а не amneziawg-dkms. Ничего не меняю."; exit 1
     fi
     if _awg_dpkg_busy; then
         log_error "Работает apt или dpkg (или это не удалось проверить). Дождитесь окончания и запустите снова."; exit 1
     fi
     _awg_deploy_ensure_helper
     if ! _awg_deploy_ensure_units; then rc=1; log_error "Обвязка помощника развёрнута не полностью, подробности выше."; fi
-    "$AWG_ENSURE_HELPER" --repair || hrc=$?
+    "$AWG_ENSURE_HELPER" --repair 2>&1 | tee -a "$LOG_FILE"
+    hrc=${PIPESTATUS[0]}
     if [[ "$hrc" -eq 0 ]]; then
-        "$AWG_ENSURE_HELPER" --finish || frc=$?
+        "$AWG_ENSURE_HELPER" --finish 2>&1 | tee -a "$LOG_FILE"
+        frc=${PIPESTATUS[0]}
     else
         frc=1
-        log_warn "Модуль собран не для всех ядер (код $hrc): донастройку пакетов (dpkg --configure -a) не запускаю."
+        log_warn "Помощник --repair завершился с кодом $hrc, причина в строках выше: донастройку пакетов (dpkg --configure -a) не запускаю."
     fi
     log "Время проверки: $(date '+%Y-%m-%d %H:%M:%S'). Изменения apt после этого момента отчёт не учитывает."
     if [[ "$rc" -eq 0 && "$hrc" -eq 0 && "$frc" -eq 0 ]]; then
-        log "Готово: модуль собран для всех ядер, пакеты донастроены. Перезагрузку скрипт не делает."
+        log "Готово: модуль на диске у всех ядер с заголовками, недонастроенных пакетов нет (dpkg --audit пуст). Перезагрузку скрипт не делает."
+        if [[ ! -d /sys/module/amneziawg ]]; then
+            log_warn "Модуль сейчас не загружен, туннель не работает. Перезагрузите сервер или выполните: sudo modprobe amneziawg && sudo systemctl restart awg-quick@awg0"
+        fi
         exit 0
     fi
     log_error "Восстановление не завершено (обвязка: $rc, сборка: $hrc, пакеты: $frc). Подробности выше; ручной путь - ADVANCED.md, раздел kernel-70-backport-adv."
     exit 1
 }
+
+# ==============================================================================
+# ШАГ 0: Инициализация
+# ==============================================================================
 
 initialize_setup() {
     if [ "$(id -u)" -ne 0 ]; then die "Запустите скрипт от root (sudo bash $0)."; fi
@@ -5900,8 +5943,9 @@ PPASRC
         fi
     fi
 
-    # Трек K (ядро 7.0): помощник разворачиваем ДО любой транзакции apt этого
-    # шага, потому что исходник модуля правит и модуль собирает именно он.
+    # Трек K (ядро 7.0): помощник разворачиваем ДО установки пакетов на пути
+    # PPA/DKMS (и до gcc-13 ниже), потому что исходник модуля правит и модуль
+    # собирает именно он.
     _awg_deploy_ensure_helper
     if [[ "$use_pinned_awg2" -eq 0 ]]; then
         # Запасной путь install_packages (T1) включается только здесь, на пути
@@ -5982,10 +6026,11 @@ PPASRC
     fi
     install_packages "${packages[@]}"
     if [[ "$use_pinned_awg2" -eq 0 ]]; then
-        # Упреждающая правка исходника (трек K). Текущее ядро уже собрано и без
-        # неё; она нужна будущим ядрам с бэкпортом udp_tunnel (7.0.0-38 и
-        # новее), и делаем её ДО мета-пакета заголовков ниже: он может привезти
-        # заголовки нового ядра, и сборка под них пойдёт сразу.
+        # Упреждающая правка исходника (трек K) для будущих ядер с бэкпортом
+        # udp_tunnel (7.0.0-38 и новее). Если текущее ядро уже такое, исходник
+        # поправили раннее --prepare или запасной путь install_packages, и этот
+        # вызов ничего не меняет. Делаем ДО мета-пакета заголовков ниже: он
+        # может привезти заголовки нового ядра, и сборка под них пойдёт сразу.
         "$AWG_ENSURE_HELPER" --prepare \
             || log_warn "Подготовка исходника модуля для будущих ядер не удалась, подробности выше."
     fi
@@ -6080,8 +6125,8 @@ PPASRC
 # Помощник amneziawg-ensure-module (v5.12.0+) и его обвязка. Две функции, потому
 # что шаг 2 разворачивает помощник РАНЬШЕ установки пакетов (трек K: в нём
 # единственная реализация правки исходника модуля под ядро 7.0 и сборки,
-# установщик зовёт его режимами --prepare и --repair), а хук apt, logrotate и
-# юнит - на прежнем месте, после пакетов. --repair-module зовёт обе.
+# установщик зовёт его режимами --prepare, --repair и --finish), а хук apt,
+# logrotate и юнит - на прежнем месте, после пакетов. --repair-module зовёт обе.
 _awg_deploy_ensure_helper() {
     # v5.12.0: standalone helper /usr/local/sbin/amneziawg-ensure-module
     # вызывается из apt hook (DPkg::Post-Invoke) и из Phase 4 systemd-юнита.
@@ -6111,21 +6156,27 @@ _awg_deploy_ensure_helper() {
 #                the old one. Fixes the module source if it is the known
 #                base (kernel 7.0 udp_tunnel change), builds the module for
 #                every kernel with headers that lacks it, and keeps a stamp
-#                so routine apt runs stay quiet. If another job holds the
-#                lock it does nothing; the next apt run or the boot repeats.
+#                so routine apt runs stay quiet. If another helper job holds
+#                the lock it does nothing (the next apt run or the boot
+#                repeats); if the lock cannot be used at all it says so and
+#                exits 1.
 #   --systemd  - from amneziawg-ensure-module.service at boot, ordered
 #                Before=awg-quick@awg0.service. The running kernel only:
-#                loads the module, building it first if it is missing, all
-#                within 280 s (the unit allows 300). Exit 1 if it cannot be
-#                loaded, so systemd marks the unit failed.
-#   --repair   - outside apt (installer, manage repair-module): fix the
-#                source and build for every kernel with headers. Exit 0 all
-#                done, 1 the running kernel has its module but something
-#                else failed, 2 the running kernel has none or the job could
-#                not run.
+#                loads the module; if the file is missing it builds it, if
+#                the file is there but does not load it rebuilds it once.
+#                Every step is bounded by what is left of 280 s (the unit
+#                allows 300). Exit 1 if the module is not loaded, so systemd
+#                marks the unit failed.
+#   --repair   - outside apt (the installer: step 2 fallback and
+#                --repair-module): fix the source, build for every kernel
+#                with headers that lacks the module, refresh the module
+#                index of each. Exit 0 all done, 1 the running kernel has
+#                its module but something else failed, 2 the running kernel
+#                has none or the job could not run.
 #   --prepare  - outside apt: fix the source only, no build.
-#   --finish   - outside apt, after a successful --repair: dpkg --configure
-#                -a, only if every kernel that can boot has the module.
+#   --finish   - outside apt; the caller runs it only after a successful
+#                --repair: dpkg --configure -a, unless that would make a
+#                kernel bootable that has no module.
 #   --revert, --enable - support: undo the source fix and keep it off, or
 #                allow it again.
 #   --version  - prints "amneziawg-ensure-module 2".
@@ -6356,6 +6407,7 @@ LOCK_DIR=/run/amneziawg
 BOOT_DIR=/boot
 PROC_DIR=/proc
 DPKG_DIR=/var/lib/dpkg
+SYS_MODULE_DIR=/sys/module
 STAMP_FILE="${STAMP_DIR}/ensure-module.stamp"
 DISABLED_MARK="${STAMP_DIR}/kmod-fix.disabled"
 KNOWN_ISSUE="[known-issue:kernel-70-udp-tunnel]"
@@ -6371,8 +6423,10 @@ has_module() { # kernel -> 0 if a non-empty amneziawg.ko* file is on disk
     [[ -n "$(find "${MODULES_DIR}/$1" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]]
 }
 
-# One job at a time for everything that changes the module source, builds
-# the module or touches the stamp. 0 locked, 1 busy, 2 cannot lock.
+# Serializes the helper's own modes (hook, boot, repair, prepare, revert,
+# enable) around the module source, the builds and the stamp. dpkg and the
+# kernel's own DKMS hooks do not take it. 0 locked, 1 busy (or flock
+# refused), 2 the lock cannot be used at all.
 LOCK_FD=""
 kmod_lock() { # seconds to wait (0 = do not wait)
     local f="${LOCK_DIR}/kmod.lock"
@@ -6390,14 +6444,20 @@ kmod_lock() { # seconds to wait (0 = do not wait)
     fi
     return 1
 }
+lock_unusable() {
+    log_line "ERROR: cannot use ${LOCK_DIR}/kmod.lock (flock missing, or the path is a symlink or not a directory/regular file); nothing done" >&2
+}
 
 # Is a package manager running? Looks for any process holding the dpkg
 # lock files open (no fuser: psmisc may be missing, and a missing tool
-# must not read as "free"). 0 busy, 1 free, 2 cannot tell.
+# must not read as "free"). 0 busy, 1 free, 2 cannot tell (no process
+# table, or some process's fd list cannot be read).
 dpkg_busy() {
     local p
     p=$(find "$PROC_DIR" -mindepth 1 -maxdepth 1 -name '[0-9]*' -print -quit 2>/dev/null || true)
     [[ -n "$p" ]] || return 2
+    p=$(find "$PROC_DIR"/[0-9]*/fd -maxdepth 0 -type d ! -readable -print -quit 2>/dev/null || true)
+    [[ -z "$p" ]] || return 2
     p=$(find "$PROC_DIR"/[0-9]*/fd -mindepth 1 -maxdepth 1 \
             \( -lname "${DPKG_DIR}/lock-frontend" -o -lname "${DPKG_DIR}/lock" \) -print -quit 2>/dev/null || true)
     [[ -n "$p" ]] && return 0
@@ -6409,18 +6469,19 @@ require_dpkg_idle() {
     case "$rc" in
         1) return 0 ;;
         0) log_line "ERROR: apt or dpkg is running; wait for it to finish and run this again" >&2 ;;
-        *) log_line "ERROR: cannot tell whether apt or dpkg is running (${PROC_DIR} unreadable)" >&2 ;;
+        *) log_line "ERROR: cannot tell whether apt or dpkg is running (${PROC_DIR} not fully readable)" >&2 ;;
     esac
     return 1
 }
 
 # The one registered AmneziaWG DKMS source. Sets SRC_VER and SRC_DIR.
 # 0 found, 1 none registered, 2 ambiguous (several versions, a broken link,
-# a path outside ${SRC_PREFIX}/amneziawg-<version>): then nothing is changed
-# and nothing is built, every entry is reported.
+# a path outside ${SRC_PREFIX}/amneziawg-<version>): then the source is not
+# touched, nothing is built and every registration is listed.
 SRC_VER="" SRC_DIR=""
-kmod_source() { # quiet (1 = report only problems)
+kmod_source() { # quiet (1 = list registrations only when something is wrong)
     local e ver dir n=0 bad=0 v="" d=""
+    local -a lines=()
     SRC_VER=""; SRC_DIR=""
     for e in "${DKMS_DIR}"/amneziawg/*/source; do
         [[ -e "$e" || -L "$e" ]] || continue
@@ -6429,17 +6490,23 @@ kmod_source() { # quiet (1 = report only problems)
         dir=$(readlink -f -- "$e" 2>/dev/null || true)
         if [[ -z "$dir" || ! -d "$dir" || "$dir" != "${SRC_PREFIX}/amneziawg-${ver}" ]]; then
             bad=1
-            log_line "WARN: amneziawg/${ver}: source ${e} -> ${dir:-<broken>} is not ${SRC_PREFIX}/amneziawg-${ver}"
-        elif [[ "${1:-0}" != 1 ]]; then
-            log_line "source: amneziawg/${ver} -> ${dir}"
+            lines+=("WARN: amneziawg/${ver}: source ${e} -> ${dir:-<unresolved>} is not the directory ${SRC_PREFIX}/amneziawg-${ver}")
+        else
+            lines+=("source: amneziawg/${ver} -> ${dir}")
         fi
         v="$ver"; d="$dir"
     done
     if [[ "$n" -eq 0 ]]; then return 1; fi
     if [[ "$n" -gt 1 || "$bad" -eq 1 ]]; then
-        log_line "WARN: ${n} AmneziaWG DKMS registrations, or a broken one: the source is left as is and nothing is built" >&2
+        for e in "${lines[@]}"; do log_line "$e" >&2; done
+        if [[ "$n" -gt 1 ]]; then
+            log_line "WARN: ${n} AmneziaWG DKMS registrations: the source is left as is and nothing is built" >&2
+        else
+            log_line "WARN: the AmneziaWG DKMS registration is broken: the source is left as is and nothing is built" >&2
+        fi
         return 2
     fi
+    [[ "${1:-0}" == 1 ]] || log_line "${lines[0]}"
     SRC_VER="$v"; SRC_DIR="$d"
     return 0
 }
@@ -6475,7 +6542,9 @@ kmod_prepare() {
         if out=$(AWG_KMOD_LOCK_HELD=1 awg_kmod_compat_fix apply "$SRC_DIR" "$diff"); then
             case "$out" in
                 applied) log_line "source: kernel 7.0 udp_tunnel fix applied to ${SRC_DIR}" ;;
-                already|foreign|absent) : ;;
+                already) : ;;
+                foreign) log_line "source: ${SRC_DIR}/compat/compat.h differs from the known base; fix not applied (the source may already handle kernel 7.0)" ;;
+                absent) log_line "WARN: source: ${SRC_DIR}/compat/compat.h not found; fix not applied" >&2 ;;
                 *) rc=1 ;;
             esac
         else
@@ -6505,30 +6574,30 @@ collect_targets() {
 }
 
 # Build the module for one kernel. 0 built and on disk, 1 not.
-# A make.log counts only if it is newer than the attempt start (a marker
-# file, compared with full timestamp precision).
+# A make.log counts as this attempt's only if it was modified after the
+# second before the attempt started: filesystem timestamps can be coarser
+# than the gap between starting dkms and its first write.
 build_kernel() { # kernel [timeout-seconds] [--force]
-    local k="$1" limit="${2:-0}" force="${3:-}" t0="" log="" rc=0
+    local k="$1" limit="${2:-0}" force="${3:-}" t0 log="" rc=0
     local -a cmd=(dkms install -m amneziawg -v "$SRC_VER" -k "$k")
     [[ -n "$force" ]] && cmd+=(--force)
     [[ "$limit" -gt 0 ]] && cmd=(timeout -k 5 "$limit" "${cmd[@]}")
-    t0=$(mktemp "${LOCK_DIR}/.build.XXXXXX" 2>/dev/null || true)
+    t0=$(( $(date +%s) - 1 ))
     log_line "dkms install -m amneziawg -v ${SRC_VER} -k ${k}${force:+ --force}"
     if "${cmd[@]}"; then rc=0; else rc=$?; fi
-    if [[ -n "$t0" ]]; then
-        log=$(find "${DKMS_DIR}/amneziawg/${SRC_VER}" -name make.log -newer "$t0" -print -quit 2>/dev/null || true)
-        rm -f -- "$t0" 2>/dev/null || :
-    fi
+    log=$(find "${DKMS_DIR}/amneziawg/${SRC_VER}" -name make.log -newermt "@${t0}" -print -quit 2>/dev/null || true)
     if [[ "$rc" -eq 0 ]] && has_module "$k"; then
         log_line "kernel ${k}: module built"
         return 0
     fi
-    if [[ -n "$log" ]] && grep -q "setup_udp_tunnel_sock.*incompatible pointer type" "$log" 2>/dev/null; then
-        log_line "kernel ${k}: NOT built ${KNOWN_ISSUE}: kernel 7.0 changed setup_udp_tunnel_sock and this module source does not handle it yet (see ADVANCED.md, kernel-70-backport-adv); log: ${log}" >&2
+    if [[ "$limit" -gt 0 && ( "$rc" -eq 124 || "$rc" -eq 137 ) ]]; then
+        log_line "kernel ${k}: NOT built: the build did not finish within ${limit} s" >&2
+    elif [[ -n "$log" ]] && grep -q "setup_udp_tunnel_sock.*incompatible pointer type" "$log" 2>/dev/null; then
+        log_line "kernel ${k}: NOT built ${KNOWN_ISSUE}: kernel 7.0 changed setup_udp_tunnel_sock and this module source does not handle it (see ADVANCED.md, kernel-70-backport-adv); log: ${log}" >&2
     elif [[ -n "$log" ]]; then
         log_line "kernel ${k}: NOT built (dkms rc=${rc}); log: ${log}" >&2
     else
-        log_line "kernel ${k}: NOT built (dkms rc=${rc}); no fresh make.log" >&2
+        log_line "kernel ${k}: NOT built (dkms rc=${rc}); dkms wrote no make.log in this attempt" >&2
     fi
     if has_module "$k"; then
         log_line "kernel ${k}: a module from an earlier build is still on disk" >&2
@@ -6537,8 +6606,9 @@ build_kernel() { # kernel [timeout-seconds] [--force]
 }
 
 # Stamp: written only when the source is prepared, every target has the
-# module on disk and no build failed in this run; otherwise the old one is
-# removed so it cannot suppress the next attempt. Lock held by the caller.
+# module on disk, depmod passed for each and no build failed in this run;
+# otherwise the old one is removed so it cannot suppress the next attempt.
+# Lock held by the caller.
 stamp_state() {
     local k m s
     s="v2 src=${SRC_VER}:${SRC_DIR}:$(src_sha)"
@@ -6571,7 +6641,8 @@ snapshot() {
 }
 
 # Prepare the source (sets PREP_FAILED), then build every target that has
-# no module (sets BUILD_FAILED). Lock held by the caller.
+# no module and refresh the module index of every target that has one
+# (sets BUILD_FAILED). Lock held by the caller.
 BUILD_FAILED=0 PREP_FAILED=0
 prepare_source() {
     local cfg
@@ -6586,8 +6657,9 @@ build_targets() {
     local k
     BUILD_FAILED=0
     for k in "${TARGETS[@]}"; do
-        has_module "$k" && continue
-        if ! build_kernel "$k"; then BUILD_FAILED=1; continue; fi
+        if ! has_module "$k" && ! build_kernel "$k"; then BUILD_FAILED=1; continue; fi
+        # Also for a module left from an earlier run: a depmod that failed
+        # then must not turn into a cached success now.
         if ! depmod -a "$k" 2>/dev/null; then
             log_line "WARN: depmod -a ${k} failed" >&2; BUILD_FAILED=1
         fi
@@ -6603,13 +6675,21 @@ all_targets_have_module() {
 # ---- modes ----
 
 mode_hook() {
-    local rc=0 state
-    command -v dkms >/dev/null 2>&1 || exit 0
-    if ! kmod_lock 0; then
+    local rc=0 lrc=0 state
+    if ! command -v dkms >/dev/null 2>&1; then
+        log_line "WARN: dkms is not installed - nothing to do"
+        exit 0
+    fi
+    kmod_lock 0 || lrc=$?
+    if [[ "$lrc" -eq 1 ]]; then
         # Busy: another job (a repair, the boot unit) is on it. Do nothing and
         # leave the stamp alone; the next apt run or the boot repeats.
         log_line "another AmneziaWG module job is running; skipped"
         exit 0
+    fi
+    if [[ "$lrc" -ne 0 ]]; then
+        # Nobody can hold an unusable lock, so the stamp is ours to drop.
+        lock_unusable; stamp_clear; exit 1
     fi
     kmod_source 1 || rc=$?
     if [[ "$rc" -eq 1 ]]; then exit 0; fi
@@ -6636,61 +6716,119 @@ mode_hook() {
     exit "$rc"
 }
 
-# Boot: the running kernel only, inside one deadline that fits the unit's
-# TimeoutStartSec=300. Other kernels are built by the hook and --repair.
+# Boot: the running kernel only. Every step is bounded by what is left of
+# a 280 s budget, so the helper reports before systemd's 300 s limit stops
+# it. Other kernels are built by the hook and --repair. Never writes the
+# stamp.
 mode_systemd() {
-    local k deadline left built=0
+    local k deadline left lrc=0 built=0 before="" after=""
+    PROBE_RAN=0
     k=$(uname -r)
     deadline=$((SECONDS + 280))
+    # 0 loaded; 1 modprobe ran and the module is not loaded; 3 no time left.
     try_load() {
-        left=$((deadline - SECONDS)); [[ "$left" -gt 5 ]] || return 1
+        left=$((deadline - SECONDS))
+        if [[ "$left" -le 5 ]]; then
+            log_line "ERROR: the boot time budget is used up; modprobe not attempted" >&2; return 3
+        fi
+        PROBE_RAN=1
         log_line "modprobe amneziawg"
-        timeout -k 5 "$left" modprobe amneziawg 2>&1 || return 1
-        lsmod 2>/dev/null | grep -q '^amneziawg ' || return 1
-        return 0
+        if timeout -k 5 "$left" modprobe amneziawg 2>&1 && [[ -d "${SYS_MODULE_DIR}/amneziawg" ]]; then
+            return 0
+        fi
+        return 1
     }
-    if has_module "$k" && try_load; then
-        log_line "amneziawg module loaded for ${k}"; exit 0
-    fi
-    if ! command -v dkms >/dev/null 2>&1; then
-        log_line "ERROR: no module for ${k} and dkms is not installed" >&2; exit 1
-    fi
-    if ! require_dpkg_idle; then try_load && exit 0; exit 1; fi
-    left=$((deadline - SECONDS)); [[ "$left" -gt 20 ]] && left=20
-    if [[ "$left" -le 0 ]] || ! kmod_lock "$left"; then
-        log_line "ERROR: another AmneziaWG module job holds the lock; not building for ${k} now" >&2
-        try_load && exit 0
+    finish_boot() { # the final verdict
+        if [[ -d "${SYS_MODULE_DIR}/amneziawg" ]]; then log_line "amneziawg module loaded for ${k}"; exit 0; fi
+        if [[ "$PROBE_RAN" -eq 1 ]] && has_module "$k"; then
+            log_line "ERROR: modprobe amneziawg failed for ${k} although the module file is on disk (one possible cause: Secure Boot rejected its signature)" >&2
+        elif ! has_module "$k"; then
+            log_line "ERROR: no AmneziaWG module for the running kernel ${k}; see the lines above" >&2
+        else
+            log_line "ERROR: the module for ${k} was not loaded; see the lines above" >&2
+        fi
         exit 1
+    }
+    if has_module "$k" && try_load; then finish_boot; fi
+    if ! command -v dkms >/dev/null 2>&1; then
+        log_line "ERROR: dkms is not installed; cannot build the module for ${k}" >&2; finish_boot
     fi
-    if ! kmod_source 1; then try_load && exit 0; exit 1; fi
-    kmod_prepare || :
+    left=$((deadline - SECONDS)); [[ "$left" -gt 20 ]] && left=20
+    if [[ "$left" -le 0 ]]; then
+        log_line "ERROR: the boot time budget is used up; not building for ${k}" >&2; finish_boot
+    fi
+    kmod_lock "$left" || lrc=$?
+    if [[ "$lrc" -eq 1 ]]; then
+        log_line "ERROR: another AmneziaWG module job held the lock for ${left} s; not building for ${k} now" >&2
+        try_load || :; finish_boot
+    elif [[ "$lrc" -ne 0 ]]; then
+        lock_unusable; try_load || :; finish_boot
+    fi
+    if ! require_dpkg_idle; then try_load || :; finish_boot; fi
+    lrc=0; kmod_source 1 || lrc=$?
+    if [[ "$lrc" -eq 1 ]]; then
+        log_line "ERROR: no AmneziaWG DKMS source is registered; cannot build for ${k}" >&2
+        try_load || :; finish_boot
+    elif [[ "$lrc" -ne 0 ]]; then
+        try_load || :; finish_boot
+    fi
+    left=$((deadline - SECONDS))
+    if [[ "$left" -ge 60 ]]; then
+        kmod_prepare || :
+    else
+        log_line "WARN: not enough of the boot time budget left to prepare the source" >&2
+    fi
+    before=$(snapshot)
     left=$((deadline - SECONDS - 15))
     if has_module "$k"; then
         # On disk but did not load: one forced rebuild if time allows.
-        if [[ "$left" -ge 90 ]] && build_kernel "$k" "$left" --force; then built=1; fi
-    elif [[ "$left" -ge 30 ]] && build_kernel "$k" "$left"; then
-        built=1
+        if [[ "$left" -ge 90 ]]; then
+            build_kernel "$k" "$left" --force && built=1
+        else
+            log_line "WARN: not enough of the boot time budget left to rebuild the module for ${k}" >&2
+        fi
+    elif [[ "$left" -ge 30 ]]; then
+        build_kernel "$k" "$left" && built=1
+    else
+        log_line "ERROR: not enough of the boot time budget left to build the module for ${k}" >&2
     fi
-    if [[ "$built" -eq 1 ]]; then depmod -a "$k" 2>/dev/null || log_line "WARN: depmod -a ${k} failed" >&2; fi
-    if try_load; then log_line "amneziawg module loaded for ${k}"; exit 0; fi
-    log_line "ERROR: modprobe amneziawg failed for running kernel ${k} (a module that builds but does not load can also mean Secure Boot rejected its signature)" >&2
-    exit 1
+    after=$(snapshot)
+    if [[ "$before" != "$after" ]]; then
+        log_line "ERROR: the module source or the amneziawg-dkms package changed during the build; the result is not trusted" >&2
+        try_load || :
+        exit 1
+    fi
+    if [[ "$built" -eq 1 ]]; then
+        left=$((deadline - SECONDS))
+        if [[ "$left" -le 5 ]] || ! timeout -k 5 "$left" depmod -a "$k" 2>/dev/null; then
+            log_line "WARN: depmod -a ${k} failed or ran out of time" >&2
+        fi
+    fi
+    try_load || :
+    finish_boot
 }
 
-# Outside apt: fix the source and build for every kernel with headers.
-# 0 all done; 1 the running kernel has its module but something else failed;
-# 2 the running kernel has no module, or the job could not run.
+# Outside apt: fix the source, build for every kernel with headers that
+# lacks the module and refresh the module index of all of them.
+# 0 all done; 1 the running kernel has its module but something else failed
+# (the source fix, another kernel, depmod); 2 the running kernel has none,
+# or the job could not run.
 mode_repair() {
-    local before after cur rc=0
+    local before after cur k rc=0 lrc=0
     cur=$(uname -r)
     command -v dkms >/dev/null 2>&1 || { log_line "ERROR: dkms is not installed" >&2; exit 2; }
     require_dpkg_idle || exit 2
-    if ! kmod_lock 600; then log_line "ERROR: cannot take ${LOCK_DIR}/kmod.lock (busy or unusable)" >&2; exit 2; fi
+    kmod_lock 600 || lrc=$?
+    if [[ "$lrc" -eq 1 ]]; then log_line "ERROR: another AmneziaWG module job held the lock for 600 s" >&2; exit 2; fi
+    if [[ "$lrc" -ne 0 ]]; then lock_unusable; exit 2; fi
+    # Checked again under the lock: apt may have started while we waited.
+    require_dpkg_idle || exit 2
     kmod_source 0 || rc=$?
     if [[ "$rc" -eq 1 ]]; then log_line "ERROR: no AmneziaWG DKMS source is registered" >&2; exit 2; fi
     if [[ "$rc" -ne 0 ]]; then stamp_clear; exit 2; fi
     collect_targets
     prepare_source
+    require_dpkg_idle || { stamp_clear; exit 2; }
     # Snapshot after our own change to compat.h and before the builds: any
     # difference afterwards is apt or dpkg working on the source meanwhile.
     before=$(snapshot)
@@ -6705,6 +6843,11 @@ mode_repair() {
     else
         stamp_clear
     fi
+    [[ ${#TARGETS[@]} -gt 0 ]] || log_line "WARN: no kernel has headers installed (${MODULES_DIR}/*/build); nothing was built" >&2
+    for k in "${TARGETS[@]}"; do
+        [[ "$k" == "$cur" ]] && continue
+        if has_module "$k"; then log_line "kernel ${k}: module on disk"; else log_line "kernel ${k}: NO module on disk" >&2; fi
+    done
     if ! has_module "$cur"; then log_line "kernel ${cur} (running): NO module on disk" >&2; exit 2; fi
     log_line "kernel ${cur} (running): module on disk"
     if [[ "$PREP_FAILED" -ne 0 || "$BUILD_FAILED" -ne 0 ]]; then exit 1; fi
@@ -6713,9 +6856,12 @@ mode_repair() {
 
 # Outside apt: fix the source only, no build. 0 done or nothing to fix.
 mode_prepare() {
-    local rc=0
+    local rc=0 lrc=0
     require_dpkg_idle || exit 1
-    if ! kmod_lock 600; then log_line "ERROR: cannot take ${LOCK_DIR}/kmod.lock (busy or unusable)" >&2; exit 1; fi
+    kmod_lock 600 || lrc=$?
+    if [[ "$lrc" -eq 1 ]]; then log_line "ERROR: another AmneziaWG module job held the lock for 600 s" >&2; exit 1; fi
+    if [[ "$lrc" -ne 0 ]]; then lock_unusable; exit 1; fi
+    require_dpkg_idle || exit 1
     kmod_source 0 || rc=$?
     if [[ "$rc" -eq 1 ]]; then log_line "no AmneziaWG DKMS source is registered; nothing to prepare"; exit 0; fi
     if [[ "$rc" -ne 0 ]]; then exit 1; fi
@@ -6723,57 +6869,75 @@ mode_prepare() {
     exit "$PREP_FAILED"
 }
 
-# Outside apt and only after a successful --repair: finish the unfinished
-# packages (dpkg --configure -a) when every kernel that can boot has the
-# module on disk. Finishing a kernel package installs its initramfs and puts
-# it into the boot loader, so a kernel without the module would boot with no
-# tunnel; then nothing is run and the steps are printed instead.
+# Outside apt; the caller runs it only after a successful --repair. Finishes
+# the unfinished packages (dpkg --configure -a), unless that would make a
+# kernel bootable that has no AmneziaWG module: configuring a kernel image
+# package builds its initramfs and adds it to the boot loader, usually as
+# the default. Kernel images that dpkg has already configured are bootable
+# anyway and are only reported. The owner of each /boot/vmlinuz-* is asked
+# from dpkg; an image dpkg does not know is not touched by configuring.
 mode_finish() {
-    local audit f rel n=0
-    local -a missing=()
-    local -A seen=()
+    local audit f rel own st pkg pending_n=0
+    local -a missing=() idle=()
     require_dpkg_idle || exit 1
-    audit=$(dpkg --audit 2>&1 || true)
-    if [[ -z "$audit" ]]; then log_line "packages: nothing left to configure"; exit 0; fi
+    # dpkg --audit prints the problems and still exits 0; non-zero means the
+    # audit itself did not run.
+    if ! audit=$(dpkg --audit 2>/dev/null); then
+        log_line "ERROR: dpkg --audit failed; cannot tell which packages are unfinished" >&2; exit 1
+    fi
+    if [[ -z "$audit" ]]; then log_line "packages: nothing left to configure (dpkg --audit is empty)"; exit 0; fi
     log_line "packages: dpkg --audit reports unfinished packages"
     if [[ ! -d "$BOOT_DIR" || ! -r "$BOOT_DIR" || ! -x "$BOOT_DIR" ]]; then
         log_line "ERROR: cannot list kernels in ${BOOT_DIR}; dpkg --configure -a not run" >&2; exit 1
     fi
     for f in "${BOOT_DIR}"/vmlinuz-*; do
         [[ -e "$f" ]] || continue
-        seen["${f##*/vmlinuz-}"]=1
-    done
-    for f in "${MODULES_DIR}"/*/modules.order; do
-        [[ -f "$f" ]] || continue
-        rel="${f%/modules.order}"; seen["${rel##*/}"]=1
-    done
-    for rel in "${!seen[@]}"; do
-        n=$((n + 1))
-        if has_module "$rel"; then
-            log_line "kernel ${rel}: AmneziaWG module on disk (loading it in that kernel is not tested here)"
-        else
-            missing+=("$rel")
+        rel="${f##*/vmlinuz-}"
+        own=$(dpkg -S "$f" 2>/dev/null | grep -v '^diversion by' || true)
+        if [[ -z "$own" ]]; then
+            log_line "kernel ${rel}: image not owned by a package; configuring does not change it"
+            continue
+        fi
+        st=installed
+        for pkg in $(printf '%s\n' "${own%%:*}" | tr ',' ' '); do
+            [[ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)" == *" installed" ]] || st=pending
+        done
+        if [[ "$st" == pending ]]; then
+            pending_n=$((pending_n + 1))
+            if has_module "$rel"; then
+                log_line "kernel ${rel} (to be configured): AmneziaWG module on disk (loading it in that kernel is not tested here)"
+            else
+                missing+=("$rel")
+            fi
+        elif ! has_module "$rel"; then
+            idle+=("$rel")
         fi
     done
-    if [[ "$n" -eq 0 ]]; then
-        log_line "ERROR: no kernels found in ${BOOT_DIR} or ${MODULES_DIR}; dpkg --configure -a not run" >&2; exit 1
+    if [[ ${#idle[@]} -gt 0 ]]; then
+        log_line "WARN: already configured kernel(s) without the AmneziaWG module: ${idle[*]}; booting one of them leaves the server without the tunnel" >&2
     fi
     if [[ ${#missing[@]} -gt 0 ]]; then
-        log_line "kernel(s) without the AmneziaWG module: ${missing[*]}" >&2
-        log_line "dpkg --configure -a NOT run: it would make such a kernel bootable with no tunnel. Fix the module first (headers for that kernel, then run the repair again), or remove that kernel." >&2
+        log_line "unfinished kernel(s) without the AmneziaWG module: ${missing[*]}" >&2
+        log_line "dpkg --configure -a NOT run: it would make such a kernel bootable, usually as the default, with no tunnel. Install the headers for it and run the repair again, or remove that kernel." >&2
         exit 1
     fi
     log_line "dpkg --configure -a"
     if ! DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then
         log_line "ERROR: dpkg --configure -a failed; see the messages above" >&2; exit 1
     fi
-    audit=$(dpkg --audit 2>&1 || true)
+    if ! audit=$(dpkg --audit 2>/dev/null); then
+        log_line "ERROR: dpkg --audit failed after dpkg --configure -a" >&2; exit 1
+    fi
     if [[ -n "$audit" ]]; then
         log_line "ERROR: packages are still unfinished after dpkg --configure -a:" >&2
         printf '%s\n' "$audit" >&2
         exit 1
     fi
-    log_line "packages: configured; the boot loader now knows the new kernel. A working tunnel now does not prove the new kernel will load the module."
+    if [[ "$pending_n" -gt 0 ]]; then
+        log_line "packages: configured; the configured kernel(s) are now in the boot loader. A working tunnel now does not prove the new kernel will load the module."
+    else
+        log_line "packages: configured"
+    fi
     exit 0
 }
 
@@ -6781,9 +6945,13 @@ mode_finish() {
 # every later run from applying it again until --enable. Modules already
 # built are not rebuilt here.
 mode_revert() {
-    local out="" rc=0
-    if ! kmod_lock 600; then log_line "ERROR: cannot take ${LOCK_DIR}/kmod.lock (busy or unusable)" >&2; exit 1; fi
+    local out="" rc=0 lrc=0
+    kmod_lock 600 || lrc=$?
+    if [[ "$lrc" -eq 1 ]]; then log_line "ERROR: another AmneziaWG module job held the lock for 600 s" >&2; exit 1; fi
+    if [[ "$lrc" -ne 0 ]]; then lock_unusable; exit 1; fi
+    require_dpkg_idle || exit 1
     kmod_source 0 || rc=$?
+    if [[ "$rc" -eq 1 ]]; then log_line "ERROR: no AmneziaWG DKMS source is registered; nothing to revert" >&2; exit 1; fi
     [[ "$rc" -eq 0 ]] || exit 1
     if ! out=$(AWG_KMOD_LOCK_HELD=1 awg_kmod_compat_fix revert "$SRC_DIR"); then
         log_line "ERROR: revert of ${SRC_DIR} failed: ${out:-no answer}" >&2; exit 1
@@ -6799,7 +6967,10 @@ mode_revert() {
 }
 
 mode_enable() {
-    if ! kmod_lock 600; then log_line "ERROR: cannot take ${LOCK_DIR}/kmod.lock (busy or unusable)" >&2; exit 1; fi
+    local lrc=0
+    kmod_lock 600 || lrc=$?
+    if [[ "$lrc" -eq 1 ]]; then log_line "ERROR: another AmneziaWG module job held the lock for 600 s" >&2; exit 1; fi
+    if [[ "$lrc" -ne 0 ]]; then lock_unusable; exit 1; fi
     if [[ -e "$DISABLED_MARK" ]] && ! rm -f -- "$DISABLED_MARK" 2>/dev/null; then
         log_line "ERROR: cannot remove ${DISABLED_MARK}" >&2; exit 1
     fi
@@ -7383,11 +7554,11 @@ step99_finish() {
 # Основной цикл выполнения
 # ==============================================================================
 
-if [[ "$REPAIR_MODULE" -eq 1 ]]; then repair_module_cmd; fi
 if [[ "$HELP" -eq 1 ]]; then show_help; fi
 if [[ "$UNINSTALL" -eq 1 ]]; then step_uninstall; fi
 if [[ "$DIAGNOSTIC" -eq 1 ]]; then create_diagnostic_report; exit 0; fi
 if [[ "$VERBOSE" -eq 1 ]]; then set -x; fi
+if [[ "$REPAIR_MODULE" -eq 1 ]]; then repair_module_cmd; fi
 
 # v5.13.0: idempotency-страж — если AmneziaWG уже установлен и работает,
 # повторный запуск даром тратит ~20 минут (Step 1 ещё раз настраивает sysctl/swap/BBR,

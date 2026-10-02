@@ -58,27 +58,29 @@
 
 # Since track K the fallback goes through the helper's --repair: it builds the
 # running kernel (and the others); a failure on a stale kernel only (exit 1)
-# still finishes the install - behaviour in test_kmod_installer.bats.
-@test "v5.13.0: RU install_packages fallback repairs the module via the helper and finishes dpkg" {
+# still finishes the install; --finish configures dpkg - behaviour in
+# test_kmod_installer.bats.
+@test "v5.13.0: RU install_packages fallback repairs the module via the helper and finishes via --finish" {
     block=$(awk '/^install_packages\(\) \{/,/^\}/' \
         "$BATS_TEST_DIRNAME/../install_amneziawg.sh")
     [[ "$block" == *'_pkg_present amneziawg-dkms'* ]]
     [[ "$block" == *'"$AWG_ENSURE_HELPER" --repair'* ]]
     [[ "$block" == *'if [[ "$_hrc" -le 1 ]]'* ]]
-    [[ "$block" == *'dpkg --configure -a'* ]]
+    [[ "$block" == *'"$AWG_ENSURE_HELPER" --finish'* ]]
     [[ "$block" == *'_pkgs_installed_ok "${to_install[@]}"'* ]]
 }
 
 # Since track K the fallback goes through the helper's --repair: it builds the
 # running kernel (and the others); a failure on a stale kernel only (exit 1)
-# still finishes the install - behaviour in test_kmod_installer.bats.
-@test "v5.13.0: EN install_packages fallback repairs the module via the helper and finishes dpkg" {
+# still finishes the install; --finish configures dpkg - behaviour in
+# test_kmod_installer.bats.
+@test "v5.13.0: EN install_packages fallback repairs the module via the helper and finishes via --finish" {
     block=$(awk '/^install_packages\(\) \{/,/^\}/' \
         "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh")
     [[ "$block" == *'_pkg_present amneziawg-dkms'* ]]
     [[ "$block" == *'"$AWG_ENSURE_HELPER" --repair'* ]]
     [[ "$block" == *'if [[ "$_hrc" -le 1 ]]'* ]]
-    [[ "$block" == *'dpkg --configure -a'* ]]
+    [[ "$block" == *'"$AWG_ENSURE_HELPER" --finish'* ]]
     [[ "$block" == *'_pkgs_installed_ok "${to_install[@]}"'* ]]
 }
 

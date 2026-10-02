@@ -2,7 +2,9 @@
 # Installer side of the kernel 7.0 module fix (track K): the install_packages
 # fallback (T1), the step 2 wiring (early helper, T1', T2) and the
 # --repair-module entry point for installed servers. The helper itself is
-# covered in test_kmod_helper.bats; here it is a stub.
+# covered in test_kmod_helper.bats; here it is a stub. Every case runs on
+# both installers: their functions differ in messages, so one cannot stand in
+# for the other.
 
 load test_helper
 
@@ -12,22 +14,29 @@ _fn() { sed -n "/^$2() {\$/,/^}\$/p" "$BATS_TEST_DIRNAME/../$1"; }
 _stub() { printf '#!/bin/bash\n%s\n' "$2" > "$T/bin/$1"; chmod +x "$T/bin/$1"; }
 _st() { mkdir -p "$T/st"; printf '%s' "$2" > "$T/st/$1"; }   # dpkg status of a package
 _calls() { cat "$T/calls" 2>/dev/null || true; }
+_reset() { rm -rf "$T/st" "$T/calls" "$T"/helper.* "$T/log" "$T/dkms" "$T/src" "$T/owner" "$T/prebuilt" "$T/held" "$T/busy" "$T/units.fail"; mkdir -p "$T/st"; }
 
 setup() {
     T=$(mktemp -d); export T
     mkdir -p "$T/bin" "$T/st"
     _stub uname 'echo 7.0.0-38-generic'
     _stub apt 'echo "apt $*" >> "$T/calls"; exit 100'
-    _stub dpkg-query 'p="${*: -1}"; [[ -f "$T/st/$p" ]] || exit 1; cat "$T/st/$p"'
-    # dpkg -S is a read-only query: not recorded as a call.
+    _stub dpkg-query 'p="${*: -1}"
+if [[ "$p" == *"*"* ]]; then cat "$T/kmodlist" 2>/dev/null; exit 0; fi
+[[ -f "$T/st/$p" ]] || exit 1; cat "$T/st/$p"'
     _stub dpkg '[[ "$1" == -S ]] || echo "dpkg $*" >> "$T/calls"
-if [[ "$1" == --configure ]]; then
-  [[ -e "$T/configure.fail" ]] && exit 1
-  for f in "$T"/st/*; do [[ -e "$f.keep" ]] || [[ "$f" == *.keep ]] || echo "install ok installed" > "$f"; done
-fi
 if [[ "$1" == -S ]]; then cat "$T/owner" 2>/dev/null || exit 1; fi
 exit 0'
-    _stub helper 'echo "helper $*" >> "$T/calls"; cat "$T/helper.out.$1" 2>/dev/null; exit "$(cat "$T/helper.rc.$1" 2>/dev/null || echo 0)"'
+    # The helper stub: records the call, prints helper.out.<mode>, exits
+    # helper.rc.<mode>; --finish "configures" every package not marked .keep.
+    _stub helper 'echo "helper $*" >> "$T/calls"; cat "$T/helper.out.$1" 2>/dev/null
+rc=$(cat "$T/helper.rc.$1" 2>/dev/null || echo 0)
+if [[ "$1" == --finish && "$rc" == 0 ]]; then
+  for f in "$T"/st/*; do [[ "$f" == *.keep || -e "$f.keep" ]] || echo "install ok installed" > "$f"; done
+fi
+exit "$rc"'
+    # Real installers run in this file believe they are not root.
+    _stub id 'if [[ "$1" == -u ]]; then echo 1000; else /usr/bin/id "$@"; fi'
     export PATH="$T/bin:$PATH"
 }
 
@@ -40,35 +49,42 @@ _t1_driver() {
     {
         echo 'log() { echo "LOG: $*"; }; log_warn() { echo "WARN: $*"; }; die() { echo "DIE: $*"; exit 1; }'
         echo 'apt_update_tolerant() { :; }; _install_temp_files=(); _APT_UPDATED=1'
-        echo "AWG_ENSURE_HELPER=$T/bin/helper; _AWG_KMOD_T1=$2"
+        echo "AWG_ENSURE_HELPER=$T/bin/helper; _AWG_KMOD_T1=$2; LOG_FILE=$T/log"
         _fn "$1" _pkg_present; _fn "$1" _pkg_installed_ok; _fn "$1" _pkgs_installed_ok; _fn "$1" install_packages
         echo 'install_packages "$@"'
     } > "$T/drv.sh"
 }
 
-@test "T1: a failed apt with the module package unpacked: helper --repair, dpkg --configure, packages checked" {
+@test "T1: a failed apt with the module package unpacked: --repair, --finish, packages checked, output in the log" {
     local f
     for f in "${INSTALLERS[@]}"; do
-        rm -f "$T/calls"; _st amneziawg-dkms "install ok unpacked"; _st qrencode "unknown ok not-installed"
+        _reset; _st amneziawg-dkms "install ok unpacked"; _st qrencode "unknown ok not-installed"
+        echo "kernel 7.0.0-38-generic: module built" > "$T/helper.out.--repair"
         _t1_driver "$f" 1
         run bash "$T/drv.sh" amneziawg-dkms qrencode
         [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
-        [[ "$(_calls)" == *"helper --repair"*"dpkg --configure -a"* ]] || { echo "$f: $(_calls)"; return 1; }
+        [ "$(_calls | grep -c '^helper')" -eq 2 ]
+        [[ "$(_calls)" == *"helper --repair"*"helper --finish"* ]] || { echo "$f: $(_calls)"; return 1; }
+        [[ "$(_calls)" != *"dpkg --configure"* ]] || { echo "$f: configure bypassed --finish"; return 1; }
+        grep -q 'kernel 7.0.0-38-generic: module built' "$T/log" || { echo "$f: helper output not in the log"; return 1; }
     done
 }
 
 @test "T1: enabled by the package state, not by the requested list" {
-    _st amneziawg-dkms "install ok half-configured"; _st qrencode "unknown ok not-installed"
-    _t1_driver install_amneziawg.sh 1
-    run bash "$T/drv.sh" qrencode
-    [ "$status" -eq 0 ]
-    [[ "$(_calls)" == *"helper --repair"* ]]
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _reset; _st amneziawg-dkms "install ok half-configured"; _st qrencode "unknown ok not-installed"
+        _t1_driver "$f" 1
+        run bash "$T/drv.sh" qrencode
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
+        [[ "$(_calls)" == *"helper --repair"* ]]
+    done
 }
 
 @test "T1: off outside the PPA/DKMS path of step 2 (ARM prebuilt, pinned 2.0, other steps)" {
     local f
     for f in "${INSTALLERS[@]}"; do
-        rm -f "$T/calls"; _st amneziawg-dkms "install ok unpacked"
+        _reset; _st amneziawg-dkms "install ok unpacked"
         _t1_driver "$f" 0
         run bash "$T/drv.sh" amneziawg-dkms
         [ "$status" -eq 1 ]; [[ "$output" == *DIE:* ]]
@@ -77,78 +93,116 @@ _t1_driver() {
 }
 
 @test "T1: a package left as config-files does not enable it" {
-    _st amneziawg-dkms "deinstall ok config-files"
-    _t1_driver install_amneziawg.sh 1
-    run bash "$T/drv.sh" amneziawg-dkms
-    [ "$status" -eq 1 ]
-    [[ "$(_calls)" != *helper* ]]
-}
-
-@test "T1: the running kernel without a module (helper exit 2) is a failure, configure is not run" {
-    _st amneziawg-dkms "install ok unpacked"
-    echo 2 > "$T/helper.rc.--repair"
-    _t1_driver install_amneziawg.sh 1
-    run bash "$T/drv.sh" amneziawg-dkms
-    [ "$status" -eq 1 ]
-    [[ "$(_calls)" != *"--configure"* ]]
-}
-
-@test "T1: helper exit 1 (another kernel failed, the running one is fine) still finishes the install" {
-    _st amneziawg-dkms "install ok unpacked"
-    echo 1 > "$T/helper.rc.--repair"
-    _t1_driver install_amneziawg.sh 1
-    run bash "$T/drv.sh" amneziawg-dkms
-    [ "$status" -eq 0 ]
-}
-
-@test "T1: the known-issue line gives the exact reason instead of the generic error" {
     local f
     for f in "${INSTALLERS[@]}"; do
-        _st amneziawg-dkms "install ok unpacked"
-        echo 2 > "$T/helper.rc.--repair"
-        echo "kernel 7.0.0-38-generic: NOT built [known-issue:kernel-70-udp-tunnel]: ..." > "$T/helper.out.--repair"
+        _reset; _st amneziawg-dkms "deinstall ok config-files"
         _t1_driver "$f" 1
         run bash "$T/drv.sh" amneziawg-dkms
         [ "$status" -eq 1 ]
-        [[ "$output" == *"DIE: "*"setup_udp_tunnel_sock"*"kernel-70-backport-adv"* ]] || { echo "$f: $output"; return 1; }
+        [[ "$(_calls)" != *helper* ]]
+    done
+}
+
+@test "T1: the running kernel without a module (helper exit 2): failure, --finish is not run" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _reset; _st amneziawg-dkms "install ok unpacked"; echo 2 > "$T/helper.rc.--repair"
+        _t1_driver "$f" 1
+        run bash "$T/drv.sh" amneziawg-dkms
+        [ "$status" -eq 1 ]
+        [[ "$(_calls)" != *"--finish"* ]] || { echo "$f"; return 1; }
+    done
+}
+
+@test "T1: helper exit 1 (another kernel failed) still finishes the install, and names that kernel" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _reset; _st amneziawg-dkms "install ok unpacked"; echo 1 > "$T/helper.rc.--repair"
+        echo "[ts] [--repair] kernel 6.8.0-31-generic: NOT built (dkms rc=10); log: /x" > "$T/helper.out.--repair"
+        _t1_driver "$f" 1
+        run bash "$T/drv.sh" amneziawg-dkms
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
+        # The warning line itself, not the helper's own line that also names the kernel.
+        grep -q '^WARN: .*6\.8\.0-31-generic - ' <<<"$output" || { echo "$f: $output"; return 1; }
+    done
+}
+
+@test "T1: a refused --finish is a failure" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _reset; _st amneziawg-dkms "install ok unpacked"; echo 1 > "$T/helper.rc.--finish"
+        _t1_driver "$f" 1
+        run bash "$T/drv.sh" amneziawg-dkms
+        [ "$status" -eq 1 ] || { echo "$f"; return 1; }
+    done
+}
+
+@test "T1: the known-issue line gives the exact reason and the kernel that failed" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _reset; _st amneziawg-dkms "install ok unpacked"; echo 2 > "$T/helper.rc.--repair"
+        echo "[ts] [--repair] kernel 7.0.0-39-generic: NOT built [known-issue:kernel-70-udp-tunnel]: ..." > "$T/helper.out.--repair"
+        _t1_driver "$f" 1
+        run bash "$T/drv.sh" amneziawg-dkms
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"DIE: "*"7.0.0-39-generic"*"setup_udp_tunnel_sock"*"kernel-70-backport-adv"* ]] || { echo "$f: $output"; return 1; }
     done
 }
 
 @test "T1: configure succeeded but a requested package is still missing: failure" {
-    _st amneziawg-dkms "install ok unpacked"; _st qrencode "unknown ok not-installed"; : > "$T/st/qrencode.keep"
-    _t1_driver install_amneziawg.sh 1
-    run bash "$T/drv.sh" amneziawg-dkms qrencode
-    [ "$status" -eq 1 ]
-    [[ "$output" == *DIE:* ]]
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _reset; _st amneziawg-dkms "install ok unpacked"; _st qrencode "unknown ok not-installed"; : > "$T/st/qrencode.keep"
+        _t1_driver "$f" 1
+        run bash "$T/drv.sh" amneziawg-dkms qrencode
+        [ "$status" -eq 1 ] || { echo "$f"; return 1; }
+        [[ "$output" == *DIE:* ]]
+    done
+}
+
+@test "T1: the flag is reset at start, so the environment cannot switch the fallback on" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        grep -qx '_AWG_KMOD_T1=0' "$BATS_TEST_DIRNAME/../$f"
+        [ "$(grep -n -m1 -x '_AWG_KMOD_T1=0' "$BATS_TEST_DIRNAME/../$f" | cut -d: -f1)" -lt \
+          "$(grep -n -m1 '^install_packages() {$' "$BATS_TEST_DIRNAME/../$f" | cut -d: -f1)" ]
+    done
 }
 
 # ---------- step 2 wiring (structure) ----------
 
 _step2() { _fn "$1" step2_install_amnezia; }
-_line() { grep -n -m1 -F -- "$2" <<<"$1" | cut -d: -f1; }
+_line() { grep -n -m1 -x -F -- "$2" <<<"$1" | cut -d: -f1; }
+# Depth of 4-space-indented if-blocks open right before line $2 of text $1.
+_depth() { sed -n "1,$(( $2 - 1 ))p" <<<"$1" | awk '/^    if .*then$/ {d++} /^    fi$/ {d--} END {print d+0}'; }
 
-@test "step 2: the helper is deployed before the first apt transaction of the DKMS path" {
+@test "step 2: the helper is deployed unconditionally, before the first package install of the DKMS path" {
     local f s dep gcc pk arm
     for f in "${INSTALLERS[@]}"; do
         s=$(_step2 "$f")
         dep=$(_line "$s" '    _awg_deploy_ensure_helper')
-        gcc=$(_line "$s" 'apt install -y gcc-13')
+        gcc=$(grep -n -m1 -F 'apt install -y gcc-13' <<<"$s" | cut -d: -f1)
         pk=$(_line "$s" '    install_packages "${packages[@]}"')
-        arm=$(_line "$s" 'request_reboot 3')
-        [ -n "$dep" ] && [ -n "$gcc" ] && [ -n "$pk" ] && [ -n "$arm" ]
+        arm=$(grep -n -m1 -F 'request_reboot 3' <<<"$s" | cut -d: -f1)
+        [ -n "$dep" ] && [ -n "$gcc" ] && [ -n "$pk" ] && [ -n "$arm" ] || { echo "$f: dep=$dep gcc=$gcc pk=$pk arm=$arm"; return 1; }
         [ "$arm" -lt "$dep" ] && [ "$dep" -lt "$gcc" ] && [ "$dep" -lt "$pk" ] || { echo "$f: arm=$arm dep=$dep gcc=$gcc pk=$pk"; return 1; }
+        [ "$(_depth "$s" "$dep")" -eq 0 ] || { echo "$f: the deploy is inside an if"; return 1; }
     done
 }
 
-@test "step 2: T1 is enabled only on the non-pinned path and switched off after the package install" {
-    local f s on off
+@test "step 2: T1 is switched on inside the non-pinned block, before the package install, and off right after" {
+    local f s on off pk guard
     for f in "${INSTALLERS[@]}"; do
         s=$(_step2 "$f")
         [ "$(grep -c '_AWG_KMOD_T1=1' <<<"$s")" -eq 1 ]
-        on=$(_line "$s" '_AWG_KMOD_T1=1'); off=$(_line "$s" '_AWG_KMOD_T1=0')
-        [ "$on" -lt "$off" ]
-        # the line before the enable is inside the use_pinned_awg2 -eq 0 block
-        sed -n "1,${on}p" <<<"$s" | grep -n 'if \[\[ "\$use_pinned_awg2" -eq 0 \]\]; then' | tail -n1 | grep -q .
+        on=$(grep -n -m1 '_AWG_KMOD_T1=1' <<<"$s" | cut -d: -f1)
+        off=$(_line "$s" '    _AWG_KMOD_T1=0')
+        pk=$(_line "$s" '    install_packages "${packages[@]}"')
+        [ "$on" -lt "$pk" ] && [ "$pk" -lt "$off" ] || { echo "$f: on=$on pk=$pk off=$off"; return 1; }
+        # the nearest 4-space if above the switch is the non-pinned guard, still open
+        guard=$(sed -n "1,${on}p" <<<"$s" | grep -n '^    if ' | tail -n1)
+        [[ "$guard" == *'if [[ "$use_pinned_awg2" -eq 0 ]]; then' ]] || { echo "$f: $guard"; return 1; }
+        [ "$(sed -n "${guard%%:*},${on}p" <<<"$s" | grep -c '^    fi$')" -eq 0 ] || { echo "$f: the guard is closed before the switch"; return 1; }
     done
 }
 
@@ -157,14 +211,13 @@ _line() { grep -n -m1 -F -- "$2" <<<"$1" | cut -d: -f1; }
     for f in "${INSTALLERS[@]}"; do
         s=$(_step2 "$f")
         pk=$(_line "$s" '    install_packages "${packages[@]}"')
-        meta=$(_line "$s" 'for meta in "${meta_candidates[@]}"')
+        meta=$(grep -n -m1 -F 'for meta in "${meta_candidates[@]}"' <<<"$s" | cut -d: -f1)
         [ -n "$pk" ] && [ -n "$meta" ] && [ "$pk" -lt "$meta" ]
         # Right after the package install: the non-pinned guard, and the
         # --prepare call inside it (not merely a matching line somewhere).
         [ "$(sed -n "$((pk + 1))p" <<<"$s")" = '    if [[ "$use_pinned_awg2" -eq 0 ]]; then' ] || { echo "$f: no guard after install_packages"; return 1; }
         blk=$(sed -n "$((pk + 2)),\$p" <<<"$s" | sed '/^    fi$/q')
         [[ "$blk" == *'"$AWG_ENSURE_HELPER" --prepare'* ]] || { echo "$f: --prepare not in the block"; return 1; }
-        # nothing before it in step 2 calls --prepare outside the early block
         [ "$(sed -n "1,${pk}p" <<<"$s" | grep -c -F '"$AWG_ENSURE_HELPER" --prepare')" -eq 1 ] || { echo "$f: extra --prepare before install"; return 1; }
     done
 }
@@ -176,27 +229,89 @@ _line() { grep -n -m1 -F -- "$2" <<<"$1" | cut -d: -f1; }
     done
 }
 
+# ---------- _awg_dpkg_busy and _awg_kmod_prebuilt_present, executed ----------
+
+_busy() { # installer -> exit code of _awg_dpkg_busy with the fake /proc
+    bash -c 'eval "$1"; AWG_PROC_DIR="$2/proc"; AWG_DPKG_DIR="$2/dpkg"; _awg_dpkg_busy' _ "$(_fn "$1" _awg_dpkg_busy)" "$T"
+}
+
+@test "_awg_dpkg_busy: idle, busy on either lock file, and 'cannot check' counts as busy" {
+    local f l
+    for f in "${INSTALLERS[@]}"; do
+        rm -rf "$T/proc"; mkdir -p "$T/proc/1/fd"
+        run _busy "$f"; [ "$status" -eq 1 ] || { echo "$f idle: $status"; return 1; }
+        for l in lock-frontend lock; do
+            ln -sfn "$T/dpkg/$l" "$T/proc/1/fd/5"
+            run _busy "$f"; [ "$status" -eq 0 ] || { echo "$f $l: $status"; return 1; }
+        done
+        rm -rf "$T/proc"; mkdir -p "$T/proc"
+        run _busy "$f"; [ "$status" -eq 0 ] || { echo "$f empty proc: $status"; return 1; }
+        mkdir -p "$T/proc/1/fd" "$T/proc/7/fd"; chmod 000 "$T/proc/7/fd"
+        run _busy "$f"; chmod 700 "$T/proc/7/fd"
+        [ "$status" -eq 0 ] || { echo "$f unreadable fd: $status"; return 1; }
+    done
+}
+
+@test "_awg_kmod_prebuilt_present: an installed prebuilt counts, a removed one does not" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        echo "amneziawg-kmod-6.12.0-rpi install ok installed" > "$T/kmodlist"
+        run bash -c 'eval "$1"; _awg_kmod_prebuilt_present' _ "$(_fn "$f" _awg_kmod_prebuilt_present)"
+        [ "$status" -eq 0 ]
+        echo "amneziawg-kmod-6.12.0-rpi deinstall ok config-files" > "$T/kmodlist"
+        run bash -c 'eval "$1"; _awg_kmod_prebuilt_present' _ "$(_fn "$f" _awg_kmod_prebuilt_present)"
+        [ "$status" -eq 1 ]
+    done
+}
+
 # ---------- --repair-module: arguments ----------
+
+# The installer is NOT run whole here: if the check ever broke, a whole run
+# would go on to whatever the other flag asks for (--uninstall included) and
+# wait on the terminal. Only the head of the script runs - from the first line
+# through the end of the --repair-module check - followed by a marker.
+_head_through_check() { # installer -> $T/head.sh
+    awk '{print} /^if \[\[ "\$REPAIR_MODULE" -eq 1 \]\]; then$/ {c=1} c && /^fi$/ {exit}' \
+        "$BATS_TEST_DIRNAME/../$1" > "$T/head.sh"
+    grep -q '^    unset _a$' "$T/head.sh" || { echo "$1: the check block was not found"; return 1; }
+    printf '%s\n' 'echo "PASSED-CHECK repair=$REPAIR_MODULE verbose=$VERBOSE"; trap - EXIT; exit 0' >> "$T/head.sh"
+}
 
 @test "--repair-module refuses any other argument before doing anything" {
     local f a
     for f in "${INSTALLERS[@]}"; do
+        _head_through_check "$f"
         for a in --uninstall --force --yes --diagnostic --help --port=51820 --bogus; do
-            run bash "$BATS_TEST_DIRNAME/../$f" --repair-module "$a"
-            [ "$status" -eq 2 ] || { echo "$f $a: status $status"; return 1; }
+            run timeout 20 bash "$T/head.sh" --repair-module "$a" </dev/null
+            [ "$status" -eq 2 ] || { echo "$f $a: status $status: $output"; return 1; }
             [[ "$output" == *"--repair-module"*"$a"* ]] || { echo "$f $a: $output"; return 1; }
-            run bash "$BATS_TEST_DIRNAME/../$f" "$a" --repair-module
+            [[ "$output" != *PASSED-CHECK* ]]
+            run timeout 20 bash "$T/head.sh" "$a" --repair-module </dev/null
             [ "$status" -eq 2 ] || { echo "$f $a (before): status $status"; return 1; }
         done
     done
 }
 
-@test "--repair-module is dispatched before help, uninstall and diagnostic" {
-    local f rm help
+@test "--repair-module accepts --verbose, -v and --no-color" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _head_through_check "$f"
+        run timeout 20 bash "$T/head.sh" --repair-module --verbose --no-color </dev/null
+        [ "$status" -eq 0 ] || { echo "$f: status $status: $output"; return 1; }
+        [[ "$output" == *"PASSED-CHECK repair=1 verbose=1"* ]] || { echo "$f: $output"; return 1; }
+        run timeout 20 bash "$T/head.sh" -v --repair-module </dev/null
+        [ "$status" -eq 0 ] || { echo "$f -v: status $status: $output"; return 1; }
+    done
+}
+
+@test "--repair-module is dispatched after set -x and before the guard and the state machine" {
+    local f rm sx guard
     for f in "${INSTALLERS[@]}"; do
         rm=$(grep -n -m1 '^if \[\[ "\$REPAIR_MODULE" -eq 1 \]\]; then repair_module_cmd; fi$' "$BATS_TEST_DIRNAME/../$f" | cut -d: -f1)
-        help=$(grep -n -m1 '^if \[\[ "\$HELP" -eq 1 \]\]; then show_help; fi$' "$BATS_TEST_DIRNAME/../$f" | cut -d: -f1)
-        [ -n "$rm" ] && [ "$rm" -lt "$help" ]
+        sx=$(grep -n -m1 '^if \[\[ "\$VERBOSE" -eq 1 \]\]; then set -x; fi$' "$BATS_TEST_DIRNAME/../$f" | cut -d: -f1)
+        guard=$(grep -n -m1 '^_resume_state=""$' "$BATS_TEST_DIRNAME/../$f" | cut -d: -f1)
+        [ -n "$rm" ] && [ -n "$sx" ] && [ -n "$guard" ]
+        [ "$sx" -lt "$rm" ] && [ "$rm" -lt "$guard" ] || { echo "$f: sx=$sx rm=$rm guard=$guard"; return 1; }
     done
 }
 
@@ -218,72 +333,94 @@ _rm_driver() {
         echo '_awg_deploy_ensure_helper() { echo deploy-helper >> "$T/calls"; }'
         echo '_awg_deploy_ensure_units() { echo deploy-units >> "$T/calls"; [[ ! -e "$T/units.fail" ]]; }'
         echo 'dkms() { :; }'
-        echo "AWG_ENSURE_HELPER=$T/bin/helper; DKMS_STATE_DIR=$T/dkms; DKMS_SRC_PREFIX=$T/src"
+        echo "AWG_ENSURE_HELPER=$T/bin/helper; DKMS_STATE_DIR=$T/dkms; DKMS_SRC_PREFIX=$T/src; LOG_FILE=$T/log"
         _fn "$1" _pkg_present; _fn "$1" repair_module_cmd
         echo 'repair_module_cmd'
     } > "$T/drv.sh"
 }
 _rm_server() {
+    _reset
     mkdir -p "$T/dkms/amneziawg/1.0.0" "$T/src/amneziawg-1.0.0"
     ln -sfn "$T/src/amneziawg-1.0.0" "$T/dkms/amneziawg/1.0.0/source"
     _st amneziawg-dkms "install ok installed"
     echo "amneziawg-dkms: $T/src/amneziawg-1.0.0/dkms.conf" > "$T/owner"
 }
 
-@test "repair-module: deploys, repairs, then finishes; exit 0 only when all three succeed" {
+@test "repair-module: deploys, repairs, then finishes; exit 0 only when all succeed; output in the log" {
     local f
     for f in "${INSTALLERS[@]}"; do
-        rm -f "$T/calls"; _rm_server; _rm_driver "$f"
+        _rm_server; echo "kernel x: module on disk" > "$T/helper.out.--repair"; _rm_driver "$f"
         run bash "$T/drv.sh"
         [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
         [ "$(_calls | tr '\n' ' ')" = "deploy-helper deploy-units helper --repair helper --finish " ] || { echo "$f: $(_calls)"; return 1; }
+        grep -q 'kernel x: module on disk' "$T/log"
     done
 }
 
 @test "repair-module: a failed repair skips --finish (no dpkg --configure) and exits 1" {
-    _rm_server; echo 1 > "$T/helper.rc.--repair"; _rm_driver install_amneziawg.sh
-    run bash "$T/drv.sh"
-    [ "$status" -eq 1 ]
-    [[ "$(_calls)" != *"--finish"* ]]
-}
-
-@test "repair-module: a failed --finish or a failed wiring stage is exit 1" {
-    _rm_server; echo 1 > "$T/helper.rc.--finish"; _rm_driver install_amneziawg.sh
-    run bash "$T/drv.sh"
-    [ "$status" -eq 1 ]
-    rm -f "$T/helper.rc.--finish" "$T/calls"; : > "$T/units.fail"
-    run bash "$T/drv.sh"
-    [ "$status" -eq 1 ]
-    [[ "$(_calls)" == *"helper --repair"* ]]
-}
-
-@test "repair-module: refused without changes on a never-installed server, ARM prebuilt, pinned hold, busy apt" {
-    local why
-    for why in nopkg prebuilt held busy configfiles; do
-        rm -rf "$T/calls" "$T/prebuilt" "$T/held" "$T/busy"
-        _rm_server
-        case "$why" in
-            nopkg) rm -f "$T/st/amneziawg-dkms" ;;
-            configfiles) _st amneziawg-dkms "deinstall ok config-files" ;;
-            *) : > "$T/$why" ;;
-        esac
-        _rm_driver install_amneziawg.sh
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _rm_server; echo 1 > "$T/helper.rc.--repair"; _rm_driver "$f"
         run bash "$T/drv.sh"
-        [ "$status" -eq 1 ] || { echo "$why: status $status"; return 1; }
-        [ -z "$(_calls)" ] || { echo "$why: $(_calls)"; return 1; }
+        [ "$status" -eq 1 ]
+        [[ "$(_calls)" != *"--finish"* ]] || { echo "$f"; return 1; }
     done
 }
 
-@test "repair-module: two registrations or a source not owned by the package are refused" {
-    _rm_server
-    mkdir -p "$T/dkms/amneziawg/1.0.1"; ln -s "$T/src/amneziawg-1.0.0" "$T/dkms/amneziawg/1.0.1/source"
-    _rm_driver install_amneziawg.sh
-    run bash "$T/drv.sh"
-    [ "$status" -eq 1 ]; [ -z "$(_calls)" ]
-    rm -rf "$T/dkms/amneziawg/1.0.1"
-    echo "someone-else: $T/src/amneziawg-1.0.0/dkms.conf" > "$T/owner"
-    run bash "$T/drv.sh"
-    [ "$status" -eq 1 ]; [ -z "$(_calls)" ]
+@test "repair-module: a failed --finish or a failed wiring stage is exit 1" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _rm_server; echo 1 > "$T/helper.rc.--finish"; _rm_driver "$f"
+        run bash "$T/drv.sh"
+        [ "$status" -eq 1 ] || { echo "$f finish"; return 1; }
+        _rm_server; : > "$T/units.fail"
+        run bash "$T/drv.sh"
+        [ "$status" -eq 1 ] || { echo "$f units"; return 1; }
+        [[ "$(_calls)" == *"helper --repair"* ]]
+    done
+}
+
+@test "repair-module: refused without changes on a never-installed server, ARM prebuilt, pinned hold, busy apt" {
+    local f why
+    for f in "${INSTALLERS[@]}"; do
+        for why in nopkg prebuilt held busy configfiles; do
+            _rm_server
+            case "$why" in
+                nopkg) rm -f "$T/st/amneziawg-dkms" ;;
+                configfiles) _st amneziawg-dkms "deinstall ok config-files" ;;
+                *) : > "$T/$why" ;;
+            esac
+            _rm_driver "$f"
+            run bash "$T/drv.sh"
+            [ "$status" -eq 1 ] || { echo "$f $why: status $status"; return 1; }
+            [ -z "$(_calls)" ] || { echo "$f $why: $(_calls)"; return 1; }
+        done
+    done
+}
+
+@test "repair-module: no registration, two, a redirected one, an unknown or a foreign owner: refused" {
+    local f case
+    for f in "${INSTALLERS[@]}"; do
+        for case in none two redirect noowner foreign; do
+            _rm_server
+            case "$case" in
+                none) rm -rf "$T/dkms/amneziawg/1.0.0" ;;
+                two) mkdir -p "$T/dkms/amneziawg/1.0.1"; ln -s "$T/src/amneziawg-1.0.0" "$T/dkms/amneziawg/1.0.1/source" ;;
+                redirect) mkdir -p "$T/elsewhere"; ln -sfn "$T/elsewhere" "$T/dkms/amneziawg/1.0.0/source" ;;
+                noowner) rm -f "$T/owner" ;;
+                foreign) echo "someone-else: $T/src/amneziawg-1.0.0/dkms.conf" > "$T/owner" ;;
+            esac
+            _rm_driver "$f"
+            run bash "$T/drv.sh"
+            [ "$status" -eq 1 ] || { echo "$f $case: status $status"; return 1; }
+            [ -z "$(_calls)" ] || { echo "$f $case: $(_calls)"; return 1; }
+            # The reason has to be the real one: with no registration a later
+            # check would refuse too, but naming a path that does not exist.
+            if [[ "$case" == none ]]; then
+                [[ "$output" == *"не зарегистрирован в DKMS"* || "$output" == *"not registered in DKMS"* ]] || { echo "$f none: $output"; return 1; }
+            fi
+        done
+    done
 }
 
 @test "step 1 failure on a server with the module points at --repair-module" {

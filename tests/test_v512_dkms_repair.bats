@@ -197,18 +197,15 @@ _mode_body() { echo "$1" | awk -v f="^$2\\\\(\\\\) \\\\{\$" '$0 ~ f {p=1} p {pri
     [[ "$boot" != *STAMP_FILE* && "$boot" != *stamp_write* ]]
 }
 
-@test "v5.12: helper --systemd loads with modprobe and verifies with lsmod" {
+# Loaded = /sys/module/amneziawg exists, not `lsmod | grep -q`: under pipefail
+# grep -q can SIGPIPE lsmod and turn a loaded module into a failure. The exit
+# codes of --systemd are covered by its behavioural tests.
+@test "v5.12: helper --systemd loads with modprobe and verifies through /sys/module" {
     helper=$(_extract_helper "$BATS_TEST_DIRNAME/../install_amneziawg.sh")
     boot=$(_mode_body "$helper" mode_systemd)
     [[ "$boot" == *'modprobe amneziawg'* ]]
-    [[ "$boot" == *"lsmod 2>/dev/null | grep -q '^amneziawg '"* ]]
-}
-
-@test "v5.12: helper --systemd ends in exit 1 whenever the module is not loaded" {
-    helper=$(_extract_helper "$BATS_TEST_DIRNAME/../install_amneziawg.sh")
-    boot=$(_mode_body "$helper" mode_systemd)
-    [ "$(echo "$boot" | grep -c 'exit 1')" -ge 4 ]
-    [ "$(echo "$boot" | grep -v '^ *#' | tail -n 3 | head -n 2 | tail -n 1 | tr -d ' ')" = 'exit1' ]
+    [[ "$boot" == *'[[ -d "${SYS_MODULE_DIR}/amneziawg" ]]'* ]]
+    [[ "$helper" != *'lsmod'*'grep -q'* ]]
 }
 
 @test "v5.12: the --hook mode never calls modprobe, dpkg or systemctl" {

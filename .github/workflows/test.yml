@@ -41,9 +41,11 @@ jobs:
 
       # qrencode: the vpn:// QR ceiling test runs the real binary with the
       # installer flags and fails in CI without it. jq: the --json tests skip
-      # without it, so it is installed explicitly rather than assumed.
-      - name: Install bats, qrencode and jq
-        run: sudo apt-get update && sudo apt-get install -y bats qrencode jq
+      # without it, so it is installed explicitly rather than assumed. patch:
+      # the kernel module source fix tests apply the real diff and fail in CI
+      # without it (they only skip locally).
+      - name: Install bats, qrencode, jq and patch
+        run: sudo apt-get update && sudo apt-get install -y bats qrencode jq patch
 
       - name: Run unit tests
         run: bats tests/*.bats

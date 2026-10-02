@@ -39,8 +39,8 @@ setup() {
     source "$BATS_TEST_DIRNAME/../awg_common.sh"
     export AWG_KMOD_LOCK="$TEST_DIR/kmod.lock"
     unset AWG_KMOD_LOCK_WAIT AWG_KMOD_LOCK_HELD
-    command -v patch >/dev/null || skip "patch not installed"
-    command -v flock >/dev/null || skip "flock not available (not Linux)"
+    command -v patch >/dev/null || { [[ -z "${CI:-}" ]] || return 1; skip "patch not installed"; }
+    command -v flock >/dev/null || { [[ -z "${CI:-}" ]] || return 1; skip "flock not available (not Linux)"; }
     _mk_src
 }
 
