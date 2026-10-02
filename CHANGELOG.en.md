@@ -33,7 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Documentation
 
-- **Known issue: kernel 7.0.0-38 on Ubuntu 26.04 and the HWE kernel 7.0.0-38 on Ubuntu 24.04.** The AmneziaWG module from the PPA does not build for these kernels: they changed the `setup_udp_tunnel_sock` function. ADVANCED, section [Known Limitations](ADVANCED.en.md#kernel-70-backport-adv), describes what it looks like, how to stay out of it on 24.04 and how to fix it by hand with the module's PR #218; the README marks Ubuntu 26.04 with a caveat.
+- **Known issue: kernel 7.0.0-38 on Ubuntu 26.04 and the HWE kernel 7.0.0-38 on Ubuntu 24.04.** The AmneziaWG module from the PPA does not build for these kernels: they changed the `setup_udp_tunnel_sock` function. ADVANCED, section [Known Limitations](ADVANCED.en.md#kernel-70-backport-adv), describes what it looks like, how to stay out of it on 24.04 and how to fix it by hand with the module's PR #218; the README marks Ubuntu 26.04 with a caveat and tells 24.04 users to stay on the regular 6.8 kernel.
 
 ## [5.37.0] - 2026-09-27
 

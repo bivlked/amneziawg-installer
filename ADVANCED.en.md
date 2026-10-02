@@ -2280,24 +2280,27 @@ it as a target.
 <a id="kernel-70-backport-adv"></a>
 * **Kernel 7.0.0-38 on Ubuntu 26.04 and the HWE kernel 7.0.0-38 on Ubuntu 24.04: the PPA module does not build (since 1 October 2026).** These kernels changed the `setup_udp_tunnel_sock` function, and the AmneziaWG module from the PPA (tag `v3.1.20260906`) does not handle that yet. A fix is proposed in the module repository ([#218](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/pull/218), [#250](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/pull/250)) but not merged.
 
-  Who is affected: Ubuntu 26.04 after the kernel update to 7.0.0-38, and Ubuntu 24.04 with the HWE kernel 7.0.0-38 (`linux-generic-hwe-24.04`). We built the module and found no such error on Ubuntu 24.04 with the regular kernel 6.8.0-146, Ubuntu 25.10 (6.17.0-41), Ubuntu 26.04 on the previous kernel 7.0.0-34, Debian 12 (6.1.0-53) and Debian 13 (6.12.107 and 6.12.111).
+  Who is affected: Ubuntu 26.04 after the kernel update to 7.0.0-38, and Ubuntu 24.04 with the HWE kernel 7.0.0-38 (`linux-generic-hwe-24.04`). In our build tests this error did not occur on Ubuntu 24.04 with the regular kernel 6.8.0-146, Ubuntu 25.10 (6.17.0-41), Ubuntu 26.04 on the previous kernel 7.0.0-34, Debian 12 (6.1.0-53) and Debian 13 (6.12.107 and 6.12.111).
 
   What it looks like: `apt upgrade` ends with a DKMS error, and the build log has `passing argument 2 of 'setup_udp_tunnel_sock' from incompatible pointer type`. The new kernel packages stay unconfigured, and later installs and upgrades through `apt` run into the same error again. The tunnel keeps working on the current kernel. On our test server (24.04 with HWE) the bootloader was not updated and the server came back on the old kernel after a reboot, but do not count on that: do not reboot into the new kernel until the module is built.
 
   On Ubuntu 24.04 the easiest way is to stay out of this: keep the regular kernel and do not install `linux-generic-hwe-24.04`. `dpkg -l 'linux-generic*' | grep ^ii` shows which metapackage you have. Holding the metapackage with `apt-mark hold` does not fix a kernel that is already installed.
 
-  If the error has already happened, the fix from #218 helps: it checks the function signature itself. We built the module with it on every kernel listed above and on both affected ones. The commands below run as root: open a root shell with `sudo -i` and enter them one at a time. If any command fails or a hash check prints `FAILED`, stop there.
+  If the error has already happened, the fix from #218 helps: it checks the function signature itself. We built the module with it on every kernel listed above and on both affected ones. The commands below run as root: open a root shell with `sudo -i`. The block in step 2 can be pasted as a whole: it stops at the first error. If any command fails or a hash check prints `FAILED`, go no further.
 
   1. Let the current `apt` command finish. Leave the running kernel and the tunnel alone.
   2. Apply the fix to the module source, checking the hash before and after:
 
      ```bash
+     (
+     set -e
      cd /usr/src/amneziawg-1.0.0
      echo 'b14346040ce0188c47e2db2baad1a4f21aa784510f6c95bbb4aa58d5bbe691c9  compat/compat.h' | sha256sum -c -
      curl -fsSL -o /tmp/pr218.diff https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/commit/62189503fa51bc049d826e226fdb49ee683f53f2.diff
      cp -p compat/compat.h /root/compat.h.orig
      patch -p2 --forward < /tmp/pr218.diff
      echo '8d47a358b4df0b2187788ce6f88ad63128218de1be22c78b263ef3e5d770c26b  compat/compat.h' | sha256sum -c -
+     )
      ```
 
      If the very first check prints `FAILED`, you have a different source, and this fix is not for it.
@@ -2307,9 +2310,9 @@ it as a target.
      dkms install -m amneziawg -v 1.0.0 -k 7.0.0-38-generic
      ```
 
-  4. Finish configuring the packages: `dpkg --configure -a`. If dependency errors remain, run `apt-get -f install` and then `dpkg --configure -a` again.
-  5. Before rebooting, check: `dpkg --audit` prints nothing, `dkms status amneziawg` shows `installed` for the new kernel, `/boot/initrd.img-7.0.0-38-generic` exists, and `grep -c 7.0.0-38-generic /boot/grub/grub.cfg` prints a number above zero. If anything is off, do not reboot and leave the old kernel as it is.
-  6. Reboot into the new kernel when you have the provider's console at hand. `installed` in DKMS does not yet mean the module will load: after the reboot check `lsmod | grep amneziawg` and `systemctl status awg-quick@awg0`. We have not tested this under Secure Boot; if it is on, the module has to be signed with a key the system trusts. Do not turn Secure Boot off for this.
+  4. Finish configuring the packages: `dpkg --configure -a`. If dependency errors remain, run `apt-get -f install` and then `dpkg --configure -a` again. If `apt` offers to remove anything, read the list first: the running kernel must stay.
+  5. Before rebooting, check: `dpkg --configure -a` finished without errors (it is what updates the initramfs and the bootloader), `dpkg --audit` prints nothing, `dkms status amneziawg` shows `installed` for the new kernel. As a cross-check, `/boot/initrd.img-7.0.0-38-generic` exists and `/boot/grub/grub.cfg` has an entry for this kernel (`grep -c 7.0.0-38-generic /boot/grub/grub.cfg` is above zero). If Secure Boot is on (`mokutil --sb-state`), the module has to be signed with a key the system trusts; we have not tested this under Secure Boot, and there is no need to turn it off. If anything is off, do not reboot and do not remove the old kernel.
+  6. Reboot into the new kernel when you have the provider's console at hand. `installed` in DKMS does not yet mean the module will load: after the reboot check `lsmod | grep amneziawg` and `systemctl status awg-quick@awg0`. We have not tested this fix on ARM.
 
   The fix stays in `/usr/src/amneziawg-1.0.0` until the next `amneziawg-dkms` package update. If the new PPA version already contains the fix, there is nothing to repeat; if it does not, the build for the next kernel fails again and the steps need repeating. If you see the same error but the hash in step 2 does not match, open an [issue](https://github.com/bivlked/amneziawg-installer/issues) with the output of `dkms status` and `uname -r`.
 
