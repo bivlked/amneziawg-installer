@@ -12,5 +12,143 @@
       "content": "Cover how the tool differs from alternatives, since readers compare. Versus the official Amnezia application: no Docker, no GUI, a kernel-native module, single-purpose server optimization and hardening, and a headless SSH workflow. Versus other AmneziaWG install scripts: deeper automation, client expiry, mobile-carrier DPI tuning and diagnostics, backup and restore, bilingual Russian and English, security hardening by default (including PPA GPG fingerprint verification and SHA256-pinned helper scripts), and no web panel required.",
       "author": "maintainer"
     }
+  ],
+  "pages": [
+    {
+      "title": "Overview",
+      "purpose": "What amneziawg-installer is, who it is for, the quick-start commands and the main differentiators"
+    },
+    {
+      "title": "Getting Started: VPS Selection and Installation",
+      "purpose": "Choosing a VPS and OS, running the installer through its reboots, first client configs, QR codes and vpn:// links",
+      "parent": "Overview"
+    },
+    {
+      "title": "Project Roadmap and Changelog",
+      "purpose": "Release history from CHANGELOG.md, the public roadmap in docs/ROADMAP.md, and the planned move to AmneziaWG 3.1 for new installs (the --protocol flag already exists, the Unreleased changelog entries track the rest)",
+      "parent": "Overview"
+    },
+    {
+      "title": "Core Architecture",
+      "purpose": "How the installer, the shared library and the management script fit together"
+    },
+    {
+      "title": "Installation Engine (install_amneziawg.sh)",
+      "purpose": "The step state machine with resume after reboot, CLI flags and non-interactive mode",
+      "parent": "Core Architecture"
+    },
+    {
+      "title": "Shared Library (awg_common.sh)",
+      "purpose": "Key generation, config rendering, AWG 2.0 parameter generation, vpn:// URIs, expiry and backup helpers",
+      "parent": "Core Architecture"
+    },
+    {
+      "title": "Configuration Files and Data Layout",
+      "purpose": "Files under /root/awg and /etc/amnezia/amneziawg, awgsetup_cfg.init settings such as CLIENT_DNS and AWG_ENDPOINT",
+      "parent": "Core Architecture"
+    },
+    {
+      "title": "AmneziaWG 2.0 Protocol and Obfuscation",
+      "purpose": "How AmneziaWG 2.0 differs from WireGuard and from AmneziaWG 1.x and 3.x"
+    },
+    {
+      "title": "Obfuscation Parameters (Jc, S1-S4, H1-H4, I1-I5)",
+      "purpose": "Meaning, ranges and generation of each parameter, the portable CPS tag set, which values must match on both sides",
+      "parent": "AmneziaWG 2.0 Protocol and Obfuscation"
+    },
+    {
+      "title": "Routing Modes and Split-Tunneling",
+      "purpose": "Full tunnel default, the Amnezia list mode, custom routes, per-client AllowedIPs and IPv6 handling",
+      "parent": "AmneziaWG 2.0 Protocol and Obfuscation"
+    },
+    {
+      "title": "Carrier Profiles and DPI Environments",
+      "purpose": "Mobile carrier presets, the --mobile flag, I1 shaped as a DNS response and per-carrier diagnostics",
+      "parent": "AmneziaWG 2.0 Protocol and Obfuscation"
+    },
+    {
+      "title": "Peer Management",
+      "purpose": "manage_amneziawg.sh commands and their --json output"
+    },
+    {
+      "title": "Client Lifecycle: Add, Remove, Modify, Regen",
+      "purpose": "Creating, editing, reissuing and removing clients and how changes are applied to the running interface",
+      "parent": "Peer Management"
+    },
+    {
+      "title": "Client Expiry System",
+      "purpose": "Time-limited clients with --expires and the cron job that removes them",
+      "parent": "Peer Management"
+    },
+    {
+      "title": "Backup, Restore, and Rollback",
+      "purpose": "What backup captures, how restore validates and rolls back",
+      "parent": "Peer Management"
+    },
+    {
+      "title": "Diagnostics and Stats",
+      "purpose": "check, show, stats, diagnose and the --diagnostic report",
+      "parent": "Peer Management"
+    },
+    {
+      "title": "Kernel Module and System Hardening",
+      "purpose": "Kernel module installation paths and the server hardening the installer applies"
+    },
+    {
+      "title": "DKMS Kernel Module Management",
+      "purpose": "PPA codename mapping, DKMS builds, module line by kernel version, rebuild after kernel updates",
+      "parent": "Kernel Module and System Hardening"
+    },
+    {
+      "title": "Network Hardening: UFW, Fail2Ban, and Sysctl",
+      "purpose": "Firewall rules, SSH port detection, Fail2Ban, sysctl settings, swap and BBR",
+      "parent": "Kernel Module and System Hardening"
+    },
+    {
+      "title": "Advanced Deployment Scenarios",
+      "purpose": "Setups beyond a single server"
+    },
+    {
+      "title": "Two-Server Cascade: Split Exit Routing",
+      "purpose": "CASCADE guide: Russian traffic exits through a server in Russia, everything else abroad, and how to remove it",
+      "parent": "Advanced Deployment Scenarios"
+    },
+    {
+      "title": "ARM Architecture Support",
+      "purpose": "Prebuilt ARM modules, the --no-prebuilt DKMS path and kernel upgrades on ARM",
+      "parent": "Advanced Deployment Scenarios"
+    },
+    {
+      "title": "Testing Infrastructure",
+      "purpose": "How the project is tested"
+    },
+    {
+      "title": "Unit Test Suite (bats-core)",
+      "purpose": "The bats suite, what it covers and how to run it",
+      "parent": "Testing Infrastructure"
+    },
+    {
+      "title": "CI/CD Workflows and Release Process",
+      "purpose": "GitHub Actions, release workflow, minisign signatures and ARM package builds",
+      "parent": "Testing Infrastructure"
+    },
+    {
+      "title": "Contributing and Security",
+      "purpose": "How to contribute and how releases are protected"
+    },
+    {
+      "title": "Contribution Guidelines",
+      "purpose": "CONTRIBUTING rules, bilingual RU and EN parity, PR checks",
+      "parent": "Contributing and Security"
+    },
+    {
+      "title": "Security Policy and Release Integrity",
+      "purpose": "SECURITY policy, signature verification with the full minisign public key, SHA256-pinned helper scripts",
+      "parent": "Contributing and Security"
+    },
+    {
+      "title": "Glossary",
+      "purpose": "Terms used across the docs"
+    }
   ]
 }
