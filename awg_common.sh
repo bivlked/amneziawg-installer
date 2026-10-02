@@ -1024,8 +1024,9 @@ _sanitize_awg_dkms_conf() {
 # файловая система, rename атомарен). Права и владелец берутся у текущего
 # compat.h (и при apply, и при revert). Временный каталог удаляется в конце
 # вызова; если не удалось, слово и код возврата не меняются (удачная замена
-# не откатывается), в stderr идёт предупреждение. Под блокировкой apply и
-# revert пытаются убрать брошенные каталоги ровно этого вида (не симлинки).
+# не откатывается), в stderr идёт предупреждение. Каталог, брошенный
+# убитым вызовом, остаётся (сборке он не мешает); чужие каталоги функция не
+# убирает, потому что по имени не отличить брошенный от живого.
 # Блокировку берут только apply и revert: flock на $AWG_KMOD_LOCK (по
 # умолчанию /run/lock/amneziawg-kmod.lock; симлинк или не обычный файл -
 # error:lock), ждать $AWG_KMOD_LOCK_WAIT секунд: 0 или целое 1-99999 без
@@ -1067,11 +1068,6 @@ awg_kmod_compat_fix() {
             elif ! flock -w "$wait" "$fd"; then
                 out='error:busy'; break
             fi
-        fi
-        if [[ "$mode" != check && -d "${src}/compat" ]] \
-                && ! find "${src}/compat" -mindepth 1 -maxdepth 1 -type d -name '.awg-kmod.??????' \
-                    -exec rm -rf -- {} + 2>/dev/null; then
-            printf 'awg_kmod_compat_fix: cannot remove leftovers in %s\n' "${src}/compat" >&2 || :
         fi
         if [[ -L "$f" ]]; then
             cls=unsafe

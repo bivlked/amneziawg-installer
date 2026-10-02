@@ -193,7 +193,7 @@ teardown() { rm -rf "$TEST_DIR"; }
 @test "kmod: without the patch tool apply fails and touches nothing" {
     local bin="$TEST_DIR/bin" t
     mkdir "$bin"
-    for t in sha256sum mktemp cp mv rm chmod chown flock find; do ln -s "$(command -v "$t")" "$bin/$t"; done
+    for t in sha256sum mktemp cp mv rm chmod chown flock; do ln -s "$(command -v "$t")" "$bin/$t"; done
     PATH="$bin" run kf apply "$SRC" "$(_fx pr218.diff)"
     [ "$status" -eq 1 ]; [ "$output" = error:no-patch ]
     [ "$(_sha "$SRC/compat/compat.h")" = "$BASE_SHA" ]
@@ -202,7 +202,7 @@ teardown() { rm -rf "$TEST_DIR"; }
 @test "kmod: without flock apply fails instead of running unlocked" {
     local bin="$TEST_DIR/bin" t
     mkdir "$bin"
-    for t in sha256sum mktemp cp mv rm chmod chown patch find; do ln -s "$(command -v "$t")" "$bin/$t"; done
+    for t in sha256sum mktemp cp mv rm chmod chown patch; do ln -s "$(command -v "$t")" "$bin/$t"; done
     PATH="$bin" run kf apply "$SRC" "$(_fx pr218.diff)"
     [ "$status" -eq 1 ]; [ "$output" = error:no-flock ]
     [ "$(_sha "$SRC/compat/compat.h")" = "$BASE_SHA" ]
@@ -332,37 +332,18 @@ teardown() { rm -rf "$TEST_DIR"; }
     [ "$status" -eq 1 ]; [ "$output" = error:src ]
 }
 
-@test "kmod: leftover staging dirs from a killed run are removed by the next apply" {
-    mkdir -p "$SRC/compat/.awg-kmod.OLD111/x" "$SRC/compat/.awg-kmod.OLD222"
-    run kf check "$SRC"
-    [ -d "$SRC/compat/.awg-kmod.OLD111" ]
-    run kf apply "$SRC" "$(_fx pr218.diff)"
+@test "kmod: other dirs in compat/, even of the staging form, are never removed" {
+    # A name cannot tell an abandoned staging dir from a live one or from the
+    # caller's own: a lock and a diff inside such a dir must survive.
+    mkdir "$SRC/compat/.awg-kmod.ABC123"
+    cp "$(_fx pr218.diff)" "$SRC/compat/.awg-kmod.ABC123/fix.diff"
+    AWG_KMOD_LOCK="$SRC/compat/.awg-kmod.ABC123/lock" run kf apply "$SRC" "$SRC/compat/.awg-kmod.ABC123/fix.diff"
     [ "$status" -eq 0 ]; [ "$output" = applied ]
-    [ -z "$(_leftovers)" ]
-}
-
-@test "kmod: the leftover sweep spares files, the lock and anything not of the mktemp form" {
-    # A regular file with the exact staging-name shape (the diff), the lock
-    # file itself inside compat/, a dir with a different suffix length.
-    cp "$(_fx pr218.diff)" "$SRC/compat/.awg-kmod.diff01"
-    mkdir "$SRC/compat/.awg-kmod.keep"
-    ln -s "$TEST_DIR" "$SRC/compat/.awg-kmod.link01"
-    AWG_KMOD_LOCK="$SRC/compat/.awg-kmod.lock01" run kf apply "$SRC" "$SRC/compat/.awg-kmod.diff01"
-    [ "$status" -eq 0 ]; [ "$output" = applied ]
-    [ -f "$SRC/compat/.awg-kmod.diff01" ]
-    [ -f "$SRC/compat/.awg-kmod.lock01" ]
-    [ -d "$SRC/compat/.awg-kmod.keep" ]
-    [ -L "$SRC/compat/.awg-kmod.link01" ]
-    [ -d "$TEST_DIR" ]
-}
-
-@test "kmod: the leftover sweep runs only under the lock" {
-    mkdir "$SRC/compat/.awg-kmod.LIVE01"
-    exec {fd}>>"$AWG_KMOD_LOCK"; flock -n "$fd"
-    run kf apply "$SRC" "$(_fx pr218.diff)"
-    exec {fd}>&-
-    [ "$status" -eq 1 ]; [ "$output" = error:busy ]
-    [ -d "$SRC/compat/.awg-kmod.LIVE01" ]
+    AWG_KMOD_LOCK="$SRC/compat/.awg-kmod.ABC123/lock" run kf revert "$SRC"
+    [ "$status" -eq 0 ]; [ "$output" = reverted ]
+    [ -f "$SRC/compat/.awg-kmod.ABC123/fix.diff" ]
+    [ -f "$SRC/compat/.awg-kmod.ABC123/lock" ]
+    [ "$(find "$SRC/compat" -mindepth 1 -maxdepth 1 -name '.awg-kmod.*' | wc -l)" -eq 1 ]
 }
 
 @test "kmod: a caller with failglob gets a token and no leaked lock" {

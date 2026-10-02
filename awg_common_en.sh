@@ -1045,8 +1045,9 @@ _sanitize_awg_dkms_conf() {
 # compat.h (on apply and on revert). The temporary directory is removed at
 # the end of the call; if that fails, the word and the exit code stay as
 # they are (a successful swap is not rolled back) and a warning goes to
-# stderr. Under the lock, apply and revert try to remove abandoned
-# directories of exactly that form (not symlinks).
+# stderr. A directory left by a killed call stays (it does not affect the
+# build); the function does not remove other directories, because a name
+# cannot tell an abandoned one from a live one.
 # Only apply and revert take the lock: flock on $AWG_KMOD_LOCK (default
 # /run/lock/amneziawg-kmod.lock; a symlink or a non-regular file is
 # error:lock), waiting $AWG_KMOD_LOCK_WAIT seconds: 0 or an integer 1-99999
@@ -1088,11 +1089,6 @@ awg_kmod_compat_fix() {
             elif ! flock -w "$wait" "$fd"; then
                 out='error:busy'; break
             fi
-        fi
-        if [[ "$mode" != check && -d "${src}/compat" ]] \
-                && ! find "${src}/compat" -mindepth 1 -maxdepth 1 -type d -name '.awg-kmod.??????' \
-                    -exec rm -rf -- {} + 2>/dev/null; then
-            printf 'awg_kmod_compat_fix: cannot remove leftovers in %s\n' "${src}/compat" >&2 || :
         fi
         if [[ -L "$f" ]]; then
             cls=unsafe

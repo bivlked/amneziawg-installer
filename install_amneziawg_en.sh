@@ -6158,11 +6158,6 @@ awg_kmod_compat_fix() {
                 out='error:busy'; break
             fi
         fi
-        if [[ "$mode" != check && -d "${src}/compat" ]] \
-                && ! find "${src}/compat" -mindepth 1 -maxdepth 1 -type d -name '.awg-kmod.??????' \
-                    -exec rm -rf -- {} + 2>/dev/null; then
-            printf 'awg_kmod_compat_fix: cannot remove leftovers in %s\n' "${src}/compat" >&2 || :
-        fi
         if [[ -L "$f" ]]; then
             cls=unsafe
         elif [[ ! -e "$f" ]]; then
