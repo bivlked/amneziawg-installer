@@ -56,22 +56,30 @@
         "$BATS_TEST_DIRNAME/../install_amneziawg.sh"
 }
 
-@test "v5.13.0: RU install_packages falls back to dkms install for running kernel on amneziawg-dkms failure" {
+# Since track K the fallback goes through the helper's --repair: it builds the
+# running kernel (and the others); a failure on a stale kernel only (exit 1)
+# still finishes the install - behaviour in test_kmod_installer.bats.
+@test "v5.13.0: RU install_packages fallback repairs the module via the helper and finishes dpkg" {
     block=$(awk '/^install_packages\(\) \{/,/^\}/' \
         "$BATS_TEST_DIRNAME/../install_amneziawg.sh")
-    [[ "$block" == *'amneziawg-dkms'* ]]
-    [[ "$block" == *'dkms install -m amneziawg'* ]]
-    [[ "$block" == *'-k "$(uname -r)" --force'* ]]
+    [[ "$block" == *'_pkg_present amneziawg-dkms'* ]]
+    [[ "$block" == *'"$AWG_ENSURE_HELPER" --repair'* ]]
+    [[ "$block" == *'if [[ "$_hrc" -le 1 ]]'* ]]
     [[ "$block" == *'dpkg --configure -a'* ]]
+    [[ "$block" == *'_pkgs_installed_ok "${to_install[@]}"'* ]]
 }
 
-@test "v5.13.0: EN install_packages falls back to dkms install for running kernel on amneziawg-dkms failure" {
+# Since track K the fallback goes through the helper's --repair: it builds the
+# running kernel (and the others); a failure on a stale kernel only (exit 1)
+# still finishes the install - behaviour in test_kmod_installer.bats.
+@test "v5.13.0: EN install_packages fallback repairs the module via the helper and finishes dpkg" {
     block=$(awk '/^install_packages\(\) \{/,/^\}/' \
         "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh")
-    [[ "$block" == *'amneziawg-dkms'* ]]
-    [[ "$block" == *'dkms install -m amneziawg'* ]]
-    [[ "$block" == *'-k "$(uname -r)" --force'* ]]
+    [[ "$block" == *'_pkg_present amneziawg-dkms'* ]]
+    [[ "$block" == *'"$AWG_ENSURE_HELPER" --repair'* ]]
+    [[ "$block" == *'if [[ "$_hrc" -le 1 ]]'* ]]
     [[ "$block" == *'dpkg --configure -a'* ]]
+    [[ "$block" == *'_pkgs_installed_ok "${to_install[@]}"'* ]]
 }
 
 @test "v5.13.0: RU install pre-installs gcc-13 when stale kernel headers detected" {
