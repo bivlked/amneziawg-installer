@@ -912,18 +912,30 @@ _e11_resume_force() {
         # a step the installer itself leaves is named, and the general warning
         # "a reinstall reruns steps 1 and 7" is not printed (it would be untrue);
         # anything else keeps the general message
+        local all="$output$stderr" general=0 named=0 damaged=0 step4=0
+        [[ "$all" == *"ВНИМАНИЕ"* || "$all" == *"WARNING: a reinstall"* ]] && general=1
+        [[ "$all" == *"setup_state"*" $st."* ]] && named=1
+        [[ "$all" == *"повреждён"* || "$all" == *"damaged"* ]] && damaged=1
+        [[ "$all" == *"шага 4"* || "$all" == *"4-го"* || "$all" == *"step 4"* || "$all" == *"steps 4 onwards"* ]] && step4=1
+        # what the message promises must be what --force does with that state
         case "$st" in
-            1|7|99)
-                [[ "$output$stderr" == *"setup_state"*" $st."* ]] \
-                    || { echo "state $st: the unfinished step is not named" >&2; return 1; }
-                [[ "$output$stderr" != *"ВНИМАНИЕ"* && "$output$stderr" != *"WARNING: a reinstall"* ]] \
-                    || { echo "state $st: the general warning is printed" >&2; return 1; } ;;
-            *)
-                [[ "$output$stderr" != *"не завершился"* && "$output$stderr" != *"did not finish"* ]] \
-                    || { echo "state $st: a step named for state $st" >&2; return 1; }
-                [[ "$output$stderr" == *"ВНИМАНИЕ"* || "$output$stderr" == *"WARNING: a reinstall"* ]] \
-                    || { echo "state $st: the general warning is missing" >&2; return 1; } ;;
-        esac
+            1)        [[ "$general$named$damaged$step4" == 0100 ]] ;;
+            7|99)     [[ "$general$named$damaged$step4" == 0101 ]] ;;
+            8|junk)   [[ "$general$named$damaged$step4" == 0010 ]] ;;
+            empty|none) [[ "$general$named$damaged$step4" == 1000 ]] ;;
+        esac || { echo "state $st: general/named/damaged/step4 = $general$named$damaged$step4" >&2; return 1; }
+    done
+    # and the route the message promises is the route --force takes
+    local want args
+    for want in "7:7:" "7:4:--port=39743" "1:1:--port=39743" "99:99:" "99:4:--port=39743"; do
+        st=${want%%:*}; want=${want#*:}; args=${want#*:}; want=${want%%:*}
+        printf '%s\n' "$st" > "$A/setup_state"
+        # shellcheck disable=SC2086  # args is one flag or nothing
+        # no --ssh-port here: it is a setting too and would roll back to step 4
+        _inst_run "$inst" --force --yes $args
+        _run_ok
+        [[ "$output" == *"STEP0_DONE step=$want"* ]] \
+            || { echo "state $st with --force $args: expected step $want" >&2; return 1; }
     done
 }
 @test "lifecycle E11: a resume after the reboot of a --force run carries on without the flag" {

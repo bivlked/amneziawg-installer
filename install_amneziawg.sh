@@ -6684,23 +6684,28 @@ _resume_state=""
 if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state" != 3 ]] && [[ -f "$SERVER_CONF_FILE" ]] \
    && systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then
     log_error "AmneziaWG уже установлен и запущен."
-    # Остаток шага, который пишет сам установщик (2 и 3 сюда не доходят): --force
-    # не сбрасывает файл состояния и продолжает с него, поэтому общее «переустановка
-    # прогонит шаги 1 и 7» было бы неправдой.
+    # Что сделает --force, зависит от файла состояния: он не сбрасывается, и
+    # initialize_setup продолжает с сохранённого шага; при шаге выше 4 параметры
+    # настройки (--port, --preset и другие) откатывают его к шагу 4. Общее
+    # «переустановка прогонит шаги 1 и 7» верно только без файла состояния.
     if [[ "$_resume_state" =~ ^([1-7]|99)$ ]]; then
         log_error "Прошлый запуск не завершился: в $STATE_FILE шаг $_resume_state."
         if [[ "$_resume_state" == 99 ]]; then
-            log_error "С --force выполнится только завершение установки."
+            log_error "С --force (или AWG_FORCE_REINSTALL=1) выполнится только завершение установки, а с параметрами настройки (--port, --preset и другие) - шаги с 4-го."
+        elif (( _resume_state > 4 )); then
+            log_error "С --force (или AWG_FORCE_REINSTALL=1) установка продолжится с шага $_resume_state, а с параметрами настройки (--port, --preset и другие) - с шага 4."
         else
-            log_error "С --force установка продолжится с шага $_resume_state (с шага 4, если вместе с --force передать параметры: --port, --preset и другие)."
+            log_error "С --force (или AWG_FORCE_REINSTALL=1) установка продолжится с шага $_resume_state."
         fi
+    elif [[ -n "$_resume_state" ]]; then
+        log_error "В $STATE_FILE значение '${_resume_state:0:40}', которое установщик не пишет: файл повреждён. Проверьте его, прежде чем запускать с --force."
     else
         log_error "Чтобы переустановить - добавьте --force (или AWG_FORCE_REINSTALL=1)."
         log_error "ВНИМАНИЕ: переустановка снова прогонит шаги 1 (sysctl/swap/BBR) и 7 (рестарт сервиса)."
-        log_error "          Параметры обфускации (Jc/Jmin/Jmax/H1-H4/I1) сохранятся, ЕСЛИ не передавать"
-        log_error "          --preset/--jc/--jmin/--jmax (эти флаги перегенерируют весь набор - все"
-        log_error "          выданные клиентские конфиги придётся перевыпустить через regen)."
     fi
+    log_error "Параметры обфускации (Jc/Jmin/Jmax/H1-H4/I1) сохранятся, ЕСЛИ не передавать"
+    log_error "--preset/--jc/--jmin/--jmax (эти флаги перегенерируют весь набор - все"
+    log_error "выданные клиентские конфиги придётся перевыпустить через regen)."
     log_error "Для управления клиентами:  sudo bash $MANAGE_SCRIPT_PATH help"
     log_error "Для полного удаления:      sudo bash $0 --uninstall"
     exit 0
