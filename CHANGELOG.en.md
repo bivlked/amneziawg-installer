@@ -31,6 +31,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **The installer and `manage` find system tools from `su` without "-" too.** On Debian such a shell, like a run from cron, leaves `PATH` without the `sbin` directories, so `reboot`, `dkms`, `sysctl`, `ufw` and `modprobe` were not found by name and dpkg refused to install packages: the install stalled already in step 1, and `manage check` falsely reported IP forwarding off and UFW not installed. The scripts now append the missing `/usr/local/sbin`, `/usr/sbin` and `/sbin` to the end of `PATH` themselves; the order the user chose does not change. The `amneziawg-ensure-module` helper, which apt runs after a kernel update, does the same: from such a shell it used to miss `dkms` and exit quietly without rebuilding the module. Running through `sudo` or after `su -` already worked.
 - **`manage` messages on stderr are no longer lost after `restore`.** Releasing the locks at the end of a restore redirected stderr of the whole script to `/dev/null`, so everything `manage` printed there afterwards (errors and warnings on exit) never reached the person. The redirection now covers only closing the lock.
 
+### Documentation
+
+- **Known issue: kernel 7.0.0-38 on Ubuntu 26.04 and the HWE kernel 7.0.0-38 on Ubuntu 24.04.** The AmneziaWG module from the PPA does not build for these kernels: they changed the `setup_udp_tunnel_sock` function. ADVANCED, section [Known Limitations](ADVANCED.en.md#kernel-70-backport-adv), describes what it looks like, how to stay out of it on 24.04 and how to fix it by hand with the module's PR #218; the README marks Ubuntu 26.04 with a caveat.
+
 ## [5.37.0] - 2026-09-27
 
 **v5.37.0** - client DNS in the config, --no-prebuilt for ARM, and a docs review.
