@@ -6843,7 +6843,7 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
     fi
     log_error "Obfuscation parameters (Jc/Jmin/Jmax/H1-H4/I1) survive UNLESS you pass"
     log_error "--preset/--jc/--jmin/--jmax (those flags regenerate the whole set - every"
-    log_error "issued client config would have to be reissued via regen)."
+    log_error "issued client config would have to be reissued via regen); --no-cps removes I1."
     log_error "To manage clients:  sudo bash $MANAGE_SCRIPT_PATH help"
     log_error "To fully uninstall: sudo bash $0 --uninstall"
     exit 0

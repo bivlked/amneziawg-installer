@@ -6705,7 +6705,7 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
     fi
     log_error "Параметры обфускации (Jc/Jmin/Jmax/H1-H4/I1) сохранятся, ЕСЛИ не передавать"
     log_error "--preset/--jc/--jmin/--jmax (эти флаги перегенерируют весь набор - все"
-    log_error "выданные клиентские конфиги придётся перевыпустить через regen)."
+    log_error "выданные клиентские конфиги придётся перевыпустить через regen); --no-cps убирает I1."
     log_error "Для управления клиентами:  sudo bash $MANAGE_SCRIPT_PATH help"
     log_error "Для полного удаления:      sudo bash $0 --uninstall"
     exit 0
