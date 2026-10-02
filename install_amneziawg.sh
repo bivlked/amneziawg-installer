@@ -5990,6 +5990,105 @@ esac
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 log_line() { printf '[%s] [%s] %s\n' "$(ts)" "$MODE" "$*"; }
 
+# awg_kmod_compat_fix: kernel 7.0 udp_tunnel backport fix for the module
+# source (exact-hash check + upstream PR #218). Byte-identical copy of the
+# function in awg_common.sh; usage and contract are documented there.
+awg_kmod_compat_fix() {
+    local mode="${1:-}" src="${2:-}" diff="${3:-}"
+    local base_sha=b14346040ce0188c47e2db2baad1a4f21aa784510f6c95bbb4aa58d5bbe691c9
+    local fixed_sha=8d47a358b4df0b2187788ce6f88ad63128218de1be22c78b263ef3e5d770c26b
+    local lock="${AWG_KMOD_LOCK:-/run/lock/amneziawg-kmod.lock}"
+    local wait="${AWG_KMOD_LOCK_WAIT:-0}"
+    local f="${src}/compat/compat.h" bak="${src}/compat/compat.h.awg-base"
+    local cls="" sha="" out="" rc=1 fd="" tmpd="" tmpf="" tmpb=""
+    case "$mode" in
+        check|apply|revert) ;;
+        *) printf '%s\n' 'error:usage'; return 1 ;;
+    esac
+    [[ "$wait" =~ ^[0-9]+$ ]] || wait=0
+    while :; do
+        if [[ -z "$src" ]]; then out='error:usage'; break; fi
+        if [[ "$mode" != check ]]; then
+            if ! { : >>"$lock"; } 2>/dev/null; then out='error:lock'; break; fi
+            exec {fd}>>"$lock"
+            if [[ "$wait" -eq 0 ]]; then
+                if ! flock -n "$fd"; then out='error:busy'; break; fi
+            elif ! flock -w "$wait" "$fd"; then
+                out='error:busy'; break
+            fi
+        fi
+        if [[ -L "$f" ]]; then
+            cls=unsafe
+        elif [[ ! -e "$f" ]]; then
+            cls=absent
+        elif [[ ! -f "$f" ]]; then
+            cls=unsafe
+        elif ! sha=$(sha256sum -- "$f" 2>/dev/null); then
+            out='error:read'; break
+        else
+            sha="${sha%% *}"
+            if [[ "$sha" == "$base_sha" ]]; then cls=base
+            elif [[ "$sha" == "$fixed_sha" ]]; then cls=patched
+            else cls=foreign
+            fi
+        fi
+        if [[ "$mode" == check ]]; then out="$cls"; rc=0; break; fi
+        if [[ "$mode" == revert ]]; then
+            if [[ "$cls" == base ]]; then out='already'; rc=0; break; fi
+            if [[ "$cls" != patched || -L "$bak" || ! -f "$bak" ]]; then out='error:revert'; break; fi
+            if ! sha=$(sha256sum -- "$bak" 2>/dev/null) || [[ "${sha%% *}" != "$base_sha" ]]; then
+                out='error:revert'; break
+            fi
+            if ! tmpf=$(mktemp "${f}.awg-new.XXXXXX" 2>/dev/null); then tmpf=""; out='error:tmp'; break; fi
+            if ! cp -p -- "$bak" "$tmpf" 2>/dev/null; then out='error:copy'; break; fi
+            if ! mv -f -- "$tmpf" "$f" 2>/dev/null; then out='error:mv'; break; fi
+            tmpf=""
+            out='reverted'; rc=0; break
+        fi
+        if [[ "$cls" != base ]]; then
+            [[ "$cls" == patched ]] && out='already' || out="$cls"
+            rc=0; break
+        fi
+        if [[ -z "$diff" || ! -f "$diff" || ! -r "$diff" ]]; then out='error:no-diff'; break; fi
+        if ! command -v patch >/dev/null 2>&1; then out='error:no-patch'; break; fi
+        if ! tmpd=$(mktemp -d 2>/dev/null); then tmpd=""; out='error:tmp'; break; fi
+        if ! tmpf=$(mktemp "${f}.awg-new.XXXXXX" 2>/dev/null); then tmpf=""; out='error:tmp'; break; fi
+        if ! patch --forward --batch --fuzz=0 --no-backup-if-mismatch \
+                --reject-file="${tmpd}/rej" -o "$tmpf" "$f" <"$diff" >&2; then
+            out='error:patch'; break
+        fi
+        if ! sha=$(sha256sum -- "$tmpf" 2>/dev/null) || [[ "${sha%% *}" != "$fixed_sha" ]]; then
+            out='error:result'; break
+        fi
+        if ! chmod --reference="$f" -- "$tmpf" 2>/dev/null \
+                || ! chown --reference="$f" -- "$tmpf" 2>/dev/null; then
+            out='error:perm'; break
+        fi
+        if [[ -L "$bak" ]]; then out='error:backup'; break; fi
+        if ! sha=$(sha256sum -- "$bak" 2>/dev/null) || [[ "${sha%% *}" != "$base_sha" ]]; then
+            if ! tmpb=$(mktemp "${bak}.XXXXXX" 2>/dev/null); then tmpb=""; out='error:tmp'; break; fi
+            if ! cp -p -- "$f" "$tmpb" 2>/dev/null; then out='error:backup'; break; fi
+            if ! sha=$(sha256sum -- "$tmpb" 2>/dev/null) || [[ "${sha%% *}" != "$base_sha" ]]; then
+                out='error:changed'; break
+            fi
+            if ! mv -f -- "$tmpb" "$bak" 2>/dev/null; then out='error:backup'; break; fi
+            tmpb=""
+        fi
+        if ! sha=$(sha256sum -- "$f" 2>/dev/null) || [[ "${sha%% *}" != "$base_sha" ]]; then
+            out='error:changed'; break
+        fi
+        if ! mv -f -- "$tmpf" "$f" 2>/dev/null; then out='error:mv'; break; fi
+        tmpf=""
+        out='applied'; rc=0; break
+    done
+    [[ -n "$tmpd" ]] && rm -rf -- "$tmpd"
+    [[ -n "$tmpf" ]] && rm -f -- "$tmpf"
+    [[ -n "$tmpb" ]] && rm -f -- "$tmpb"
+    [[ -n "$fd" ]] && exec {fd}>&-
+    printf '%s\n' "$out"
+    return "$rc"
+}
+
 if [[ $(id -u) -ne 0 ]]; then
     log_line "ERROR: root privileges required" >&2
     exit 1
