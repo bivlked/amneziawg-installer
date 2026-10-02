@@ -1010,19 +1010,28 @@ _sanitize_awg_dkms_conf() {
 #            не тронут. patched -> already, foreign и absent печатаются как
 #            есть с кодом 0: решает слово, а не код. unsafe - код 1.
 #   revert - patched -> reverted, только если compat.h.awg-base ровно base;
-#            base -> already, absent -> absent (код 0); иное - error:revert
-#            или unsafe (код 1)
-# Сбой - error:<причина> и код 1; неверный каталог - error:src. В stdout
-# всегда одно слово, вывод patch идёт в stderr. Все промежуточные файлы
-# лежат во временном каталоге внутри compat/, перед каждой заменой хеш
-# заменяемого файла проверяется заново, замена - mv -T в том же каталоге.
-# Права и владелец берутся у текущего compat.h (и при apply, и при revert).
-# Блокировка: flock на $AWG_KMOD_LOCK (по умолчанию
-# /run/lock/amneziawg-kmod.lock), ждать $AWG_KMOD_LOCK_WAIT секунд (0 - не
-# ждать). Вызывающий, который уже держит эту блокировку, ставит
-# AWG_KMOD_LOCK_HELD=1: второй дескриптор на тот же файл в одном процессе
-# ждал бы сам себя. dpkg этой блокировки не берёт, поэтому перепроверка хеша
-# сужает гонку с распаковкой пакета, но не исключает её полностью.
+#            base -> already, absent -> absent (код 0); иное -
+#            error:<причина> (обычно error:revert) или unsafe (код 1)
+# Сбой - error:<причина> и код 1; неверный каталог (нет его, compat не
+# каталог или симлинк) - error:src. В stdout
+# всегда одно слово, вывод patch идёт в stderr. Если compat.h.awg-base -
+# симлинк, каталог или FIFO, apply на base и revert на patched дают
+# error:backup; тип копии проверяется заново перед каждым её чтением и
+# заменой. Все промежуточные файлы лежат во временном каталоге внутри
+# compat/; перед заменой compat.h его хеш проверяется заново, замена -
+# mv -T из этого каталога в compat/ (одна файловая система, rename
+# атомарен). Права и владелец берутся у текущего compat.h (и при apply, и
+# при revert). Если временный каталог убрать не удалось, результат не
+# меняется (замена уже сделана), в stderr идёт предупреждение, а брошенные
+# каталоги .awg-kmod.* убирает следующий вызов apply или revert.
+# Блокировку берут только apply и revert: flock на $AWG_KMOD_LOCK (по
+# умолчанию /run/lock/amneziawg-kmod.lock; симлинк или не обычный файл -
+# error:lock), ждать $AWG_KMOD_LOCK_WAIT секунд (0-99999, по умолчанию 0 -
+# не ждать; иное значение - error:usage). Вызывающий, который уже
+# держит эту блокировку, ставит AWG_KMOD_LOCK_HELD=1 только на этот вызов:
+# второй дескриптор на тот же файл в одном процессе получил бы error:busy.
+# dpkg этой блокировки не берёт, поэтому перепроверка хеша сужает гонку с
+# распаковкой пакета, но не исключает её полностью.
 # Тело функции побайтово совпадает в awg_common.sh, awg_common_en.sh и в
 # помощнике amneziawg-ensure-module обоих установщиков (это проверяет тест).
 awg_kmod_compat_fix() {
@@ -1037,20 +1046,26 @@ awg_kmod_compat_fix() {
         check|apply|revert) ;;
         *) printf '%s\n' 'error:usage'; return 1 ;;
     esac
-    [[ "$wait" =~ ^(0|[1-9][0-9]{0,4})$ ]] || wait=0
+    if [[ "$mode" != check && ! "$wait" =~ ^(0|[1-9][0-9]{0,4})$ ]]; then
+        printf '%s\n' 'error:usage'; return 1
+    fi
     while :; do
         if [[ -z "$src" ]]; then out='error:usage'; break; fi
-        if [[ ! -d "$src" ]] || [[ -e "${src}/compat" && ! -d "${src}/compat" ]]; then
+        if [[ ! -d "$src" || -L "${src}/compat" ]] || [[ -e "${src}/compat" && ! -d "${src}/compat" ]]; then
             out='error:src'; break
         fi
         if [[ "$mode" != check && "${AWG_KMOD_LOCK_HELD:-0}" != 1 ]]; then
             if ! command -v flock >/dev/null 2>&1; then out='error:no-flock'; break; fi
-            if ! { exec {fd}>>"$lock"; } 2>/dev/null; then fd=""; out='error:lock'; break; fi
+            if [[ -L "$lock" ]] || [[ -e "$lock" && ! -f "$lock" ]]; then out='error:lock'; break; fi
+            if ! { command exec {fd}>>"$lock"; } 2>/dev/null; then fd=""; out='error:lock'; break; fi
             if [[ "$wait" -eq 0 ]]; then
                 if ! flock -n "$fd"; then out='error:busy'; break; fi
             elif ! flock -w "$wait" "$fd"; then
                 out='error:busy'; break
             fi
+        fi
+        if [[ "$mode" != check && -d "${src}/compat" ]]; then
+            rm -rf -- "${src}/compat/".awg-kmod.* 2>/dev/null || :
         fi
         if [[ -L "$f" ]]; then
             cls=unsafe
@@ -1070,16 +1085,18 @@ awg_kmod_compat_fix() {
         if [[ "$mode" == check ]]; then out="$cls"; rc=0; break; fi
         if [[ "$cls" == unsafe ]]; then out='unsafe'; break; fi
         if [[ "$cls" == absent ]]; then out='absent'; rc=0; break; fi
-        if [[ -L "$bak" ]] || [[ -e "$bak" && ! -f "$bak" ]]; then out='error:backup'; break; fi
         if [[ "$mode" == revert ]]; then
             if [[ "$cls" == base ]]; then out='already'; rc=0; break; fi
-            if [[ "$cls" != patched || ! -f "$bak" ]]; then out='error:revert'; break; fi
+            if [[ "$cls" != patched ]]; then out='error:revert'; break; fi
+            if [[ -L "$bak" ]] || [[ -e "$bak" && ! -f "$bak" ]]; then out='error:backup'; break; fi
+            if [[ ! -f "$bak" ]]; then out='error:revert'; break; fi
             if ! sha=$(sha256sum -- "$bak" 2>/dev/null) || [[ "${sha%% *}" != "$base_sha" ]]; then
                 out='error:revert'; break
             fi
             if ! stage=$(mktemp -d "${src}/compat/.awg-kmod.XXXXXX" 2>/dev/null); then
                 stage=""; out='error:tmp'; break
             fi
+            if [[ -L "$bak" ]] || [[ -e "$bak" && ! -f "$bak" ]]; then out='error:backup'; break; fi
             if ! cp -- "$bak" "${stage}/new" 2>/dev/null; then out='error:copy'; break; fi
             if ! sha=$(sha256sum -- "${stage}/new" 2>/dev/null) || [[ "${sha%% *}" != "$base_sha" ]]; then
                 out='error:copy'; break
@@ -1117,6 +1134,7 @@ awg_kmod_compat_fix() {
                 || ! chmod --reference="$f" -- "${stage}/new" 2>/dev/null; then
             out='error:perm'; break
         fi
+        if [[ -L "$bak" ]] || [[ -e "$bak" && ! -f "$bak" ]]; then out='error:backup'; break; fi
         if ! sha=$(sha256sum -- "$bak" 2>/dev/null) || [[ "${sha%% *}" != "$base_sha" ]]; then
             if ! cp -- "${stage}/in" "${stage}/bak" 2>/dev/null \
                     || ! mv -fT -- "${stage}/bak" "$bak" 2>/dev/null; then
@@ -1130,8 +1148,10 @@ awg_kmod_compat_fix() {
         if ! mv -fT -- "${stage}/new" "$f" 2>/dev/null; then out='error:mv'; break; fi
         out='applied'; rc=0; break
     done
-    if [[ -n "$stage" ]]; then rm -rf -- "$stage" 2>/dev/null || :; fi
-    if [[ -n "$fd" ]]; then exec {fd}>&- || :; fi
+    if [[ -n "$stage" ]] && ! rm -rf -- "$stage" 2>/dev/null; then
+        printf 'awg_kmod_compat_fix: cannot remove %s\n' "$stage" >&2 || :
+    fi
+    if [[ -n "$fd" ]]; then command exec {fd}>&- || :; fi
     printf '%s\n' "$out"
     return "$rc"
 }

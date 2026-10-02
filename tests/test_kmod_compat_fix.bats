@@ -96,7 +96,7 @@ teardown() { rm -rf "$TEST_DIR"; }
     run kf apply "$TEST_DIR/odd" "$(_fx pr218.diff)"; [ "$status" -eq 1 ]; [ "$output" = error:src ]
 }
 
-@test "kmod: a symlinked compat.h is unsafe, exits 1 and its target is never written" {
+@test "kmod: a symlinked compat.h is unsafe (apply and revert exit 1), its target is never written" {
     mv "$SRC/compat/compat.h" "$TEST_DIR/real.h"
     ln -s "$TEST_DIR/real.h" "$SRC/compat/compat.h"
     run kf check "$SRC";                         [ "$status" -eq 0 ]; [ "$output" = unsafe ]
@@ -271,7 +271,116 @@ teardown() { rm -rf "$TEST_DIR"; }
     [ "$(_sha "$SRC/compat/compat.h")" = "$BASE_SHA" ]
 }
 
+@test "kmod: a bad backup path does not change the no-op answers" {
+    kf apply "$SRC" "$(_fx pr218.diff)" >/dev/null
+    rm "$SRC/compat/compat.h.awg-base"; mkdir "$SRC/compat/compat.h.awg-base"
+    run kf apply "$SRC" "$(_fx pr218.diff)";   [ "$status" -eq 0 ]; [ "$output" = already ]
+    _mk_src; mkdir "$SRC/compat/compat.h.awg-base"
+    run kf revert "$SRC";                      [ "$status" -eq 0 ]; [ "$output" = already ]
+    _mk_src; echo '/* x */' >> "$SRC/compat/compat.h"; mkfifo "$SRC/compat/compat.h.awg-base"
+    run timeout 10 bash -c 'source "$1"; awg_kmod_compat_fix apply "$2" "$3" 2>/dev/null' _ \
+        "$BATS_TEST_DIRNAME/../awg_common.sh" "$SRC" "$(_fx pr218.diff)"
+    [ "$status" -eq 0 ]; [ "$output" = foreign ]
+}
+
+@test "kmod: a backup swapped for a FIFO or a symlink during the patch is refused" {
+    _wrap patch "mkfifo $(printf %q "$SRC/compat/compat.h.awg-base")"
+    run timeout 10 env PATH="$TEST_DIR/bin:$PATH" bash -c 'source "$1"; awg_kmod_compat_fix apply "$2" "$3" 2>/dev/null' _ \
+        "$BATS_TEST_DIRNAME/../awg_common.sh" "$SRC" "$(_fx pr218.diff)"
+    [ "$status" -eq 1 ]; [ "$output" = error:backup ]
+    [ "$(_sha "$SRC/compat/compat.h")" = "$BASE_SHA" ]
+    _mk_src
+    cp "$(_fx compat.h.base)" "$TEST_DIR/base-copy.h"
+    _wrap patch "ln -s $(printf %q "$TEST_DIR/base-copy.h") $(printf %q "$SRC/compat/compat.h.awg-base")"
+    PATH="$TEST_DIR/bin:$PATH" run kf apply "$SRC" "$(_fx pr218.diff)"
+    [ "$status" -eq 1 ]; [ "$output" = error:backup ]
+    [ "$(_sha "$SRC/compat/compat.h")" = "$BASE_SHA" ]
+    [ -z "$(_leftovers | grep -v '^compat.h.awg-base$')" ]
+}
+
+@test "kmod: revert refuses a backup swapped for a symlink before it copies" {
+    kf apply "$SRC" "$(_fx pr218.diff)" >/dev/null
+    cp "$(_fx compat.h.base)" "$TEST_DIR/base-copy.h"
+    _wrap mktemp "rm -f $(printf %q "$SRC/compat/compat.h.awg-base"); ln -s $(printf %q "$TEST_DIR/base-copy.h") $(printf %q "$SRC/compat/compat.h.awg-base")"
+    PATH="$TEST_DIR/bin:$PATH" run kf revert "$SRC"
+    [ "$status" -eq 1 ]; [ "$output" = error:backup ]
+    [ "$(_sha "$SRC/compat/compat.h")" = "$FIXED_SHA" ]
+    [ -z "$(_leftovers)" ]
+}
+
+@test "kmod: a failed backup write is error:backup, not a silent applied" {
+    # mv fails for the backup target only, before touching anything.
+    mkdir -p "$TEST_DIR/bin"
+    printf '#!/bin/bash\n[[ "${@: -1}" == *compat.h.awg-base ]] && exit 1\nexec %q "$@"\n' "$(command -v mv)" > "$TEST_DIR/bin/mv"
+    chmod +x "$TEST_DIR/bin/mv"
+    PATH="$TEST_DIR/bin:$PATH" run kf apply "$SRC" "$(_fx pr218.diff)"
+    [ "$status" -eq 1 ]; [ "$output" = error:backup ]
+    [ "$(_sha "$SRC/compat/compat.h")" = "$BASE_SHA" ]
+    [ ! -e "$SRC/compat/compat.h.awg-base" ]
+    [ -z "$(_leftovers)" ]
+}
+
+@test "kmod: a symlinked compat dir is error:src and nothing is written through it" {
+    mkdir "$TEST_DIR/outside"; mv "$SRC/compat/compat.h" "$TEST_DIR/outside/"
+    rmdir "$SRC/compat"; ln -s "$TEST_DIR/outside" "$SRC/compat"
+    run kf apply "$SRC" "$(_fx pr218.diff)"
+    [ "$status" -eq 1 ]; [ "$output" = error:src ]
+    [ "$(_sha "$TEST_DIR/outside/compat.h")" = "$BASE_SHA" ]
+    [ -z "$(find "$TEST_DIR/outside" -mindepth 1 ! -name compat.h)" ]
+    rm "$SRC/compat"; ln -s "$TEST_DIR/missing" "$SRC/compat"
+    run kf check "$SRC"
+    [ "$status" -eq 1 ]; [ "$output" = error:src ]
+}
+
+@test "kmod: leftover staging dirs from a killed run are removed by the next apply" {
+    mkdir -p "$SRC/compat/.awg-kmod.OLD1/x" "$SRC/compat/.awg-kmod.OLD2"
+    run kf check "$SRC"
+    [ -d "$SRC/compat/.awg-kmod.OLD1" ]
+    run kf apply "$SRC" "$(_fx pr218.diff)"
+    [ "$status" -eq 0 ]; [ "$output" = applied ]
+    [ -z "$(_leftovers)" ]
+}
+
+@test "kmod: revert refuses a foreign source even with an exact backup" {
+    cp -p "$(_fx compat.h.base)" "$SRC/compat/compat.h.awg-base"
+    echo '/* newer package */' >> "$SRC/compat/compat.h"
+    local before; before=$(_sha "$SRC/compat/compat.h")
+    run kf revert "$SRC"
+    [ "$status" -eq 1 ]; [ "$output" = error:revert ]
+    [ "$(_sha "$SRC/compat/compat.h")" = "$before" ]
+}
+
 # ---------- lock ----------
+
+@test "kmod: a FIFO or a symlink as the lock file is error:lock, nothing blocks" {
+    mkfifo "$TEST_DIR/fifo.lock"
+    run timeout 10 env AWG_KMOD_LOCK="$TEST_DIR/fifo.lock" bash -c 'source "$1"; awg_kmod_compat_fix apply "$2" "$3" 2>/dev/null' _ \
+        "$BATS_TEST_DIRNAME/../awg_common.sh" "$SRC" "$(_fx pr218.diff)"
+    [ "$status" -eq 1 ]; [ "$output" = error:lock ]
+    ln -s "$TEST_DIR/elsewhere.lock" "$TEST_DIR/link.lock"
+    AWG_KMOD_LOCK="$TEST_DIR/link.lock" run kf apply "$SRC" "$(_fx pr218.diff)"
+    [ "$status" -eq 1 ]; [ "$output" = error:lock ]
+    [ ! -e "$TEST_DIR/elsewhere.lock" ]
+    [ "$(_sha "$SRC/compat/compat.h")" = "$BASE_SHA" ]
+}
+
+@test "kmod: a lock open failure in POSIX mode still prints the token" {
+    run /bin/bash -c 'set -o posix; source "$1"
+        AWG_KMOD_LOCK=/nonexistent/dir/lock awg_kmod_compat_fix apply "$2" "$3" 2>/dev/null || echo "rc=$?"
+        echo continues' _ "$BATS_TEST_DIRNAME/../awg_common.sh" "$SRC" "$(_fx pr218.diff)"
+    [ "$output" = $'error:lock\nrc=1\ncontinues' ]
+}
+
+@test "kmod: an invalid AWG_KMOD_LOCK_WAIT is a usage error, check ignores it" {
+    local v
+    for v in 02 5s -1 ' 2' 100000; do
+        AWG_KMOD_LOCK_WAIT="$v" run kf apply "$SRC" "$(_fx pr218.diff)"
+        [ "$status" -eq 1 ] && [ "$output" = error:usage ] || { echo "WAIT=[$v]: $status $output"; return 1; }
+    done
+    AWG_KMOD_LOCK_WAIT=5s run kf check "$SRC"
+    [ "$status" -eq 0 ]; [ "$output" = base ]
+    [ "$(_sha "$SRC/compat/compat.h")" = "$BASE_SHA" ]
+}
 
 @test "kmod: a held lock makes apply and revert fail fast, the source is untouched" {
     exec {fd}>>"$AWG_KMOD_LOCK"; flock -n "$fd"

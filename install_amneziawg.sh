@@ -6006,20 +6006,26 @@ awg_kmod_compat_fix() {
         check|apply|revert) ;;
         *) printf '%s\n' 'error:usage'; return 1 ;;
     esac
-    [[ "$wait" =~ ^(0|[1-9][0-9]{0,4})$ ]] || wait=0
+    if [[ "$mode" != check && ! "$wait" =~ ^(0|[1-9][0-9]{0,4})$ ]]; then
+        printf '%s\n' 'error:usage'; return 1
+    fi
     while :; do
         if [[ -z "$src" ]]; then out='error:usage'; break; fi
-        if [[ ! -d "$src" ]] || [[ -e "${src}/compat" && ! -d "${src}/compat" ]]; then
+        if [[ ! -d "$src" || -L "${src}/compat" ]] || [[ -e "${src}/compat" && ! -d "${src}/compat" ]]; then
             out='error:src'; break
         fi
         if [[ "$mode" != check && "${AWG_KMOD_LOCK_HELD:-0}" != 1 ]]; then
             if ! command -v flock >/dev/null 2>&1; then out='error:no-flock'; break; fi
-            if ! { exec {fd}>>"$lock"; } 2>/dev/null; then fd=""; out='error:lock'; break; fi
+            if [[ -L "$lock" ]] || [[ -e "$lock" && ! -f "$lock" ]]; then out='error:lock'; break; fi
+            if ! { command exec {fd}>>"$lock"; } 2>/dev/null; then fd=""; out='error:lock'; break; fi
             if [[ "$wait" -eq 0 ]]; then
                 if ! flock -n "$fd"; then out='error:busy'; break; fi
             elif ! flock -w "$wait" "$fd"; then
                 out='error:busy'; break
             fi
+        fi
+        if [[ "$mode" != check && -d "${src}/compat" ]]; then
+            rm -rf -- "${src}/compat/".awg-kmod.* 2>/dev/null || :
         fi
         if [[ -L "$f" ]]; then
             cls=unsafe
@@ -6039,16 +6045,18 @@ awg_kmod_compat_fix() {
         if [[ "$mode" == check ]]; then out="$cls"; rc=0; break; fi
         if [[ "$cls" == unsafe ]]; then out='unsafe'; break; fi
         if [[ "$cls" == absent ]]; then out='absent'; rc=0; break; fi
-        if [[ -L "$bak" ]] || [[ -e "$bak" && ! -f "$bak" ]]; then out='error:backup'; break; fi
         if [[ "$mode" == revert ]]; then
             if [[ "$cls" == base ]]; then out='already'; rc=0; break; fi
-            if [[ "$cls" != patched || ! -f "$bak" ]]; then out='error:revert'; break; fi
+            if [[ "$cls" != patched ]]; then out='error:revert'; break; fi
+            if [[ -L "$bak" ]] || [[ -e "$bak" && ! -f "$bak" ]]; then out='error:backup'; break; fi
+            if [[ ! -f "$bak" ]]; then out='error:revert'; break; fi
             if ! sha=$(sha256sum -- "$bak" 2>/dev/null) || [[ "${sha%% *}" != "$base_sha" ]]; then
                 out='error:revert'; break
             fi
             if ! stage=$(mktemp -d "${src}/compat/.awg-kmod.XXXXXX" 2>/dev/null); then
                 stage=""; out='error:tmp'; break
             fi
+            if [[ -L "$bak" ]] || [[ -e "$bak" && ! -f "$bak" ]]; then out='error:backup'; break; fi
             if ! cp -- "$bak" "${stage}/new" 2>/dev/null; then out='error:copy'; break; fi
             if ! sha=$(sha256sum -- "${stage}/new" 2>/dev/null) || [[ "${sha%% *}" != "$base_sha" ]]; then
                 out='error:copy'; break
@@ -6086,6 +6094,7 @@ awg_kmod_compat_fix() {
                 || ! chmod --reference="$f" -- "${stage}/new" 2>/dev/null; then
             out='error:perm'; break
         fi
+        if [[ -L "$bak" ]] || [[ -e "$bak" && ! -f "$bak" ]]; then out='error:backup'; break; fi
         if ! sha=$(sha256sum -- "$bak" 2>/dev/null) || [[ "${sha%% *}" != "$base_sha" ]]; then
             if ! cp -- "${stage}/in" "${stage}/bak" 2>/dev/null \
                     || ! mv -fT -- "${stage}/bak" "$bak" 2>/dev/null; then
@@ -6099,8 +6108,10 @@ awg_kmod_compat_fix() {
         if ! mv -fT -- "${stage}/new" "$f" 2>/dev/null; then out='error:mv'; break; fi
         out='applied'; rc=0; break
     done
-    if [[ -n "$stage" ]]; then rm -rf -- "$stage" 2>/dev/null || :; fi
-    if [[ -n "$fd" ]]; then exec {fd}>&- || :; fi
+    if [[ -n "$stage" ]] && ! rm -rf -- "$stage" 2>/dev/null; then
+        printf 'awg_kmod_compat_fix: cannot remove %s\n' "$stage" >&2 || :
+    fi
+    if [[ -n "$fd" ]]; then command exec {fd}>&- || :; fi
     printf '%s\n' "$out"
     return "$rc"
 }
