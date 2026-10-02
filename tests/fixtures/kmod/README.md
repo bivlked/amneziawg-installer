@@ -12,4 +12,4 @@ SHA-256:
 - `compat.h.base` - `b14346040ce0188c47e2db2baad1a4f21aa784510f6c95bbb4aa58d5bbe691c9`
 - `compat.h.base` with `pr218.diff` applied - `8d47a358b4df0b2187788ce6f88ad63128218de1be22c78b263ef3e5d770c26b`
 
-Both files are hash-pinned: do not reformat them (`.gitattributes` marks the directory `-text`, `.editorconfig` keeps trailing whitespace).
+Both files are hash-pinned: do not reformat them (`.gitattributes` marks both `-text`, `.editorconfig` leaves their whitespace and final newline alone).

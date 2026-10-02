@@ -7,5 +7,6 @@
 *.jpg binary
 *.png binary
 *.sh linguist-language=Shell
-# Hash-pinned test fixtures (tests/fixtures/kmod): bytes must never change
-tests/fixtures/** -text
+# Hash-pinned test fixtures: bytes must never change
+tests/fixtures/kmod/compat.h.base -text
+tests/fixtures/kmod/pr218.diff -text
