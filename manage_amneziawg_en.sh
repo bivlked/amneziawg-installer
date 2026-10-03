@@ -1933,7 +1933,7 @@ _KS_KERNELS=()
 _kmod_status_parse() {
     local f="$1" code="$2" line last="" n_run=0 n_path=0 n_src=0 n_mod=0 n_pkg=0 rel
     local -A seen=()
-    local re_k='^kernel release=([A-Za-z0-9._+~-]+) running=(0|1) image=(0|1) module=(0|1|unknown) headers=(ok|missing|broken) package=(installed|unfinished|unowned|none|unknown)( .*)?$'
+    local re_k='^kernel release=([A-Za-z0-9._+~-]+) running=(0|1) image=(0|1) module=(0|1|unknown) headers=(ok|missing|broken|unknown) package=(installed|unfinished|unowned|none|unknown)( .*)?$'
     _KS_OK=0; _KS_COMPLETE=0; _KS_KIND=""; _KS_REASON=""; _KS_SRC=""; _KS_FIX=""; _KS_LOADED=""; _KS_AUDIT=""; _KS_TIME=""
     _KS_KERNELS=()
     [[ -r "$f" ]] || return 0
@@ -1945,7 +1945,7 @@ _kmod_status_parse() {
                 [[ "$line" =~ ^path\ kind=(ppa|prebuilt|pinned|none|refused)\ reason=([a-z-]+)(\ .*)?$ ]] || return 0
                 _KS_KIND="${BASH_REMATCH[1]}"; _KS_REASON="${BASH_REMATCH[2]}"; n_path=$((n_path + 1)) ;;
             "source "*)
-                [[ "$line" =~ ^source\ state=(base|patched|foreign|absent|unsafe|none|ambiguous|unknown)\ version=[A-Za-z0-9._+~-]+\ fix=(enabled|disabled)(\ .*)?$ ]] || return 0
+                [[ "$line" =~ ^source\ state=(base|patched|foreign|absent|unsafe|none|ambiguous|unknown)\ version=[A-Za-z0-9._+~-]+\ fix=(enabled|disabled|unknown)(\ .*)?$ ]] || return 0
                 _KS_SRC="${BASH_REMATCH[1]}"; _KS_FIX="${BASH_REMATCH[2]}"; n_src=$((n_src + 1)) ;;
             "kernel "*)
                 [[ "$line" =~ $re_k ]] || return 0
@@ -2111,7 +2111,7 @@ _kmod_repair_via_helper() {
         if [[ "$_KS_OK" -eq 1 ]]; then
             if [[ "$_KS_COMPLETE" -eq 1 ]]; then jst=true; else jst=false; fi
             jpk="\"$_KS_AUDIT\""; jsrc="\"$_KS_SRC\""
-            if [[ "$_KS_FIX" == disabled ]]; then jfix=true; else jfix=false; fi
+            case "$_KS_FIX" in disabled) jfix=true ;; enabled) jfix=false ;; *) jfix=null ;; esac
             jnm=$(_kmod_json_list "${nomod[@]}"); jun=$(_kmod_json_list "${unfin[@]}")
         else
             rmod=null; rhdr=null
@@ -2170,6 +2170,12 @@ _diag_kmod_facts() {
         if [[ "$mod" == 0 && "$pkg" == unfinished ]]; then
             _diag_line WARN "Unfinished kernel $rel has no AmneziaWG module: configuring it would make it bootable without the tunnel"
             echo "        Fix: sudo apt install linux-headers-$rel, then sudo bash $0 repair-module (or remove that kernel)"
+            warn=$((warn+1)); flagged=1
+        elif [[ "$run" -eq 1 && "$mod" == 0 ]]; then
+            # A loaded module outlives its file: the "module loaded" check
+            # above does not see this, and a reboot leaves no tunnel.
+            _diag_line WARN "The running kernel $rel has no AmneziaWG module file on disk: after a reboot there is no tunnel"
+            echo "        Fix: sudo bash $0 repair-module"
             warn=$((warn+1)); flagged=1
         elif [[ "$run" -eq 0 && "$mod" == 0 ]]; then
             _diag_line WARN "Kernel $rel has no AmneziaWG module: do not boot into it"

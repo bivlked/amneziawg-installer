@@ -4670,7 +4670,7 @@ _KS_KERNELS=()
 _awg_kmod_status_parse() {
     local f="$1" code="$2" line last="" n_run=0 n_path=0 n_src=0 n_mod=0 n_pkg=0 rel
     local -A seen=()
-    local re_k='^kernel release=([A-Za-z0-9._+~-]+) running=(0|1) image=(0|1) module=(0|1|unknown) headers=(ok|missing|broken) package=(installed|unfinished|unowned|none|unknown)( .*)?$'
+    local re_k='^kernel release=([A-Za-z0-9._+~-]+) running=(0|1) image=(0|1) module=(0|1|unknown) headers=(ok|missing|broken|unknown) package=(installed|unfinished|unowned|none|unknown)( .*)?$'
     _KS_OK=0; _KS_COMPLETE=0; _KS_KERNELS=()
     [[ -r "$f" ]] || return 0
     while IFS= read -r line; do
@@ -4681,7 +4681,7 @@ _awg_kmod_status_parse() {
                 [[ "$line" =~ ^path\ kind=(ppa|prebuilt|pinned|none|refused)\ reason=[a-z-]+(\ .*)?$ ]] || return 0
                 n_path=$((n_path + 1)) ;;
             "source "*)
-                [[ "$line" =~ ^source\ state=(base|patched|foreign|absent|unsafe|none|ambiguous|unknown)\ version=[A-Za-z0-9._+~-]+\ fix=(enabled|disabled)(\ .*)?$ ]] || return 0
+                [[ "$line" =~ ^source\ state=(base|patched|foreign|absent|unsafe|none|ambiguous|unknown)\ version=[A-Za-z0-9._+~-]+\ fix=(enabled|disabled|unknown)(\ .*)?$ ]] || return 0
                 n_src=$((n_src + 1)) ;;
             "kernel "*)
                 [[ "$line" =~ $re_k ]] || return 0
@@ -7292,7 +7292,9 @@ mode_status() {
                 s=$(awg_kmod_compat_fix check "$SRC_DIR" 2>/dev/null || true)
                 case "$s" in base|patched|foreign|absent|unsafe) src_state="$s" ;; *) complete=0 ;; esac ;;
             1)  src_state=none; if [[ -z "$kind" ]]; then kind=refused; reason=noreg; fi ;;
-            *)  src_state=ambiguous; if [[ -z "$kind" ]]; then kind=refused; reason=ambiguous; fi ;;
+            # Several registrations or a broken one: which source is meant
+            # is not known - an unknown, not a fact.
+            *)  src_state=ambiguous; complete=0; if [[ -z "$kind" ]]; then kind=refused; reason=ambiguous; fi ;;
         esac
         ok_token "$src_ver" || { src_ver=-; complete=0; }
     fi

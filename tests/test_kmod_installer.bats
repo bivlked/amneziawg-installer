@@ -470,6 +470,18 @@ EOF
     done
 }
 
+@test "repair-module: unknown headers or fix values are a valid report, not a malformed one" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _rm_server
+        sed -i 's/headers=ok/headers=unknown/; s/fix=enabled/fix=unknown/' "$T/helper.out.--status"
+        _rm_driver "$f"
+        run bash "$T/drv.sh"
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
+        if grep -q '\(получить не удалось\|could not be obtained\)' <<<"$output"; then echo "$f: rejected: $output"; return 1; fi
+    done
+}
+
 @test "repair-module: a malformed or incomplete --status is said, not taken as fine" {
     local f bad
     for f in "${INSTALLERS[@]}"; do

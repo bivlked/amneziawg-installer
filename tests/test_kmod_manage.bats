@@ -264,6 +264,19 @@ _diag() { run bash "${SCR:-$M}" diagnose "${ARGS[@]}"; }
     if grep -E 'FAIL.*'"$OLDK" <<<"$output"; then return 1; fi
 }
 
+@test "diagnose: the running kernel's module file gone while it is still loaded is a warning, not OK" {
+    RMOD=0 _status > "$T/helper.out.--status"
+    _diag
+    [[ "$output" == *"WARN"*"$RUN"*"на диске"* ]] || { echo "$output"; return 1; }
+    [[ "$output" != *"всех загрузочных ядер"* ]]
+}
+
+@test "new path: unknown headers and fix values are kept as unknown, not turned into facts" {
+    RHDR=unknown FIX=unknown _status > "$T/helper.out.--status"
+    _repair
+    _j '.running_headers=="unknown" and .fix_disabled==null' || { echo "$output"; return 1; }
+}
+
 @test "diagnose: all kernels with the module is one OK line; non-root says root is needed" {
     _diag
     [[ "$output" == *"OK"*"всех загрузочных ядер"* ]] || { echo "$output"; return 1; }

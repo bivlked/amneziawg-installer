@@ -1270,6 +1270,8 @@ _rec() { grep -E "^$1( |\$)" "$T/st.out" || true; }
     mkdir -p "$T/usr/src/amneziawg-2.0.0" "$T/var/lib/dkms/amneziawg/2.0.0"
     ln -s "$T/usr/src/amneziawg-2.0.0" "$T/var/lib/dkms/amneziawg/2.0.0/source"
     _status; [ "$(_rec path)" = "path kind=refused reason=ambiguous" ]; [[ "$(_rec source)" == "source state=ambiguous "* ]]
+    # Which source is meant is not known: incomplete, exit 1.
+    [ "$status" -eq 1 ]; [[ "$(tail -n 1 "$T/st.out")" == "status complete=0 "* ]]
     rm -rf "${T:?}/var/lib/dkms/amneziawg"
     _status; [ "$(_rec path)" = "path kind=refused reason=noreg" ]; [[ "$(_rec source)" == "source state=none "* ]]
 }
