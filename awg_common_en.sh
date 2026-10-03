@@ -5953,7 +5953,7 @@ _validate_awg_config_body() {
     # Jc = 0 is legal: both implementations simply send no junk packets at zero.
     # The length is checked before any arithmetic: bash silently wraps a number
     # longer than int64, and a huge Jc would compare as small or negative.
-    # Without leading zeros 010 is not read as octal.
+    # With the leading zeros stripped, 010 is not read as octal.
     if [[ "$jc" =~ ^[0-9]+$ ]]; then
         jc=$(_awg_dec_strip "$jc")
         if (( ${#jc} > 3 )) || [[ "$jc" -gt 128 ]]; then

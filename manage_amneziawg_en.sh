@@ -2545,8 +2545,8 @@ diagnose_server() {
         # awg show prints the jc, jmin and jmax lines only when non-zero. When jc
         # is absent but S or H lines are there, the interface runs with Jc = 0
         # (and zero in any missing jmin/jmax), and that is checked against
-        # awg0.conf. Without S and H lines the output proves nothing: the values
-        # stay unknown, not zero. An unread interface takes the else branch below.
+        # awg0.conf. Without S and H lines a missing jc proves nothing: Jc stays
+        # unknown, not zero. An unread interface takes the else branch below.
         local _jc_note="" _cjc
         if [[ -z "$jc" ]] && grep -qE '^[[:space:]]*(s[1-4]|h[1-4]):' <<< "$_awg_show"; then
             jc=0

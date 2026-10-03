@@ -4228,12 +4228,12 @@ check_service_status() {
     # value (amneziawg-tools show.c). When it is absent but S or H lines are
     # there, the interface runs with Jc = 0, and that is checked against the Jc
     # that was set: a zero nobody asked for is a mismatch, not the norm.
-    # Jmin/Jmax are no sign: at Jc = 0 they have no effect.
+    # Jmin/Jmax are no sign of active obfuscation: at Jc = 0 they have no effect.
     _show_awg0=$(timeout 10 awg show awg0 2>/dev/null) || _show_awg0=""
     if grep -qE '^[[:space:]]*jc:' <<< "$_show_awg0"; then
         log "AWG 2.0 parameters active."
     elif grep -qE '^[[:space:]]*(s[1-4]|h[1-4]):' <<< "$_show_awg0"; then
-        if [[ -z "${AWG_Jc:-}" || "${AWG_Jc}" == 0 ]]; then
+        if [[ -z "${AWG_Jc:-}" || "${AWG_Jc}" =~ ^0+$ ]]; then
             log "AWG 2.0 parameters active (Jc = 0: junk packets off)."
         else
             log_warn "The interface runs with Jc = 0 (awg show has no jc line), but Jc=${AWG_Jc} is set: no junk packets are sent."
