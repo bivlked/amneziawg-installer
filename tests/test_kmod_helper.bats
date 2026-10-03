@@ -852,6 +852,9 @@ exec \"$(command -v find)\" \"\$@\""
     run env AWG_KMOD_LOCK_FD="$LFD" timeout 30 "$H" --prepare-locked
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
     [ "$(_sha "$(_src)")" = "$FIXED_SHA" ]
+    # The child's exit leaves the lock with its holder.
+    run bash -c 'exec 7>>"$1"; exec "$2" -n 7' _ "$T/run/amneziawg/kmod.lock" "$REAL_FLOCK"
+    [ "$status" -ne 0 ]
 }
 
 @test "prepare-locked: run by hand it refuses, whether the lock is free or another job holds it" {
@@ -866,6 +869,9 @@ exec \"$(command -v find)\" \"\$@\""
     run timeout 30 "$H" --prepare-locked
     [ "$status" -eq 2 ]
     run bash -c 'exec 8>>"$1"; AWG_KMOD_LOCK_FD=8 exec timeout 30 "$2" --prepare-locked' _ "$T/run/amneziawg/kmod.lock" "$H"
+    [ "$status" -eq 2 ] || { echo "$output"; return 1; }
+    # A descriptor of some other file, lockable at once, is not the lock either.
+    run bash -c 'exec 8>>"$1"; AWG_KMOD_LOCK_FD=8 exec timeout 30 "$2" --prepare-locked' _ "$T/other.lock" "$H"
     [ "$status" -eq 2 ] || { echo "$output"; return 1; }
     [ "$(_sha "$(_src)")" = "$BASE_SHA" ]
 }

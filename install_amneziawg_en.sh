@@ -7055,8 +7055,9 @@ mode_prepare_locked() {
     # Internal: --systemd runs it as a child and passes the descriptor of the
     # lock it holds. Proof that this is that lock: the descriptor is the lock
     # file, and flock on it succeeds at once (the lock is held through that
-    # very open file; a fresh one would find it taken). Anything else is a
-    # manual call that would bypass the lock and the dpkg check.
+    # very open file; a fresh one would find it taken). This stops a manual
+    # call that would bypass the lock and the dpkg check; it is not a guard
+    # against root deliberately passing a descriptor of its own.
     if [[ ! "$n" =~ ^[0-9]+$ ]] || [[ ! "/dev/fd/$n" -ef "${LOCK_DIR}/kmod.lock" ]] \
             || ! flock -n "$n" 2>/dev/null; then
         log_line "ERROR: --prepare-locked is internal (run by --systemd under its lock); use --prepare" >&2
@@ -7156,7 +7157,7 @@ mode_finish() {
         if [[ "$err" == *"no packages found matching"* ]]; then
             imgs=""
         else
-            log_line "ERROR: cannot list the kernel image packages: ${err:-it failed once and then worked; run this again}; dpkg --configure -a not run" >&2
+            log_line "ERROR: cannot list the kernel image packages: ${err:-the query failed without a message; run this again}; dpkg --configure -a not run" >&2
             exit 1
         fi
     fi
