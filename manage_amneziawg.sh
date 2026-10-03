@@ -45,6 +45,11 @@ CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 KEYS_DIR="$AWG_DIR/keys"
 COMMON_SCRIPT_PATH="$AWG_DIR/awg_common.sh"
 LOG_FILE="$AWG_DIR/manage_amneziawg.log"
+# Помощник модуля ядра и пути, которые смотрит repair-module (тесты подменяют
+# эти три строки в копии скрипта; одно присваивание на строку).
+AWG_ENSURE_HELPER=/usr/local/sbin/amneziawg-ensure-module
+KMOD_MODULES_DIR=/lib/modules
+KMOD_SYS_DIR=/sys/module
 NO_COLOR=0
 VERBOSE_LIST=0
 JSON_OUTPUT=0
@@ -1832,6 +1837,338 @@ check_server() {
 # Megafon Москва из таблицы пока 🔄 тестируется (Jc=3, Jmin=80, Jmax=268) -
 # параметры широкие и не вписываются в mobile preset; добавим когда оператор
 # подтвердят и зафиксируют диапазоны. T-Mobile MO US - Discussion #45 (o2me).
+# ==============================================================================
+# Модуль ядра: путь через помощник amneziawg-ensure-module (трек K, ядро 7.0)
+# ==============================================================================
+
+# Какой помощник стоит. _KH_CLASS:
+#   current  - версия 3 и новее: есть --repair, --finish и --status;
+#   outdated - заведомо старый: версия 1-2, либо помощник до v5.37.1, который
+#              на --version отвечает кодом 2, пустым stdout и «missing or
+#              unknown mode» в stderr;
+#   absent   - файла нет (серверы до v5.12.0, ARM-пребилт);
+#   broken   - файл есть, но не исполняется или отвечает непонятно.
+_KH_CLASS=""
+_kmod_helper_class() {
+    local out err rc=0
+    _KH_CLASS=broken
+    if [[ ! -e "$AWG_ENSURE_HELPER" && ! -L "$AWG_ENSURE_HELPER" ]]; then _KH_CLASS=absent; return 0; fi
+    [[ -f "$AWG_ENSURE_HELPER" && -x "$AWG_ENSURE_HELPER" ]] || return 0
+    out=$(timeout 10 "$AWG_ENSURE_HELPER" --version 2>/dev/null) || rc=$?
+    if [[ "$rc" -eq 0 && "$out" =~ ^amneziawg-ensure-module\ ([0-9]+)$ ]]; then
+        if [[ "${BASH_REMATCH[1]}" -ge 3 ]]; then _KH_CLASS=current; else _KH_CLASS=outdated; fi
+        return 0
+    fi
+    if [[ "$rc" -eq 2 && -z "$out" ]]; then
+        err=$(timeout 10 "$AWG_ENSURE_HELPER" --version 2>&1 >/dev/null || true)
+        [[ "$err" == *"amneziawg-ensure-module: missing or unknown mode"* ]] && _KH_CLASS=outdated
+    fi
+    return 0
+}
+
+# Без нового помощника классифицируем сервер сами, и каждый запрос
+# закрывается при сбое. _KL: legacy (пребилт ARM или пакета amneziawg-dkms
+# нет - их штатный путь), dkms (пакет стоит: путь PPA со старым помощником),
+# query (dpkg спросить не удалось - отказ).
+_KL=""
+_kmod_legacy_class() {
+    local q e
+    _KL=query
+    if q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null); then
+        if awk '$NF != "not-installed" && $NF != "config-files" {f=1} END {exit !f}' <<<"$q"; then _KL=legacy; return 0; fi
+    else
+        e=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>&1 >/dev/null || true)
+        [[ "$e" == *"no packages found matching"* ]] || return 0
+    fi
+    if ! q=$(LC_ALL=C dpkg-query -W -f='${Status}' amneziawg-dkms 2>/dev/null); then
+        e=$(LC_ALL=C dpkg-query -W -f='${Status}' amneziawg-dkms 2>&1 >/dev/null || true)
+        [[ "$e" == *"no packages found matching"* ]] && _KL=legacy
+        return 0
+    fi
+    case "${q##* }" in not-installed|config-files) _KL=legacy ;; *) _KL=dkms ;; esac
+    return 0
+}
+
+# Разбор вывода «помощник --status» (контракт - в mode_status помощника, та
+# же проверка, что в установщике). Принимается только целый отчёт: каждая
+# запись со всеми ключами и допустимыми значениями, ровно одна запись о
+# текущем ядре, по одной path/source/module/packages, ядра без повторов,
+# последняя строка status, код, совпадающий с complete. Неизвестные записи и
+# лишние ключи в конце записи пропускаются. Заполняет _KS_*.
+_KS_OK=0 _KS_COMPLETE=0 _KS_KIND="" _KS_REASON="" _KS_SRC="" _KS_FIX="" _KS_LOADED="" _KS_AUDIT="" _KS_TIME=""
+_KS_KERNELS=()
+# Аргументы: файл вывода, код возврата --status
+_kmod_status_parse() {
+    local f="$1" code="$2" line last="" n_run=0 n_path=0 n_src=0 n_mod=0 n_pkg=0 rel
+    local -A seen=()
+    local re_k='^kernel release=([A-Za-z0-9._+~-]+) running=(0|1) image=(0|1) module=(0|1|unknown) headers=(ok|missing|broken) package=(installed|unfinished|unowned|none|unknown)( .*)?$'
+    _KS_OK=0; _KS_COMPLETE=0; _KS_KIND=""; _KS_REASON=""; _KS_SRC=""; _KS_FIX=""; _KS_LOADED=""; _KS_AUDIT=""; _KS_TIME=""
+    _KS_KERNELS=()
+    [[ -r "$f" ]] || return 0
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        last="$line"
+        case "$line" in
+            "path "*)
+                [[ "$line" =~ ^path\ kind=(ppa|prebuilt|pinned|none|refused)\ reason=([a-z-]+)(\ .*)?$ ]] || return 0
+                _KS_KIND="${BASH_REMATCH[1]}"; _KS_REASON="${BASH_REMATCH[2]}"; n_path=$((n_path + 1)) ;;
+            "source "*)
+                [[ "$line" =~ ^source\ state=(base|patched|foreign|absent|unsafe|none|ambiguous|unknown)\ version=[A-Za-z0-9._+~-]+\ fix=(enabled|disabled)(\ .*)?$ ]] || return 0
+                _KS_SRC="${BASH_REMATCH[1]}"; _KS_FIX="${BASH_REMATCH[2]}"; n_src=$((n_src + 1)) ;;
+            "kernel "*)
+                [[ "$line" =~ $re_k ]] || return 0
+                rel="${BASH_REMATCH[1]}"
+                [[ -z "${seen[$rel]:-}" ]] || return 0
+                seen["$rel"]=1
+                [[ "${BASH_REMATCH[2]}" == 1 ]] && n_run=$((n_run + 1))
+                _KS_KERNELS+=("$line") ;;
+            "module "*)
+                [[ "$line" =~ ^module\ loaded=(0|1)(\ .*)?$ ]] || return 0
+                _KS_LOADED="${BASH_REMATCH[1]}"; n_mod=$((n_mod + 1)) ;;
+            "packages "*)
+                [[ "$line" =~ ^packages\ audit=(empty|unfinished|failed)(\ .*)?$ ]] || return 0
+                _KS_AUDIT="${BASH_REMATCH[1]}"; n_pkg=$((n_pkg + 1)) ;;
+        esac
+    done < "$f"
+    [[ "$last" =~ ^status\ complete=(0|1)\ time=([0-9]+)(\ .*)?$ ]] || return 0
+    _KS_COMPLETE="${BASH_REMATCH[1]}"; _KS_TIME="${BASH_REMATCH[2]}"
+    [[ "$n_run" -eq 1 && "$n_path" -eq 1 && "$n_src" -eq 1 && "$n_mod" -eq 1 && "$n_pkg" -eq 1 ]] || return 0
+    if [[ "$_KS_COMPLETE" -eq 1 ]]; then [[ "$code" -eq 0 ]] || return 0; else [[ "$code" -eq 1 ]] || return 0; fi
+    _KS_OK=1
+}
+
+# Запуск --status во временный файл и разбор; stderr помощника - в лог.
+_kmod_status_run() {
+    local sf code=0
+    _KS_OK=0
+    manage_mktempdir_var sf || return 0
+    sf="$sf/status"
+    timeout 60 "$AWG_ENSURE_HELPER" --status > "$sf" 2>> "$LOG_FILE" || code=$?
+    _kmod_status_parse "$sf" "$code"
+}
+
+# Загрузка модуля текущего ядра и старт сервиса. 0 - модуль загружен И сервис
+# активен; 1 - модуль не загружен; 2 - модуль подтверждённо загружен, сервис
+# не стал активным. Успех сервиса не перекрывает сбой загрузки.
+_kmod_load_and_start() {
+    local cur
+    cur=$(uname -r)
+    if [[ ! -d "$KMOD_SYS_DIR/amneziawg" ]]; then
+        if [[ -n "$(find "$KMOD_MODULES_DIR/$cur" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]]; then
+            # Помощник обновляет индекс только у ядер с заголовками, а модуль
+            # без заголовков бывает: устаревший индекс не даст modprobe найти его.
+            depmod -a "$cur" || log_warn "depmod -a $cur завершился с ошибкой."
+            modprobe amneziawg || log_warn "modprobe amneziawg завершился с ошибкой."
+        fi
+    fi
+    [[ -d "$KMOD_SYS_DIR/amneziawg" ]] || return 1
+    _ensure_awg_quick_running awg0 || return 2
+    return 0
+}
+
+# Строка JSON-массива из имён ядер (имена уже проверены разбором).
+_kmod_json_list() {
+    local out="" k
+    for k in "$@"; do out="${out:+$out,}\"$k\""; done
+    printf '[%s]' "$out"
+}
+
+# repair-module через помощник. Код: 0 - успех; 1 - сбой или отказ;
+# 10 - помощник сообщил путь пребилта, пинового 2.0 или «пакета нет» (их
+# штатный прежний путь, решает вызывающий).
+_kmod_repair_via_helper() {
+    local hrc=0 frc="" mrc=1 cur k rel run mod hdr pkg rmod="null" rhdr="null" ok=0 other=0 pend_mod=0
+    local -a nomod=() unfin=() unk=()
+    _kh() { if [[ "$JSON_OUTPUT" -eq 1 ]]; then "$AWG_ENSURE_HELPER" "$@" >&2; else "$AWG_ENSURE_HELPER" "$@"; fi; }
+    cur=$(uname -r)
+    _kmod_status_run
+    if [[ "$_KS_OK" -ne 1 ]]; then
+        _JSON_ERR="состояние модуля не получено (amneziawg-ensure-module --status)"
+        log_error "Не удалось получить состояние модуля от помощника ($AWG_ENSURE_HELPER --status). Ничего не меняю; подробности в $LOG_FILE."
+        return 1
+    fi
+    case "$_KS_KIND" in
+        prebuilt|pinned|none) return 10 ;;
+        refused)
+            _JSON_ERR="repair-module: путь не допущен ($_KS_REASON)"
+            case "$_KS_REASON" in
+                query)     log_error "Не удалось опросить dpkg или apt-mark. Ничего не меняю, повторите позже." ;;
+                nodkms)    log_error "dkms не установлен: собрать модуль нечем. Ничего не меняю." ;;
+                noreg)     log_error "Пакет amneziawg-dkms стоит, но модуль не зарегистрирован в DKMS. Ничего не меняю; ручной путь - ADVANCED.md, раздел kernel-70-backport-adv." ;;
+                ambiguous) log_error "Регистрация модуля в DKMS не одна или указывает не туда (подробности в $LOG_FILE). Ничего не меняю." ;;
+                owner)     log_error "Исходник модуля принадлежит не пакету amneziawg-dkms. Ничего не меняю." ;;
+                *)         log_error "Путь восстановления не допущен ($_KS_REASON). Ничего не меняю." ;;
+            esac
+            return 1 ;;
+    esac
+    # Нет модуля и нет заголовков у текущего ядра: apt здесь не зовём (он
+    # взялся бы донастраивать и то, что --finish не пропустил бы).
+    for k in "${_KS_KERNELS[@]}"; do
+        [[ "$k" =~ release=([^ ]+)\ running=1\ image=[01]\ module=0\ headers=missing ]] || continue
+        _JSON_ERR="у текущего ядра нет заголовков"
+        log_error "У текущего ядра ${BASH_REMATCH[1]} нет ни модуля AmneziaWG, ни заголовков. Поставьте их: sudo apt install linux-headers-${BASH_REMATCH[1]} - затем запустите repair-module снова."
+        return 1
+    done
+    log "Сборка модуля помощником (--repair)..."
+    _kh --repair || hrc=$?
+    mrc=0; _kmod_load_and_start || mrc=$?
+    if [[ "$hrc" -eq 0 ]]; then
+        _kh --finish && frc=0 || frc=$?
+    else
+        log_warn "Помощник --repair завершился с кодом $hrc, причина выше: донастройку пакетов (dpkg --configure -a) не запускаю."
+    fi
+    _kmod_status_run
+    log "Время проверки: $(date '+%F %T'). Снимка нет: изменения apt во время и после проверки здесь не учтены."
+    if [[ "$_KS_OK" -eq 1 ]]; then
+        for k in "${_KS_KERNELS[@]}"; do
+            [[ "$k" =~ release=([^ ]+)\ running=([01])\ image=[01]\ module=([^ ]+)\ headers=([^ ]+)\ package=([^ ]+) ]] || continue
+            rel="${BASH_REMATCH[1]}" run="${BASH_REMATCH[2]}" mod="${BASH_REMATCH[3]}" hdr="${BASH_REMATCH[4]}" pkg="${BASH_REMATCH[5]}"
+            if [[ "$run" -eq 1 ]]; then
+                case "$mod" in 1) rmod=true ;; 0) rmod=false ;; *) rmod=null ;; esac
+                rhdr="\"$hdr\""
+            else
+                [[ "$mod" == 1 ]] && other=1
+            fi
+            [[ "$mod" == unknown ]] && unk+=("$rel")
+            if [[ "$mod" == 0 && "$pkg" == unfinished ]]; then unfin+=("$rel")
+            elif [[ "$run" -eq 0 && "$mod" == 0 && ( "$pkg" == installed || "$pkg" == unowned ) ]]; then nomod+=("$rel"); fi
+            [[ "$mod" == 1 && "$pkg" == unfinished ]] && pend_mod=1
+        done
+        for rel in "${nomod[@]}"; do
+            log_warn "У ядра $rel нет модуля AmneziaWG, в него не загружайтесь. Поставьте linux-headers-$rel и запустите repair-module снова, либо удалите это ядро."
+        done
+        for rel in "${unfin[@]}"; do
+            log_error "Недонастроенное ядро $rel без модуля AmneziaWG: донастройка (dpkg --configure -a) сделала бы его загрузочным без туннеля. Поставьте linux-headers-$rel и запустите repair-module снова, либо удалите это ядро."
+        done
+        for rel in "${unk[@]}"; do log_warn "Модуль ядра $rel проверить не удалось (каталог модулей не читается)."; done
+        [[ "$_KS_FIX" == disabled ]] && log "Правка исходника отключена вручную (--revert); включить снова: sudo $AWG_ENSURE_HELPER --enable"
+        if [[ "$mrc" -eq 0 && ( "$_KS_AUDIT" != empty || "${frc:-1}" -ne 0 ) ]]; then
+            log_warn "Работающий туннель не значит, что apt починен: пакеты не донастроены."
+        fi
+        if [[ "$pend_mod" -eq 1 ]]; then
+            log_warn "Собранный модуль не завершает настройку ядра: initramfs и загрузчик обновит dpkg --configure -a."
+        fi
+        [[ "$other" -eq 1 ]] && log "Загрузка модуля в другом ядре не проверена: после перезагрузки в него проверьте lsmod | grep amneziawg."
+        [[ "$_KS_COMPLETE" -eq 1 ]] || log_warn "Состояние определено не полностью (часть проверок не удалась), подробности в $LOG_FILE."
+        if [[ "$hrc" -eq 0 && "$mrc" -eq 0 && "${frc:-1}" -eq 0 && "$_KS_COMPLETE" -eq 1 && "$_KS_AUDIT" == empty && ${#unfin[@]} -eq 0 ]]; then
+            ok=1
+        fi
+    else
+        log_warn "Итоговое состояние модуля получить не удалось ($AWG_ENSURE_HELPER --status): перед перезагрузкой проверьте dkms status amneziawg и dpkg --audit сами."
+    fi
+    case "$mrc" in
+        1) log_error "Модуль ядра amneziawg для $cur не загружен." ;;
+        2) log_error "Модуль ядра в порядке, но сервис awg-quick@awg0 НЕ запустился."
+           log_error "Диагностика: systemctl status awg-quick@awg0; journalctl -u awg-quick@awg0 -n 50" ;;
+    esac
+    if [[ "$ok" -eq 1 ]]; then
+        log "Модуль и сервис текущего ядра восстановлены; недонастроенных пакетов нет. Перезагрузку команда не делает."
+    else
+        _JSON_ERR="${_JSON_ERR:-восстановление не завершено}"
+        log_error "Восстановление не завершено (сборка: $hrc, загрузка и сервис: $mrc, пакеты: ${frc:-не запускалась}). Подробности выше."
+    fi
+    if [[ "$JSON_OUTPUT" -eq 1 ]]; then
+        # Факт, которого нет, - null, а не false или пустой список.
+        local jok=false jmod=false jsvc=false jst=null jpk=null jsrc=null jfix=null jfrc="${frc:-null}" jnm=null jun=null
+        [[ "$ok" -eq 1 ]] && jok=true
+        [[ "$mrc" -ne 1 ]] && jmod=true
+        [[ "$mrc" -eq 0 ]] && jsvc=true
+        if [[ "$_KS_OK" -eq 1 ]]; then
+            if [[ "$_KS_COMPLETE" -eq 1 ]]; then jst=true; else jst=false; fi
+            jpk="\"$_KS_AUDIT\""; jsrc="\"$_KS_SRC\""
+            if [[ "$_KS_FIX" == disabled ]]; then jfix=true; else jfix=false; fi
+            jnm=$(_kmod_json_list "${nomod[@]}"); jun=$(_kmod_json_list "${unfin[@]}")
+        else
+            rmod=null; rhdr=null
+        fi
+        json_out "{\"command\":\"repair-module\",\"ok\":$jok,\"module_loaded\":$jmod,\"service_active\":$jsvc,\"rc\":$mrc,\"helper\":\"current\",\"path\":\"helper\",\"repair_rc\":$hrc,\"finish_rc\":$jfrc,\"status_complete\":$jst,\"packages\":$jpk,\"source\":$jsrc,\"fix_disabled\":$jfix,\"kernels_without_module\":$jnm,\"unfinished_without_module\":$jun,\"running_module_on_disk\":$rmod,\"running_headers\":$rhdr}"
+    fi
+    [[ "$ok" -eq 1 ]] && return 0
+    return 1
+}
+
+# diagnose: модуль по загрузочным ядрам, исходник и пакеты - по --status
+# помощника. Только INFO/WARN, без FAIL: старое ядро образа без заголовков
+# иначе держало бы диагностику красной навсегда. Меняет счётчики ok и warn
+# вызывающего.
+_diag_kmod_facts() {
+    local k rel run mod hdr pkg flagged=0
+    _kmod_helper_class
+    case "$_KH_CLASS" in
+        current) ;;
+        broken)
+            _diag_line WARN "Помощник модуля $AWG_ENSURE_HELPER не исполняется или отвечает непонятно"
+            echo "        Fix: sudo bash install_amneziawg.sh --repair-module (допуск установщик проверит сам)"
+            warn=$((warn+1)); return 0 ;;
+        *)
+            _kmod_legacy_class
+            if [[ "$_KL" == dkms ]]; then
+                _diag_line WARN "Помощник модуля устарел или отсутствует: исходник под ядро 7.0 он не правит, модуль по ядрам не проверен"
+                echo "        Fix: sudo bash install_amneziawg.sh --repair-module (если установщик допустит этот путь)"
+                warn=$((warn+1))
+            fi
+            return 0 ;;
+    esac
+    if [[ "$(id -u)" -ne 0 ]]; then
+        _diag_line INFO "Модуль по всем ядрам: проверка требует root (sudo bash $0 diagnose)"
+        return 0
+    fi
+    _kmod_status_run
+    if [[ "$_KS_OK" -ne 1 ]]; then
+        _diag_line WARN "Состояние модуля по ядрам получить не удалось ($AWG_ENSURE_HELPER --status), подробности в $LOG_FILE"
+        warn=$((warn+1)); return 0
+    fi
+    case "$_KS_KIND" in
+        ppa) ;;
+        refused)
+            _diag_line WARN "repair-module на этом сервере не допущен (причина: $_KS_REASON)"
+            warn=$((warn+1)); return 0 ;;
+        *)
+            _diag_line INFO "Модуль ставился не из PPA (путь: $_KS_KIND), проверка по ядрам не выполнялась"
+            return 0 ;;
+    esac
+    [[ "$_KS_SRC" == foreign ]] && _diag_line INFO "Исходник модуля не совпадает с проверенным: правку под ядро 7.0 помощник к нему не применяет"
+    [[ "$_KS_FIX" == disabled ]] && _diag_line INFO "Правка исходника отключена вручную (--revert); включить: sudo $AWG_ENSURE_HELPER --enable"
+    for k in "${_KS_KERNELS[@]}"; do
+        [[ "$k" =~ release=([^ ]+)\ running=([01])\ image=[01]\ module=([^ ]+)\ headers=([^ ]+)\ package=([^ ]+) ]] || continue
+        rel="${BASH_REMATCH[1]}" run="${BASH_REMATCH[2]}" mod="${BASH_REMATCH[3]}" hdr="${BASH_REMATCH[4]}" pkg="${BASH_REMATCH[5]}"
+        if [[ "$mod" == 0 && "$pkg" == unfinished ]]; then
+            _diag_line WARN "Недонастроенное ядро $rel без модуля AmneziaWG: донастройка сделала бы его загрузочным без туннеля"
+            echo "        Fix: sudo apt install linux-headers-$rel, затем sudo bash $0 repair-module (или удалите это ядро)"
+            warn=$((warn+1)); flagged=1
+        elif [[ "$run" -eq 0 && "$mod" == 0 ]]; then
+            _diag_line WARN "У ядра $rel нет модуля AmneziaWG: в него не загружайтесь"
+            echo "        Fix: sudo apt install linux-headers-$rel, затем sudo bash $0 repair-module (или удалите это ядро)"
+            warn=$((warn+1)); flagged=1
+        elif [[ "$mod" == unknown ]]; then
+            _diag_line WARN "Модуль ядра $rel проверить не удалось (каталог модулей не читается)"
+            warn=$((warn+1)); flagged=1
+        fi
+        if [[ "$hdr" == broken ]]; then
+            _diag_line WARN "Ссылка на заголовки ядра $rel битая ($KMOD_MODULES_DIR/$rel/build): модуль для него не собирается"
+            warn=$((warn+1)); flagged=1
+        fi
+    done
+    case "$_KS_AUDIT" in
+        unfinished)
+            _diag_line WARN "Есть недонастроенные пакеты (dpkg --audit): работающий туннель не значит, что apt починен"
+            echo "        Fix: sudo bash $0 repair-module"
+            warn=$((warn+1)); flagged=1 ;;
+        failed)
+            _diag_line WARN "dpkg --audit не выполнился: недонастроенные пакеты не проверены"
+            warn=$((warn+1)); flagged=1 ;;
+    esac
+    if [[ "$_KS_COMPLETE" -ne 1 ]]; then
+        _diag_line WARN "Состояние модуля по ядрам определено не полностью, подробности в $LOG_FILE"
+        warn=$((warn+1)); flagged=1
+    fi
+    if [[ "$flagged" -eq 0 ]]; then
+        _diag_line OK "Модуль на диске у всех загрузочных ядер, недонастроенных пакетов нет"
+        ok=$((ok+1))
+    fi
+    return 0
+}
+
 _diagnose_carrier_known() {
     case "$1" in
         beeline_msk)            echo "3 6 40 89 50 250 random" ;;
@@ -1964,6 +2301,9 @@ diagnose_server() {
         echo "        Fix: sudo bash $0 repair-module"
         fail=$((fail+1))
     fi
+
+    # 1b. Модуль по загрузочным ядрам, исходник, пакеты (трек K, ядро 7.0).
+    _diag_kmod_facts
 
     # 1a. Поколение конфигурации - по маркеру установки. Строка стоит рядом с
     # версией модуля намеренно: модуль третьей линии и конфигурация второй -
@@ -3202,9 +3542,45 @@ case $COMMAND in
 
     repair-module|repair)
         # Явная пользовательская команда: после kernel upgrade модуль может
-        # требовать пересборки DKMS. Здесь разрешаем apt-установку headers
-        # (AWG_ALLOW_APT_IN_ENSURE=1) — пользователь явно запросил восстановление.
+        # требовать пересборки DKMS.
         log "Восстановление модуля ядра amneziawg (может занять до 5 минут — DKMS rebuild)..."
+        # Путь PPA с новым помощником (v5.37.1+, трек K): сборка, загрузка и
+        # донастройка через помощник, без ensure_amneziawg_kernel_module - тот
+        # обошёл бы отказы помощника (dkms autoinstall без блокировки, apt).
+        _kmod_helper_class
+        _kh_path=legacy
+        case "$_KH_CLASS" in
+            current)
+                if [[ "$(id -u)" -ne 0 ]]; then die "repair-module требует root: sudo bash $0 repair-module"; fi
+                _kh_rc=0; _kmod_repair_via_helper || _kh_rc=$?
+                if [[ "$_kh_rc" -ne 10 ]]; then
+                    if [[ "$_kh_rc" -ne 0 ]]; then
+                        _cmd_rc=1
+                        if [[ "$JSON_OUTPUT" -eq 1 && "$_JSON_EMITTED" -eq 0 ]]; then
+                            json_out "{\"command\":\"repair-module\",\"ok\":false,\"module_loaded\":null,\"service_active\":null,\"rc\":null,\"helper\":\"current\",\"path\":\"refused\",\"repair_rc\":null,\"finish_rc\":null,\"status_complete\":null,\"packages\":null,\"source\":null,\"fix_disabled\":null,\"kernels_without_module\":null,\"unfinished_without_module\":null,\"running_module_on_disk\":null,\"running_headers\":null,\"error\":\"$(json_escape "${_JSON_ERR:-repair-module failed}")\"}"
+                        fi
+                    fi
+                    _kh_path=helper
+                fi ;;
+            broken)
+                _JSON_ERR="помощник модуля не отвечает как ожидалось"
+                log_error "Помощник $AWG_ENSURE_HELPER есть, но не исполняется или отвечает непонятно. Ничего не меняю. Обновите его: sudo bash install_amneziawg.sh --repair-module (допуск установщик проверит сам)."
+                exit 1 ;;
+            *)
+                # Нет помощника или он заведомо старый: классифицируем сами.
+                _kmod_legacy_class
+                if [[ "$_KL" == query ]]; then
+                    _JSON_ERR="не удалось опросить dpkg"
+                    log_error "Не удалось опросить dpkg о пакетах модуля. Ничего не меняю, повторите позже."
+                    exit 1
+                fi
+                if [[ "$_KL" == dkms ]]; then
+                    log_warn "Помощник модуля устарел или отсутствует: исходник под ядро 7.0 он не правит. Обновите его: sudo bash install_amneziawg.sh --repair-module (если установщик допустит этот путь). Сейчас - прежний способ восстановления."
+                fi ;;
+        esac
+        # Прежний путь v5.37.0: пребилт ARM, пиновый 2.0, пакета нет, старый
+        # помощник. Блок ниже не перевыровнен намеренно (дифф по делу).
+        if [[ "$_kh_path" == legacy ]]; then
         AWG_ALLOW_APT_IN_ENSURE=1 ensure_amneziawg_kernel_module full; _mod_rc=$?
         _jmod=true; _jsvc=false
         case "$_mod_rc" in
@@ -3228,7 +3604,9 @@ case $COMMAND in
         if [[ "$JSON_OUTPUT" -eq 1 ]]; then
             _jok=false; [[ "$_cmd_rc" -eq 0 ]] && _jok=true
             # rc здесь = код ensure_amneziawg_kernel_module (0/1/2), не exit-код.
-            json_out "{\"command\":\"repair-module\",\"ok\":$_jok,\"module_loaded\":$_jmod,\"service_active\":$_jsvc,\"rc\":$_mod_rc}"
+            # Факты помощника на этом пути не собирались - null, а не false.
+            json_out "{\"command\":\"repair-module\",\"ok\":$_jok,\"module_loaded\":$_jmod,\"service_active\":$_jsvc,\"rc\":$_mod_rc,\"helper\":\"$_KH_CLASS\",\"path\":\"legacy\",\"repair_rc\":null,\"finish_rc\":null,\"status_complete\":null,\"packages\":null,\"source\":null,\"fix_disabled\":null,\"kernels_without_module\":null,\"unfinished_without_module\":null,\"running_module_on_disk\":null,\"running_headers\":null}"
+        fi
         fi
         ;;
 
