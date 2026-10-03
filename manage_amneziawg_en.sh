@@ -1647,15 +1647,19 @@ show_awg_status() {
     return "$_gen_rc"
 }
 
-# _conf_jc : Jc from the server config (last line, leading zeros dropped),
-# empty when the line is missing, the file is unreadable or the value is not a
+# _conf_jc : Jc from [Interface] of the server config as amneziawg-tools would
+# apply it (key case-insensitive, last value wins), leading zeros dropped;
+# empty when the key is missing, the file is unreadable or the value is not a
 # number. check and diagnose compare it with an interface on which awg show
 # prints no jc line.
 _conf_jc() {
-    local v
-    v=$(sed -n 's/^[[:space:]]*Jc[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null | tail -1 | sed 's/#.*//' | tr -d '[:space:]') || v=""
-    [[ "$v" =~ ^[0-9]+$ ]] || return 0
-    _awg_dec_strip "$v"
+    local pairs sec k v jc=""
+    pairs=$(_awg_conf_pairs "$SERVER_CONF_FILE" 2>/dev/null) || return 0
+    while IFS=$'\t' read -r sec k v; do
+        if [[ "$sec" == interface && "$k" == jc ]]; then jc="$v"; fi
+    done <<< "$pairs"
+    [[ "$jc" =~ ^[0-9]+$ ]] || return 0
+    _awg_dec_strip "$jc"
 }
 
 check_server() {

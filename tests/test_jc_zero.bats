@@ -45,6 +45,16 @@ twins() {
 }
 en() { [[ "$1" == *_en.sh ]]; }
 
+# conf_jc_lines <spec> : the Jc lines of a test awg0.conf. "-" = none,
+# "raw:<text>" = <text> as is (\n for new lines), otherwise "Jc = <spec>".
+conf_jc_lines() {
+    case "$1" in
+        -) ;;
+        raw:*) printf '%b\n' "${1#raw:}" ;;
+        *) printf 'Jc = %s\n' "$1" ;;
+    esac
+}
+
 # ---------------------------------------------------------------- validator
 
 # vjc <installer> <value> : validate_jc_value from the installer, prints rc=N.
@@ -398,6 +408,8 @@ awg_stub() {
         bare) printf '#!/usr/bin/env bash\nprintf "interface: awg0\\n  listening port: 39743\\n"\n' > "$1/awg" ;;
         # Jc = Jmin = Jmax = 0: only the S lines are left to recognise the dump.
         sonly) printf '#!/usr/bin/env bash\nprintf "interface: awg0\\n  listening port: 39743\\n  s1: 72\\n"\n' > "$1/awg" ;;
+        # S = 0 by hand on 2.0: only the H ranges are left.
+        honly) printf '#!/usr/bin/env bash\nprintf "interface: awg0\\n  listening port: 39743\\n  h1: 100000-800000\\n"\n' > "$1/awg" ;;
         # Jmin/Jmax alone prove nothing: at Jc = 0 they have no effect.
         jonly) printf '#!/usr/bin/env bash\nprintf "interface: awg0\\n  listening port: 39743\\n  jmin: 55\\n  jmax: 380\\n"\n' > "$1/awg" ;;
     esac
@@ -430,11 +442,15 @@ step7() {
 s7_zero() {
     local want="Jc = 0: junk-пакеты выключены" mode
     en "$1" && want="Jc = 0: junk packets off"
-    for mode in zero sonly; do
-        run step7 "$1" "$mode" 0
-        [[ "$output" == *"rc=0"* ]] || { echo "$1 $mode: $output"; return 1; }
-        [[ "$output" != *"WARN:"* ]] || { echo "$1 $mode: a Jc = 0 interface reported as a problem: $output"; return 1; }
-        [[ "$output" == *"INFO: "*"$want"* ]] || { echo "$1 $mode: Jc = 0 not named: $output"; return 1; }
+    # "" = no AWG_Jc known at all: nothing to contradict the interface.
+    local expect
+    for mode in zero sonly honly; do
+        for expect in 0 ""; do
+            run step7 "$1" "$mode" "$expect"
+            [[ "$output" == *"rc=0"* ]] || { echo "$1 $mode [$expect]: $output"; return 1; }
+            [[ "$output" != *"WARN:"* ]] || { echo "$1 $mode [$expect]: a Jc = 0 interface reported as a problem: $output"; return 1; }
+            [[ "$output" == *"INFO: "*"$want"* ]] || { echo "$1 $mode [$expect]: Jc = 0 not named: $output"; return 1; }
+        done
     done
 }
 @test "installer step 7: an interface with Jc = 0, set as 0, is reported active with junk off, both twins" {
@@ -491,7 +507,7 @@ mcheck() {
     dir="$BATS_TEST_TMPDIR/awgm"
     mkdir -p "$dir"
     printf '[Interface]\nListenPort = 39743\n' > "$dir/awg0.conf"
-    [[ "$cjc" == "-" ]] || printf 'Jc = %s\n' "$cjc" >> "$dir/awg0.conf"
+    conf_jc_lines "$cjc" >> "$dir/awg0.conf"
     PATH="$bin:$PATH" AWG_DIR="$dir" CONFIG_FILE="$dir/awgsetup_cfg.init" SERVER_CONF_FILE="$dir/awg0.conf" \
     timeout 60 bash -c '
         set -o pipefail
@@ -519,7 +535,7 @@ mc_zero() {
     en "$1" && want="Jc = 0: junk packets off"
     # A conf with Jc = 0, a zero-padded 00, or no Jc line at all (nothing to
     # contradict the interface) all agree with an interface at zero.
-    for mode in zero sonly; do
+    for mode in zero sonly honly; do
         for cjc in 0 00 -; do
             run mcheck "$1" "$mode" "$cjc"
             [[ "$output" != *NO_FUNCTION* && "$output" == *"rc=0"* ]] || { echo "$1 $mode conf=$cjc: check failed: $output"; return 1; }
@@ -535,9 +551,22 @@ mc_zero() {
 mc_mismatch() {
     local want="а в awg0.conf Jc=4"
     en "$1" && want="but awg0.conf has Jc=4"
-    run mcheck "$1" zero 4
-    [[ "$output" == *"WARN: "*"$want"*"restart awg-quick@awg0"* ]] || { echo "$1: an unapplied Jc was not flagged: $output"; return 1; }
-    [ "$(grep -c '^INFO: .*Jc = 0: junk' <<< "$output")" -eq 0 ] || { echo "$1: the unexpected zero was also called fine: $output"; return 1; }
+    # The key is read as the tools read it: case-insensitive, last value wins.
+    local spec
+    for spec in 4 'raw:Jc = 0\njc = 4' 'raw:jc = 04' 'raw:JC=4 # set by hand'; do
+        run mcheck "$1" zero "$spec"
+        [[ "$output" == *"WARN: "*"$want"*"restart awg-quick@awg0"* ]] || { echo "$1 [$spec]: an unapplied Jc was not flagged: $output"; return 1; }
+        [ "$(grep -c '^INFO: .*Jc = 0: junk' <<< "$output")" -eq 0 ] || { echo "$1 [$spec]: the unexpected zero was also called fine: $output"; return 1; }
+    done
+    # Mirror: the last value is 0, so an earlier Jc = 4 must not warn.
+    run mcheck "$1" zero 'raw:Jc = 4\njc = 0'
+    [[ "$output" != *"WARN:"* ]] || { echo "$1: the overridden Jc = 4 was taken: $output"; return 1; }
+    # A Jc in a [Peer] section is not the interface's, and a value that is
+    # not a number is "unknown", not a Jc to report a mismatch with.
+    for spec in 'raw:[Peer]\nJc = 4' 'raw:Jc = 4x'; do
+        run mcheck "$1" zero "$spec"
+        [[ "$output" != *"WARN:"* ]] || { echo "$1 [$spec]: taken as the interface Jc: $output"; return 1; }
+    done
 }
 @test "manage check: Jc = 0 on the interface while awg0.conf has another Jc is a warning with the fix, both twins" {
     twins mc_mismatch "$MANAGE" "$MANAGE_EN"
@@ -568,18 +597,20 @@ mc_mirrors() {
 step8() {
     local cjc="${4-0}"
     printf '[Interface]\nListenPort = 39743\n' > "$BATS_TEST_TMPDIR/d8.conf"
-    [[ "$cjc" == "-" ]] || printf 'Jc = %s\n' "$cjc" >> "$BATS_TEST_TMPDIR/d8.conf"
+    conf_jc_lines "$cjc" >> "$BATS_TEST_TMPDIR/d8.conf"
     SERVER_CONF_FILE="$BATS_TEST_TMPDIR/d8.conf" bash -c '
         MANAGE="$1"; MODE="$2"; _cps_unsafe="$3"
         warn=0; fail=0
         _diag_line() { echo "[$1] ${*:2}"; }
         _mask_report_secrets() { cat; }
         eval "$(awk "/^_awg_dec_strip\\(\\) \\{/,/^\\}/" "${MANAGE/manage_amneziawg/awg_common}")"
+        eval "$(awk "/^_awg_conf_pairs\\(\\) \\{/,/^\\}/" "${MANAGE/manage_amneziawg/awg_common}")"
         eval "$(awk "/^_conf_jc\\(\\) \\{/,/^\\}/" "$MANAGE")"
-        declare -F _awg_dec_strip _conf_jc >/dev/null || { echo "NO_FUNCTION"; exit 3; }
+        declare -F _awg_dec_strip _awg_conf_pairs _conf_jc >/dev/null || { echo "NO_FUNCTION"; exit 3; }
         case "$MODE" in
             zero)  awg() { printf "interface: awg0\n  jmin: 55\n  jmax: 380\n  s1: 72\n"; } ;;
             sonly) awg() { printf "interface: awg0\n  s1: 72\n"; } ;;
+            honly) awg() { printf "interface: awg0\n  h1: 100000-800000\n"; } ;;
             jc)    awg() { printf "interface: awg0\n  jc: 4\n  jmin: 55\n  jmax: 380\n  s1: 72\n"; } ;;
             bare)  awg() { printf "interface: awg0\n  listening port: 39743\n"; } ;;
             fail)  awg() { echo "Unable to access interface: No such device" >&2; return 1; } ;;
@@ -609,10 +640,13 @@ d_zero() {
     # The carrier comparison after step 8 reads $jc: it must get the number.
     [[ "$output" == *"JC=[0] warn=0 fail=0"* ]] || { echo "$1: jc not 0, or a warning on an agreed zero: $output"; return 1; }
     # All-zero junk set: missing jmin/jmax are zero too once the dump is proven.
-    run step8 "$1" sonly 0 -
-    ok8 "$1" || return 1
-    [[ "$output" == *"AWG params: Jc=0 $note Jmin=0 Jmax=0 "* && "$output" == *"warn=0 fail=0"* ]] \
-        || { echo "$1: the all-zero set is not read as zeros: $output"; return 1; }
+    local mode
+    for mode in sonly honly; do
+        run step8 "$1" "$mode" 0 -
+        ok8 "$1" || return 1
+        [[ "$output" == *"AWG params: Jc=0 $note Jmin=0 Jmax=0 "* && "$output" == *"warn=0 fail=0"* ]] \
+            || { echo "$1 $mode: the all-zero set is not read as zeros: $output"; return 1; }
+    done
 }
 @test "diagnose: a read AWG dump without a jc line is Jc=0, junk off, with zero Jmin/Jmax when absent, both twins" {
     twins d_zero "$MANAGE" "$MANAGE_EN"
@@ -621,11 +655,17 @@ d_zero() {
 d_mismatch() {
     local want="а в awg0.conf Jc=4"
     en "$1" && want="but awg0.conf has Jc=4"
-    run step8 "$1" zero 0 4
+    local spec
+    for spec in 4 'raw:Jc = 0\njc = 4' 'raw:jc = 04'; do
+        run step8 "$1" zero 0 "$spec"
+        ok8 "$1" || return 1
+        [[ "$output" == *"[WARN] "*"$want"* && "$output" == *"Fix: sudo systemctl restart awg-quick@awg0"* ]] \
+            || { echo "$1 [$spec]: an unapplied Jc was not flagged: $output"; return 1; }
+        [[ "$output" == *"JC=[0] warn=1 fail=0"* ]] || { echo "$1 [$spec]: the mismatch was not counted: $output"; return 1; }
+    done
+    run step8 "$1" zero 0 'raw:Jc = 4\njc = 0'
     ok8 "$1" || return 1
-    [[ "$output" == *"[WARN] "*"$want"* && "$output" == *"Fix: sudo systemctl restart awg-quick@awg0"* ]] \
-        || { echo "$1: an unapplied Jc was not flagged: $output"; return 1; }
-    [[ "$output" == *"JC=[0] warn=1 fail=0"* ]] || { echo "$1: the mismatch was not counted: $output"; return 1; }
+    [[ "$output" == *"JC=[0] warn=0 fail=0"* ]] || { echo "$1: the overridden Jc = 4 was taken: $output"; return 1; }
 }
 @test "diagnose: Jc = 0 on the interface while awg0.conf has another Jc is a counted warning with the fix, both twins" {
     twins d_mismatch "$MANAGE" "$MANAGE_EN"

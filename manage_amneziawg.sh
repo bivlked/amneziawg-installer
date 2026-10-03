@@ -1616,14 +1616,18 @@ show_awg_status() {
     return "$_gen_rc"
 }
 
-# _conf_jc : Jc из серверного конфига (последняя строка, без ведущих нулей),
-# пусто, если строки нет, файл не читается или значение не число. С ним check
-# и diagnose сверяют интерфейс, на котором awg show не печатает строку jc.
+# _conf_jc : Jc из [Interface] серверного конфига так, как его применят
+# amneziawg-tools (ключ без учёта регистра, последнее значение), без ведущих
+# нулей; пусто, если ключа нет, файл не читается или значение не число. С ним
+# check и diagnose сверяют интерфейс, на котором awg show не печатает jc.
 _conf_jc() {
-    local v
-    v=$(sed -n 's/^[[:space:]]*Jc[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null | tail -1 | sed 's/#.*//' | tr -d '[:space:]') || v=""
-    [[ "$v" =~ ^[0-9]+$ ]] || return 0
-    _awg_dec_strip "$v"
+    local pairs sec k v jc=""
+    pairs=$(_awg_conf_pairs "$SERVER_CONF_FILE" 2>/dev/null) || return 0
+    while IFS=$'\t' read -r sec k v; do
+        if [[ "$sec" == interface && "$k" == jc ]]; then jc="$v"; fi
+    done <<< "$pairs"
+    [[ "$jc" =~ ^[0-9]+$ ]] || return 0
+    _awg_dec_strip "$jc"
 }
 
 check_server() {
