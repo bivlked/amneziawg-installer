@@ -2069,7 +2069,7 @@ awg_installed_protocol() {
 
 # 0 turns junk packets off: the kernel module (src/send.c) and amneziawg-go
 # simply send none at Jc = 0. Leading zeros are refused: '08' is read as octal
-# in arithmetic and crashes the check, and '00' would go into the config as is.
+# in arithmetic and crashes the check, and '01' used to go into the config as is.
 validate_jc_value() {
     local v="$1"
     [[ "$v" =~ ^(0|[1-9][0-9]{0,2})$ ]] && [[ "$v" -le 128 ]]
@@ -4225,13 +4225,19 @@ check_service_status() {
     fi
 
     # AWG 2.0 parameter check. awg show prints the jc line only for a non-zero
-    # value (amneziawg-tools show.c), so Jc = 0 is recognised by the other
-    # obfuscation parameters.
+    # value (amneziawg-tools show.c). When it is absent but S or H lines are
+    # there, the interface runs with Jc = 0, and that is checked against the Jc
+    # that was set: a zero nobody asked for is a mismatch, not the norm.
+    # Jmin/Jmax are no sign: at Jc = 0 they have no effect.
     _show_awg0=$(timeout 10 awg show awg0 2>/dev/null) || _show_awg0=""
     if grep -qE '^[[:space:]]*jc:' <<< "$_show_awg0"; then
         log "AWG 2.0 parameters active."
-    elif grep -qE '^[[:space:]]*(jmin|jmax|s[1-4]|h[1-4]):' <<< "$_show_awg0"; then
-        log "AWG 2.0 parameters active (Jc = 0: junk packets off)."
+    elif grep -qE '^[[:space:]]*(s[1-4]|h[1-4]):' <<< "$_show_awg0"; then
+        if [[ -z "${AWG_Jc:-}" || "${AWG_Jc}" == 0 ]]; then
+            log "AWG 2.0 parameters active (Jc = 0: junk packets off)."
+        else
+            log_warn "The interface runs with Jc = 0 (awg show has no jc line), but Jc=${AWG_Jc} is set: no junk packets are sent."
+        fi
     else
         log_warn "AWG 2.0 parameters not detected in awg show."
     fi

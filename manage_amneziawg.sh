@@ -1616,6 +1616,16 @@ show_awg_status() {
     return "$_gen_rc"
 }
 
+# _conf_jc : Jc из серверного конфига (последняя строка, без ведущих нулей),
+# пусто, если строки нет, файл не читается или значение не число. С ним check
+# и diagnose сверяют интерфейс, на котором awg show не печатает строку jc.
+_conf_jc() {
+    local v
+    v=$(sed -n 's/^[[:space:]]*Jc[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" 2>/dev/null | tail -1 | sed 's/#.*//' | tr -d '[:space:]') || v=""
+    [[ "$v" =~ ^[0-9]+$ ]] || return 0
+    _awg_dec_strip "$v"
+}
+
 check_server() {
     case $- in *x*) _awg_xtrace_guard check_server; return ;; esac
     log "Проверка состояния сервера AmneziaWG..."
@@ -1802,12 +1812,19 @@ check_server() {
     # текстом, остальные коды числом.
     elif (( _filter_ok )); then
         while IFS= read -r _l; do log "  $_l"; done <<< "$_awg_out"
-        # Строку jc awg show печатает только при ненулевом значении, поэтому
-        # Jc = 0 узнаём по остальным параметрам обфускации.
+        # Строку jc awg show печатает только при ненулевом значении. Если её
+        # нет, а строки S или H на месте, интерфейс работает с Jc = 0, и это
+        # сверяется с awg0.conf: ноль, которого там нет, - расхождение.
+        local _cjc
         if grep -qE '^[[:space:]]*jc:' <<< "$_awg_out"; then
             log " - Параметры обфускации: активны"
-        elif grep -qE '^[[:space:]]*(jmin|jmax|s[1-4]|h[1-4]):' <<< "$_awg_out"; then
-            log " - Параметры обфускации: активны (Jc = 0: junk-пакеты выключены)"
+        elif grep -qE '^[[:space:]]*(s[1-4]|h[1-4]):' <<< "$_awg_out"; then
+            _cjc=$(_conf_jc)
+            if [[ -z "$_cjc" || "$_cjc" == 0 ]]; then
+                log " - Параметры обфускации: активны (Jc = 0: junk-пакеты выключены)"
+            else
+                log_warn " - Параметры обфускации: на интерфейсе Jc = 0, а в awg0.conf Jc=${_cjc}. Применить конфиг: sudo systemctl restart awg-quick@awg0"
+            fi
         else
             log_warn " - Параметры обфускации не обнаружены"
         fi
@@ -2485,15 +2502,30 @@ diagnose_server() {
         jmin=$(awk '/^[[:space:]]*jmin:/ {print $2; exit}' <<< "$_awg_show")
         jmax=$(awk '/^[[:space:]]*jmax:/ {print $2; exit}' <<< "$_awg_show")
         i1=$(awk -F': ' '/^[[:space:]]*i1:/ {print $2; exit}' <<< "$_awg_show")
-        # Строку jc awg show печатает только ненулевой: интерфейс прочитан, а
-        # строки нет - значит Jc = 0, junk-пакеты выключены. С «нет данных» это
-        # не путается: непрочитанный интерфейс идёт веткой else ниже.
-        local _jc_note=""
-        if [[ -z "$jc" ]]; then
+        # Строки jc, jmin и jmax awg show печатает только ненулевыми. Если jc
+        # нет, а строки S или H на месте, интерфейс работает с Jc = 0 (и с нулём
+        # в отсутствующих jmin/jmax), и это сверяется с awg0.conf. Без строк S
+        # и H вывод ничего не доказывает: значения остаются неизвестными, а не
+        # нулевыми. Непрочитанный интерфейс идёт веткой else ниже.
+        local _jc_note="" _cjc
+        if [[ -z "$jc" ]] && grep -qE '^[[:space:]]*(s[1-4]|h[1-4]):' <<< "$_awg_show"; then
             jc=0
+            jmin="${jmin:-0}"
+            jmax="${jmax:-0}"
             _jc_note=" (junk-пакеты выключены)"
         fi
-        _diag_line INFO "AWG params: Jc=${jc}${_jc_note} Jmin=${jmin:-?} Jmax=${jmax:-?} I1=${i1:-absent}"
+        _diag_line INFO "AWG params: Jc=${jc:-?}${_jc_note} Jmin=${jmin:-?} Jmax=${jmax:-?} I1=${i1:-absent}"
+        if [[ -z "$jc" ]]; then
+            _diag_line WARN "в выводе awg show нет параметров обфускации (строк jc, S и H): значения не проверялись"
+            warn=$((warn+1))
+        elif [[ -n "$_jc_note" ]]; then
+            _cjc=$(_conf_jc)
+            if [[ -n "$_cjc" && "$_cjc" != 0 ]]; then
+                _diag_line WARN "на интерфейсе Jc=0, а в awg0.conf Jc=${_cjc}: конфиг не применён"
+                echo "        Fix: sudo systemctl restart awg-quick@awg0"
+                warn=$((warn+1))
+            fi
+        fi
         # Модуль ядра пару Jmin/Jmax между собой не сравнивает, и при Jmin больше
         # Jmax пишет мусорный пакет за границу буфера размера Jmax
         # (amneziawg-linux-kernel-module#225). Наш генератор такую пару не
