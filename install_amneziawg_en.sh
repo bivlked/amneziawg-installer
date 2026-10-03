@@ -4745,19 +4745,6 @@ step_uninstall() {
     exit 0
 }
 
-# --repair-module: repair the kernel module on an ALREADY installed server
-# (track K, kernel 7.0.0-38 and later). It does not touch the state machine and
-# runs no apt transaction: a plain installer re-run does not fit here, because
-# step 1 starts with apt-get upgrade, which fails on such a server before the
-# new helper is in place. Deploys the new helper and its wiring, then the
-# helper fixes the source and builds the module for the kernels with headers
-# that lack it (--repair), and only if that succeeded configures the packages
-# (dpkg --configure -a through --finish, which refuses to make an unfinished
-# kernel without the module bootable). Does not load the module, restart the
-# tunnel or reboot.
-# Admission is positive: amneziawg-dkms is installed, not on hold (the pinned
-# 2.0 and the ARM prebuilt set hold), one DKMS registration that points at the
-# package's source, apt not running. Every refusal comes before any change.
 # Parses "amneziawg-ensure-module --status" (the contract is in the helper's
 # mode_status). Only a whole report is accepted: every record with all its
 # keys and allowed values, exactly one running-kernel record, one
@@ -4814,7 +4801,7 @@ _awg_kmod_status_warn() {
     local sf scode=0 k rel run mod hdr pkg
     if ! sf="$(mktemp)"; then log_warn "The final kernel state was not checked: could not create a temporary file."; return 0; fi
     _install_temp_files+=("$sf")
-    "$AWG_ENSURE_HELPER" --status > "$sf" 2>> "$LOG_FILE" || scode=$?
+    timeout 60 "$AWG_ENSURE_HELPER" --status > "$sf" 2>> "$LOG_FILE" || scode=$?
     _awg_kmod_status_parse "$sf" "$scode"
     if [[ "$_KS_OK" -ne 1 ]]; then
         log_warn "The final kernel state could not be obtained (amneziawg-ensure-module --status): before a reboot check dkms status amneziawg and dpkg --audit yourself."
@@ -4823,7 +4810,11 @@ _awg_kmod_status_warn() {
     for k in "${_KS_KERNELS[@]}"; do
         [[ "$k" =~ release=([^ ]+)\ running=([01])\ image=[01]\ module=([^ ]+)\ headers=([^ ]+)\ package=([^ ]+) ]] || continue
         rel="${BASH_REMATCH[1]}" run="${BASH_REMATCH[2]}" mod="${BASH_REMATCH[3]}" hdr="${BASH_REMATCH[4]}" pkg="${BASH_REMATCH[5]}"
-        if [[ "$run" -eq 0 && "$mod" == 0 && ( "$pkg" == installed || "$pkg" == unowned ) ]]; then
+        if [[ "$mod" == 0 && "$pkg" == unfinished ]]; then
+            log_warn "Before a reboot: unfinished kernel $rel has no AmneziaWG module - configuring it would make it bootable without the tunnel. Install linux-headers-$rel and run --repair-module again, or remove that kernel."
+        elif [[ "$run" -eq 1 && "$mod" == 0 ]]; then
+            log_warn "Before a reboot: the running kernel $rel has no AmneziaWG module file on disk; after a reboot there is no tunnel."
+        elif [[ "$run" -eq 0 && "$mod" == 0 && ( "$pkg" == installed || "$pkg" == unowned ) ]]; then
             log_warn "Before a reboot: kernel $rel has no AmneziaWG module, do not boot into it. Install linux-headers-$rel and run --repair-module again, or remove that kernel."
         fi
         if [[ "$mod" == unknown ]]; then
@@ -4838,6 +4829,19 @@ _awg_kmod_status_warn() {
     fi
 }
 
+# --repair-module: repair the kernel module on an ALREADY installed server
+# (track K, kernel 7.0.0-38 and later). It does not touch the state machine and
+# runs no apt transaction: a plain installer re-run does not fit here, because
+# step 1 starts with apt-get upgrade, which fails on such a server before the
+# new helper is in place. Deploys the new helper and its wiring, then the
+# helper fixes the source and builds the module for the kernels with headers
+# that lack it (--repair), and only if that succeeded configures the packages
+# (dpkg --configure -a through --finish, which refuses to make an unfinished
+# kernel without the module bootable). Does not load the module, restart the
+# tunnel or reboot.
+# Admission is positive: amneziawg-dkms is installed, not on hold (the pinned
+# 2.0 and the ARM prebuilt set hold), one DKMS registration that points at the
+# package's source, apt not running. Every refusal comes before any change.
 repair_module_cmd() {
     local rc=0 hrc=0 frc=0 ver owner src out
     local -a reg=()
@@ -7420,7 +7424,9 @@ mode_status() {
     # source (classified on every path: on the pinned one it is informative)
     local src_state=unknown src_ver=- src_rc=0 fix=enabled
     [[ -e "$DISABLED_MARK" ]] && fix=disabled
-    if [[ -e "${DKMS_DIR}/amneziawg" && ( ! -r "${DKMS_DIR}/amneziawg" || ! -x "${DKMS_DIR}/amneziawg" ) ]]; then
+    # Root passes -r/-x tests on any directory, and a glob cannot tell an
+    # empty directory from a failed readdir: ask find, which fails loudly.
+    if [[ -e "${DKMS_DIR}/amneziawg" ]] && ! LC_ALL=C find "${DKMS_DIR}/amneziawg" -mindepth 1 -maxdepth 2 >/dev/null 2>&1; then
         complete=0
         if [[ -z "$kind" ]]; then kind=refused; reason=query; fi
     else
@@ -7467,11 +7473,14 @@ mode_status() {
     }
     cur=$(uname -r)
     if ! ok_token "$cur"; then log_line "WARN: running kernel name has unexpected characters; not reported" >&2; complete=0; cur=""; fi
-    if [[ ! -d "$BOOT_DIR" || ! -r "$BOOT_DIR" || ! -x "$BOOT_DIR" ]]; then
+    # find, not a glob: a failed readdir must not read as "no kernels".
+    local bl=""
+    if [[ ! -d "$BOOT_DIR" ]] || ! bl=$(LC_ALL=C find "$BOOT_DIR" -mindepth 1 -maxdepth 1 -name 'vmlinuz-*' -print 2>/dev/null); then
         log_line "WARN: cannot list kernels in ${BOOT_DIR}" >&2; complete=0
     else
-        for f in "${BOOT_DIR}"/vmlinuz-*; do
-            [[ -e "$f" ]] || continue
+        bl=$(LC_ALL=C sort <<<"$bl")
+        while IFS= read -r f; do
+            [[ -n "$f" && -e "$f" ]] || continue
             rel="${f##*/vmlinuz-}"
             if ! ok_token "$rel"; then log_line "WARN: kernel image name with unexpected characters skipped" >&2; complete=0; continue; fi
             [[ -z "${seen[$rel]:-}" ]] || continue
@@ -7485,7 +7494,7 @@ mode_status() {
             esac
             [[ "$IMG_QFAIL" -eq 1 ]] && pk=unknown
             kernel_rec "$rel" 1 "$pk"
-        done
+        done <<<"$bl"
     fi
     if ! q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'linux-image-*' 2>/dev/null); then
         err=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'linux-image-*' 2>&1 >/dev/null || true)

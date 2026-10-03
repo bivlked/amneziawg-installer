@@ -457,7 +457,7 @@ EOF
         _rm_server
         # --finish said nothing (empty audit): the configured old kernel
         # without a module is named from --status alone.
-        sed -i '/^module /i kernel release=6.8.0-31-generic running=0 image=1 module=0 headers=missing package=installed\nkernel release=6.8.0-40-generic running=0 image=1 module=unknown headers=broken package=installed' "$T/helper.out.--status"
+        sed -i '/^module /i kernel release=6.8.0-31-generic running=0 image=1 module=0 headers=missing package=installed\nkernel release=6.8.0-40-generic running=0 image=1 module=unknown headers=broken package=installed\nkernel release=7.0.0-39-generic running=0 image=0 module=0 headers=missing package=unfinished' "$T/helper.out.--status"
         _rm_driver "$f"
         run bash "$T/drv.sh"
         [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
@@ -465,6 +465,8 @@ EOF
         grep -q '^WARN: .*6\.8\.0-31-generic.*linux-headers-6\.8\.0-31-generic' <<<"$output" || { echo "$f: $output"; return 1; }
         grep -q '^WARN: .*6\.8\.0-40-generic.*\(не читается\|not readable\)' <<<"$output" || { echo "$f: $output"; return 1; }
         grep -q '^WARN: .*6\.8\.0-40-generic.*\(битая\|broken\)' <<<"$output" || { echo "$f: $output"; return 1; }
+        # An unfinished kernel without the module is named too.
+        grep -q '^WARN: .*7\.0\.0-39-generic.*linux-headers-7\.0\.0-39-generic' <<<"$output" || { echo "$f: $output"; return 1; }
         # The running kernel is never named as a kernel to avoid.
         if grep -q '^WARN: .*7\.0\.0-38-generic' <<<"$output"; then echo "$f: running kernel named: $output"; return 1; fi
     done

@@ -1234,6 +1234,24 @@ _rec() { grep -E "^$1( |\$)" "$T/st.out" || true; }
     [[ "$(tail -n 1 "$T/st.out")" == "status complete=0 "* ]]
 }
 
+@test "status: an unreadable /boot or DKMS directory is unknown, not 'no kernels' or 'not registered'" {
+    [[ $EUID -ne 0 ]] || skip "root reads a mode-000 directory anyway"
+    _mk_server "$OLD" "$NEW"
+    "$H" --repair >/dev/null 2>&1
+    chmod 000 "$T/boot"
+    _status
+    chmod 755 "$T/boot"
+    [ "$status" -eq 1 ]
+    [[ "$(tail -n 1 "$T/st.out")" == "status complete=0 "* ]] || { cat "$T/st.out"; return 1; }
+    [[ "$(_rec kernel)" != *"release=$NEW"* ]]
+    chmod 000 "$T/var/lib/dkms/amneziawg"
+    _status
+    chmod 755 "$T/var/lib/dkms/amneziawg"
+    [ "$status" -eq 1 ]
+    [ "$(_rec path)" = "path kind=refused reason=query" ] || { cat "$T/st.out"; return 1; }
+    [[ "$(_rec source)" == "source state=unknown "* ]]
+}
+
 @test "status: a failed audit, ownership lookup or image list is complete=0" {
     _mk_server "$OLD"
     "$H" --repair >/dev/null 2>&1

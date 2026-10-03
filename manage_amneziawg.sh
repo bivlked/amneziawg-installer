@@ -1989,6 +1989,14 @@ _kmod_repair_via_helper() {
     fi
     case "$_KS_KIND" in
         prebuilt|pinned|none) return 10 ;;
+        ppa)
+            # Неполный статус - не разрешение собирать: что-то не удалось
+            # проверить, и от root это ненормально.
+            if [[ "$_KS_COMPLETE" -ne 1 ]]; then
+                _JSON_ERR="состояние модуля определено не полностью"
+                log_error "Состояние модуля определено не полностью (часть проверок помощника не удалась, подробности в $LOG_FILE). Ничего не меняю: устраните причину и запустите repair-module снова."
+                return 1
+            fi ;;
         refused)
             _JSON_ERR="repair-module: путь не допущен ($_KS_REASON)"
             case "$_KS_REASON" in
@@ -2042,7 +2050,7 @@ _kmod_repair_via_helper() {
         done
         for rel in "${unk[@]}"; do log_warn "Модуль ядра $rel проверить не удалось (каталог модулей не читается)."; done
         [[ "$_KS_FIX" == disabled ]] && log "Правка исходника отключена вручную (--revert); включить снова: sudo $AWG_ENSURE_HELPER --enable"
-        if [[ "$mrc" -eq 0 && ( "$_KS_AUDIT" != empty || "${frc:-1}" -ne 0 ) ]]; then
+        if [[ "$mrc" -eq 0 && ( "$_KS_AUDIT" != empty || ( -n "$frc" && "$frc" -ne 0 ) ) ]]; then
             log_warn "Работающий туннель не значит, что apt починен: пакеты не донастроены."
         fi
         if [[ "$pend_mod" -eq 1 ]]; then
@@ -2069,19 +2077,20 @@ _kmod_repair_via_helper() {
     fi
     if [[ "$JSON_OUTPUT" -eq 1 ]]; then
         # Факт, которого нет, - null, а не false или пустой список.
-        local jok=false jmod=false jsvc=false jst=null jpk=null jsrc=null jfix=null jfrc="${frc:-null}" jnm=null jun=null
+        local jok=false jmod=false jsvc=false jst=null jpk=null jsrc=null jfix=null jfrc="${frc:-null}" jnm=null jun=null junk=null
         [[ "$ok" -eq 1 ]] && jok=true
         [[ "$mrc" -ne 1 ]] && jmod=true
         [[ "$mrc" -eq 0 ]] && jsvc=true
+        [[ "$mrc" -eq 1 ]] && jsvc=null
         if [[ "$_KS_OK" -eq 1 ]]; then
             if [[ "$_KS_COMPLETE" -eq 1 ]]; then jst=true; else jst=false; fi
             jpk="\"$_KS_AUDIT\""; jsrc="\"$_KS_SRC\""
             case "$_KS_FIX" in disabled) jfix=true ;; enabled) jfix=false ;; *) jfix=null ;; esac
-            jnm=$(_kmod_json_list "${nomod[@]}"); jun=$(_kmod_json_list "${unfin[@]}")
+            jnm=$(_kmod_json_list "${nomod[@]}"); jun=$(_kmod_json_list "${unfin[@]}"); junk=$(_kmod_json_list "${unk[@]}")
         else
             rmod=null; rhdr=null
         fi
-        json_out "{\"command\":\"repair-module\",\"ok\":$jok,\"module_loaded\":$jmod,\"service_active\":$jsvc,\"rc\":$mrc,\"helper\":\"current\",\"path\":\"helper\",\"repair_rc\":$hrc,\"finish_rc\":$jfrc,\"status_complete\":$jst,\"packages\":$jpk,\"source\":$jsrc,\"fix_disabled\":$jfix,\"kernels_without_module\":$jnm,\"unfinished_without_module\":$jun,\"running_module_on_disk\":$rmod,\"running_headers\":$rhdr}"
+        json_out "{\"command\":\"repair-module\",\"ok\":$jok,\"module_loaded\":$jmod,\"service_active\":$jsvc,\"rc\":$mrc,\"helper\":\"current\",\"path\":\"helper\",\"repair_rc\":$hrc,\"finish_rc\":$jfrc,\"status_complete\":$jst,\"packages\":$jpk,\"source\":$jsrc,\"fix_disabled\":$jfix,\"kernels_without_module\":$jnm,\"unfinished_without_module\":$jun,\"kernels_unknown\":$junk,\"running_module_on_disk\":$rmod,\"running_headers\":$rhdr}"
     fi
     [[ "$ok" -eq 1 ]] && return 0
     return 1
@@ -2105,6 +2114,9 @@ _diag_kmod_facts() {
             if [[ "$_KL" == dkms ]]; then
                 _diag_line WARN "Помощник модуля устарел или отсутствует: исходник под ядро 7.0 он не правит, модуль по ядрам не проверен"
                 echo "        Fix: sudo bash install_amneziawg.sh --repair-module (если установщик допустит этот путь)"
+                warn=$((warn+1))
+            elif [[ "$_KL" == query ]]; then
+                _diag_line WARN "Не удалось опросить dpkg о пакетах модуля: путь модуля не определён"
                 warn=$((warn+1))
             fi
             return 0 ;;
@@ -3563,7 +3575,7 @@ case $COMMAND in
                     if [[ "$_kh_rc" -ne 0 ]]; then
                         _cmd_rc=1
                         if [[ "$JSON_OUTPUT" -eq 1 && "$_JSON_EMITTED" -eq 0 ]]; then
-                            json_out "{\"command\":\"repair-module\",\"ok\":false,\"module_loaded\":null,\"service_active\":null,\"rc\":null,\"helper\":\"current\",\"path\":\"refused\",\"repair_rc\":null,\"finish_rc\":null,\"status_complete\":null,\"packages\":null,\"source\":null,\"fix_disabled\":null,\"kernels_without_module\":null,\"unfinished_without_module\":null,\"running_module_on_disk\":null,\"running_headers\":null,\"error\":\"$(json_escape "${_JSON_ERR:-repair-module failed}")\"}"
+                            json_out "{\"command\":\"repair-module\",\"ok\":false,\"module_loaded\":null,\"service_active\":null,\"rc\":null,\"helper\":\"current\",\"path\":\"refused\",\"repair_rc\":null,\"finish_rc\":null,\"status_complete\":null,\"packages\":null,\"source\":null,\"fix_disabled\":null,\"kernels_without_module\":null,\"unfinished_without_module\":null,\"kernels_unknown\":null,\"running_module_on_disk\":null,\"running_headers\":null,\"error\":\"$(json_escape "${_JSON_ERR:-repair-module failed}")\"}"
                         fi
                     fi
                     _kh_path=helper
@@ -3571,6 +3583,7 @@ case $COMMAND in
             broken)
                 _JSON_ERR="помощник модуля не отвечает как ожидалось"
                 log_error "Помощник $AWG_ENSURE_HELPER есть, но не исполняется или отвечает непонятно. Ничего не меняю. Обновите его: sudo bash install_amneziawg.sh --repair-module (допуск установщик проверит сам)."
+                json_out "{\"command\":\"repair-module\",\"ok\":false,\"module_loaded\":null,\"service_active\":null,\"rc\":null,\"helper\":\"broken\",\"path\":\"refused\",\"repair_rc\":null,\"finish_rc\":null,\"status_complete\":null,\"packages\":null,\"source\":null,\"fix_disabled\":null,\"kernels_without_module\":null,\"unfinished_without_module\":null,\"kernels_unknown\":null,\"running_module_on_disk\":null,\"running_headers\":null,\"error\":\"$(json_escape "$_JSON_ERR")\"}"
                 exit 1 ;;
             *)
                 # Нет помощника или он заведомо старый: классифицируем сами.
@@ -3578,6 +3591,7 @@ case $COMMAND in
                 if [[ "$_KL" == query ]]; then
                     _JSON_ERR="не удалось опросить dpkg"
                     log_error "Не удалось опросить dpkg о пакетах модуля. Ничего не меняю, повторите позже."
+                    json_out "{\"command\":\"repair-module\",\"ok\":false,\"module_loaded\":null,\"service_active\":null,\"rc\":null,\"helper\":\"$_KH_CLASS\",\"path\":\"refused\",\"repair_rc\":null,\"finish_rc\":null,\"status_complete\":null,\"packages\":null,\"source\":null,\"fix_disabled\":null,\"kernels_without_module\":null,\"unfinished_without_module\":null,\"kernels_unknown\":null,\"running_module_on_disk\":null,\"running_headers\":null,\"error\":\"$(json_escape "$_JSON_ERR")\"}"
                     exit 1
                 fi
                 if [[ "$_KL" == dkms ]]; then
@@ -3611,7 +3625,7 @@ case $COMMAND in
             _jok=false; [[ "$_cmd_rc" -eq 0 ]] && _jok=true
             # rc здесь = код ensure_amneziawg_kernel_module (0/1/2), не exit-код.
             # Факты помощника на этом пути не собирались - null, а не false.
-            json_out "{\"command\":\"repair-module\",\"ok\":$_jok,\"module_loaded\":$_jmod,\"service_active\":$_jsvc,\"rc\":$_mod_rc,\"helper\":\"$_KH_CLASS\",\"path\":\"legacy\",\"repair_rc\":null,\"finish_rc\":null,\"status_complete\":null,\"packages\":null,\"source\":null,\"fix_disabled\":null,\"kernels_without_module\":null,\"unfinished_without_module\":null,\"running_module_on_disk\":null,\"running_headers\":null}"
+            json_out "{\"command\":\"repair-module\",\"ok\":$_jok,\"module_loaded\":$_jmod,\"service_active\":$_jsvc,\"rc\":$_mod_rc,\"helper\":\"$_KH_CLASS\",\"path\":\"legacy\",\"repair_rc\":null,\"finish_rc\":null,\"status_complete\":null,\"packages\":null,\"source\":null,\"fix_disabled\":null,\"kernels_without_module\":null,\"unfinished_without_module\":null,\"kernels_unknown\":null,\"running_module_on_disk\":null,\"running_headers\":null}"
         fi
         fi
         ;;

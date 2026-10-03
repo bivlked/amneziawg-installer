@@ -4642,19 +4642,6 @@ step_uninstall() {
     exit 0
 }
 
-# --repair-module: лечение модуля ядра на УЖЕ установленном сервере (трек K,
-# ядро 7.0.0-38 и новее). Машину состояний не трогает и ни одной транзакции apt
-# не делает: обычный повтор установщика здесь не годится, потому что шаг 1
-# начинается с apt-get upgrade, а он на таком сервере падает раньше, чем
-# появится новый помощник. Разворачивает новый помощник и его обвязку, затем
-# помощник правит исходник и собирает модуль для ядер с заголовками, где его
-# нет (--repair), и только если это удалось - донастраивает пакеты
-# (dpkg --configure -a через --finish; тот не даёт сделать загрузочным
-# недонастроенное ядро без модуля). Модуль не загружает, туннель не
-# перезапускает, не перезагружает.
-# Допуск положительный: пакет amneziawg-dkms есть, не в hold (hold ставят
-# пиновый 2.0 и ARM-пребилт), регистрация в DKMS одна и указывает на исходник
-# пакета, apt не работает. Любой отказ - до каких-либо изменений.
 # Разбор вывода «amneziawg-ensure-module --status» (контракт - в mode_status
 # помощника). Принимается только целый отчёт: каждая запись со всеми своими
 # ключами и допустимыми значениями, ровно одна запись о текущем ядре, по
@@ -4712,7 +4699,7 @@ _awg_kmod_status_warn() {
     local sf scode=0 k rel run mod hdr pkg
     if ! sf="$(mktemp)"; then log_warn "Итоговое состояние ядер не проверено: не удалось создать временный файл."; return 0; fi
     _install_temp_files+=("$sf")
-    "$AWG_ENSURE_HELPER" --status > "$sf" 2>> "$LOG_FILE" || scode=$?
+    timeout 60 "$AWG_ENSURE_HELPER" --status > "$sf" 2>> "$LOG_FILE" || scode=$?
     _awg_kmod_status_parse "$sf" "$scode"
     if [[ "$_KS_OK" -ne 1 ]]; then
         log_warn "Итоговое состояние ядер получить не удалось (amneziawg-ensure-module --status): перед перезагрузкой проверьте dkms status amneziawg и dpkg --audit сами."
@@ -4721,7 +4708,11 @@ _awg_kmod_status_warn() {
     for k in "${_KS_KERNELS[@]}"; do
         [[ "$k" =~ release=([^ ]+)\ running=([01])\ image=[01]\ module=([^ ]+)\ headers=([^ ]+)\ package=([^ ]+) ]] || continue
         rel="${BASH_REMATCH[1]}" run="${BASH_REMATCH[2]}" mod="${BASH_REMATCH[3]}" hdr="${BASH_REMATCH[4]}" pkg="${BASH_REMATCH[5]}"
-        if [[ "$run" -eq 0 && "$mod" == 0 && ( "$pkg" == installed || "$pkg" == unowned ) ]]; then
+        if [[ "$mod" == 0 && "$pkg" == unfinished ]]; then
+            log_warn "Перед перезагрузкой: недонастроенное ядро $rel без модуля AmneziaWG - донастройка сделала бы его загрузочным без туннеля. Поставьте linux-headers-$rel и запустите --repair-module снова, либо удалите это ядро."
+        elif [[ "$run" -eq 1 && "$mod" == 0 ]]; then
+            log_warn "Перед перезагрузкой: у текущего ядра $rel нет файла модуля AmneziaWG на диске, после перезагрузки туннеля не будет."
+        elif [[ "$run" -eq 0 && "$mod" == 0 && ( "$pkg" == installed || "$pkg" == unowned ) ]]; then
             log_warn "Перед перезагрузкой: у ядра $rel нет модуля AmneziaWG, в него не загружайтесь. Поставьте linux-headers-$rel и запустите --repair-module снова, либо удалите это ядро."
         fi
         if [[ "$mod" == unknown ]]; then
@@ -4736,6 +4727,19 @@ _awg_kmod_status_warn() {
     fi
 }
 
+# --repair-module: лечение модуля ядра на УЖЕ установленном сервере (трек K,
+# ядро 7.0.0-38 и новее). Машину состояний не трогает и ни одной транзакции apt
+# не делает: обычный повтор установщика здесь не годится, потому что шаг 1
+# начинается с apt-get upgrade, а он на таком сервере падает раньше, чем
+# появится новый помощник. Разворачивает новый помощник и его обвязку, затем
+# помощник правит исходник и собирает модуль для ядер с заголовками, где его
+# нет (--repair), и только если это удалось - донастраивает пакеты
+# (dpkg --configure -a через --finish; тот не даёт сделать загрузочным
+# недонастроенное ядро без модуля). Модуль не загружает, туннель не
+# перезапускает, не перезагружает.
+# Допуск положительный: пакет amneziawg-dkms есть, не в hold (hold ставят
+# пиновый 2.0 и ARM-пребилт), регистрация в DKMS одна и указывает на исходник
+# пакета, apt не работает. Любой отказ - до каких-либо изменений.
 repair_module_cmd() {
     local rc=0 hrc=0 frc=0 ver owner src out
     local -a reg=()
@@ -7282,7 +7286,9 @@ mode_status() {
     # source (classified on every path: on the pinned one it is informative)
     local src_state=unknown src_ver=- src_rc=0 fix=enabled
     [[ -e "$DISABLED_MARK" ]] && fix=disabled
-    if [[ -e "${DKMS_DIR}/amneziawg" && ( ! -r "${DKMS_DIR}/amneziawg" || ! -x "${DKMS_DIR}/amneziawg" ) ]]; then
+    # Root passes -r/-x tests on any directory, and a glob cannot tell an
+    # empty directory from a failed readdir: ask find, which fails loudly.
+    if [[ -e "${DKMS_DIR}/amneziawg" ]] && ! LC_ALL=C find "${DKMS_DIR}/amneziawg" -mindepth 1 -maxdepth 2 >/dev/null 2>&1; then
         complete=0
         if [[ -z "$kind" ]]; then kind=refused; reason=query; fi
     else
@@ -7329,11 +7335,14 @@ mode_status() {
     }
     cur=$(uname -r)
     if ! ok_token "$cur"; then log_line "WARN: running kernel name has unexpected characters; not reported" >&2; complete=0; cur=""; fi
-    if [[ ! -d "$BOOT_DIR" || ! -r "$BOOT_DIR" || ! -x "$BOOT_DIR" ]]; then
+    # find, not a glob: a failed readdir must not read as "no kernels".
+    local bl=""
+    if [[ ! -d "$BOOT_DIR" ]] || ! bl=$(LC_ALL=C find "$BOOT_DIR" -mindepth 1 -maxdepth 1 -name 'vmlinuz-*' -print 2>/dev/null); then
         log_line "WARN: cannot list kernels in ${BOOT_DIR}" >&2; complete=0
     else
-        for f in "${BOOT_DIR}"/vmlinuz-*; do
-            [[ -e "$f" ]] || continue
+        bl=$(LC_ALL=C sort <<<"$bl")
+        while IFS= read -r f; do
+            [[ -n "$f" && -e "$f" ]] || continue
             rel="${f##*/vmlinuz-}"
             if ! ok_token "$rel"; then log_line "WARN: kernel image name with unexpected characters skipped" >&2; complete=0; continue; fi
             [[ -z "${seen[$rel]:-}" ]] || continue
@@ -7347,7 +7356,7 @@ mode_status() {
             esac
             [[ "$IMG_QFAIL" -eq 1 ]] && pk=unknown
             kernel_rec "$rel" 1 "$pk"
-        done
+        done <<<"$bl"
     fi
     if ! q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'linux-image-*' 2>/dev/null); then
         err=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'linux-image-*' 2>&1 >/dev/null || true)

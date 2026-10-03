@@ -32,7 +32,8 @@ _status() { # [extra records before "module"...]
 setup() {
     T=$(mktemp -d); export T RUN
     mkdir -p "$T/bin" "$T/st" "$T/awg/keys" "$T/sys/module" "$T/lib/modules/$RUN/updates"
-    command -v jq >/dev/null || skip "jq not available"
+    # In CI a missing jq must fail, not skip all of these silently.
+    command -v jq >/dev/null || { [[ -z "${CI:-}" ]] || return 1; skip "jq not available"; }
     _stub awg 'case "$1" in genkey|genpsk) echo AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= ;; pubkey) cat >/dev/null; echo BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB= ;; esac; exit 0'
     _stub id 'if [[ "$1" == -u ]]; then cat "$T/uid" 2>/dev/null || echo 0; else /usr/bin/id "$@"; fi'
     _stub uname 'if [[ "$1" == -r ]]; then echo "$RUN"; else /bin/uname "$@"; fi'
@@ -104,151 +105,266 @@ teardown() { rm -rf "$T"; }
 
 _repair() { run --separate-stderr bash "${SCR:-$M}" repair-module --json "${ARGS[@]}"; }
 _j() { printf '%s' "$output" | jq -e "$1" >/dev/null; }
+# State one run leaves behind that the next must not inherit.
+_fresh() { rm -f "$T/calls" "$T/status.n" "$T/svc.active"; rm -rf "$T/sys/module/amneziawg"; }
+# Every repair-module case runs on both scripts: their branches differ in
+# messages only, and a test of one language does not guard the other.
+LANGS=(RU EN)
+_scr() { if [[ "$1" == EN ]]; then SCR="$M_EN"; else SCR="$M"; fi; }
 
 # ---------- the new path ----------
 
 @test "new path: --status, --repair, depmod+modprobe, --finish, --status; no apt, no ensure; exit 0, JSON says so" {
-    _repair
-    [ "$status" -eq 0 ] || { echo "$stderr"; return 1; }
-    [ "$(printf '%s\n' "$output" | grep -c .)" -eq 1 ]
-    _j '.command=="repair-module" and .ok==true and .module_loaded==true and .service_active==true and .rc==0'
-    _j '.helper=="current" and .path=="helper" and .repair_rc==0 and .finish_rc==0 and .status_complete==true'
-    _j '.packages=="empty" and .source=="patched" and .fix_disabled==false and .running_module_on_disk==true and .running_headers=="ok"'
-    _j '.kernels_without_module==[] and .unfinished_without_module==[]'
-    [ "$(_calls | grep -E '^(helper|depmod|modprobe)' | tr '\n' '|')" = "helper --status|helper --repair|depmod -a $RUN|modprobe amneziawg|helper --finish|helper --status|" ] || { _calls; return 1; }
-    [[ "$(_calls)" != *apt* && "$(_calls)" != *"dkms autoinstall"* ]]
+    local l
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 0 ] || { echo "$l: $stderr"; return 1; }
+        [ "$(printf '%s\n' "$output" | grep -c .)" -eq 1 ] || { echo "$l: more than one document"; return 1; }
+        _j '.command=="repair-module" and .ok==true and .module_loaded==true and .service_active==true and .rc==0'
+        _j '.helper=="current" and .path=="helper" and .repair_rc==0 and .finish_rc==0 and .status_complete==true'
+        _j '.packages=="empty" and .source=="patched" and .fix_disabled==false and .running_module_on_disk==true and .running_headers=="ok"'
+        _j '.kernels_without_module==[] and .unfinished_without_module==[]'
+        [ "$(_calls | grep -E '^(helper|depmod|modprobe)' | tr '\n' '|')" = "helper --status|helper --repair|depmod -a $RUN|modprobe amneziawg|helper --finish|helper --status|" ] || { echo "$l"; _calls; return 1; }
+        [[ "$(_calls)" != *apt* && "$(_calls)" != *"dkms autoinstall"* ]] || { echo "$l: apt or autoinstall"; return 1; }
+    done
 }
 
 @test "new path: a failed --repair skips --finish and fails; the JSON keeps finish_rc null" {
+    local l
     echo 1 > "$T/helper.rc.--repair"
-    _repair
-    [ "$status" -eq 1 ]
-    [[ "$(_calls)" != *"helper --finish"* ]]
-    _j '.ok==false and .repair_rc==1 and .finish_rc==null'
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l"; return 1; }
+        [[ "$(_calls)" != *"helper --finish"* ]] || { echo "$l: finish ran"; return 1; }
+        _j '.ok==false and .repair_rc==1 and .finish_rc==null' || { echo "$l: $output"; return 1; }
+        # --finish did not run and the audit is empty: nothing claims packages are unfinished.
+        if [[ "$stderr" == *"apt починен"* || "$stderr" == *"apt is fixed"* ]]; then echo "$l: false claim: $stderr"; return 1; fi
+    done
 }
 
 @test "new path: an already configured other kernel without a module warns by name, success stays" {
+    local l
     _status "kernel release=$OLDK running=0 image=1 module=0 headers=missing package=installed" > "$T/helper.out.--status"
-    _repair
-    [ "$status" -eq 0 ] || { echo "$stderr"; return 1; }
-    _j ".ok==true and .kernels_without_module==[\"$OLDK\"]"
-    [[ "$stderr" == *"$OLDK"*"linux-headers-$OLDK"*"repair-module"* ]]
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 0 ] || { echo "$l: $stderr"; return 1; }
+        _j ".ok==true and .kernels_without_module==[\"$OLDK\"] and .unfinished_without_module==[]" || { echo "$l: $output"; return 1; }
+        [[ "$stderr" == *"$OLDK"*"linux-headers-$OLDK"*"repair-module"* ]] || { echo "$l: $stderr"; return 1; }
+    done
 }
 
-@test "new path: an unfinished kernel without a module fails, the running kernel counts too" {
-    _status "kernel release=7.0.0-39-generic running=0 image=1 module=0 headers=missing package=unfinished" > "$T/helper.out.--status.2"
-    _status > "$T/helper.out.--status.1"
-    sed -i 's/packages audit=empty/packages audit=unfinished/' "$T/helper.out.--status.2"
-    echo 1 > "$T/helper.rc.--finish"
-    _repair
-    [ "$status" -eq 1 ]
-    _j '.ok==false and .unfinished_without_module==["7.0.0-39-generic"] and .packages=="unfinished"'
-    [[ "$stderr" == *"7.0.0-39-generic"* ]]
-    # A working tunnel is not a fixed apt.
-    [[ "$stderr" == *"apt"* ]]
+@test "success rule: unfinished packages after a clean --finish still fail" {
+    local l
+    AUDIT=unfinished _status > "$T/helper.out.--status.2"
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l: $output"; return 1; }
+        _j '.ok==false and .finish_rc==0 and .packages=="unfinished"' || { echo "$l: $output"; return 1; }
+        # A working tunnel is not a fixed apt (the phrase itself: "apt" alone
+        # is in the time-of-check line of every run).
+        [[ "$stderr" == *"apt починен"* || "$stderr" == *"apt is fixed"* ]] || { echo "$l: $stderr"; return 1; }
+    done
+}
+
+@test "success rule: an unfinished kernel without a module fails even with a clean --finish and an empty audit" {
+    local l
+    _status "kernel release=7.0.0-39-generic running=0 image=0 module=0 headers=missing package=unfinished" > "$T/helper.out.--status.2"
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l: $output"; return 1; }
+        _j '.ok==false and .finish_rc==0 and .packages=="empty" and .unfinished_without_module==["7.0.0-39-generic"] and .kernels_without_module==[]' || { echo "$l: $output"; return 1; }
+        [[ "$stderr" == *"7.0.0-39-generic"* ]] || { echo "$l: $stderr"; return 1; }
+    done
+}
+
+@test "success rule: an unfinished running kernel without a module is listed as unfinished" {
+    local l
+    sed "s/^kernel release=$RUN running=1 image=1 module=1 headers=ok package=installed/kernel release=$RUN running=1 image=1 module=0 headers=ok package=unfinished/" \
+        <(_status) > "$T/helper.out.--status.2"
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l: $output"; return 1; }
+        _j ".unfinished_without_module==[\"$RUN\"] and .running_module_on_disk==false" || { echo "$l: $output"; return 1; }
+    done
 }
 
 @test "new path: no module and no headers for the running kernel: the exact command, exit 1, nothing built, no apt" {
+    local l
     RMOD=0 RHDR=missing _status > "$T/helper.out.--status"
     rm -f "$T/lib/modules/$RUN/updates/amneziawg.ko"
-    _repair
-    [ "$status" -eq 1 ]
-    [[ "$stderr" == *"apt install linux-headers-$RUN"* ]]
-    [[ "$(_calls)" != *"helper --repair"* && "$(_calls)" != *apt* ]]
-    _j '.ok==false and .path=="refused"'
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l"; return 1; }
+        [[ "$stderr" == *"apt install linux-headers-$RUN"* ]] || { echo "$l: $stderr"; return 1; }
+        [[ "$(_calls)" != *"helper --repair"* && "$(_calls)" != *apt* ]] || { echo "$l: $(_calls)"; return 1; }
+        _j '.ok==false and .path=="refused"' || { echo "$l: $output"; return 1; }
+    done
 }
 
 @test "new path: module load fails while the service would start: rc 1, not loaded, the service is not claimed" {
+    local l
     : > "$T/modprobe.fail"
-    _repair
-    [ "$status" -eq 1 ]
-    _j '.ok==false and .rc==1 and .module_loaded==false and .service_active==false'
-    [[ "$(_calls)" != *"systemctl start"* ]]
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l"; return 1; }
+        # The service was not looked at: null, not false.
+        _j '.ok==false and .rc==1 and .module_loaded==false and .service_active==null' || { echo "$l: $output"; return 1; }
+        [[ "$(_calls)" != *"systemctl start"* ]] || { echo "$l: service started"; return 1; }
+    done
 }
 
 @test "new path: module loaded, service fails: rc 2" {
+    local l
     : > "$T/svc.fail"
-    _repair
-    [ "$status" -eq 1 ]
-    _j '.ok==false and .rc==2 and .module_loaded==true and .service_active==false'
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l"; return 1; }
+        _j '.ok==false and .rc==2 and .module_loaded==true and .service_active==false' || { echo "$l: $output"; return 1; }
+    done
 }
 
 @test "new path: an incomplete final status is not a success" {
+    local l
     COMPLETE=0 _status > "$T/helper.out.--status.2"; echo 1 > "$T/helper.rc.--status.2"
-    _repair
-    [ "$status" -eq 1 ]
-    _j '.ok==false and .status_complete==false'
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l"; return 1; }
+        _j '.ok==false and .status_complete==false' || { echo "$l: $output"; return 1; }
+    done
+}
+
+@test "new path: an incomplete first status builds nothing" {
+    local l
+    COMPLETE=0 _status > "$T/helper.out.--status"; echo 1 > "$T/helper.rc.--status"
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l"; return 1; }
+        [ "$(_calls | tr '\n' '|')" = "helper --status|" ] || { echo "$l: $(_calls)"; return 1; }
+        _j '.ok==false and .path=="refused"' || { echo "$l: $output"; return 1; }
+    done
+}
+
+@test "new path: kernels whose module could not be checked are listed as unknown, not as fine" {
+    local l
+    COMPLETE=0 _status "kernel release=$OLDK running=0 image=1 module=unknown headers=ok package=installed" > "$T/helper.out.--status.2"
+    echo 1 > "$T/helper.rc.--status.2"
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l"; return 1; }
+        _j ".kernels_unknown==[\"$OLDK\"] and .kernels_without_module==[] and .status_complete==false" || { echo "$l: $output"; return 1; }
+    done
+}
+
+@test "new path: unknown headers and fix values are kept as unknown, not turned into facts" {
+    local l
+    RHDR=unknown FIX=unknown _status > "$T/helper.out.--status"
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        _j '.running_headers=="unknown" and .fix_disabled==null' || { echo "$l: $output"; return 1; }
+    done
 }
 
 @test "refused, unreadable or malformed status: nothing is built or configured" {
-    local c
-    for c in refused malformed mismatch; do
-        rm -f "$T/calls" "$T/status.n" "$T/helper.rc.--status"
-        case "$c" in
-            refused) KIND=refused REASON=owner _status > "$T/helper.out.--status" ;;
-            malformed) _status | sed '/^status /d' > "$T/helper.out.--status" ;;
-            mismatch) _status > "$T/helper.out.--status"; echo 1 > "$T/helper.rc.--status" ;;
-        esac
-        _repair
-        [ "$status" -eq 1 ] || { echo "$c: $status"; return 1; }
-        [ "$(_calls | tr '\n' '|')" = "helper --status|" ] || { echo "$c: $(_calls)"; return 1; }
-        _j '.ok==false and .path=="refused" and (.error|length>0)' || { echo "$c: $output"; return 1; }
+    local c l
+    for l in "${LANGS[@]}"; do
+        for c in refused malformed mismatch tworunning dup badvalue missingkey nopackages; do
+            _fresh; rm -f "$T/helper.rc.--status"; _scr "$l"
+            case "$c" in
+                refused)    KIND=refused REASON=owner _status > "$T/helper.out.--status" ;;
+                malformed)  _status | sed '/^status /d' > "$T/helper.out.--status" ;;
+                mismatch)   _status > "$T/helper.out.--status"; echo 1 > "$T/helper.rc.--status" ;;
+                tworunning) _status "kernel release=$OLDK running=1 image=1 module=1 headers=ok package=installed" > "$T/helper.out.--status" ;;
+                dup)        _status "kernel release=$RUN running=0 image=0 module=1 headers=ok package=none" > "$T/helper.out.--status" ;;
+                badvalue)   _status | sed 's/module=1 headers/module=maybe headers/' > "$T/helper.out.--status" ;;
+                missingkey) _status | sed 's/ headers=ok//' > "$T/helper.out.--status" ;;
+                nopackages) _status | sed '/^packages /d' > "$T/helper.out.--status" ;;
+            esac
+            _repair
+            [ "$status" -eq 1 ] || { echo "$l $c: $status"; return 1; }
+            [ "$(_calls | tr '\n' '|')" = "helper --status|" ] || { echo "$l $c: $(_calls)"; return 1; }
+            _j '.ok==false and .path=="refused" and (.error|length>0)' || { echo "$l $c: $output"; return 1; }
+        done
     done
 }
 
 @test "prebuilt, pinned or no package per --status: the previous path, no helper build" {
-    local k
-    for k in prebuilt pinned none; do
-        rm -f "$T/calls" "$T/status.n"
-        KIND=$k _status > "$T/helper.out.--status"
-        : > "$T/lsmod.loaded"; : > "$T/svc.active"
-        _repair
-        [ "$status" -eq 0 ] || { echo "$k: $stderr"; return 1; }
-        _j '.path=="legacy" and .helper=="current" and .repair_rc==null'
-        [ "$(_calls | grep '^helper' | tr '\n' '|')" = "helper --status|" ] || { echo "$k: $(_calls)"; return 1; }
+    local k l
+    for l in "${LANGS[@]}"; do
+        for k in prebuilt pinned none; do
+            _fresh; _scr "$l"
+            KIND=$k _status > "$T/helper.out.--status"
+            : > "$T/lsmod.loaded"; : > "$T/svc.active"
+            _repair
+            [ "$status" -eq 0 ] || { echo "$l $k: $stderr"; return 1; }
+            _j '.path=="legacy" and .helper=="current" and .repair_rc==null' || { echo "$l $k: $output"; return 1; }
+            [ "$(_calls | grep '^helper' | tr '\n' '|')" = "helper --status|" ] || { echo "$l $k: $(_calls)"; return 1; }
+        done
     done
 }
 
 @test "an old or missing helper: the previous path, with a warning only where amneziawg-dkms is installed" {
-    : > "$T/lsmod.loaded"; : > "$T/svc.active"
+    local l
     printf 'amneziawg-ensure-module: missing or unknown mode (use --hook or --systemd)\n' > "$T/helper.verr"
     : > "$T/helper.version"; echo 2 > "$T/helper.vrc"
-    _repair
-    [ "$status" -eq 0 ] || { echo "$stderr"; return 1; }
-    _j '.helper=="outdated" and .path=="legacy"'
-    [[ "$stderr" == *"--repair-module"* ]]
-    [[ "$(_calls)" != *"helper --"* ]]
-    rm -f "$T/st/amneziawg-dkms"
-    _repair
-    [ "$status" -eq 0 ]
-    [[ "$stderr" != *"--repair-module"* ]]
-    rm -f "$T/helper"
-    _repair
-    _j '.helper=="absent" and .path=="legacy"'
+    for l in "${LANGS[@]}"; do
+        _st amneziawg-dkms "install ok installed"; _fresh; _scr "$l"
+        : > "$T/lsmod.loaded"; : > "$T/svc.active"
+        _repair
+        [ "$status" -eq 0 ] || { echo "$l: $stderr"; return 1; }
+        _j '.helper=="outdated" and .path=="legacy"' || { echo "$l: $output"; return 1; }
+        [[ "$stderr" == *"--repair-module"* ]] || { echo "$l: no warning"; return 1; }
+        [[ "$(_calls)" != *"helper --"* ]] || { echo "$l: helper used"; return 1; }
+        rm -f "$T/st/amneziawg-dkms"; _fresh; : > "$T/svc.active"
+        _repair
+        [ "$status" -eq 0 ] || { echo "$l nopkg: $stderr"; return 1; }
+        [[ "$stderr" != *"--repair-module"* ]] || { echo "$l: warned without the package"; return 1; }
+    done
+    # No helper file at all, with amneziawg-dkms installed: the same warning.
+    mv "$T/helper" "$T/helper.gone"
+    for l in "${LANGS[@]}"; do
+        _st amneziawg-dkms "install ok installed"; _fresh; _scr "$l"; : > "$T/svc.active"
+        _repair
+        _j '.helper=="absent" and .path=="legacy"' || { echo "$l: $output"; return 1; }
+        [[ "$stderr" == *"--repair-module"* ]] || { echo "$l absent: no warning"; return 1; }
+    done
 }
 
-@test "a broken helper or a failed dpkg query: refused without changes" {
-    echo "garbage" > "$T/helper.version"
-    _repair
-    [ "$status" -eq 1 ]
-    [[ "$(_calls)" != *"helper --"* && "$(_calls)" != *dkms* ]]
-    rm -f "$T/helper"; : > "$T/dq.fail"
-    _repair
-    [ "$status" -eq 1 ]
-    [[ "$(_calls)" != *dkms* ]]
+@test "a broken helper or a failed dpkg query: refused for that reason, nothing repaired" {
+    local l
+    for l in "${LANGS[@]}"; do
+        echo "garbage" > "$T/helper.version"; _fresh; _scr "$l"
+        _repair
+        [ "$status" -eq 1 ] || { echo "$l broken"; return 1; }
+        [[ "$stderr" == *"$T/helper"* ]] || { echo "$l broken: reason not named: $stderr"; return 1; }
+        _j '.ok==false and .helper=="broken" and .path=="refused" and (.error|length>0)' || { echo "$l broken: $output"; return 1; }
+        [[ "$(_calls)" != *"helper --"* && "$(_calls)" != *dkms* && "$(_calls)" != *modprobe* && "$(_calls)" != *systemctl* ]] || { echo "$l broken: $(_calls)"; return 1; }
+        rm -f "$T/helper.version"
+    done
+    mv "$T/helper" "$T/helper.gone"; : > "$T/dq.fail"
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"
+        _repair
+        [ "$status" -eq 1 ] || { echo "$l query"; return 1; }
+        [[ "$stderr" == *dpkg* ]] || { echo "$l query: reason not named: $stderr"; return 1; }
+        _j '.ok==false and .helper=="absent" and .path=="refused"' || { echo "$l query: $output"; return 1; }
+        [[ "$(_calls)" != *dkms* && "$(_calls)" != *modprobe* && "$(_calls)" != *systemctl* ]] || { echo "$l query: $(_calls)"; return 1; }
+    done
 }
 
 @test "new path needs root" {
+    local l
     echo 1000 > "$T/uid"
-    _repair
-    [ "$status" -eq 1 ]
-    [[ "$(_calls)" != *"helper --"* ]]
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l"; return 1; }
+        [[ "$stderr" == *root* ]] || { echo "$l: $stderr"; return 1; }
+        [[ "$(_calls)" != *"helper --"* ]] || { echo "$l: $(_calls)"; return 1; }
+    done
 }
 
 @test "EN: the new path's envelope has the RU keys" {
-    _repair; local ru; ru=$(printf '%s' "$output" | jq -cS 'keys')
-    rm -f "$T/status.n" "$T/calls"; rm -rf "$T/sys/module/amneziawg"
-    SCR="$M_EN" _repair; [ "$status" -eq 0 ] || { echo "$stderr"; return 1; }
+    _fresh; _repair; local ru; ru=$(printf '%s' "$output" | jq -cS 'keys')
+    _fresh; SCR="$M_EN" _repair; [ "$status" -eq 0 ] || { echo "$stderr"; return 1; }
     [ "$(printf '%s' "$output" | jq -cS 'keys')" = "$ru" ]
 }
 
@@ -257,11 +373,14 @@ _j() { printf '%s' "$output" | jq -e "$1" >/dev/null; }
 _diag() { run bash "${SCR:-$M}" diagnose "${ARGS[@]}"; }
 
 @test "diagnose: a configured kernel without a module and unfinished packages are warnings, not failures" {
+    local l
     AUDIT=unfinished _status "kernel release=$OLDK running=0 image=1 module=0 headers=missing package=installed" > "$T/helper.out.--status"
-    _diag
-    [[ "$output" == *"$OLDK"*"linux-headers-$OLDK"* ]] || { echo "$output"; return 1; }
-    [[ "$output" == *"dpkg --audit"* ]]
-    if grep -E 'FAIL.*'"$OLDK" <<<"$output"; then return 1; fi
+    for l in "${LANGS[@]}"; do
+        _scr "$l"; _diag
+        [[ "$output" == *"WARN"*"$OLDK"*"linux-headers-$OLDK"* ]] || { echo "$l: $output"; return 1; }
+        [[ "$output" == *"WARN"*"dpkg --audit"* ]] || { echo "$l: $output"; return 1; }
+        if grep -E 'FAIL.*'"$OLDK" <<<"$output"; then echo "$l"; return 1; fi
+    done
 }
 
 @test "diagnose: the running kernel's module file gone while it is still loaded is a warning, not OK" {
@@ -269,12 +388,9 @@ _diag() { run bash "${SCR:-$M}" diagnose "${ARGS[@]}"; }
     _diag
     [[ "$output" == *"WARN"*"$RUN"*"на диске"* ]] || { echo "$output"; return 1; }
     [[ "$output" != *"всех загрузочных ядер"* ]]
-}
-
-@test "new path: unknown headers and fix values are kept as unknown, not turned into facts" {
-    RHDR=unknown FIX=unknown _status > "$T/helper.out.--status"
-    _repair
-    _j '.running_headers=="unknown" and .fix_disabled==null' || { echo "$output"; return 1; }
+    SCR="$M_EN" _diag
+    [[ "$output" == *"WARN"*"$RUN"*"on disk"* ]] || { echo "$output"; return 1; }
+    [[ "$output" != *"every boot kernel"* ]]
 }
 
 @test "diagnose: all kernels with the module is one OK line; non-root says root is needed" {
@@ -284,7 +400,19 @@ _diag() { run bash "${SCR:-$M}" diagnose "${ARGS[@]}"; }
     [[ "$output" == *"every boot kernel"* ]] || { echo "$output"; return 1; }
     echo 1000 > "$T/uid"
     _diag
-    [[ "$output" == *"root"* ]]
+    [[ "$output" == *"INFO"*"требует root"* ]] || { echo "$output"; return 1; }
+    SCR="$M_EN" _diag
+    [[ "$output" == *"INFO"*"needs root"* ]] || { echo "$output"; return 1; }
+}
+
+@test "diagnose: an old helper and a failed dpkg query is a warning, not silence" {
+    local l
+    printf 'amneziawg-ensure-module: missing or unknown mode (use --hook or --systemd)\n' > "$T/helper.verr"
+    : > "$T/helper.version"; echo 2 > "$T/helper.vrc"; : > "$T/dq.fail"
+    for l in "${LANGS[@]}"; do
+        _scr "$l"; _diag
+        [[ "$output" == *"WARN"*"dpkg"* ]] || { echo "$l: $output"; return 1; }
+    done
 }
 
 @test "diagnose: an outdated helper on a PPA server is named with the installer command" {
