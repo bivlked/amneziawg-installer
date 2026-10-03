@@ -2039,7 +2039,7 @@ _kmod_repair_via_helper() {
             fi
             [[ "$mod" == unknown ]] && unk+=("$rel")
             if [[ "$mod" == 0 && "$pkg" == unfinished ]]; then unfin+=("$rel")
-            elif [[ "$run" -eq 0 && "$mod" == 0 && ( "$pkg" == installed || "$pkg" == unowned ) ]]; then nomod+=("$rel"); fi
+            elif [[ "$run" -eq 0 && "$mod" == 0 ]]; then nomod+=("$rel"); fi
             [[ "$mod" == 1 && "$pkg" == unfinished ]] && pend_mod=1
         done
         for rel in "${nomod[@]}"; do
@@ -2050,7 +2050,7 @@ _kmod_repair_via_helper() {
         done
         for rel in "${unk[@]}"; do log_warn "Модуль ядра $rel проверить не удалось (каталог модулей не читается)."; done
         [[ "$_KS_FIX" == disabled ]] && log "Правка исходника отключена вручную (--revert); включить снова: sudo $AWG_ENSURE_HELPER --enable"
-        if [[ "$mrc" -eq 0 && ( "$_KS_AUDIT" != empty || ( -n "$frc" && "$frc" -ne 0 ) ) ]]; then
+        if [[ "$mrc" -eq 0 && ( "$_KS_AUDIT" == unfinished || ( -n "$frc" && "$frc" -ne 0 ) ) ]]; then
             log_warn "Работающий туннель не значит, что apt починен: пакеты не донастроены."
         fi
         if [[ "$pend_mod" -eq 1 ]]; then

@@ -4712,7 +4712,7 @@ _awg_kmod_status_warn() {
             log_warn "Перед перезагрузкой: недонастроенное ядро $rel без модуля AmneziaWG - донастройка сделала бы его загрузочным без туннеля. Поставьте linux-headers-$rel и запустите --repair-module снова, либо удалите это ядро."
         elif [[ "$run" -eq 1 && "$mod" == 0 ]]; then
             log_warn "Перед перезагрузкой: у текущего ядра $rel нет файла модуля AmneziaWG на диске, после перезагрузки туннеля не будет."
-        elif [[ "$run" -eq 0 && "$mod" == 0 && ( "$pkg" == installed || "$pkg" == unowned ) ]]; then
+        elif [[ "$run" -eq 0 && "$mod" == 0 ]]; then
             log_warn "Перед перезагрузкой: у ядра $rel нет модуля AmneziaWG, в него не загружайтесь. Поставьте linux-headers-$rel и запустите --repair-module снова, либо удалите это ядро."
         fi
         if [[ "$mod" == unknown ]]; then

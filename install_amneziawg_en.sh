@@ -4814,7 +4814,7 @@ _awg_kmod_status_warn() {
             log_warn "Before a reboot: unfinished kernel $rel has no AmneziaWG module - configuring it would make it bootable without the tunnel. Install linux-headers-$rel and run --repair-module again, or remove that kernel."
         elif [[ "$run" -eq 1 && "$mod" == 0 ]]; then
             log_warn "Before a reboot: the running kernel $rel has no AmneziaWG module file on disk; after a reboot there is no tunnel."
-        elif [[ "$run" -eq 0 && "$mod" == 0 && ( "$pkg" == installed || "$pkg" == unowned ) ]]; then
+        elif [[ "$run" -eq 0 && "$mod" == 0 ]]; then
             log_warn "Before a reboot: kernel $rel has no AmneziaWG module, do not boot into it. Install linux-headers-$rel and run --repair-module again, or remove that kernel."
         fi
         if [[ "$mod" == unknown ]]; then

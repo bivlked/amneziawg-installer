@@ -153,6 +153,18 @@ _scr() { if [[ "$1" == EN ]]; then SCR="$M_EN"; else SCR="$M"; fi; }
     done
 }
 
+@test "new path: a kernel without a module whose package state is unknown is still named; a failed audit is not 'unfinished packages'" {
+    local l
+    COMPLETE=0 AUDIT=failed _status "kernel release=$OLDK running=0 image=1 module=0 headers=missing package=unknown" > "$T/helper.out.--status.2"
+    echo 1 > "$T/helper.rc.--status.2"
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l"; return 1; }
+        _j ".kernels_without_module==[\"$OLDK\"] and .packages==\"failed\"" || { echo "$l: $output"; return 1; }
+        if [[ "$stderr" == *"apt починен"* || "$stderr" == *"apt is fixed"* ]]; then echo "$l: false claim: $stderr"; return 1; fi
+    done
+}
+
 @test "success rule: unfinished packages after a clean --finish still fail" {
     local l
     AUDIT=unfinished _status > "$T/helper.out.--status.2"
