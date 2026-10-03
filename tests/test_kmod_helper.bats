@@ -860,7 +860,8 @@ exec \"$(command -v find)\" \"\$@\""
     [ "$(_sha "$(_src)")" = "$FIXED_SHA" ]
     # The child's exit leaves the lock with its holder.
     run bash -c 'exec 7>>"$1"; exec "$2" -n 7' _ "$T/run/amneziawg/kmod.lock" "$REAL_FLOCK"
-    [ "$status" -ne 0 ]
+    # flock -n on a held lock exits exactly 1; anything else is another failure.
+    [ "$status" -eq 1 ]
 }
 
 @test "prepare-locked: run by hand it refuses, whether the lock is free or another job holds it" {
