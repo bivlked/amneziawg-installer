@@ -848,16 +848,25 @@ exec \"$(command -v find)\" \"\$@\""
 @test "systemd: preparing the source runs in a child that does not take the held lock" {
     _mk_server "$OLD"
     _hold_lock
-    run timeout 30 "$H" --prepare-locked
-    [ "$status" -eq 0 ]
+    # As --systemd does: the descriptor it holds the lock through is passed on.
+    run env AWG_KMOD_LOCK_FD="$LFD" timeout 30 "$H" --prepare-locked
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
     [ "$(_sha "$(_src)")" = "$FIXED_SHA" ]
 }
 
-@test "prepare-locked: run by hand, with nobody holding the lock, it refuses" {
+@test "prepare-locked: run by hand it refuses, whether the lock is free or another job holds it" {
     _mk_server "$OLD"
     run timeout 30 "$H" --prepare-locked
     [ "$status" -eq 2 ]
     [[ "$output" == *"--prepare-locked is internal"* ]] || { echo "$output"; return 1; }
+    # Another job (say, --repair) holds the lock; a manual call must not
+    # take that for its parent's lock, not even with a descriptor of its own
+    # on the same file.
+    _hold_lock
+    run timeout 30 "$H" --prepare-locked
+    [ "$status" -eq 2 ]
+    run bash -c 'exec 8>>"$1"; AWG_KMOD_LOCK_FD=8 exec timeout 30 "$2" --prepare-locked' _ "$T/run/amneziawg/kmod.lock" "$H"
+    [ "$status" -eq 2 ] || { echo "$output"; return 1; }
     [ "$(_sha "$(_src)")" = "$BASE_SHA" ]
 }
 

@@ -1730,7 +1730,7 @@ install_packages() {
                 log "Модуль собран для $(uname -r), пакеты донастроены."
                 # То, что не мешает донастройке, но важно перед перезагрузкой.
                 grep -E 'already configured kernel\(s\) without|headers link .* is broken' "$_hout" 2>/dev/null \
-                    | while IFS= read -r _line; do log_warn "Перед перезагрузкой: ${_line##*] }"; done
+                    | while IFS= read -r _line; do _line=${_line#\[*\] }; log_warn "Перед перезагрузкой: ${_line#\[*\] }"; done
                 log "Пакеты установлены."
                 return 0
             fi
@@ -4692,7 +4692,7 @@ repair_module_cmd() {
         log "Готово: модуль на диске у всех ядер с заголовками, недонастроенных пакетов нет (dpkg --audit пуст). Перезагрузку скрипт не делает."
         # То, что не мешает донастройке, но важно перед перезагрузкой.
         grep -E 'already configured kernel\(s\) without|headers link .* is broken' "$out" 2>/dev/null \
-            | while IFS= read -r line; do log_warn "Перед перезагрузкой: ${line##*] }"; done
+            | while IFS= read -r line; do line=${line#\[*\] }; log_warn "Перед перезагрузкой: ${line#\[*\] }"; done
         if [[ ! -d /sys/module/amneziawg ]]; then
             log_warn "Модуль сейчас не загружен, туннель не работает. Перезагрузите сервер или выполните: sudo modprobe amneziawg && sudo systemctl restart awg-quick@awg0"
         fi
@@ -6826,7 +6826,7 @@ mode_systemd() {
         # A child under timeout (it normally takes well under a second), so a
         # stalled step cannot eat the budget; it runs under this process's
         # lock and does not take it again.
-        if ! timeout -k 5 20 "$0" --prepare-locked; then
+        if ! AWG_KMOD_LOCK_FD="$LOCK_FD" timeout -k 5 20 "$0" --prepare-locked; then
             log_line "WARN: preparing the source failed or did not finish within 20 s" >&2
         fi
     else
@@ -6912,16 +6912,17 @@ mode_repair() {
 # Internal (the boot path's child under timeout): fix the source under the
 # lock the parent holds. Not for direct use.
 mode_prepare_locked() {
-    local lrc=0
-    # Internal: --systemd runs it as a child while holding the lock. A free
-    # lock means a manual call, which would bypass the lock and the dpkg
-    # check: refuse it (the lock taken here is released on exit).
-    kmod_lock 0 || lrc=$?
-    if [[ "$lrc" -eq 0 ]]; then
+    local n="${AWG_KMOD_LOCK_FD:-}"
+    # Internal: --systemd runs it as a child and passes the descriptor of the
+    # lock it holds. Proof that this is that lock: the descriptor is the lock
+    # file, and flock on it succeeds at once (the lock is held through that
+    # very open file; a fresh one would find it taken). Anything else is a
+    # manual call that would bypass the lock and the dpkg check.
+    if [[ ! "$n" =~ ^[0-9]+$ ]] || [[ ! "/dev/fd/$n" -ef "${LOCK_DIR}/kmod.lock" ]] \
+            || ! flock -n "$n" 2>/dev/null; then
         log_line "ERROR: --prepare-locked is internal (run by --systemd under its lock); use --prepare" >&2
         exit 2
     fi
-    if [[ "$lrc" -ne 1 ]]; then lock_unusable; exit 1; fi
     kmod_source 1 || exit 1
     kmod_prepare || exit 1
     exit 0
@@ -7016,7 +7017,7 @@ mode_finish() {
         if [[ "$err" == *"no packages found matching"* ]]; then
             imgs=""
         else
-            log_line "ERROR: cannot list the kernel image packages: ${err}; dpkg --configure -a not run" >&2
+            log_line "ERROR: cannot list the kernel image packages: ${err:-it failed once and then worked; run this again}; dpkg --configure -a not run" >&2
             exit 1
         fi
     fi
