@@ -564,6 +564,10 @@ EOF
             run bash "$T/drv.sh"
             [ "$status" -eq 1 ] || { echo "$f $why: status $status"; return 1; }
             [ -z "$(_calls)" ] || { echo "$f $why: $(_calls)"; return 1; }
+            # A failed query is named as such, not as "not installed".
+            if [[ "$why" == dkmsfail ]]; then
+                [[ "$output" == *"спросить dpkg о пакете amneziawg-dkms"* || "$output" == *"ask dpkg about the amneziawg-dkms"* ]] || { echo "$f dkmsfail: $output"; return 1; }
+            fi
         done
     done
 }
@@ -600,7 +604,10 @@ EOF
             case "$case" in
                 none) rm -rf "$T/dkms/amneziawg/1.0.0" ;;
                 two) mkdir -p "$T/dkms/amneziawg/1.0.1"; ln -s "$T/src/amneziawg-1.0.0" "$T/dkms/amneziawg/1.0.1/source" ;;
-                redirect) mkdir -p "$T/elsewhere"; ln -sfn "$T/elsewhere" "$T/dkms/amneziawg/1.0.0/source" ;;
+                # The owner names the redirected path too: only the
+                # canonical-path check can refuse it.
+                redirect) mkdir -p "$T/elsewhere"; ln -sfn "$T/elsewhere" "$T/dkms/amneziawg/1.0.0/source"
+                          echo "amneziawg-dkms: $T/elsewhere/dkms.conf" > "$T/owner" ;;
                 noowner) rm -f "$T/owner" ;;
                 foreign) echo "someone-else: $T/src/amneziawg-1.0.0/dkms.conf" > "$T/owner" ;;
             esac
@@ -612,6 +619,9 @@ EOF
             # check would refuse too, but naming a path that does not exist.
             if [[ "$case" == none ]]; then
                 [[ "$output" == *"не зарегистрирован в DKMS"* || "$output" == *"not registered in DKMS"* ]] || { echo "$f none: $output"; return 1; }
+            fi
+            if [[ "$case" == redirect ]]; then
+                [[ "$output" == *"$T/elsewhere"*"$T/src/amneziawg-1.0.0"* ]] || { echo "$f redirect: $output"; return 1; }
             fi
         done
     done

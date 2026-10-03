@@ -329,6 +329,18 @@ _scr() { if [[ "$1" == EN ]]; then SCR="$M_EN"; else SCR="$M"; fi; }
     done
 }
 
+@test "a version 2 helper (no --status) is outdated: the previous path, never --status" {
+    local l
+    echo "amneziawg-ensure-module 2" > "$T/helper.version"
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; : > "$T/lsmod.loaded"; : > "$T/svc.active"
+        _repair
+        [ "$status" -eq 0 ] || { echo "$l: $stderr"; return 1; }
+        _j '.helper=="outdated" and .path=="legacy"' || { echo "$l: $output"; return 1; }
+        [[ "$(_calls)" != *"helper --"* ]] || { echo "$l: $(_calls)"; return 1; }
+    done
+}
+
 @test "a broken helper or a failed dpkg query: refused for that reason, nothing repaired" {
     local l
     for l in "${LANGS[@]}"; do

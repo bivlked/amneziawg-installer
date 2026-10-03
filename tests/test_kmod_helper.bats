@@ -104,6 +104,7 @@ if [[ "$p" == *"*"* ]]; then
   [[ $n = 1 ]] || { echo "dpkg-query: no packages found matching $p" >&2; exit 1; }; exit 0
 fi
 [[ "$p" == amneziawg-dkms && -e "$T/dq.dkmsfail" ]] && { echo "dpkg-query: error: database locked" >&2; exit 2; }
+[[ "$p" == linux-image-* && -e "$T/dq.imgfail" ]] && { echo "dpkg-query: error: database locked" >&2; exit 2; }
 if [[ -f "$T/st/$p" ]]; then cat "$T/st/$p"
 elif [[ "$p" == amneziawg-dkms ]]; then echo "1.0.0-0~202609061402+4569c4c install ok installed"
 else echo "unknown ok not-installed"; fi'
@@ -1275,7 +1276,13 @@ exec \"$real\" \"\$@\""
     _status
     [ "$status" -eq 1 ]
     [[ "$(_rec kernel)" == *"release=$OLD running=1 image=1 module=1 headers=ok package=unknown"* ]] || { cat "$T/st.out"; return 1; }
-    rm "$T/S.fail"; : > "$T/dq.listfail"
+    # The owner is known, but its package status query fails: unknown too.
+    rm "$T/S.fail"; : > "$T/dq.imgfail"
+    _status
+    [ "$status" -eq 1 ]
+    [[ "$(_rec kernel)" == *"release=$OLD running=1 image=1 module=1 headers=ok package=unknown"* ]] || { cat "$T/st.out"; return 1; }
+    rm "$T/dq.imgfail"
+    : > "$T/dq.listfail"
     _status
     [ "$status" -eq 1 ]
 }
@@ -1297,6 +1304,9 @@ exec \"$real\" \"\$@\""
     echo "diversion by x from: $T/usr/src/amneziawg-1.0.0/dkms.conf" > "$T/own/dkms.conf"
     _status; [ "$(_rec path)" = "path kind=refused reason=owner" ]
     echo "amneziawg-dkms:amd64: $T/usr/src/amneziawg-1.0.0/dkms.conf" > "$T/own/dkms.conf"
+    _status; [ "$(_rec path)" = "path kind=ppa reason=-" ]
+    # A diversion record next to the real owner names no owner: still ppa.
+    printf 'diversion by local from: %s\namneziawg-dkms: %s\n' "$T/usr/src/amneziawg-1.0.0/dkms.conf" "$T/usr/src/amneziawg-1.0.0/dkms.conf" > "$T/own/dkms.conf"
     _status; [ "$(_rec path)" = "path kind=ppa reason=-" ]
     mkdir -p "$T/usr/src/amneziawg-2.0.0" "$T/var/lib/dkms/amneziawg/2.0.0"
     ln -s "$T/usr/src/amneziawg-2.0.0" "$T/var/lib/dkms/amneziawg/2.0.0/source"
