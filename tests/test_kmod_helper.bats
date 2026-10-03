@@ -87,7 +87,7 @@ setup() {
     command -v patch >/dev/null || { [[ -z "${CI:-}" ]] || return 1; skip "patch not installed"; }
     _stub id 'echo 0'
     _stub uname 'cat "$T/uname" 2>/dev/null || echo '"$OLD"
-    _stub depmod 'echo "depmod $*" >> "$T/calls"; [[ ! -e "$T/depmod.fail" ]]'
+    _stub depmod 'echo "depmod $*" >> "$T/calls"; [[ ! -e "$T/depmod.fail" ]] || { echo "depmod: ERROR: could not open directory $T/lib/modules/$2" >&2; exit 1; }'
     _stub modprobe 'echo "modprobe $*" >> "$T/calls"
 k=$(uname -r)
 [[ -e "$T/modprobe.fail" ]] && exit 1
@@ -98,6 +98,7 @@ mkdir -p "$T/sys/module/amneziawg"'
     _stub dpkg-query 'p="${*: -1}"
 if [[ "$p" == *"*"* ]]; then
   [[ -e "$T/dq.listfail" ]] && { echo "dpkg-query: error: database locked" >&2; exit 2; }
+  [[ -e "$T/dq.warn" ]] && echo "dpkg-query: warning: parsing file '"'"'/var/lib/dpkg/status'"'"' near line 5" >&2
   n=0; for f in "$T"/st/${p}; do [[ -f "$f" ]] || continue; echo "${f##*/} $(cat "$f")"; n=1; done
   [[ $n = 1 ]] || { echo "dpkg-query: no packages found matching $p" >&2; exit 1; }; exit 0
 fi
@@ -107,7 +108,10 @@ else echo "unknown ok not-installed"; fi'
     _stub dpkg 'case "$1" in
   -S) [[ -e "$T/S.fail" ]] && { echo "dpkg-query: error: cannot read the database" >&2; exit 2; }
       f="$T/own/${2##*/}"; [[ -f "$f" ]] && cat "$f" && exit 0; echo "dpkg-query: no path found matching pattern $2" >&2; exit 1 ;;
-  -L) r="${2#linux-image-}"; r="${r%%:*}"; [[ -f "$T/st/$2" ]] || exit 1; echo "/boot/vmlinuz-$r"; echo "/lib/modules/$r/modules.order"; exit 0 ;;
+  -L) [[ -e "$T/L.fail" ]] && { echo "dpkg-query: error: cannot read the database" >&2; exit 2; }
+      [[ -f "$T/st/$2" ]] || exit 1
+      [[ -e "$T/meta.$2" ]] && { echo "/usr/share/doc/$2"; exit 0; }
+      r="${2#linux-image-}"; r="${r%%:*}"; echo "/boot/vmlinuz-$r"; echo "/lib/modules/$r/modules.order"; exit 0 ;;
 esac
 echo "dpkg $*" >> "$T/calls"
 case "$1" in
@@ -361,6 +365,8 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
     run "$H" --repair
     [ "$status" -eq 1 ]
     [ ! -e "$(_stamp)" ]
+    # depmod's own reason reaches the output, not just "depmod failed".
+    [[ "$output" == *"depmod: ERROR: could not open directory"* ]] || { echo "$output"; return 1; }
     rm -f "$T/calls"
     run "$H" --repair
     [ "$status" -eq 1 ]
@@ -775,6 +781,28 @@ exec \"$real\" \"\$@\""
     [[ "$(_calls)" != *"dkms install"* ]]
 }
 
+@test "dpkg check: a process that exits during the scan does not make it 'cannot tell'" {
+    _mk_server "$OLD"
+    # On a live system find often meets an fd directory that is gone by then.
+    local real; real=$(command -v find)
+    _stub find "case \"\$*\" in *-lname*) \"$real\" \"\$@\"; echo \"find: '$T/proc/9/fd': No such file or directory\" >&2; exit 1 ;; esac
+exec \"$real\" \"\$@\""
+    run "$H" --repair
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$(_calls)" == *"dkms install"* ]]
+}
+
+@test "dpkg check: any other scan error means 'cannot tell', not 'idle'" {
+    _mk_server "$OLD"
+    # find never runs (a process table too big for one command line).
+    _stub find "case \"\$*\" in *-lname*) echo \"bash: find: Argument list too long\" >&2; exit 126 ;; esac
+exec \"$(command -v find)\" \"\$@\""
+    run "$H" --repair
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"cannot tell whether apt or dpkg is running"* ]] || { echo "$output"; return 1; }
+    [[ "$(_calls)" != *"dkms install"* ]]
+}
+
 @test "build: a log another kernel wrote in this run is not blamed on the next one" {
     local third=7.1.0-5-generic
     _mk_server "$OLD" "$NEW" "$third"
@@ -823,6 +851,14 @@ exec \"$real\" \"\$@\""
     run timeout 30 "$H" --prepare-locked
     [ "$status" -eq 0 ]
     [ "$(_sha "$(_src)")" = "$FIXED_SHA" ]
+}
+
+@test "prepare-locked: run by hand, with nobody holding the lock, it refuses" {
+    _mk_server "$OLD"
+    run timeout 30 "$H" --prepare-locked
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--prepare-locked is internal"* ]] || { echo "$output"; return 1; }
+    [ "$(_sha "$(_src)")" = "$BASE_SHA" ]
 }
 
 @test "systemd: apt that starts while the source is prepared stops the build" {
@@ -907,6 +943,66 @@ exec \"$rt\" \"\$@\""
     [[ "$(_calls)" != *"--configure"* ]]
 }
 
+@test "finish: an unfinished metapackage ships no kernel image and does not block" {
+    # linux-image-generic stays unpacked after every interrupted kernel update.
+    _mk_server "$OLD"
+    "$H" --repair >/dev/null 2>&1
+    echo "install ok unpacked" > "$T/st/linux-image-generic"; : > "$T/meta.linux-image-generic"
+    echo "unfinished" > "$T/audit"
+    run "$H" --finish
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$(_calls)" == *"dpkg --configure -a"* ]]
+}
+
+@test "finish: a warning from the package query is not read as a package" {
+    _mk_server "$OLD"
+    "$H" --repair >/dev/null 2>&1
+    echo "unfinished" > "$T/audit"; : > "$T/dq.warn"
+    run "$H" --finish
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$(_calls)" == *"dpkg --configure -a"* ]]
+}
+
+@test "finish: an ownership answer with no owner record is a refusal" {
+    local k3=6.8.0-200-generic
+    _mk_server "$OLD"
+    "$H" --repair >/dev/null 2>&1
+    _mk_image "$k3"
+    # dpkg -S succeeds but names only a diversion of that path.
+    echo "diversion by local-kernel from: $T/boot/vmlinuz-$k3" > "$T/own/vmlinuz-$k3"
+    echo "unfinished" > "$T/audit"
+    run "$H" --finish
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"named no owning package"* ]] || { echo "$output"; return 1; }
+    [[ "$(_calls)" != *"--configure"* ]]
+}
+
+@test "finish: a failed file list of an unfinished image package is a refusal" {
+    _mk_server "$OLD"
+    "$H" --repair >/dev/null 2>&1
+    echo "install ok unpacked" > "$T/st/linux-image-$NEW"; : > "$T/L.fail"
+    echo "unfinished" > "$T/audit"
+    run "$H" --finish
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"cannot list the files of linux-image-$NEW"* ]] || { echo "$output"; return 1; }
+    [[ "$(_calls)" != *"--configure"* ]]
+}
+
+@test "finish: an unfinished image only dpkg shows, with its module on disk, is configured" {
+    local k3=6.8.0-200-generic
+    _mk_server "$OLD"
+    # Headers but no image in /boot; the repair builds its module.
+    mkdir -p "$T/lib/modules/$k3/hdr"; ln -s hdr "$T/lib/modules/$k3/build"
+    "$H" --repair >/dev/null 2>&1
+    [ -s "$(_ko "$k3")" ]
+    echo "install ok unpacked" > "$T/st/linux-image-$k3"
+    echo "unfinished" > "$T/audit"
+    run "$H" --finish
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"kernel $k3 (to be configured, not seen in"* ]]
+    [[ "$(_calls)" == *"dpkg --configure -a"* ]]
+}
+
 @test "finish: a failed configure says so" {
     _mk_server "$OLD"
     echo "amneziawg-tools unfinished" > "$T/audit"; : > "$T/configure.fail"
@@ -958,8 +1054,17 @@ exec \"$rt\" \"\$@\""
     _stub timeout 'echo "timeout $*" >> "$T/calls"; shift 3; exec "$@"'
     run "$H" --systemd
     [ "$status" -eq 1 ] || { echo "status $status: $output"; return 1; }
-    [[ "$output" == *"did not finish within"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"kernel $NEW: NOT built: the build did not finish within"* ]] || { echo "$output"; return 1; }
     [[ "$(_calls)" == *"timeout -k 5 "*" dkms install"* ]]
+}
+
+@test "systemd: a modprobe that runs out of time does not blame Secure Boot" {
+    _mk_server "$OLD"; _put_ko "$OLD"
+    _stub modprobe 'echo "modprobe $*" >> "$T/calls"; exit 124'
+    run "$H" --systemd
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"modprobe did not finish within"* ]] || { echo "$output"; return 1; }
+    [[ "$output" != *"Secure Boot"* ]]
 }
 
 @test "prepare and revert: a running apt stops them" {

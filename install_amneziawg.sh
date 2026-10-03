@@ -1720,12 +1720,17 @@ install_packages() {
             if [[ "$_hrc" -eq 1 ]]; then
                 if [[ -n "$_bad" ]]; then
                     log_warn "Модуль собран для текущего ядра, но не для: ${_bad}- после перезагрузки в такое ядро туннеля не будет."
+                elif [[ "$_hout" == /dev/null ]]; then
+                    log_warn "Модуль для текущего ядра есть, но помощник сообщил о сбое, подробности выше."
                 else
                     log_warn "Модуль для текущего ядра есть, но помощник сообщил о сбое (правка исходника или depmod), подробности выше: будущее обновление ядра может снова не собрать модуль."
                 fi
             fi
             if [[ "$_hrc" -le 1 && "$_frc" -eq 0 ]] && _pkgs_installed_ok "${to_install[@]}"; then
                 log "Модуль собран для $(uname -r), пакеты донастроены."
+                # То, что не мешает донастройке, но важно перед перезагрузкой.
+                grep -E 'already configured kernel\(s\) without|headers link .* is broken' "$_hout" 2>/dev/null \
+                    | while IFS= read -r _line; do log_warn "Перед перезагрузкой: ${_line##*] }"; done
                 log "Пакеты установлены."
                 return 0
             fi
@@ -4687,7 +4692,7 @@ repair_module_cmd() {
         log "Готово: модуль на диске у всех ядер с заголовками, недонастроенных пакетов нет (dpkg --audit пуст). Перезагрузку скрипт не делает."
         # То, что не мешает донастройке, но важно перед перезагрузкой.
         grep -E 'already configured kernel\(s\) without|headers link .* is broken' "$out" 2>/dev/null \
-            | while IFS= read -r line; do log_warn "Перед перезагрузкой: ${line#*] }"; done
+            | while IFS= read -r line; do log_warn "Перед перезагрузкой: ${line##*] }"; done
         if [[ ! -d /sys/module/amneziawg ]]; then
             log_warn "Модуль сейчас не загружен, туннель не работает. Перезагрузите сервер или выполните: sudo modprobe amneziawg && sudo systemctl restart awg-quick@awg0"
         fi
@@ -6477,12 +6482,14 @@ dpkg_busy() {
     p=$(find "$PROC_DIR"/[0-9]*/fd -maxdepth 0 -type d ! -readable -print -quit 2>/dev/null || true)
     [[ -z "$p" ]] || return 2
     # Matches and errors together: a process that exits during the scan
-    # ("No such file") is fine, but "Permission denied" on an fd means that
-    # fd was never looked at.
+    # ("No such file or directory") is fine; any other error (an fd that
+    # cannot be read, find that cannot even start) means part of the table
+    # was never looked at.
     p=$(LC_ALL=C find "$PROC_DIR"/[0-9]*/fd -mindepth 1 -maxdepth 1 \
             \( -lname "${DPKG_DIR}/lock-frontend" -o -lname "${DPKG_DIR}/lock" \) -print 2>&1 || true)
     if grep -q "^${PROC_DIR}/[0-9]*/fd/" <<<"$p"; then return 0; fi
-    [[ "$p" == *"Permission denied"* ]] && return 2
+    p=$(grep -v ': No such file or directory$' <<<"$p" || true)
+    if [[ -n "$p" ]]; then return 2; fi
     return 1
 }
 require_dpkg_idle() {
@@ -6699,7 +6706,7 @@ build_targets() {
         if ! has_module "$k" && ! build_kernel "$k"; then BUILD_FAILED=1; continue; fi
         # Also for a module left from an earlier run: a depmod that failed
         # then must not turn into a cached success now.
-        if ! depmod -a "$k" 2>/dev/null; then
+        if ! depmod -a "$k"; then
             log_line "WARN: depmod -a ${k} failed" >&2; BUILD_FAILED=1
         fi
     done
@@ -6848,7 +6855,7 @@ mode_systemd() {
     fi
     if [[ "$built" -eq 1 ]]; then
         left=$((deadline - SECONDS))
-        if [[ "$left" -le 5 ]] || ! timeout -k 5 "$left" depmod -a "$k" 2>/dev/null; then
+        if [[ "$left" -le 5 ]] || ! timeout -k 5 "$left" depmod -a "$k"; then
             log_line "WARN: depmod -a ${k} failed or ran out of time" >&2
         fi
     fi
@@ -6905,6 +6912,16 @@ mode_repair() {
 # Internal (the boot path's child under timeout): fix the source under the
 # lock the parent holds. Not for direct use.
 mode_prepare_locked() {
+    local lrc=0
+    # Internal: --systemd runs it as a child while holding the lock. A free
+    # lock means a manual call, which would bypass the lock and the dpkg
+    # check: refuse it (the lock taken here is released on exit).
+    kmod_lock 0 || lrc=$?
+    if [[ "$lrc" -eq 0 ]]; then
+        log_line "ERROR: --prepare-locked is internal (run by --systemd under its lock); use --prepare" >&2
+        exit 2
+    fi
+    if [[ "$lrc" -ne 1 ]]; then lock_unusable; exit 1; fi
     kmod_source 1 || exit 1
     kmod_prepare || exit 1
     exit 0
@@ -6933,7 +6950,7 @@ mode_prepare() {
 # anyway and are only reported. The owner of each /boot/vmlinuz-* is asked
 # from dpkg; an image dpkg does not know is not touched by configuring.
 mode_finish() {
-    local audit f rel own st pkg line imgs lst state pending_n=0
+    local audit f rel own st recs pkg line imgs err lst state pending_n=0
     local -a missing=() idle=()
     local -A seen=()
     require_dpkg_idle || exit 1
@@ -6963,15 +6980,21 @@ mode_finish() {
         fi
         # One record per line: "pkg[:arch][, pkg[:arch]...]: <path>", plus
         # diversion records that name no owner.
-        st=installed
+        st=installed recs=0
         while IFS= read -r line; do
             case "$line" in "diversion by "*|"local diversion "*|"") continue ;; esac
             [[ "$line" == *": $f" ]] || continue
+            recs=$((recs + 1))
             line="${line%": $f"}"
             for pkg in ${line//,/ }; do
                 [[ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)" == *" installed" ]] || st=pending
             done
         done <<<"$own"
+        # An answer with no owner record is not "configured".
+        if [[ "$recs" -eq 0 ]]; then
+            log_line "ERROR: dpkg -S ${f} named no owning package (${own//$'\n'/; }); dpkg --configure -a not run" >&2
+            exit 1
+        fi
         if [[ "$st" == pending ]]; then
             pending_n=$((pending_n + 1))
             if has_module "$rel"; then
@@ -6987,11 +7010,13 @@ mode_finish() {
     # directory does not show (say, a /boot mounted over the one the package
     # was unpacked to) is not missed: every linux-image-* package that is not
     # configured and ships a /boot/vmlinuz-* file. Metapackages ship none.
-    if ! imgs=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'linux-image-*' 2>&1); then
-        if [[ "$imgs" == *"no packages found matching"* ]]; then
+    # Only stdout is parsed: a warning on stderr is not a package line.
+    if ! imgs=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'linux-image-*' 2>/dev/null); then
+        err=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'linux-image-*' 2>&1 >/dev/null || true)
+        if [[ "$err" == *"no packages found matching"* ]]; then
             imgs=""
         else
-            log_line "ERROR: cannot list the kernel image packages: ${imgs}; dpkg --configure -a not run" >&2
+            log_line "ERROR: cannot list the kernel image packages: ${err}; dpkg --configure -a not run" >&2
             exit 1
         fi
     fi

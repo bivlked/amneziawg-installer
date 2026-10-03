@@ -70,6 +70,18 @@ _t1_driver() {
     done
 }
 
+@test "T1: success repeats what matters before a reboot" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _reset; _st amneziawg-dkms "install ok unpacked"
+        echo "[ts] [--finish] WARN: already configured kernel(s) without the AmneziaWG module: 6.8.0-31-generic; booting ..." > "$T/helper.out.--finish"
+        _t1_driver "$f" 1
+        run bash "$T/drv.sh" amneziawg-dkms
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
+        grep -q '^WARN: .*: WARN: already configured kernel(s) without the AmneziaWG module: 6\.8\.0-31-generic' <<<"$output" || { echo "$f: $output"; return 1; }
+    done
+}
+
 @test "T1: enabled by the package state, not by the requested list" {
     local f
     for f in "${INSTALLERS[@]}"; do
@@ -160,6 +172,20 @@ _t1_driver() {
     done
 }
 
+@test "T1: without a saved helper output the warning does not guess the cause" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _reset; _st amneziawg-dkms "install ok unpacked"; echo 1 > "$T/helper.rc.--repair"
+        _stub mktemp 'exit 1'
+        _t1_driver "$f" 1
+        run bash "$T/drv.sh" amneziawg-dkms
+        rm -f "$T/bin/mktemp"
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
+        grep -q '^WARN: .*, details above\.$\|^WARN: .*, подробности выше\.$' <<<"$output" || { echo "$f: $output"; return 1; }
+        ! grep -q '^WARN: .*depmod' <<<"$output" || { echo "$f: guessed the cause: $output"; return 1; }
+    done
+}
+
 @test "T1: a --finish refusal over an unfinished kernel names it and the way out" {
     local f
     for f in "${INSTALLERS[@]}"; do
@@ -182,6 +208,8 @@ _t1_driver() {
         run bash "$T/drv.sh" amneziawg-dkms qrencode
         [ "$status" -eq 1 ]
         [[ "$output" != *"DIE: "*"setup_udp_tunnel_sock"* ]] || { echo "$f: $output"; return 1; }
+        # It stops on the package check, not on something unrelated.
+        [[ "$output" == *"DIE: Ошибка установки пакетов."* || "$output" == *"DIE: Package installation error."* ]] || { echo "$f: $output"; return 1; }
     done
 }
 
@@ -409,6 +437,7 @@ _rm_server() {
         run bash "$T/drv.sh"
         [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
         grep -q '^WARN: .*6\.8\.0-31-generic' <<<"$output" || { echo "$f: $output"; return 1; }
+        ! grep -q '^WARN: .*\[--finish\]' <<<"$output" || { echo "$f: helper prefix left in: $output"; return 1; }
     done
 }
 
