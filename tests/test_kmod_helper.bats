@@ -94,9 +94,10 @@ k=$(uname -r)
 [[ -n "$(find "$T/lib/modules/$k" -name "amneziawg.ko*" -type f -size +0c 2>/dev/null)" ]] || exit 1
 mkdir -p "$T/sys/module/amneziawg"'
     # Status per package from $T/st/<pkg>; amneziawg-dkms has a version too.
+    # dq.listfail breaks only the pattern query (the kernel image list).
     _stub dpkg-query 'p="${*: -1}"
-[[ -e "$T/dq.fail" ]] && { echo "dpkg-query: error: database locked" >&2; exit 2; }
 if [[ "$p" == *"*"* ]]; then
+  [[ -e "$T/dq.listfail" ]] && { echo "dpkg-query: error: database locked" >&2; exit 2; }
   n=0; for f in "$T"/st/${p}; do [[ -f "$f" ]] || continue; echo "${f##*/} $(cat "$f")"; n=1; done
   [[ $n = 1 ]] || { echo "dpkg-query: no packages found matching $p" >&2; exit 1; }; exit 0
 fi
@@ -303,6 +304,18 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
     echo 'touch -d "@$(cat "$T/dkms.start")" "$T/var/lib/dkms/amneziawg/1.0.0/build/make.log"' > "$T/dkms.after"
     run "$H" --repair
     [[ "$output" == *"kernel $NEW: NOT built [known-issue:kernel-70-udp-tunnel]"* ]]
+}
+
+@test "repair: a make.log the new attempt rewrites in place still counts" {
+    # DKMS keeps one build directory, so a failure after an earlier one
+    # overwrites the same file: same path, new content.
+    _mk_server "$OLD" "$NEW"
+    echo '/* local edit */' >> "$(_src)"
+    mkdir -p "$T/var/lib/dkms/amneziawg/1.0.0/build"
+    echo "error: an earlier, unrelated failure" > "$T/var/lib/dkms/amneziawg/1.0.0/build/make.log"
+    touch -d '-1 hour' "$T/var/lib/dkms/amneziawg/1.0.0/build/make.log"
+    run "$H" --repair
+    [[ "$output" == *"kernel $NEW: NOT built [known-issue:kernel-70-udp-tunnel]"* ]] || { echo "$output"; return 1; }
 }
 
 @test "repair: a failed build of the running kernel is exit 2 and leaves no stamp" {
@@ -823,6 +836,21 @@ exec \"$real\" \"\$@\""
     [[ "$(_calls)" != *"dkms install"* ]]
 }
 
+@test "systemd: a stalled source fix is cut off and the boot goes on" {
+    # patch hangs; the child that prepares the source is stopped by its own
+    # timeout (shortened here from 20 s to 2 s), the build still runs.
+    _mk_server "$OLD"
+    local rt; rt=$(command -v timeout)
+    _stub patch 'exec sleep 60'
+    _stub timeout "case \" \$* \" in *' --prepare-locked '*) exec \"$rt\" -k 1 2 \"\${@:4}\" ;; esac
+exec \"$rt\" \"\$@\""
+    run timeout 30 "$H" --systemd
+    [ "$status" -eq 0 ] || { echo "status $status: $output"; return 1; }
+    [[ "$output" == *"preparing the source failed or did not finish"* ]]
+    [[ "$(_calls)" == *"dkms install -m amneziawg -v 1.0.0 -k $OLD"* ]]
+    [ "$(_sha "$(_src)")" = "$BASE_SHA" ]
+}
+
 # ---------- review round 2: branches that had no test ----------
 
 @test "finish: a running apt stops it before the audit" {
@@ -867,11 +895,15 @@ exec \"$real\" \"\$@\""
 }
 
 @test "finish: a failed package query is a refusal" {
+    # Every kernel in /boot has its module, so only the failed list of
+    # kernel image packages can stop it.
     _mk_server "$OLD"
+    "$H" --repair >/dev/null 2>&1
     echo "unfinished" > "$T/audit"
-    : > "$T/dq.fail"
+    : > "$T/dq.listfail"
     run "$H" --finish
-    [ "$status" -eq 1 ]
+    [ "$status" -eq 1 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"cannot list the kernel image packages"* ]]
     [[ "$(_calls)" != *"--configure"* ]]
 }
 
@@ -937,6 +969,17 @@ exec \"$real\" \"\$@\""
     [ "$status" -eq 1 ]; [ "$(_sha "$(_src)")" = "$BASE_SHA" ]
     run "$H" --revert
     [ "$status" -eq 1 ]
+}
+
+@test "prepare: apt that starts while it waits for the lock stops it before the source changes" {
+    _mk_server "$OLD"
+    _signal_flock; _holder 'ln -s "$T/var/lib/dpkg/lock-frontend" "$T/proc/1/fd/7"'
+    run timeout 60 "$H" --prepare
+    wait
+    [ "$status" -eq 1 ] || { echo "$output"; return 1; }
+    [ -e "$T/flock.waiting" ]
+    [[ "$output" == *"apt or dpkg is running"* ]]
+    [ "$(_sha "$(_src)")" = "$BASE_SHA" ]
 }
 
 @test "hook: a failed source fix is exit 1 and leaves no stamp" {
