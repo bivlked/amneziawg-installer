@@ -3065,10 +3065,17 @@ _pkgs_installed_ok() {
     return 0
 }
 
-# _awg_kmod_prebuilt_present : 0 if a prebuilt ARM module package is installed.
+# _awg_kmod_prebuilt_present : 0 if a prebuilt ARM module package is
+# installed; 1 if not; 2 if dpkg could not be asked (for --repair-module
+# admission that is a refusal, not "no": "could not" must not read as "none").
 _awg_kmod_prebuilt_present() {
-    [[ -n "$(dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null \
-        | awk '$NF != "not-installed" && $NF != "config-files" {print $1}')" ]]
+    local q e
+    if ! q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null); then
+        e=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>&1 >/dev/null || true)
+        [[ "$e" == *"no packages found matching"* ]] && return 1
+        return 2
+    fi
+    awk '$NF != "not-installed" && $NF != "config-files" {f=1} END {exit !f}' <<<"$q"
 }
 
 # _awg_dpkg_busy : 0 if apt or dpkg is running OR that cannot be checked (no
@@ -4510,6 +4517,15 @@ create_diagnostic_report() {
         echo "--- DKMS Status ---"
         dkms status 2>/dev/null || echo "N/A"
         echo ""
+        # The module per boot kernel, the source, the packages. An old helper
+        # answers "unknown mode" - also an answer for support.
+        echo "--- AmneziaWG module helper (--status) ---"
+        if [[ -x "$AWG_ENSURE_HELPER" ]]; then
+            timeout 60 "$AWG_ENSURE_HELPER" --status 2>&1 || echo "(exit code $?)"
+        else
+            echo "N/A"
+        fi
+        echo ""
         echo "--- Module Info ---"
         _diag_module_info /sys/module/amneziawg
         echo ""
@@ -4742,18 +4758,117 @@ step_uninstall() {
 # Admission is positive: amneziawg-dkms is installed, not on hold (the pinned
 # 2.0 and the ARM prebuilt set hold), one DKMS registration that points at the
 # package's source, apt not running. Every refusal comes before any change.
+# Parses "amneziawg-ensure-module --status" (the contract is in the helper's
+# mode_status). Only a whole report is accepted: every record with all its
+# keys and allowed values, exactly one running-kernel record, one
+# path/source/module/packages each, no kernel twice, a status line last and
+# an exit code that matches complete. Otherwise the report is not accepted:
+# "unknown" is not passed off as "all fine". Unknown records and extra keys
+# at the end of a record are skipped (later helpers only add).
+# Sets _KS_OK (1 = accepted), _KS_COMPLETE and the array _KS_KERNELS (the
+# kernel records as they are).
+_KS_OK=0 _KS_COMPLETE=0
+_KS_KERNELS=()
+# Arguments: output file, --status exit code
+_awg_kmod_status_parse() {
+    local f="$1" code="$2" line last="" n_run=0 n_path=0 n_src=0 n_mod=0 n_pkg=0 rel
+    local -A seen=()
+    local re_k='^kernel release=([A-Za-z0-9._+~-]+) running=(0|1) image=(0|1) module=(0|1|unknown) headers=(ok|missing|broken) package=(installed|unfinished|unowned|none|unknown)( .*)?$'
+    _KS_OK=0; _KS_COMPLETE=0; _KS_KERNELS=()
+    [[ -r "$f" ]] || return 0
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        last="$line"
+        case "$line" in
+            "path "*)
+                [[ "$line" =~ ^path\ kind=(ppa|prebuilt|pinned|none|refused)\ reason=[a-z-]+(\ .*)?$ ]] || return 0
+                n_path=$((n_path + 1)) ;;
+            "source "*)
+                [[ "$line" =~ ^source\ state=(base|patched|foreign|absent|unsafe|none|ambiguous|unknown)\ version=[A-Za-z0-9._+~-]+\ fix=(enabled|disabled)(\ .*)?$ ]] || return 0
+                n_src=$((n_src + 1)) ;;
+            "kernel "*)
+                [[ "$line" =~ $re_k ]] || return 0
+                rel="${BASH_REMATCH[1]}"
+                [[ -z "${seen[$rel]:-}" ]] || return 0
+                seen["$rel"]=1
+                [[ "${BASH_REMATCH[2]}" == 1 ]] && n_run=$((n_run + 1))
+                _KS_KERNELS+=("$line") ;;
+            "module "*)
+                [[ "$line" =~ ^module\ loaded=(0|1)(\ .*)?$ ]] || return 0
+                n_mod=$((n_mod + 1)) ;;
+            "packages "*)
+                [[ "$line" =~ ^packages\ audit=(empty|unfinished|failed)(\ .*)?$ ]] || return 0
+                n_pkg=$((n_pkg + 1)) ;;
+        esac
+    done < "$f"
+    [[ "$last" =~ ^status\ complete=(0|1)\ time=[0-9]+(\ .*)?$ ]] || return 0
+    _KS_COMPLETE="${BASH_REMATCH[1]}"
+    [[ "$n_run" -eq 1 && "$n_path" -eq 1 && "$n_src" -eq 1 && "$n_mod" -eq 1 && "$n_pkg" -eq 1 ]] || return 0
+    if [[ "$_KS_COMPLETE" -eq 1 ]]; then [[ "$code" -eq 0 ]] || return 0; else [[ "$code" -eq 1 ]] || return 0; fi
+    _KS_OK=1
+}
+
+# Warnings before a reboot from the final --status. Warnings only: the
+# stages (wiring, --repair, --finish) decide the exit code of --repair-module.
+_awg_kmod_status_warn() {
+    local sf scode=0 k rel run mod hdr pkg
+    if ! sf="$(mktemp)"; then log_warn "The final kernel state was not checked: could not create a temporary file."; return 0; fi
+    _install_temp_files+=("$sf")
+    "$AWG_ENSURE_HELPER" --status > "$sf" 2>> "$LOG_FILE" || scode=$?
+    _awg_kmod_status_parse "$sf" "$scode"
+    if [[ "$_KS_OK" -ne 1 ]]; then
+        log_warn "The final kernel state could not be obtained (amneziawg-ensure-module --status): before a reboot check dkms status amneziawg and dpkg --audit yourself."
+        return 0
+    fi
+    for k in "${_KS_KERNELS[@]}"; do
+        [[ "$k" =~ release=([^ ]+)\ running=([01])\ image=[01]\ module=([^ ]+)\ headers=([^ ]+)\ package=([^ ]+) ]] || continue
+        rel="${BASH_REMATCH[1]}" run="${BASH_REMATCH[2]}" mod="${BASH_REMATCH[3]}" hdr="${BASH_REMATCH[4]}" pkg="${BASH_REMATCH[5]}"
+        if [[ "$run" -eq 0 && "$mod" == 0 && ( "$pkg" == installed || "$pkg" == unowned ) ]]; then
+            log_warn "Before a reboot: kernel $rel has no AmneziaWG module, do not boot into it. Install linux-headers-$rel and run --repair-module again, or remove that kernel."
+        fi
+        if [[ "$mod" == unknown ]]; then
+            log_warn "Before a reboot: the module of kernel $rel could not be checked (its module directory is not readable)."
+        fi
+        if [[ "$hdr" == broken ]]; then
+            log_warn "Before a reboot: the headers link of kernel $rel is broken (/lib/modules/$rel/build); the module is not built for it."
+        fi
+    done
+    if [[ "$_KS_COMPLETE" -ne 1 ]]; then
+        log_warn "The kernel state was not determined in full (some checks failed); details in $LOG_FILE."
+    fi
+}
+
 repair_module_cmd() {
     local rc=0 hrc=0 frc=0 ver owner src out
     local -a reg=()
     if [[ "$(id -u)" -ne 0 ]]; then log_error "Run as root: sudo bash $0 --repair-module"; exit 1; fi
     log "### AmneziaWG kernel module repair (--repair-module) ###"
-    if _awg_kmod_prebuilt_present; then
+    # Every admission query fails closed: "could not ask" is a refusal.
+    local _q _e _prc=0
+    _awg_kmod_prebuilt_present || _prc=$?
+    if [[ "$_prc" -eq 0 ]]; then
         log_error "A prebuilt module package (ARM) is installed; this path does not repair it."; exit 1
+    elif [[ "$_prc" -ne 1 ]]; then
+        log_error "Could not ask dpkg about prebuilt module packages. Nothing changed."; exit 1
     fi
-    if ! _pkg_present amneziawg-dkms; then
-        log_error "The amneziawg-dkms package is not installed: nothing to repair this way (the module did not come from the PPA, or AmneziaWG is not installed)."; exit 1
+    if ! _q=$(LC_ALL=C dpkg-query -W -f='${Status}' amneziawg-dkms 2>/dev/null); then
+        _e=$(LC_ALL=C dpkg-query -W -f='${Status}' amneziawg-dkms 2>&1 >/dev/null || true)
+        if [[ "$_e" != *"no packages found matching"* ]]; then
+            log_error "Could not ask dpkg about the amneziawg-dkms package. Nothing changed."; exit 1
+        fi
+        _q="unknown ok not-installed"
     fi
-    if _awg_pkg_held amneziawg-dkms; then
+    case "${_q##* }" in
+        not-installed|config-files)
+            log_error "The amneziawg-dkms package is not installed: nothing to repair this way (the module did not come from the PPA, or AmneziaWG is not installed)."; exit 1 ;;
+    esac
+    if [[ "${_q%% *}" == hold ]]; then
+        log_error "amneziawg-dkms is on hold: that is how the installer sets up the pinned AmneziaWG 2.0 module and the ARM prebuilt; this path does not repair them."; exit 1
+    fi
+    if ! _e=$(apt-mark showhold 2>/dev/null); then
+        log_error "Could not get the list of held packages (apt-mark showhold). Nothing changed."; exit 1
+    fi
+    if grep -qxF amneziawg-dkms <<<"$_e"; then
         log_error "amneziawg-dkms is on hold: that is how the installer sets up the pinned AmneziaWG 2.0 module and the ARM prebuilt; this path does not repair them."; exit 1
     fi
     if ! command -v dkms >/dev/null 2>&1; then log_error "dkms is not installed."; exit 1; fi
@@ -4769,11 +4884,20 @@ repair_module_cmd() {
     if [[ -z "$src" || ! -d "$src" || "$src" != "${DKMS_SRC_PREFIX}/amneziawg-${ver}" ]]; then
         log_error "The DKMS registration amneziawg/${ver} points at ${src:-<unresolved path>}, not at the directory ${DKMS_SRC_PREFIX}/amneziawg-${ver}. Nothing changed."; exit 1
     fi
-    if ! owner=$(dpkg -S "${src}/dkms.conf" 2>/dev/null); then
+    if ! owner=$(LC_ALL=C dpkg -S "${src}/dkms.conf" 2>/dev/null); then
         log_error "dpkg knows no package that owns ${src}/dkms.conf. Nothing changed."; exit 1
     fi
-    if [[ "${owner%%:*}" != amneziawg-dkms ]]; then
-        log_error "The source ${src} is owned by ${owner%%:*}, not by amneziawg-dkms. Nothing changed."; exit 1
+    # Per line, as in the helper's --status: diversion records name no owner,
+    # and every owner named must be amneziawg-dkms.
+    local _l _p _recs=0 _bad=""
+    while IFS= read -r _l; do
+        case "$_l" in "diversion by "*|"local diversion "*|"") continue ;; esac
+        [[ "$_l" == *": ${src}/dkms.conf" ]] || continue
+        _recs=$((_recs + 1)); _l="${_l%": ${src}/dkms.conf"}"
+        for _p in ${_l//,/ }; do [[ "${_p%%:*}" == amneziawg-dkms ]] || _bad="${_bad:+$_bad }${_p%%:*}"; done
+    done <<<"$owner"
+    if [[ "$_recs" -eq 0 || -n "$_bad" ]]; then
+        log_error "The source ${src} is owned by ${_bad:-<none named>}, not by amneziawg-dkms. Nothing changed."; exit 1
     fi
     if _awg_dpkg_busy; then
         log_error "apt or dpkg is running (or that could not be checked). Wait for it to finish and run again."; exit 1
@@ -4791,11 +4915,12 @@ repair_module_cmd() {
         log_warn "The helper's --repair exited with code $hrc, the reason is in the lines above: not running dpkg --configure -a."
     fi
     log "Checked at: $(date '+%Y-%m-%d %H:%M:%S'). apt changes after this moment are not in this report."
+    # What does not stop the configuration but matters before a reboot, from
+    # the final --status (it also names already configured kernels without
+    # the module, which --finish does not list when the audit is empty).
+    _awg_kmod_status_warn
     if [[ "$rc" -eq 0 && "$hrc" -eq 0 && "$frc" -eq 0 ]]; then
         log "Done: the module is on disk for every kernel with headers, no unfinished packages left (dpkg --audit is empty). The script does not reboot."
-        # What does not stop the configuration but matters before a reboot.
-        grep -E 'already configured kernel\(s\) without|headers link .* is broken' "$out" 2>/dev/null \
-            | while IFS= read -r line; do line=${line#\[*\] }; log_warn "Before a reboot: ${line#\[*\] }"; done
         if [[ ! -d /sys/module/amneziawg ]]; then
             log_warn "The module is not loaded now, so the tunnel is down. Reboot, or run: sudo modprobe amneziawg && sudo systemctl restart awg-quick@awg0"
         fi
@@ -6335,9 +6460,11 @@ _awg_deploy_ensure_helper() {
 #   --finish   - outside apt; the caller runs it only after a successful
 #                --repair: dpkg --configure -a, unless that would make a
 #                kernel bootable that has no module.
+#   --status   - read-only facts for manage and the installer (module per
+#                boot kernel, source, packages); see mode_status.
 #   --revert, --enable - support: undo the source fix and keep it off, or
 #                allow it again.
-#   --version  - prints "amneziawg-ensure-module 2".
+#   --version  - prints "amneziawg-ensure-module 3" (3: --status added).
 #
 # Kernels: /lib/modules/<ver>/build (installed headers). uname -r alone is
 # not enough in the apt hook: it returns the OLD running kernel while the
@@ -6366,9 +6493,9 @@ export PATH
 
 MODE="${1:-}"
 case "$MODE" in
-    --hook|--systemd|--repair|--prepare|--prepare-locked|--finish|--revert|--enable) ;;
-    --version) echo "amneziawg-ensure-module 2"; exit 0 ;;
-    --help|-h) echo "Usage: $0 --hook | --systemd | --repair | --prepare | --finish | --revert | --enable | --version"; exit 0 ;;
+    --hook|--systemd|--repair|--prepare|--prepare-locked|--finish|--status|--revert|--enable) ;;
+    --version) echo "amneziawg-ensure-module 3"; exit 0 ;;
+    --help|-h) echo "Usage: $0 --hook | --systemd | --repair | --prepare | --finish | --status | --revert | --enable | --version"; exit 0 ;;
     *) echo "amneziawg-ensure-module: missing or unknown mode (see --help)" >&2; exit 2 ;;
 esac
 
@@ -6581,6 +6708,19 @@ fi
 
 has_module() { # kernel -> 0 if a non-empty amneziawg.ko* file is on disk
     [[ -n "$(find "${MODULES_DIR}/$1" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]]
+}
+# For --status, which must not take "could not look" for "not there": prints
+# 1 (module on disk), 0 (no module, or no directory for that kernel) or
+# unknown (the tree could not be walked). A full walk, no -quit: an
+# unreadable subtree after a match would otherwise go unseen.
+module_probe() { # kernel
+    local d="${MODULES_DIR}/$1" out
+    if [[ ! -e "$d" && ! -L "$d" ]]; then echo 0; return 0; fi
+    if out=$(LC_ALL=C find "$d" -name 'amneziawg.ko*' -type f -size +0c -print 2>&1); then
+        if [[ -n "$out" ]]; then echo 1; else echo 0; fi
+    else
+        echo unknown
+    fi
 }
 
 # Serializes the helper's own modes (hook, boot, repair, prepare, revert,
@@ -7083,6 +7223,42 @@ mode_prepare() {
     exit "$PREP_FAILED"
 }
 
+# dpkg's view of a kernel image file. Sets IMG_STATE:
+#   installed - every package that owns it is configured
+#   pending   - an owner is not configured, or its status query failed
+#               (IMG_QFAIL=1 then: --finish counts it as unfinished, --status
+#               as unknown)
+#   unowned   - dpkg owns no such path ("no path found" is its own message)
+#   noowner   - dpkg -S answered, but with no owner record (diversions only)
+#   error     - dpkg -S failed
+# IMG_MSG keeps dpkg -S output for the caller's message. dpkg -S exits 1
+# both for "no owner" and for a failed lookup, hence the message test. One
+# record per line: "pkg[:arch][, pkg[:arch]...]: <path>", plus diversion
+# records that name no owner.
+IMG_STATE="" IMG_MSG="" IMG_QFAIL=0
+image_state() { # image file
+    local f="$1" own line pkg s recs=0
+    IMG_STATE=installed; IMG_MSG=""; IMG_QFAIL=0
+    if ! own=$(LC_ALL=C dpkg -S "$f" 2>&1); then
+        IMG_MSG="$own"
+        if [[ "$own" == *"no path found matching pattern"* ]]; then IMG_STATE=unowned; else IMG_STATE=error; fi
+        return 0
+    fi
+    IMG_MSG="$own"
+    while IFS= read -r line; do
+        case "$line" in "diversion by "*|"local diversion "*|"") continue ;; esac
+        [[ "$line" == *": $f" ]] || continue
+        recs=$((recs + 1))
+        line="${line%": $f"}"
+        for pkg in ${line//,/ }; do
+            if ! s=$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null); then IMG_QFAIL=1; s=""; fi
+            [[ "$s" == *" installed" ]] || IMG_STATE=pending
+        done
+    done <<<"$own"
+    if [[ "$recs" -eq 0 ]]; then IMG_STATE=noowner; fi
+    return 0
+}
+
 # Outside apt; the caller runs it only after a successful --repair. Finishes
 # the unfinished packages (dpkg --configure -a), unless that would make a
 # kernel bootable that has no AmneziaWG module: configuring a kernel image
@@ -7091,7 +7267,7 @@ mode_prepare() {
 # anyway and are only reported. The owner of each /boot/vmlinuz-* is asked
 # from dpkg; an image dpkg does not know is not touched by configuring.
 mode_finish() {
-    local audit f rel own st recs pkg line imgs err lst state pending_n=0
+    local audit f rel st pkg imgs err lst state pending_n=0
     local -a missing=() idle=()
     local -A seen=()
     require_dpkg_idle || exit 1
@@ -7109,33 +7285,22 @@ mode_finish() {
     for f in "${BOOT_DIR}"/vmlinuz-*; do
         [[ -e "$f" ]] || continue
         rel="${f##*/vmlinuz-}"; seen["$rel"]=1
-        # dpkg -S exits 1 both for "no owner" and for a failed lookup; only
-        # its own "no path found" message means the image is not packaged.
-        if ! own=$(LC_ALL=C dpkg -S "$f" 2>&1); then
-            if [[ "$own" == *"no path found matching pattern"* ]]; then
+        image_state "$f"
+        case "$IMG_STATE" in
+            unowned)
                 log_line "kernel ${rel}: image not owned by a package; configuring does not change it"
-                continue
-            fi
-            log_line "ERROR: cannot ask dpkg who owns ${f}: ${own}; dpkg --configure -a not run" >&2
-            exit 1
-        fi
-        # One record per line: "pkg[:arch][, pkg[:arch]...]: <path>", plus
-        # diversion records that name no owner.
-        st=installed recs=0
-        while IFS= read -r line; do
-            case "$line" in "diversion by "*|"local diversion "*|"") continue ;; esac
-            [[ "$line" == *": $f" ]] || continue
-            recs=$((recs + 1))
-            line="${line%": $f"}"
-            for pkg in ${line//,/ }; do
-                [[ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)" == *" installed" ]] || st=pending
-            done
-        done <<<"$own"
-        # An answer with no owner record is not "configured".
-        if [[ "$recs" -eq 0 ]]; then
-            log_line "ERROR: dpkg -S ${f} named no owning package (${own//$'\n'/; }); dpkg --configure -a not run" >&2
-            exit 1
-        fi
+                continue ;;
+            error)
+                log_line "ERROR: cannot ask dpkg who owns ${f}: ${IMG_MSG}; dpkg --configure -a not run" >&2
+                exit 1 ;;
+            noowner)
+                # An answer with no owner record is not "configured".
+                log_line "ERROR: dpkg -S ${f} named no owning package (${IMG_MSG//$'\n'/; }); dpkg --configure -a not run" >&2
+                exit 1 ;;
+        esac
+        # A failed status query counts as unfinished: configuring is what is
+        # being decided here, and "unknown" must not let it through.
+        st="$IMG_STATE"
         if [[ "$st" == pending ]]; then
             pending_n=$((pending_n + 1))
             if has_module "$rel"; then
@@ -7209,6 +7374,152 @@ mode_finish() {
     exit 0
 }
 
+# Read-only facts for manage and the installer: no lock, no dpkg check,
+# nothing changed. Machine records on stdout, one per line, key=value;
+# everything else on stderr. Not an atomic snapshot: apt running meanwhile
+# can mix states, which is why the trailer carries the time. Exit 0 only
+# with complete=1 (every probe worked); partial records are printed anyway.
+# Later versions only add records and keys; readers skip unknown ones.
+#   path kind=<ppa|prebuilt|pinned|none|refused> reason=<word>
+#   source state=<base|patched|foreign|absent|unsafe|none|ambiguous|unknown> version=<v|-> fix=<enabled|disabled>
+#   kernel release=<r> running=<0|1> image=<0|1> module=<1|0|unknown> headers=<ok|missing|broken> package=<installed|unfinished|unowned|none|unknown>
+#   module loaded=<0|1>
+#   packages audit=<empty|unfinished|failed>
+#   status complete=<0|1> time=<epoch>
+# kind repeats the installer's --repair-module admission: an installed
+# prebuilt module package is prebuilt; no amneziawg-dkms is none; a held one
+# is pinned (the pinned 2.0 path and the ARM prebuilt hold it); no dkms,
+# not exactly one canonical registration, or a dkms.conf another package
+# owns is refused; any failed query is refused reason=query.
+mode_status() {
+    local complete=1 kind="" reason="-" q err s cur f rel lst pkg state pk im
+    local -A seen=()
+    local -a krecs=()
+    ok_token() { [[ "$1" =~ ^[A-Za-z0-9._+~-]+$ ]]; }
+    # path
+    if q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null); then
+        if awk '$NF != "not-installed" && $NF != "config-files" {f=1} END {exit !f}' <<<"$q"; then kind=prebuilt; fi
+    else
+        err=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>&1 >/dev/null || true)
+        [[ "$err" == *"no packages found matching"* ]] || { kind=refused; reason=query; }
+    fi
+    if [[ -z "$kind" ]]; then
+        if s=$(LC_ALL=C dpkg-query -W -f='${Status}' amneziawg-dkms 2>/dev/null); then
+            case "${s##* }" in not-installed|config-files) kind=none ;; esac
+            if [[ -z "$kind" && "${s%% *}" == hold ]]; then kind=pinned; fi
+        else
+            err=$(LC_ALL=C dpkg-query -W -f='${Status}' amneziawg-dkms 2>&1 >/dev/null || true)
+            if [[ "$err" == *"no packages found matching"* ]]; then kind=none; else kind=refused; reason=query; fi
+        fi
+    fi
+    if [[ -z "$kind" ]]; then
+        if ! q=$(apt-mark showhold 2>/dev/null); then kind=refused; reason=query
+        elif grep -qxF amneziawg-dkms <<<"$q"; then kind=pinned; fi
+    fi
+    if [[ -z "$kind" ]] && ! command -v dkms >/dev/null 2>&1; then kind=refused; reason=nodkms; fi
+    # source (classified on every path: on the pinned one it is informative)
+    local src_state=unknown src_ver=- src_rc=0 fix=enabled
+    [[ -e "$DISABLED_MARK" ]] && fix=disabled
+    if [[ -e "${DKMS_DIR}/amneziawg" && ( ! -r "${DKMS_DIR}/amneziawg" || ! -x "${DKMS_DIR}/amneziawg" ) ]]; then
+        complete=0
+        if [[ -z "$kind" ]]; then kind=refused; reason=query; fi
+    else
+        kmod_source 1 >&2 || src_rc=$?
+        case "$src_rc" in
+            0)  src_ver="$SRC_VER"
+                s=$(awg_kmod_compat_fix check "$SRC_DIR" 2>/dev/null || true)
+                case "$s" in base|patched|foreign|absent|unsafe) src_state="$s" ;; *) complete=0 ;; esac ;;
+            1)  src_state=none; if [[ -z "$kind" ]]; then kind=refused; reason=noreg; fi ;;
+            *)  src_state=ambiguous; if [[ -z "$kind" ]]; then kind=refused; reason=ambiguous; fi ;;
+        esac
+        ok_token "$src_ver" || { src_ver=-; complete=0; }
+    fi
+    if [[ -z "$kind" ]]; then
+        # Every owner record of dkms.conf must name amneziawg-dkms.
+        if ! q=$(LC_ALL=C dpkg -S "${SRC_DIR}/dkms.conf" 2>&1); then
+            kind=refused
+            if [[ "$q" == *"no path found matching pattern"* ]]; then reason=owner; else reason=query; fi
+        else
+            local recs=0 bad=0 line
+            while IFS= read -r line; do
+                case "$line" in "diversion by "*|"local diversion "*|"") continue ;; esac
+                [[ "$line" == *": ${SRC_DIR}/dkms.conf" ]] || continue
+                recs=$((recs + 1)); line="${line%": ${SRC_DIR}/dkms.conf"}"
+                for pkg in ${line//,/ }; do [[ "${pkg%%:*}" == amneziawg-dkms ]] || bad=1; done
+            done <<<"$q"
+            if [[ "$recs" -eq 0 || "$bad" -eq 1 ]]; then kind=refused; reason=owner; else kind=ppa; fi
+        fi
+    fi
+    [[ "$kind" == refused && "$reason" == query ]] && complete=0
+    printf 'path kind=%s reason=%s\n' "$kind" "$reason"
+    printf 'source state=%s version=%s fix=%s\n' "$src_state" "$src_ver" "$fix"
+    # kernels: images in /boot, unfinished image packages from dpkg's side,
+    # and the running kernel always
+    kernel_rec() { # release image package
+        local r="$1" h m b="${MODULES_DIR}/$1/build" run=0
+        [[ "$r" == "$cur" ]] && run=1
+        m=$(module_probe "$r"); [[ "$m" == unknown ]] && complete=0
+        if [[ -d "$b" ]]; then h=ok; elif [[ -e "$b" || -L "$b" ]]; then h=broken; else h=missing; fi
+        [[ "$3" == unknown ]] && complete=0
+        krecs+=("kernel release=${r} running=${run} image=$2 module=${m} headers=${h} package=$3")
+    }
+    cur=$(uname -r)
+    if ! ok_token "$cur"; then log_line "WARN: running kernel name has unexpected characters; not reported" >&2; complete=0; cur=""; fi
+    if [[ ! -d "$BOOT_DIR" || ! -r "$BOOT_DIR" || ! -x "$BOOT_DIR" ]]; then
+        log_line "WARN: cannot list kernels in ${BOOT_DIR}" >&2; complete=0
+    else
+        for f in "${BOOT_DIR}"/vmlinuz-*; do
+            [[ -e "$f" ]] || continue
+            rel="${f##*/vmlinuz-}"
+            if ! ok_token "$rel"; then log_line "WARN: kernel image name with unexpected characters skipped" >&2; complete=0; continue; fi
+            [[ -z "${seen[$rel]:-}" ]] || continue
+            seen["$rel"]=1
+            image_state "$f"
+            case "$IMG_STATE" in
+                installed) pk=installed ;;
+                pending)   pk=unfinished ;;
+                unowned)   pk=unowned ;;
+                *)         pk=unknown ;;
+            esac
+            [[ "$IMG_QFAIL" -eq 1 ]] && pk=unknown
+            kernel_rec "$rel" 1 "$pk"
+        done
+    fi
+    if ! q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'linux-image-*' 2>/dev/null); then
+        err=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'linux-image-*' 2>&1 >/dev/null || true)
+        q=""; [[ "$err" == *"no packages found matching"* ]] || { log_line "WARN: cannot list the kernel image packages" >&2; complete=0; }
+    fi
+    while read -r pkg _ _ state; do
+        [[ -n "$pkg" ]] || continue
+        case "$state" in installed|not-installed|config-files) continue ;; esac
+        if ! lst=$(dpkg -L "$pkg" 2>/dev/null); then log_line "WARN: cannot list the files of ${pkg}" >&2; complete=0; continue; fi
+        f=$(grep -m1 '^/boot/vmlinuz-' <<<"$lst" || true)
+        [[ -n "$f" ]] || continue
+        rel="${f##*/vmlinuz-}"
+        ok_token "$rel" || { complete=0; continue; }
+        [[ -z "${seen[$rel]:-}" ]] || continue
+        seen["$rel"]=1
+        kernel_rec "$rel" 0 unfinished
+    done <<<"$q"
+    if [[ -n "$cur" && -z "${seen[$cur]:-}" ]]; then
+        seen["$cur"]=1
+        kernel_rec "$cur" 0 none
+    fi
+    [[ ${#krecs[@]} -eq 0 ]] || printf '%s\n' "${krecs[@]}"
+    im=0; [[ -d "${SYS_MODULE_DIR}/amneziawg" ]] && im=1
+    printf 'module loaded=%s\n' "$im"
+    if ! q=$(dpkg --audit 2>/dev/null); then
+        printf 'packages audit=failed\n'; complete=0
+    elif [[ -z "$q" ]]; then
+        printf 'packages audit=empty\n'
+    else
+        printf 'packages audit=unfinished\n'
+    fi
+    printf 'status complete=%s time=%s\n' "$complete" "$(date +%s)"
+    [[ "$complete" -eq 1 ]] && exit 0
+    exit 1
+}
+
 # Deliberate rollback of the source fix (support use). The marker keeps
 # every later run from applying it again until --enable. Modules already
 # built are not rebuilt here.
@@ -7254,6 +7565,7 @@ case "$MODE" in
     --prepare) mode_prepare ;;
     --prepare-locked) mode_prepare_locked ;;
     --finish) mode_finish ;;
+    --status) mode_status ;;
     --revert) mode_revert ;;
     --enable) mode_enable ;;
 esac

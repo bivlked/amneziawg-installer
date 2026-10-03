@@ -49,6 +49,7 @@ _mk_server() {
     mkdir -p "$T/usr/src/amneziawg-1.0.0/compat" "$T/var/lib/dkms/amneziawg/1.0.0" "$T/var/lib/dpkg"
     cp "$(_fx compat.h.base)" "$T/usr/src/amneziawg-1.0.0/compat/compat.h"
     ln -s "$T/usr/src/amneziawg-1.0.0" "$T/var/lib/dkms/amneziawg/1.0.0/source"
+    mkdir -p "$T/own"; echo "amneziawg-dkms: $T/usr/src/amneziawg-1.0.0/dkms.conf" > "$T/own/dkms.conf"
     for k in "$@"; do _mk_kernel "$k"; done
 }
 _mk_kernel() { _mk_image "$1"; mkdir -p "$T/lib/modules/$1/hdr"; ln -s hdr "$T/lib/modules/$1/build"; }
@@ -102,6 +103,7 @@ if [[ "$p" == *"*"* ]]; then
   n=0; for f in "$T"/st/${p}; do [[ -f "$f" ]] || continue; echo "${f##*/} $(cat "$f")"; n=1; done
   [[ $n = 1 ]] || { echo "dpkg-query: no packages found matching $p" >&2; exit 1; }; exit 0
 fi
+[[ "$p" == amneziawg-dkms && -e "$T/dq.dkmsfail" ]] && { echo "dpkg-query: error: database locked" >&2; exit 2; }
 if [[ -f "$T/st/$p" ]]; then cat "$T/st/$p"
 elif [[ "$p" == amneziawg-dkms ]]; then echo "1.0.0-0~202609061402+4569c4c install ok installed"
 else echo "unknown ok not-installed"; fi'
@@ -134,6 +136,10 @@ if [[ "$k" == 7.0.0-38* && "$(sha256sum < "$T/usr/src/amneziawg-$v/compat/compat
 fi
 if [[ -e "$T/dkms.fail.$k" ]]; then echo "error: something else" > "$d/make.log"; exit 10; fi
 mkdir -p "$T/lib/modules/$k/updates/dkms"; echo ko > "$T/lib/modules/$k/updates/dkms/amneziawg.ko.zst"'
+    # Holds as apt-mark lists them; am.fail breaks the query.
+    _stub apt-mark '[[ "$1" == showhold ]] || exit 0
+[[ -e "$T/am.fail" ]] && { echo "E: cannot read the selections" >&2; exit 100; }
+cat "$T/holds" 2>/dev/null; exit 0'
     export PATH="$T/bin:$PATH"
     _mk_helper install_amneziawg.sh
 }
@@ -1139,7 +1145,160 @@ exec \"$rt\" \"\$@\""
 
 @test "helper: --version identifies the new helper, an unknown mode is exit 2" {
     run "$H" --version
-    [ "$status" -eq 0 ]; [ "$output" = "amneziawg-ensure-module 2" ]
+    [ "$status" -eq 0 ]; [ "$output" = "amneziawg-ensure-module 3" ]
     run "$H" --bogus
     [ "$status" -eq 2 ]
+}
+
+# ---------- --status (K2b): read-only facts ----------
+
+# Runs --status with stdout only (stderr is chatter) into $T/st.out.
+_status() { run bash -c '"$1" --status 2>/dev/null' _ "$H"; printf '%s\n' "$output" > "$T/st.out"; }
+_rec() { grep -E "^$1( |\$)" "$T/st.out" || true; }
+
+@test "status: a healthy server - every record, exactly one running kernel, complete, nothing changed" {
+    _mk_server "$OLD" "$NEW"
+    "$H" --repair >/dev/null 2>&1
+    rm -f "$T/calls"
+    local before; before=$(_sha "$(_src)")
+    _status
+    [ "$status" -eq 0 ] || { cat "$T/st.out"; return 1; }
+    [ "$(_rec path)" = "path kind=ppa reason=-" ]
+    [ "$(_rec source)" = "source state=patched version=1.0.0 fix=enabled" ]
+    [ "$(_rec kernel | grep -c 'running=1')" -eq 1 ]
+    [[ "$(_rec kernel)" == *"kernel release=$OLD running=1 image=1 module=1 headers=ok package=installed"* ]]
+    [[ "$(_rec kernel)" == *"kernel release=$NEW running=0 image=1 module=1 headers=ok package=installed"* ]]
+    [ "$(_rec module)" = "module loaded=0" ]
+    [ "$(_rec packages)" = "packages audit=empty" ]
+    [[ "$(tail -n 1 "$T/st.out")" =~ ^status\ complete=1\ time=[0-9]+$ ]]
+    # Machine records only on stdout.
+    [ -z "$(grep -vE '^(path|source|kernel|module|packages|status) ' "$T/st.out" || true)" ]
+    # Read-only: no build, no configure, source as it was.
+    [[ "$(_calls)" != *"dkms install"* && "$(_calls)" != *"--configure"* ]]
+    [ "$(_sha "$(_src)")" = "$before" ]
+}
+
+@test "status: an already configured kernel without a module is reported even when nothing is unfinished" {
+    local old2=6.8.0-31-generic
+    _mk_server "$OLD"
+    "$H" --repair >/dev/null 2>&1
+    _mk_image "$old2"
+    _status
+    [ "$status" -eq 0 ]
+    [[ "$(_rec kernel)" == *"kernel release=$old2 running=0 image=1 module=0 headers=missing package=installed"* ]] || { cat "$T/st.out"; return 1; }
+    [ "$(_rec packages)" = "packages audit=empty" ]
+}
+
+@test "status: unfinished images, from /boot and from dpkg's side only" {
+    _mk_server "$OLD"
+    "$H" --repair >/dev/null 2>&1
+    _mk_image 7.0.0-39-generic "install ok unpacked"
+    echo "install ok half-configured" > "$T/st/linux-image-$NEW"
+    echo "unfinished" > "$T/audit"
+    _status
+    [ "$status" -eq 0 ]
+    [[ "$(_rec kernel)" == *"kernel release=7.0.0-39-generic running=0 image=1 module=0 headers=missing package=unfinished"* ]] || { cat "$T/st.out"; return 1; }
+    [[ "$(_rec kernel)" == *"kernel release=$NEW running=0 image=0 module=0 headers=missing package=unfinished"* ]]
+    [ "$(_rec packages)" = "packages audit=unfinished" ]
+}
+
+@test "status: the running kernel is always reported, image or not" {
+    _mk_server
+    mkdir -p "$T/lib/modules/$OLD"
+    _status
+    [ "$status" -eq 0 ] || { cat "$T/st.out"; return 1; }
+    [ "$(_rec kernel)" = "kernel release=$OLD running=1 image=0 module=0 headers=missing package=none" ]
+}
+
+@test "status: a broken headers link is broken, a loaded module is loaded" {
+    _mk_server "$OLD"
+    "$H" --repair >/dev/null 2>&1
+    rm "$T/lib/modules/$OLD/build"; ln -s "$T/nowhere" "$T/lib/modules/$OLD/build"
+    mkdir -p "$T/sys/module/amneziawg"
+    _status
+    [[ "$(_rec kernel)" == *"release=$OLD running=1 image=1 module=1 headers=broken"* ]] || { cat "$T/st.out"; return 1; }
+    [ "$(_rec module)" = "module loaded=1" ]
+}
+
+@test "status: what could not be looked at is unknown, never 'no' - and complete=0, exit 1, records kept" {
+    [[ $EUID -ne 0 ]] || skip "root reads a mode-000 directory anyway"
+    _mk_server "$OLD" "$NEW"
+    "$H" --repair >/dev/null 2>&1
+    chmod 000 "$T/lib/modules/$NEW/updates"
+    _status
+    chmod 755 "$T/lib/modules/$NEW/updates"
+    [ "$status" -eq 1 ]
+    [[ "$(_rec kernel)" == *"release=$NEW running=0 image=1 module=unknown"* ]] || { cat "$T/st.out"; return 1; }
+    [[ "$(_rec kernel)" == *"release=$OLD running=1 image=1 module=1"* ]]
+    [[ "$(tail -n 1 "$T/st.out")" == "status complete=0 "* ]]
+}
+
+@test "status: a failed audit, ownership lookup or image list is complete=0" {
+    _mk_server "$OLD"
+    "$H" --repair >/dev/null 2>&1
+    : > "$T/audit.fail"
+    _status
+    [ "$status" -eq 1 ]; [ "$(_rec packages)" = "packages audit=failed" ]
+    rm "$T/audit.fail"; : > "$T/S.fail"
+    _status
+    [ "$status" -eq 1 ]
+    [[ "$(_rec kernel)" == *"release=$OLD running=1 image=1 module=1 headers=ok package=unknown"* ]] || { cat "$T/st.out"; return 1; }
+    rm "$T/S.fail"; : > "$T/dq.listfail"
+    _status
+    [ "$status" -eq 1 ]
+}
+
+@test "status: path kind repeats the installer's admission" {
+    _mk_server "$OLD"
+    _status; [ "$(_rec path)" = "path kind=ppa reason=-" ]
+    echo "hold ok installed" > "$T/st/amneziawg-dkms"
+    _status; [ "$(_rec path)" = "path kind=pinned reason=-" ]
+    rm "$T/st/amneziawg-dkms"; echo amneziawg-dkms > "$T/holds"
+    _status; [ "$(_rec path)" = "path kind=pinned reason=-" ]
+    rm "$T/holds"; echo "unknown ok not-installed" > "$T/st/amneziawg-dkms"
+    _status; [ "$(_rec path)" = "path kind=none reason=-" ]
+    rm "$T/st/amneziawg-dkms"; echo "install ok installed" > "$T/st/amneziawg-kmod-6.8.0-100-generic"
+    _status; [ "$(_rec path)" = "path kind=prebuilt reason=-" ]
+    rm "$T/st/amneziawg-kmod-6.8.0-100-generic"
+    echo "other-pkg: $T/usr/src/amneziawg-1.0.0/dkms.conf" > "$T/own/dkms.conf"
+    _status; [ "$(_rec path)" = "path kind=refused reason=owner" ]
+    echo "diversion by x from: $T/usr/src/amneziawg-1.0.0/dkms.conf" > "$T/own/dkms.conf"
+    _status; [ "$(_rec path)" = "path kind=refused reason=owner" ]
+    echo "amneziawg-dkms:amd64: $T/usr/src/amneziawg-1.0.0/dkms.conf" > "$T/own/dkms.conf"
+    _status; [ "$(_rec path)" = "path kind=ppa reason=-" ]
+    mkdir -p "$T/usr/src/amneziawg-2.0.0" "$T/var/lib/dkms/amneziawg/2.0.0"
+    ln -s "$T/usr/src/amneziawg-2.0.0" "$T/var/lib/dkms/amneziawg/2.0.0/source"
+    _status; [ "$(_rec path)" = "path kind=refused reason=ambiguous" ]; [[ "$(_rec source)" == "source state=ambiguous "* ]]
+    rm -rf "${T:?}/var/lib/dkms/amneziawg"
+    _status; [ "$(_rec path)" = "path kind=refused reason=noreg" ]; [[ "$(_rec source)" == "source state=none "* ]]
+}
+
+@test "status: any failed admission query is refused reason=query and complete=0, never ppa" {
+    _mk_server "$OLD"
+    : > "$T/dq.dkmsfail"
+    _status; [ "$status" -eq 1 ]; [ "$(_rec path)" = "path kind=refused reason=query" ]
+    rm "$T/dq.dkmsfail"; : > "$T/am.fail"
+    _status; [ "$status" -eq 1 ]; [ "$(_rec path)" = "path kind=refused reason=query" ]
+    rm "$T/am.fail"; : > "$T/dq.listfail"
+    _status; [ "$status" -eq 1 ]; [ "$(_rec path)" = "path kind=refused reason=query" ]
+    rm "$T/dq.listfail"; : > "$T/S.fail"
+    _status; [ "$(_rec path)" = "path kind=refused reason=query" ]
+}
+
+@test "status: no dkms is refused, the revert marker shows as fix=disabled" {
+    _mk_server "$OLD"
+    rm "$T/bin/dkms"
+    if command -v dkms >/dev/null; then skip "a real dkms is on this host"; fi
+    _status
+    [ "$(_rec path)" = "path kind=refused reason=nodkms" ]
+    mkdir -p "$T/var/lib/amneziawg"; : > "$T/var/lib/amneziawg/kmod-fix.disabled"
+    _status
+    [[ "$(_rec source)" == *" fix=disabled" ]]
+}
+
+@test "status: works on both installers' helpers alike" {
+    _mk_server "$OLD"
+    _status; local ru; ru=$(grep -v '^status ' "$T/st.out")
+    _mk_helper install_amneziawg_en.sh
+    _status; [ "$(grep -v '^status ' "$T/st.out")" = "$ru" ]
 }
