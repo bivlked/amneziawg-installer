@@ -7288,7 +7288,7 @@ mode_status() {
     [[ -e "$DISABLED_MARK" ]] && fix=disabled
     # Root passes -r/-x tests on any directory, and a glob cannot tell an
     # empty directory from a failed readdir: ask find, which fails loudly.
-    if [[ -e "${DKMS_DIR}/amneziawg" ]] && ! LC_ALL=C find "${DKMS_DIR}/amneziawg" -mindepth 1 -maxdepth 2 >/dev/null 2>&1; then
+    if [[ -e "${DKMS_DIR}/amneziawg" ]] && ! LC_ALL=C find -H "${DKMS_DIR}/amneziawg" -mindepth 1 -maxdepth 2 >/dev/null 2>&1; then
         complete=0
         if [[ -z "$kind" ]]; then kind=refused; reason=query; fi
     else
@@ -7335,9 +7335,10 @@ mode_status() {
     }
     cur=$(uname -r)
     if ! ok_token "$cur"; then log_line "WARN: running kernel name has unexpected characters; not reported" >&2; complete=0; cur=""; fi
-    # find, not a glob: a failed readdir must not read as "no kernels".
+    # find, not a glob: a failed readdir must not read as "no kernels"; -H
+    # walks a /boot that is a symlink (plain find would list nothing there).
     local bl=""
-    if [[ ! -d "$BOOT_DIR" ]] || ! bl=$(LC_ALL=C find "$BOOT_DIR" -mindepth 1 -maxdepth 1 -name 'vmlinuz-*' -print 2>/dev/null); then
+    if [[ ! -d "$BOOT_DIR" ]] || ! bl=$(LC_ALL=C find -H "$BOOT_DIR" -mindepth 1 -maxdepth 1 -name 'vmlinuz-*' -print 2>/dev/null); then
         log_line "WARN: cannot list kernels in ${BOOT_DIR}" >&2; complete=0
     else
         bl=$(LC_ALL=C sort <<<"$bl")

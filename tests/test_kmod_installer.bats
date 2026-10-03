@@ -472,6 +472,17 @@ EOF
     done
 }
 
+@test "repair-module: a running kernel whose module file is gone is named before a reboot" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _rm_server
+        sed -i 's/^kernel release=7.0.0-38-generic running=1 image=1 module=1/kernel release=7.0.0-38-generic running=1 image=1 module=0/' "$T/helper.out.--status"
+        _rm_driver "$f"
+        run bash "$T/drv.sh"
+        grep -q '^WARN: .*7\.0\.0-38-generic.*\(на диске\|on disk\)' <<<"$output" || { echo "$f: $output"; return 1; }
+    done
+}
+
 @test "repair-module: unknown headers or fix values are a valid report, not a malformed one" {
     local f
     for f in "${INSTALLERS[@]}"; do

@@ -359,6 +359,8 @@ _scr() { if [[ "$1" == EN ]]; then SCR="$M_EN"; else SCR="$M"; fi; }
         [ "$status" -eq 1 ] || { echo "$l"; return 1; }
         [[ "$stderr" == *root* ]] || { echo "$l: $stderr"; return 1; }
         [[ "$(_calls)" != *"helper --"* ]] || { echo "$l: $(_calls)"; return 1; }
+        # A full envelope, not the generic emergency object.
+        _j '.ok==false and .helper=="current" and .path=="refused" and has("kernels_unknown")' || { echo "$l: $output"; return 1; }
     done
 }
 
@@ -416,8 +418,11 @@ _diag() { run bash "${SCR:-$M}" diagnose "${ARGS[@]}"; }
 }
 
 @test "diagnose: an outdated helper on a PPA server is named with the installer command" {
+    local l
     printf 'amneziawg-ensure-module: missing or unknown mode (use --hook or --systemd)\n' > "$T/helper.verr"
     : > "$T/helper.version"; echo 2 > "$T/helper.vrc"
-    _diag
-    [[ "$output" == *"WARN"*"--repair-module"* ]] || { echo "$output"; return 1; }
+    for l in "${LANGS[@]}"; do
+        _scr "$l"; _diag
+        [[ "$output" == *"WARN"*"--repair-module"* ]] || { echo "$l: $output"; return 1; }
+    done
 }

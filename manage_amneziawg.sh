@@ -3569,7 +3569,11 @@ case $COMMAND in
         _kh_path=legacy
         case "$_KH_CLASS" in
             current)
-                if [[ "$(id -u)" -ne 0 ]]; then die "repair-module требует root: sudo bash $0 repair-module"; fi
+                if [[ "$(id -u)" -ne 0 ]]; then
+                    _JSON_ERR="repair-module требует root: sudo bash $0 repair-module"; log_error "$_JSON_ERR"
+                    json_out "{\"command\":\"repair-module\",\"ok\":false,\"module_loaded\":null,\"service_active\":null,\"rc\":null,\"helper\":\"current\",\"path\":\"refused\",\"repair_rc\":null,\"finish_rc\":null,\"status_complete\":null,\"packages\":null,\"source\":null,\"fix_disabled\":null,\"kernels_without_module\":null,\"unfinished_without_module\":null,\"kernels_unknown\":null,\"running_module_on_disk\":null,\"running_headers\":null,\"error\":\"$(json_escape "$_JSON_ERR")\"}"
+                    exit 1
+                fi
                 _kh_rc=0; _kmod_repair_via_helper || _kh_rc=$?
                 if [[ "$_kh_rc" -ne 10 ]]; then
                     if [[ "$_kh_rc" -ne 0 ]]; then

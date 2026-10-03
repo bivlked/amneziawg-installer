@@ -1234,22 +1234,35 @@ _rec() { grep -E "^$1( |\$)" "$T/st.out" || true; }
     [[ "$(tail -n 1 "$T/st.out")" == "status complete=0 "* ]]
 }
 
-@test "status: an unreadable /boot or DKMS directory is unknown, not 'no kernels' or 'not registered'" {
-    [[ $EUID -ne 0 ]] || skip "root reads a mode-000 directory anyway"
+@test "status: a failed listing of /boot or of the DKMS registrations is unknown, not 'no kernels' or 'not registered'" {
+    # The listing itself fails (an I/O error or an LSM denial - root passes
+    # permission tests, so this is injected): only the code of find tells.
     _mk_server "$OLD" "$NEW"
     "$H" --repair >/dev/null 2>&1
-    chmod 000 "$T/boot"
+    local real; real=$(command -v find)
+    _stub find "case \"\$*\" in *\"$T/boot\"*vmlinuz*) [[ -e \"$T/boot.fail\" ]] && { echo \"find: '$T/boot': Input/output error\" >&2; exit 1; } ;;
+  *\"$T/var/lib/dkms/amneziawg\"*-maxdepth\ 2*) [[ -e \"$T/dkms.fail\" ]] && { echo \"find: '$T/var/lib/dkms/amneziawg/1.0.0': Input/output error\" >&2; exit 1; } ;; esac
+exec \"$real\" \"\$@\""
+    : > "$T/boot.fail"
     _status
-    chmod 755 "$T/boot"
     [ "$status" -eq 1 ]
     [[ "$(tail -n 1 "$T/st.out")" == "status complete=0 "* ]] || { cat "$T/st.out"; return 1; }
     [[ "$(_rec kernel)" != *"release=$NEW"* ]]
-    chmod 000 "$T/var/lib/dkms/amneziawg"
+    rm "$T/boot.fail"; : > "$T/dkms.fail"
     _status
-    chmod 755 "$T/var/lib/dkms/amneziawg"
     [ "$status" -eq 1 ]
     [ "$(_rec path)" = "path kind=refused reason=query" ] || { cat "$T/st.out"; return 1; }
     [[ "$(_rec source)" == "source state=unknown "* ]]
+}
+
+@test "status: a /boot that is a symlink is walked, its kernels are reported" {
+    _mk_server "$OLD" "$NEW"
+    "$H" --repair >/dev/null 2>&1
+    mv "$T/boot" "$T/boot.real"; ln -s "$T/boot.real" "$T/boot"
+    # The owner records name the path as seen through the link.
+    _status
+    [ "$status" -eq 0 ] || { cat "$T/st.out"; return 1; }
+    [[ "$(_rec kernel)" == *"release=$NEW running=0 image=1 module=1"* ]] || { cat "$T/st.out"; return 1; }
 }
 
 @test "status: a failed audit, ownership lookup or image list is complete=0" {
