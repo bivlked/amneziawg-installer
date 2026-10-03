@@ -278,7 +278,7 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
     local side
     for side in 'echo "1.0.0-0~new install ok installed" > "$T/st/amneziawg-dkms"' \
                 'echo "/* unpacked */" >> "$T/usr/src/amneziawg-1.0.0/compat/compat.h"'; do
-        rm -rf "$T/usr" "$T/var" "$T/lib" "$T/st"; _mk_server "$OLD" "$NEW"
+        rm -rf "${T:?}/usr" "${T:?}/var" "${T:?}/lib" "${T:?}/st"; _mk_server "$OLD" "$NEW"
         echo "$side" > "$T/dkms.side"
         run "$H" --repair
         [ "$status" -eq 2 ] || { echo "[$side]: $status"; return 1; }
@@ -706,7 +706,7 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
 @test "finish: an unreadable /boot is not an empty inventory" {
     _mk_server "$OLD"
     echo "unfinished" > "$T/audit"
-    rm -rf "$T/boot"
+    rm -rf "${T:?}/boot"
     run "$H" --finish
     [ "$status" -eq 1 ]
     [[ "$output" == *"cannot list kernels"* ]]
