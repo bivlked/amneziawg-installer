@@ -577,7 +577,7 @@ Options:
                         takes installed snaps and their data in /var/snap with it
   --preset=TYPE         Obfuscation parameter preset: default, mobile
                         mobile: Jc=3, narrow Jmax — for mobile carriers (Tele2, Yota, Megafon)
-  --jc=N               Set Jc manually (1-128, overrides preset)
+  --jc=N               Set Jc manually (0-128, overrides preset; 0 turns junk packets off)
   --jmin=N             Set Jmin manually (0-1280, overrides preset)
   --jmax=N             Set Jmax manually (0-1280, overrides preset, must be >= Jmin)
   --no-cps              Disable CPS (the I1 parameter) - needed if the desktop
@@ -2067,9 +2067,12 @@ awg_installed_protocol() {
     esac
 }
 
+# 0 turns junk packets off: the kernel module (src/send.c) and amneziawg-go
+# simply send none at Jc = 0. Leading zeros are refused: '08' is read as octal
+# in arithmetic and crashes the check, and '00' would go into the config as is.
 validate_jc_value() {
     local v="$1"
-    [[ "$v" =~ ^[0-9]+$ ]] && [[ "$v" -ge 1 ]] && [[ "$v" -le 128 ]]
+    [[ "$v" =~ ^(0|[1-9][0-9]{0,2})$ ]] && [[ "$v" -le 128 ]]
 }
 
 validate_junk_size() {
@@ -2788,7 +2791,7 @@ generate_awg_params() {
 
     # Individual CLI overrides (on top of preset)
     if [[ -n "${CLI_JC:-}" ]]; then
-        validate_jc_value "$CLI_JC" || die "Invalid --jc=$CLI_JC (allowed: 1-128)"
+        validate_jc_value "$CLI_JC" || die "Invalid --jc=$CLI_JC (allowed: 0-128, 0 turns junk packets off)"
         AWG_Jc="$CLI_JC"
     fi
     if [[ -n "${CLI_JMIN:-}" ]]; then
@@ -2905,6 +2908,9 @@ generate_awg_params() {
     export AWG_H1 AWG_H2 AWG_H3 AWG_H4 AWG_I1
 
     log "  Jc=$AWG_Jc, Jmin=$AWG_Jmin, Jmax=$AWG_Jmax"
+    if [[ "$AWG_Jc" == 0 ]]; then
+        log "  Jc=0: junk packets before the handshake are off"
+    fi
     log "  S1=$AWG_S1, S2=$AWG_S2, S3=$AWG_S3, S4=$AWG_S4"
     log "  H1=$AWG_H1"
     log "  H2=$AWG_H2"
@@ -4218,10 +4224,14 @@ check_service_status() {
         fi
     fi
 
-    # AWG 2.0 parameter check
+    # AWG 2.0 parameter check. awg show prints the jc line only for a non-zero
+    # value (amneziawg-tools show.c), so Jc = 0 is recognised by the other
+    # obfuscation parameters.
     _show_awg0=$(timeout 10 awg show awg0 2>/dev/null) || _show_awg0=""
-    if grep -qF -- "jc:" <<< "$_show_awg0"; then
+    if grep -qE '^[[:space:]]*jc:' <<< "$_show_awg0"; then
         log "AWG 2.0 parameters active."
+    elif grep -qE '^[[:space:]]*(jmin|jmax|s[1-4]|h[1-4]):' <<< "$_show_awg0"; then
+        log "AWG 2.0 parameters active (Jc = 0: junk packets off)."
     else
         log_warn "AWG 2.0 parameters not detected in awg show."
     fi

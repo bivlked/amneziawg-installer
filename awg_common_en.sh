@@ -5950,9 +5950,10 @@ _validate_awg_config_body() {
         s3=$(sed -n 's/^[[:space:]]*S3[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
         s4=$(sed -n 's/^[[:space:]]*S4[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
     fi
+    # Jc = 0 is legal: both implementations simply send no junk packets at zero.
     if [[ "$jc" =~ ^[0-9]+$ ]]; then
-        if [[ "$jc" -lt 1 || "$jc" -gt 128 ]]; then
-            log_error "Jc=$jc is out of range (1-128)"
+        if [[ "$jc" -gt 128 ]]; then
+            log_error "Jc=$jc is out of range (0-128)"
             ok=0
         fi
     fi

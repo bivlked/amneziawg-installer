@@ -558,7 +558,7 @@ show_help() {
                         установленные снапы и их данные в /var/snap
   --preset=ТИП          Набор параметров обфускации: default, mobile
                         mobile: Jc=3, узкий Jmax — для мобильных операторов (Tele2, Yota, Megafon)
-  --jc=N               Задать Jc вручную (1-128, поверх preset)
+  --jc=N               Задать Jc вручную (0-128, поверх preset; 0 выключает junk-пакеты)
   --jmin=N             Задать Jmin вручную (0-1280, поверх preset)
   --jmax=N             Задать Jmax вручную (0-1280, поверх preset, должно быть >= Jmin)
   --no-cps              Отключить CPS (параметр I1) - нужно, если десктопный
@@ -2001,9 +2001,12 @@ awg_installed_protocol() {
     esac
 }
 
+# 0 выключает junk-пакеты: модуль ядра (src/send.c) и amneziawg-go при Jc = 0
+# их просто не шлют. Ведущие нули запрещены: '08' в арифметике читается как
+# восьмеричное и роняет проверку, а '00' ушло бы в конфиг как есть.
 validate_jc_value() {
     local v="$1"
-    [[ "$v" =~ ^[0-9]+$ ]] && [[ "$v" -ge 1 ]] && [[ "$v" -le 128 ]]
+    [[ "$v" =~ ^(0|[1-9][0-9]{0,2})$ ]] && [[ "$v" -le 128 ]]
 }
 
 validate_junk_size() {
@@ -2710,7 +2713,7 @@ generate_awg_params() {
 
     # Точечные CLI overrides (поверх preset)
     if [[ -n "${CLI_JC:-}" ]]; then
-        validate_jc_value "$CLI_JC" || die "Невалидный --jc=$CLI_JC (допустимо: 1-128)"
+        validate_jc_value "$CLI_JC" || die "Невалидный --jc=$CLI_JC (допустимо: 0-128, 0 выключает junk-пакеты)"
         AWG_Jc="$CLI_JC"
     fi
     if [[ -n "${CLI_JMIN:-}" ]]; then
@@ -2825,6 +2828,9 @@ generate_awg_params() {
     export AWG_H1 AWG_H2 AWG_H3 AWG_H4 AWG_I1
 
     log "  Jc=$AWG_Jc, Jmin=$AWG_Jmin, Jmax=$AWG_Jmax"
+    if [[ "$AWG_Jc" == 0 ]]; then
+        log "  Jc=0: junk-пакеты перед рукопожатием выключены"
+    fi
     log "  S1=$AWG_S1, S2=$AWG_S2, S3=$AWG_S3, S4=$AWG_S4"
     log "  H1=$AWG_H1"
     log "  H2=$AWG_H2"
@@ -4126,10 +4132,14 @@ check_service_status() {
         fi
     fi
 
-    # Проверка AWG 2.0 параметров
+    # Проверка AWG 2.0 параметров. Строку jc awg show печатает только при
+    # ненулевом значении (amneziawg-tools show.c), поэтому Jc = 0 узнаём по
+    # остальным параметрам обфускации.
     _show_awg0=$(timeout 10 awg show awg0 2>/dev/null) || _show_awg0=""
-    if grep -qF -- "jc:" <<< "$_show_awg0"; then
+    if grep -qE '^[[:space:]]*jc:' <<< "$_show_awg0"; then
         log "AWG 2.0 параметры активны."
+    elif grep -qE '^[[:space:]]*(jmin|jmax|s[1-4]|h[1-4]):' <<< "$_show_awg0"; then
+        log "AWG 2.0 параметры активны (Jc = 0: junk-пакеты выключены)."
     else
         log_warn "AWG 2.0 параметры не обнаружены в awg show."
     fi

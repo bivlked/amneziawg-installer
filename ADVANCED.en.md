@@ -159,7 +159,7 @@ sudo bash install_amneziawg_en.sh --jc=2 --jmin=20 --jmax=60 --yes
 
 | Flag | Range | Description |
 |------|-------|------------|
-| `--jc=N` | 1-128 | Number of junk packets |
+| `--jc=N` | 0-128 | Number of junk packets; 0 turns them off |
 | `--jmin=N` | 0-1280 | Minimum junk size (bytes) |
 | `--jmax=N` | 0-1280 | Maximum junk size (bytes), must be ≥ Jmin |
 
@@ -790,7 +790,7 @@ Options:
                         names the reason
   --preset=TYPE         Obfuscation parameter preset: default, mobile
                         mobile: Jc=3, narrow Jmax — for mobile carriers (Tele2, Yota, Megafon)
-  --jc=N                Set Jc manually (1-128, overrides preset)
+  --jc=N                Set Jc manually (0-128, overrides preset; 0 turns junk packets off)
   --jmin=N              Set Jmin manually (0-1280, overrides preset)
   --jmax=N              Set Jmax manually (0-1280, overrides preset, must be >= Jmin)
   --no-cps              Disable CPS (the I1 parameter) - for desktop clients that do not support it (e.g. macOS)

@@ -1802,8 +1802,12 @@ check_server() {
     # текстом, остальные коды числом.
     elif (( _filter_ok )); then
         while IFS= read -r _l; do log "  $_l"; done <<< "$_awg_out"
-        if grep -q "jc:" <<< "$_awg_out"; then
+        # Строку jc awg show печатает только при ненулевом значении, поэтому
+        # Jc = 0 узнаём по остальным параметрам обфускации.
+        if grep -qE '^[[:space:]]*jc:' <<< "$_awg_out"; then
             log " - Параметры обфускации: активны"
+        elif grep -qE '^[[:space:]]*(jmin|jmax|s[1-4]|h[1-4]):' <<< "$_awg_out"; then
+            log " - Параметры обфускации: активны (Jc = 0: junk-пакеты выключены)"
         else
             log_warn " - Параметры обфускации не обнаружены"
         fi
@@ -2481,7 +2485,15 @@ diagnose_server() {
         jmin=$(awk '/^[[:space:]]*jmin:/ {print $2; exit}' <<< "$_awg_show")
         jmax=$(awk '/^[[:space:]]*jmax:/ {print $2; exit}' <<< "$_awg_show")
         i1=$(awk -F': ' '/^[[:space:]]*i1:/ {print $2; exit}' <<< "$_awg_show")
-        _diag_line INFO "AWG params: Jc=${jc:-?} Jmin=${jmin:-?} Jmax=${jmax:-?} I1=${i1:-absent}"
+        # Строку jc awg show печатает только ненулевой: интерфейс прочитан, а
+        # строки нет - значит Jc = 0, junk-пакеты выключены. С «нет данных» это
+        # не путается: непрочитанный интерфейс идёт веткой else ниже.
+        local _jc_note=""
+        if [[ -z "$jc" ]]; then
+            jc=0
+            _jc_note=" (junk-пакеты выключены)"
+        fi
+        _diag_line INFO "AWG params: Jc=${jc}${_jc_note} Jmin=${jmin:-?} Jmax=${jmax:-?} I1=${i1:-absent}"
         # Модуль ядра пару Jmin/Jmax между собой не сравнивает, и при Jmin больше
         # Jmax пишет мусорный пакет за границу буфера размера Jmax
         # (amneziawg-linux-kernel-module#225). Наш генератор такую пару не

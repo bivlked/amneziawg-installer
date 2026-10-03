@@ -1834,8 +1834,12 @@ check_server() {
     # a timeout by its message, any other status by its code.
     elif (( _filter_ok )); then
         while IFS= read -r _l; do log "  $_l"; done <<< "$_awg_out"
-        if grep -q "jc:" <<< "$_awg_out"; then
+        # awg show prints the jc line only for a non-zero value, so Jc = 0 is
+        # recognised by the other obfuscation parameters.
+        if grep -qE '^[[:space:]]*jc:' <<< "$_awg_out"; then
             log " - Obfuscation parameters: active"
+        elif grep -qE '^[[:space:]]*(jmin|jmax|s[1-4]|h[1-4]):' <<< "$_awg_out"; then
+            log " - Obfuscation parameters: active (Jc = 0: junk packets off)"
         else
             log_warn " - Obfuscation parameters not detected"
         fi
@@ -2515,7 +2519,15 @@ diagnose_server() {
         jmin=$(awk '/^[[:space:]]*jmin:/ {print $2; exit}' <<< "$_awg_show")
         jmax=$(awk '/^[[:space:]]*jmax:/ {print $2; exit}' <<< "$_awg_show")
         i1=$(awk -F': ' '/^[[:space:]]*i1:/ {print $2; exit}' <<< "$_awg_show")
-        _diag_line INFO "AWG params: Jc=${jc:-?} Jmin=${jmin:-?} Jmax=${jmax:-?} I1=${i1:-absent}"
+        # awg show prints the jc line only when it is non-zero: the interface was
+        # read and the line is absent, so Jc = 0 and junk packets are off. This
+        # is not "no data": an unread interface takes the else branch below.
+        local _jc_note=""
+        if [[ -z "$jc" ]]; then
+            jc=0
+            _jc_note=" (junk packets off)"
+        fi
+        _diag_line INFO "AWG params: Jc=${jc}${_jc_note} Jmin=${jmin:-?} Jmax=${jmax:-?} I1=${i1:-absent}"
         # The kernel module does not compare Jmin with Jmax, and with Jmin above
         # Jmax it writes a junk packet past the end of a buffer sized Jmax
         # (amneziawg-linux-kernel-module#225). Our generator never produces such

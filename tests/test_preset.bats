@@ -124,8 +124,13 @@ teardown() {
 
 # --- Validation ---
 
-@test "validate: --jc=0 rejected" {
+@test "validate: --jc=0 accepted (junk packets off)" {
     run validate_jc_value "0"
+    [ "$status" -eq 0 ]
+}
+
+@test "validate: --jc=129 rejected" {
+    run validate_jc_value "129"
     [ "$status" -ne 0 ]
 }
 
