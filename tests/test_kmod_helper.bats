@@ -731,8 +731,6 @@ EOF
     [[ "$output" == *"build pass after configuring exited with code 1 (still no module: $k3)"* ]] || { echo "$output"; return 1; }
 }
 
-# Exit 1 with every kernel built before configuring is a real failure of the
-# pass after it (here depmod), not the T1 case: modules on disk are not enough.
 # A kernel without a module before configuring that builds in the pass
 # after it does not excuse that pass's exit 1 (here depmod).
 @test "finish: a never-built kernel that builds after configuring does not excuse exit 1" {
@@ -750,6 +748,8 @@ EOF
     [[ "$output" == *"build pass after them failed (exit 1)"* ]] || { echo "$output"; return 1; }
 }
 
+# Exit 1 with every kernel built before configuring is a real failure of the
+# pass after it (here depmod), not the T1 case: modules on disk are not enough.
 @test "finish: exit 1 of the pass after configuring with no never-built kernel fails it, on both helpers" {
     local s
     for s in install_amneziawg.sh install_amneziawg_en.sh; do
