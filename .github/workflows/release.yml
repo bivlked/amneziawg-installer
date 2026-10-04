@@ -18,7 +18,10 @@ jobs:
   # from the release. This job blocks that.
   preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Forty, the same budget as test.yml: the preflight runs the whole bats
+    # suite serially, which took 13-18.5 min. At fifteen the v5.37.1 tag was
+    # cancelled at 15m17s and published nothing.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
