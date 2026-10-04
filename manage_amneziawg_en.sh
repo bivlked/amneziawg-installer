@@ -2042,11 +2042,11 @@ _kmod_repair_via_helper() {
     local hrc=0 frc="" mrc=1 cur k rel run mod hdr pkg rmod="null" rhdr="null" ok=0 other=0 pend_mod=0
     local -a nomod=() unfin=() unk=()
     local -A khdr=()
-    # What to do with a kernel that has no module: with its headers installed
-    # the build failed, and installing them again does not help.
+    # What to do with a kernel that has no module: with its headers installed,
+    # installing them again does not help; the reason is elsewhere (above).
     _kmod_fix_hint() {
         if [[ "${khdr[$1]:-}" == ok ]]; then
-            printf 'Headers are installed, but the module did not build (the reason is above): run repair-module again'
+            printf 'Headers are installed, but the module is missing (the reason is above): run repair-module again'
         else
             printf 'Install linux-headers-%s and run repair-module again' "$1"
         fi
@@ -2123,7 +2123,7 @@ _kmod_repair_via_helper() {
         done
         for rel in "${unk[@]}"; do log_warn "The module of kernel $rel could not be checked (its module directory is not readable)."; done
         [[ "$_KS_FIX" == disabled ]] && log "The source fix is turned off by hand (--revert); to allow it again: sudo $AWG_ENSURE_HELPER --enable"
-        if [[ "$mrc" -eq 0 && ( "$_KS_AUDIT" == unfinished || ( -n "$frc" && "$frc" -ne 0 ) ) ]]; then
+        if [[ "$mrc" -eq 0 && "$_KS_AUDIT" == unfinished ]]; then
             log_warn "A working tunnel does not mean apt is fixed: packages are left unfinished."
         fi
         if [[ "$pend_mod" -eq 1 ]]; then

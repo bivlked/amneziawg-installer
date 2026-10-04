@@ -180,6 +180,17 @@ _scr() { if [[ "$1" == EN ]]; then SCR="$M_EN"; else SCR="$M"; fi; }
     done
 }
 
+@test "success rule: a failed --finish with an empty final audit fails without claiming unfinished packages" {
+    local l
+    echo 1 > "$T/helper.rc.--finish"
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l: $output"; return 1; }
+        _j '.ok==false and .finish_rc==1 and .packages=="empty"' || { echo "$l: $output"; return 1; }
+        if [[ "$stderr" == *"apt починен"* || "$stderr" == *"apt is fixed"* ]]; then echo "$l: false claim: $stderr"; return 1; fi
+    done
+}
+
 @test "success rule: unfinished packages after a clean --finish still fail" {
     local l
     AUDIT=unfinished _status > "$T/helper.out.--status.2"

@@ -4826,9 +4826,9 @@ _awg_kmod_status_warn() {
     for k in "${_KS_KERNELS[@]}"; do
         [[ "$k" =~ release=([^ ]+)\ running=([01])\ image=[01]\ module=([^ ]+)\ headers=([^ ]+)\ package=([^ ]+) ]] || continue
         rel="${BASH_REMATCH[1]}" run="${BASH_REMATCH[2]}" mod="${BASH_REMATCH[3]}" hdr="${BASH_REMATCH[4]}" pkg="${BASH_REMATCH[5]}"
-        # Headers installed means the build failed; installing them again does not help.
+        # Headers installed: installing them again does not help, the reason is elsewhere.
         if [[ "$hdr" == ok ]]; then
-            how="Headers are installed, but the module did not build (the reason is above): run --repair-module again"
+            how="Headers are installed, but the module is missing (the reason is above): run --repair-module again"
         else
             how="Install linux-headers-$rel and run --repair-module again"
         fi
@@ -7293,8 +7293,8 @@ image_state() { # image file
 # anyway and are only reported. The owner of each /boot/vmlinuz-* is asked
 # from dpkg; an image dpkg does not know is not touched by configuring.
 mode_finish() {
-    local audit f rel st pkg imgs err lst state pending_n=0
-    local -a missing=() idle=()
+    local audit f rel st pkg imgs err lst state k pending_n=0
+    local -a missing=() idle=() had=() lost=() still=()
     local -A seen=()
     require_dpkg_idle || exit 1
     # dpkg --audit prints the problems and still exits 0; non-zero means the
@@ -7379,6 +7379,8 @@ mode_finish() {
         log_line "dpkg --configure -a NOT run: it would make such a kernel bootable, usually as the default, with no tunnel. Install the headers for it and run the repair again, or remove that kernel." >&2
         exit 1
     fi
+    collect_targets
+    for k in "${TARGETS[@]}"; do if has_module "$k"; then had+=("$k"); fi; done
     log_line "dpkg --configure -a"
     if ! DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then
         log_line "ERROR: dpkg --configure -a failed; see the messages above" >&2; exit 1
@@ -7396,13 +7398,17 @@ mode_finish() {
     # unfinished, its postinst deletes the module from the DKMS tree for
     # every kernel and builds it back only for the running one. Our apt hook
     # does not run here (DPkg::Post-Invoke fires only when apt calls dpkg),
-    # so the build pass runs once more, as a child that takes the lock itself
-    # and builds only the kernels left without the module.
-    collect_targets
-    if ! all_targets_have_module; then
-        log_line "dpkg --configure -a removed the module of some kernels; building it again (--repair)"
-        if ! "$0" --repair; then
-            log_line "ERROR: packages are configured, but building the module again after dpkg failed; see the messages above and run the repair again" >&2
+    # so the build pass runs once more, as a child that takes the lock itself.
+    # Only a module that configuring took away counts: a kernel that had none
+    # before (the installer's fallback runs --finish after a --repair that
+    # exited 1) is not this step's failure.
+    for k in "${had[@]}"; do has_module "$k" || lost+=("$k"); done
+    if [[ ${#lost[@]} -gt 0 ]]; then
+        log_line "dpkg --configure -a removed the module of: ${lost[*]}; building it again (--repair)"
+        "$0" --repair || log_line "WARN: the build pass exited with code $?; checking the kernels that lost the module" >&2
+        for k in "${lost[@]}"; do has_module "$k" || still+=("$k"); done
+        if [[ ${#still[@]} -gt 0 ]]; then
+            log_line "ERROR: packages are configured, but the module did not build again for: ${still[*]}; see the messages above and run the repair again" >&2
             exit 1
         fi
     fi

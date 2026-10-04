@@ -481,6 +481,7 @@ EOF
         sed -i '/^module /i kernel release=6.8.0-31-generic running=0 image=1 module=0 headers=ok package=installed\nkernel release=7.0.0-39-generic running=0 image=1 module=0 headers=ok package=unfinished' "$T/helper.out.--status"
         _rm_driver "$f"
         run bash "$T/drv.sh"
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
         grep -q '^WARN: .*6\.8\.0-31-generic.*--repair-module' <<<"$output" || { echo "$f: $output"; return 1; }
         grep -q '^WARN: .*7\.0\.0-39-generic.*--repair-module' <<<"$output" || { echo "$f: $output"; return 1; }
         grep -q '^WARN: .*6\.8\.0-31-generic.*\(Заголовки стоят\|Headers are installed\)' <<<"$output" || { echo "$f: $output"; return 1; }

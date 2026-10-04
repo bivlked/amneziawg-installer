@@ -2005,11 +2005,11 @@ _kmod_repair_via_helper() {
     local hrc=0 frc="" mrc=1 cur k rel run mod hdr pkg rmod="null" rhdr="null" ok=0 other=0 pend_mod=0
     local -a nomod=() unfin=() unk=()
     local -A khdr=()
-    # Что делать с ядром без модуля: заголовки стоят - значит, сборка не
-    # удалась, и ставить их снова бесполезно.
+    # Что делать с ядром без модуля: если заголовки стоят, ставить их снова
+    # бесполезно, причина в другом (она в строках выше).
     _kmod_fix_hint() {
         if [[ "${khdr[$1]:-}" == ok ]]; then
-            printf 'Заголовки стоят, но модуль не собрался (причина в строках выше): запустите repair-module снова'
+            printf 'Заголовки стоят, но модуля нет (причина в строках выше): запустите repair-module снова'
         else
             printf 'Поставьте linux-headers-%s и запустите repair-module снова' "$1"
         fi
@@ -2086,7 +2086,7 @@ _kmod_repair_via_helper() {
         done
         for rel in "${unk[@]}"; do log_warn "Модуль ядра $rel проверить не удалось (каталог модулей не читается)."; done
         [[ "$_KS_FIX" == disabled ]] && log "Правка исходника отключена вручную (--revert); включить снова: sudo $AWG_ENSURE_HELPER --enable"
-        if [[ "$mrc" -eq 0 && ( "$_KS_AUDIT" == unfinished || ( -n "$frc" && "$frc" -ne 0 ) ) ]]; then
+        if [[ "$mrc" -eq 0 && "$_KS_AUDIT" == unfinished ]]; then
             log_warn "Работающий туннель не значит, что apt починен: пакеты не донастроены."
         fi
         if [[ "$pend_mod" -eq 1 ]]; then

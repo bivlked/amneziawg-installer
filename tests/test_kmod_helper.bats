@@ -119,7 +119,7 @@ esac
 echo "dpkg $*" >> "$T/calls"
 case "$1" in
   --audit) [[ -e "$T/audit.fail" ]] && exit 2; cat "$T/audit" 2>/dev/null; exit 0 ;;
-  --configure) [[ -e "$T/configure.fail" ]] && exit 1; [[ -e "$T/configure.side" ]] && bash "$T/configure.side"; rm -f "$T/audit"; for f in "$T"/st/linux-image-*; do [[ -e "$f" ]] && echo "install ok installed" > "$f"; done; exit 0 ;;
+  --configure) [[ -e "$T/configure.fail" ]] && exit 1; if [[ -e "$T/configure.side" ]]; then bash "$T/configure.side" || { echo "configure.side failed" >&2; exit 97; }; fi; rm -f "$T/audit"; for f in "$T"/st/linux-image-*; do [[ -e "$f" ]] && echo "install ok installed" > "$f"; done; exit 0 ;;
 esac'
     _stub dkms 'echo "dkms $*" >> "$T/calls"
 [[ "$1" == install ]] || exit 0
@@ -694,9 +694,45 @@ EOF
         echo ": > \"$T/dkms.fail.$NEW\"" >> "$T/configure.side"
         run "$H" --finish
         [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
-        [[ "$output" == *"building the module again after dpkg failed"* ]]
+        [[ "$output" == *"the module did not build again for: $NEW;"* ]] || { echo "$s: $output"; return 1; }
         [ ! -e "$(_ko "$NEW")" ]
     done
+}
+
+# The installer's fallback (T1) runs --finish after a --repair that exited 1:
+# the running kernel has its module, another kernel never built (old headers
+# after an in-place upgrade). That kernel is not --finish's business: only a
+# module that configuring took away is built again.
+@test "finish: a kernel that never built does not fail it; only modules lost to configure are rebuilt" {
+    local k3=6.8.0-31-generic n
+    _mk_server "$OLD" "$NEW" "$k3"
+    : > "$T/dkms.fail.$k3"
+    run "$H" --repair
+    [ "$status" -eq 1 ] || { echo "$output"; return 1; }
+    [ ! -e "$(_ko "$k3")" ]; [ -s "$(_ko "$NEW")" ]
+    echo "amneziawg-dkms is only half configured" > "$T/audit"
+    _configure_drops_others
+    n=$(grep -c "^dkms install -m amneziawg -v 1.0.0 -k $k3\$" "$T/calls")
+    run "$H" --finish
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [ -s "$(_ko "$NEW")" ]; [ ! -e "$(_ko "$k3")" ]
+    [[ "$output" == *"removed the module of: $NEW;"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"packages: configured"* ]]
+    # The never-built kernel is tried again by the child pass (it builds every
+    # kernel without a module), but its failure does not fail --finish.
+    [ "$(grep -c "^dkms install -m amneziawg -v 1.0.0 -k $k3\$" "$T/calls")" -eq $((n + 1)) ]
+}
+
+@test "finish: the running kernel's module lost to configure and not rebuilt (child exit 2) fails it by name" {
+    _mk_server "$OLD" "$NEW"
+    "$H" --repair >/dev/null 2>&1
+    echo "amneziawg-dkms is only half configured" > "$T/audit"
+    printf 'rm -f "%s" "%s"\n: > "%s"\n' "$(_ko "$OLD")" "$(_ko "$NEW")" "$T/dkms.fail.$OLD" > "$T/configure.side"
+    run "$H" --finish
+    [ "$status" -eq 1 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"build pass exited with code 2"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"the module did not build again for: $OLD;"* ]] || { echo "$output"; return 1; }
+    [ -s "$(_ko "$NEW")" ]; [ ! -e "$(_ko "$OLD")" ]
 }
 
 @test "finish: configure that keeps every module builds nothing more" {
