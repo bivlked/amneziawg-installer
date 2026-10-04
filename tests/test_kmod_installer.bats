@@ -425,14 +425,14 @@ _deploy_driver() {
     grep -q '^AWG_ENSURE_HELPER_EOF$' "$T/deploy.sh" || { echo "helper heredoc not cut"; return 1; }
 }
 # cat stub. CAT_MODE=fail writes ALL of its input and then fails, so only the
-# exit-code check can catch it; short writes the first 4096 bytes and succeeds
-# (caught by the last-line check); corrupt writes all of it with one line in the
+# exit-code check can catch it; short drops exactly the last line and succeeds
+# (the rest still parses, so only the last-line check can catch it); corrupt writes all of it with one line in the
 # middle broken and succeeds, so the last line is intact and only bash -n can
 # catch it.
 _cat_stub() {
     _stub cat 'case "${CAT_MODE:-}" in
   fail)    /bin/cat; exit 1 ;;
-  short)   head -c 4096; /bin/cat >/dev/null; exit 0 ;;
+  short)   sed "\$d"; exit 0 ;;
   corrupt) awk "NR==600{print \"if then\"; next} {print}"; exit 0 ;;
   *)       exec /bin/cat "$@" ;;
 esac'
