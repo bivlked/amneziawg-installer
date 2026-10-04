@@ -748,6 +748,27 @@ EOF
     [[ "$output" == *"build pass after them failed (exit 1)"* ]] || { echo "$output"; return 1; }
 }
 
+# A kernel that still has no module excuses the pass's exit 1 only for
+# itself: a depmod failure of a kernel that lost its module is still caught.
+@test "finish: a never-built kernel does not hide a depmod failure of a lost one, on both helpers" {
+    local s k3=6.8.0-31-generic
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        rm -rf "${T:?}/usr" "${T:?}/var" "${T:?}/lib" "${T:?}/boot"/* "${T:?}/own" "${T:?}/st" "${T:?}/calls" "${T:?}/depmod.fail"; mkdir -p "$T/boot"
+        _mk_helper "$s"
+        _mk_server "$OLD" "$NEW" "$k3"
+        : > "$T/dkms.fail.$k3"
+        "$H" --repair >/dev/null 2>&1 || true
+        echo "amneziawg-dkms is only half configured" > "$T/audit"
+        _configure_drops_others
+        echo ": > \"$T/depmod.fail\"" >> "$T/configure.side"
+        run "$H" --finish
+        [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
+        [ -s "$(_ko "$NEW")" ]; [ ! -e "$(_ko "$k3")" ]
+        [[ "$output" == *"ERROR: packages are configured, but depmod -a $NEW failed after the rebuild"* ]] || { echo "$s: $output"; return 1; }
+    done
+    rm -f "$T/dkms.fail.$k3"
+}
+
 # Exit 1 with every kernel built before configuring is a real failure of the
 # pass after it (here depmod), not the T1 case: modules on disk are not enough.
 @test "finish: exit 1 of the pass after configuring with no never-built kernel fails it, on both helpers" {

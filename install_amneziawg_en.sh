@@ -7430,6 +7430,15 @@ mode_finish() {
             log_line "ERROR: packages are configured, but the build pass after them failed (exit ${crc}); see the messages above and run the repair again" >&2
             exit 1
         fi
+        # A kernel that still has no module excuses exit 1 only for itself: the
+        # module index of every kernel that lost the module is refreshed here
+        # (idempotent), so a depmod failure there is not hidden behind it.
+        for k in "${lost[@]}"; do
+            if ! depmod -a "$k"; then
+                log_line "ERROR: packages are configured, but depmod -a ${k} failed after the rebuild; see the messages above and run the repair again" >&2
+                exit 1
+            fi
+        done
         [[ "$crc" -eq 0 ]] || log_line "WARN: the build pass after configuring exited with code ${crc} (still no module: ${nofix[*]}); the kernels that lost the module have it again" >&2
     fi
     if [[ "$pending_n" -gt 0 ]]; then
