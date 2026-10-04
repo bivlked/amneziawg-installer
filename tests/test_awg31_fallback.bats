@@ -129,7 +129,7 @@ _s0() {
         grep -E '^PROTOCOL_DEFAULT=' "$s"
         grep -E '^AWG31_FALLBACK_(PRE|POST)_CODES=' "$s"
         echo 'awg31_environment_blocker() { echo "$1" >> "$GATE_LOG"; printf "%s" "${BLOCKER_CODE-}"; return ${GATE_RC:-0}; }'
-        for fn in awg_installed_protocol _awg_install_state _awg31_host_arch _awg31_blocker_message _awg31_code_in _awg31_fallback_reason _awg31_announce_fallback _awg31_resolve_protocol _awg_gen_switch_rewind; do
+        for fn in awg_installed_protocol _awg_install_state _awg31_host_arch _awg31_blocker_message _awg31_code_in _awg31_fallback_reason _awg31_announce_fallback _awg31_existing_refusal _awg31_resolve_protocol _awg_gen_switch_rewind; do
             func_from "$s" "$fn"
         done
         echo 'step0_slice() {'
@@ -217,6 +217,7 @@ _begun() {
         # for an existing install by the resolver itself
         [[ "$output" == *"DIE:"*"--uninstall"* ]] || { echo "$s: no removal path: $output"; return 1; }
         [[ "$output" != *"Выход: поставьте с --protocol=2.0"* && "$output" != *"Way out: install with --protocol=2.0"* ]] || { echo "$s: contradictory advice: $output"; return 1; }
+        [[ "$output" == *"uname -r"* ]] || { echo "$s: no kernel repair hint: $output"; return 1; }
         [ "$(cat "$STATE_FILE")" = 7 ]
     done
 }
@@ -360,7 +361,7 @@ _s3() {
         echo 'SCRIPT_VERSION="0.0.0-test"'
         echo 'AWG31_POST_OK=0'
         grep -E '^AWG31_FALLBACK_(PRE|POST)_CODES=' "$s"
-        for fn in _awg31_host_arch _awg31_blocker_message _awg31_code_in _awg31_fallback_reason _awg31_announce_fallback _awg31_post_fallback_allowed _awg31_post_fallback _awg31_step3_gate step3_check_module; do
+        for fn in _awg31_host_arch _awg31_blocker_message _awg31_code_in _awg31_fallback_reason _awg31_announce_fallback _awg31_post_fallback_allowed _awg31_post_fallback _awg31_existing_refusal _awg20_candidate_stale_die _awg31_step3_gate step3_check_module; do
             func_from "$s" "$fn"
         done
         echo 'awg31_environment_blocker() { echo "$1" >> "$GATE_LOG"; printf "%s" "${BLOCKER_CODE-}"; return ${GATE_RC:-0}; }'
@@ -449,7 +450,32 @@ _s3() {
         [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
         [[ "$output" == *"DIE:"*"--uninstall"* ]] || { echo "$s: $output"; return 1; }
         [[ "$output" != *"Либо поставьте"* && "$output" != *"Or install with"* ]] || { echo "$s: contradictory advice: $output"; return 1; }
+        # the repair that leaves the install alone comes first
+        [[ "$output" == *"amneziawg-dkms"* ]] || { echo "$s: no repair hint: $output"; return 1; }
         ! grep -q '^SAVE' "$EVLOG"
+    done
+}
+
+@test "step 3: an internal gate error on an existing install is not a reason to remove it" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=1 BLOCKER_CODE="internal_error" _s3 "$s"
+        [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"DIE:"* && "$output" != *"--uninstall"* ]] || { echo "$s: advises a removal for our own defect: $output"; return 1; }
+        [[ "$output" == *"--verbose"* ]] || { echo "$s: $output"; return 1; }
+    done
+}
+
+@test "step 3: a candidate that was not checked because of a left probe interface is not blamed on the module" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_line2" PROBE_RC=2 _s3 "$s"
+        [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"DIE:"*"awgp"* ]] || { echo "$s: $output"; return 1; }
+        [[ "$output" != *"не принял"* && "$output" != *"refused the 2.0"* ]] || { echo "$s: blamed on the module: $output"; return 1; }
+        ! grep -q '^SAVE' "$EVLOG"
+        AWG_PROTOCOL=2.0 AWG_PROTOCOL_FALLBACK=kernel AWG_INSTALL_STATE_AT_START=0 PROBE_RC=2 _s3 "$s"
+        [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"*"awgp"* ]] || { echo "$s saved set: $output"; return 1; }
     done
 }
 
@@ -468,7 +494,7 @@ _s3() {
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 NOW_STATE=1 BLOCKER_CODE="module_line2" _s3 "$s"
         [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"* ]] || { echo "$s: $output"; return 1; }
-        grep -qx 'STATECHK 1' "$EVLOG" || { echo "$s: the trace was not rechecked: $(cat "$EVLOG")"; return 1; }
+        grep -q '^STATECHK' "$EVLOG" || { echo "$s: the trace was not rechecked: $(cat "$EVLOG")"; return 1; }
         ! grep -q '^GEN' "$EVLOG"
     done
 }
@@ -680,9 +706,9 @@ _cand() {
             echo awgp\$\$x1 > \"$TEST_DIR/awg31probe.\$\$.iface\"
             AWG_Jc=3 AWG_Jmin=57 AWG_Jmax=128 AWG_S1=47 AWG_S2=57 AWG_S3=22 AWG_S4=20
             AWG_H1=1-2 AWG_H2=3-4 AWG_H3=5-6 AWG_H4=7-8 AWG_I1=''
-            if awg20_candidate_support; then echo VERDICT=ok; else echo VERDICT=failed; fi
+            awg20_candidate_support; echo \"VERDICT=failed RC=\$?\"
             [ -e \"$TEST_DIR/awg31probe.\$\$.iface\" ] && echo RECORD_KEPT"
-        [[ "$output" == *"VERDICT=failed"* && "$output" == *RECORD_KEPT* ]] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"VERDICT=failed RC=2"* && "$output" == *RECORD_KEPT* ]] || { echo "$s: $output"; return 1; }
         [ ! -e "$TEST_DIR/set.args" ] || { echo "$s: a set was sent despite the left record"; return 1; }
     done
 }

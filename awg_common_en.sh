@@ -1720,9 +1720,10 @@ _awg31_module_probe() (
     # that record. With the fallback the probe runs twice per process (line31,
     # then candidate20), and the second would overwrite the first record: the
     # interface would be left with no trace.
-    if [[ -e "$rec" || -L "$rec" ]]; then
+    # A regular file only: anything else on this path (a directory, a link) is caught by the write refusal below.
+    if [[ -f "$rec" && ! -L "$rec" ]]; then
         rm -f "$kf" 2>/dev/null
-        _probe_say "a record of an earlier probe of this run is left ($rec): its interface was not removed, not starting a new probe"; printf 'failed'; exit 0
+        _probe_say "a record of an earlier probe of this run is left ($rec): its interface was not removed, not starting a new probe"; printf 'stale'; exit 0
     fi
     # The cleanup has to survive both an ordinary exit and a signal: the machine
     # must not keep an interface of ours after the probe.
@@ -1911,8 +1912,9 @@ _awg31_module_probe() (
         if [[ -n "$miss" ]]; then
             # What came back instead (H and I1 carry no secret): the comparison
             # is exact, and another module build may answer in another form.
+            _probe_say "  lines in the answer: ${#got[@]}"
             for line in "${!got[@]}"; do
-                [[ "$line" == H[1-4]\ =* || "$line" == I1\ =* ]] && _probe_say "  came back: $line"
+                [[ "${line,,}" =~ ^(jc|jmin|jmax|s[1-4]|h[1-4]|i[1-5])[[:space:]]*= ]] && _probe_say "  came back: $line"
             done
             _probe_say "the 2.0 set came back with different values:${miss}"
             printf 'failed'

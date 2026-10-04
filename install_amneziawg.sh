@@ -891,11 +891,24 @@ awg31_module_support() {
 }
 
 # awg20_candidate_support : применяется ли текущий набор 2.0 (AWG_Jc..AWG_I1)
-# к временному интерфейсу и читается ли обратно без расхождений. 0 - да.
+# к временному интерфейсу и читается ли обратно без расхождений. 0 - да; 2 - не
+# проверялся вовсе: не убран временный интерфейс прошлой пробы этого запуска
+# (модуль тут ни при чём); 1 - модуль не принял набор или вернул другое.
 awg20_candidate_support() {
     local verdict=""
     verdict=$(_awg31_module_probe candidate20)
-    [[ "$verdict" == ok ]]
+    case "$verdict" in
+        ok)    return 0 ;;
+        stale) return 2 ;;
+        *)     return 1 ;;
+    esac
+}
+
+# _awg20_candidate_stale_die : отказ, когда набор 2.0 не проверялся из-за
+# неубранного интерфейса прошлой пробы. Повторный запуск - новый процесс со
+# своей записью, поэтому совет простой.
+_awg20_candidate_stale_die() {
+    die "Набор параметров 2.0 не проверен: не убран временный интерфейс прошлой проверки этого запуска (awgp$$x*), и установщик не стал пробовать поверх. Модуль тут ни при чём. Посмотрите: ip link show type amneziawg; лишний awgp-интерфейс можно убрать (ip link del <имя>). Затем запустите установщик снова."
 }
 
 # _awg31_module_probe : печатает ok | line2 | failed. Тело идёт в подоболочке
@@ -955,9 +968,10 @@ _awg31_module_probe() (
     # убран (удаление не прошло), и уборка установщика ищет его по этой записи.
     # С автооткатом проба зовётся дважды за процесс (line31, затем candidate20),
     # и вторая затёрла бы запись первой: интерфейс остался бы без следа.
-    if [[ -e "$rec" || -L "$rec" ]]; then
+    # Только обычный файл: всё прочее на этом пути (каталог, ссылка) ловит отказ записи ниже.
+    if [[ -f "$rec" && ! -L "$rec" ]]; then
         rm -f "$kf" 2>/dev/null
-        _probe_say "осталась запись прошлой пробы этого запуска ($rec): её интерфейс не убран, новую пробу не начинаю"; printf 'failed'; exit 0
+        _probe_say "осталась запись прошлой пробы этого запуска ($rec): её интерфейс не убран, новую пробу не начинаю"; printf 'stale'; exit 0
     fi
     # Уборка обязана пережить и обычный выход, и сигнал: без интерфейса на
     # машине не должно остаться следа пробы.
@@ -1139,8 +1153,9 @@ _awg31_module_probe() (
         if [[ -n "$miss" ]]; then
             # Что вернулось вместо них (секретов в H и I1 нет): сверка точная,
             # и на другой сборке модуля форма ответа может отличаться.
+            _probe_say "  строк в ответе: ${#got[@]}"
             for line in "${!got[@]}"; do
-                [[ "$line" == H[1-4]\ =* || "$line" == I1\ =* ]] && _probe_say "  вернулось: $line"
+                [[ "${line,,}" =~ ^(jc|jmin|jmax|s[1-4]|h[1-4]|i[1-5])[[:space:]]*= ]] && _probe_say "  вернулось: $line"
             done
             _probe_say "набор 2.0 вернулся не теми значениями:${miss}"
             printf 'failed'
@@ -1520,7 +1535,7 @@ _awg31_post_fallback_allowed() {
     _awg31_code_in "$code" "$AWG31_FALLBACK_PRE_CODES $AWG31_FALLBACK_POST_CODES" || return 1
     [[ "${AWG_PROTOCOL_SOURCE:-}" == "default" ]] || return 1
     [[ "${AWG_INSTALL_STATE_AT_START:-}" == 0 || "${AWG_INSTALL_STATE_AT_START:-}" == 2 ]] || return 1
-    now=$(_awg_install_state 1) || return 1
+    now=$(_awg_install_state "$([[ -f "$CONFIG_FILE" ]] && echo 1 || echo 0)") || return 1
     [[ "$now" == 2 ]]
 }
 
@@ -1537,7 +1552,10 @@ _awg31_post_fallback() {
     AWG_PROTOCOL="2.0"
     _awg_fallback_params
     if [[ "${NO_CPS:-0}" -eq 1 ]]; then AWG_I1=''; fi
-    if ! awg20_candidate_support; then
+    local _crc=0
+    awg20_candidate_support || _crc=$?
+    (( _crc == 2 )) && _awg20_candidate_stale_die
+    if (( _crc != 0 )); then
         die "Профиль AmneziaWG 3.1 здесь не поднять ($(_awg31_fallback_reason "$code"), код причины: ${code}), а набор параметров 2.0 модуль не принял или вернул не теми значениями. Рабочего 2.0 на этой машине установщик не видит, поэтому дальше не идёт; init не изменён. Запустите с --verbose, чтобы увидеть, на чём остановилась проба, и проверьте модуль: modprobe amneziawg; dkms status."
     fi
     AWG_PROTOCOL_FALLBACK="$code"
@@ -1545,6 +1563,28 @@ _awg31_post_fallback() {
     _awg_save_init
     _awg31_announce_fallback "$code"
     log "Автооткат на 2.0 на шаге 3: параметры перегенерированы, init перезаписан."
+}
+
+# _awg31_existing_refusal <код> : текст отказа для СУЩЕСТВУЮЩЕЙ установки 3.1
+# (профили могли быть выданы), которая сейчас не проходит гейт. Сначала причина и
+# лечение, которое не трогает установку; удаление - только последний выход.
+# Совет «--protocol=2.0» здесь неуместен: резолвер его отвергнет, а внутренняя
+# ошибка установщика - не вердикт о машине и не повод сносить сервер.
+_awg31_existing_refusal() {
+    local code="${1-}" fix=""
+    if ! _awg31_code_in "$code" "$AWG31_FALLBACK_PRE_CODES $AWG31_FALLBACK_POST_CODES"; then
+        printf '%s' "Гейт окружения 3.1 вернул код '${code:-нет}', которого эта версия не ожидает: это внутренняя ошибка установщика, а не вывод о вашей машине. Установку не удаляйте и поколение не меняйте; запустите с --verbose и сообщите об ошибке, приложив вывод."
+        return 0
+    fi
+    case "$code" in
+        kernel)              fix="Загрузите ядро 6.7 или новее (оно могло смениться при перезагрузке: uname -r) и запустите установщик снова." ;;
+        tools_old)           fix="Обновите инструменты: apt-get update && apt-get install --only-upgrade amneziawg-tools, затем запустите установщик снова." ;;
+        module_line2)        fix="Обновите модуль: apt-get update && apt-get install --only-upgrade amneziawg-dkms, перезагрузитесь и запустите установщик снова." ;;
+        module_probe_failed) fix="Проверка могла сорваться по временной причине: запустите установщик снова с --verbose, в журнале будет, на чём она остановилась." ;;
+        arch_unknown)        fix="Проверьте, что отвечают dpkg --print-architecture и uname -m, и запустите установщик снова." ;;
+        *)                   fix="" ;;
+    esac
+    printf '%s' "Профиль AmneziaWG 3.1 этой установки сейчас не проходит проверку окружения: $(_awg31_fallback_reason "$code") (код причины: ${code}).${fix:+ ${fix}} Поколение установки при этом не меняется: она могла уже выдать профили 3.1. Если починить нельзя, путь на 2.0 - удаление (sudo bash $0 --uninstall) и новая установка с --protocol=2.0."
 }
 
 # _awg_install_state <config_exists> : в каком состоянии установка, для решения,
@@ -1810,7 +1850,7 @@ _awg31_resolve_protocol() {
         if [[ -n "$_awg31_blocker" ]]; then
             log "Гейт окружения 3.1 (pre): код причины '${_awg31_blocker}', код возврата ${_awg31_rc}."
             if [[ "$install_state" -eq 1 ]]; then
-                die "Профиль AmneziaWG 3.1 здесь больше не поднять: $(_awg31_fallback_reason "$_awg31_blocker") (код причины: ${_awg31_blocker}).${_pre_tail}"
+                die "$(_awg31_existing_refusal "$_awg31_blocker")"
             fi
             die "$(_awg31_blocker_message "$_awg31_blocker")"
         fi
@@ -1831,7 +1871,7 @@ _awg31_resolve_protocol() {
     # вопроса и без паузы (решение владельца 27 sep): у кого роутер или старый
     # клиент, тот успевает прервать до изменений системы.
     if [[ "$install_state" -eq 0 && "$AWG_PROTOCOL" == "3.1" && "${AWG_PROTOCOL_SOURCE:-}" == "default" ]]; then
-        log_warn "Поколение по умолчанию - AmneziaWG 3.1 (если инструменты или модуль его не потянут, будет поставлена 2.0, об этом будет сказано). Если среди клиентов роутер без поддержки 3.1 в прошивке (стоковый Keenetic, OpenWrt со старым пакетом amneziawg), Hiddify или необновлённые приложения - прервите сейчас (Ctrl+C) и запустите с --protocol=2.0."
+        log_warn "Поколение по умолчанию - AmneziaWG 3.1 (если инструменты или модуль его не потянут, установщик поставит 2.0 или остановится и объяснит почему). Если среди клиентов роутер без поддержки 3.1 в прошивке (стоковый Keenetic, OpenWrt со старым пакетом amneziawg), Hiddify или необновлённые приложения - прервите сейчас (Ctrl+C) и запустите с --protocol=2.0."
     fi
 
     if (( AWG_GEN_SWITCHED )); then
@@ -7909,7 +7949,7 @@ _awg31_step3_gate() {
     # Существующая - если такой была на шаге 0 ИЛИ след шага 6 есть сейчас: для
     # неё --protocol=2.0 резолвер отвергнет, и совет обязан вести к удалению.
     local _tail="" _now=""
-    _now=$(_awg_install_state 1 2>/dev/null) || _now=1
+    _now=$(_awg_install_state "$([[ -f "$CONFIG_FILE" ]] && echo 1 || echo 0)" 2>/dev/null) || _now=1
     if [[ "${AWG_INSTALL_STATE_AT_START:-}" == 0 || "${AWG_INSTALL_STATE_AT_START:-}" == 2 ]] && [[ "$_now" == 2 ]]; then
         _tail=" Ключи сервера и профили ещё не созданы, поэтому перейти на 2.0 можно без удаления: sudo bash $0 --protocol=2.0"
         if [[ -n "$_awg31_blocker" ]]; then
@@ -7918,7 +7958,7 @@ _awg31_step3_gate() {
     else
         _tail=" Установка могла уже выдать профили 3.1 (или установщик не может это исключить), поэтому поколение здесь не меняется: путь на 2.0 - удаление (sudo bash $0 --uninstall) и новая установка с --protocol=2.0."
         if [[ -n "$_awg31_blocker" ]]; then
-            die "Профиль AmneziaWG 3.1 здесь больше не поднять: $(_awg31_fallback_reason "$_awg31_blocker") (код причины: ${_awg31_blocker}).${_tail}"
+            die "$(_awg31_existing_refusal "$_awg31_blocker")"
         fi
     fi
     # Тот же fail-closed, что и на шаге 0: молчание сорвавшегося гейта не
@@ -7990,10 +8030,14 @@ step3_check_module() {
         # сохранил набор 2.0, а модуль и инструменты могли смениться. Тот же набор (без перегенерации) проверяется
         # на временном интерфейсе ДО шага 6: иначе непринятые H-диапазоны или
         # I1 всплыли бы только на старте сервиса, когда ключи сервера уже
-        # закрепили поколение. Вето по состоянию тут НЕ действует: оно
+        # закрепили поколение. Явный --protocol=2.0 стирает причину, и тогда
+        # проверки нет - как у любой явно выбранной 2.0. Вето по состоянию тут НЕ действует: оно
         # запрещает понижение, а не проверку, и установка, которую шаг 0
         # счёл существующей (например, из-за сбоя ip), тоже проверяется.
-        if ! awg20_candidate_support; then
+        local _crc=0
+        awg20_candidate_support || _crc=$?
+        (( _crc == 2 )) && _awg20_candidate_stale_die
+        if (( _crc != 0 )); then
             die "Установка автоматически перешла на AmneziaWG 2.0 ($(_awg31_fallback_reason "$AWG_PROTOCOL_FALLBACK")), но набор параметров 2.0 модуль не принял или вернул не теми значениями. Установка остановлена до шага 4. Запустите с --verbose, чтобы увидеть, на чём остановилась проба, и проверьте модуль: modprobe amneziawg; dkms status."
         fi
         log "Набор параметров 2.0 (автооткат: ${AWG_PROTOCOL_FALLBACK}) проверен на временном интерфейсе."
@@ -8391,8 +8435,8 @@ step99_finish() {
     log " "
     if [[ "${AWG_PROTOCOL:-2.0}" == "3.1" ]]; then
         log "ВАЖНО: профили третьей линии (3.1). Нужен клиент с поддержкой AmneziaWG 3.1"
-        log "       (свежие AmneziaVPN, AmneziaWG, WG Tunnel; список - ADVANCED.md,"
-        log "       раздел «Какое поколение AmneziaWG понимает клиент»)."
+        log "       (свежие AmneziaVPN, AmneziaWG, WG Tunnel; список - раздел «Какое поколение"
+        log "       AmneziaWG понимает клиент»: https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.md)."
         log "       Роутерам без поддержки 3.1 в прошивке и Hiddify нужен сервер 2.0."
     else
         log "ВАЖНО: Для подключения используйте клиент Amnezia VPN >= 4.8.12.7"
