@@ -1573,8 +1573,16 @@ _awg31_announce_fallback() {
 # S3/S4, H and CPA do, and the generator recomputes them with the whole set.
 # The assignments are temporary: after the call CLI_* are back, and the
 # --no-cps logic below does not mistake them for an explicit flag.
+# 🔴 An explicit preset of THIS run (--preset, --mobile) sets J anew: the saved
+# J would carry the previous preset and override the new one (Jc=6 instead of 3
+# for mobile). Then only the explicit --jc/--jmin/--jmax of this run carry over.
+# Found by Codex.
 _awg_fallback_params() {
-    CLI_PRESET="${CLI_PRESET:-${AWG_PRESET:-default}}" \
+    if [[ -n "${CLI_PRESET:-}" ]]; then
+        generate_awg_params
+        return
+    fi
+    CLI_PRESET="${AWG_PRESET:-default}" \
     CLI_JC="${CLI_JC:-${AWG_Jc:-}}" \
     CLI_JMIN="${CLI_JMIN:-${AWG_Jmin:-}}" \
     CLI_JMAX="${CLI_JMAX:-${AWG_Jmax:-}}" \
@@ -1730,6 +1738,11 @@ _awg_gen_switch_rewind() {
         why="Fallback to 2.0"
     elif [[ "${AWG_INSTALL_STATE_AT_START:-}" == 2 && "${AWG_PROTOCOL:-}" == "3.1" ]]; then
         why="Resuming a 3.1 install"
+    elif [[ "${AWG_INSTALL_STATE_AT_START:-}" == 2 && -n "${AWG_PROTOCOL_FALLBACK:-}" ]]; then
+        # The fallback 2.0 set is probed at step 3; a resume after it (other
+        # tools or module, regeneration by configuration flags) would otherwise
+        # reach the step 6 keys unchecked. Found by Codex.
+        why="Resuming an install after the fallback to 2.0"
     else
         return 0
     fi

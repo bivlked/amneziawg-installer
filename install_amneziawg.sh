@@ -1516,8 +1516,15 @@ _awg31_announce_fallback() {
 # приоритетнее. От поколения J не зависят, зависят S3/S4, H и CPA - их и
 # пересчитывает генератор вместе со всем набором. Присваивания временные: после
 # вызова CLI_* прежние, и логика --no-cps ниже не принимает их за явный флаг.
+# 🔴 Явный пресет ЭТОГО запуска (--preset, --mobile) задаёт J заново: сохранённые
+# J несли бы прежний пресет и перебили бы новый (Jc=6 вместо 3 у mobile). Тогда
+# переносятся только явные --jc/--jmin/--jmax этого запуска. Найдено Codex.
 _awg_fallback_params() {
-    CLI_PRESET="${CLI_PRESET:-${AWG_PRESET:-default}}" \
+    if [[ -n "${CLI_PRESET:-}" ]]; then
+        generate_awg_params
+        return
+    fi
+    CLI_PRESET="${AWG_PRESET:-default}" \
     CLI_JC="${CLI_JC:-${AWG_Jc:-}}" \
     CLI_JMIN="${CLI_JMIN:-${AWG_Jmin:-}}" \
     CLI_JMAX="${CLI_JMAX:-${AWG_Jmax:-}}" \
@@ -1672,6 +1679,11 @@ _awg_gen_switch_rewind() {
         why="Автооткат на 2.0"
     elif [[ "${AWG_INSTALL_STATE_AT_START:-}" == 2 && "${AWG_PROTOCOL:-}" == "3.1" ]]; then
         why="Возобновление установки 3.1"
+    elif [[ "${AWG_INSTALL_STATE_AT_START:-}" == 2 && -n "${AWG_PROTOCOL_FALLBACK:-}" ]]; then
+        # Набор 2.0 автоотката проверяется на шаге 3; возобновление после него
+        # (другие инструменты или модуль, перегенерация по флагам настройки)
+        # иначе дошло бы до ключей шага 6 без проверки. Найдено Codex.
+        why="Возобновление установки после автоотката на 2.0"
     else
         return 0
     fi

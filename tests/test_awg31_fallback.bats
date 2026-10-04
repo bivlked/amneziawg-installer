@@ -102,6 +102,25 @@ _gen() {
     [ "$n" -eq 2 ]
 }
 
+@test "fallback params: an explicit preset of the current run sets J anew instead of the saved values, both twins" {
+    local pair s lib n=0
+    for pair in "$INSTALL_RU $COMMON_RU" "$INSTALL_EN $COMMON_EN"; do
+        read -r s lib <<< "$pair"
+        _gen "$s" "$lib"
+        run bash -c "source '$TEST_DIR/gen.sh'
+            AWG_PROTOCOL=2.0 AWG_Jc=6 AWG_Jmin=89 AWG_Jmax=339 AWG_PRESET=default
+            CLI_JC='' CLI_JMIN='' CLI_JMAX='' CLI_PRESET=mobile
+            _awg_fallback_params
+            echo \"J=\$AWG_Jc/\$AWG_Jmin/\$AWG_Jmax P=\$AWG_PRESET\""
+        [ "$status" -eq 0 ] || { echo "$s: $output"; return 1; }
+        # mobile fixes Jc=3 and Jmin 30..50: the saved 6/89 must not survive
+        [[ "$output" == *"J=3/"* && "$output" == *"P=mobile"* ]] || { echo "$s: saved J overrode the new preset: $output"; return 1; }
+        [[ "$output" != *"/89/"* ]] || { echo "$s: saved Jmin kept: $output"; return 1; }
+        n=$((n + 1))
+    done
+    [ "$n" -eq 2 ]
+}
+
 @test "fallback params: an explicit flag of the current run wins over the saved value, both twins" {
     local pair s lib
     for pair in "$INSTALL_RU $COMMON_RU" "$INSTALL_EN $COMMON_EN"; do
@@ -332,7 +351,8 @@ echo \"POST=\$AWG31_POST_OK AUTO=\$AWG_AUTO_FALLBACK AT=[\$AWG_INSTALL_STATE_AT_
         _begun 2.0 4 default module_line2
         CLI_PROTOCOL="" CLI_PROTOCOL_SET=0 BLOCKER_CODE="" _s0 "$s"
         [ "$status" -eq 0 ] || { echo "$s: $output"; return 1; }
-        [[ "$output" == *"PROTO=2.0 SRC=default FB=module_line2 AUTO=0 AT=2 STATE=4"* ]] || { echo "$s: $output"; return 1; }
+        # resumed after step 3: back to step 3, where the saved 2.0 set is probed
+        [[ "$output" == *"PROTO=2.0 SRC=default FB=module_line2 AUTO=0 AT=2 STATE=3"* ]] || { echo "$s: $output"; return 1; }
     done
 }
 
