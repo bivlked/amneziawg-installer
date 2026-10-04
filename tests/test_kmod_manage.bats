@@ -191,6 +191,18 @@ _scr() { if [[ "$1" == EN ]]; then SCR="$M_EN"; else SCR="$M"; fi; }
     done
 }
 
+@test "success rule: a failed --finish with unfinished packages still says apt is not fixed" {
+    local l
+    echo 1 > "$T/helper.rc.--finish"
+    AUDIT=unfinished _status > "$T/helper.out.--status.2"
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l: $output"; return 1; }
+        _j '.ok==false and .finish_rc==1 and .packages=="unfinished"' || { echo "$l: $output"; return 1; }
+        [[ "$stderr" == *"apt починен"* || "$stderr" == *"apt is fixed"* ]] || { echo "$l: $stderr"; return 1; }
+    done
+}
+
 @test "success rule: unfinished packages after a clean --finish still fail" {
     local l
     AUDIT=unfinished _status > "$T/helper.out.--status.2"
@@ -432,6 +444,18 @@ _diag() { run bash "${SCR:-$M}" diagnose "${ARGS[@]}"; }
         [[ "$output" == *"WARN"*"$OLDK"*"linux-headers-$OLDK"* ]] || { echo "$l: $output"; return 1; }
         [[ "$output" == *"WARN"*"dpkg --audit"* ]] || { echo "$l: $output"; return 1; }
         if grep -E 'FAIL.*'"$OLDK" <<<"$output"; then echo "$l"; return 1; fi
+    done
+}
+
+@test "diagnose: a kernel with headers but no module is not told to install headers" {
+    local l
+    _status "kernel release=$OLDK running=0 image=1 module=0 headers=ok package=installed" \
+            "kernel release=7.0.0-39-generic running=0 image=1 module=0 headers=ok package=unfinished" > "$T/helper.out.--status"
+    for l in "${LANGS[@]}"; do
+        _scr "$l"; _diag
+        [[ "$output" == *"WARN"*"$OLDK"* && "$output" == *"WARN"*"7.0.0-39-generic"* ]] || { echo "$l: $output"; return 1; }
+        [ "$(grep -c 'Fix: .*repair-module' <<<"$output")" -ge 2 ] || { echo "$l: $output"; return 1; }
+        [[ "$output" != *"linux-headers-$OLDK"* && "$output" != *"linux-headers-7.0.0-39-generic"* ]] || { echo "$l: $output"; return 1; }
     done
 }
 

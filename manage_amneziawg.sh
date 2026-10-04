@@ -2180,9 +2180,12 @@ _diag_kmod_facts() {
     for k in "${_KS_KERNELS[@]}"; do
         [[ "$k" =~ release=([^ ]+)\ running=([01])\ image=[01]\ module=([^ ]+)\ headers=([^ ]+)\ package=([^ ]+) ]] || continue
         rel="${BASH_REMATCH[1]}" run="${BASH_REMATCH[2]}" mod="${BASH_REMATCH[3]}" hdr="${BASH_REMATCH[4]}" pkg="${BASH_REMATCH[5]}"
+        # Заголовки стоят - ставить их снова бесполезно.
+        local _dfix="sudo apt install linux-headers-$rel, затем sudo bash $0 repair-module (или удалите это ядро)"
+        [[ "$hdr" == ok ]] && _dfix="sudo bash $0 repair-module (заголовки стоят; если модуль снова не появится, причина будет в выводе) или удалите это ядро"
         if [[ "$mod" == 0 && "$pkg" == unfinished ]]; then
             _diag_line WARN "Недонастроенное ядро $rel без модуля AmneziaWG: донастройка сделала бы его загрузочным без туннеля"
-            echo "        Fix: sudo apt install linux-headers-$rel, затем sudo bash $0 repair-module (или удалите это ядро)"
+            echo "        Fix: $_dfix"
             warn=$((warn+1)); flagged=1
         elif [[ "$run" -eq 1 && "$mod" == 0 ]]; then
             # Загруженный модуль переживает удаление файла: проверка «модуль
@@ -2192,7 +2195,7 @@ _diag_kmod_facts() {
             warn=$((warn+1)); flagged=1
         elif [[ "$run" -eq 0 && "$mod" == 0 ]]; then
             _diag_line WARN "У ядра $rel нет модуля AmneziaWG: в него не загружайтесь"
-            echo "        Fix: sudo apt install linux-headers-$rel, затем sudo bash $0 repair-module (или удалите это ядро)"
+            echo "        Fix: $_dfix"
             warn=$((warn+1)); flagged=1
         elif [[ "$mod" == unknown ]]; then
             _diag_line WARN "Модуль ядра $rel проверить не удалось (каталог модулей не читается)"

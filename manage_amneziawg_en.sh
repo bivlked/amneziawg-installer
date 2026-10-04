@@ -2217,9 +2217,12 @@ _diag_kmod_facts() {
     for k in "${_KS_KERNELS[@]}"; do
         [[ "$k" =~ release=([^ ]+)\ running=([01])\ image=[01]\ module=([^ ]+)\ headers=([^ ]+)\ package=([^ ]+) ]] || continue
         rel="${BASH_REMATCH[1]}" run="${BASH_REMATCH[2]}" mod="${BASH_REMATCH[3]}" hdr="${BASH_REMATCH[4]}" pkg="${BASH_REMATCH[5]}"
+        # Headers installed: installing them again does not help.
+        local _dfix="sudo apt install linux-headers-$rel, then sudo bash $0 repair-module (or remove that kernel)"
+        [[ "$hdr" == ok ]] && _dfix="sudo bash $0 repair-module (headers are installed; if the module is still missing, the reason will be in its output) or remove that kernel"
         if [[ "$mod" == 0 && "$pkg" == unfinished ]]; then
             _diag_line WARN "Unfinished kernel $rel has no AmneziaWG module: configuring it would make it bootable without the tunnel"
-            echo "        Fix: sudo apt install linux-headers-$rel, then sudo bash $0 repair-module (or remove that kernel)"
+            echo "        Fix: $_dfix"
             warn=$((warn+1)); flagged=1
         elif [[ "$run" -eq 1 && "$mod" == 0 ]]; then
             # A loaded module outlives its file: the "module loaded" check
@@ -2229,7 +2232,7 @@ _diag_kmod_facts() {
             warn=$((warn+1)); flagged=1
         elif [[ "$run" -eq 0 && "$mod" == 0 ]]; then
             _diag_line WARN "Kernel $rel has no AmneziaWG module: do not boot into it"
-            echo "        Fix: sudo apt install linux-headers-$rel, then sudo bash $0 repair-module (or remove that kernel)"
+            echo "        Fix: $_dfix"
             warn=$((warn+1)); flagged=1
         elif [[ "$mod" == unknown ]]; then
             _diag_line WARN "The module of kernel $rel could not be checked (its module directory is not readable)"

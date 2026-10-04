@@ -209,6 +209,19 @@ _t1_driver() {
     done
 }
 
+@test "T1: configured packages whose lost module did not come back are said as such, not as a package failure" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _reset; _st amneziawg-dkms "install ok unpacked"; echo 1 > "$T/helper.rc.--finish"
+        echo "[ts] [--finish] ERROR: packages are configured, but the module did not build again for: 6.8.0-31-generic; see the messages above and run the repair again" > "$T/helper.out.--finish"
+        _t1_driver "$f" 1
+        run bash "$T/drv.sh" amneziawg-dkms
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"DIE: "*"6.8.0-31-generic"*"--repair-module"* ]] || { echo "$f: $output"; return 1; }
+        [[ "$output" != *"Ошибка установки пакетов"* && "$output" != *"Package installation error"* ]] || { echo "$f: $output"; return 1; }
+    done
+}
+
 @test "T1: the known issue of another kernel is not given as the reason when packages failed" {
     local f
     for f in "${INSTALLERS[@]}"; do

@@ -721,6 +721,28 @@ EOF
     # The never-built kernel is tried again by the child pass (it builds every
     # kernel without a module), but its failure does not fail --finish.
     [ "$(grep -c "^dkms install -m amneziawg -v 1.0.0 -k $k3\$" "$T/calls")" -eq $((n + 1)) ]
+    [[ "$output" == *"build pass after configuring exited with code 1"* ]] || { echo "$output"; return 1; }
+}
+
+# Exit 2 of the pass after configuring means it did not count its result:
+# the module files on disk prove nothing then. Here the package changes
+# under the build (the snapshot includes its dpkg status).
+@test "finish: a build pass that did not count its result (exit 2) fails it even with the modules back, on both helpers" {
+    local s
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        rm -rf "${T:?}/usr" "${T:?}/var" "${T:?}/lib" "${T:?}/boot"/* "${T:?}/own" "${T:?}/st" "${T:?}/calls" "${T:?}/dkms.side" "${T:?}/configure.side.dkms"; mkdir -p "$T/boot"
+        _mk_helper "$s"
+        _mk_server "$OLD" "$NEW"
+        "$H" --repair >/dev/null 2>&1
+        echo "amneziawg-dkms is only half configured" > "$T/audit"
+        _configure_drops_others
+        printf 'echo "1.0.0-0~new install ok half-configured" > "%s"\n' "$T/st/amneziawg-dkms" > "$T/configure.side.dkms"
+        echo "cp \"$T/configure.side.dkms\" \"$T/dkms.side\"" >> "$T/configure.side"
+        run "$H" --finish
+        [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
+        [ -s "$(_ko "$NEW")" ]
+        [[ "$output" == *"did not count its result (exit 2)"* ]] || { echo "$s: $output"; return 1; }
+    done
 }
 
 @test "finish: the running kernel's module lost to configure and not rebuilt (child exit 2) fails it by name" {
@@ -730,7 +752,6 @@ EOF
     printf 'rm -f "%s" "%s"\n: > "%s"\n' "$(_ko "$OLD")" "$(_ko "$NEW")" "$T/dkms.fail.$OLD" > "$T/configure.side"
     run "$H" --finish
     [ "$status" -eq 1 ] || { echo "$output"; return 1; }
-    [[ "$output" == *"build pass exited with code 2"* ]] || { echo "$output"; return 1; }
     [[ "$output" == *"the module did not build again for: $OLD;"* ]] || { echo "$output"; return 1; }
     [ -s "$(_ko "$NEW")" ]; [ ! -e "$(_ko "$OLD")" ]
 }
