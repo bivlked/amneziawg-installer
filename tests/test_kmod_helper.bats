@@ -157,6 +157,13 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
     done
 }
 
+@test "helper: the helper is byte-identical in both installers (tests run on one rely on it)" {
+    _raw_helper install_amneziawg.sh > "$T/h.ru"
+    _raw_helper install_amneziawg_en.sh > "$T/h.en"
+    [ -s "$T/h.ru" ] && [ "$(wc -l < "$T/h.ru")" -gt 1000 ]
+    cmp "$T/h.ru" "$T/h.en"
+}
+
 @test "helper: the pinned hash of the fix matches the fixture, and the fix turns base into the fixed file" {
     grep -qx "PR218_SHA=$(_sha "$(_fx pr218.diff)")" "$H"
     bash -c 'eval "$(sed -n "/^_awg_kmod_pr218_diff() {\$/,/^}\$/p" "$1")"; _awg_kmod_pr218_diff' _ "$H" > "$T/out.diff"
@@ -721,11 +728,28 @@ EOF
     # The never-built kernel is tried again by the child pass (it builds every
     # kernel without a module), but its failure does not fail --finish.
     [ "$(grep -c "^dkms install -m amneziawg -v 1.0.0 -k $k3\$" "$T/calls")" -eq $((n + 1)) ]
-    [[ "$output" == *"build pass after configuring exited with code 1 (no module before configuring either: $k3)"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"build pass after configuring exited with code 1 (still no module: $k3)"* ]] || { echo "$output"; return 1; }
 }
 
 # Exit 1 with every kernel built before configuring is a real failure of the
 # pass after it (here depmod), not the T1 case: modules on disk are not enough.
+# A kernel without a module before configuring that builds in the pass
+# after it does not excuse that pass's exit 1 (here depmod).
+@test "finish: a never-built kernel that builds after configuring does not excuse exit 1" {
+    local k3=6.8.0-31-generic
+    _mk_server "$OLD" "$NEW" "$k3"
+    : > "$T/dkms.fail.$k3"
+    "$H" --repair >/dev/null 2>&1 || true
+    [ ! -e "$(_ko "$k3")" ]
+    echo "amneziawg-dkms is only half configured" > "$T/audit"
+    _configure_drops_others
+    printf 'rm -f "%s"\n: > "%s"\n' "$T/dkms.fail.$k3" "$T/depmod.fail" >> "$T/configure.side"
+    run "$H" --finish
+    [ "$status" -eq 1 ] || { echo "$output"; return 1; }
+    [ -s "$(_ko "$k3")" ]
+    [[ "$output" == *"build pass after them failed (exit 1)"* ]] || { echo "$output"; return 1; }
+}
+
 @test "finish: exit 1 of the pass after configuring with no never-built kernel fails it, on both helpers" {
     local s
     for s in install_amneziawg.sh install_amneziawg_en.sh; do

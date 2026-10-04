@@ -1742,7 +1742,7 @@ install_packages() {
                 die "Пакеты не донастроены: донастройка сделала бы загрузочным ядро без модуля AmneziaWG (${_stuck}). Если заголовков этого ядра нет, поставьте их (linux-headers-<версия>), если стоят - причина сборки в строках выше; затем запустите: sudo bash $0 --repair-module, либо удалите это ядро."
             fi
             # Донастройка прошла, но сняла модуль у других ядер, и он не
-            # вернулся (или проход сборки после неё не засчитан).
+            # вернулся, или проход сборки после неё не удался.
             _lost=$(sed -n 's/.*ERROR: packages are configured, but //p' "$_hout" 2>/dev/null | tail -n 1)
             if [[ "$_hrc" -le 1 && "$_frc" -ne 0 && -n "$_lost" ]]; then
                 die "Пакеты донастроены, но восстановление модуля AmneziaWG после донастройки не завершено (${_lost%%;*}). Причина в строках выше; запустите: sudo bash $0 --repair-module"
@@ -7162,7 +7162,7 @@ image_state() { # image file
 # from dpkg; an image dpkg does not know is not touched by configuring.
 mode_finish() {
     local audit f rel st pkg imgs err lst state k crc pending_n=0
-    local -a missing=() idle=() had=() never=() lost=() still=()
+    local -a missing=() idle=() had=() never=() nofix=() lost=() still=()
     local -A seen=()
     require_dpkg_idle || exit 1
     # dpkg --audit prints the problems and still exits 0; non-zero means the
@@ -7284,13 +7284,14 @@ mode_finish() {
         # package changed under it, the lock or dpkg was busy), and anything
         # above 2 is not its verdict at all: modules on disk prove nothing
         # then. Exit 1 also comes from a kernel that had no module before
-        # configuring, which is not this step's failure; with no such kernel
-        # it is a real one (the source fix or depmod).
-        if [[ "$crc" -ge 2 || ( "$crc" -eq 1 && ${#never[@]} -eq 0 ) ]]; then
+        # configuring and still has none, which is not this step's failure;
+        # with no such kernel it is a real one (the source fix or depmod).
+        for k in "${never[@]}"; do has_module "$k" || nofix+=("$k"); done
+        if [[ "$crc" -ge 2 || ( "$crc" -eq 1 && ${#nofix[@]} -eq 0 ) ]]; then
             log_line "ERROR: packages are configured, but the build pass after them failed (exit ${crc}); see the messages above and run the repair again" >&2
             exit 1
         fi
-        [[ "$crc" -eq 0 ]] || log_line "WARN: the build pass after configuring exited with code ${crc} (no module before configuring either: ${never[*]}); the kernels that lost the module have it again" >&2
+        [[ "$crc" -eq 0 ]] || log_line "WARN: the build pass after configuring exited with code ${crc} (still no module: ${nofix[*]}); the kernels that lost the module have it again" >&2
     fi
     if [[ "$pending_n" -gt 0 ]]; then
         log_line "packages: configured; the configured kernel(s) are now in the boot loader. A working tunnel now does not prove the new kernel will load the module."
