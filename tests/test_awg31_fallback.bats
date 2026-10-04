@@ -474,10 +474,12 @@ _s3() {
     local s
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         : > "$CONFIG_FILE"
-        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 NOW_STATE=2 BLOCKER_CODE="module_line2" _s3 "$s"
+        # explicit 3.1: the fallback check returns before its own recheck, so
+        # the line logged is the recheck of the gate's refusal path
+        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=explicit AWG_INSTALL_STATE_AT_START=0 NOW_STATE=2 BLOCKER_CODE="module_line2" _s3 "$s"
         grep -qx 'STATECHK 1' "$EVLOG" || { echo "$s with init: $(cat "$EVLOG")"; return 1; }
         rm -f "$CONFIG_FILE"
-        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 NOW_STATE=2 BLOCKER_CODE="module_line2" _s3 "$s"
+        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=explicit AWG_INSTALL_STATE_AT_START=0 NOW_STATE=2 BLOCKER_CODE="module_line2" _s3 "$s"
         grep -qx 'STATECHK 0' "$EVLOG" || { echo "$s without init: $(cat "$EVLOG")"; return 1; }
     done
 }
