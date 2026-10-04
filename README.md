@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/Architecture-x86__64_|_ARM64_|_ARMv7-green" alt="x86_64 | ARM64 | ARMv7">
   <img src="https://img.shields.io/badge/AmneziaWG-2.0_&#124;_3.x-blueviolet" alt="AmneziaWG 2.0 and 3.x">
   <a href="https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
-  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-5.37.0-blue" alt="Version"></a>
+  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-5.37.1-blue" alt="Version"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/stargazers"><img src="https://img.shields.io/github/stars/bivlked/amneziawg-installer?style=flat" alt="Stars"></a>
   <img src="https://img.shields.io/github/last-commit/bivlked/amneziawg-installer" alt="Last commit">
@@ -34,7 +34,7 @@
 <!-- facts:begin -->
 <!-- Собирается scripts/update-facts-block.sh из данных репозитория.
      Руками не править: check-docs-consistency.sh сверит блок с источниками. -->
-**Факты на 2026-09-27.** Установщик 5.37.0. Сроки поддержки ОС проверены по данным вендоров на 2026-08-29.
+**Факты на 2026-10-04.** Установщик 5.37.1. Сроки поддержки ОС проверены по данным вендоров на 2026-08-29.
 
 | | |
 |---|---|
@@ -134,7 +134,7 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 
 Сервер настраивается под одну задачу - VPN: лишние пакеты убираются, ядро, сеть и swap тюнингуются под железо, включаются firewall и базовая защита. AmneziaWG работает в ядре, поэтому накладных расходов почти нет - быстро и экономно. Поставил один раз для дома или семьи и забыл: добавить друга или новое устройство через месяц - минута, конфиг и QR готовятся одной командой.
 
-Рекомендуемые системы: Ubuntu 24.04 LTS и Debian 13. Ubuntu 26.04 поддерживается, но с 1 октября 2026 модуль из PPA не собирается под её новое ядро 7.0.0-38, подробности и обход - в [известных ограничениях](ADVANCED.md#kernel-70-backport-adv). Ubuntu 25.10 и Debian 12 тоже ставятся и работают, но обычная поддержка у обеих уже закончилась - даты в таблице совместимости ниже. Хватит любого дешёвого VPS с 1 ГБ RAM.
+Рекомендуемые системы: Ubuntu 24.04 LTS и Debian 13. Ubuntu 26.04 поддерживается: под её ядро 7.0.0-38 модуль из PPA сам не собирается, и с v5.37.1 установщик исправляет его исходник сам, подробности - в [известных ограничениях](ADVANCED.md#kernel-70-backport-adv). Ubuntu 25.10 и Debian 12 тоже ставятся и работают, но обычная поддержка у обеих уже закончилась - даты в таблице совместимости ниже. Хватит любого дешёвого VPS с 1 ГБ RAM.
 
 ---
 
@@ -299,9 +299,9 @@ cat /sys/module/amneziawg/version    # версия загруженного м�
 
 | ОС | Наш выбор | Поддержка от вендора | Примечание |
 |----|-----------|----------------------|------------|
-| Ubuntu 24.04 LTS | ✅ выбор по умолчанию | до 2029-05-31 | Обкатана лучше всех. Оставайтесь на обычном ядре 6.8: под HWE-ядро 7.0.0-38 модуль из PPA пока не собирается ([подробнее](ADVANCED.md#kernel-70-backport-adv)) |
+| Ubuntu 24.04 LTS | ✅ выбор по умолчанию | до 2029-05-31 | Обкатана лучше всех. HWE-ядро 7.0.0-38 поддерживается с v5.37.1: исходник модуля из PPA установщик исправляет сам ([подробнее](ADVANCED.md#kernel-70-backport-adv)) |
 | Debian 13 (trixie) | ✅ выбор по умолчанию | до 2028-08-09 | Протестировано. PPA через маппинг codename на noble, DEB822 |
-| Ubuntu 26.04 | ⚠️ временно с оговоркой | до 2031-05-29 | С 1 октября 2026 модуль из PPA не собирается под ядро 7.0.0-38, обход описан в [известных ограничениях](ADVANCED.md#kernel-70-backport-adv). Установщик проверяет, отвечает ли PPA для кодового имени выпуска, и если нет, сам переключается на `noble` (с v5.13.0) |
+| Ubuntu 26.04 | ⚠️ временно с оговоркой | до 2031-05-29 | Под ядро 7.0.0-38 модуль из PPA сам не собирается, с v5.37.1 установщик исправляет его исходник сам ([подробнее](ADVANCED.md#kernel-70-backport-adv)). Установщик проверяет, отвечает ли PPA для кодового имени выпуска, и если нет, сам переключается на `noble` (с v5.13.0) |
 | Debian 12 (bookworm) | ⚠️ для миграции | обычная закончилась 2026-07-11, Debian LTS до 2028-06-30 | Работает и протестировано, обновления безопасности идут через Debian LTS. PPA через маппинг codename на focal. Для нового сервера лучше Debian 13 |
 | Ubuntu 25.10 (questing) | ⚠️ для миграции | закончилась 2026-07-01, продления нет | Работает: если PPA не отвечает для `questing`, установщик сам переключается на `noble` (с v5.13.0). Обновлений безопасности не выходит вообще никаких - для нового сервера не берите |
 

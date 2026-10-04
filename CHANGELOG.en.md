@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [5.37.1] - 2026-10-04
+
+**v5.37.1** - the AmneziaWG module builds on 7.0.0-38 kernels, `--jc=0`, direct device IPv6 and backup checks before the service stops.
+
 ### Added
 
 - **IPv4 through the tunnel, the device's IPv6 directly.** The installer flag `--client-ipv6-direct` (the `CLIENT_IPV6_DIRECT=1` key in `awgsetup_cfg.init`) together with the "Amnezia" mode (`--route-amnezia`) drops the `2000::/3` IPv6 route and the service IPv6 address from clients: IPv4 goes through the tunnel, the device's IPv6 goes directly through the provider, and the local network stays reachable. The installer names the cost out loud: sites reached over IPv6 see the device's real address. The key is refused in the "All traffic" mode, because without `::/0` iOS AmneziaVPN does not bring the tunnel up, and with `--allow-ipv6-tunnel`. A plain `manage regen` takes the route away from clients already issued and leaves hand-made routes alone. Requested in [PR #260](https://github.com/bivlked/amneziawg-installer/pull/260).
@@ -2070,7 +2074,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.1...HEAD
+[5.37.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.0...v5.37.1
 [5.37.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.2...v5.37.0
 [5.36.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.1...v5.36.2
 [5.36.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.0...v5.36.1

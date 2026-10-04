@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [5.37.1] - 2026-10-04
+
+**v5.37.1** - модуль AmneziaWG собирается на ядрах 7.0.0-38, `--jc=0`, IPv6 устройств напрямую и проверка бэкапа до остановки сервиса.
+
 ### Добавлено
 
 - **IPv4 через туннель, IPv6 устройства напрямую.** Флаг установки `--client-ipv6-direct` (ключ `CLIENT_IPV6_DIRECT=1` в `awgsetup_cfg.init`) вместе с режимом «Amnezia» (`--route-amnezia`) убирает у клиентов IPv6-маршрут `2000::/3` и служебный IPv6-адрес: IPv4 идёт через туннель, IPv6 устройства напрямую через провайдера, локальная сеть доступна. Цену установщик называет вслух: сайты по IPv6 видят настоящий адрес устройства. В режиме «Весь трафик» ключ не принимается, потому что без `::/0` iOS AmneziaVPN не поднимает туннель; с `--allow-ipv6-tunnel` тоже. Уже выданным клиентам маршрут снимает обычный `manage regen`, маршруты, заданные вручную, он не трогает. Запрос из [PR #260](https://github.com/bivlked/amneziawg-installer/pull/260).
@@ -2070,7 +2074,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.1...HEAD
+[5.37.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.0...v5.37.1
 [5.37.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.2...v5.37.0
 [5.36.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.1...v5.36.2
 [5.36.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.0...v5.36.1

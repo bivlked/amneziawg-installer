@@ -1007,7 +1007,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common_en.sh` and `manage_amneziawg_en.sh` (the Russian installer: `awg_common.sh` and `manage_amneziawg.sh`) from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.37.0/awg_common_en.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v5.37.1/awg_common_en.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -2284,9 +2284,9 @@ it as a target.
 
   What it looks like: `apt upgrade` ends with a DKMS error, and the build log has `passing argument 2 of 'setup_udp_tunnel_sock' from incompatible pointer type`. The new kernel packages stay unconfigured, and later installs and upgrades through `apt` run into the same error again. The tunnel keeps working on the current kernel. On our test server (24.04 with HWE) the bootloader was not updated and the server came back on the old kernel after a reboot, but do not count on that: do not reboot into the new kernel until the module is built.
 
-  On Ubuntu 24.04 the easiest way is to stay out of this: keep the regular kernel and do not install `linux-generic-hwe-24.04`. `dpkg -l 'linux-generic*' | grep ^ii` shows which metapackage you have. Holding the metapackage with `apt-mark hold` does not fix a kernel that is already installed.
+  With an installer older than v5.37.1, the easiest way on Ubuntu 24.04 is to stay out of this: keep the regular kernel and do not install `linux-generic-hwe-24.04`. `dpkg -l 'linux-generic*' | grep ^ii` shows which metapackage you have. Holding the metapackage with `apt-mark hold` does not fix a kernel that is already installed.
 
-  **Starting with v5.37.1 the installer does this** (if v5.37.1 is not on the [releases page](https://github.com/bivlked/amneziawg-installer/releases) yet, use the manual way below). The `amneziawg-ensure-module` helper, which `apt` runs after every kernel update, applies the fix from #218 to the module source - only when the source matches the tested one byte for byte - and builds the module for every kernel with headers. A fresh install and later kernel updates need no manual steps.
+  **Starting with v5.37.1 the installer does this**. The `amneziawg-ensure-module` helper, which `apt` runs after every kernel update, applies the fix from #218 to the module source - only when the source matches the tested one byte for byte - and builds the module for every kernel with headers. A fresh install and later kernel updates need no manual steps.
 
   On a server that is already installed the helper is old, and it needs updating once: download the new installer with its signature, check the signature and run the repair. You need `minisign` (`sudo apt install minisign`); the block checks the signature with the same key and the same way as the block in [How to Update Scripts](#update-scripts-adv), and does not run the installer if the signature does not match or the release is older than v5.37.1:
 
