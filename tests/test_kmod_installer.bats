@@ -14,16 +14,27 @@ _fn() { sed -n "/^$2() {\$/,/^}\$/p" "$BATS_TEST_DIRNAME/../$1"; }
 _stub() { printf '#!/bin/bash\n%s\n' "$2" > "$T/bin/$1"; chmod +x "$T/bin/$1"; }
 _st() { mkdir -p "$T/st"; printf '%s' "$2" > "$T/st/$1"; }   # dpkg status of a package
 _calls() { cat "$T/calls" 2>/dev/null || true; }
-_reset() { rm -rf "$T/st" "$T/calls" "$T"/helper.* "$T/log" "$T/dkms" "$T/src" "$T/owner" "$T/prebuilt" "$T/held" "$T/busy" "$T/units.fail"; mkdir -p "$T/st"; }
+_reset() { rm -rf "$T/st" "$T/calls" "$T"/helper.* "$T/log" "$T/dkms" "$T/src" "$T/owner" "$T/busy" "$T/units.fail" "$T/kmodlist" "$T/holds" "$T"/*.fail; mkdir -p "$T/st"; }
 
 setup() {
     T=$(mktemp -d); export T
     mkdir -p "$T/bin" "$T/st"
     _stub uname 'echo 7.0.0-38-generic'
     _stub apt 'echo "apt $*" >> "$T/calls"; exit 100'
+    # dpkg-query: kmod.fail breaks the pattern query, dkms.fail the query of
+    # amneziawg-dkms; an unknown package answers the way dpkg-query does.
     _stub dpkg-query 'p="${*: -1}"
-if [[ "$p" == *"*"* ]]; then cat "$T/kmodlist" 2>/dev/null; exit 0; fi
-[[ -f "$T/st/$p" ]] || exit 1; cat "$T/st/$p"'
+if [[ "$p" == *"*"* ]]; then
+  [[ -e "$T/kmod.fail" ]] && { echo "dpkg-query: error: database locked" >&2; exit 2; }
+  [[ -s "$T/kmodlist" ]] && { cat "$T/kmodlist"; exit 0; }
+  echo "dpkg-query: no packages found matching $p" >&2; exit 1
+fi
+[[ "$p" == amneziawg-dkms && -e "$T/dkms.fail" ]] && { echo "dpkg-query: error: database locked" >&2; exit 2; }
+[[ -f "$T/st/$p" ]] || { echo "dpkg-query: no packages found matching $p" >&2; exit 1; }
+cat "$T/st/$p"'
+    _stub apt-mark '[[ "$1" == showhold ]] || exit 0
+[[ -e "$T/am.fail" ]] && { echo "E: cannot read the selections" >&2; exit 100; }
+cat "$T/holds" 2>/dev/null; exit 0'
     _stub dpkg '[[ "$1" == -S ]] || echo "dpkg $*" >> "$T/calls"
 if [[ "$1" == -S ]]; then cat "$T/owner" 2>/dev/null || exit 1; fi
 exit 0'
@@ -398,14 +409,14 @@ _rm_driver() {
     {
         echo 'log() { echo "LOG: $*"; }; log_warn() { echo "WARN: $*"; }; log_error() { echo "ERR: $*"; }'
         echo 'id() { echo 0; }'
-        echo '_awg_kmod_prebuilt_present() { [[ -e "$T/prebuilt" ]]; }'
-        echo '_awg_pkg_held() { [[ -e "$T/held" ]]; }'
         echo '_awg_dpkg_busy() { [[ -e "$T/busy" ]]; }'
         echo '_awg_deploy_ensure_helper() { echo deploy-helper >> "$T/calls"; }'
         echo '_awg_deploy_ensure_units() { echo deploy-units >> "$T/calls"; [[ ! -e "$T/units.fail" ]]; }'
         echo 'dkms() { :; }'
         echo "AWG_ENSURE_HELPER=$T/bin/helper; DKMS_STATE_DIR=$T/dkms; DKMS_SRC_PREFIX=$T/src; LOG_FILE=$T/log"
-        _fn "$1" _pkg_present; _fn "$1" repair_module_cmd
+        echo '_install_temp_files=(); _KS_OK=0; _KS_COMPLETE=0; _KS_KERNELS=()'
+        _fn "$1" _pkg_present; _fn "$1" _awg_kmod_prebuilt_present
+        _fn "$1" _awg_kmod_status_parse; _fn "$1" _awg_kmod_status_warn; _fn "$1" repair_module_cmd
         echo 'repair_module_cmd'
     } > "$T/drv.sh"
 }
@@ -415,6 +426,18 @@ _rm_server() {
     ln -sfn "$T/src/amneziawg-1.0.0" "$T/dkms/amneziawg/1.0.0/source"
     _st amneziawg-dkms "install ok installed"
     echo "amneziawg-dkms: $T/src/amneziawg-1.0.0/dkms.conf" > "$T/owner"
+    _status_ok
+}
+# A healthy final --status of the helper (the running kernel has its module).
+_status_ok() {
+    cat > "$T/helper.out.--status" <<'EOF'
+path kind=ppa reason=-
+source state=patched version=1.0.0 fix=enabled
+kernel release=7.0.0-38-generic running=1 image=1 module=1 headers=ok package=installed
+module loaded=1
+packages audit=empty
+status complete=1 time=1700000000
+EOF
 }
 
 @test "repair-module: deploys, repairs, then finishes; exit 0 only when all succeed; output in the log" {
@@ -423,21 +446,79 @@ _rm_server() {
         _rm_server; echo "kernel x: module on disk" > "$T/helper.out.--repair"; _rm_driver "$f"
         run bash "$T/drv.sh"
         [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
-        [ "$(_calls | tr '\n' ' ')" = "deploy-helper deploy-units helper --repair helper --finish " ] || { echo "$f: $(_calls)"; return 1; }
+        [ "$(_calls | tr '\n' ' ')" = "deploy-helper deploy-units helper --repair helper --finish helper --status " ] || { echo "$f: $(_calls)"; return 1; }
         grep -q 'kernel x: module on disk' "$T/log"
     done
 }
 
-@test "repair-module: success repeats what matters before a reboot" {
+@test "repair-module: what matters before a reboot comes from the final --status, even with nothing to configure" {
     local f
     for f in "${INSTALLERS[@]}"; do
         _rm_server
-        echo "[ts] [--finish] WARN: already configured kernel(s) without the AmneziaWG module: 6.8.0-31-generic; booting ..." > "$T/helper.out.--finish"
+        # --finish said nothing (empty audit): the configured old kernel
+        # without a module is named from --status alone.
+        sed -i '/^module /i kernel release=6.8.0-31-generic running=0 image=1 module=0 headers=missing package=installed\nkernel release=6.8.0-40-generic running=0 image=1 module=unknown headers=broken package=installed\nkernel release=7.0.0-39-generic running=0 image=0 module=0 headers=missing package=unfinished\nkernel release=6.8.0-50-generic running=0 image=1 module=0 headers=missing package=unknown' "$T/helper.out.--status"
         _rm_driver "$f"
         run bash "$T/drv.sh"
         [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
-        grep -q '^WARN: .*6\.8\.0-31-generic' <<<"$output" || { echo "$f: $output"; return 1; }
-        ! grep -q '^WARN: .*\[--finish\]' <<<"$output" || { echo "$f: helper prefix left in: $output"; return 1; }
+        [[ "$(_calls)" == *"helper --status"* ]]
+        grep -q '^WARN: .*6\.8\.0-31-generic.*linux-headers-6\.8\.0-31-generic' <<<"$output" || { echo "$f: $output"; return 1; }
+        grep -q '^WARN: .*6\.8\.0-40-generic.*\(не читается\|not readable\)' <<<"$output" || { echo "$f: $output"; return 1; }
+        grep -q '^WARN: .*6\.8\.0-40-generic.*\(битая\|broken\)' <<<"$output" || { echo "$f: $output"; return 1; }
+        # An unfinished kernel without the module is named too, and one whose
+        # package state could not be read.
+        grep -q '^WARN: .*\(недонастроенное ядро\|unfinished kernel\) 7\.0\.0-39-generic.*linux-headers-7\.0\.0-39-generic' <<<"$output" || { echo "$f: $output"; return 1; }
+        grep -q '^WARN: .*6\.8\.0-50-generic.*linux-headers-6\.8\.0-50-generic' <<<"$output" || { echo "$f: $output"; return 1; }
+        # The running kernel is never named as a kernel to avoid.
+        if grep -q '^WARN: .*7\.0\.0-38-generic' <<<"$output"; then echo "$f: running kernel named: $output"; return 1; fi
+    done
+}
+
+@test "repair-module: a running kernel whose module file is gone is named before a reboot" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _rm_server
+        sed -i 's/^kernel release=7.0.0-38-generic running=1 image=1 module=1/kernel release=7.0.0-38-generic running=1 image=1 module=0/' "$T/helper.out.--status"
+        _rm_driver "$f"
+        run bash "$T/drv.sh"
+        grep -q '^WARN: .*7\.0\.0-38-generic.*\(на диске\|on disk\)' <<<"$output" || { echo "$f: $output"; return 1; }
+    done
+}
+
+@test "repair-module: unknown headers or fix values are a valid report, not a malformed one" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _rm_server
+        sed -i 's/headers=ok/headers=unknown/; s/fix=enabled/fix=unknown/' "$T/helper.out.--status"
+        _rm_driver "$f"
+        run bash "$T/drv.sh"
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
+        if grep -q '\(получить не удалось\|could not be obtained\)' <<<"$output"; then echo "$f: rejected: $output"; return 1; fi
+    done
+}
+
+@test "repair-module: a malformed or incomplete --status is said, not taken as fine" {
+    local f bad
+    for f in "${INSTALLERS[@]}"; do
+        for bad in notrailer tworunning dup badvalue missingkey codemismatch incomplete; do
+            _rm_server
+            case "$bad" in
+                notrailer)   sed -i '/^status /d' "$T/helper.out.--status" ;;
+                tworunning)  sed -i '/^module /i kernel release=6.8.0-31-generic running=1 image=1 module=1 headers=ok package=installed' "$T/helper.out.--status" ;;
+                dup)         sed -i '/^module /i kernel release=7.0.0-38-generic running=0 image=0 module=1 headers=ok package=none' "$T/helper.out.--status" ;;
+                badvalue)    sed -i 's/module=1 headers/module=maybe headers/' "$T/helper.out.--status" ;;
+                missingkey)  sed -i 's/ headers=ok//' "$T/helper.out.--status" ;;
+                codemismatch) echo 1 > "$T/helper.rc.--status" ;;
+                incomplete)  sed -i 's/complete=1/complete=0/' "$T/helper.out.--status"; echo 1 > "$T/helper.rc.--status" ;;
+            esac
+            _rm_driver "$f"
+            run bash "$T/drv.sh"
+            if [[ "$bad" == incomplete ]]; then
+                grep -q '^WARN: .*\(не полностью\|not determined in full\)' <<<"$output" || { echo "$f $bad: $output"; return 1; }
+            else
+                grep -q '^WARN: .*\(получить не удалось\|could not be obtained\)' <<<"$output" || { echo "$f $bad: $output"; return 1; }
+            fi
+        done
     done
 }
 
@@ -467,17 +548,52 @@ _rm_server() {
 @test "repair-module: refused without changes on a never-installed server, ARM prebuilt, pinned hold, busy apt" {
     local f why
     for f in "${INSTALLERS[@]}"; do
-        for why in nopkg prebuilt held busy configfiles; do
+        for why in nopkg prebuilt held heldmark busy configfiles kmodfail dkmsfail amfail; do
             _rm_server
             case "$why" in
                 nopkg) rm -f "$T/st/amneziawg-dkms" ;;
                 configfiles) _st amneziawg-dkms "deinstall ok config-files" ;;
+                prebuilt) echo "amneziawg-kmod-6.8.0-100-generic install ok installed" > "$T/kmodlist" ;;
+                held) _st amneziawg-dkms "hold ok installed" ;;
+                heldmark) echo amneziawg-dkms > "$T/holds" ;;
+                # Every admission query fails closed.
+                kmodfail) : > "$T/kmod.fail" ;;
+                dkmsfail) : > "$T/dkms.fail" ;;
+                amfail) : > "$T/am.fail" ;;
                 *) : > "$T/$why" ;;
             esac
             _rm_driver "$f"
             run bash "$T/drv.sh"
             [ "$status" -eq 1 ] || { echo "$f $why: status $status"; return 1; }
             [ -z "$(_calls)" ] || { echo "$f $why: $(_calls)"; return 1; }
+            # A failed query is named as such, not as "not installed".
+            if [[ "$why" == dkmsfail ]]; then
+                [[ "$output" == *"спросить dpkg о пакете amneziawg-dkms"* || "$output" == *"ask dpkg about the amneziawg-dkms"* ]] || { echo "$f dkmsfail: $output"; return 1; }
+            fi
+        done
+    done
+}
+
+@test "repair-module: owner records are read per line, as the helper's --status reads them" {
+    local f case
+    for f in "${INSTALLERS[@]}"; do
+        for case in divfirst arch multi; do
+            _rm_server
+            local p="$T/src/amneziawg-1.0.0/dkms.conf"
+            case "$case" in
+                divfirst) printf 'diversion by local from: %s\namneziawg-dkms: %s\n' "$p" "$p" > "$T/owner" ;;
+                arch) echo "amneziawg-dkms:amd64: $p" > "$T/owner" ;;
+                multi) echo "amneziawg-dkms, other-pkg: $p" > "$T/owner" ;;
+            esac
+            _rm_driver "$f"
+            run bash "$T/drv.sh"
+            if [[ "$case" == multi ]]; then
+                [ "$status" -eq 1 ] || { echo "$f $case: $output"; return 1; }
+                [[ "$output" == *other-pkg* ]]
+                [ -z "$(_calls)" ]
+            else
+                [ "$status" -eq 0 ] || { echo "$f $case: $output"; return 1; }
+            fi
         done
     done
 }
@@ -490,7 +606,10 @@ _rm_server() {
             case "$case" in
                 none) rm -rf "$T/dkms/amneziawg/1.0.0" ;;
                 two) mkdir -p "$T/dkms/amneziawg/1.0.1"; ln -s "$T/src/amneziawg-1.0.0" "$T/dkms/amneziawg/1.0.1/source" ;;
-                redirect) mkdir -p "$T/elsewhere"; ln -sfn "$T/elsewhere" "$T/dkms/amneziawg/1.0.0/source" ;;
+                # The owner names the redirected path too: only the
+                # canonical-path check can refuse it.
+                redirect) mkdir -p "$T/elsewhere"; ln -sfn "$T/elsewhere" "$T/dkms/amneziawg/1.0.0/source"
+                          echo "amneziawg-dkms: $T/elsewhere/dkms.conf" > "$T/owner" ;;
                 noowner) rm -f "$T/owner" ;;
                 foreign) echo "someone-else: $T/src/amneziawg-1.0.0/dkms.conf" > "$T/owner" ;;
             esac
@@ -502,6 +621,9 @@ _rm_server() {
             # check would refuse too, but naming a path that does not exist.
             if [[ "$case" == none ]]; then
                 [[ "$output" == *"не зарегистрирован в DKMS"* || "$output" == *"not registered in DKMS"* ]] || { echo "$f none: $output"; return 1; }
+            fi
+            if [[ "$case" == redirect ]]; then
+                [[ "$output" == *"$T/elsewhere"*"$T/src/amneziawg-1.0.0"* ]] || { echo "$f redirect: $output"; return 1; }
             fi
         done
     done

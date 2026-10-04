@@ -2286,7 +2286,33 @@ it as a target.
 
   On Ubuntu 24.04 the easiest way is to stay out of this: keep the regular kernel and do not install `linux-generic-hwe-24.04`. `dpkg -l 'linux-generic*' | grep ^ii` shows which metapackage you have. Holding the metapackage with `apt-mark hold` does not fix a kernel that is already installed.
 
-  If the error has already happened, the fix from #218 helps: it checks the function signature itself. We built the module with it on every kernel listed above and on both affected ones. The commands below run as root: open a root shell with `sudo -i`. The block in step 2 can be pasted as a whole: it stops at the first error. If any command fails or a hash check prints `FAILED`, go no further.
+  **Starting with v5.37.1 the installer does this** (if v5.37.1 is not on the [releases page](https://github.com/bivlked/amneziawg-installer/releases) yet, use the manual way below). The `amneziawg-ensure-module` helper, which `apt` runs after every kernel update, applies the fix from #218 to the module source - only when the source matches the tested one byte for byte - and builds the module for every kernel with headers. A fresh install and later kernel updates need no manual steps.
+
+  On a server that is already installed the helper is old, and it needs updating once: download the new installer with its signature, check the signature and run the repair. You need `minisign` (`sudo apt install minisign`); the block checks the signature with the same key and the same way as the block in [How to Update Scripts](#update-scripts-adv), and does not run the installer if the signature does not match or the release is older than v5.37.1:
+
+  ```bash
+  cd "$(mktemp -d)"
+  KEY=RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN
+  f=install_amneziawg_en.sh   # Russian version: f=install_amneziawg.sh
+  tag=
+  wget -q -O "$f" "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f" \
+    && wget -q -O "$f.minisig" "https://github.com/bivlked/amneziawg-installer/releases/latest/download/$f.minisig" \
+    && out=$(minisign -V -P "$KEY" -m "$f" -x "$f.minisig") \
+    && tag=$(printf '%s\n' "$out" | sed -n "s/^Trusted comment: amneziawg-installer \(v[0-9.]*\) $f\$/\1/p")
+  if [ -z "$tag" ]; then
+    echo "NOT VERIFIED: $f, not running it"
+  elif [ "$(printf '%s\n' v5.37.1 "$tag" | sort -V | head -1)" != v5.37.1 ]; then
+    echo "Release $tag is older than v5.37.1: it has no such command, use the manual way below"
+  else
+    echo "Verified release $tag"; sudo bash "$f" --repair-module
+  fi
+  ```
+
+  `--repair-module` does not run the normal install. It deploys the new helper, fixes the source (only the tested one), builds the module for the kernels with headers and configures the packages (`dpkg --configure -a`) only if no unfinished kernel is left without the module. At the end it names the kernels that have no module and prints the time of the check. It does not reboot the server and does not test loading the module in the new kernel. Do not run `apt` while it works. It does not update the management scripts: for `manage repair-module` to go through the new helper too, and for `manage diagnose` to show the module per kernel, update them with the block in [How to Update Scripts](#update-scripts-adv). Before rebooting into the new kernel, check the same as in steps 5 and 6 of the manual way below.
+
+  If the helper's fix gets in the way (for support): `sudo amneziawg-ensure-module --revert` puts the source back as it was and leaves it alone from then on, `sudo amneziawg-ensure-module --enable` allows the fix again. What is tested: builds with the fix on every kernel listed above and on both affected ones; other compilers, Secure Boot and ARM we have not tested.
+
+  **Manual way** (v5.37.0 and older, or if `--repair-module` refused): the same fix from #218 helps, it checks the function signature itself. The commands below run as root: open a root shell with `sudo -i`. The block in step 2 can be pasted as a whole: it stops at the first error. If any command fails or a hash check prints `FAILED`, go no further.
 
   1. Let the current `apt` command finish. Leave the running kernel and the tunnel alone.
   2. Apply the fix to the module source, checking the hash before and after:

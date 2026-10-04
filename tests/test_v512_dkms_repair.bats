@@ -186,7 +186,7 @@ _mode_body() { echo "$1" | awk -v f="^$2\\\\(\\\\) \\\\{\$" '$0 ~ f {p=1} p {pri
 
 @test "v5.12: helper case allows every mode" {
     helper=$(_extract_helper "$BATS_TEST_DIRNAME/../install_amneziawg.sh")
-    [[ "$helper" == *'--hook|--systemd|--repair|--prepare|--prepare-locked|--finish|--revert|--enable) ;;'* ]]
+    [[ "$helper" == *'--hook|--systemd|--repair|--prepare|--prepare-locked|--finish|--status|--revert|--enable) ;;'* ]]
 }
 
 @test "v5.12: helper stamp fast-path lives in the --hook mode only (boot never skips)" {
