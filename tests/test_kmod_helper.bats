@@ -721,7 +721,26 @@ EOF
     # The never-built kernel is tried again by the child pass (it builds every
     # kernel without a module), but its failure does not fail --finish.
     [ "$(grep -c "^dkms install -m amneziawg -v 1.0.0 -k $k3\$" "$T/calls")" -eq $((n + 1)) ]
-    [[ "$output" == *"build pass after configuring exited with code 1"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"build pass after configuring exited with code 1 (no module before configuring either: $k3)"* ]] || { echo "$output"; return 1; }
+}
+
+# Exit 1 with every kernel built before configuring is a real failure of the
+# pass after it (here depmod), not the T1 case: modules on disk are not enough.
+@test "finish: exit 1 of the pass after configuring with no never-built kernel fails it, on both helpers" {
+    local s
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        rm -rf "${T:?}/usr" "${T:?}/var" "${T:?}/lib" "${T:?}/boot"/* "${T:?}/own" "${T:?}/st" "${T:?}/calls" "${T:?}/depmod.fail"; mkdir -p "$T/boot"
+        _mk_helper "$s"
+        _mk_server "$OLD" "$NEW"
+        "$H" --repair >/dev/null 2>&1
+        echo "amneziawg-dkms is only half configured" > "$T/audit"
+        _configure_drops_others
+        echo ": > \"$T/depmod.fail\"" >> "$T/configure.side"
+        run "$H" --finish
+        [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
+        [ -s "$(_ko "$NEW")" ]
+        [[ "$output" == *"build pass after them failed (exit 1)"* ]] || { echo "$s: $output"; return 1; }
+    done
 }
 
 # Exit 2 of the pass after configuring means it did not count its result:
@@ -741,7 +760,7 @@ EOF
         run "$H" --finish
         [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
         [ -s "$(_ko "$NEW")" ]
-        [[ "$output" == *"did not count its result (exit 2)"* ]] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"build pass after them failed (exit 2)"* ]] || { echo "$s: $output"; return 1; }
     done
 }
 

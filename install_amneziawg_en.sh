@@ -1807,7 +1807,7 @@ install_packages() {
             # did not count its result).
             _lost=$(sed -n 's/.*ERROR: packages are configured, but //p' "$_hout" 2>/dev/null | tail -n 1)
             if [[ "$_hrc" -le 1 && "$_frc" -ne 0 && -n "$_lost" ]]; then
-                die "Packages are configured, but the AmneziaWG module was not restored after configuring (${_lost%%;*}). The reason is above; run: sudo bash $0 --repair-module"
+                die "Packages are configured, but restoring the AmneziaWG module after configuring did not complete (${_lost%%;*}). The reason is above; run: sudo bash $0 --repair-module"
             fi
             if [[ "$_hrc" -eq 2 && -n "$_bad" ]]; then
                 die "The AmneziaWG module did not build for kernel ${_bad% }: the kernel changed setup_udp_tunnel_sock and this module source does not handle it. The fix the helper applies did not apply to it; why is in the source lines above (the source differs from the tested one, the fix is disabled by --revert, or it failed to apply). Options: a kernel without this change (on Ubuntu 24.04, plain linux-generic instead of HWE) or a fixed module in the PPA. Details: ADVANCED.en.md, section kernel-70-backport-adv."
@@ -7301,7 +7301,7 @@ image_state() { # image file
 # from dpkg; an image dpkg does not know is not touched by configuring.
 mode_finish() {
     local audit f rel st pkg imgs err lst state k crc pending_n=0
-    local -a missing=() idle=() had=() lost=() still=()
+    local -a missing=() idle=() had=() never=() lost=() still=()
     local -A seen=()
     require_dpkg_idle || exit 1
     # dpkg --audit prints the problems and still exits 0; non-zero means the
@@ -7388,7 +7388,7 @@ mode_finish() {
     fi
     # Quiet: a broken headers link was already reported by --repair.
     collect_targets 2>/dev/null
-    for k in "${TARGETS[@]}"; do if has_module "$k"; then had+=("$k"); fi; done
+    for k in "${TARGETS[@]}"; do if has_module "$k"; then had+=("$k"); else never+=("$k"); fi; done
     log_line "dpkg --configure -a"
     if ! DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then
         log_line "ERROR: dpkg --configure -a failed; see the messages above" >&2; exit 1
@@ -7419,15 +7419,17 @@ mode_finish() {
             log_line "ERROR: packages are configured, but the module did not build again for: ${still[*]}; see the messages above and run the repair again" >&2
             exit 1
         fi
-        # Exit 2: the pass did not count its result (the source or the
-        # package changed under it, the lock or dpkg was busy), so modules on
-        # disk prove nothing. Exit 1 also comes from a kernel that never
-        # built, which is not this step's failure; it is only reported.
-        if [[ "$crc" -eq 2 ]]; then
-            log_line "ERROR: packages are configured, but the build pass after them did not count its result (exit 2); see the messages above and run the repair again" >&2
+        # Exit 2 means the pass did not count its result (the source or the
+        # package changed under it, the lock or dpkg was busy), and anything
+        # above 2 is not its verdict at all: modules on disk prove nothing
+        # then. Exit 1 also comes from a kernel that had no module before
+        # configuring, which is not this step's failure; with no such kernel
+        # it is a real one (the source fix or depmod).
+        if [[ "$crc" -ge 2 || ( "$crc" -eq 1 && ${#never[@]} -eq 0 ) ]]; then
+            log_line "ERROR: packages are configured, but the build pass after them failed (exit ${crc}); see the messages above and run the repair again" >&2
             exit 1
         fi
-        [[ "$crc" -eq 0 ]] || log_line "WARN: the build pass after configuring exited with code ${crc}; the kernels that lost the module have it again" >&2
+        [[ "$crc" -eq 0 ]] || log_line "WARN: the build pass after configuring exited with code ${crc} (no module before configuring either: ${never[*]}); the kernels that lost the module have it again" >&2
     fi
     if [[ "$pending_n" -gt 0 ]]; then
         log_line "packages: configured; the configured kernel(s) are now in the boot loader. A working tunnel now does not prove the new kernel will load the module."
