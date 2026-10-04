@@ -424,25 +424,35 @@ _deploy_driver() {
     } > "$T/deploy.sh"
     grep -q '^AWG_ENSURE_HELPER_EOF$' "$T/deploy.sh" || { echo "helper heredoc not cut"; return 1; }
 }
-# cat stub: CAT_MODE=fail writes part of its input and fails, short writes part and succeeds.
+# cat stub. CAT_MODE=fail writes ALL of its input and then fails, so only the
+# exit-code check can catch it; short writes the first 4096 bytes and succeeds
+# (caught by the last-line check); corrupt writes all of it with one line in the
+# middle broken and succeeds, so the last line is intact and only bash -n can
+# catch it.
 _cat_stub() {
     _stub cat 'case "${CAT_MODE:-}" in
-  fail)  head -c 4096; exit 1 ;;
-  short) head -c 4096; cat_rest=$(/bin/cat >/dev/null); exit 0 ;;
-  *)     exec /bin/cat "$@" ;;
+  fail)    /bin/cat; exit 1 ;;
+  short)   head -c 4096; /bin/cat >/dev/null; exit 0 ;;
+  corrupt) awk "NR==600{print \"if then\"; next} {print}"; exit 0 ;;
+  *)       exec /bin/cat "$@" ;;
 esac'
 }
 
 @test "deploy: a failed or silently short write of the helper dies and keeps the installed one, on both installers" {
     local f mode
     for f in "${INSTALLERS[@]}"; do
-        for mode in fail short; do
+        for mode in fail short corrupt; do
             rm -rf "${T:?}/sbin"; mkdir -p "$T/sbin"
             echo "old helper" > "$T/sbin/amneziawg-ensure-module"
             _deploy_driver "$f"; _cat_stub
             CAT_MODE=$mode PATH="$T/bin:$PATH" run bash "$T/deploy.sh"
             [ "$status" -eq 1 ] || { echo "$f $mode: $output"; return 1; }
-            [[ "$output" == *"DIE: "* ]] || { echo "$f $mode: $output"; return 1; }
+            # Each mode is caught by its own check: the write's exit code, or the staged file.
+            if [[ "$mode" == fail ]]; then
+                [[ "$output" == *"DIE: Не удалось записать"* || "$output" == *"DIE: Could not write"* ]] || { echo "$f $mode: $output"; return 1; }
+            else
+                [[ "$output" == *"DIE: Записанный helper"*"неполный или повреждён"* || "$output" == *"DIE: The written"*"incomplete or damaged"* ]] || { echo "$f $mode: $output"; return 1; }
+            fi
             [ "$(/bin/cat "$T/sbin/amneziawg-ensure-module")" = "old helper" ] || { echo "$f $mode: replaced"; return 1; }
             [ ! -e "$T/sbin/.amneziawg-ensure-module.new" ] || { echo "$f $mode: stage left"; return 1; }
         done
