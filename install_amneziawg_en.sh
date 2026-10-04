@@ -938,10 +938,13 @@ awg20_candidate_support() {
 # because an earlier probe interface was left. A rerun is a new process with its
 # own record, so the advice is simple.
 _awg20_candidate_stale_die() {
-    die "The 2.0 parameter set was not checked: a temporary interface of an earlier check of this run was not removed (awgp$$x*), and the installer did not probe on top of it. The module is not to blame. Look: ip link show type amneziawg; a stray awgp interface can be removed (ip link del <name>). Then run the installer again."
+    local _left=""
+    _left=$(head -c 64 "${TMPDIR:-/tmp}/awg31probe.$$.iface" 2>/dev/null)
+    die "The 2.0 parameter set was not checked (there is no verdict on it): a temporary interface of an earlier check of this run was not removed (${_left:-awgp$$x*}), and the installer did not probe on top of it. The removal may have failed because of a hung netlink or module: look at dmesg and ip link show type amneziawg. The cleanup on exit tries to remove the interface once more; if it stays, remove it yourself: timeout 5 ip link del <name>. Then run the installer again."
 }
 
-# _awg31_module_probe : prints ok | line2 | failed. The body is a subshell
+# _awg31_module_probe : prints ok | line2 | failed | stale (stale - a record of
+# an earlier probe of this process is left, the probe did not start). The body is a subshell
 # (round brackets instead of braces) on purpose: the cleanup trap then leaves
 # the caller's traps alone, and the interface and the key file are removed on
 # every exit, a signal included. The showconf output never reaches the log: it
@@ -951,7 +954,7 @@ _awg20_candidate_stale_die() {
 #
 # Mode candidate20 (argument $1): instead of the third-line parameters, the
 # CURRENT 2.0 set from the variables AWG_Jc .. AWG_I1 is applied in full to the
-# same temporary interface and read back; prints ok | failed. Step 3 uses it to
+# same temporary interface and read back; prints ok | failed | stale. Step 3 uses it to
 # check the candidate before a fallback to 2.0 (the control steps of the 3.1
 # mode only send S1-S4 and the key and prove nothing about H ranges, J and I1).
 # No header protection key is created or checked in this mode.
@@ -1192,7 +1195,7 @@ _awg31_module_probe() (
         # The comparison is EXACT: measured 4 oct 2026 (tools v3.1.20260812),
         # H ranges and I1 read back verbatim. A mismatch is "unknown", not "works".
         if [[ -n "$miss" ]]; then
-            # What came back instead (H and I1 carry no secret): the comparison
+            # What came back instead - every J, S, H and I line (they carry no secret): the comparison
             # is exact, and another module build may answer in another form.
             _probe_say "  lines in the answer: ${#got[@]}"
             for line in "${!got[@]}"; do
@@ -1628,10 +1631,12 @@ _awg31_post_fallback() {
 # that leaves the install alone come first; removal is only the last resort.
 # Advising --protocol=2.0 here would be wrong: the resolver refuses it, and an
 # internal installer error is no verdict on the machine and no reason to wipe it.
+# Arg $2: the gate exit code. Non-zero means the gate failed, and its answer
+# (even a known code) is no verdict: the same text as for an unknown code.
 _awg31_existing_refusal() {
-    local code="${1-}" fix=""
-    if ! _awg31_code_in "$code" "$AWG31_FALLBACK_PRE_CODES $AWG31_FALLBACK_POST_CODES"; then
-        printf '%s' "The 3.1 environment gate returned code '${code:-none}', which this version does not expect: it is an internal installer error, not a finding about your machine. Do not remove the installation and do not change its generation; run with --verbose and report the error with the output attached."
+    local code="${1-}" rc="${2:-0}" fix=""
+    if [[ "$rc" != 0 ]] || ! _awg31_code_in "$code" "$AWG31_FALLBACK_PRE_CODES $AWG31_FALLBACK_POST_CODES"; then
+        printf '%s' "The 3.1 environment gate gave no answer that can be trusted (reason code '${code:-none}', exit code ${rc}): it is an internal installer error or a passing failure, not a finding about your machine. Do not remove the installation and do not change its generation; run the installer again with --verbose and, if it repeats, report the error with the output attached."
         return 0
     fi
     case "$code" in
@@ -1905,15 +1910,16 @@ _awg31_resolve_protocol() {
             if [[ "$install_state" -eq 2 ]]; then AWG_AUTO_FALLBACK=1; fi
             return 0
         fi
-        local _pre_tail=""
-        if [[ "$install_state" -eq 1 ]]; then
-            _pre_tail=" This installation has already reached step 6 (or that could not be ruled out), so its generation does not change here: the way to 2.0 is removal (sudo bash $0 --uninstall) and a new install with --protocol=2.0."
+        # An existing install (profiles may be out): the resolver refuses it the
+        # --protocol=2.0 advice, so the refusal is built separately - reason,
+        # repair, removal as the last resort, and a failure of the gate itself is
+        # no reason to remove anything.
+        if [[ "$install_state" -eq 1 ]] && [[ -n "$_awg31_blocker" || "$_awg31_rc" -ne 0 ]]; then
+            log "3.1 environment gate (pre) for an existing install: reason code '${_awg31_blocker:-none}', exit code ${_awg31_rc}."
+            die "$(_awg31_existing_refusal "$_awg31_blocker" "$_awg31_rc")"
         fi
         if [[ -n "$_awg31_blocker" ]]; then
             log "3.1 environment gate (pre): reason code '${_awg31_blocker}', exit code ${_awg31_rc}."
-            if [[ "$install_state" -eq 1 ]]; then
-                die "$(_awg31_existing_refusal "$_awg31_blocker")"
-            fi
             die "$(_awg31_blocker_message "$_awg31_blocker")"
         fi
         # 🔴 A GATE THAT COULD NOT ANSWER IS NOT PERMISSION. Empty output means
@@ -1922,9 +1928,6 @@ _awg31_resolve_protocol() {
         # would read as "yes". So the status is checked separately from the
         # output. Found by external review 9 sep 2026.
         if (( _awg31_rc != 0 )); then
-            if [[ "$install_state" -eq 1 ]]; then
-                die "The environment gate could not determine whether this machine fits the AmneziaWG 3.1 profile (exit code ${_awg31_rc}, no reason given). Without an answer we do not ship the third line. Report this.${_pre_tail}"
-            fi
             die "The environment gate could not determine whether this machine fits the AmneziaWG 3.1 profile (exit code ${_awg31_rc}, no reason given). Without an answer we do not ship the third line. Install with --protocol=2.0 and report this."
         fi
     fi
@@ -8091,16 +8094,14 @@ _awg31_step3_gate() {
     # the resolver refuses --protocol=2.0, and the advice must lead to removal.
     local _tail="" _now=""
     _now=$(_awg_install_state "$([[ -f "$CONFIG_FILE" ]] && echo 1 || echo 0)" 2>/dev/null) || _now=1
-    if [[ "${AWG_INSTALL_STATE_AT_START:-}" == 0 || "${AWG_INSTALL_STATE_AT_START:-}" == 2 ]] && [[ "$_now" == 2 ]]; then
-        _tail=" The server keys and profiles are not created yet, so you can switch to 2.0 without removing anything: sudo bash $0 --protocol=2.0"
-        if [[ -n "$_awg31_blocker" ]]; then
-            die "$(_awg31_blocker_message "$_awg31_blocker")${_tail}"
-        fi
-    else
-        _tail=" This installation may already have handed out 3.1 profiles (or the installer cannot rule it out), so its generation does not change here: the way to 2.0 is removal (sudo bash $0 --uninstall) and a new install with --protocol=2.0."
-        if [[ -n "$_awg31_blocker" ]]; then
-            die "$(_awg31_existing_refusal "$_awg31_blocker")"
-        fi
+    if [[ "${AWG_INSTALL_STATE_AT_START:-}" != 0 && "${AWG_INSTALL_STATE_AT_START:-}" != 2 ]] || [[ "$_now" != 2 ]]; then
+        # Existing: reason and repair, removal as the last resort; a failure of
+        # the gate itself (non-zero exit code, no reason) is no reason to remove.
+        die "$(_awg31_existing_refusal "$_awg31_blocker" "$_awg31_rc")"
+    fi
+    _tail=" The server keys and profiles are not created yet, so you can switch to 2.0 without removing anything: sudo bash $0 --protocol=2.0"
+    if [[ -n "$_awg31_blocker" ]]; then
+        die "$(_awg31_blocker_message "$_awg31_blocker")${_tail}"
     fi
     # The same fail-closed rule as at step 0: the silence of a gate that
     # crashed is not permission.

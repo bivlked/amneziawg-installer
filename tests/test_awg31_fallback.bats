@@ -285,6 +285,20 @@ _begun() {
     done
 }
 
+@test "step 0: an internal code or a failed gate on an existing 3.1 install is not a reason to remove it" {
+    local s c
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        for c in "internal_error:0" "brand_new_code:0" ":2" "kernel:2"; do
+            _begun 3.1 7 default
+            : > "$SERVER_CONF_FILE"
+            CLI_PROTOCOL="" CLI_PROTOCOL_SET=0 BLOCKER_CODE="${c%%:*}" GATE_RC="${c##*:}" _s0 "$s"
+            [ "$status" -eq 1 ] || { echo "$s/$c: $output"; return 1; }
+            [[ "$output" == *"DIE:"*"--verbose"* && "$output" != *"--uninstall"* ]] || { echo "$s/$c: $output"; return 1; }
+            [ "$(cat "$STATE_FILE")" = 7 ]
+        done
+    done
+}
+
 @test "step 0: a matching explicit flag on an existing install records the choice and clears the reason" {
     local s
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
@@ -453,6 +467,28 @@ _s3() {
         # the repair that leaves the install alone comes first
         [[ "$output" == *"amneziawg-dkms"* ]] || { echo "$s: no repair hint: $output"; return 1; }
         ! grep -q '^SAVE' "$EVLOG"
+    done
+}
+
+@test "step 3: the trace recheck passes whether the init exists (1 with it, 0 without)" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        : > "$CONFIG_FILE"
+        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 NOW_STATE=2 BLOCKER_CODE="module_line2" _s3 "$s"
+        grep -qx 'STATECHK 1' "$EVLOG" || { echo "$s with init: $(cat "$EVLOG")"; return 1; }
+        rm -f "$CONFIG_FILE"
+        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 NOW_STATE=2 BLOCKER_CODE="module_line2" _s3 "$s"
+        grep -qx 'STATECHK 0' "$EVLOG" || { echo "$s without init: $(cat "$EVLOG")"; return 1; }
+    done
+}
+
+@test "step 3: a gate that failed on an existing install, with or without a code, is not a reason to remove it" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=1 BLOCKER_CODE="" GATE_RC=1 _s3 "$s"
+        [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"*"--verbose"* && "$output" != *"--uninstall"* ]] || { echo "$s no code: $output"; return 1; }
+        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=1 BLOCKER_CODE="module_line2" GATE_RC=2 _s3 "$s"
+        [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"*"--verbose"* && "$output" != *"--uninstall"* ]] || { echo "$s known code, bad status: $output"; return 1; }
     done
 }
 

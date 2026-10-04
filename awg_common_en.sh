@@ -1910,7 +1910,7 @@ _awg31_module_probe() (
         # The comparison is EXACT: measured 4 oct 2026 (tools v3.1.20260812),
         # H ranges and I1 read back verbatim. A mismatch is "unknown", not "works".
         if [[ -n "$miss" ]]; then
-            # What came back instead (H and I1 carry no secret): the comparison
+            # What came back instead - every J, S, H and I line (they carry no secret): the comparison
             # is exact, and another module build may answer in another form.
             _probe_say "  lines in the answer: ${#got[@]}"
             for line in "${!got[@]}"; do
