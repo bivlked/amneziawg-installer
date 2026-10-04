@@ -27,7 +27,10 @@ jobs:
     # a parallel run of this suite produced nine failures of which eight passed
     # when the same files were re-run serially, because some cases share state.
     # Parallelism here would trade a timeout for red runs on a green tree.
-    timeout-minutes: 20
+    # Forty since 4 oct 2026: the suite took 13-18.5 min depending on the
+    # runner, so twenty was again close to the edge. release.yml runs the same
+    # suite inside its preflight job and keeps the same budget.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
