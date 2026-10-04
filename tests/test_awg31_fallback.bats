@@ -403,6 +403,9 @@ _s3() {
         echo '_awg_fallback_params() { echo "GEN proto=$AWG_PROTOCOL" >> "$EVLOG"; AWG_I1="<b 0x01>"; }'
         echo 'awg20_candidate_support() { echo "PROBE proto=$AWG_PROTOCOL i1=[$AWG_I1]" >> "$EVLOG"; return ${PROBE_RC:-0}; }'
         echo '_awg_save_init() { echo "SAVE proto=$AWG_PROTOCOL fb=$AWG_PROTOCOL_FALLBACK src=$AWG_PROTOCOL_SOURCE" >> "$EVLOG"; }'
+        # REC_CONTENT: a record of an earlier probe of this process, as the probe
+        # (or someone planting it in /tmp) would leave it; @PID becomes $$
+        echo '[[ -n "${REC_CONTENT-}" ]] && printf "%b" "${REC_CONTENT//@PID/$$}" > "${TMPDIR:-/tmp}/awg31probe.$$.iface"'
         echo '${S3_CALL:-step3_check_module}'
         echo 'echo "POST_OK=$AWG31_POST_OK PROTO=$AWG_PROTOCOL FB=${AWG_PROTOCOL_FALLBACK-}"'
     } > "$TEST_DIR/s3.sh"
@@ -534,6 +537,19 @@ _s3() {
         ! grep -q '^SAVE' "$EVLOG"
         AWG_PROTOCOL=2.0 AWG_PROTOCOL_FALLBACK=kernel AWG_INSTALL_STATE_AT_START=0 PROBE_RC=2 _s3 "$s"
         [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"*"awgp"* ]] || { echo "$s saved set: $output"; return 1; }
+    done
+}
+
+@test "step 3: the left-interface refusal names only a name of our probe, never a planted one" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        TMPDIR="$TEST_DIR" REC_CONTENT='eth0' AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_line2" PROBE_RC=2 _s3 "$s"
+        [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
+        [[ "$output" != *eth0* && "$output" == *"awgp"* ]] || { echo "$s: a planted name reached the advice: $output"; return 1; }
+        TMPDIR="$TEST_DIR" REC_CONTENT='awgp@PIDx1\033[2Jtrail' AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_line2" PROBE_RC=2 _s3 "$s"
+        [[ "$output" != *$'\033'* ]] || { echo "$s: a control sequence reached the console"; return 1; }
+        TMPDIR="$TEST_DIR" REC_CONTENT='awgp@PIDx2' AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_line2" PROBE_RC=2 _s3 "$s"
+        [[ "$output" =~ awgp[0-9]+x2 ]] || { echo "$s: the real probe name is not named: $output"; return 1; }
     done
 }
 

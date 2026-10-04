@@ -938,8 +938,15 @@ awg20_candidate_support() {
 # because an earlier probe interface was left. A rerun is a new process with its
 # own record, so the advice is simple.
 _awg20_candidate_stale_die() {
+    # 🔴 The record lives in the shared /tmp under a predictable name and may be
+    # planted - it is read the way the cleanup reads it: with a time limit (a
+    # FIFO would hang the installer otherwise), the first line only, and only a
+    # name matching our probe mask goes out. A planted "eth0" in the
+    # "ip link del" advice would take the machine off the network. Found by review.
     local _left=""
-    _left=$(head -c 64 "${TMPDIR:-/tmp}/awg31probe.$$.iface" 2>/dev/null)
+    _left=$(timeout -k 1 5 head -c 64 "${TMPDIR:-/tmp}/awg31probe.$$.iface" 2>/dev/null)
+    _left="${_left%%$'\n'*}"
+    [[ "$_left" =~ ^awgp$$x[1-5]$ ]] || _left=""
     die "The 2.0 parameter set was not checked (there is no verdict on it): a temporary interface of an earlier check of this run was not removed (${_left:-awgp$$x*}), and the installer did not probe on top of it. The removal may have failed because of a hung netlink or module: look at dmesg and ip link show type amneziawg. The cleanup on exit tries to remove the interface once more; if it stays, remove it yourself: timeout 5 ip link del <name>. Then run the installer again."
 }
 
@@ -1644,7 +1651,7 @@ _awg31_post_fallback() {
 _awg31_existing_refusal() {
     local code="${1-}" rc="${2:-0}" fix=""
     if [[ "$rc" != 0 ]] || ! _awg31_code_in "$code" "$AWG31_FALLBACK_PRE_CODES $AWG31_FALLBACK_POST_CODES"; then
-        printf '%s' "The 3.1 environment gate gave no answer that can be trusted (reason code '${code:-none}', exit code ${rc}): it is an internal installer error or a passing failure, not a finding about your machine. Do not remove the installation and do not change its generation; run the installer again with --verbose and, if it repeats, report the error with the output attached."
+        printf '%s' "The 3.1 environment gate gave no answer that can be trusted (reason code '${code:-none}', exit code ${rc}): it is an internal installer error or a transient failure, not a finding about your machine. Do not remove the installation and do not change its generation; run the installer again with --verbose and, if it repeats, report the error with the output attached."
         return 0
     fi
     case "$code" in
