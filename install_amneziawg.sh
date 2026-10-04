@@ -4712,7 +4712,7 @@ _awg_kmod_status_parse() {
 # предупреждения: код --repair-module решают этапы (обвязка, --repair,
 # --finish).
 _awg_kmod_status_warn() {
-    local sf scode=0 k rel run mod hdr pkg
+    local sf scode=0 k rel run mod hdr pkg how
     if ! sf="$(mktemp)"; then log_warn "Итоговое состояние ядер не проверено: не удалось создать временный файл."; return 0; fi
     _install_temp_files+=("$sf")
     timeout 60 "$AWG_ENSURE_HELPER" --status > "$sf" 2>> "$LOG_FILE" || scode=$?
@@ -4724,12 +4724,18 @@ _awg_kmod_status_warn() {
     for k in "${_KS_KERNELS[@]}"; do
         [[ "$k" =~ release=([^ ]+)\ running=([01])\ image=[01]\ module=([^ ]+)\ headers=([^ ]+)\ package=([^ ]+) ]] || continue
         rel="${BASH_REMATCH[1]}" run="${BASH_REMATCH[2]}" mod="${BASH_REMATCH[3]}" hdr="${BASH_REMATCH[4]}" pkg="${BASH_REMATCH[5]}"
+        # Заголовки стоят - значит, сборка не удалась, и ставить их снова бесполезно.
+        if [[ "$hdr" == ok ]]; then
+            how="Заголовки стоят, но модуль не собрался (причина в строках выше): запустите --repair-module снова"
+        else
+            how="Поставьте linux-headers-$rel и запустите --repair-module снова"
+        fi
         if [[ "$mod" == 0 && "$pkg" == unfinished ]]; then
-            log_warn "Перед перезагрузкой: недонастроенное ядро $rel без модуля AmneziaWG - донастройка сделала бы его загрузочным без туннеля. Поставьте linux-headers-$rel и запустите --repair-module снова, либо удалите это ядро."
+            log_warn "Перед перезагрузкой: недонастроенное ядро $rel без модуля AmneziaWG - донастройка сделала бы его загрузочным без туннеля. $how, либо удалите это ядро."
         elif [[ "$run" -eq 1 && "$mod" == 0 ]]; then
             log_warn "Перед перезагрузкой: у текущего ядра $rel нет файла модуля AmneziaWG на диске, после перезагрузки туннеля не будет."
         elif [[ "$run" -eq 0 && "$mod" == 0 ]]; then
-            log_warn "Перед перезагрузкой: у ядра $rel нет модуля AmneziaWG, в него не загружайтесь. Поставьте linux-headers-$rel и запустите --repair-module снова, либо удалите это ядро."
+            log_warn "Перед перезагрузкой: у ядра $rel нет модуля AmneziaWG, в него не загружайтесь. $how, либо удалите это ядро."
         fi
         if [[ "$mod" == unknown ]]; then
             log_warn "Перед перезагрузкой: модуль ядра $rel проверить не удалось (каталог модулей не читается)."
@@ -7247,6 +7253,20 @@ mode_finish() {
         log_line "ERROR: packages are still unfinished after dpkg --configure -a:" >&2
         printf '%s\n' "$audit" >&2
         exit 1
+    fi
+    # Configuring can take a module away: when amneziawg-dkms itself was
+    # unfinished, its postinst deletes the module from the DKMS tree for
+    # every kernel and builds it back only for the running one. Our apt hook
+    # does not run here (DPkg::Post-Invoke fires only when apt calls dpkg),
+    # so the build pass runs once more, as a child that takes the lock itself
+    # and builds only the kernels left without the module.
+    collect_targets
+    if ! all_targets_have_module; then
+        log_line "dpkg --configure -a removed the module of some kernels; building it again (--repair)"
+        if ! "$0" --repair; then
+            log_line "ERROR: packages are configured, but building the module again after dpkg failed; see the messages above and run the repair again" >&2
+            exit 1
+        fi
     fi
     if [[ "$pending_n" -gt 0 ]]; then
         log_line "packages: configured; the configured kernel(s) are now in the boot loader. A working tunnel now does not prove the new kernel will load the module."

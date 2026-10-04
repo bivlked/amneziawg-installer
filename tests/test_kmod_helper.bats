@@ -119,7 +119,7 @@ esac
 echo "dpkg $*" >> "$T/calls"
 case "$1" in
   --audit) [[ -e "$T/audit.fail" ]] && exit 2; cat "$T/audit" 2>/dev/null; exit 0 ;;
-  --configure) [[ -e "$T/configure.fail" ]] && exit 1; rm -f "$T/audit"; for f in "$T"/st/linux-image-*; do [[ -e "$f" ]] && echo "install ok installed" > "$f"; done; exit 0 ;;
+  --configure) [[ -e "$T/configure.fail" ]] && exit 1; [[ -e "$T/configure.side" ]] && bash "$T/configure.side"; rm -f "$T/audit"; for f in "$T"/st/linux-image-*; do [[ -e "$f" ]] && echo "install ok installed" > "$f"; done; exit 0 ;;
 esac'
     _stub dkms 'echo "dkms $*" >> "$T/calls"
 [[ "$1" == install ]] || exit 0
@@ -648,6 +648,69 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
     [[ "$(_calls)" == *"dpkg --configure -a"* ]]
     [[ "$output" == *"now in the boot loader"* ]]
+}
+
+# Configuring amneziawg-dkms itself runs its postinst, which deletes the
+# module from the DKMS tree for every kernel and builds it back only for the
+# running one (stand LA #2, 4 oct 2026). Our apt hook does not fire under a
+# bare dpkg, so --finish has to build the other kernels again.
+_configure_drops_others() {
+    cat > "$T/configure.side" <<EOF
+rm -f "$(_ko "$OLD")" "$(_ko "$NEW")"
+mkdir -p "\$(dirname "$(_ko "$OLD")")"; echo ko > "$(_ko "$OLD")"
+EOF
+}
+
+@test "finish: configure that drops the other kernels' module builds them again, on both helpers" {
+    local s
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        rm -rf "${T:?}/usr" "${T:?}/var" "${T:?}/lib" "${T:?}/boot"/* "${T:?}/own" "${T:?}/st" "${T:?}/calls"; mkdir -p "$T/boot"
+        _mk_helper "$s"
+        _mk_server "$OLD" "$NEW"
+        "$H" --repair >/dev/null 2>&1
+        [ -s "$(_ko "$NEW")" ]
+        echo "amneziawg-dkms is only half configured" > "$T/audit"
+        _configure_drops_others
+        run "$H" --finish
+        [ "$status" -eq 0 ] || { echo "$s: $output"; return 1; }
+        [ -s "$(_ko "$OLD")" ]; [ -s "$(_ko "$NEW")" ]
+        # The rebuild of $NEW comes after the configure, not from the first --repair.
+        sed -n '/^dpkg --configure -a$/,$p' "$T/calls" | grep -qx "dkms install -m amneziawg -v 1.0.0 -k $NEW" \
+            || { echo "$s: no rebuild of $NEW after configure"; cat "$T/calls"; return 1; }
+        [[ "$output" == *"building it again"* ]]
+        [[ "$output" == *"packages: configured"* ]]
+    done
+}
+
+@test "finish: a failed rebuild after configure is exit 1 and says so, on both helpers" {
+    local s
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        rm -rf "${T:?}/usr" "${T:?}/var" "${T:?}/lib" "${T:?}/boot"/* "${T:?}/own" "${T:?}/st" "${T:?}/calls" "$T/dkms.fail.$NEW"; mkdir -p "$T/boot"
+        _mk_helper "$s"
+        _mk_server "$OLD" "$NEW"
+        "$H" --repair >/dev/null 2>&1
+        echo "amneziawg-dkms is only half configured" > "$T/audit"
+        _configure_drops_others
+        echo ": > \"$T/dkms.fail.$NEW\"" >> "$T/configure.side"
+        run "$H" --finish
+        [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"building the module again after dpkg failed"* ]]
+        [ ! -e "$(_ko "$NEW")" ]
+    done
+}
+
+@test "finish: configure that keeps every module builds nothing more" {
+    _mk_server "$OLD" "$NEW"
+    "$H" --repair >/dev/null 2>&1
+    local n
+    n=$(grep -c '^dkms install' "$T/calls")
+    echo "amneziawg-tools is not configured" > "$T/audit"
+    run "$H" --finish
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"packages: configured"* ]]
+    [[ "$(_calls)" == *"dpkg --configure -a"* ]]
+    [ "$(grep -c '^dkms install' "$T/calls")" -eq "$n" ]
+    [[ "$output" != *"building it again"* ]]
 }
 
 @test "finish: an unfinished kernel without headers and without the module blocks configure, by name" {

@@ -2041,6 +2041,16 @@ _kmod_json_list() {
 _kmod_repair_via_helper() {
     local hrc=0 frc="" mrc=1 cur k rel run mod hdr pkg rmod="null" rhdr="null" ok=0 other=0 pend_mod=0
     local -a nomod=() unfin=() unk=()
+    local -A khdr=()
+    # What to do with a kernel that has no module: with its headers installed
+    # the build failed, and installing them again does not help.
+    _kmod_fix_hint() {
+        if [[ "${khdr[$1]:-}" == ok ]]; then
+            printf 'Headers are installed, but the module did not build (the reason is above): run repair-module again'
+        else
+            printf 'Install linux-headers-%s and run repair-module again' "$1"
+        fi
+    }
     _kh() { if [[ "$JSON_OUTPUT" -eq 1 ]]; then "$AWG_ENSURE_HELPER" "$@" >&2; else "$AWG_ENSURE_HELPER" "$@"; fi; }
     cur=$(uname -r)
     _kmod_status_run
@@ -2100,15 +2110,16 @@ _kmod_repair_via_helper() {
                 [[ "$mod" == 1 ]] && other=1
             fi
             [[ "$mod" == unknown ]] && unk+=("$rel")
+            khdr["$rel"]="$hdr"
             if [[ "$mod" == 0 && "$pkg" == unfinished ]]; then unfin+=("$rel")
             elif [[ "$run" -eq 0 && "$mod" == 0 ]]; then nomod+=("$rel"); fi
             [[ "$mod" == 1 && "$pkg" == unfinished ]] && pend_mod=1
         done
         for rel in "${nomod[@]}"; do
-            log_warn "Kernel $rel has no AmneziaWG module, do not boot into it. Install linux-headers-$rel and run repair-module again, or remove that kernel."
+            log_warn "Kernel $rel has no AmneziaWG module, do not boot into it. $(_kmod_fix_hint "$rel"), or remove that kernel."
         done
         for rel in "${unfin[@]}"; do
-            log_error "Unfinished kernel $rel has no AmneziaWG module: configuring it (dpkg --configure -a) would make it bootable without the tunnel. Install linux-headers-$rel and run repair-module again, or remove that kernel."
+            log_error "Unfinished kernel $rel has no AmneziaWG module: configuring it (dpkg --configure -a) would make it bootable without the tunnel. $(_kmod_fix_hint "$rel"), or remove that kernel."
         done
         for rel in "${unk[@]}"; do log_warn "The module of kernel $rel could not be checked (its module directory is not readable)."; done
         [[ "$_KS_FIX" == disabled ]] && log "The source fix is turned off by hand (--revert); to allow it again: sudo $AWG_ENSURE_HELPER --enable"

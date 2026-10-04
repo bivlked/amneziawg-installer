@@ -153,6 +153,21 @@ _scr() { if [[ "$1" == EN ]]; then SCR="$M_EN"; else SCR="$M"; fi; }
     done
 }
 
+@test "new path: a kernel with headers but no module is told its build failed, not to install headers" {
+    local l
+    _status "kernel release=$OLDK running=0 image=1 module=0 headers=ok package=installed" \
+            "kernel release=7.0.0-39-generic running=0 image=1 module=0 headers=ok package=unfinished" > "$T/helper.out.--status.2"
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l: $stderr"; return 1; }
+        _j ".kernels_without_module==[\"$OLDK\"] and .unfinished_without_module==[\"7.0.0-39-generic\"]" || { echo "$l: $output"; return 1; }
+        [ "$(grep -c "$OLDK.*repair-module" <<<"$stderr")" -eq 1 ] || { echo "$l: $stderr"; return 1; }
+        [ "$(grep -c "7.0.0-39-generic.*repair-module" <<<"$stderr")" -eq 1 ] || { echo "$l: $stderr"; return 1; }
+        [[ "$stderr" != *"linux-headers-$OLDK"* && "$stderr" != *"linux-headers-7.0.0-39-generic"* ]] || { echo "$l: $stderr"; return 1; }
+        [[ "$stderr" == *"Заголовки стоят"* || "$stderr" == *"Headers are installed"* ]] || { echo "$l: $stderr"; return 1; }
+    done
+}
+
 @test "new path: a kernel without a module whose package state is unknown is still named; a failed audit is not 'unfinished packages'" {
     local l
     COMPLETE=0 AUDIT=failed _status "kernel release=$OLDK running=0 image=1 module=0 headers=missing package=unknown" > "$T/helper.out.--status.2"
