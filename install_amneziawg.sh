@@ -6317,7 +6317,10 @@ _awg_deploy_ensure_helper() {
     log "Развёртывание helper'а DKMS auto-repair..."
     mkdir -p /usr/local/sbin
     local _stage_helper=/usr/local/sbin/.amneziawg-ensure-module.new
-    cat > "$_stage_helper" <<'AWG_ENSURE_HELPER_EOF'
+    # Код записи проверяется, а файл - разбором и последней строкой: короткая
+    # запись (ENOSPC) оставила бы обрезанный помощник, который на --version ещё
+    # отвечает, а на остальных режимах падает.
+    cat > "$_stage_helper" <<'AWG_ENSURE_HELPER_EOF' || { rm -f "$_stage_helper"; die "Не удалось записать helper amneziawg-ensure-module (места на диске нет?). Установленный helper не тронут."; }
 #!/bin/bash
 # amneziawg-ensure-module — rebuilds the AmneziaWG DKMS module after a
 # kernel upgrade.
@@ -7515,6 +7518,9 @@ case "$MODE" in
 esac
 exit 2
 AWG_ENSURE_HELPER_EOF
+    if ! bash -n "$_stage_helper" 2>/dev/null || [[ "$(tail -n 1 "$_stage_helper" 2>/dev/null)" != "exit 2" ]]; then
+        rm -f "$_stage_helper"; die "Записанный helper amneziawg-ensure-module неполный или повреждён (места на диске нет?). Установленный helper не тронут."
+    fi
     chown root:root "$_stage_helper" 2>/dev/null || true
     chmod 0755 "$_stage_helper" \
         || { rm -f "$_stage_helper"; die "Не удалось chmod helper'а."; }

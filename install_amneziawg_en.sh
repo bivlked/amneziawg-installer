@@ -6456,7 +6456,10 @@ _awg_deploy_ensure_helper() {
     log "Deploying DKMS auto-repair helper..."
     mkdir -p /usr/local/sbin
     local _stage_helper=/usr/local/sbin/.amneziawg-ensure-module.new
-    cat > "$_stage_helper" <<'AWG_ENSURE_HELPER_EOF'
+    # The write is checked by its exit code and the file by a parse and its
+    # last line: a short write (ENOSPC) would leave a cut helper that still
+    # answers --version but fails every other mode.
+    cat > "$_stage_helper" <<'AWG_ENSURE_HELPER_EOF' || { rm -f "$_stage_helper"; die "Could not write the amneziawg-ensure-module helper (is the disk full?). The installed helper is untouched."; }
 #!/bin/bash
 # amneziawg-ensure-module — rebuilds the AmneziaWG DKMS module after a
 # kernel upgrade.
@@ -7654,6 +7657,9 @@ case "$MODE" in
 esac
 exit 2
 AWG_ENSURE_HELPER_EOF
+    if ! bash -n "$_stage_helper" 2>/dev/null || [[ "$(tail -n 1 "$_stage_helper" 2>/dev/null)" != "exit 2" ]]; then
+        rm -f "$_stage_helper"; die "The written amneziawg-ensure-module helper is incomplete or damaged (is the disk full?). The installed helper is untouched."
+    fi
     chown root:root "$_stage_helper" 2>/dev/null || true
     chmod 0755 "$_stage_helper" \
         || { rm -f "$_stage_helper"; die "Failed to chmod helper."; }

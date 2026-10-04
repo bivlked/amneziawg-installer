@@ -410,6 +410,60 @@ _head_through_check() { # installer -> $T/head.sh
     done
 }
 
+# ---------- helper deployment: a short or failed write never replaces the helper ----------
+
+# _awg_deploy_ensure_helper of installer $1 with /usr/local/sbin moved into $T.
+# Its heredoc holds functions closing with "}" in column 0, so the function is
+# cut up to the "}" that follows the heredoc's end marker.
+_deploy_driver() {
+    {
+        echo 'log() { echo "LOG: $*"; }; die() { echo "DIE: $*"; exit 1; }'
+        awk '/^_awg_deploy_ensure_helper\(\) \{$/{f=1} f{print} f&&/^AWG_ENSURE_HELPER_EOF$/{e=1} f&&e&&/^}$/{exit}' \
+            "$BATS_TEST_DIRNAME/../$1" | sed "s#/usr/local/sbin#$T/sbin#g"
+        echo '_awg_deploy_ensure_helper; echo "RC=$?"'
+    } > "$T/deploy.sh"
+    grep -q '^AWG_ENSURE_HELPER_EOF$' "$T/deploy.sh" || { echo "helper heredoc not cut"; return 1; }
+}
+# cat stub: CAT_MODE=fail writes part of its input and fails, short writes part and succeeds.
+_cat_stub() {
+    _stub cat 'case "${CAT_MODE:-}" in
+  fail)  head -c 4096; exit 1 ;;
+  short) head -c 4096; cat_rest=$(/bin/cat >/dev/null); exit 0 ;;
+  *)     exec /bin/cat "$@" ;;
+esac'
+}
+
+@test "deploy: a failed or silently short write of the helper dies and keeps the installed one, on both installers" {
+    local f mode
+    for f in "${INSTALLERS[@]}"; do
+        for mode in fail short; do
+            rm -rf "${T:?}/sbin"; mkdir -p "$T/sbin"
+            echo "old helper" > "$T/sbin/amneziawg-ensure-module"
+            _deploy_driver "$f"; _cat_stub
+            CAT_MODE=$mode PATH="$T/bin:$PATH" run bash "$T/deploy.sh"
+            [ "$status" -eq 1 ] || { echo "$f $mode: $output"; return 1; }
+            [[ "$output" == *"DIE: "* ]] || { echo "$f $mode: $output"; return 1; }
+            [ "$(/bin/cat "$T/sbin/amneziawg-ensure-module")" = "old helper" ] || { echo "$f $mode: replaced"; return 1; }
+            [ ! -e "$T/sbin/.amneziawg-ensure-module.new" ] || { echo "$f $mode: stage left"; return 1; }
+        done
+    done
+}
+
+@test "deploy: a full write installs an executable helper that answers --version, on both installers" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        rm -rf "${T:?}/sbin"; mkdir -p "$T/sbin"
+        _deploy_driver "$f"; _cat_stub
+        PATH="$T/bin:$PATH" run bash "$T/deploy.sh"
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
+        [[ "$output" == *"RC=0"* ]] || { echo "$f: $output"; return 1; }
+        [ -x "$T/sbin/amneziawg-ensure-module" ]
+        [ "$(tail -n 1 "$T/sbin/amneziawg-ensure-module")" = "exit 2" ]
+        run bash "$T/sbin/amneziawg-ensure-module" --version
+        [[ "$output" == "amneziawg-ensure-module "* ]] || { echo "$f: $output"; return 1; }
+    done
+}
+
 @test "--repair-module is in the help of both installers" {
     grep -q -- '--repair-module       Починить модуль ядра' "$BATS_TEST_DIRNAME/../install_amneziawg.sh"
     grep -q -- '--repair-module       Repair the kernel module' "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"
