@@ -209,6 +209,19 @@ _t1_driver() {
     done
 }
 
+@test "T1: configured packages whose lost module did not come back are said as such, not as a package failure" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _reset; _st amneziawg-dkms "install ok unpacked"; echo 1 > "$T/helper.rc.--finish"
+        echo "[ts] [--finish] ERROR: packages are configured, but the module did not build again for: 6.8.0-31-generic; see the messages above and run the repair again" > "$T/helper.out.--finish"
+        _t1_driver "$f" 1
+        run bash "$T/drv.sh" amneziawg-dkms
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"DIE: "*"6.8.0-31-generic"*"--repair-module"* ]] || { echo "$f: $output"; return 1; }
+        [[ "$output" != *"Ошибка установки пакетов"* && "$output" != *"Package installation error"* ]] || { echo "$f: $output"; return 1; }
+    done
+}
+
 @test "T1: the known issue of another kernel is not given as the reason when packages failed" {
     local f
     for f in "${INSTALLERS[@]}"; do
@@ -471,6 +484,21 @@ EOF
         grep -q '^WARN: .*6\.8\.0-50-generic.*linux-headers-6\.8\.0-50-generic' <<<"$output" || { echo "$f: $output"; return 1; }
         # The running kernel is never named as a kernel to avoid.
         if grep -q '^WARN: .*7\.0\.0-38-generic' <<<"$output"; then echo "$f: running kernel named: $output"; return 1; fi
+    done
+}
+
+@test "repair-module: a kernel with headers but no module is told its build failed, not to install headers" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _rm_server
+        sed -i '/^module /i kernel release=6.8.0-31-generic running=0 image=1 module=0 headers=ok package=installed\nkernel release=7.0.0-39-generic running=0 image=1 module=0 headers=ok package=unfinished' "$T/helper.out.--status"
+        _rm_driver "$f"
+        run bash "$T/drv.sh"
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
+        grep -q '^WARN: .*6\.8\.0-31-generic.*--repair-module' <<<"$output" || { echo "$f: $output"; return 1; }
+        grep -q '^WARN: .*7\.0\.0-39-generic.*--repair-module' <<<"$output" || { echo "$f: $output"; return 1; }
+        grep -q '^WARN: .*6\.8\.0-31-generic.*\(Заголовки стоят\|Headers are installed\)' <<<"$output" || { echo "$f: $output"; return 1; }
+        if grep -q 'linux-headers-6\.8\.0-31-generic\|linux-headers-7\.0\.0-39-generic' <<<"$output"; then echo "$f: told to install headers: $output"; return 1; fi
     done
 }
 

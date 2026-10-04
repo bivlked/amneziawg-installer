@@ -2004,6 +2004,16 @@ _kmod_json_list() {
 _kmod_repair_via_helper() {
     local hrc=0 frc="" mrc=1 cur k rel run mod hdr pkg rmod="null" rhdr="null" ok=0 other=0 pend_mod=0
     local -a nomod=() unfin=() unk=()
+    local -A khdr=()
+    # Что делать с ядром без модуля: если заголовки стоят, ставить их снова
+    # бесполезно, причина в другом (она в строках выше).
+    _kmod_fix_hint() {
+        if [[ "${khdr[$1]:-}" == ok ]]; then
+            printf 'Заголовки стоят, но модуля нет (причина в строках выше): запустите repair-module снова'
+        else
+            printf 'Поставьте linux-headers-%s и запустите repair-module снова' "$1"
+        fi
+    }
     _kh() { if [[ "$JSON_OUTPUT" -eq 1 ]]; then "$AWG_ENSURE_HELPER" "$@" >&2; else "$AWG_ENSURE_HELPER" "$@"; fi; }
     cur=$(uname -r)
     _kmod_status_run
@@ -2063,19 +2073,20 @@ _kmod_repair_via_helper() {
                 [[ "$mod" == 1 ]] && other=1
             fi
             [[ "$mod" == unknown ]] && unk+=("$rel")
+            khdr["$rel"]="$hdr"
             if [[ "$mod" == 0 && "$pkg" == unfinished ]]; then unfin+=("$rel")
             elif [[ "$run" -eq 0 && "$mod" == 0 ]]; then nomod+=("$rel"); fi
             [[ "$mod" == 1 && "$pkg" == unfinished ]] && pend_mod=1
         done
         for rel in "${nomod[@]}"; do
-            log_warn "У ядра $rel нет модуля AmneziaWG, в него не загружайтесь. Поставьте linux-headers-$rel и запустите repair-module снова, либо удалите это ядро."
+            log_warn "У ядра $rel нет модуля AmneziaWG, в него не загружайтесь. $(_kmod_fix_hint "$rel"), либо удалите это ядро."
         done
         for rel in "${unfin[@]}"; do
-            log_error "Недонастроенное ядро $rel без модуля AmneziaWG: донастройка (dpkg --configure -a) сделала бы его загрузочным без туннеля. Поставьте linux-headers-$rel и запустите repair-module снова, либо удалите это ядро."
+            log_error "Недонастроенное ядро $rel без модуля AmneziaWG: донастройка (dpkg --configure -a) сделала бы его загрузочным без туннеля. $(_kmod_fix_hint "$rel"), либо удалите это ядро."
         done
         for rel in "${unk[@]}"; do log_warn "Модуль ядра $rel проверить не удалось (каталог модулей не читается)."; done
         [[ "$_KS_FIX" == disabled ]] && log "Правка исходника отключена вручную (--revert); включить снова: sudo $AWG_ENSURE_HELPER --enable"
-        if [[ "$mrc" -eq 0 && ( "$_KS_AUDIT" == unfinished || ( -n "$frc" && "$frc" -ne 0 ) ) ]]; then
+        if [[ "$mrc" -eq 0 && "$_KS_AUDIT" == unfinished ]]; then
             log_warn "Работающий туннель не значит, что apt починен: пакеты не донастроены."
         fi
         if [[ "$pend_mod" -eq 1 ]]; then
@@ -2169,9 +2180,12 @@ _diag_kmod_facts() {
     for k in "${_KS_KERNELS[@]}"; do
         [[ "$k" =~ release=([^ ]+)\ running=([01])\ image=[01]\ module=([^ ]+)\ headers=([^ ]+)\ package=([^ ]+) ]] || continue
         rel="${BASH_REMATCH[1]}" run="${BASH_REMATCH[2]}" mod="${BASH_REMATCH[3]}" hdr="${BASH_REMATCH[4]}" pkg="${BASH_REMATCH[5]}"
+        # Заголовки стоят - ставить их снова бесполезно.
+        local _dfix="sudo apt install linux-headers-$rel, затем sudo bash $0 repair-module (или удалите это ядро)"
+        [[ "$hdr" == ok ]] && _dfix="sudo bash $0 repair-module (заголовки стоят; если модуль снова не появится, причина будет в выводе) или удалите это ядро"
         if [[ "$mod" == 0 && "$pkg" == unfinished ]]; then
             _diag_line WARN "Недонастроенное ядро $rel без модуля AmneziaWG: донастройка сделала бы его загрузочным без туннеля"
-            echo "        Fix: sudo apt install linux-headers-$rel, затем sudo bash $0 repair-module (или удалите это ядро)"
+            echo "        Fix: $_dfix"
             warn=$((warn+1)); flagged=1
         elif [[ "$run" -eq 1 && "$mod" == 0 ]]; then
             # Загруженный модуль переживает удаление файла: проверка «модуль
@@ -2181,7 +2195,7 @@ _diag_kmod_facts() {
             warn=$((warn+1)); flagged=1
         elif [[ "$run" -eq 0 && "$mod" == 0 ]]; then
             _diag_line WARN "У ядра $rel нет модуля AmneziaWG: в него не загружайтесь"
-            echo "        Fix: sudo apt install linux-headers-$rel, затем sudo bash $0 repair-module (или удалите это ядро)"
+            echo "        Fix: $_dfix"
             warn=$((warn+1)); flagged=1
         elif [[ "$mod" == unknown ]]; then
             _diag_line WARN "Модуль ядра $rel проверить не удалось (каталог модулей не читается)"

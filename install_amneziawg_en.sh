@@ -1760,7 +1760,7 @@ install_packages() {
         if [[ "${_AWG_KMOD_T1:-0}" -eq 1 && -x "$AWG_ENSURE_HELPER" ]] \
                 && _pkg_present amneziawg-dkms; then
             log_warn "apt install did not complete - repairing the AmneziaWG module (source and build)..."
-            local _hout _hrc _frc=1 _bad _stuck
+            local _hout _hrc _frc=1 _bad _stuck _lost
             if _hout="$(mktemp)"; then
                 _install_temp_files+=("$_hout")
             else
@@ -1800,7 +1800,14 @@ install_packages() {
             _bad=$(sed -n 's/.*kernel \([^ :]*\): NOT built \[known-issue:kernel-70-udp-tunnel\].*/\1/p' "$_hout" 2>/dev/null | sort -u | tr '\n' ' ')
             _stuck=$(sed -n 's/.*unfinished kernel(s) without the AmneziaWG module: //p' "$_hout" 2>/dev/null | tail -n 1)
             if [[ "$_hrc" -le 1 && "$_frc" -ne 0 && -n "$_stuck" ]]; then
-                die "Packages not configured: configuring would make a kernel without the AmneziaWG module bootable (${_stuck}). Install the headers for that kernel (linux-headers-<version>) or remove it, then run: sudo bash $0 --repair-module"
+                die "Packages not configured: configuring would make a kernel without the AmneziaWG module bootable (${_stuck}). If that kernel has no headers, install them (linux-headers-<version>); if it has, the build error is above; then run: sudo bash $0 --repair-module, or remove that kernel."
+            fi
+            # Configuring went through but took the module away from other
+            # kernels, and it did not come back, or the build pass after it
+            # failed.
+            _lost=$(sed -n 's/.*ERROR: packages are configured, but //p' "$_hout" 2>/dev/null | tail -n 1)
+            if [[ "$_hrc" -le 1 && "$_frc" -ne 0 && -n "$_lost" ]]; then
+                die "Packages are configured, but restoring the AmneziaWG module after configuring did not complete (${_lost%%;*}). The reason is above; run: sudo bash $0 --repair-module"
             fi
             if [[ "$_hrc" -eq 2 && -n "$_bad" ]]; then
                 die "The AmneziaWG module did not build for kernel ${_bad% }: the kernel changed setup_udp_tunnel_sock and this module source does not handle it. The fix the helper applies did not apply to it; why is in the source lines above (the source differs from the tested one, the fix is disabled by --revert, or it failed to apply). Options: a kernel without this change (on Ubuntu 24.04, plain linux-generic instead of HWE) or a fixed module in the PPA. Details: ADVANCED.en.md, section kernel-70-backport-adv."
@@ -4814,7 +4821,7 @@ _awg_kmod_status_parse() {
 # Warnings before a reboot from the final --status. Warnings only: the
 # stages (wiring, --repair, --finish) decide the exit code of --repair-module.
 _awg_kmod_status_warn() {
-    local sf scode=0 k rel run mod hdr pkg
+    local sf scode=0 k rel run mod hdr pkg how
     if ! sf="$(mktemp)"; then log_warn "The final kernel state was not checked: could not create a temporary file."; return 0; fi
     _install_temp_files+=("$sf")
     timeout 60 "$AWG_ENSURE_HELPER" --status > "$sf" 2>> "$LOG_FILE" || scode=$?
@@ -4826,12 +4833,18 @@ _awg_kmod_status_warn() {
     for k in "${_KS_KERNELS[@]}"; do
         [[ "$k" =~ release=([^ ]+)\ running=([01])\ image=[01]\ module=([^ ]+)\ headers=([^ ]+)\ package=([^ ]+) ]] || continue
         rel="${BASH_REMATCH[1]}" run="${BASH_REMATCH[2]}" mod="${BASH_REMATCH[3]}" hdr="${BASH_REMATCH[4]}" pkg="${BASH_REMATCH[5]}"
+        # Headers installed: installing them again does not help, the reason is elsewhere.
+        if [[ "$hdr" == ok ]]; then
+            how="Headers are installed, but the module is missing (the reason is above): run --repair-module again"
+        else
+            how="Install linux-headers-$rel and run --repair-module again"
+        fi
         if [[ "$mod" == 0 && "$pkg" == unfinished ]]; then
-            log_warn "Before a reboot: unfinished kernel $rel has no AmneziaWG module - configuring it would make it bootable without the tunnel. Install linux-headers-$rel and run --repair-module again, or remove that kernel."
+            log_warn "Before a reboot: unfinished kernel $rel has no AmneziaWG module - configuring it would make it bootable without the tunnel. $how, or remove that kernel."
         elif [[ "$run" -eq 1 && "$mod" == 0 ]]; then
             log_warn "Before a reboot: the running kernel $rel has no AmneziaWG module file on disk; after a reboot there is no tunnel."
         elif [[ "$run" -eq 0 && "$mod" == 0 ]]; then
-            log_warn "Before a reboot: kernel $rel has no AmneziaWG module, do not boot into it. Install linux-headers-$rel and run --repair-module again, or remove that kernel."
+            log_warn "Before a reboot: kernel $rel has no AmneziaWG module, do not boot into it. $how, or remove that kernel."
         fi
         if [[ "$mod" == unknown ]]; then
             log_warn "Before a reboot: the module of kernel $rel could not be checked (its module directory is not readable)."
@@ -7287,8 +7300,8 @@ image_state() { # image file
 # anyway and are only reported. The owner of each /boot/vmlinuz-* is asked
 # from dpkg; an image dpkg does not know is not touched by configuring.
 mode_finish() {
-    local audit f rel st pkg imgs err lst state pending_n=0
-    local -a missing=() idle=()
+    local audit f rel st pkg imgs err lst state k crc pending_n=0
+    local -a missing=() idle=() had=() never=() nofix=() lost=() still=()
     local -A seen=()
     require_dpkg_idle || exit 1
     # dpkg --audit prints the problems and still exits 0; non-zero means the
@@ -7370,9 +7383,12 @@ mode_finish() {
     fi
     if [[ ${#missing[@]} -gt 0 ]]; then
         log_line "unfinished kernel(s) without the AmneziaWG module: ${missing[*]}" >&2
-        log_line "dpkg --configure -a NOT run: it would make such a kernel bootable, usually as the default, with no tunnel. Install the headers for it and run the repair again, or remove that kernel." >&2
+        log_line "dpkg --configure -a NOT run: it would make such a kernel bootable, usually as the default, with no tunnel. Install its headers if they are missing and run the repair again (build errors, if any, are above), or remove that kernel." >&2
         exit 1
     fi
+    # Quiet: a broken headers link was already reported by --repair.
+    collect_targets 2>/dev/null
+    for k in "${TARGETS[@]}"; do if has_module "$k"; then had+=("$k"); else never+=("$k"); fi; done
     log_line "dpkg --configure -a"
     if ! DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then
         log_line "ERROR: dpkg --configure -a failed; see the messages above" >&2; exit 1
@@ -7385,6 +7401,45 @@ mode_finish() {
         log_line "ERROR: packages are still unfinished after dpkg --configure -a:" >&2
         printf '%s\n' "$audit" >&2
         exit 1
+    fi
+    # Configuring can take a module away: when amneziawg-dkms itself was
+    # unfinished, its postinst deletes the module from the DKMS tree for
+    # every kernel and builds it back only for the running one. Our apt hook
+    # does not run here (DPkg::Post-Invoke fires only when apt calls dpkg),
+    # so the build pass runs once more, as a child that takes the lock itself.
+    # Only a module that configuring took away counts: a kernel that had none
+    # before (the installer's fallback runs --finish after a --repair that
+    # exited 1) is not this step's failure.
+    for k in "${had[@]}"; do has_module "$k" || lost+=("$k"); done
+    if [[ ${#lost[@]} -gt 0 ]]; then
+        log_line "dpkg --configure -a removed the module of: ${lost[*]}; building it again (--repair)"
+        crc=0; "$0" --repair || crc=$?
+        for k in "${lost[@]}"; do has_module "$k" || still+=("$k"); done
+        if [[ ${#still[@]} -gt 0 ]]; then
+            log_line "ERROR: packages are configured, but the module did not build again for: ${still[*]}; see the messages above and run the repair again" >&2
+            exit 1
+        fi
+        # Exit 2 means the pass did not count its result (the source or the
+        # package changed under it, the lock or dpkg was busy), and anything
+        # above 2 is not its verdict at all: modules on disk prove nothing
+        # then. Exit 1 also comes from a kernel that had no module before
+        # configuring and still has none, which is not this step's failure;
+        # with no such kernel it is a real one (the source fix or depmod).
+        for k in "${never[@]}"; do has_module "$k" || nofix+=("$k"); done
+        if [[ "$crc" -ge 2 || ( "$crc" -eq 1 && ${#nofix[@]} -eq 0 ) ]]; then
+            log_line "ERROR: packages are configured, but the build pass after them failed (exit ${crc}); see the messages above and run the repair again" >&2
+            exit 1
+        fi
+        # A kernel that still has no module excuses exit 1 only for itself: the
+        # module index of every kernel that lost the module is refreshed here
+        # (idempotent), so a depmod failure there is not hidden behind it.
+        for k in "${lost[@]}"; do
+            if ! depmod -a "$k"; then
+                log_line "ERROR: packages are configured, but depmod -a ${k} failed after the rebuild; see the messages above and run the repair again" >&2
+                exit 1
+            fi
+        done
+        [[ "$crc" -eq 0 ]] || log_line "WARN: the build pass after configuring exited with code ${crc} (still no module: ${nofix[*]}); the kernels that lost the module have it again" >&2
     fi
     if [[ "$pending_n" -gt 0 ]]; then
         log_line "packages: configured; the configured kernel(s) are now in the boot loader. A working tunnel now does not prove the new kernel will load the module."
