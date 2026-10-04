@@ -474,8 +474,8 @@ s7_mismatch() {
 }
 
 s7_mirrors() {
-    local active="AWG 2.0 параметры активны." missing="AWG 2.0 параметры не обнаружены" mode
-    en "$1" && active="AWG 2.0 parameters active." && missing="AWG 2.0 parameters not detected"
+    local active="Параметры обфускации AmneziaWG 2.0 активны." missing="Параметры обфускации AmneziaWG 2.0 не обнаружены" mode
+    en "$1" && active="AmneziaWG 2.0 obfuscation parameters active." && missing="AmneziaWG 2.0 obfuscation parameters not detected"
     run step7 "$1" jc 4
     [[ "$output" == *"rc=0"* && "$output" != *"WARN:"* ]] || { echo "$1 jc: $output"; return 1; }
     [[ "$output" == *"INFO: $active"* && "$output" != *"Jc = 0"* ]] || { echo "$1: Jc = 4 not plain active: $output"; return 1; }

@@ -311,12 +311,13 @@ gate_case() {
 
 @test "post: a fully suitable environment passes with an empty answer, both twins" {
     # Capable tools and a third-line module on a suitable machine: post answers
-    # empty with status 0, and the probe really ran (its argv log exists), so
-    # the empty answer is a verdict, not a skipped check.
+    # empty with status 0, and the MODULE probe really ran - a temporary
+    # interface was created - so the empty answer is a verdict, not a skipped
+    # check. (awg.argv alone would not prove it: the tools check writes it too.)
     gate_case "$INSTALL_RU" 31 ok ""
-    [ -e "$TEST_DIR/awg.argv" ] || { echo "the probe did not run (RU)"; return 1; }
+    grep -q '^link add awgp' "$TEST_DIR/ip.argv" || { echo "the module probe did not run (RU)"; return 1; }
     gate_case "$INSTALL_EN" 31 ok ""
-    [ -e "$TEST_DIR/awg.argv" ] || { echo "the probe did not run (EN)"; return 1; }
+    grep -q '^link add awgp' "$TEST_DIR/ip.argv" || { echo "the module probe did not run (EN)"; return 1; }
 }
 
 @test "post: a second-line module is refused with its own code, both twins" {

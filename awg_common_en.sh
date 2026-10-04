@@ -1672,6 +1672,7 @@ awg31_module_support() {
     esac
 }
 
+# A copy of the installer function (kept byte-identical by a test). Modes: line31 (default) and candidate20 - described at the installer copy.
 _awg31_module_probe() (
     case $- in *x*) set +x ;; esac
     umask 077
@@ -1714,6 +1715,15 @@ _awg31_module_probe() (
     # installer gets a SIGKILL, the record and the interface stay until a reboot:
     # the next run only looks for records of its own $$.
     rec="${TMPDIR:-/tmp}/awg31probe.$$.iface"
+    # 🔴 A record of an earlier probe of THIS process means its interface was
+    # not removed (the delete failed), and the installer cleanup finds it by
+    # that record. With the fallback the probe runs twice per process (line31,
+    # then candidate20), and the second would overwrite the first record: the
+    # interface would be left with no trace.
+    if [[ -e "$rec" || -L "$rec" ]]; then
+        rm -f "$kf" 2>/dev/null
+        _probe_say "a record of an earlier probe of this run is left ($rec): its interface was not removed, not starting a new probe"; printf 'failed'; exit 0
+    fi
     # The cleanup has to survive both an ordinary exit and a signal: the machine
     # must not keep an interface of ours after the probe.
     _probe_cleanup() {
@@ -1899,6 +1909,11 @@ _awg31_module_probe() (
         # The comparison is EXACT: measured 4 oct 2026 (tools v3.1.20260812),
         # H ranges and I1 read back verbatim. A mismatch is "unknown", not "works".
         if [[ -n "$miss" ]]; then
+            # What came back instead (H and I1 carry no secret): the comparison
+            # is exact, and another module build may answer in another form.
+            for line in "${!got[@]}"; do
+                [[ "$line" == H[1-4]\ =* || "$line" == I1\ =* ]] && _probe_say "  came back: $line"
+            done
             _probe_say "the 2.0 set came back with different values:${miss}"
             printf 'failed'
         else

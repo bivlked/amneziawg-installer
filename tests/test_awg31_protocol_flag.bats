@@ -712,6 +712,9 @@ run_step3() {
         grep -E '^AWG31_FALLBACK_(PRE|POST)_CODES=' "$script"
         func_from "$script" step3_check_module
         echo 'awg31_environment_blocker() { echo "$1" >> "$GATE_LOG"; printf "%s" "${BLOCKER_CODE-}"; return ${GATE_RC:-0}; }'
+        # a new install that has not reached step 6: the refusal names the flag way out
+        echo '_awg_install_state() { echo 2; }'
+        echo 'AWG_INSTALL_STATE_AT_START=0'
         echo 'step3_check_module'
     } > "$TEST_DIR/step3.sh"
     export GATE_LOG="$TEST_DIR/gate.log"

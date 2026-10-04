@@ -65,9 +65,20 @@ case "\$1" in
             [[ "\$prev" == header-protection-key ]] && cat "\$a" > "$TEST_DIR/probe_hpk"
             prev="\$a"
         done
+        # the 2.0 candidate probe (step 3 fallback): remember the pairs per
+        # interface, a module takes the 2.0 set and reads it back as given
+        if [[ " \$* " == *" jc "* ]]; then ifc="\$2"; shift 2; printf '%s\\n' "\$@" > "$TEST_DIR/cand_\${ifc}_set"; fi
         exit 0 ;;
     showconf)
         echo "[Interface]"
+        if [[ -s "$TEST_DIR/cand_\$2_set" && ! -e "$TEST_DIR/cand_refuse" ]]; then
+            mapfile -t cv < "$TEST_DIR/cand_\$2_set"
+            for ((i = 0; i + 1 < \${#cv[@]}; i += 2)); do
+                k="\${cv[i]}"
+                case "\$k" in jc) k=Jc ;; jmin) k=Jmin ;; jmax) k=Jmax ;; *) k="\${k^^}" ;; esac
+                echo "\$k = \${cv[i+1]}"
+            done
+        fi
         # module_line2: a second-line module ignores the key (the step 3 post check fails)
         if [[ ! -e "$TEST_DIR/module_line2" && -s "$TEST_DIR/probe_hpk" ]]; then
             echo "HeaderProtectionKey = \$(cat "$TEST_DIR/probe_hpk")"
@@ -859,6 +870,90 @@ _e8_post_refused() {
 }
 @test "lifecycle E8: a refused post check at step 3 leaves the install as it was" {
     _bothi _e8_post_refused
+}
+
+# F5: the same unfinished 3.1 install, but the generation was NOT chosen
+# (AWG_PROTOCOL_SOURCE=default): the real step 3 falls back to 2.0 through the
+# real candidate probe and the real init writer, keeping J and the preset.
+_f5_fallback_step3() {
+    local inst="$1" init="$A/awgsetup_cfg.init" jc jmin jmax preset
+    _inst_stubs
+    : > "$TEST_DIR/inactive"
+    : > "$TEST_DIR/module_line2"
+    _fresh 3.1
+    printf "export AWG_PROTOCOL_SOURCE='default'\n" >> "$init"
+    printf '3\n' > "$A/setup_state"
+    _inst_run "$inst" --yes --ssh-port=22; _run_ok
+    jc=$(grep '^export AWG_Jc=' "$init"); jmin=$(grep '^export AWG_Jmin=' "$init")
+    jmax=$(grep '^export AWG_Jmax=' "$init"); preset=$(grep '^export AWG_PRESET=' "$init")
+    AWG_TEST_STEP3=1 _inst_run "$inst" --yes --ssh-port=22; _run_ok
+    [[ "$output" == *STEP3_DONE* ]] || { echo "step 3 did not finish: $output $stderr" >&2; return 1; }
+    [[ "$output$stderr" == *module_line2* ]]
+    grep -qx "export AWG_PROTOCOL='2.0'" "$init"
+    grep -qx "export AWG_PROTOCOL_FALLBACK='module_line2'" "$init"
+    grep -qx "export AWG_PROTOCOL_SOURCE='default'" "$init"
+    # J and the preset carried over byte for byte; the 3.1-only padding is gone
+    grep -qxF "$jc" "$init" && grep -qxF "$jmin" "$init" && grep -qxF "$jmax" "$init" && grep -qxF "$preset" "$init"
+    ! grep -q "^export AWG_CPA='32-128'" "$init"
+    ! grep -qx "export AWG_H1='1'" "$init"
+    # the probed candidate is what was written
+    local h1; h1=$(sed -n "s/^export AWG_H1='\(.*\)'$/\1/p" "$init")
+    grep -qxF -- "$h1" "$TEST_DIR"/cand_*_set
+    [ "$(cat "$A/setup_state")" = 4 ]
+    [[ ! -e "$SC" && ! -e "$A/server_hpk.key" && ! -e "$A/server_private.key" ]]
+    # the temporary probe interfaces are gone
+    [ -z "$(ls "$TEST_DIR"/if_* 2>/dev/null)" ]
+}
+@test "lifecycle F5: an unchosen 3.1 on a second-line module falls back to 2.0 at step 3, for real" {
+    _bothi _f5_fallback_step3
+}
+
+_f5_fallback_refused_probe() {
+    local inst="$1" init="$A/awgsetup_cfg.init" before
+    _inst_stubs
+    : > "$TEST_DIR/inactive"
+    : > "$TEST_DIR/module_line2"
+    : > "$TEST_DIR/cand_refuse"
+    _fresh 3.1
+    printf "export AWG_PROTOCOL_SOURCE='default'\n" >> "$init"
+    printf '3\n' > "$A/setup_state"
+    _inst_run "$inst" --yes --ssh-port=22; _run_ok
+    before=$(sha256sum < "$init")
+    AWG_TEST_STEP3=1 _inst_run "$inst" --yes --ssh-port=22
+    [ "$status" -ne 0 ]
+    [[ "$output" != *STEP3_DONE* ]]
+    [ "$(sha256sum < "$init")" = "$before" ] || { echo "the init changed despite the refused probe" >&2; return 1; }
+    [ "$(cat "$A/setup_state")" = 3 ]
+}
+@test "lifecycle F5: a candidate the module does not read back stops step 3 with the init untouched" {
+    _bothi _f5_fallback_refused_probe
+}
+
+# F5: a finished 3.1 server re-run with --force and a configuration flag is
+# rewound to step 4 and reaches step 6 without step 3; on a module that can no
+# longer run 3.1, step 6 runs the post gate itself and refuses - never a
+# downgrade, no byte changed (setup_state aside: step 6 records itself first,
+# so the next run names the stopped step).
+_f5_step6_no_downgrade() {
+    local inst="$1" sums="$TEST_DIR/sums"
+    _inst_stubs
+    _finished "$inst" 3.1
+    printf "export AWG_PROTOCOL_SOURCE='default'\n" >> "$A/awgsetup_cfg.init"
+    AWG_TEST_STEP6=1 _inst_run "$inst" --force --yes --ssh-port=22; _run_ok
+    ( cd "$A" && find . -type f ! -name '*.log' ! -name '*.lock' ! -name setup_state -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) > "$sums"
+    sha256sum "$SC" >> "$sums"
+    : > "$TEST_DIR/module_line2"
+    AWG_TEST_STEP6=1 _inst_run "$inst" --force --yes --ssh-port=22
+    [ "$status" -ne 0 ]
+    [[ "$output" != *STEP6_DONE* ]]
+    [[ "$output$stderr" == *module_line2* && "$output$stderr" == *--uninstall* ]] || { echo "$output $stderr" >&2; return 1; }
+    grep -qx "export AWG_PROTOCOL='3.1'" "$A/awgsetup_cfg.init"
+    ( cd "$A" && find . -type f ! -name '*.log' ! -name '*.lock' ! -name setup_state -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) > "$sums.after"
+    sha256sum "$SC" >> "$sums.after"
+    diff "$sums" "$sums.after"
+}
+@test "lifecycle F5: step 6 of a finished 3.1 server refuses on a second-line module and changes no byte" {
+    _bothi _f5_step6_no_downgrade
 }
 
 # Found on the stand 1 oct 2026: --force runs step 1, which reboots; after the

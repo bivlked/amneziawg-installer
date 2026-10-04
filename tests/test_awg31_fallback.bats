@@ -213,7 +213,10 @@ _begun() {
         : > "$SERVER_CONF_FILE"
         CLI_PROTOCOL="" CLI_PROTOCOL_SET=0 BLOCKER_CODE="kernel" _s0 "$s"
         [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
-        [[ "$output" == *"DIE:"* ]]
+        # the way out names the removal: --protocol=2.0 alone would be refused
+        # for an existing install by the resolver itself
+        [[ "$output" == *"DIE:"*"--uninstall"* ]] || { echo "$s: no removal path: $output"; return 1; }
+        [[ "$output" != *"Выход: поставьте с --protocol=2.0"* && "$output" != *"Way out: install with --protocol=2.0"* ]] || { echo "$s: contradictory advice: $output"; return 1; }
         [ "$(cat "$STATE_FILE")" = 7 ]
     done
 }
@@ -260,6 +263,17 @@ _begun() {
     done
 }
 
+@test "step 0: a fallback reason next to a 3.1 marker is dropped" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _begun 3.1 4 default kernel
+        CLI_PROTOCOL="" CLI_PROTOCOL_SET=0 BLOCKER_CODE="" _s0 "$s"
+        [ "$status" -eq 0 ] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"PROTO=3.1 SRC=default FB= "* ]] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"WARN:"*"AWG_PROTOCOL_FALLBACK"* ]]
+    done
+}
+
 @test "step 0: an explicit choice after a fallback clears the reason and records the flag" {
     local s
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
@@ -267,6 +281,33 @@ _begun() {
         CLI_PROTOCOL=2.0 CLI_PROTOCOL_SET=1 BLOCKER_CODE="" _s0 "$s"
         [ "$status" -eq 0 ] || { echo "$s: $output"; return 1; }
         [[ "$output" == *"PROTO=2.0 SRC=explicit FB= "* ]] || { echo "$s: $output"; return 1; }
+    done
+}
+
+@test "step 0: a matching explicit flag on an existing install records the choice and clears the reason" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _begun 2.0 7 default kernel
+        : > "$SERVER_CONF_FILE"
+        CLI_PROTOCOL=2.0 CLI_PROTOCOL_SET=1 BLOCKER_CODE="" _s0 "$s"
+        [ "$status" -eq 0 ] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"PROTO=2.0 SRC=explicit FB= AUTO=0 AT=1"* ]] || { echo "$s: $output"; return 1; }
+    done
+}
+
+@test "step 0: the process bookkeeping inherited from the environment is reset" {
+    # AWG31_POST_OK=1 from outside would let step 6 hand out 3.1 profiles with
+    # no post gate in this run. The reset block of initialize_setup is run as it
+    # is, with the poisoned values exported.
+    local s blk
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        blk=$(_body "$s" | sed -n '/^    AWG_PROTOCOL=""$/,/^    AWG_INSTALL_STATE_AT_START=""$/p')
+        [[ "$blk" == *AWG31_POST_OK=0* ]] || { echo "$s: reset block not found"; return 1; }
+        run env AWG31_POST_OK=1 AWG_AUTO_FALLBACK=1 AWG_INSTALL_STATE_AT_START=0 \
+            AWG_PROTOCOL_SOURCE=default AWG_PROTOCOL_FALLBACK=kernel bash -c "$blk
+echo \"POST=\$AWG31_POST_OK AUTO=\$AWG_AUTO_FALLBACK AT=[\$AWG_INSTALL_STATE_AT_START] SRC=[\$AWG_PROTOCOL_SOURCE] FB=[\$AWG_PROTOCOL_FALLBACK]\""
+        [ "$status" -eq 0 ] || { echo "$s: $output"; return 1; }
+        [ "$output" = "POST=0 AUTO=0 AT=[] SRC=[] FB=[]" ] || { echo "$s: $output"; return 1; }
     done
 }
 
@@ -354,6 +395,8 @@ _s3() {
             [[ "$output" == *"POST_OK=0 PROTO=2.0 FB=$code"* ]] || { echo "$s/$code: $output"; return 1; }
             [ "$(grep -v '^STATECHK' "$EVLOG" | cut -d' ' -f1 | tr '\n' ' ')" = "GEN PROBE SAVE " ] || { echo "$s/$code: order $(cat "$EVLOG")"; return 1; }
             grep -qx "SAVE proto=2.0 fb=$code src=default" "$EVLOG" || { echo "$s/$code: $(cat "$EVLOG")"; return 1; }
+            grep -qx 'GEN proto=2.0' "$EVLOG" || { echo "$s/$code: generated on another generation: $(cat "$EVLOG")"; return 1; }
+            grep -qx 'PROBE proto=2.0 i1=\[<b 0x01>\]' "$EVLOG" || { echo "$s/$code: probed something else: $(cat "$EVLOG")"; return 1; }
             grep -qx 4 "$STATE_LOG"
             [[ "$output" == *"WARN:"*"$code"* ]]
         done
@@ -374,6 +417,7 @@ _s3() {
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_probe_failed" PROBE_RC=1 _s3 "$s"
         [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"* ]] || { echo "$s: $output"; return 1; }
+        grep -q '^PROBE' "$EVLOG" || { echo "$s: died before the probe"; return 1; }
         ! grep -q '^SAVE' "$EVLOG" || { echo "$s: written despite the failed probe"; return 1; }
         ! grep -qx 4 "$STATE_LOG" || { echo "$s: state advanced"; return 1; }
     done
@@ -394,7 +438,7 @@ _s3() {
         AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=explicit AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_line2" _s3 "$s"
         [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
         [[ "$output" == *"DIE:"*"--protocol=2.0"* && "$output" != *"--uninstall"* ]] || { echo "$s: $output"; return 1; }
-        [ ! -s "$EVLOG" ]
+        ! grep -qv '^STATECHK' "$EVLOG" || { echo "$s: $(cat "$EVLOG")"; return 1; }
     done
 }
 
@@ -404,7 +448,18 @@ _s3() {
         AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=1 NOW_STATE=2 BLOCKER_CODE="module_line2" _s3 "$s"
         [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
         [[ "$output" == *"DIE:"*"--uninstall"* ]] || { echo "$s: $output"; return 1; }
+        [[ "$output" != *"Либо поставьте"* && "$output" != *"Or install with"* ]] || { echo "$s: contradictory advice: $output"; return 1; }
         ! grep -q '^SAVE' "$EVLOG"
+    done
+}
+
+@test "step 3: a trace found now makes the advice lead to removal even if step 0 saw a new install" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=explicit AWG_INSTALL_STATE_AT_START=0 NOW_STATE=1 BLOCKER_CODE="module_line2" _s3 "$s"
+        [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"DIE:"*"--uninstall"* ]] || { echo "$s: $output"; return 1; }
+        [[ "$output" != *"без удаления"* && "$output" != *"without removing"* ]] || { echo "$s: $output"; return 1; }
     done
 }
 
@@ -445,11 +500,15 @@ _s3() {
     done
 }
 
-@test "step 3: a finished fallback install (existing at step 0) and a plain 2.0 install are not probed" {
+@test "step 3: the saved fallback set is probed whatever the start state, a plain 2.0 install is not" {
+    # The state veto forbids a downgrade, not a check: an unfinished fallback
+    # install that step 0 took for an existing one (an ip failure gives 1)
+    # must not reach step 6 unprobed. Found by the code review of round 1.
     local s
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         AWG_PROTOCOL=2.0 AWG_PROTOCOL_FALLBACK=kernel AWG_INSTALL_STATE_AT_START=1 _s3 "$s"
-        [ "$status" -eq 0 ] && [ ! -s "$EVLOG" ] || { echo "$s existing: $output / $(cat "$EVLOG")"; return 1; }
+        [ "$status" -eq 0 ] || { echo "$s existing: $output"; return 1; }
+        grep -q '^PROBE proto=2.0' "$EVLOG" || { echo "$s existing: not probed"; return 1; }
         AWG_PROTOCOL=2.0 AWG_PROTOCOL_FALLBACK="" AWG_INSTALL_STATE_AT_START=0 _s3 "$s"
         [ "$status" -eq 0 ] && [ ! -s "$EVLOG" ] || { echo "$s plain: $output"; return 1; }
     done
@@ -462,7 +521,7 @@ _s3() {
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         S3_CALL="_awg31_step3_gate step6" AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_line2" _s3 "$s"
         [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"* ]] || { echo "$s: $output"; return 1; }
-        [ ! -s "$EVLOG" ] || { echo "$s: $(cat "$EVLOG")"; return 1; }
+        ! grep -qv '^STATECHK' "$EVLOG" || { echo "$s: $(cat "$EVLOG")"; return 1; }
         S3_CALL="_awg31_step3_gate step6" AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="" _s3 "$s"
         [ "$status" -eq 0 ] && [[ "$output" == *"POST_OK=1"* ]] || { echo "$s pass: $output"; return 1; }
     done
@@ -490,12 +549,18 @@ _s3() {
             AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_PROTOCOL_FALLBACK=''; echo \"A[\$(_awg_generation_summary)]\"
             AWG_PROTOCOL=2.0 AWG_PROTOCOL_SOURCE=explicit; echo \"B[\$(_awg_generation_summary)]\"
             AWG_PROTOCOL=2.0 AWG_PROTOCOL_SOURCE=default AWG_PROTOCOL_FALLBACK=kernel; echo \"C[\$(_awg_generation_summary)]\"
-            AWG_PROTOCOL=2.0 AWG_PROTOCOL_SOURCE='' AWG_PROTOCOL_FALLBACK=''; echo \"D[\$(_awg_generation_summary)]\""
+            AWG_PROTOCOL=2.0 AWG_PROTOCOL_SOURCE='' AWG_PROTOCOL_FALLBACK=''; echo \"D[\$(_awg_generation_summary)]\"
+            AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE='' AWG_PROTOCOL_FALLBACK=''; echo \"E[\$(_awg_generation_summary)]\"
+            AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=explicit AWG_PROTOCOL_FALLBACK=''; echo \"F[\$(_awg_generation_summary)]\""
         [ "$status" -eq 0 ]
         [[ "$output" == *"A[3.1"* ]] || { echo "$s: $output"; return 1; }
         [[ "$output" == *"B[2.0 ("* ]] || { echo "$s: $output"; return 1; }
         [[ "$output" == *"C[2.0 - "*"6.7]"* ]] || { echo "$s: $output"; return 1; }
         [[ "$output" == *"D[2.0 ("* ]] || { echo "$s: $output"; return 1; }
+        # an unknown source on 3.1 claims neither "default" nor "by flag"
+        [[ "$output" == *"E[3.1]"* ]] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"F[3.1 ("* ]] || { echo "$s: $output"; return 1; }
+        [ "$(grep '^F\[' <<< "$output" | cut -c2-)" != "$(grep '^A\[' <<< "$output" | cut -c2-)" ] || { echo "$s: 3.1 by flag and by default read the same"; return 1; }
         # four different texts
         [ "$(grep -o '^[A-D]\[.*\]$' <<< "$output" | cut -c3- | sort -u | wc -l)" -eq 4 ] || { echo "$s: $output"; return 1; }
     done
@@ -520,6 +585,7 @@ case "$1" in
             case "$k" in jc) k=Jc ;; jmin) k=Jmin ;; jmax) k=Jmax ;; *) k="${k^^}" ;; esac
             [ "${SHOW_MODE:-ok}" = dropi1 ] && [ "$k" = I1 ] && continue
             [ "${SHOW_MODE:-ok}" = alterh1 ] && [ "$k" = H1 ] && v="1-2"
+            [ "${SHOW_MODE:-ok}" = "alter:$k" ] && v="${v}9"
             echo "$k = $v"
         done
         ;;
@@ -585,5 +651,125 @@ _cand() {
         SET_RC=1 SHOW_MODE=ok _cand "$s"
         [[ "$output" == *"VERDICT=failed"* ]] || { echo "$s/setrc: $output"; return 1; }
         [ -z "$(ls -A "$TEST_DIR/ifaces" 2>/dev/null)" ] || { echo "$s: interface left after a refusal"; return 1; }
+    done
+}
+
+@test "candidate probe: all twelve parameters and I1 are sent, and a change of ANY one of them is caught" {
+    local s key
+    make_cand_awg
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        SHOW_MODE=ok _cand "$s"
+        [[ "$output" == *"VERDICT=ok"* ]] || { echo "$s: $output"; return 1; }
+        for key in jc jmin jmax s1 s2 s3 s4 h1 h2 h3 h4 i1; do
+            grep -qx "$key" "$TEST_DIR/set.args" || { echo "$s: $key not sent"; return 1; }
+        done
+        for key in Jc Jmin Jmax S1 S2 S3 S4 H1 H2 H3 H4 I1; do
+            SHOW_MODE="alter:$key" _cand "$s"
+            [[ "$output" == *"VERDICT=failed"* ]] || { echo "$s: a changed $key passed: $output"; return 1; }
+        done
+    done
+}
+
+@test "candidate probe: a record left by an earlier probe of this run stops a new one and stays for the cleanup" {
+    local s
+    make_cand_awg
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        { _src "$s" _awg31_module_probe; func_from "$s" awg20_candidate_support; } > "$TEST_DIR/cand.sh"
+        rm -rf "$TEST_DIR/ifaces" "$TEST_DIR/set.args" "$TEST_DIR"/awg31probe.*
+        run env PATH="$TEST_DIR/bin:$PATH" TMPDIR="$TEST_DIR" bash -c "source '$TEST_DIR/cand.sh'
+            echo awgp\$\$x1 > \"$TEST_DIR/awg31probe.\$\$.iface\"
+            AWG_Jc=3 AWG_Jmin=57 AWG_Jmax=128 AWG_S1=47 AWG_S2=57 AWG_S3=22 AWG_S4=20
+            AWG_H1=1-2 AWG_H2=3-4 AWG_H3=5-6 AWG_H4=7-8 AWG_I1=''
+            if awg20_candidate_support; then echo VERDICT=ok; else echo VERDICT=failed; fi
+            [ -e \"$TEST_DIR/awg31probe.\$\$.iface\" ] && echo RECORD_KEPT"
+        [[ "$output" == *"VERDICT=failed"* && "$output" == *RECORD_KEPT* ]] || { echo "$s: $output"; return 1; }
+        [ ! -e "$TEST_DIR/set.args" ] || { echo "$s: a set was sent despite the left record"; return 1; }
+    done
+}
+
+# ============================================================ init writer, for real
+
+_wr() {
+    {
+        echo 'log() { :; }; log_warn() { echo "WARN: $*"; }; log_error() { :; }; log_debug() { :; }'
+        echo 'die() { echo "DIE: $*"; exit 1; }'
+        echo '_install_temp_files=()'
+        func_from "$1" _awg_save_init
+        func_from "$1" safe_load_config
+    } > "$TEST_DIR/wr.sh"
+}
+
+@test "init: the real writer persists the source and the reason, and the real loader reads them back" {
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _wr "$s"
+        rm -rf "$TEST_DIR/cfg"; mkdir -p "$TEST_DIR/cfg"
+        run bash -c "source '$TEST_DIR/wr.sh'
+            CONFIG_FILE='$TEST_DIR/cfg/awgsetup_cfg.init' PREV_AWG_PORT=''
+            AWG_PROTOCOL=2.0 AWG_PROTOCOL_SOURCE=default AWG_PROTOCOL_FALLBACK=module_line2 AWG_Jc=3
+            _awg_save_init
+            unset AWG_PROTOCOL AWG_PROTOCOL_SOURCE AWG_PROTOCOL_FALLBACK
+            safe_load_config \"\$CONFIG_FILE\"
+            echo \"R=\$AWG_PROTOCOL/\$AWG_PROTOCOL_SOURCE/\$AWG_PROTOCOL_FALLBACK\""
+        [ "$status" -eq 0 ] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"R=2.0/default/module_line2"* ]] || { echo "$s: $output"; return 1; }
+        [ "$(tail -n 1 "$TEST_DIR/cfg/awgsetup_cfg.init")" = "export AWG_PROTOCOL='2.0'" ] || { echo "$s: the marker is not the last line"; return 1; }
+    done
+}
+
+@test "init: a failed rename dies, keeps the working init byte for byte and leaves no temp file" {
+    local s
+    printf '#!/bin/bash\nexit 1\n' > "$TEST_DIR/bin/mv"; chmod +x "$TEST_DIR/bin/mv"
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _wr "$s"
+        rm -rf "$TEST_DIR/cfg"; mkdir -p "$TEST_DIR/cfg"
+        printf "export AWG_PROTOCOL='3.1'\nexport AWG_Jc=4\n" > "$TEST_DIR/cfg/awgsetup_cfg.init"
+        cp "$TEST_DIR/cfg/awgsetup_cfg.init" "$TEST_DIR/ref.init"
+        run env PATH="$TEST_DIR/bin:$PATH" bash -c "source '$TEST_DIR/wr.sh'
+            CONFIG_FILE='$TEST_DIR/cfg/awgsetup_cfg.init' PREV_AWG_PORT=''
+            AWG_PROTOCOL=2.0 AWG_PROTOCOL_SOURCE=default AWG_PROTOCOL_FALLBACK=kernel AWG_Jc=3
+            _awg_save_init; echo SAVED"
+        [[ "$output" == *"DIE:"* && "$output" != *SAVED* ]] || { echo "$s: $output"; return 1; }
+        cmp "$TEST_DIR/ref.init" "$TEST_DIR/cfg/awgsetup_cfg.init" || { echo "$s: the working init changed"; return 1; }
+        [ "$(ls -A "$TEST_DIR/cfg")" = "awgsetup_cfg.init" ] || { echo "$s: left: $(ls -A "$TEST_DIR/cfg")"; return 1; }
+    done
+}
+
+# ============================================================ step 0 parameter block
+
+_s0gen() {
+    local s="$1" lib="$2" f
+    {
+        echo "source '$lib' >/dev/null 2>&1 || true"
+        echo 'log() { :; }; log_warn() { echo "WARN: $*"; }; log_error() { :; }; log_debug() { :; }'
+        echo 'die() { echo "DIE: $*" >&2; exit 1; }'
+        for f in rand_range validate_jc_value validate_junk_size generate_awg_h_ranges generate_cps_i1 generate_awg_params _awg_fallback_params _awg_switch_params; do
+            func_from "$s" "$f"
+        done
+        echo 'gen_slice() {'
+        _body "$s" | sed -n '/^    if \[\[ -z "\${AWG_Jc:-}" \]\] || \[\[ "\${AWG_GEN_SWITCHED/,/^    case "\${NO_PREBUILT:-0}" in$/p' | sed '$d'
+        echo '}'
+    } > "$TEST_DIR/s0gen.sh"
+    grep -q '_awg_fallback_params$' "$TEST_DIR/s0gen.sh" || { echo "slice not found in $s"; return 1; }
+}
+
+@test "step 0: the fallback of an unfinished install regenerates 2.0 with the saved J, preset and --no-cps, and tells nobody to regen" {
+    local pair s lib
+    for pair in "$INSTALL_RU $COMMON_RU" "$INSTALL_EN $COMMON_EN"; do
+        read -r s lib <<< "$pair"
+        _s0gen "$s" "$lib"
+        run bash -c "source '$TEST_DIR/s0gen.sh'
+            config_exists=1 AWG_PROTOCOL=2.0 AWG_AUTO_FALLBACK=1 AWG_GEN_SWITCHED=0 MANAGE_SCRIPT_PATH=/x
+            AWG_Jc=0 AWG_Jmin=10 AWG_Jmax=20 AWG_PRESET=mobile NO_CPS=1 AWG_I1='<r 2>'
+            AWG_H1=1 AWG_H2=2 AWG_H3=3 AWG_H4=4 AWG_S3=12 AWG_S4=12
+            export AWG_CPA=32-128
+            CLI_PRESET='' CLI_JC='' CLI_JMIN='' CLI_JMAX='' CLI_NO_CPS=0
+            gen_slice
+            echo \"J=\$AWG_Jc/\$AWG_Jmin/\$AWG_Jmax P=\$AWG_PRESET H1=\$AWG_H1 I1=[\$AWG_I1] CPA=\$(printenv AWG_CPA || echo unset) NOCPS=\$NO_CPS\""
+        [ "$status" -eq 0 ] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"J=0/10/20 P=mobile"* ]] || { echo "$s: J or preset lost: $output"; return 1; }
+        [[ "$output" != *"H1=1 "* ]] || { echo "$s: the saved 3.1 set was kept: $output"; return 1; }
+        [[ "$output" == *"I1=[] CPA=unset NOCPS=1"* ]] || { echo "$s: $output"; return 1; }
+        [[ "$output" != *regen* ]] || { echo "$s: told someone to regen: $output"; return 1; }
     done
 }
