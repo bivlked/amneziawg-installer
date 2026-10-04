@@ -468,7 +468,7 @@ _s3() {
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="tools_old" AWG_PRESENT=0 _s3 "$s"
         [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"*"amneziawg-tools"* ]] || { echo "$s: $output"; return 1; }
-        ! grep -q '^GEN' "$EVLOG"
+        ! grep -q '^GEN' "$EVLOG" || { echo "$s: negative check failed: grep -q '^GEN' '$EVLOG'"; return 1; }
     done
 }
 
@@ -491,7 +491,7 @@ _s3() {
         [[ "$output" != *"Либо поставьте"* && "$output" != *"Or install with"* ]] || { echo "$s: contradictory advice: $output"; return 1; }
         # the repair that leaves the install alone comes first
         [[ "$output" == *"amneziawg-dkms"* ]] || { echo "$s: no repair hint: $output"; return 1; }
-        ! grep -q '^SAVE' "$EVLOG"
+        ! grep -q '^SAVE' "$EVLOG" || { echo "$s: negative check failed: grep -q '^SAVE' '$EVLOG'"; return 1; }
     done
 }
 
@@ -536,7 +536,7 @@ _s3() {
         [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
         [[ "$output" == *"DIE:"*"awgp"* ]] || { echo "$s: $output"; return 1; }
         [[ "$output" != *"не принял"* && "$output" != *"refused the 2.0"* ]] || { echo "$s: blamed on the module: $output"; return 1; }
-        ! grep -q '^SAVE' "$EVLOG"
+        ! grep -q '^SAVE' "$EVLOG" || { echo "$s: negative check failed: grep -q '^SAVE' '$EVLOG'"; return 1; }
         AWG_PROTOCOL=2.0 AWG_PROTOCOL_FALLBACK=kernel AWG_INSTALL_STATE_AT_START=0 PROBE_RC=2 _s3 "$s"
         [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"*"awgp"* ]] || { echo "$s saved set: $output"; return 1; }
     done
@@ -556,6 +556,11 @@ _s3() {
         [[ "$output" =~ awgp[0-9]+x3 && "$output" != *eth0* ]] || { echo "$s: first line: $output"; return 1; }
         TMPDIR="$TEST_DIR" REC_CONTENT='awgp@PIDx2' AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_line2" PROBE_RC=2 _s3 "$s"
         [[ "$output" =~ awgp[0-9]+x2 ]] || { echo "$s: the real probe name is not named: $output"; return 1; }
+        # a probe name of another process, and a number outside 1..5, are not ours
+        TMPDIR="$TEST_DIR" REC_CONTENT='awgp1x1' AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_line2" PROBE_RC=2 _s3 "$s"
+        [ "$status" -eq 1 ] && [[ "$output" != *"awgp1x1"* ]] || { echo "$s: another process's name was named: $output"; return 1; }
+        TMPDIR="$TEST_DIR" REC_CONTENT='awgp@PIDx9' AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_line2" PROBE_RC=2 _s3 "$s"
+        [ "$status" -eq 1 ] && ! [[ "$output" =~ awgp[0-9]+x9 ]] || { echo "$s: an out-of-mask number was named: $output"; return 1; }
     done
 }
 
@@ -566,6 +571,9 @@ _s3() {
         TMPDIR="$TEST_DIR" REC_FIFO=1 AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_line2" PROBE_RC=2 _s3 "$s"
         [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"*"awgp"* ]] || { echo "$s: $output"; return 1; }
         (( SECONDS - t0 < 20 )) || { echo "$s: took $((SECONDS - t0)) s"; return 1; }
+        # the FIFO really was there: without it the fallback text passes this case too
+        [ -n "$(find "$TEST_DIR" -maxdepth 1 -type p -name 'awg31probe.*.iface')" ] || { echo "$s: no FIFO was planted"; return 1; }
+        find "$TEST_DIR" -maxdepth 1 -type p -name 'awg31probe.*.iface' -delete
     done
 }
 
@@ -585,7 +593,7 @@ _s3() {
         AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 NOW_STATE=1 BLOCKER_CODE="module_line2" _s3 "$s"
         [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"* ]] || { echo "$s: $output"; return 1; }
         grep -q '^STATECHK' "$EVLOG" || { echo "$s: the trace was not rechecked: $(cat "$EVLOG")"; return 1; }
-        ! grep -q '^GEN' "$EVLOG"
+        ! grep -q '^GEN' "$EVLOG" || { echo "$s: negative check failed: grep -q '^GEN' '$EVLOG'"; return 1; }
     done
 }
 
@@ -598,7 +606,7 @@ _s3() {
         [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"* ]] || { echo "$s unknown: $output"; return 1; }
         AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="tools_old" GATE_RC=2 _s3 "$s"
         [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"* ]] || { echo "$s rc: $output"; return 1; }
-        ! grep -q '^SAVE' "$EVLOG"
+        ! grep -q '^SAVE' "$EVLOG" || { echo "$s: negative check failed: grep -q '^SAVE' '$EVLOG'"; return 1; }
     done
 }
 
@@ -612,7 +620,7 @@ _s3() {
         [ ! -s "$GATE_LOG" ]
         AWG_PROTOCOL=2.0 AWG_PROTOCOL_FALLBACK=kernel AWG_INSTALL_STATE_AT_START=0 PROBE_RC=1 _s3 "$s"
         [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"* ]] || { echo "$s: $output"; return 1; }
-        ! grep -qx 4 "$STATE_LOG"
+        ! grep -qx 4 "$STATE_LOG" || { echo "$s: negative check failed: grep -qx 4 '$STATE_LOG'"; return 1; }
     done
 }
 
@@ -739,9 +747,10 @@ _cand() {
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         SHOW_MODE=ok _cand "$s"
         [[ "$output" == *"VERDICT=ok"* ]] || { echo "$s: $output"; return 1; }
-        grep -qx 'h1' "$TEST_DIR/set.args" && grep -qx '106708213-181093823' "$TEST_DIR/set.args"
+        grep -qx 'h1' "$TEST_DIR/set.args" || { echo "$s: check failed: grep -qx 'h1' '$TEST_DIR/set.args'"; return 1; }
+        grep -qx '106708213-181093823' "$TEST_DIR/set.args" || { echo "$s: check failed: grep -qx '106708213-181093823' '$TEST_DIR/set.args'"; return 1; }
         grep -qx 'i1' "$TEST_DIR/set.args" || { echo "$s: I1 not sent"; return 1; }
-        ! grep -q 'header-protection-key' "$TEST_DIR/set.args"
+        ! grep -q 'header-protection-key' "$TEST_DIR/set.args" || { echo "$s: negative check failed: grep -q 'header-protection-key' '$TEST_DIR/set.args'"; return 1; }
         [ -z "$(ls -A "$TEST_DIR/ifaces" 2>/dev/null)" ] || { echo "$s: the temporary interface was left behind"; return 1; }
     done
 }
@@ -752,7 +761,7 @@ _cand() {
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         CAND_I1="" SHOW_MODE=ok _cand "$s"
         [[ "$output" == *"VERDICT=ok"* ]] || { echo "$s: $output"; return 1; }
-        ! grep -qx 'i1' "$TEST_DIR/set.args"
+        ! grep -qx 'i1' "$TEST_DIR/set.args" || { echo "$s: negative check failed: grep -qx 'i1' '$TEST_DIR/set.args'"; return 1; }
     done
 }
 

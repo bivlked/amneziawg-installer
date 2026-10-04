@@ -893,9 +893,12 @@ _f5_fallback_step3() {
     grep -qx "export AWG_PROTOCOL_FALLBACK='module_line2'" "$init"
     grep -qx "export AWG_PROTOCOL_SOURCE='default'" "$init"
     # J and the preset carried over byte for byte; the 3.1-only padding is gone
-    grep -qxF "$jc" "$init" && grep -qxF "$jmin" "$init" && grep -qxF "$jmax" "$init" && grep -qxF "$preset" "$init"
-    ! grep -q "^export AWG_CPA='32-128'" "$init"
-    ! grep -qx "export AWG_H1='1'" "$init"
+    grep -qxF "$jc" "$init" || { echo "not carried over byte for byte: grep -qxF '$jc' '$init'" >&2; return 1; }
+    grep -qxF "$jmin" "$init" || { echo "not carried over byte for byte: grep -qxF '$jmin' '$init'" >&2; return 1; }
+    grep -qxF "$jmax" "$init" || { echo "not carried over byte for byte: grep -qxF '$jmax' '$init'" >&2; return 1; }
+    grep -qxF "$preset" "$init" || { echo "not carried over byte for byte: grep -qxF '$preset' '$init'" >&2; return 1; }
+    ! grep -q "^export AWG_CPA='32-128'" "$init" || { echo "3.1-only value left after the fallback: grep -q '^export AWG_CPA='32-128'' '$init'" >&2; return 1; }
+    ! grep -qx "export AWG_H1='1'" "$init" || { echo "3.1-only value left after the fallback: grep -qx 'export AWG_H1='1'' '$init'" >&2; return 1; }
     # the probed candidate is what was written
     local h1; h1=$(sed -n "s/^export AWG_H1='\(.*\)'$/\1/p" "$init")
     grep -qxF -- "$h1" "$TEST_DIR"/cand_*_set
