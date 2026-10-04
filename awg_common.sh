@@ -5860,9 +5860,14 @@ _validate_awg_config_body() {
         s3=$(sed -n 's/^[[:space:]]*S3[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
         s4=$(sed -n 's/^[[:space:]]*S4[[:space:]]*=[[:space:]]*//p' "$SERVER_CONF_FILE" | tail -1 | sed 's/#.*//' | tr -d '[:space:]')
     fi
+    # Jc = 0 законно: обе реализации при нуле junk-пакеты просто не шлют.
+    # Длина проверяется до арифметики: число длиннее int64 bash молча
+    # заворачивает, и огромный Jc прошёл бы сравнение как малый или
+    # отрицательный. После снятия ведущих нулей 010 не читается как восьмеричное.
     if [[ "$jc" =~ ^[0-9]+$ ]]; then
-        if [[ "$jc" -lt 1 || "$jc" -gt 128 ]]; then
-            log_error "Jc=$jc вне допустимого диапазона (1-128)"
+        jc=$(_awg_dec_strip "$jc")
+        if (( ${#jc} > 3 )) || [[ "$jc" -gt 128 ]]; then
+            log_error "Jc=$jc вне допустимого диапазона (0-128)"
             ok=0
         fi
     fi

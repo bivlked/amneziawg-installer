@@ -43,11 +43,11 @@ load test_helper
     [ "$status" -eq 1 ]
 }
 
-@test "validate: Jc=0 out of range fails" {
+@test "validate: Jc=0 (junk packets off) passes" {
     create_server_config
     sed -i 's/^Jc = .*/Jc = 0/' "$SERVER_CONF_FILE"
     run validate_awg_config
-    [ "$status" -eq 1 ]
+    [ "$status" -eq 0 ]
 }
 
 @test "validate: Jc=129 out of range fails" {

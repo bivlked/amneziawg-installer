@@ -1647,6 +1647,21 @@ show_awg_status() {
     return "$_gen_rc"
 }
 
+# _conf_jc : Jc from [Interface] of the server config as amneziawg-tools would
+# apply it (key case-insensitive, last value wins), leading zeros dropped;
+# empty when the key is missing, the file is unreadable or the value is not a
+# number. check and diagnose compare it with an interface on which awg show
+# prints no jc line.
+_conf_jc() {
+    local pairs sec k v jc=""
+    pairs=$(_awg_conf_pairs "$SERVER_CONF_FILE" 2>/dev/null) || return 0
+    while IFS=$'\t' read -r sec k v; do
+        if [[ "$sec" == interface && "$k" == jc ]]; then jc="$v"; fi
+    done <<< "$pairs"
+    [[ "$jc" =~ ^[0-9]+$ ]] || return 0
+    _awg_dec_strip "$jc"
+}
+
 check_server() {
     case $- in *x*) _awg_xtrace_guard check_server; return ;; esac
     log "Checking AmneziaWG server status..."
@@ -1834,8 +1849,20 @@ check_server() {
     # a timeout by its message, any other status by its code.
     elif (( _filter_ok )); then
         while IFS= read -r _l; do log "  $_l"; done <<< "$_awg_out"
-        if grep -q "jc:" <<< "$_awg_out"; then
+        # awg show prints the jc line only for a non-zero value. When it is
+        # absent but S or H lines are there, the interface runs with Jc = 0, and
+        # that is checked against awg0.conf: a zero the file does not have is a
+        # mismatch.
+        local _cjc
+        if grep -qE '^[[:space:]]*jc:' <<< "$_awg_out"; then
             log " - Obfuscation parameters: active"
+        elif grep -qE '^[[:space:]]*(s[1-4]|h[1-4]):' <<< "$_awg_out"; then
+            _cjc=$(_conf_jc)
+            if [[ -z "$_cjc" || "$_cjc" == 0 ]]; then
+                log " - Obfuscation parameters: active (Jc = 0: junk packets off)"
+            else
+                log_warn " - Obfuscation parameters: the interface runs with Jc = 0, but awg0.conf has Jc=${_cjc}. To apply the config: sudo systemctl restart awg-quick@awg0"
+            fi
         else
             log_warn " - Obfuscation parameters not detected"
         fi
@@ -2515,7 +2542,30 @@ diagnose_server() {
         jmin=$(awk '/^[[:space:]]*jmin:/ {print $2; exit}' <<< "$_awg_show")
         jmax=$(awk '/^[[:space:]]*jmax:/ {print $2; exit}' <<< "$_awg_show")
         i1=$(awk -F': ' '/^[[:space:]]*i1:/ {print $2; exit}' <<< "$_awg_show")
-        _diag_line INFO "AWG params: Jc=${jc:-?} Jmin=${jmin:-?} Jmax=${jmax:-?} I1=${i1:-absent}"
+        # awg show prints the jc, jmin and jmax lines only when non-zero. When jc
+        # is absent but S or H lines are there, the interface runs with Jc = 0
+        # (and zero in any missing jmin/jmax), and that is checked against
+        # awg0.conf. Without S and H lines a missing jc proves nothing: Jc stays
+        # unknown, not zero. An unread interface takes the else branch below.
+        local _jc_note="" _cjc
+        if [[ -z "$jc" ]] && grep -qE '^[[:space:]]*(s[1-4]|h[1-4]):' <<< "$_awg_show"; then
+            jc=0
+            jmin="${jmin:-0}"
+            jmax="${jmax:-0}"
+            _jc_note=" (junk packets off)"
+        fi
+        _diag_line INFO "AWG params: Jc=${jc:-?}${_jc_note} Jmin=${jmin:-?} Jmax=${jmax:-?} I1=${i1:-absent}"
+        if [[ -z "$jc" ]]; then
+            _diag_line WARN "awg show prints no obfuscation parameters (no jc, S or H lines): values not checked"
+            warn=$((warn+1))
+        elif [[ -n "$_jc_note" ]]; then
+            _cjc=$(_conf_jc)
+            if [[ -n "$_cjc" && "$_cjc" != 0 ]]; then
+                _diag_line WARN "the interface runs with Jc=0, but awg0.conf has Jc=${_cjc}: the config is not applied"
+                echo "        Fix: sudo systemctl restart awg-quick@awg0"
+                warn=$((warn+1))
+            fi
+        fi
         # The kernel module does not compare Jmin with Jmax, and with Jmin above
         # Jmax it writes a junk packet past the end of a buffer sized Jmax
         # (amneziawg-linux-kernel-module#225). Our generator never produces such
