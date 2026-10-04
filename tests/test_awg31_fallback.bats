@@ -406,11 +406,13 @@ _s3() {
         # REC_CONTENT: a record of an earlier probe of this process, as the probe
         # (or someone planting it in /tmp) would leave it; @PID becomes $$
         echo '[[ -n "${REC_CONTENT-}" ]] && printf "%b" "${REC_CONTENT//@PID/$$}" > "${TMPDIR:-/tmp}/awg31probe.$$.iface"'
+        # REC_FIFO=1: a FIFO planted in place of the record (nobody ever writes it)
+        echo '[[ "${REC_FIFO:-0}" == 1 ]] && mkfifo "${TMPDIR:-/tmp}/awg31probe.$$.iface"'
         echo '${S3_CALL:-step3_check_module}'
         echo 'echo "POST_OK=$AWG31_POST_OK PROTO=$AWG_PROTOCOL FB=${AWG_PROTOCOL_FALLBACK-}"'
     } > "$TEST_DIR/s3.sh"
     : > "$GATE_LOG"; : > "$STATE_LOG"; : > "$EVLOG"
-    run bash "$TEST_DIR/s3.sh"
+    run timeout 60 bash "$TEST_DIR/s3.sh"
 }
 
 @test "step 3: a suitable machine passes post and sets the in-process flag" {
@@ -547,9 +549,23 @@ _s3() {
         [ "$status" -eq 1 ] || { echo "$s: $output"; return 1; }
         [[ "$output" != *eth0* && "$output" == *"awgp"* ]] || { echo "$s: a planted name reached the advice: $output"; return 1; }
         TMPDIR="$TEST_DIR" REC_CONTENT='awgp@PIDx1\033[2Jtrail' AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_line2" PROBE_RC=2 _s3 "$s"
+        [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"*"awgp"* ]] || { echo "$s: did not reach the refusal: $output"; return 1; }
         [[ "$output" != *$'\033'* ]] || { echo "$s: a control sequence reached the console"; return 1; }
+        # only the first line counts: a real name followed by a planted second line
+        TMPDIR="$TEST_DIR" REC_CONTENT='awgp@PIDx3\neth0' AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_line2" PROBE_RC=2 _s3 "$s"
+        [[ "$output" =~ awgp[0-9]+x3 && "$output" != *eth0* ]] || { echo "$s: first line: $output"; return 1; }
         TMPDIR="$TEST_DIR" REC_CONTENT='awgp@PIDx2' AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_line2" PROBE_RC=2 _s3 "$s"
         [[ "$output" =~ awgp[0-9]+x2 ]] || { echo "$s: the real probe name is not named: $output"; return 1; }
+    done
+}
+
+@test "step 3: a FIFO planted as the probe record does not hang the left-interface refusal" {
+    local s t0
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        t0=$SECONDS
+        TMPDIR="$TEST_DIR" REC_FIFO=1 AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_line2" PROBE_RC=2 _s3 "$s"
+        [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"*"awgp"* ]] || { echo "$s: $output"; return 1; }
+        (( SECONDS - t0 < 20 )) || { echo "$s: took $((SECONDS - t0)) s"; return 1; }
     done
 }
 
