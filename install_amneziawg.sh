@@ -4864,6 +4864,90 @@ repair_module_cmd() {
 # ШАГ 0: Инициализация
 # ==============================================================================
 
+# _awg_save_init : атомарно записать $CONFIG_FILE из текущих переменных.
+# Временный файл в каталоге init, heredoc с проверкой записи, дописывание
+# PREV_AWG_PORT, mv, chmod. Любой сбой - die, рабочий init не тронут.
+# Вынесено из initialize_setup, чтобы тот же писатель служил и шагу 3
+# (автооткат на 2.0): второй писатель с отдельным списком ключей разошёлся бы
+# с этим молча.
+_awg_save_init() {
+    log "Сохранение настроек в $CONFIG_FILE..."
+    # temp в каталоге итогового конфига -> mv = атомарный rename на той же ФС
+    # (а не cross-fs copy+unlink, если /tmp смонтирован как tmpfs).
+    local temp_conf cfg_dir
+    cfg_dir="$(dirname "$CONFIG_FILE")"
+    mkdir -p "$cfg_dir" 2>/dev/null
+    temp_conf=$(mktemp -p "$cfg_dir") || die "Ошибка mktemp."
+    _install_temp_files+=("$temp_conf")
+    # Код записи проверяется: при ENOSPC/EFBIG обрезанный temp иначе заменил бы
+    # рабочий init, и следующий запуск заново сгенерировал бы набор обфускации.
+    cat > "$temp_conf" << EOF || { rm -f "$temp_conf"; die "Ошибка записи настроек в $temp_conf, $CONFIG_FILE не изменён"; }
+# Конфигурация установки AmneziaWG 2.0 (Авто-генерация)
+# Используется скриптами установки и управления
+export OS_ID='${OS_ID:-ubuntu}'
+export OS_VERSION='${OS_VERSION:-}'
+export OS_CODENAME='${OS_CODENAME:-}'
+export AWG_PORT=${AWG_PORT}
+export AWG_TUNNEL_SUBNET='${AWG_TUNNEL_SUBNET}'
+export DISABLE_IPV6=${DISABLE_IPV6}
+export ALLOWED_IPS_MODE=${ALLOWED_IPS_MODE}
+export ALLOWED_IPS='${ALLOWED_IPS}'
+export CLIENT_ISOLATION=${CLIENT_ISOLATION:-1}
+export CLIENT_ISOLATION_NET='${CLIENT_ISOLATION_NET:-}'
+export AWG_ENDPOINT='${AWG_ENDPOINT}'
+export AWG_SERVER_NAME='${AWG_SERVER_NAME:-AWG Server}'
+export AWG_MTU=${AWG_MTU:-1280}
+# AWG 2.0 Parameters
+export AWG_Jc=${AWG_Jc}
+export AWG_Jmin=${AWG_Jmin}
+export AWG_Jmax=${AWG_Jmax}
+export AWG_S1=${AWG_S1}
+export AWG_S2=${AWG_S2}
+export AWG_S3=${AWG_S3}
+export AWG_S4=${AWG_S4}
+export AWG_H1='${AWG_H1}'
+export AWG_H2='${AWG_H2}'
+export AWG_H3='${AWG_H3}'
+export AWG_H4='${AWG_H4}'
+export AWG_I1='${AWG_I1}'
+export AWG_I2='${AWG_I2:-}'
+export AWG_I3='${AWG_I3:-}'
+export AWG_I4='${AWG_I4:-}'
+export AWG_I5='${AWG_I5:-}'
+export AWG_PRESET='${AWG_PRESET:-default}'
+export NO_TWEAKS=${NO_TWEAKS}
+export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
+export NO_CPS=${NO_CPS}
+export NO_PREBUILT=${NO_PREBUILT:-0}
+# IPv6 устройств клиентов напрямую, мимо туннеля (только режим 2). 0 - через туннель.
+export CLIENT_IPV6_DIRECT=${CLIENT_IPV6_DIRECT:-0}
+# DNS для НОВЫХ клиентов (IP через запятую). Пусто - 1.1.1.1, 1.0.0.1.
+export CLIENT_DNS='${CLIENT_DNS:-}'
+export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
+export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
+export IPV6_SUBNET='${IPV6_SUBNET}'
+export SERVER_HAS_NATIVE_IPV6=${SERVER_HAS_NATIVE_IPV6:-0}
+export AWG_CPA='${AWG_CPA:-}'
+# Поколение протокола этой установки. Не редактируйте вручную: другое поколение
+# требует перевыпуска всех клиентских профилей. Отсутствие поля читается как 2.0.
+export AWG_PROTOCOL='${AWG_PROTOCOL}'
+EOF
+    # Отложенное удаление UFW-правила старого порта обязано пережить reboot:
+    # шаг 4 выполняется в другом процессе после 1-2 перезагрузок, переменная
+    # процесса до него не доживает (PR #176). Ключ снимает
+    # setup_improved_firewall после успешного ufw delete.
+    if [[ "$PREV_AWG_PORT" =~ ^[0-9]+$ ]]; then
+        echo "export PREV_AWG_PORT=${PREV_AWG_PORT}" >> "$temp_conf" \
+            || die "Ошибка записи PREV_AWG_PORT в $temp_conf"
+    fi
+    if ! mv "$temp_conf" "$CONFIG_FILE"; then
+        rm -f "$temp_conf"
+        die "Ошибка сохранения $CONFIG_FILE"
+    fi
+    chmod 600 "$CONFIG_FILE" || log_warn "Ошибка chmod $CONFIG_FILE"
+    log "Настройки сохранены."
+}
+
 initialize_setup() {
     if [ "$(id -u)" -ne 0 ]; then die "Запустите скрипт от root (sudo bash $0)."; fi
 
@@ -5259,81 +5343,7 @@ initialize_setup() {
     fi
 
     # Сохранение конфигурации
-    log "Сохранение настроек в $CONFIG_FILE..."
-    # temp в каталоге итогового конфига -> mv = атомарный rename на той же ФС
-    # (а не cross-fs copy+unlink, если /tmp смонтирован как tmpfs).
-    local temp_conf cfg_dir
-    cfg_dir="$(dirname "$CONFIG_FILE")"
-    mkdir -p "$cfg_dir" 2>/dev/null
-    temp_conf=$(mktemp -p "$cfg_dir") || die "Ошибка mktemp."
-    _install_temp_files+=("$temp_conf")
-    # Код записи проверяется: при ENOSPC/EFBIG обрезанный temp иначе заменил бы
-    # рабочий init, и следующий запуск заново сгенерировал бы набор обфускации.
-    cat > "$temp_conf" << EOF || { rm -f "$temp_conf"; die "Ошибка записи настроек в $temp_conf, $CONFIG_FILE не изменён"; }
-# Конфигурация установки AmneziaWG 2.0 (Авто-генерация)
-# Используется скриптами установки и управления
-export OS_ID='${OS_ID:-ubuntu}'
-export OS_VERSION='${OS_VERSION:-}'
-export OS_CODENAME='${OS_CODENAME:-}'
-export AWG_PORT=${AWG_PORT}
-export AWG_TUNNEL_SUBNET='${AWG_TUNNEL_SUBNET}'
-export DISABLE_IPV6=${DISABLE_IPV6}
-export ALLOWED_IPS_MODE=${ALLOWED_IPS_MODE}
-export ALLOWED_IPS='${ALLOWED_IPS}'
-export CLIENT_ISOLATION=${CLIENT_ISOLATION:-1}
-export CLIENT_ISOLATION_NET='${CLIENT_ISOLATION_NET:-}'
-export AWG_ENDPOINT='${AWG_ENDPOINT}'
-export AWG_SERVER_NAME='${AWG_SERVER_NAME:-AWG Server}'
-export AWG_MTU=${AWG_MTU:-1280}
-# AWG 2.0 Parameters
-export AWG_Jc=${AWG_Jc}
-export AWG_Jmin=${AWG_Jmin}
-export AWG_Jmax=${AWG_Jmax}
-export AWG_S1=${AWG_S1}
-export AWG_S2=${AWG_S2}
-export AWG_S3=${AWG_S3}
-export AWG_S4=${AWG_S4}
-export AWG_H1='${AWG_H1}'
-export AWG_H2='${AWG_H2}'
-export AWG_H3='${AWG_H3}'
-export AWG_H4='${AWG_H4}'
-export AWG_I1='${AWG_I1}'
-export AWG_I2='${AWG_I2:-}'
-export AWG_I3='${AWG_I3:-}'
-export AWG_I4='${AWG_I4:-}'
-export AWG_I5='${AWG_I5:-}'
-export AWG_PRESET='${AWG_PRESET:-default}'
-export NO_TWEAKS=${NO_TWEAKS}
-export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
-export NO_CPS=${NO_CPS}
-export NO_PREBUILT=${NO_PREBUILT:-0}
-# IPv6 устройств клиентов напрямую, мимо туннеля (только режим 2). 0 - через туннель.
-export CLIENT_IPV6_DIRECT=${CLIENT_IPV6_DIRECT:-0}
-# DNS для НОВЫХ клиентов (IP через запятую). Пусто - 1.1.1.1, 1.0.0.1.
-export CLIENT_DNS='${CLIENT_DNS:-}'
-export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
-export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
-export IPV6_SUBNET='${IPV6_SUBNET}'
-export SERVER_HAS_NATIVE_IPV6=${SERVER_HAS_NATIVE_IPV6:-0}
-export AWG_CPA='${AWG_CPA:-}'
-# Поколение протокола этой установки. Не редактируйте вручную: другое поколение
-# требует перевыпуска всех клиентских профилей. Отсутствие поля читается как 2.0.
-export AWG_PROTOCOL='${AWG_PROTOCOL}'
-EOF
-    # Отложенное удаление UFW-правила старого порта обязано пережить reboot:
-    # шаг 4 выполняется в другом процессе после 1-2 перезагрузок, переменная
-    # процесса до него не доживает (PR #176). Ключ снимает
-    # setup_improved_firewall после успешного ufw delete.
-    if [[ "$PREV_AWG_PORT" =~ ^[0-9]+$ ]]; then
-        echo "export PREV_AWG_PORT=${PREV_AWG_PORT}" >> "$temp_conf" \
-            || die "Ошибка записи PREV_AWG_PORT в $temp_conf"
-    fi
-    if ! mv "$temp_conf" "$CONFIG_FILE"; then
-        rm -f "$temp_conf"
-        die "Ошибка сохранения $CONFIG_FILE"
-    fi
-    chmod 600 "$CONFIG_FILE" || log_warn "Ошибка chmod $CONFIG_FILE"
-    log "Настройки сохранены."
+    _awg_save_init
     export AWG_PORT AWG_TUNNEL_SUBNET DISABLE_IPV6 ALLOWED_IPS_MODE ALLOWED_IPS AWG_ENDPOINT AWG_PROTOCOL
     log "Порт: ${AWG_PORT}/udp"
     log "Подсеть: ${AWG_TUNNEL_SUBNET}"

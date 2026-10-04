@@ -352,7 +352,8 @@ _assert_bad_ssh_port_stops_ufw() {
         # written and the install moves on to upgrades and reboots.
         local gl wl
         gl=$(grep -n 'detect_ssh_ports >/dev/null' <<< "$body" | head -1 | cut -d: -f1)
-        wl=$(grep -n 'cat > "\$temp_conf" << EOF' <<< "$body" | head -1 | cut -d: -f1)
+        # the init is written by _awg_save_init, called from step 0
+        wl=$(grep -n '^[[:space:]]*_awg_save_init$' <<< "$body" | head -1 | cut -d: -f1)
         if [ -z "$gl" ] || [ -z "$wl" ] || [ "$gl" -ge "$wl" ]; then
             echo "$script: --ssh-port check (line ${gl:-?}) is not before the init write (line ${wl:-?})"; return 1
         fi

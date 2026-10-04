@@ -156,7 +156,9 @@ setup() {
         local override guard save
         override=$(grep -n 'CLI_ROUTING_MODE" -eq 3 \]\]; then ALLOWED_IPS=\$CLI_CUSTOM_ROUTES' "$ROOT/$f" | head -1 | cut -d: -f1)
         guard=$(grep -nF '[[ -n "$ALLOWED_IPS" ]] && ! validate_cidr_list "$ALLOWED_IPS"' "$ROOT/$f" | head -1 | cut -d: -f1)
-        save=$(grep -n "^export ALLOWED_IPS='" "$ROOT/$f" | head -1 | cut -d: -f1)
+        # the save is the step 0 call of the init writer (_awg_save_init)
+        save=$(sed -n '/^initialize_setup() {/,$p' "$ROOT/$f" | grep -n '^    _awg_save_init$' | head -1 | cut -d: -f1)
+        [ -n "$save" ] && save=$(( save + $(grep -n '^initialize_setup() {' "$ROOT/$f" | cut -d: -f1) - 1 ))
         [ -n "$override" ] && [ -n "$guard" ] && [ -n "$save" ] || { echo "anchor missing in $f"; false; }
         [ "$guard" -gt "$override" ] || { echo "guard before override in $f"; false; }
         [ "$guard" -lt "$save" ] || { echo "guard after save in $f"; false; }

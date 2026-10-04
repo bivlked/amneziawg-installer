@@ -356,8 +356,11 @@ _line() { grep -n -m1 -- "$2" <<< "$1" | cut -d: -f1; }
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         b=$(_body "$s")
         rew=$(_line "$b" '^[[:space:]]*_awg_gen_switch_rewind$')
-        # the heredoc line at column 0, not the sample inside an error text
-        save=$(_line "$b" "^export AWG_PROTOCOL='")
+        # the init is written by _awg_save_init, called from step 0; the
+        # marker line lives in that writer, not in the body
+        save=$(_line "$b" '^[[:space:]]*_awg_save_init$')
+        sed -n '/^_awg_save_init() {/,/^}/p' "$s" | grep -q "^export AWG_PROTOCOL='" \
+            || { echo "$s: the writer does not write the marker"; return 1; }
         cur=$(_line "$b" 'current_step=$(cat "$STATE_FILE")')
         [ -n "$rew" ] && [ -n "$save" ] && [ -n "$cur" ] || { echo "$s: rewind=$rew save=$save read=$cur"; return 1; }
         [ "$rew" -lt "$save" ] || { echo "$s: rewind after the init write"; return 1; }

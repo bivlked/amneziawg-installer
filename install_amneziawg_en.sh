@@ -4967,6 +4967,90 @@ repair_module_cmd() {
 # STEP 0: Initialization
 # ==============================================================================
 
+# _awg_save_init : write $CONFIG_FILE atomically from the current variables.
+# A temp file in the init directory, a checked heredoc write, the PREV_AWG_PORT
+# append, mv, chmod. Any failure dies and leaves the working init untouched.
+# Moved out of initialize_setup so that the same writer serves step 3 (the
+# fallback to 2.0): a second writer with its own key list would drift from
+# this one silently.
+_awg_save_init() {
+    log "Saving settings to $CONFIG_FILE..."
+    # temp in the target config's directory -> mv = atomic rename on the same
+    # filesystem (not a cross-fs copy+unlink when /tmp is mounted as tmpfs).
+    local temp_conf cfg_dir
+    cfg_dir="$(dirname "$CONFIG_FILE")"
+    mkdir -p "$cfg_dir" 2>/dev/null
+    temp_conf=$(mktemp -p "$cfg_dir") || die "mktemp error."
+    _install_temp_files+=("$temp_conf")
+    # The write status is checked: on ENOSPC/EFBIG a truncated temp would otherwise
+    # replace the working init, and the next run would regenerate the obfuscation set.
+    cat > "$temp_conf" << EOF || { rm -f "$temp_conf"; die "Error writing settings to $temp_conf, $CONFIG_FILE left unchanged"; }
+# AmneziaWG 2.0 installation configuration (Auto-generated)
+# Used by installation and management scripts
+export OS_ID='${OS_ID:-ubuntu}'
+export OS_VERSION='${OS_VERSION:-}'
+export OS_CODENAME='${OS_CODENAME:-}'
+export AWG_PORT=${AWG_PORT}
+export AWG_TUNNEL_SUBNET='${AWG_TUNNEL_SUBNET}'
+export DISABLE_IPV6=${DISABLE_IPV6}
+export ALLOWED_IPS_MODE=${ALLOWED_IPS_MODE}
+export ALLOWED_IPS='${ALLOWED_IPS}'
+export CLIENT_ISOLATION=${CLIENT_ISOLATION:-1}
+export CLIENT_ISOLATION_NET='${CLIENT_ISOLATION_NET:-}'
+export AWG_ENDPOINT='${AWG_ENDPOINT}'
+export AWG_SERVER_NAME='${AWG_SERVER_NAME:-AWG Server}'
+export AWG_MTU=${AWG_MTU:-1280}
+# AWG 2.0 Parameters
+export AWG_Jc=${AWG_Jc}
+export AWG_Jmin=${AWG_Jmin}
+export AWG_Jmax=${AWG_Jmax}
+export AWG_S1=${AWG_S1}
+export AWG_S2=${AWG_S2}
+export AWG_S3=${AWG_S3}
+export AWG_S4=${AWG_S4}
+export AWG_H1='${AWG_H1}'
+export AWG_H2='${AWG_H2}'
+export AWG_H3='${AWG_H3}'
+export AWG_H4='${AWG_H4}'
+export AWG_I1='${AWG_I1}'
+export AWG_I2='${AWG_I2:-}'
+export AWG_I3='${AWG_I3:-}'
+export AWG_I4='${AWG_I4:-}'
+export AWG_I5='${AWG_I5:-}'
+export AWG_PRESET='${AWG_PRESET:-default}'
+export NO_TWEAKS=${NO_TWEAKS}
+export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
+export NO_CPS=${NO_CPS}
+export NO_PREBUILT=${NO_PREBUILT:-0}
+# Client devices' IPv6 directly, around the tunnel (mode 2 only). 0 - through the tunnel.
+export CLIENT_IPV6_DIRECT=${CLIENT_IPV6_DIRECT:-0}
+# DNS for NEW clients (IPs separated by commas). Empty means 1.1.1.1, 1.0.0.1.
+export CLIENT_DNS='${CLIENT_DNS:-}'
+export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
+export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
+export IPV6_SUBNET='${IPV6_SUBNET}'
+export SERVER_HAS_NATIVE_IPV6=${SERVER_HAS_NATIVE_IPV6:-0}
+export AWG_CPA='${AWG_CPA:-}'
+# Protocol generation of this installation. Do not edit by hand: a different
+# generation requires reissuing every client profile. A missing field reads as 2.0.
+export AWG_PROTOCOL='${AWG_PROTOCOL}'
+EOF
+    # The pending delete of the old port's UFW rule must survive a reboot:
+    # step 4 runs in a different process after 1-2 reboots, a process variable
+    # does not live that long (PR #176). setup_improved_firewall removes the
+    # key after a successful ufw delete.
+    if [[ "$PREV_AWG_PORT" =~ ^[0-9]+$ ]]; then
+        echo "export PREV_AWG_PORT=${PREV_AWG_PORT}" >> "$temp_conf" \
+            || die "Error writing PREV_AWG_PORT to $temp_conf"
+    fi
+    if ! mv "$temp_conf" "$CONFIG_FILE"; then
+        rm -f "$temp_conf"
+        die "Error saving $CONFIG_FILE"
+    fi
+    chmod 600 "$CONFIG_FILE" || log_warn "chmod $CONFIG_FILE error"
+    log "Settings saved."
+}
+
 initialize_setup() {
     if [ "$(id -u)" -ne 0 ]; then die "Run the script as root (sudo bash $0)."; fi
 
@@ -5372,81 +5456,7 @@ initialize_setup() {
     fi
 
     # Save configuration
-    log "Saving settings to $CONFIG_FILE..."
-    # temp in the target config's directory -> mv = atomic rename on the same
-    # filesystem (not a cross-fs copy+unlink when /tmp is mounted as tmpfs).
-    local temp_conf cfg_dir
-    cfg_dir="$(dirname "$CONFIG_FILE")"
-    mkdir -p "$cfg_dir" 2>/dev/null
-    temp_conf=$(mktemp -p "$cfg_dir") || die "mktemp error."
-    _install_temp_files+=("$temp_conf")
-    # The write status is checked: on ENOSPC/EFBIG a truncated temp would otherwise
-    # replace the working init, and the next run would regenerate the obfuscation set.
-    cat > "$temp_conf" << EOF || { rm -f "$temp_conf"; die "Error writing settings to $temp_conf, $CONFIG_FILE left unchanged"; }
-# AmneziaWG 2.0 installation configuration (Auto-generated)
-# Used by installation and management scripts
-export OS_ID='${OS_ID:-ubuntu}'
-export OS_VERSION='${OS_VERSION:-}'
-export OS_CODENAME='${OS_CODENAME:-}'
-export AWG_PORT=${AWG_PORT}
-export AWG_TUNNEL_SUBNET='${AWG_TUNNEL_SUBNET}'
-export DISABLE_IPV6=${DISABLE_IPV6}
-export ALLOWED_IPS_MODE=${ALLOWED_IPS_MODE}
-export ALLOWED_IPS='${ALLOWED_IPS}'
-export CLIENT_ISOLATION=${CLIENT_ISOLATION:-1}
-export CLIENT_ISOLATION_NET='${CLIENT_ISOLATION_NET:-}'
-export AWG_ENDPOINT='${AWG_ENDPOINT}'
-export AWG_SERVER_NAME='${AWG_SERVER_NAME:-AWG Server}'
-export AWG_MTU=${AWG_MTU:-1280}
-# AWG 2.0 Parameters
-export AWG_Jc=${AWG_Jc}
-export AWG_Jmin=${AWG_Jmin}
-export AWG_Jmax=${AWG_Jmax}
-export AWG_S1=${AWG_S1}
-export AWG_S2=${AWG_S2}
-export AWG_S3=${AWG_S3}
-export AWG_S4=${AWG_S4}
-export AWG_H1='${AWG_H1}'
-export AWG_H2='${AWG_H2}'
-export AWG_H3='${AWG_H3}'
-export AWG_H4='${AWG_H4}'
-export AWG_I1='${AWG_I1}'
-export AWG_I2='${AWG_I2:-}'
-export AWG_I3='${AWG_I3:-}'
-export AWG_I4='${AWG_I4:-}'
-export AWG_I5='${AWG_I5:-}'
-export AWG_PRESET='${AWG_PRESET:-default}'
-export NO_TWEAKS=${NO_TWEAKS}
-export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
-export NO_CPS=${NO_CPS}
-export NO_PREBUILT=${NO_PREBUILT:-0}
-# Client devices' IPv6 directly, around the tunnel (mode 2 only). 0 - through the tunnel.
-export CLIENT_IPV6_DIRECT=${CLIENT_IPV6_DIRECT:-0}
-# DNS for NEW clients (IPs separated by commas). Empty means 1.1.1.1, 1.0.0.1.
-export CLIENT_DNS='${CLIENT_DNS:-}'
-export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
-export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
-export IPV6_SUBNET='${IPV6_SUBNET}'
-export SERVER_HAS_NATIVE_IPV6=${SERVER_HAS_NATIVE_IPV6:-0}
-export AWG_CPA='${AWG_CPA:-}'
-# Protocol generation of this installation. Do not edit by hand: a different
-# generation requires reissuing every client profile. A missing field reads as 2.0.
-export AWG_PROTOCOL='${AWG_PROTOCOL}'
-EOF
-    # The pending delete of the old port's UFW rule must survive a reboot:
-    # step 4 runs in a different process after 1-2 reboots, a process variable
-    # does not live that long (PR #176). setup_improved_firewall removes the
-    # key after a successful ufw delete.
-    if [[ "$PREV_AWG_PORT" =~ ^[0-9]+$ ]]; then
-        echo "export PREV_AWG_PORT=${PREV_AWG_PORT}" >> "$temp_conf" \
-            || die "Error writing PREV_AWG_PORT to $temp_conf"
-    fi
-    if ! mv "$temp_conf" "$CONFIG_FILE"; then
-        rm -f "$temp_conf"
-        die "Error saving $CONFIG_FILE"
-    fi
-    chmod 600 "$CONFIG_FILE" || log_warn "chmod $CONFIG_FILE error"
-    log "Settings saved."
+    _awg_save_init
     export AWG_PORT AWG_TUNNEL_SUBNET DISABLE_IPV6 ALLOWED_IPS_MODE ALLOWED_IPS AWG_ENDPOINT AWG_PROTOCOL
     log "Port: ${AWG_PORT}/udp"
     log "Subnet: ${AWG_TUNNEL_SUBNET}"
