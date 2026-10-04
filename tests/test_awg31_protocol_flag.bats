@@ -105,7 +105,7 @@ run_argparse() {
     build_harness
     local code
     for code in kernel arm arch_unsupported arch_unknown tools_old \
-                not_implemented_yet internal_error; do
+                internal_error; do
         run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message '$code'"
         [ "$status" -eq 0 ]
         [ -n "$output" ]
@@ -117,18 +117,18 @@ run_argparse() {
     local code out
     : > "$TEST_DIR/msgs"
     for code in kernel arm arch_unsupported arch_unknown tools_old \
-                not_implemented_yet internal_error; do
+                internal_error; do
         out=$(bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message '$code'")
         echo "$out" >> "$TEST_DIR/msgs"
     done
-    [ "$(sort -u "$TEST_DIR/msgs" | wc -l)" -eq 7 ]
+    [ "$(sort -u "$TEST_DIR/msgs" | wc -l)" -eq 6 ]
 }
 
 @test "every message names the way out" {
     build_harness
     local code out
     for code in kernel arm arch_unsupported arch_unknown tools_old \
-                not_implemented_yet internal_error nonsense_code; do
+                internal_error nonsense_code; do
         out=$(bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message '$code'")
         [[ "$out" == *"--protocol=2.0"* ]] || {
             echo "code '$code' does not name --protocol=2.0: $out"; return 1; }
@@ -149,12 +149,6 @@ run_argparse() {
     [[ "$output" == *"amneziawg-dkms"* ]]
     run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message arm"
     [[ "$output" != *"amneziawg-tools"* ]]
-}
-
-@test "not_implemented_yet says the machine is not at fault" {
-    build_harness
-    run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message not_implemented_yet"
-    [[ "$output" == *"0.0.0-test"* ]]
 }
 
 @test "a refusal says nothing about which module this machine gets" {
@@ -190,11 +184,9 @@ run_argparse() {
 }
 
 @test "no refusal scopes a 3.1 release to an architecture" {
-    # arch_unsupported used to say the profile "ships for x86_64 only". It ships
-    # NOWHERE: on a suitable machine the gate ends at not_implemented_yet. The
-    # check order guarantees that the owner of an ARM or exotic box sees this
-    # text and never sees that one, so the old wording sent them away believing
-    # x86_64 already had the third line - at the price of provisioning one.
+    # arch_unsupported used to say the profile "ships for x86_64 only", at a time
+    # when it shipped NOWHERE. Since v6.0.0 it does ship on x86_64, but the text
+    # states the requirement, not a release scope, and keeps doing so.
     #
     # 🔴 What is banned is the false SCOPING, not a verb. A first version of this
     # guard forbade the word "выпускается" outright, and review pointed out that
@@ -219,25 +211,27 @@ run_argparse() {
     done
 }
 
-@test "a refusal on an unsupported architecture does not send the reader shopping" {
-    # Concrete cost this prevents: a riscv64 owner reads "requires x86_64",
-    # provisions an x86_64 host, runs --protocol=3.1 there, and only then learns
-    # that no build emits the third line at all. The gate order means they never
-    # reach not_implemented_yet, so the architecture texts have to carry that
-    # fact themselves.
+@test "no refusal still claims that no machine gets a 3.1 profile" {
+    # Until v6.0.0 the kernel, arm and arch_unsupported texts said that this
+    # installer version emits 3.1 nowhere, so that nobody changed machines for
+    # nothing. Since the path opened that sentence is false: an x86_64 host with
+    # kernel 6.7+ gets 3.1. Kept as a tripwire against the old wording coming back.
     local script code
     for script in "$INSTALL_RU" "$INSTALL_EN"; do
         build_harness "$script"
-        for code in arm arch_unsupported; do
+        for code in kernel arm arch_unsupported; do
             run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message '$code'"
             [ "$status" -eq 0 ]
-            [[ "$output" == *"ни на одной архитектуре"* || "$output" == *"no architecture"* ]]                 || { echo "$code lets the reader infer another architecture has it ($script): $output"; return 1; }
+            [ -n "$output" ]
+            [[ "$output" != *"ни на одной"* && "$output" != *"no architecture"* && "$output" != *"on any machine"* ]] \
+                || { echo "$code still says 3.1 ships nowhere ($script): $output"; return 1; }
+            [[ "$output" == *"--protocol=2.0"* ]] || { echo "$code names no way out ($script): $output"; return 1; }
         done
     done
 }
 
 @test "no refusal claims the installer lacks a 3.1 generator, or promises a later release" {
-    # The arm, arch_unsupported and not_implemented_yet texts used to say that
+    # The arm and arch_unsupported texts (and the removed not_implemented_yet) used to say that
     # this installer version carries no 3.1 generator. That stopped being true
     # when the generator landed while the path stayed closed on purpose, and the
     # sentence silently turned false. A refusal says what the reader gets: no
@@ -252,7 +246,7 @@ run_argparse() {
     local script code lower
     for script in "$INSTALL_RU" "$INSTALL_EN"; do
         build_harness "$script"
-        for code in kernel arm arch_unsupported arch_unknown tools_old not_implemented_yet internal_error; do
+        for code in kernel arm arch_unsupported arch_unknown tools_old internal_error; do
             run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message '$code'"
             [ "$status" -eq 0 ]
             [ -n "$output" ]
@@ -264,9 +258,6 @@ run_argparse() {
             [[ "$output" != *"уже умеет"* && "$lower" != *"can already"* ]] \
                 || { echo "$code points to a version that already does 3.1 ($script): $output"; return 1; }
         done
-        run bash -c "source '$TEST_DIR/harness.sh'; _awg31_blocker_message not_implemented_yet"
-        [[ "$output" == *"--protocol=2.0"* ]] || { echo "not_implemented_yet lost the way out ($script): $output"; return 1; }
-        [[ "$output" == *"3.1"* ]] || { echo "not_implemented_yet no longer names the profile ($script): $output"; return 1; }
     done
 }
 
@@ -301,9 +292,9 @@ run_argparse() {
     [[ "$output" == *"RESULT: $(declared_default)"* ]]
 }
 
-@test "the phase default is still 2.0 (goes red on purpose when phase 5 flips it)" {
-    [ "$(declared_default "$INSTALL_RU")" = "2.0" ]
-    [ "$(declared_default "$INSTALL_EN")" = "2.0" ]
+@test "the new-install default is 3.1 (owner decision 27 sep 2026; goes red if it flips back)" {
+    [ "$(declared_default "$INSTALL_RU")" = "3.1" ]
+    [ "$(declared_default "$INSTALL_EN")" = "3.1" ]
 }
 
 @test "a new install with --protocol=2.0 does not call the gate" {
@@ -486,7 +477,7 @@ run_argparse() {
     local script
     for script in "$INSTALL_RU" "$INSTALL_EN"; do
         build_harness "$script"
-        CLI_PROTOCOL="" CLI_PROTOCOL_SET=0 AWG_PROTOCOL="3.1" BLOCKER_CODE="not_implemented_yet" run_resolve 2
+        CLI_PROTOCOL="" CLI_PROTOCOL_SET=0 AWG_PROTOCOL="3.1" BLOCKER_CODE="tools_old" run_resolve 2
         [ "$status" -eq 1 ]
         [ "$(cat "$GATE_LOG")" = "pre" ] || { echo "$script: gate log [$(cat "$GATE_LOG")]"; return 1; }
         [[ "$output" == *"--protocol=2.0"* ]]
@@ -577,7 +568,7 @@ run_argparse() {
     for script in "$INSTALL_RU" "$INSTALL_EN"; do
         build_harness "$script"
         : > "$TEST_DIR/awgsetup_cfg.init"
-        for code in not_implemented_yet kernel arm; do
+        for code in kernel arm arch_unsupported; do
             : > "$GATE_LOG"
             CLI_PROTOCOL="3.1" CLI_PROTOCOL_SET=1 AWG_PROTOCOL="2.0" BLOCKER_CODE="$code" run_resolve 1
             [ "$status" -eq 1 ]
@@ -694,10 +685,10 @@ run_argparse() {
 
 # ------------------------------------------------------- the step 3 call site
 
-# 🔴 This is the branch that comes alive in phase 5. Today a 3.1 marker never
-# reaches step 3, so nothing but this test proves the call site exists and is
-# guarded by the marker. Deleting the call makes the first test red; removing
-# the guard makes the second one red.
+# The step 3 call site: the post gate runs only for a 3.1 marker. Deleting the
+# call makes the first test red; removing the guard makes the second one red.
+# AWG_PROTOCOL_SOURCE is not set here, so the fallback is never allowed and a
+# blocker is a refusal; the fallback cases live in test_awg31_fallback.bats.
 run_step3() {
     local script="${1:-$INSTALL_RU}"
     {
@@ -714,6 +705,11 @@ run_step3() {
         echo 'CONFIG_FILE="/tmp/awgsetup_cfg.init"'
         func_from "$script" _awg31_host_arch
         func_from "$script" _awg31_blocker_message
+        func_from "$script" _awg31_code_in
+        func_from "$script" _awg31_fallback_reason
+        func_from "$script" _awg31_post_fallback_allowed
+        func_from "$script" _awg31_step3_gate
+        grep -E '^AWG31_FALLBACK_(PRE|POST)_CODES=' "$script"
         func_from "$script" step3_check_module
         echo 'awg31_environment_blocker() { echo "$1" >> "$GATE_LOG"; printf "%s" "${BLOCKER_CODE-}"; return ${GATE_RC:-0}; }'
         echo 'step3_check_module'

@@ -629,16 +629,17 @@ s_codes() {
 
 # ------------------------------------------------------------ the gate wiring
 
-@test "gate: the module probe runs after the tools check and before not_implemented_yet" {
-    local f body tools mod nimpl
+@test "gate: the module probe runs after the tools check and before the 'fits' terminal" {
+    local f body tools mod term
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         body=$(sed -n '/^awg31_environment_blocker() {/,/^}/p' "$BATS_TEST_DIRNAME/../$f")
         tools=$(grep -n 'awg31_tools_support' <<< "$body" | head -1 | cut -d: -f1)
         mod=$(grep -n 'awg31_module_support' <<< "$body" | head -1 | cut -d: -f1)
-        nimpl=$(grep -n "printf 'not_implemented_yet'" <<< "$body" | head -1 | cut -d: -f1)
-        [ -n "$tools" ] && [ -n "$mod" ] && [ -n "$nimpl" ] || { echo "a check is missing in $f"; return 1; }
+        # the explicit "environment fits" terminal: the last return 0 of the body
+        term=$(grep -n '^    return 0$' <<< "$body" | tail -1 | cut -d: -f1)
+        [ -n "$tools" ] && [ -n "$mod" ] && [ -n "$term" ] || { echo "a check is missing in $f"; return 1; }
         [ "$mod" -gt "$tools" ] || { echo "the module probe runs before the tools check in $f"; return 1; }
-        [ "$nimpl" -gt "$mod" ] || { echo "not_implemented_yet comes before the module probe in $f"; return 1; }
+        [ "$term" -gt "$mod" ] || { echo "the 'fits' terminal comes before the module probe in $f"; return 1; }
     done
 }
 

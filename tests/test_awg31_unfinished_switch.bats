@@ -432,7 +432,8 @@ _step0() {
         echo 'SCRIPT_VERSION="0.0.0-test"'
         echo 'PROTOCOL_DEFAULT="2.0"'
         echo 'awg31_environment_blocker() { echo "$1" >> "$GATE_LOG"; printf "%s" "${BLOCKER_CODE-}"; return ${GATE_RC:-0}; }'
-        for fn in awg_installed_protocol _awg_install_state _awg31_host_arch _awg31_blocker_message _awg31_resolve_protocol _awg_gen_switch_rewind; do
+        grep -E '^AWG31_FALLBACK_(PRE|POST)_CODES=' "$s"
+        for fn in awg_installed_protocol _awg_install_state _awg31_host_arch _awg31_blocker_message _awg31_code_in _awg31_fallback_reason _awg31_announce_fallback _awg31_resolve_protocol _awg_gen_switch_rewind; do
             func_from "$s" "$fn"
         done
         echo 'step0_slice() {'
@@ -472,7 +473,8 @@ _begun() {
     local s
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         _begun 3.1 3
-        CLI_PROTOCOL="" CLI_PROTOCOL_SET=0 BLOCKER_CODE="not_implemented_yet" _step0 "$s"
+        # the init carries no AWG_PROTOCOL_SOURCE: no fallback, the gate refuses
+        CLI_PROTOCOL="" CLI_PROTOCOL_SET=0 BLOCKER_CODE="kernel" _step0 "$s"
         [ "$status" -eq 1 ]
         [[ "$output" == *"DIE:"*"--protocol=2.0"* ]] || { echo "$s: $output"; return 1; }
         [ "$(cat "$GATE_LOG")" = "pre" ]
