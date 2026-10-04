@@ -410,6 +410,70 @@ _head_through_check() { # installer -> $T/head.sh
     done
 }
 
+# ---------- helper deployment: a short or failed write never replaces the helper ----------
+
+# _awg_deploy_ensure_helper of installer $1 with /usr/local/sbin moved into $T.
+# Its heredoc holds functions closing with "}" in column 0, so the function is
+# cut up to the "}" that follows the heredoc's end marker.
+_deploy_driver() {
+    {
+        echo 'log() { echo "LOG: $*"; }; die() { echo "DIE: $*"; exit 1; }'
+        awk '/^_awg_deploy_ensure_helper\(\) \{$/{f=1} f{print} f&&/^AWG_ENSURE_HELPER_EOF$/{e=1} f&&e&&/^}$/{exit}' \
+            "$BATS_TEST_DIRNAME/../$1" | sed "s#/usr/local/sbin#$T/sbin#g"
+        echo '_awg_deploy_ensure_helper; echo "RC=$?"'
+    } > "$T/deploy.sh"
+    grep -q '^AWG_ENSURE_HELPER_EOF$' "$T/deploy.sh" || { echo "helper heredoc not cut"; return 1; }
+}
+# cat stub. CAT_MODE=fail writes ALL of its input and then fails, so only the
+# exit-code check can catch it; short drops exactly the last line and succeeds
+# (the rest still parses, so only the last-line check can catch it); corrupt writes all of it with one line in the
+# middle broken and succeeds, so the last line is intact and only bash -n can
+# catch it.
+_cat_stub() {
+    _stub cat 'case "${CAT_MODE:-}" in
+  fail)    /bin/cat; exit 1 ;;
+  short)   sed "\$d"; exit 0 ;;
+  corrupt) awk "NR==600{print \"if then\"; next} {print}"; exit 0 ;;
+  *)       exec /bin/cat "$@" ;;
+esac'
+}
+
+@test "deploy: a failed or silently short write of the helper dies and keeps the installed one, on both installers" {
+    local f mode
+    for f in "${INSTALLERS[@]}"; do
+        for mode in fail short corrupt; do
+            rm -rf "${T:?}/sbin"; mkdir -p "$T/sbin"
+            echo "old helper" > "$T/sbin/amneziawg-ensure-module"
+            _deploy_driver "$f"; _cat_stub
+            CAT_MODE=$mode PATH="$T/bin:$PATH" run bash "$T/deploy.sh"
+            [ "$status" -eq 1 ] || { echo "$f $mode: $output"; return 1; }
+            # Each mode is caught by its own check: the write's exit code, or the staged file.
+            if [[ "$mode" == fail ]]; then
+                [[ "$output" == *"DIE: Не удалось записать"* || "$output" == *"DIE: Could not write"* ]] || { echo "$f $mode: $output"; return 1; }
+            else
+                [[ "$output" == *"DIE: Записанный helper"*"неполный или повреждён"* || "$output" == *"DIE: The written"*"incomplete or damaged"* ]] || { echo "$f $mode: $output"; return 1; }
+            fi
+            [ "$(/bin/cat "$T/sbin/amneziawg-ensure-module")" = "old helper" ] || { echo "$f $mode: replaced"; return 1; }
+            [ ! -e "$T/sbin/.amneziawg-ensure-module.new" ] || { echo "$f $mode: stage left"; return 1; }
+        done
+    done
+}
+
+@test "deploy: a full write installs an executable helper that answers --version, on both installers" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        rm -rf "${T:?}/sbin"; mkdir -p "$T/sbin"
+        _deploy_driver "$f"; _cat_stub
+        PATH="$T/bin:$PATH" run bash "$T/deploy.sh"
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
+        [[ "$output" == *"RC=0"* ]] || { echo "$f: $output"; return 1; }
+        [ -x "$T/sbin/amneziawg-ensure-module" ]
+        [ "$(tail -n 1 "$T/sbin/amneziawg-ensure-module")" = "exit 2" ]
+        run bash "$T/sbin/amneziawg-ensure-module" --version
+        [[ "$output" == "amneziawg-ensure-module "* ]] || { echo "$f: $output"; return 1; }
+    done
+}
+
 @test "--repair-module is in the help of both installers" {
     grep -q -- '--repair-module       Починить модуль ядра' "$BATS_TEST_DIRNAME/../install_amneziawg.sh"
     grep -q -- '--repair-module       Repair the kernel module' "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"

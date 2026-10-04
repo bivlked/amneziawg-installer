@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # AmneziaWG 2.0 installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 5.37.0
-# Date: 2026-09-27
+# Version: 5.37.1
+# Date: 2026-10-04
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -40,7 +40,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="5.37.0"
+SCRIPT_VERSION="5.37.1"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -67,8 +67,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="5592ac9ba016494dc2c359dc0e9d6286508ff4bbd4829c9153bf1c942daf21c9"
-MANAGE_SCRIPT_SHA256="be9856579a486bf127ad1fc35eddf32ac5feb02194345a31f9d2d2adf91fad27"
+COMMON_SCRIPT_SHA256="f4ee3b8505e4536eeb74cf8714ed423ba2321a7a73a2677b322c7f35d8e0697f"
+MANAGE_SCRIPT_SHA256="2b7672b7f4a74bcd7fa081eaca54ca321ea2a4397063de85c892060e1bdf6a40"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back
@@ -6456,7 +6456,10 @@ _awg_deploy_ensure_helper() {
     log "Deploying DKMS auto-repair helper..."
     mkdir -p /usr/local/sbin
     local _stage_helper=/usr/local/sbin/.amneziawg-ensure-module.new
-    cat > "$_stage_helper" <<'AWG_ENSURE_HELPER_EOF'
+    # The write is checked by its exit code and the file by a parse and its
+    # last line: a short write (ENOSPC) would leave a cut helper that still
+    # answers --version but fails every other mode.
+    cat > "$_stage_helper" <<'AWG_ENSURE_HELPER_EOF' || { rm -f "$_stage_helper"; die "Could not write the amneziawg-ensure-module helper (is the disk full?). The installed helper is untouched."; }
 #!/bin/bash
 # amneziawg-ensure-module — rebuilds the AmneziaWG DKMS module after a
 # kernel upgrade.
@@ -7654,6 +7657,9 @@ case "$MODE" in
 esac
 exit 2
 AWG_ENSURE_HELPER_EOF
+    if ! bash -n "$_stage_helper" 2>/dev/null || [[ "$(tail -n 1 "$_stage_helper" 2>/dev/null)" != "exit 2" ]]; then
+        rm -f "$_stage_helper"; die "The written amneziawg-ensure-module helper is incomplete or damaged (is the disk full?). The installed helper is untouched."
+    fi
     chown root:root "$_stage_helper" 2>/dev/null || true
     chmod 0755 "$_stage_helper" \
         || { rm -f "$_stage_helper"; die "Failed to chmod helper."; }
