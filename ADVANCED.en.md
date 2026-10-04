@@ -764,6 +764,7 @@ Options:
   -h, --help            Show help
   --uninstall           Uninstall AmneziaWG
   --diagnostic          Generate diagnostic report
+  --repair-module       Repair the kernel module on an installed server (kernel 7.0.0-38 and later; does not run the normal install)
   -v, --verbose         Verbose output (including DEBUG)
   --no-color            Disable colored output
   --port=PORT           Set UDP port (1-65535; on mobile networks with DPI, 443/udp often helps)
@@ -2278,7 +2279,7 @@ it as a target.
 ## ⚠️ Known Limitations
 
 <a id="kernel-70-backport-adv"></a>
-* **Kernel 7.0.0-38 on Ubuntu 26.04 and the HWE kernel 7.0.0-38 on Ubuntu 24.04: the PPA module does not build (since 1 October 2026).** These kernels changed the `setup_udp_tunnel_sock` function, and the AmneziaWG module from the PPA (tag `v3.1.20260906`) does not handle that yet. A fix is proposed in the module repository ([#218](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/pull/218), [#250](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/pull/250)) but not merged.
+* **Kernel 7.0.0-38 on Ubuntu 26.04 and the HWE kernel 7.0.0-38 on Ubuntu 24.04: the PPA module does not build (since 1 October 2026); since v5.37.1 the installer fixes it itself.** These kernels changed the `setup_udp_tunnel_sock` function, and the AmneziaWG module from the PPA (tag `v3.1.20260906`) does not handle that yet. A fix is proposed in the module repository ([#218](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/pull/218), [#250](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/pull/250)) but not merged.
 
   Who is affected: Ubuntu 26.04 after the kernel update to 7.0.0-38, and Ubuntu 24.04 with the HWE kernel 7.0.0-38 (`linux-generic-hwe-24.04`). In our build tests this error did not occur on Ubuntu 24.04 with the regular kernel 6.8.0-146, Ubuntu 25.10 (6.17.0-41), Ubuntu 26.04 on the previous kernel 7.0.0-34, Debian 12 (6.1.0-53) and Debian 13 (6.12.107 and 6.12.111).
 
