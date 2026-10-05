@@ -484,31 +484,30 @@ regen_ep_name_lost() {
 }
 # add hands out the render list as is, so it warns through render, and a regen
 # flag inherited from the environment must not mute that.
+ADD_STUBS='
+    awg() { case "$1" in
+        genkey|genpsk) echo "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;
+        pubkey) cat >/dev/null; echo "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=" ;;
+        *) return 0 ;; esac; }
+    generate_qr() { return 0; }; generate_vpn_uri() { return 0; }; generate_qr_vpnuri() { return 0; }'
 add_ep_name_env_flag() {
-    local lib="$1" out
-    out=$(lr "$lib" "$(mode2_list)" '
-        awg() { case "$1" in
-            genkey|genpsk) echo "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;
-            pubkey) cat >/dev/null; echo "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=" ;;
-            *) return 0 ;; esac; }
-        generate_qr() { return 0; }; generate_vpn_uri() { return 0; }; generate_qr_vpnuri() { return 0; }
+    local lib="$1" out own want i
+    out=$(lr "$lib" "$(mode2_list)" "$ADD_STUBS"'
         export _AWG_EP_WARN_LATER=1
         generate_client a1 vpn.example.com; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "add failed ($lib): $out"; return 1; }
     [ "$(ep_warn_n "$out")" -eq 1 ] || { echo "Endpoint warning count on add ($lib): $out"; return 1; }
-    # an own list with 0.0.0.0/0 anywhere in it, or with no IPv4 at all: nothing to warn about
-    local own
-    for own in "10.0.0.0/8, 0.0.0.0/0" "::/0"; do
-        out=$(lr "$lib" "$(mode2_list)" '
-            awg() { case "$1" in
-                genkey|genpsk) echo "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;
-                pubkey) cat >/dev/null; echo "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=" ;;
-                *) return 0 ;; esac; }
-            generate_qr() { return 0; }; generate_vpn_uri() { return 0; }; generate_qr_vpnuri() { return 0; }
+    # an own list with 0.0.0.0/0 anywhere in it, or with no IPv4 at all: nothing
+    # to warn about (render adds ::/0 to the full tunnel, as for any client)
+    local -a owns=("10.0.0.0/8, 0.0.0.0/0" "::/0") wants=("10.0.0.0/8, 0.0.0.0/0, ::/0" "::/0")
+    for i in 0 1; do
+        own="${owns[$i]}"; want="${wants[$i]}"
+        out=$(lr "$lib" "$(mode2_list)" "$ADD_STUBS"'
             export CLIENT_ALLOWED_IPS="'"$own"'"
             generate_client a2 vpn.example.com; echo "RC=$?"
             sed -n "s/^AllowedIPs = /AIPS=/p" "$AWG_DIR/a2.conf"')
-        [[ "$out" == *"RC=0"* && "$out" == *"AIPS=$own"* ]] || { echo "add with an own list failed ($lib, $own): $out"; return 1; }
+        [[ "$out" == *"RC=0"* ]] || { echo "add with an own list failed ($lib, $own): $out"; return 1; }
+        grep -qxF "AIPS=$want" <<< "$out" || { echo "routes ($lib, $own): $out"; return 1; }
         [ "$(ep_warn_n "$out")" -eq 0 ] || { echo "warned on an own list ($lib, $own): $out"; return 1; }
     done
 }

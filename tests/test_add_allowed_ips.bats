@@ -82,6 +82,7 @@ export AWG_H2='1000000-8000000'
 export AWG_H3='10000000-80000000'
 export AWG_H4='100000000-800000000'
 export AWG_APPLY_MODE='syncconf'
+export AWG_ENDPOINT='vpn.example.com'
 CONF
     cat > "$MGMT_DIR/awg/awg0.conf" << 'CONF'
 [Interface]
