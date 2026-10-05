@@ -139,10 +139,10 @@ strict_ok() {
                 IFS=',' read -r -a toks <<< "$val,"
                 [ "${#toks[@]}" -gt 0 ] || { echo "an empty list: '$line'"; return 1; }
                 for tok in "${toks[@]}"; do
-                    tok="${tok## }"; tok="${tok%% }"
+                    tok="${tok#"${tok%%[![:space:]]*}"}"; tok="${tok%"${tok##*[![:space:]]}"}"
                     if [[ "$tok" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]]; then :
                     elif [[ "$tok" =~ ^([^/]+)/([0-9]{1,3})$ ]] && v6a="${BASH_REMATCH[1]}" && v6p="${BASH_REMATCH[2]}" \
-                         && v6ok "$v6a" && (( v6p <= 128 )); then :
+                         && v6ok "$v6a" && (( 10#$v6p <= 128 )); then :
                     else echo "not a CIDR list: '$line'"; return 1
                     fi
                 done ;;
@@ -227,7 +227,8 @@ check() {
         ! strict_ok "$f" >/dev/null || { echo "accepted: $bad"; return 1; }
     done
     local fine
-    for fine in "Address = 10.9.9.2/32, fddd:2c4:2c4:2c4::2/128" "Address = ::/0" "Address = 2000::/3"; do
+    for fine in "Address = 10.9.9.2/32, fddd:2c4:2c4:2c4::2/128" "Address = ::/0" "Address = 2000::/3" \
+                "Address = 10.9.9.2/32,  fddd::2/128" "Address = 10.9.9.2/32,"$'\t'"fddd::2/128" "Address = fddd::/08"; do
         printf '%s' "${good/Address = 10.9.9.2\/32/$fine}" > "$f"
         strict_ok "$f" >/dev/null || { echo "rejected: $fine"; return 1; }
     done
