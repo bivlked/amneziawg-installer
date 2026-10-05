@@ -1,6 +1,6 @@
 # Install AmneziaWG VPN server on Ubuntu / Debian VPS
 
-A step-by-step guide for deploying an AmneziaWG 2.0 VPN server on a clean Ubuntu or Debian VPS over SSH. Single bash command, no Docker, no web panel. Aimed at headless setups where you want a working DPI-resistant VPN with the lowest possible footprint on a cheap VPS.
+A step-by-step guide for deploying an AmneziaWG VPN server (3.1 by default, 2.0 for older clients) on a clean Ubuntu or Debian VPS over SSH. Single bash command, no Docker, no web panel. Aimed at headless setups where you want a working DPI-resistant VPN with the lowest possible footprint on a cheap VPS.
 
 > The official [Amnezia VPN](https://amnezia.org/) app deploys the server side for you in Docker. This guide takes a different route on purpose: AmneziaWG as a kernel module, no Docker overhead, and the whole server tuned and hardened for a single-purpose VPN. See [how it differs](https://bivlked.github.io/amneziawg-installer/compare/).
 
@@ -11,6 +11,7 @@ A step-by-step guide for deploying an AmneziaWG 2.0 VPN server on a clean Ubuntu
 - Built for cheap VPS budgets: $3 to $5 a month, 1 vCPU, 512 MB RAM minimum (1 GB recommended), 2 GB disk minimum (3+ GB recommended).
 - Both x86_64 (amd64) and ARM64 (aarch64), with prebuilt kernel modules covering Raspberry Pi 4/5, Ubuntu 24.04/25.10 ARM64, and Debian 12/13 ARM64 (Hetzner CAX, Oracle Ampere A1, AWS Graviton all run on these stock kernels). Ubuntu 26.04 ARM64 builds the module from source via DKMS.
 - DPI bypass for Russia (ТСПУ), Iran, China, school and corporate firewalls.
+- AmneziaWG 3.1 for a new install by default; routers on stock firmware, Hiddify and old apps need `--protocol=2.0`. On a stock Debian 12 (kernel 6.1) and on ARM the installer picks 2.0 by itself.
 - Survives kernel upgrades automatically via DKMS auto-repair (since v5.12.0). On ARM with a prebuilt module there is no DKMS: after a kernel change, run the installer again.
 - Ubuntu 25.10 and 26.04: if the PPA does not answer for the release codename, the installer switches to `noble` itself (since v5.13.0).
 
@@ -51,6 +52,14 @@ wget -O install_amneziawg_en.sh https://github.com/bivlked/amneziawg-installer/r
 chmod +x install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh
 ```
+
+**Protocol generation.** A new install gets AmneziaWG 3.1 by default: header encryption (`HeaderProtectionKey`) and extra padding (`ContentPaddingAddition`) on top of the usual obfuscation. A client without 3.1 support will not connect to such a server, so if you have one - a router on stock firmware (stable KeeneticOS, OpenWrt with an old amneziawg package), Hiddify, an app that has not been updated for a long time - install on 2.0 from the start:
+
+```bash
+sudo bash ./install_amneziawg_en.sh --protocol=2.0
+```
+
+On kernels older than 6.7 (a stock Debian 12), on ARM, and where the installed tools or module do not understand third-line parameters, the installer installs 2.0 by itself and says why. The final report names the generation on the "Protocol generation" line. Which clients understand 3.1: [client table](ADVANCED.en.md#client-gen-adv); the details of both profiles: [ADVANCED.en.md](ADVANCED.en.md#awg3-fallback-adv).
 
 The script walks through OS detection, base packages, PPA setup, kernel module install (DKMS or ARM prebuilt), UFW firewall, sysctl hardening, Fail2Ban, AmneziaWG service start, and default client config generation. Expect two reboots and 15 to 25 minutes of wall-clock time, mostly bound by `apt` and the kernel module build.
 
@@ -161,7 +170,7 @@ sudo bash ./install_amneziawg_en.sh --force
 
 Set aside a few minutes for this. A reinstall walks the state machine from the top, so the box reboots twice, once after the system-update step and once after the kernel-module step, and you run the same command again after each reboot. Step 1 is replayed in full along the way: package cleanup, sysctl tuning, swap and BBR. The tunnel is down across those reboots, but nothing that clients hold is touched.
 
-The `--force` flag (or `AWG_FORCE_REINSTALL=1`) is required when reinstalling over an already-running AmneziaWG service, so an accidental re-run on a healthy box does not destroy state. First-time installs do not need it. Server keys, peer list, and obfuscation parameters survive a reinstall. Since v5.21.0 the script pair is protected against drift: update one half and forget the other, and the scripts stop with the exact commands to fetch the missing piece, instead of throwing strange errors halfway through.
+The `--force` flag (or `AWG_FORCE_REINSTALL=1`) is required when reinstalling over an already-running AmneziaWG service, so an accidental re-run on a healthy box does not destroy state. First-time installs do not need it. Server keys, peer list, and obfuscation parameters survive a reinstall, and so does the protocol generation: a server installed before version 6.0.0 stays on AmneziaWG 2.0, and moving it to 3.1 takes `--uninstall` and a fresh install with every client profile issued again. Since v5.21.0 the script pair is protected against drift: update one half and forget the other, and the scripts stop with the exact commands to fetch the missing piece, instead of throwing strange errors halfway through.
 
 That is what keeps an update invisible to your users: config files and QR codes handed out earlier stay valid, and existing clients are preserved rather than recreated, the default `my_phone` and `my_laptop` included. One exception is worth remembering. Passing `--mobile`, `--preset`, `--jc`, `--jmin` or `--jmax` regenerates the whole `Jc`/`S`/`H`/`I1` set, while `--port` (as well as `--mobile`, which sets 443) changes the port. Either way every config issued before that stops connecting until you re-issue it with `sudo bash /root/awg/manage_amneziawg.sh regen` and hand it out again. `--endpoint` changes the address only in configs issued afterwards: the old ones keep the previous address and work as long as it still reaches the server, and they get the new one after `regen`. Leave those flags off when you are only updating. And if all you want is the newer management commands, `--force` is not needed at all: replacing the two scripts on the server is enough, and the installer only has to be re-run when the installer itself changed.
 
@@ -222,4 +231,4 @@ Re-installing later starts from a clean slate.
 - [VPN Status (RU): AmneziaWG catalog](https://vpnstatus.site/protocols/amneziawg) - Russian-language directory of AmneziaWG server-side options.
 - [LowEndTalk Tutorial #217191](https://lowendtalk.com/discussion/217191) - the short version of this guide, with reader Q&A.
 - [README.en.md](README.en.md) - project overview, full feature list, FAQ, and the comparison with similar tools.
-- [ADVANCED.en.md](ADVANCED.en.md) - full FAQ, mobile carrier presets, AWG 2.0 parameter reference, troubleshooting deep-dive.
+- [ADVANCED.en.md](ADVANCED.en.md) - full FAQ, mobile carrier presets, AmneziaWG 2.0 and 3.1 parameter reference, troubleshooting deep-dive.

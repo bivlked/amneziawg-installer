@@ -19,7 +19,8 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
   - [The new 3.0 parameters](#awg3-params-adv)
   - [What has to match and what does not](#awg3-must-match-adv)
   - [Three things that can cost you an evening](#awg3-gotchas-adv)
-  - [What the installer does not enable yet](#awg3-not-yet-adv)
+  - [The 3.1 profile: what the installer turns on and what it leaves out](#awg3-not-yet-adv)
+  - [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv)
 - [⚙️ Client Configuration Details](#config-details-adv)
   - [AllowedIPs](#allowedips-adv)
   - [Device IPv6, `::/0` and the local network](#client-ipv6-adv)
@@ -57,7 +58,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 - [📱 MTU and Mobile Clients](#mtu-mobile-adv)
 - [🚧 Host Unreachable from Russia (Hetzner): AS-based Blocking](#as-blocking-adv)
 - [🛡️ Active Probing and Obfuscation Without a Proxy](#active-probing-adv)
-- [📋 AWG 2.0 Client Compatibility](#client-compat-adv)
+- [📋 Client Compatibility](#client-compat-adv)
 - [🐧 Debian Support](#debian-support-adv)
 - [🔧 Raspberry Pi and ARM64 Support](#arm-support-adv)
 - [🐧 Connecting a Linux machine as a client](#linux-client-adv)
@@ -170,7 +171,7 @@ sudo bash install_amneziawg_en.sh --jc=2 --jmin=20 --jmax=60 --yes
 <a id="awg3-adv"></a>
 ## 🆕 The third AmneziaWG line for self-hosted servers
 
-In late July 2026 the Amnezia team released **AmneziaWG 3.0** and switched the PPA over to it; on 12 August **3.1** followed inside the same line (tag `v3.1.20260812`), and the PPA has carried it since that day. On x86 with kernel 6.7 or newer the installer **already gives you a third-line module** - there is nothing to opt into, and your existing configs keep working.
+In late July 2026 the Amnezia team released **AmneziaWG 3.0** and switched the PPA over to it; on 12 August **3.1** followed inside the same line (tag `v3.1.20260812`), and the PPA has carried it since that day. Since version 6.0.0 the installer issues a new install the **3.1 profile** by default: what it is made of is covered in [The 3.1 profile](#awg3-not-yet-adv), and where 2.0 is installed instead in [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv). A third-line module on x86 with kernel 6.7 or newer was installed before as well, and second-line configs keep working on it.
 
 To see what you actually have:
 
@@ -198,12 +199,14 @@ The kernel interface contract is unaffected: `WG_GENL_VERSION` is unchanged, so 
 <a id="awg3-lines-adv"></a>
 ### Which module line you get
 
-| Condition | What gets installed | Protocol |
-|---|---|---|
-| x86_64, kernel >= 6.7 | `amneziawg-dkms` from `ppa:amnezia/ppa` | **3.x** |
-| any arch, kernel older than 6.7 (Debian 12 on 6.1) | pinned module built from source | 2.0 |
-| ARM64 / armhf with a prebuilt for your kernel | our prebuilt package | 2.0 |
-| ARM64 / armhf with no prebuilt, kernel >= 6.7 | `amneziawg-dkms` from the PPA | **3.x** |
+| Condition | What gets installed | Module line | Profile without `--protocol` |
+|---|---|---|---|
+| x86_64, kernel >= 6.7 | `amneziawg-dkms` from `ppa:amnezia/ppa` | **3.x** | **3.1** |
+| any arch, kernel older than 6.7 (Debian 12 on 6.1) | pinned module built from source | 2.0 | 2.0, automatically |
+| ARM64 / armhf with a prebuilt for your kernel | our prebuilt package | 2.0 | 2.0, automatically |
+| ARM64 / armhf with no prebuilt, kernel >= 6.7 | `amneziawg-dkms` from the PPA | **3.x** | 2.0, automatically: ARM has not been measured for the third line |
+
+A third-line module is necessary but not sufficient for the 3.1 profile: at step 3 the installer also checks the tools and the loaded module, see [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv).
 
 That last row is not hypothetical: prebuilt ARM packages are built for Raspberry Pi 3/4/5, Ubuntu 24.04 and 25.10 ARM64, and Debian 12/13 ARM64. Ubuntu 26.04 ARM64 is not on that list yet, and on such a host the installer finds no match, falls through to the normal DKMS path and installs the PPA module, which is the third version.
 
@@ -215,7 +218,7 @@ On ARM the installer tries the prebuilt package first, and if it finds one match
 >
 > What that means in practice. On Debian 12 with its stock 6.1 kernel, and on ARM with a matching prebuilt package, you get a proven but frozen module. There is no "upgrade to the third version with a plain `apt upgrade`" path for such hosts: the installer keeps `amneziawg-dkms` on `apt-mark hold` precisely so the PPA module does not land next to it as a second tree with the same name. Nothing breaks and nothing stops working - updates simply do not arrive.
 >
-> If you specifically need the third version on such a host, there is one supported route: get a kernel 6.7 or newer (on Debian 12 that means the backports kernel) and reinstall. On x86 the normal PPA path takes over from there. ⚠️ On ARM, mind the order: the prebuilt package is tried first, so if a prebuilt exists for your new kernel you will get the pinned 2.0 again - the third version arrives only when no match is found.
+> If you specifically need the third version on such a host, there is one supported route: get a kernel 6.7 or newer (on Debian 12 that means the backports kernel) and reinstall. On x86 the normal PPA path takes over from there, and a new install gets the 3.1 profile. ⚠️ On ARM, mind the order: the prebuilt package is tried first, so if a prebuilt exists for your new kernel you will get the pinned 2.0 again - the third version arrives only when no match is found. And the 3.1 profile is not issued on ARM at all for now, whichever module lands.
 
 <a id="awg3-wire-adv"></a>
 ### What 3.0 changes on the wire, and what it does not
@@ -250,7 +253,7 @@ All seven work through `awg-quick` as well: it hands every key it does not consu
 
 🔴 **Six of the seven take a RANGE rather than a single number, and the value is drawn from it at random on every use.** Those are `ContentPaddingAddition`, `RekeyAfterTime`, `RekeyTimeout`, `RejectAfterTime`, `KeepaliveTimeout` and `MaxHandshakeAttempts`: the format is `lo-hi`, and a bare number is accepted too as a range of zero width. Verified in both implementations from the sources rather than from documentation: the kernel module declares them as `u16_range_t` (`src/device.h`) and draws the value in `u16_range_pick_one()` via `get_random_u32_inclusive()` (`src/type.h`); `amneziawg-go` uses the `UintRange` type with `FromString` and `PickOne` (`device/noise-types.go`) and parses the keys in `device/uapi.go`. That is the whole point: a constant handshake and keepalive interval was a tell in itself, and a range removes it. The one exception among the seven is `HeaderProtectionKey`, which is a key rather than a number.
 
-⚠️ Practical consequence: if you set these by hand, remember that `KeepaliveTimeout = 20-30` is neither a typo nor a "between these" timeout, it means a fresh random pick on every use. The installer sets none of the seven.
+⚠️ Practical consequence: if you set these by hand, remember that `KeepaliveTimeout = 20-30` is neither a typo nor a "between these" timeout, it means a fresh random pick on every use. Of the seven the installer sets two, `HeaderProtectionKey` and `ContentPaddingAddition` (the 3.1 profile, see [below](#awg3-not-yet-adv)), and leaves the timers alone.
 
 <a id="awg3-must-match-adv"></a>
 ### What has to match and what does not
@@ -297,13 +300,48 @@ echo "module amneziawg -p" > /sys/kernel/debug/dynamic_debug/control
 Since v5.25.0 the management scripts track this and **warn**: they remember the set of interface parameters applied last time, and if a parameter has disappeared from `awg0.conf`, the log gets a `Removed from the [Interface] section: S1` warning along with the command that carries the removal through to the live interface. The script does **not** restart on its own: that would drop every client connection, and a decision with that price belongs to a person rather than to automation. The warning normally appears once: the snapshot is refreshed after a successful apply, and also after `manage restart`, `manage restore` and an install, that is after everything that recreates the interface. If the apply failed, the snapshot stays as it was and the warning repeats on the next run - deliberately, because otherwise a failure would silently mute the reminder that the parameter is still on the live interface. Parameter values are still applied without a restart: `syncconf` changes those correctly, the problem is only removal.
 
 <a id="awg3-not-yet-adv"></a>
-### What the installer does not enable yet, and why
+### The 3.1 profile: what the installer turns on and what it leaves out
 
-None of the 3.0 features appear in generated configs, and that is deliberate:
+Since version 6.0.0 a new install without a flag gets the 3.1 profile. It differs from the 2.0 profile like this:
 
-- **`HeaderProtectionKey`** needs every one of your clients to understand it at the same time, and that requirement bites harder than it reads: the parameter is two-sided and fails silently on a mismatch - the handshake simply never happens and nothing reports an error. Where the clients stand on 31 August 2026: `amneziawg-windows-client` has a 3.1.0 release (21 August), `amneziawg-android` has a full `v3.1.20260814` release (14 August; the separate 3.0.1 from 24 July stayed a prerelease), and the light client on Google Play has not been updated since 12 June. While some of your devices update from a store, turning the parameter on would cut them off without warning.
-- **`ContentPaddingAddition`** is left out for a historical reason that no longer applies. The padding broke keepalive detection, so an idle tunnel redid its handshake every 15 seconds instead of roughly 147. The defect is analysed in [issue #186](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/186) and was fixed upstream on 5 August 2026 ([PR #208](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/pull/208)); the fix was verified on a test server - the interval went back to 147 seconds.
-- **The timer parameters** are one-sided and safe, but on their own they buy little, so they travel with the next step.
+| Parameter | 2.0 profile | 3.1 profile |
+|---|---|---|
+| `HeaderProtectionKey` | none | a random key per install, one for the server and all of its clients |
+| `ContentPaddingAddition` | none | `32-128` |
+| `H1`-`H4` | random non-overlapping ranges | `1`, `2`, `3`, `4` |
+| `S3` / `S4` | from 8 / from 4 | from 12 / from 12 |
+| `Jc`/`Jmin`/`Jmax`, `S1`/`S2`, `I1` | as before | as before |
+
+- **`H1`-`H4` are set to 1-4 on purpose.** The key encrypts the header, so the message type is no longer visible on the wire whatever `H` is: random ranges add nothing. What makes each install unique now is the key.
+- **`S3` and `S4` start at 12** because the first 12 bytes of S-padding serve as the nonce for header encryption (details in [Three things that can cost you an evening](#awg3-gotchas-adv)).
+- **The key** lives in the `[Interface]` section of the server `awg0.conf`, with a copy in `/root/awg/server_hpk.key`. `manage` writes it into every client profile and into the `vpn://` link, and `backup` and `restore` carry it together with the config. Changing the key means reissuing every client profile: a client with the old key will not connect, and will not show an error either.
+- **`ContentPaddingAddition`** is one-sided and does not need to match. The defect that kept padding out before (an idle tunnel redid its handshake every 15 seconds instead of roughly 147, [issue #186](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/186)) was fixed upstream on 5 August 2026 ([PR #208](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/pull/208)) and verified on a test server.
+
+What the profile leaves out, and why:
+
+- **`RandomTrailers`** is two-sided, and together with the rest of the obfuscation it cuts throughput by tens of times (measurement in [What has to match](#awg3-must-match-adv)). It stays off until a fix ships.
+- **`DisableCookies`** takes away, together with the cookie-reply signature, the protection against handshake floods from spoofed addresses (see [What 3.1 added](#awg3-31-adv)).
+- **The timer parameters** are one-sided and safe, but without a separate measurement they buy little, so the installer does not set them.
+
+The configs carry no `RandomTrailers` or `DisableCookies` line at all, not even with the value `off`.
+
+<a id="awg3-fallback-adv"></a>
+### Where 2.0 is installed instead of 3.1
+
+The installer checks the machine twice. At step 0 it checks the architecture and the kernel: the 3.1 profile is issued only on x86_64 with kernel 6.7 or newer. At step 3, once the packages are in and the reboots are behind, it checks the `awg` tools and the loaded module: the module is checked with a probe, that is, the profile is applied to a temporary interface and read back.
+
+| Situation | What the installer does |
+|---|---|
+| no generation chosen, the machine does not fit | installs 2.0 by itself: the reason goes to the log as a separate block and is repeated in the final report. At step 3 it first checks the 2.0 set on a temporary interface the same way and, if the module refuses it, stops without touching the settings file |
+| `--protocol=3.1`, the machine does not fit | stops and names the reason code |
+| `--protocol=2.0` | installs 2.0, no third-line checks needed |
+| the server has already issued profiles (reached step 6) | never changes the generation. If a 3.1 server stops passing the check, the installer names the reason and the repair (upgrade the tools or the module, boot a suitable kernel); it names removal only as the last resort |
+
+Reason codes: `kernel`, `arm`, `arch_unsupported`, `arch_unknown` (checked at step 0 and again at step 3); `tools_old`, `module_line2`, `module_probe_failed` (step 3).
+
+The generation and how it was chosen are recorded in `/root/awg/awgsetup_cfg.init`: `AWG_PROTOCOL` (`2.0` or `3.1`), `AWG_PROTOCOL_SOURCE` (`default` if the generation came from the default, `explicit` if from the flag) and `AWG_PROTOCOL_FALLBACK` (the reason code if the installer switched to 2.0 by itself). A server installed before version 6.0.0 has no `AWG_PROTOCOL_SOURCE`, and its `AWG_PROTOCOL` marker is `2.0` (since v5.32.0) or absent (earlier); either way it reads as 2.0.
+
+**Changing the generation of a running server** takes a reinstall: `--uninstall`, then an install with the `--protocol` you want. Every client profile is issued again, so it is better to decide before installing.
 
 The situation on kernels older than 6.7 is covered separately in <a href="#debian-support-adv">Debian support</a>.
 
@@ -781,14 +819,18 @@ Options:
   --endpoint=ADDR       External server endpoint: FQDN, IPv4 or [IPv6] (NAT)
   --server-name=NAME    Server name shown in the Amnezia app on vpn:// import (default 'AWG Server')
   --mobile              Mobile setup in one flag: preset mobile + port 443/udp (an explicit --port wins)
-  --protocol=2.0|3.1    Protocol generation for a NEW install (default 2.0). The spaced form
-                        is accepted too: --protocol 3.1
-                        On an already configured server a flag naming a DIFFERENT generation
-                        ends the install: the generation of a running install changes only by
-                        reinstalling and reissuing every client profile. One matching the
-                        installed generation is accepted quietly
-                        3.1 is not something this installer version emits: it refuses and
-                        names the reason
+  --protocol=2.0|3.1    Protocol generation for a new install, or for one that started but
+                        has not reached step 6 (default 3.1). The spaced form is accepted
+                        too: --protocol 2.0
+                        Without the flag, on a machine where 3.1 cannot run (kernel older
+                        than 6.7, an architecture other than x86_64 including ARM, old tools
+                        or module), 2.0 is installed with an explanation. --protocol=2.0 is
+                        for clients such as routers on stock firmware, Hiddify or apps that
+                        were not updated. An explicit --protocol=3.1 on an unsuitable machine
+                        stops the install and names the reason. On an already configured
+                        server a flag naming a DIFFERENT generation ends the install: the
+                        generation of a running install changes only by reinstalling and
+                        reissuing every client profile
   --preset=TYPE         Obfuscation parameter preset: default, mobile
                         mobile: Jc=3, narrow Jmax — for mobile carriers (Tele2, Yota, Megafon)
   --jc=N                Set Jc manually (0-128, overrides preset; 0 turns junk packets off)
@@ -1061,22 +1103,22 @@ If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULL
 <a id="faq-yellow-adv"></a>
 <details>
   <summary><strong>Q: Why is my config highlighted yellow in the Amnezia app?</strong></summary>
-  <b>A:</b> The yellow mark reports the profile generation, not an error: that is how the Amnezia app marks second-line AmneziaWG configurations. On its own the mark does not say anything is wrong with the connection, and nothing needs redoing because of it. As of 31 August 2026 the installer issues a second-line profile, so the mark is expected on any server it sets up.
+  <b>A:</b> The yellow mark reports the profile generation, not an error: that is how the Amnezia app marks second-line AmneziaWG configurations. On its own the mark does not say anything is wrong with the connection, and nothing needs redoing because of it. Since version 6.0.0 a new install gets the 3.1 profile by default. A 2.0 profile - on servers installed earlier, installed with <code>--protocol=2.0</code>, or where the installer picked 2.0 by itself (a stock Debian 12 with kernel 6.1, ARM) - gets the mark as expected. Removing it takes a 3.1 server, that is, a reinstall with every profile reissued, and all your clients have to understand 3.1.
 </details>
 
 <details>
   <summary><strong>Q: How do I get a client on Android that speaks the third line?</strong></summary>
-  <b>A:</b> Two paths speak the third line on Android: the flagship Amnezia VPN app, and the light client APK from the project's releases page, full release of 14 August 2026. The light client on Google Play was updated 12 June 2026, before the third-line build shipped, so the advice "install the light client from Play" will most likely leave you on the second line. The full table is in <a href="#client-compat-adv">Client compatibility</a>.
+  <b>A:</b> Update the app: the light AmneziaWG on Google Play speaks the third line since version 3.1.4 (21 September 2026), the APK from the project's releases page since v3.1.20260814, the flagship Amnezia VPN since 5.0.1.5, WG Tunnel since 5.6.0. The full table is in <a href="#client-gen-adv">Which AmneziaWG generation a client speaks</a>.
 </details>
 
 <details>
   <summary><strong>Q: Does my router speak third-line AmneziaWG?</strong></summary>
-  <b>A:</b> I know of no stock firmware supporting the third line as of 31 August 2026, so for a router the second-line profile stays a working path rather than a temporary compromise. On routers the third line comes from third-party projects: AWG Manager for Keenetic (v2.17.4 of 27 August 2026), and for MikroTik and RouterOS two independent projects updated on 26 and 30 August 2026.
+  <b>A:</b> Stable stock firmware has no third line as of 5 October 2026: Keenetic added it in KeeneticOS 5.2 Alpha 11 (development channel), OpenWrt has it in the daily awg-openwrt feed for 25.12, with no tag. So for a router on stock firmware install the server with <code>--protocol=2.0</code>: the second-line profile is a working path for it rather than a temporary compromise. On routers the third line comes from third-party projects: AWG Manager for Keenetic (v2.19.12 of 29 September 2026), and for MikroTik and RouterOS amneziawg-mikrotik-c (v1.4.2 of 4 October 2026) and AmneziaWG-MikroTik. The table is in <a href="#client-gen-adv">Which AmneziaWG generation a client speaks</a>.
 </details>
 
 <details>
   <summary><strong>Q: Can a third-line config be converted back to the second line?</strong></summary>
-  <b>A:</b> A third-line client config cannot be edited down to the second line: the generation is set on the server side, and some third-line parameters are two-sided. In a measurement on 30 August 2026 a header protection key left on one side only produced zero handshakes and 100% loss, silently, with no error message anywhere. Devices that stay on the second line need a second-generation server.
+  <b>A:</b> A third-line client config cannot be edited down to the second line: the generation is set on the server side, and some third-line parameters are two-sided. In a measurement on 30 August 2026 a header protection key left on one side only produced zero handshakes and 100% loss, silently, with no error message anywhere. Devices that stay on the second line need a second-generation server: if you have such devices, install the server with <code>--protocol=2.0</code>.
 </details>
 
 <details>
@@ -1116,7 +1158,7 @@ If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULL
 
 <details>
   <summary><strong>Q: Where are the AWG 2.0 parameters stored?</strong></summary>
-  <b>A:</b> After the install, in the <code>[Interface]</code> section of the server config <code>/etc/amnezia/amneziawg/awg0.conf</code>. That file is the source of truth: <code>regen</code> reads the values for client configs from there. A copy of the parameters (AWG_Jc, AWG_S1..S4, AWG_H1..H4, AWG_I1..I5) also lives in <code>/root/awg/awgsetup_cfg.init</code>, but that file is read for them only during a first install, so editing it afterwards never reaches clients - change <code>awg0.conf</code> instead (the next question has the steps). Since v5.22.0 <code>manage</code> prints a warning when it spots such a disagreement.
+  <b>A:</b> After the install, in the <code>[Interface]</code> section of the server config <code>/etc/amnezia/amneziawg/awg0.conf</code>. That file is the source of truth: <code>regen</code> reads the values for client configs from there. A copy of the parameters (AWG_Jc, AWG_S1..S4, AWG_H1..H4, AWG_I1..I5) also lives in <code>/root/awg/awgsetup_cfg.init</code>, but that file is read for them only during a first install, so editing it afterwards never reaches clients - change <code>awg0.conf</code> instead (the next question has the steps). Since v5.22.0 <code>manage</code> prints a warning when it spots such a disagreement. On a 3.1 server <code>[Interface]</code> also holds <code>HeaderProtectionKey</code> and <code>ContentPaddingAddition</code>, and the key has an extra copy in <code>/root/awg/server_hpk.key</code>.
 </details>
 
 <a id="faq-change-params-adv"></a>
@@ -1130,16 +1172,17 @@ If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULL
     <li>Distribute the new <code>.conf</code> / QR codes / vpn:// URIs to clients.</li>
   </ol>
   <b>Important:</b> S1-S4 and H1-H4 must match on the server and every client, otherwise the handshake fails; Jc/Jmin/Jmax and I1-I5 do not have to match. The easiest way to get a fresh set of randomized non-overlapping H1-H4 ranges is to reinstall the server (<code>--uninstall</code> followed by a fresh install) - every install generates a unique set.
+  <b>On a 3.1 server</b> H1-H4 are set to 1-4 on purpose, and changing them is pointless: the header protection key hides the message type. S1-S4 and I1 change the same way as above, only S1-S4 not below 12. A new <code>HeaderProtectionKey</code> comes with a reinstall (<code>--uninstall</code> plus an install), and every profile is issued again.
 </details>
 
 <details>
   <summary><strong>Q: How is this different from the official Amnezia app?</strong></summary>
-  <b>A:</b> The protocol underneath is the same - AmneziaWG 2.0 with the same obfuscation. What differs is how the server is deployed and run. The official Amnezia app is a graphical client: you point it at a server and it installs the server side in Docker containers over SSH, without the host-wide tuning and hardening this installer does. This installer is built to get the most out of a dedicated VPS as a VPN server, so it works differently:
+  <b>A:</b> The protocol underneath is the same AmneziaWG with the same obfuscation. What differs is how the server is deployed and run. The official Amnezia app is a graphical client: you point it at a server and it installs the server side in Docker containers over SSH, without the host-wide tuning and hardening this installer does. This installer is built to get the most out of a dedicated VPS as a VPN server, so it works differently:
   <ul>
     <li>AmneziaWG runs as a kernel module (DKMS), with no Docker - no background daemon and none of its RAM/CPU cost.</li>
     <li>The whole server is tuned to the hardware: sysctl buffers, swap, BBR, unneeded packages stripped.</li>
     <li>The attack surface is kept small: UFW deny-all, Fail2Ban, strict permissions, sysctl hardening, one service instead of a stack.</li>
-    <li>Fine tuning is available: a mobile-network preset and direct access to the AWG 2.0 parameters.</li>
+    <li>Fine tuning is available: a mobile-network preset and direct access to the AmneziaWG parameters.</li>
     <li>Management is from the CLI (<code>manage</code> add/remove/list/<code>--expires</code>), with prebuilt ARM modules and a headless mode for automation.</li>
   </ul>
   A detailed comparison is on the <a href="https://bivlked.github.io/amneziawg-installer/compare/">comparison page</a>.
@@ -1172,12 +1215,12 @@ If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULL
 
 <details>
   <summary><strong>Q: "Invalid key: s3" error when importing config in the Windows client?</strong></summary>
-  <b>A:</b> You're using an outdated version of <code>amneziawg-windows-client</code> (< 2.0.0) that doesn't understand AWG 2.0 parameters. Update to <a href="https://github.com/amnezia-vpn/amneziawg-windows-client/releases"><b>version 2.0.0+</b></a>. Alternatively, use <a href="https://github.com/amnezia-vpn/amnezia-client/releases"><b>Amnezia VPN</b></a> >= 4.8.12.7.
+  <b>A:</b> You're using an outdated version of <code>amneziawg-windows-client</code> (< 2.0.0) that doesn't understand AWG 2.0 parameters. Update to <a href="https://github.com/amnezia-vpn/amneziawg-windows-client/releases"><b>version 2.0.0+</b></a>, or 3.1.0+ for a 3.1 server. Alternatively, use <a href="https://github.com/amnezia-vpn/amnezia-client/releases"><b>Amnezia VPN</b></a> >= 4.8.12.7, or >= 5.0.1.5 for 3.1.
 </details>
 
 <details>
   <summary><strong>Q: My AWG 2.0 server can't handshake with my old AWG 1.0 client — why?</strong></summary>
-  <b>A:</b> When the server generates <code>S3>0</code> or <code>S4>0</code> (cookie / data padding from AWG 2.0), an AWG 1.0 client cannot handshake with it. This is a <b>known upstream issue</b>: <a href="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/168">amnezia-vpn/amneziawg-linux-kernel-module#168</a>. My installer always generates <code>S3=8..55</code> and <code>S4=4..27</code> — both <code>>0</code>.
+  <b>A:</b> When the server generates <code>S3>0</code> or <code>S4>0</code> (cookie / data padding from AWG 2.0), an AWG 1.0 client cannot handshake with it. This is a <b>known upstream issue</b>: <a href="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/168">amnezia-vpn/amneziawg-linux-kernel-module#168</a>. My installer always generates both <code>>0</code>: <code>S3=8..55</code> and <code>S4=4..27</code> in the 2.0 profile, from 12 in the 3.1 profile.
   <br><br>
   <b>In the typical scenario</b> (Amnezia VPN client / WireGuard-Tools 2.0+ on the clients + client <code>.conf</code> files generated by <code>manage add</code>) there is no issue: <code>manage</code> always writes <code>S3</code> / <code>S4</code> into the client <code>.conf</code>. The risk arises <b>only</b> when:
   <ul>
@@ -1348,8 +1391,8 @@ sudo ufw reload</pre>
 </details>
 
 <details>
-  <summary><strong>Q: Which client should I use for AWG 2.0?</strong></summary>
-  <b>A:</b> Recommended: <a href="https://github.com/amnezia-vpn/amnezia-client/releases">Amnezia VPN</a> (version >= 4.8.12.7). Native AmneziaWG clients for Android and iOS also work. The standard WireGuard client <b>does not</b> support AWG parameters. See <a href="#client-compat-adv">AWG 2.0 Client Compatibility</a> for the full table.
+  <summary><strong>Q: Which client should I use for AmneziaWG?</strong></summary>
+  <b>A:</b> Recommended: <a href="https://github.com/amnezia-vpn/amnezia-client/releases">Amnezia VPN</a>, version >= 5.0.1.5 for a 3.1 server, >= 4.8.12.7 for 2.0. The lightweight AmneziaWG clients for Android, iOS and Windows also work (for 3.1: Windows >= 3.1.0, Android and iOS >= 3.1.4). The standard WireGuard client <b>does not</b> support AWG parameters. See <a href="#client-compat-adv">Client Compatibility</a> for the full table.
 </details>
 
 <details>
@@ -1858,54 +1901,54 @@ Control: a tunnel to a server in a different AS (US) came up and held on all thr
 ---
 
 <a id="client-compat-adv"></a>
-## 📋 AWG 2.0 Client Compatibility
+## 📋 Client Compatibility
 
-Not all clients support AWG 2.0. Check compatibility before choosing a client:
+A client has to understand your server's generation: a new install gives the 3.1 profile by default, and with `--protocol=2.0`, on a kernel older than 6.7 (a stock Debian 12) and on ARM the 2.0 profile. The installer prints the server generation in the final report, on the "Protocol generation" line.
 
-| Client | Platform | AWG 1.x | AWG 2.0 | Notes |
+| Client | Platform | AWG 3.1 | AWG 2.0 | Notes |
 |--------|----------|---------|---------|-------|
-| [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) | Windows, macOS, Linux, Android, iOS | ✅ | ✅ (>= 4.8.12.7) | Recommended. Supports vpn:// URI import |
-| [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-android) | Android | ✅ | ✅ (>= 2.0.0) | Lightweight tunnel manager. Import via `.conf` |
-| [WG Tunnel](https://github.com/wgtunnel/android) | Android | ✅ | ⚠️ | FOSS client with auto-tunneling, split tunneling, F-Droid. AWG 2.0 — partial support |
-| [AmneziaWG](https://apps.apple.com/app/amneziawg/id6478942365) | iOS | ✅ | ✅ | Native WG client for iOS |
-| [WireSock VPN Client](https://www.ntkernel.com) | Windows | ✅ | ✅ | Commercial. Userspace WireGuard via NDISAPI |
-| [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) | Windows | ✅ | ✅ (>= 2.0.0) | Lightweight tunnel manager. Import via `.conf` |
+| [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) | Windows, macOS, Linux, Android, iOS | ✅ (>= 5.0.1.5) | ✅ (>= 4.8.12.7) | Recommended. Supports vpn:// URI import. Not in the Russian App Store |
+| [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-android) | Android | ✅ (Google Play >= 3.1.4, APK >= v3.1.20260814) | ✅ (>= 2.0.0) | Lightweight tunnel manager. Import via `.conf` |
+| [AmneziaWG](https://apps.apple.com/app/amneziawg/id6478942365) | iOS, macOS | ✅ (>= 3.1.4) | ✅ | Lightweight client, available in the Russian App Store |
+| [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) | Windows | ✅ (>= 3.1.0) | ✅ (>= 2.0.0) | Lightweight tunnel manager. Import via `.conf` |
+| [WG Tunnel](https://github.com/wgtunnel/android) | Android | ✅ (>= 5.6.0, better >= 5.7.5) | ✅ | FOSS client with auto-tunneling and split tunneling; Google Play, IzzyOnDroid |
+| [WG Tunnel Desktop](https://github.com/wgtunnel/desktop) | Windows, Linux, macOS | ✅ (v2 line) | ✅ | Same engine as the Android version |
+| [WireSock VPN Client](https://www.ntkernel.com) | Windows | not verified | ✅ | Commercial. Userspace WireGuard via NDISAPI |
+| Hiddify | all | ❌ | - | Its engine is below the third line: for Hiddify install the server with `--protocol=2.0` |
 | Standard WireGuard | All | ❌ | ❌ | Does not support AWG parameters |
 
-> If a client shows an error about an unknown parameter (S3, S4, I1, or H1 as a range), use one of the first four clients in the table.
+> If a client shows an error about an unknown parameter (`HeaderProtectionKey`, `ContentPaddingAddition`, S3, S4, I1, or H1 as a range), it does not understand the server generation: update it or take a client from the first rows of the table. A client that does not know 3.1 may show no error at all - then there is simply no handshake.
 
+<a id="client-gen-adv"></a>
 ### Which AmneziaWG generation a client speaks
 
-Recorded 31 August 2026 from the projects' own release pages, and you can check the same way.
-Clients move every few days, so each row carries a date: it says when that version was current.
+Recorded 5 October 2026 from the release pages and the app stores, and you can check the same way.
+Clients move every few days, so the rows carry dates. "Since which version" comes from the
+projects' own release notes.
 
-| Client | Generation | Version | Date | Where to get it |
+| Client | 3.1 | Version on 5 Oct 2026 | 3.1 since | Where to get it |
 |---|---|---|---|---|
-| Amnezia VPN (flagship, all platforms) | third line | 5.0.1.5 | 21 Aug 2026 | GitHub, app stores |
-| AmneziaWG for Android (light, APK) | third line | v3.1.20260814 | 14 Aug 2026 | project releases page |
-| AmneziaWG on Google Play (light) | **an inference, not an observation: second line** | 2.0.1 in the release-notes text | listing updated **12 Jun 2026** | Google Play |
-| AmneziaWG for Windows (standalone client) | third line | 3.1.0 | 21 Aug 2026 | project releases page |
-| WG Tunnel (third-party, Android) | speaks AmneziaWG; generation not verified by behaviour | 5.6.0 | 27 Aug 2026 | Play, F-Droid, IzzyOnDroid, APK |
-| AWG Manager (Keenetic, third-party) | third line | v2.17.4 | 27 Aug 2026 | project releases page |
-| amneziawg-mikrotik-c (third-party) | third line | v1.2.8 | 26 Aug 2026 | project releases page |
-| AmneziaWG-MikroTik (third-party) | third line | Containers_3.1 | 30 Aug 2026 | project releases page |
+| Amnezia VPN (flagship, all platforms) | yes | 5.0.3.0 (GitHub), 5.0.3.1 (Google Play) | 5.0.1.5 (21 Aug 2026) | GitHub, app stores; not in the Russian App Store; on Windows use the direct link from the releases page |
+| AmneziaWG for Android (light) | yes | 3.1.4 (Google Play, 21 Sep 2026) | 3.1.4 on Google Play, v3.1.20260814 as APK | Google Play, releases page |
+| AmneziaWG for iOS and macOS (light) | yes | 3.1.4 (24 Aug 2026) | 3.1.4 | App Store, the Russian one included |
+| AmneziaWG for Windows (light) | yes | 3.1.0 (21 Aug 2026) | 3.1.0 | project releases page |
+| WG Tunnel (Android, third-party) | yes | 5.7.5 (26 Sep 2026) | 5.6.0 | Google Play, IzzyOnDroid, APK |
+| WG Tunnel Desktop (third-party) | yes | v2.3.0 (3 Oct 2026) | v2 line | project releases page, choco, apt, AUR |
+| mihomo (core for Clash Verge Rev and others) | yes | v1.19.32 (30 Sep 2026) | v1.19.30 | project releases page |
+| Hiddify | no | 4.1.1 (5 Mar 2026) | - | - |
+| KeeneticOS (stock firmware) | development channel only | 5.2 Beta 0 (2 Oct 2026) | 5.2 Alpha 11 (25 Sep 2026); not in stable 5.1 | Keenetic development channel |
+| AWG Manager (Keenetic, third-party) | yes | v2.19.12 (29 Sep 2026) | on KeeneticOS 5.2 Alpha 11 and newer | project releases page |
+| awg-openwrt (OpenWrt, third-party) | in the daily feed for 25.12, no tag | feed of 5 Oct 2026 | - | project feed |
+| amneziawg-mikrotik-c (MikroTik, third-party) | yes | v1.4.2 (4 Oct 2026) | - | project releases page |
+| AmneziaWG-MikroTik (third-party) | yes | Containers_3.1 (30 Aug 2026) | Containers_3.1 | project releases page |
 
-⚠️ **The Google Play row is an inference, not an observation.** The Google Play
-app page no longer carries a separate current-version field: the only number on it is
-`AmneziaWG 2.0.1` inside the release-notes text, which the developer writes by hand and which
-can lag what is actually being served. So the generation is inferred from dates: the listing was
-updated 12 June 2026 and the third-line build appeared on 14 August 2026, after the listing was
-last updated. The number in the notes agrees with that conclusion but does not prove it on its
-own.
+- **sing-box-extended** (podkop and forkop on OpenWrt) crashes with `ContentPaddingAddition` above 16 and traffic from TUN (issue #158 in its repository), while our 3.1 profile carries `32-128`. The parameter is one-sided: in that device's profile the line can be lowered to 16 or removed, the server does not need to change.
+- **amneziawg-mikrotik-c** before v1.4.2 did not send `I1`-`I5` with `Jc = 0`, so a profile made with `--jc=0` lost its concealment packet there.
+- **Karing** is not recommended: its release notes do not mention AmneziaWG support.
 
-⚠️ **The WG Tunnel row is held to the same standard.** It is a third-party project, its 5.6.0
-release from 27 August 2026 exists, but I have not verified the protocol generation by
-behaviour and name no generation number here. Until that check it stays in the table as "speaks AmneziaWG",
-nothing more.
-
-> ⚠️ For third-party projects the generation comes from their authors' own documentation and
-> release notes: I read their code, but verified none of them by behaviour, and no row here is
-> marked as verified.
+> ⚠️ For third-party projects the generation comes from their code and their authors' notes, for
+> the official ones from release notes and app stores. This table has not been verified by
+> behaviour on a generated 3.1 profile.
 
 ### Router Clients
 
@@ -1955,7 +1998,7 @@ In late July 2026 the Amnezia team released **AmneziaWG 3.0** and switched the `
 
 The installer still keeps the **pinned last AmneziaWG 2.0 module** (tag `v1.0.20260725`, verified by commit hash) on such kernels: starting with **v5.23.0**, if the kernel is older than 6.7, the module is not taken from the PPA but built from source via DKMS. That is now a deliberate choice rather than a way around a broken build: in its first days the 3.0 line managed to break and then fix the build on old kernels specifically, so that is where it is least proven. The `amneziawg-tools` userland still comes from the PPA - the 3.0 tools work correctly with a 2.0 module, that part is verified. You do not need to install anything by hand; it all happens at step 2. On kernels 6.7 and newer (Ubuntu 24.04/25.10/26.04, Debian 13 trixie) the behaviour is unchanged - the module is installed from the PPA.
 
-If you specifically want the third AmneziaWG line on Debian 12, the simplest route is to deploy the server afresh on Debian 13 / Ubuntu 24.04+. The other route is to install a 6.7+ kernel from `bookworm-backports` and **reboot into it**: the installer looks at the running kernel, not at the installed one, so after the reboot it follows the normal path. On a server that is already set up, do not install on top: back it up (`sudo bash /root/awg/manage_amneziawg.sh backup`), remove the current install (`sudo bash install_amneziawg_en.sh --uninstall`) and install again - otherwise the pinned 2.0 module stays registered in DKMS under the same name as the PPA package. Support for the 3.0 features themselves (header protection, timing randomization) in the installer is planned separately and will land once the 3.0 stack and the client apps stabilize.
+If you specifically want the third AmneziaWG line on Debian 12, the simplest route is to deploy the server afresh on Debian 13 / Ubuntu 24.04+. The other route is to install a 6.7+ kernel from `bookworm-backports` and **reboot into it**: the installer looks at the running kernel, not at the installed one, so after the reboot it follows the normal path. On a server that is already set up, do not install on top: back it up (`sudo bash /root/awg/manage_amneziawg.sh backup`), remove the current install (`sudo bash install_amneziawg_en.sh --uninstall`) and install again - otherwise the pinned 2.0 module stays registered in DKMS under the same name as the PPA package. Since version 6.0.0 a new install on kernel 6.7 or newer gets the 3.1 profile by itself, and on the stock 6.1 kernel the installer installs 2.0 automatically, see [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv).
 
 ---
 

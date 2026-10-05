@@ -191,42 +191,63 @@ arch_line = ', '.join(['x86_64'] + arches)
 # --- профиль конфигурации: утверждение, привязанное к коду, а не к данным ----
 # Литералов в блоке три: строка про модуль ядра, "x86_64" в архитектурах и эта.
 # Из них только эта поддаётся машинной привязке, и она же самая ломкая, поэтому
-# сторож ставится именно сюда:
-# если в шаблон конфига попадёт параметр третьей линии, блок начнёт обещать
-# неправду, и генератор обязан остановиться, а не молча собрать старый текст.
+# сторож ставится именно сюда. Строка обещает три вещи, и каждая сверяется с
+# кодом, а не с памятью того, кто её писал:
+#   1. новая установка по умолчанию получает 3.1 - PROTOCOL_DEFAULT="3.1" в
+#      обоих установщиках;
+#   2. профиль 3.1 несёт HeaderProtectionKey и ContentPaddingAddition - обе
+#      библиотеки пишут их в конфиг;
+#   3. остальных параметров третьей линии (таймеры, RandomTrailers,
+#      DisableCookies) профиль не задаёт - ни один скрипт их в конфиг не пишет;
+#   4. флаг --protocol есть, и переход на 2.0 сам вызывается.
+# Обещание «работающий сервер остаётся на своём поколении» сюда не привязано:
+# это поведение нескольких веток, его держат тесты lifecycle, а не греп.
+# Пункт 3 - прежний сторож, пункты 1-2 - его обратная сторона: раньше блок
+# обещал 2.0, и опасно было ПОЯВЛЕНИЕ параметра 3.x, теперь блок обещает 3.1, и
+# опасно ещё и его ИСЧЕЗНОВЕНИЕ.
 #
-# Форм записи в конфиг у нас ДВЕ, и ловить надо обе:
+# Форм записи в конфиг у нас ТРИ, и ловить надо все:
 #   1. литерал в heredoc-шаблоне  - так лежат Jc/S1/H1;
-#   2. `echo "Имя = ..." >> "$tmpfile"` - так пишутся ОПЦИОНАЛЬНЫЕ I1-I5
-#      (awg_common.sh, около 1341 и 1560).
-# 🔴 Вторая важнее первой: HeaderProtectionKey тоже опционален, значит его
-# добавят ровно по образцу I1. Первая редакция этой проверки знала только форму
-# 1, то есть пропускала самый вероятный способ появления параметра 3.x, а тест
-# на ложную тревогу закреплял форму 2 как норму. Нашло ревью 30 aug.
+#   2. `echo "Имя = ..." >> "$tmpfile"` - так пишутся ОПЦИОНАЛЬНЫЕ I1-I5;
+#   3. `printf 'Имя = %s\n' ...` в ОДИНАРНЫХ кавычках - так пишутся
+#      HeaderProtectionKey и ContentPaddingAddition.
+# 🔴 Форму 3 прежняя редакция не видела: регулярка ждала двойную кавычку, и
+# профиль 3.1 вошёл в код, не уронив обещание "конфиги остаются 2.0". Кейс на
+# неё закреплён тестом с printf в одинарных кавычках.
 #
 # ⚠️ Граница названа честно: параметр, чьё ИМЯ собирается из переменной, сюда не
 # попадёт. Сужение осознанное - широкий поиск по именам даёт ложные срабатывания
-# на перечнях параметров (awg_common.sh:1740) и на маскировании секретов в
-# диагностическом отчёте (install_amneziawg.sh:2603), где имена законны.
+# на перечнях параметров и на маскировании секретов в диагностическом отчёте,
+# где имена законны. Обратная граница: строка, где имя стоит после `#` в конце
+# строки или в сообщении в stderr, даёт громкую ложную тревогу - направление
+# безопасное, такую строку переписывают.
 # 🔴 Набор обязан совпадать с тем, что перечисляет ADVANCED.md (раздел про
 # параметры 3.0, таблица из СЕМИ ключей плюс RandomTrailers и DisableCookies из
-# 3.1). Там же стоит утверждение, которое этот сторож и защищает: "Установщик не
-# задаёт ни один из семи". Первая редакция знала пять имён из девяти, то есть
-# охраняла утверждение уже, чем оно сформулировано - например KeepaliveTimeout,
-# который как раз просится в конфиг диапазоном, прошёл бы молча. Нашло ревью
-# 30 aug. Меняешь таблицу в ADVANCED.md - поправь и здесь.
-AWG3_PARAMS = ('HeaderProtectionKey', 'ContentPaddingAddition', 'RekeyAfterTime',
-               'RekeyTimeout', 'RejectAfterTime', 'KeepaliveTimeout',
-               'MaxHandshakeAttempts',          # семь ключей 3.0
-               'RandomTrailers', 'DisableCookies')  # добавка 3.1
-AWG3_NAMES = '|'.join(AWG3_PARAMS)
-AWG3_RE = re.compile(
-    r'^[ \t]*(%s)[ \t]*='                      # форма 1: литерал в шаблоне
-    r'|(?:echo|printf)[^"\n]*"[ \t]*(%s)[ \t]*='   # форма 2: запись строкой
-    % (AWG3_NAMES, AWG3_NAMES), re.M)
+# 3.1). Меняешь профиль или таблицу в ADVANCED.md - поправь и здесь.
+AWG3_PROFILE = ('HeaderProtectionKey', 'ContentPaddingAddition')  # пишет профиль 3.1
+AWG3_ABSENT = ('RekeyAfterTime', 'RekeyTimeout', 'RejectAfterTime',
+               'KeepaliveTimeout', 'MaxHandshakeAttempts',     # таймеры 3.0
+               'RandomTrailers', 'DisableCookies')              # добавка 3.1
+
+
+def config_writer_re(names):
+    # Форма 1 - литерал в начале строки шаблона. Формы 2-3 - имя ГДЕ УГОДНО в
+    # строке с echo, printf или sed: `printf '%s\n' "Имя = 1"`, перевод строки
+    # перед именем, два ключа в одном printf, `sed '/.../a Имя = 1'`. Регистр не
+    # важен: awg читает ключи без учёта регистра.
+    alt = '|'.join(names)
+    return re.compile(
+        r'^[ \t]*(%s)[ \t]*='
+        r'|^[^\n]*\b(?:echo|printf|sed)\b[^\n]*?'
+        r'(?:(?<=\\n)|(?<=\\t)|(?<![A-Za-z0-9_]))(%s)[ \t]*='   # и после \n, \t в строке
+        % (alt, alt), re.M | re.I)
+
+
 SCRIPTS = ('awg_common.sh', 'awg_common_en.sh',
            'install_amneziawg.sh', 'install_amneziawg_en.sh',
            'manage_amneziawg.sh', 'manage_amneziawg_en.sh')
+LIBS = ('awg_common.sh', 'awg_common_en.sh')
+INSTALLERS = ('install_amneziawg.sh', 'install_amneziawg_en.sh')
 
 # 🔴 Сторож обязан читать ИСПОЛНЯЕМЫЕ строки, а не любой текст. Комментарий,
 # объясняющий параметр (в том числе комментарий про этот самый сторож), краснил
@@ -234,21 +255,59 @@ SCRIPTS = ('awg_common.sh', 'awg_common_en.sh',
 # строка `# Раньше было: echo "HeaderProtectionKey = $k"` даёт rc=1. Ложная
 # тревога здесь дороже пропуска - гейт стоит на релизном пути, а сторож, который
 # краснеет на объяснении, приучает себе не верить. Комментарии ГАСЯТСЯ пустой
-# строкой, а не вырезаются: иначе номера строк в отчёте съедут. Форму 1 это не
-# трогает, она и раньше была привязана к началу строки; лечится форма 2.
+# строкой, а не вырезаются: иначе номера строк в отчёте съедут.
 COMMENT_RE = re.compile(r'^[ \t]*#.*$', re.M)
+BODY = {name: COMMENT_RE.sub('', read(name)) for name in SCRIPTS}
+# Продолжение строки обратным слешем склеивается для поиска: `printf '%s\n' \`
+# с ключом на следующей строке - та же запись. Замена "\<перевод строки>" на
+# "\ " сохраняет длину, поэтому номер строки в отчёте считается по исходнику.
+JOINED = {name: BODY[name].replace('\\\n', '\\ ') for name in SCRIPTS}
 
-hits = []
+problems = []
+absent_re = config_writer_re(AWG3_ABSENT)
 for name in SCRIPTS:
-    body = COMMENT_RE.sub('', read(name))
-    for m in AWG3_RE.finditer(body):
-        hits.append('%s:%d: %s' % (name, body[:m.start()].count('\n') + 1,
-                                   m.group(1) or m.group(2)))
-if hits:
-    for h in hits:
+    for m in absent_re.finditer(JOINED[name]):
+        problems.append('%s:%d: в конфиг пишется %s, а профиль 3.1 его не обещает'
+                        % (name, BODY[name][:m.start()].count('\n') + 1,
+                           m.group(1) or m.group(2)))
+for name in LIBS:
+    for param in AWG3_PROFILE:
+        if not config_writer_re((param,)).search(JOINED[name]):
+            problems.append('%s: нет записи %s в конфиг, а блок обещает профиль 3.1'
+                            % (name, param))
+    # Запись есть - ещё не значит, что она доходит до конфига: строки профиля
+    # пишет _awg31_append_profile_lines, и её зовут ОБА рендера (серверный и
+    # клиентский). Убранный вызов оставил бы printf на месте, а профиль - пустым.
+    calls = re.findall(r'^[^\n#]*(?<![A-Za-z0-9_])_awg31_append_profile_lines[ \t]+["$]',
+                       JOINED[name], re.M)
+    if len(calls) < 2:
+        problems.append('%s: _awg31_append_profile_lines вызывается %d раз(а), нужно из '
+                        'обоих рендеров, а блок обещает профиль 3.1' % (name, len(calls)))
+for name in INSTALLERS:
+    # Ровно одно присваивание и оно 3.1: позднее переопределение ниже по файлу
+    # иначе прошло бы мимо. Плюс точка использования: константа без неё ничего
+    # не значит.
+    # Любое присваивание в строке, а не только в её начале: `[[ ... ]] &&
+    # PROTOCOL_DEFAULT="2.0"`, export и local тоже переопределяют умолчание.
+    defs = re.findall(r'(?<![A-Za-z0-9_$])PROTOCOL_DEFAULT=(\S*)',
+                      JOINED[name], re.M)
+    if len(defs) != 1 or defs[0].strip('"\'') != '3.1':
+        problems.append('%s: PROTOCOL_DEFAULT должен присваиваться один раз и равняться '
+                        '"3.1" (найдено: %s), а блок обещает 3.1 для новой установки'
+                        % (name, ', '.join(defs) or 'нет'))
+    if not re.search(r'AWG_PROTOCOL=["\']?\$\{?PROTOCOL_DEFAULT\}?["\']?', BODY[name]):
+        problems.append('%s: умолчание PROTOCOL_DEFAULT нигде не применяется' % name)
+    # Остальные обещания строки: флаг --protocol и переход на 2.0 сам.
+    if not re.search(r'^[ \t]*--protocol=\*\)', JOINED[name], re.M):
+        problems.append('%s: нет разбора --protocol=, а блок обещает флаг' % name)
+    if not re.search(r'^[ \t]*_awg31_announce_fallback[ \t]+"', JOINED[name], re.M):
+        problems.append('%s: переход на 2.0 сам (_awg31_announce_fallback) не вызывается, '
+                        'а блок его обещает' % name)
+if problems:
+    for h in problems:
         sys.stderr.write('  %s\n' % h)
-    die('в конфиг пишется параметр третьей линии, а блок фактов обещает профиль '
-        'AmneziaWG 2.0 - строку профиля надо переписать в этом скрипте осознанно')
+    die('строка профиля в блоке фактов разошлась с кодом - её надо переписать '
+        'в этом скрипте осознанно')
 
 # --- рендер -------------------------------------------------------------
 # Обе языковые версии собираются из ОДНИХ И ТЕХ ЖЕ значений, поэтому разойтись
@@ -274,7 +333,9 @@ TEXT = {
                    'DKMS из PPA Amnezia; на ядрах старее 6.7 (штатный Debian 12) - '
                    'проверенный модуль 2.0 из исходников; для части ARM - готовые сборки'),
         'profile': ('Профиль конфигурации',
-                    'AmneziaWG 2.0 (модуль может быть 3.x - генерируемые конфиги остаются 2.0)'),
+                    'AmneziaWG 3.1 для новой установки; 2.0 - флагом `--protocol=2.0` или '
+                    'автоматически там, где 3.1 не поднять (ядро старее 6.7, ARM); '
+                    'уже работающий сервер остаётся на своём поколении'),
     },
     'README.en.md': {
         'note': ['<!-- Generated by scripts/update-facts-block.sh from repository data.',
@@ -291,7 +352,9 @@ TEXT = {
                    'DKMS from the Amnezia PPA; on kernels older than 6.7 (a stock Debian 12) '
                    'a pinned 2.0 module built from source; prebuilt packages for some ARM targets'),
         'profile': ('Config profile',
-                    'AmneziaWG 2.0 (the kernel module may be 3.x - generated configs stay 2.0)'),
+                    'AmneziaWG 3.1 for a new install; 2.0 with `--protocol=2.0`, or '
+                    'automatically where 3.1 cannot run (kernel older than 6.7, ARM); '
+                    'a running server keeps its generation'),
     },
 }
 

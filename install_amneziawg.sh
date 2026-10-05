@@ -8455,7 +8455,7 @@ step99_finish() {
     if [[ "${AWG_PROTOCOL:-2.0}" == "3.1" ]]; then
         log "ВАЖНО: профили третьей линии (3.1). Нужен клиент с поддержкой AmneziaWG 3.1"
         log "       (свежие AmneziaVPN, AmneziaWG, WG Tunnel; список - раздел «Какое поколение"
-        log "       AmneziaWG понимает клиент»: https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.md)."
+        log "       AmneziaWG понимает клиент»: https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.md#client-gen-adv)."
         log "       Роутерам без поддержки 3.1 в прошивке и Hiddify нужен сервер 2.0."
     else
         log "ВАЖНО: Для подключения используйте клиент Amnezia VPN >= 4.8.12.7"
