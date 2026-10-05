@@ -1,4 +1,8 @@
 #!/usr/bin/env bats
+# The server endpoint in these fixtures is a NAME on purpose: a literal IPv4
+# address inside the client routes would be cut out of AllowedIPs (see
+# test_aip_endpoint_carve.bats), and these tests are about other parts of the
+# list.
 # v5.15.1 (audit C7) - intent-mirroring of the IPv4 routing mode into IPv6.
 #
 # When the client uses a SPLIT tunnel (custom ALLOWED_IPS, not 0.0.0.0/0),
@@ -35,28 +39,28 @@ CONF
 
 @test "v5.15.1 C7: split tunnel + native IPv6 keeps IPv4 split and appends only the ULA" {
     setup_split_native
-    render_client_config "splitnat" "10.9.9.20" "FAKEPRIVKEY" "FAKEPUBKEY" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::20"
+    render_client_config "splitnat" "10.9.9.20" "FAKEPRIVKEY" "FAKEPUBKEY" "vpn.example.com" "39743" "fddd:2c4:2c4:2c4::20"
     local conf="$AWG_DIR/splitnat.conf"
     grep -q "AllowedIPs = 0.0.0.0/5, 8.0.0.0/7, fddd:2c4:2c4:2c4::/64" "$conf"
 }
 
 @test "v5.15.1 C7: split tunnel + native IPv6 does NOT add ::/0" {
     setup_split_native
-    render_client_config "splitnat2" "10.9.9.21" "FAKEPRIVKEY" "FAKEPUBKEY" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::21"
+    render_client_config "splitnat2" "10.9.9.21" "FAKEPRIVKEY" "FAKEPUBKEY" "vpn.example.com" "39743" "fddd:2c4:2c4:2c4::21"
     local conf="$AWG_DIR/splitnat2.conf"
     ! grep -q "::/0" "$conf"
 }
 
 @test "v5.15.1 C7: split tunnel + no native IPv6 keeps IPv4 split and appends only the ULA" {
     setup_split_no_native
-    render_client_config "splitno" "10.9.9.22" "FAKEPRIVKEY" "FAKEPUBKEY" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::22"
+    render_client_config "splitno" "10.9.9.22" "FAKEPRIVKEY" "FAKEPUBKEY" "vpn.example.com" "39743" "fddd:2c4:2c4:2c4::22"
     local conf="$AWG_DIR/splitno.conf"
     grep -q "AllowedIPs = 0.0.0.0/5, 8.0.0.0/7, fddd:2c4:2c4:2c4::/64" "$conf"
 }
 
 @test "v5.15.1 C7: split tunnel preserves the IPv4 split (not collapsed to 0.0.0.0/0)" {
     setup_split_native
-    render_client_config "splitnat3" "10.9.9.23" "FAKEPRIVKEY" "FAKEPUBKEY" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::23"
+    render_client_config "splitnat3" "10.9.9.23" "FAKEPRIVKEY" "FAKEPUBKEY" "vpn.example.com" "39743" "fddd:2c4:2c4:2c4::23"
     local conf="$AWG_DIR/splitnat3.conf"
     grep -qP '^AllowedIPs = 0\.0\.0\.0/5, 8\.0\.0\.0/7,' "$conf"
     ! grep -qP '^AllowedIPs = 0\.0\.0\.0/0' "$conf"

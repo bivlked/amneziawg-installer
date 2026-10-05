@@ -61,6 +61,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 - [🐧 Debian Support](#debian-support-adv)
 - [🔧 Raspberry Pi and ARM64 Support](#arm-support-adv)
 - [🐧 Connecting a Linux machine as a client](#linux-client-adv)
+  - [A split route list and the server address](#linux-client-loop-adv)
 - [📦 LXC / Docker via amneziawg-go (userspace)](#lxc-userspace-adv)
 - [🗄️ AmneziaWG on a Synology NAS (DSM)](#synology-adv)
 - [⚠️ Known Limitations](#limitations-adv)
@@ -2041,11 +2042,29 @@ sudo awg-quick up awg0
 sudo systemctl enable awg-quick@awg0   # start on boot
 ```
 
-Check: `sudo awg show` shows a `latest handshake` - the main sign of a live tunnel. On a full tunnel `curl ifconfig.me` returns the server IP; on a split tunnel verify with traffic to an address covered by `AllowedIPs`. Stop the tunnel with `sudo awg-quick down awg0`.
+Check: `sudo awg show` shows a `latest handshake`, but that alone is not enough - check the traffic too (why, see [below](#linux-client-loop-adv)). On a full tunnel `curl ifconfig.me` returns the server IP; on a split tunnel verify with traffic to an address covered by `AllowedIPs`. Stop the tunnel with `sudo awg-quick down awg0`.
 
 ### 2. amneziawg-go (userspace, no kernel module)
 
 If the module cannot be installed (no kernel headers, DKMS blocked, an exotic architecture), the userspace [`amneziawg-go`](https://github.com/amnezia-vpn/amneziawg-go) runs over `/dev/net/tun` on any Linux at the cost of ~30-50% CPU overhead. The client needs `amneziawg-go` plus `amneziawg-tools`. `awg-quick up awg0` picks up the userspace implementation if the `amneziawg-go` binary is in `PATH` (or set `WG_QUICK_USERSPACE_IMPLEMENTATION=/path/to/amneziawg-go`); it needs access to `/dev/net/tun` and `CAP_NET_ADMIN`. Building and running it is covered in [LXC / Docker via amneziawg-go](#lxc-userspace-adv).
+
+<a id="linux-client-loop-adv"></a>
+### A split route list and the server address
+
+Linux `awg-quick` sorts the routes out by itself only for a full tunnel, `0.0.0.0/0`: it sets the mark and the rule that send packets to the server around the tunnel. With a list of routes (mode 2 `--route-amnezia`, mode 3, a list set with `modify`) there is no such rule. If the server address falls inside the list, the encrypted packets to the server are routed into the tunnel itself. The Windows, Android and iOS apps add a route to the server themselves, so they do not fail this way.
+
+The sign: `awg show` shows a fresh `latest handshake` (the first packet leaves before the routes), but no data goes through. Received bytes freeze at about 92, sent bytes grow to gigabytes within seconds, `ping` says `No buffer space available`. In this failure a fresh `latest handshake` says nothing about a live tunnel.
+
+Since version 6.0.0 the installer and `manage` cut a hole in the list at the server address themselves: the route that holds it is replaced by its complement around that address. Clients issued earlier only need a reissue (`regen`). The one cost: traffic to the server address itself, such as a site on the same server, goes around the tunnel.
+
+The hole is made only for an IPv4 address. If `Endpoint` holds a name (its address may change) or IPv6, add the route to the server yourself, before `awg-quick up`:
+
+```bash
+sudo ip route add <server-address>/32 via <your-gateway>          # IPv4
+sudo ip -6 route add <server-address>/128 via <your-IPv6-gateway>  # IPv6
+```
+
+`modify <name> AllowedIPs` writes the list as given and warns if it holds the server address.
 
 ### Careful on a remote machine (risk of losing SSH)
 

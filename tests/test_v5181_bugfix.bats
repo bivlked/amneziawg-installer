@@ -1,4 +1,8 @@
 #!/usr/bin/env bats
+# The server endpoint in these fixtures is a NAME on purpose: a literal IPv4
+# address inside the client routes would be cut out of AllowedIPs (see
+# test_aip_endpoint_carve.bats), and these tests are about other parts of the
+# list.
 # v5.18.1 bug-fix release. Three independent fixes:
 #
 #   force-port:
@@ -58,7 +62,7 @@ stub_nic() {
 
 @test "v5.18.1 dual-dns: client config DNS defaults to 1.1.1.1, 1.0.0.1" {
     create_init_config
-    render_client_config "c1" "10.9.9.2" "CLIENTPRIV" "SERVERPUB" "1.2.3.4" "443"
+    render_client_config "c1" "10.9.9.2" "CLIENTPRIV" "SERVERPUB" "vpn.example.com" "443"
     grep -qxF "DNS = 1.1.1.1, 1.0.0.1" "$AWG_DIR/c1.conf"
 }
 
@@ -67,14 +71,14 @@ stub_nic() {
 @test "v5.18.1 ipv6-allowedips: full-tunnel client gets 0.0.0.0/0, ::/0" {
     create_init_config
     sed -i "s|^export ALLOWED_IPS=.*|export ALLOWED_IPS='0.0.0.0/0'|" "$CONFIG_FILE"
-    render_client_config "c2" "10.9.9.3" "CLIENTPRIV" "SERVERPUB" "1.2.3.4" "443"
+    render_client_config "c2" "10.9.9.3" "CLIENTPRIV" "SERVERPUB" "vpn.example.com" "443"
     grep -qxF "AllowedIPs = 0.0.0.0/0, ::/0" "$AWG_DIR/c2.conf"
 }
 
 @test "v5.18.1 ipv6-allowedips: split-tunnel (custom list) does NOT get ::/0" {
     create_init_config
     sed -i "s|^export ALLOWED_IPS=.*|export ALLOWED_IPS='1.0.0.0/8, 2.0.0.0/7'|" "$CONFIG_FILE"
-    render_client_config "c3" "10.9.9.4" "CLIENTPRIV" "SERVERPUB" "1.2.3.4" "443"
+    render_client_config "c3" "10.9.9.4" "CLIENTPRIV" "SERVERPUB" "vpn.example.com" "443"
     grep -qxF "AllowedIPs = 1.0.0.0/8, 2.0.0.0/7" "$AWG_DIR/c3.conf"
     run grep -qF "::/0" "$AWG_DIR/c3.conf"
     [ "$status" -ne 0 ]
@@ -102,11 +106,11 @@ MTU = 1280
 
 [Peer]
 PublicKey = FAKESERVERPUB
-Endpoint = 1.2.3.4:39743
+Endpoint = vpn.example.com:39743
 AllowedIPs = $3
 PersistentKeepalive = 33
 EOF
-    get_server_public_ip() { echo "1.2.3.4"; }
+    get_server_public_ip() { echo vpn.example.com; }
     _ensure_server_public_key() { return 0; }
     generate_qr()        { return 0; }
     generate_vpn_uri()   { return 0; }

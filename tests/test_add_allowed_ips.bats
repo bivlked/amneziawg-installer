@@ -1,4 +1,8 @@
 #!/usr/bin/env bats
+# The server endpoint in these fixtures is a NAME on purpose: a literal IPv4
+# address inside the client routes would be cut out of AllowedIPs (see
+# test_aip_endpoint_carve.bats), and these tests are about other parts of the
+# list.
 # Issue #253 - per-client AllowedIPs at creation time (`manage add
 # --allowed-ips=<CIDR list>`).
 #
@@ -178,7 +182,7 @@ _client_allowed_ips() {
 @test "render: without CLIENT_ALLOWED_IPS keeps the global routing mode" {
     setup_params
     unset CLIENT_ALLOWED_IPS
-    run render_client_config "glob" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "1.2.3.4" "39743"
+    run render_client_config "glob" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "vpn.example.com" "39743"
     [ "$status" -eq 0 ]
     # create_init_config ships the split list '0.0.0.0/5, 8.0.0.0/7' -> as-is
     [ "$(_client_allowed_ips glob)" = "0.0.0.0/5, 8.0.0.0/7" ]
@@ -187,7 +191,7 @@ _client_allowed_ips() {
 @test "render: CLIENT_ALLOWED_IPS split list replaces the global mode verbatim" {
     setup_params
     export CLIENT_ALLOWED_IPS="10.50.0.0/16, 10.60.0.0/16"
-    run render_client_config "split" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "1.2.3.4" "39743"
+    run render_client_config "split" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "vpn.example.com" "39743"
     [ "$status" -eq 0 ]
     [ "$(_client_allowed_ips split)" = "10.50.0.0/16, 10.60.0.0/16" ]
     unset CLIENT_ALLOWED_IPS
@@ -196,7 +200,7 @@ _client_allowed_ips() {
 @test "render: full-tunnel v4 override gets ::/0 appended (iOS rule)" {
     setup_params
     export CLIENT_ALLOWED_IPS="0.0.0.0/0"
-    run render_client_config "fullv4" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "1.2.3.4" "39743"
+    run render_client_config "fullv4" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "vpn.example.com" "39743"
     [ "$status" -eq 0 ]
     [ "$(_client_allowed_ips fullv4)" = "0.0.0.0/0, ::/0" ]
     unset CLIENT_ALLOWED_IPS
@@ -205,7 +209,7 @@ _client_allowed_ips() {
 @test "render: override that already carries ::/0 is written as-is" {
     setup_params
     export CLIENT_ALLOWED_IPS="0.0.0.0/0, ::/0"
-    run render_client_config "fullboth" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "1.2.3.4" "39743"
+    run render_client_config "fullboth" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "vpn.example.com" "39743"
     [ "$status" -eq 0 ]
     [ "$(_client_allowed_ips fullboth)" = "0.0.0.0/0, ::/0" ]
     unset CLIENT_ALLOWED_IPS
@@ -217,7 +221,7 @@ _client_allowed_ips() {
     export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
     export SERVER_HAS_NATIVE_IPV6=0
     export CLIENT_ALLOWED_IPS="10.50.0.0/16"
-    run render_client_config "dsplit" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::9"
+    run render_client_config "dsplit" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "vpn.example.com" "39743" "fddd:2c4:2c4:2c4::9"
     [ "$status" -eq 0 ]
     [ "$(_client_allowed_ips dsplit)" = "10.50.0.0/16, fddd:2c4:2c4:2c4::/64" ]
     unset CLIENT_ALLOWED_IPS ALLOW_IPV6_TUNNEL IPV6_SUBNET SERVER_HAS_NATIVE_IPV6
@@ -229,7 +233,7 @@ _client_allowed_ips() {
     export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
     export SERVER_HAS_NATIVE_IPV6=1
     export CLIENT_ALLOWED_IPS="0.0.0.0/0"
-    run render_client_config "dnative" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::9"
+    run render_client_config "dnative" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "vpn.example.com" "39743" "fddd:2c4:2c4:2c4::9"
     [ "$status" -eq 0 ]
     [ "$(_client_allowed_ips dnative)" = "0.0.0.0/0, ::/0" ]
     unset CLIENT_ALLOWED_IPS ALLOW_IPV6_TUNNEL IPV6_SUBNET SERVER_HAS_NATIVE_IPV6
@@ -243,7 +247,7 @@ _client_allowed_ips() {
     export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
     export SERVER_HAS_NATIVE_IPV6=1
     export CLIENT_ALLOWED_IPS="10.50.0.0/16, fdab::/48"
-    run render_client_config "dv6" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::9"
+    run render_client_config "dv6" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "vpn.example.com" "39743" "fddd:2c4:2c4:2c4::9"
     [ "$status" -eq 0 ]
     [ "$(_client_allowed_ips dv6)" = "10.50.0.0/16, fdab::/48" ]
     unset CLIENT_ALLOWED_IPS ALLOW_IPV6_TUNNEL IPV6_SUBNET SERVER_HAS_NATIVE_IPV6
@@ -261,7 +265,7 @@ _client_allowed_ips() {
     export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
     export SERVER_HAS_NATIVE_IPV6=0
     unset CLIENT_ALLOWED_IPS
-    run render_client_config "gv6" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::9"
+    run render_client_config "gv6" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "vpn.example.com" "39743" "fddd:2c4:2c4:2c4::9"
     unset ALLOW_IPV6_TUNNEL IPV6_SUBNET SERVER_HAS_NATIVE_IPV6
     [ "$status" -eq 0 ]
     # The tunnel ULA is appended to the hand-edited global list, as on main
@@ -281,7 +285,7 @@ _client_allowed_ips() {
     # shellcheck disable=SC2317
     log_warn() { printf '%s\n' "$*" >> "$_warns"; }
     export -f log_warn
-    run render_client_config "warn1" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::9"
+    run render_client_config "warn1" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "vpn.example.com" "39743" "fddd:2c4:2c4:2c4::9"
     [ "$status" -eq 0 ]
     [ "$(_client_allowed_ips warn1)" = "0.0.0.0/0, fdab:1::/48" ]
     # Separate asserts: bats does not reliably fail a compound `a && b` list
@@ -301,7 +305,7 @@ _client_allowed_ips() {
     # shellcheck disable=SC2317
     log_warn() { printf '%s\n' "$*" >> "$_warns"; }
     export -f log_warn
-    run render_client_config "warn2" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::9"
+    run render_client_config "warn2" "10.9.9.5" "CLIENT_PRIV" "SERVER_PUB" "vpn.example.com" "39743" "fddd:2c4:2c4:2c4::9"
     [ "$status" -eq 0 ]
     [ "$(_client_allowed_ips warn2)" = "0.0.0.0/0, ::/0" ]
     [ ! -s "$_warns" ]

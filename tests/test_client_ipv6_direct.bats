@@ -1,4 +1,8 @@
 #!/usr/bin/env bats
+# The server endpoint in these fixtures is a NAME on purpose: a literal IPv4
+# address inside the client routes would be cut out of AllowedIPs (see
+# test_aip_endpoint_carve.bats), and these tests are about other parts of the
+# list.
 # CLIENT_IPV6_DIRECT=1 (installer flag --client-ipv6-direct): IPv4 through the
 # tunnel, the device's IPv6 directly, the LAN reachable - routing mode 2 without
 # the IPv6 route it gets since v5.31.0 (2000::/3 plus the sink address since
@@ -69,7 +73,7 @@ CONF
         source "$1" >/dev/null 2>&1 || true
         safe_load_config "$CONFIG_FILE" >/dev/null 2>&1
         get_main_nic() { echo eth0; }
-        get_server_public_ip() { echo 203.0.113.10; }
+        get_server_public_ip() { echo vpn.example.com; }
         _ensure_server_public_key() { return 0; }
         eval "$2"
     ' _ "$BATS_TEST_DIRNAME/../$lib" "$snippet" 2>&1
@@ -93,7 +97,7 @@ ON="export CLIENT_IPV6_DIRECT=1"
 render_direct() {
     local lib="$1" list out
     list=$(mode2_list)
-    out=$(lr "$lib" "$list" "$ON" 'render_client_config c1 10.9.9.2 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+    out=$(lr "$lib" "$list" "$ON" 'render_client_config c1 10.9.9.2 FAKEPRIV FAKEPUB vpn.example.com 39743; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs c1)" = "AllowedIPs = $list" ] || { echo "routes ($lib): $(conf_line "$lib" AllowedIPs c1)"; return 1; }
     [ "$(conf_line "$lib" Address c1)" = "Address = 10.9.9.2/32" ] || { echo "address ($lib): $(conf_line "$lib" Address c1)"; return 1; }
@@ -104,7 +108,7 @@ render_direct() {
 
 render_mode1_kept() {
     local lib="$1" out
-    out=$(lr "$lib" "0.0.0.0/0" "$ON" 'render_client_config c1 10.9.9.4 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+    out=$(lr "$lib" "0.0.0.0/0" "$ON" 'render_client_config c1 10.9.9.4 FAKEPRIV FAKEPUB vpn.example.com 39743; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs c1)" = "AllowedIPs = 0.0.0.0/0, ::/0" ] || { echo "mode 1 lost ::/0 ($lib): $(conf_line "$lib" AllowedIPs c1)"; return 1; }
 }
@@ -116,13 +120,13 @@ render_only_server_list() {
     local lib="$1" out
     # mode 3 with a list that happens to be a full tunnel: the key is for mode 2 only
     out=$(lr "$lib" "0.0.0.0/1, 128.0.0.0/1" "$ON
-export ALLOWED_IPS_MODE=3" 'render_client_config c1 10.9.9.2 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+export ALLOWED_IPS_MODE=3" 'render_client_config c1 10.9.9.2 FAKEPRIV FAKEPUB vpn.example.com 39743; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs c1)" = "AllowedIPs = 0.0.0.0/1, 128.0.0.0/1, 2000::/3" ] || { echo "mode 3 lost the route ($lib): $(conf_line "$lib" AllowedIPs c1)"; return 1; }
     # a hand-made full tunnel through --allowed-ips on a mode 2 server keeps the route
     out=$(lr "$lib" "$(mode2_list)" "$ON" '
         export CLIENT_ALLOWED_IPS="0.0.0.0/1, 128.0.0.0/1"
-        render_client_config c1 10.9.9.3 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+        render_client_config c1 10.9.9.3 FAKEPRIV FAKEPUB vpn.example.com 39743; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs c1)" = "AllowedIPs = 0.0.0.0/1, 128.0.0.0/1, 2000::/3" ] || { echo "hand-made list lost the route ($lib): $(conf_line "$lib" AllowedIPs c1)"; return 1; }
 }
@@ -133,7 +137,7 @@ export ALLOWED_IPS_MODE=3" 'render_client_config c1 10.9.9.2 FAKEPRIV FAKEPUB 20
 render_env_ignored() {
     local lib="$1" list out
     list=$(mode2_list)
-    out=$(CLIENT_IPV6_DIRECT=1 lr "$lib" "$list" "" 'render_client_config c1 10.9.9.2 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+    out=$(CLIENT_IPV6_DIRECT=1 lr "$lib" "$list" "" 'render_client_config c1 10.9.9.2 FAKEPRIV FAKEPUB vpn.example.com 39743; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs c1)" = "AllowedIPs = $list, 2000::/3" ] || { echo "environment changed the routes ($lib): $(conf_line "$lib" AllowedIPs c1)"; return 1; }
 }
@@ -144,7 +148,7 @@ render_env_ignored() {
 render_bad_value() {
     local lib="$1" list out
     list=$(mode2_list)
-    out=$(lr "$lib" "$list" "export CLIENT_IPV6_DIRECT=yes" 'render_client_config c1 10.9.9.2 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+    out=$(lr "$lib" "$list" "export CLIENT_IPV6_DIRECT=yes" 'render_client_config c1 10.9.9.2 FAKEPRIV FAKEPUB vpn.example.com 39743; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs c1)" = "AllowedIPs = $list, 2000::/3" ] || { echo "routes ($lib): $(conf_line "$lib" AllowedIPs c1)"; return 1; }
     [[ "$out" == *"WARN:"*"CLIENT_IPV6_DIRECT"* ]] || { echo "bad value not named ($lib): $out"; return 1; }
@@ -170,7 +174,7 @@ MTU = 1280
 
 [Peer]
 PublicKey = SRVPUB
-Endpoint = 203.0.113.10:39743
+Endpoint = vpn.example.com:39743
 AllowedIPs = '"$caips"'
 PersistentKeepalive = 33
 EOF
@@ -303,7 +307,7 @@ MTU = 1280
 
 [Peer]
 PublicKey = SRVPUB
-Endpoint = 203.0.113.10:39743
+Endpoint = vpn.example.com:39743
 AllowedIPs = 10.0.0.0/8
 PersistentKeepalive = 33
 EOF

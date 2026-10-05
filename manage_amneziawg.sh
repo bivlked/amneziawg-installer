@@ -1453,6 +1453,12 @@ modify_client() {
             # С CLIENT_IPV6_DIRECT=1 список режима 2 без IPv6 - выбранная схема, и
             # предупреждать о ней нечего; у 0.0.0.0/0 ::/0 нужен и с ключом (iOS).
             # init до modify не загружен, поэтому ключ читается здесь, в подоболочке.
+            # Адрес сервера из Endpoint клиента: список, где у него уже есть дыра,
+            # остаётся для проверок ниже полным туннелем и списком сервера.
+            local _AWG_CARVE_EPS=""
+            if [[ "$param" == "AllowedIPs" ]]; then
+                _AWG_CARVE_EPS=$(_aip_endpoint_v4 "$(sed -n 's/^Endpoint[ \t]*=[ \t]*//p' "$cf" | head -n 1 | tr -d '\r')")
+            fi
             local _v6d=""
             if [[ "$param" == "AllowedIPs" && "$value" != *:* ]] && ! _aip_has_token "$value" "0.0.0.0/0"; then
                 _v6d=$(safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; _aip_direct_applies "$value" && printf yes)
@@ -1460,6 +1466,25 @@ modify_client() {
             if [[ "$param" == "AllowedIPs" && "$value" != *:* ]] \
                && _is_full_tunnel "$value" && [[ "$_v6d" != "yes" ]]; then
                 log_warn "AllowedIPs клиента '$name' задан полным туннелем без IPv6-маршрута - IPv6 устройства пойдёт мимо туннеля со своим настоящим адресом. Вернуть маршрут: regen '$name'."
+            fi
+            # Список пишется как попросили, но если он ведёт в туннель адрес
+            # самого сервера, Linux awg-quick завернёт в туннель и пакеты к
+            # серверу. regen сохраняет список и делает в нём дыру у адреса.
+            if [[ "$param" == "AllowedIPs" && -n "$_AWG_CARVE_EPS" ]] \
+               && [[ "$(_aip_v4_norm "$value")" != "$(_AWG_CARVE_EPS="" _aip_v4_norm "$value")" ]]; then
+                log_warn "AllowedIPs клиента '$name' ведёт в туннель адрес самого сервера ($_AWG_CARVE_EPS). Приложения ставят маршрут до сервера сами, а Linux awg-quick завернёт в туннель и пакеты к серверу, и связь не пойдёт. Исключить адрес из списка: regen '$name'."
+            fi
+            ;;
+        Endpoint)
+            # Новый адрес сервера под маршрутами клиента: та же петля у Linux
+            # awg-quick. regen вернул бы Endpoint к серверному, поэтому только
+            # предупреждаем.
+            local _ep4 _cur_aip
+            _ep4=$(_aip_endpoint_v4 "$value")
+            _cur_aip=$(sed -n '/^\[Peer\]/,$ s/^AllowedIPs[ \t]*=[ \t]*//p' "$cf" | paste -sd, - | tr -d '\r')
+            if [[ -n "$_ep4" && -n "$_cur_aip" ]] \
+               && [[ "$(_AWG_CARVE_EPS="$_ep4" _aip_v4_norm "$_cur_aip")" != "$(_AWG_CARVE_EPS="" _aip_v4_norm "$_cur_aip")" ]]; then
+                log_warn "Новый Endpoint клиента '$name' ($_ep4) попадает в его AllowedIPs. Приложения ставят маршрут до сервера сами, а Linux awg-quick завернёт в туннель и пакеты к серверу. Если клиент на Linux, задайте AllowedIPs без этого адреса (modify '$name' AllowedIPs)."
             fi
             ;;
     esac

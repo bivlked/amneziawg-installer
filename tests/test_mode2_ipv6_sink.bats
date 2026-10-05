@@ -1,4 +1,8 @@
 #!/usr/bin/env bats
+# The server endpoint in these fixtures is a NAME on purpose: a literal IPv4
+# address inside the client routes would be cut out of AllowedIPs (see
+# test_aip_endpoint_carve.bats), and these tests are about other parts of the
+# list.
 # Routing mode 2 on Windows: LAN stays reachable, IPv6 still does not leak.
 #
 # Since v5.31.0 the list-based mode 2 got a bare ::/0 appended. The AmneziaWG
@@ -82,7 +86,7 @@ CONF
         source "$1" >/dev/null 2>&1 || true
         safe_load_config "$CONFIG_FILE" >/dev/null 2>&1
         get_main_nic() { echo eth0; }
-        get_server_public_ip() { echo 203.0.113.10; }
+        get_server_public_ip() { echo vpn.example.com; }
         _ensure_server_public_key() { return 0; }
         eval "$2"
     ' _ "$BATS_TEST_DIRNAME/../$lib" "$snippet" 2>&1
@@ -239,7 +243,7 @@ has_token_pipefail() {
 
 render_mode2() {
     local lib="$1" out
-    out=$(lr "$lib" "$(mode2_list)" 'render_client_config c1 10.9.9.2 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+    out=$(lr "$lib" "$(mode2_list)" 'render_client_config c1 10.9.9.2 FAKEPRIV FAKEPUB vpn.example.com 39743; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" Address c1)" = "Address = 10.9.9.2/32, ${SINK_PREFIX}::a09:902/128" ] || { echo "address ($lib): $(conf_line "$lib" Address c1)"; return 1; }
     [[ "$(conf_line "$lib" AllowedIPs c1)" == "AllowedIPs = 1.0.0.0/8, "*"208.0.0.0/4, 8.8.8.8/32, 1.1.1.1/32, 2000::/3" ]] || { echo "routes ($lib): $(conf_line "$lib" AllowedIPs c1)"; return 1; }
@@ -251,7 +255,7 @@ render_mode2() {
 
 render_mode1() {
     local lib="$1" out
-    out=$(lr "$lib" "0.0.0.0/0" 'render_client_config c1 10.9.9.4 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+    out=$(lr "$lib" "0.0.0.0/0" 'render_client_config c1 10.9.9.4 FAKEPRIV FAKEPUB vpn.example.com 39743; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" Address c1)" = "Address = 10.9.9.4/32" ] || { echo "address ($lib): $(conf_line "$lib" Address c1)"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs c1)" = "AllowedIPs = 0.0.0.0/0, ::/0" ] || { echo "routes ($lib)"; return 1; }
@@ -262,7 +266,7 @@ render_mode1() {
 
 render_split() {
     local lib="$1" out
-    out=$(lr "$lib" "10.0.0.0/8, 192.168.0.0/16" 'render_client_config c1 10.9.9.5 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+    out=$(lr "$lib" "10.0.0.0/8, 192.168.0.0/16" 'render_client_config c1 10.9.9.5 FAKEPRIV FAKEPUB vpn.example.com 39743; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" Address c1)" = "Address = 10.9.9.5/32" ] || { echo "address ($lib)"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs c1)" = "AllowedIPs = 10.0.0.0/8, 192.168.0.0/16" ] || { echo "routes ($lib)"; return 1; }
@@ -275,7 +279,7 @@ render_dual() {
     local lib="$1" out
     out=$(lr "$lib" "$(mode2_list)" '
         export ALLOW_IPV6_TUNNEL=1 IPV6_SUBNET="fddd:2c4:2c4:2c4::/64" SERVER_HAS_NATIVE_IPV6=0
-        render_client_config c1 10.9.9.6 FAKEPRIV FAKEPUB 203.0.113.10 39743 fddd:2c4:2c4:2c4::6; echo "RC=$?"')
+        render_client_config c1 10.9.9.6 FAKEPRIV FAKEPUB vpn.example.com 39743 fddd:2c4:2c4:2c4::6; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" Address c1)" = "Address = 10.9.9.6/32, fddd:2c4:2c4:2c4::6/128" ] || { echo "address ($lib): $(conf_line "$lib" Address c1)"; return 1; }
     ! grep -qF "$SINK_PREFIX" "$(dir_of "$lib")/c1.conf" || { echo "sink on a dual-stack client ($lib)"; return 1; }
@@ -288,7 +292,7 @@ render_explicit_v6() {
     local lib="$1" out
     out=$(lr "$lib" "$(mode2_list)" '
         export CLIENT_ALLOWED_IPS="0.0.0.0/1, 128.0.0.0/1, ::/0"
-        render_client_config c1 10.9.9.7 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+        render_client_config c1 10.9.9.7 FAKEPRIV FAKEPUB vpn.example.com 39743; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs c1)" = "AllowedIPs = 0.0.0.0/1, 128.0.0.0/1, ::/0" ] || { echo "explicit list rewritten ($lib): $(conf_line "$lib" AllowedIPs c1)"; return 1; }
     [ "$(conf_line "$lib" Address c1)" = "Address = 10.9.9.7/32" ] || { echo "sink on an explicit ::/0 ($lib): $(conf_line "$lib" Address c1)"; return 1; }
@@ -314,7 +318,7 @@ MTU = 1280
 
 [Peer]
 PublicKey = SRVPUB
-Endpoint = 203.0.113.10:39743
+Endpoint = vpn.example.com:39743
 AllowedIPs = '"$caips"'
 PersistentKeepalive = 33
 EOF
@@ -503,7 +507,7 @@ MTU = 1280
 
 [Peer]
 PublicKey = SRVPUB
-Endpoint = 203.0.113.10:39743
+Endpoint = vpn.example.com:39743
 AllowedIPs = '"$caips"'
 PersistentKeepalive = 33
 EOF
@@ -669,7 +673,7 @@ vpnuri_no_sink() {
     local lib="$1" out inner
     out=$(lr "$lib" "$(mode2_list)" '
         render_server_config >/dev/null 2>&1
-        render_client_config c1 10.9.9.2 CLIENTPRIVKEYPLACEHOLDER SRVPUBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= 203.0.113.10 39743 || echo RC=91
+        render_client_config c1 10.9.9.2 CLIENTPRIVKEYPLACEHOLDER SRVPUBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= vpn.example.com 39743 || echo RC=91
         generate_vpn_uri c1; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "uri not created ($lib): $out"; return 1; }
     inner=$(inner_json "$(dir_of "$lib")/c1.vpnuri") || { echo "cannot decode ($lib)"; return 1; }

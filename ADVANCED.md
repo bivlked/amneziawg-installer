@@ -61,6 +61,7 @@
 - [🐧 Поддержка Debian](#debian-support-adv)
 - [🔧 Raspberry Pi и ARM64](#arm-support-adv)
 - [🐧 Подключение Linux-машины как клиента](#linux-client-adv)
+  - [Раздельный список маршрутов и адрес сервера](#linux-client-loop-adv)
 - [📦 LXC / Docker через amneziawg-go (userspace)](#lxc-userspace-adv)
 - [🗄️ AmneziaWG на Synology NAS (DSM)](#synology-adv)
 - [⚠️ Известные ограничения](#limitations-adv)
@@ -2037,11 +2038,29 @@ sudo awg-quick up awg0
 sudo systemctl enable awg-quick@awg0   # автозапуск при загрузке
 ```
 
-Проверка: `sudo awg show` покажет `latest handshake` - это главный признак живого туннеля. При полном туннеле `curl ifconfig.me` вернёт IP сервера; при split-туннеле проверяйте по трафику к адресу, попадающему в `AllowedIPs`. Остановить туннель - `sudo awg-quick down awg0`.
+Проверка: `sudo awg show` покажет `latest handshake`, но одного его мало - проверьте и трафик (почему, см. [ниже](#linux-client-loop-adv)). При полном туннеле `curl ifconfig.me` вернёт IP сервера; при split-туннеле проверяйте по трафику к адресу, попадающему в `AllowedIPs`. Остановить туннель - `sudo awg-quick down awg0`.
 
 ### 2. amneziawg-go (userspace, без модуля ядра)
 
 Если модуль поставить нельзя (нет заголовков ядра, запрет DKMS, экзотическая архитектура), userspace [`amneziawg-go`](https://github.com/amnezia-vpn/amneziawg-go) работает поверх `/dev/net/tun` в любом Linux ценой ~30-50% CPU overhead. Клиенту нужны `amneziawg-go` плюс `amneziawg-tools`. `awg-quick up awg0` подхватит userspace-реализацию, если бинарь `amneziawg-go` лежит в `PATH` (или задайте `WG_QUICK_USERSPACE_IMPLEMENTATION=/путь/к/amneziawg-go`); нужен доступ к `/dev/net/tun` и `CAP_NET_ADMIN`. Сборка и запуск разобраны в разделе [LXC / Docker через amneziawg-go](#lxc-userspace-adv).
+
+<a id="linux-client-loop-adv"></a>
+### Раздельный список маршрутов и адрес сервера
+
+Linux `awg-quick` сам разводит маршруты только для полного туннеля `0.0.0.0/0`: ставит метку и правило, по которым пакеты к серверу идут мимо туннеля. Со списком маршрутов (режим 2 `--route-amnezia`, режим 3, список через `modify`) такого правила нет. Если адрес сервера попадает в список, шифрованные пакеты к серверу заворачиваются в сам туннель. Приложения для Windows, Android и iOS ставят маршрут до сервера сами, поэтому у них этого отказа нет.
+
+Признак: `awg show` показывает свежий `latest handshake` (первый пакет уходит до маршрутов), но данные не идут. Принятое застывает около 92 байт, отправленное за секунды растёт до гигабайт, `ping` пишет `No buffer space available`. В этом отказе свежий `latest handshake` ничего не говорит о живом туннеле.
+
+С версии 6.0.0 установщик и `manage` сами делают в списке дыру у адреса сервера: маршрут, который его содержит, заменяется своим дополнением до этого адреса. Клиентам, выданным раньше, достаточно перевыпуска (`regen`). Цена одна: трафик к самому адресу сервера, например к сайту на том же сервере, идёт мимо туннеля.
+
+Дыра делается только для IPv4-адреса. Если в `Endpoint` стоит имя (его адрес может смениться) или IPv6, поставьте маршрут до сервера сами, до `awg-quick up`:
+
+```bash
+sudo ip route add <адрес-сервера>/32 via <ваш-шлюз>          # IPv4
+sudo ip -6 route add <адрес-сервера>/128 via <ваш-шлюз-IPv6>  # IPv6
+```
+
+`modify <имя> AllowedIPs` записывает список как задан и предупреждает, если в нём адрес сервера.
 
 ### Осторожно на удалённой машине (риск потерять SSH)
 
