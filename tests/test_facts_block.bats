@@ -420,6 +420,18 @@ PY
     [[ "$output" == *"awg_common.sh:"*"RandomTrailers"* ]]
 }
 
+@test "facts: запись HeaderProtectionKey, перенесённая на строку продолжения, засчитывается" {
+    # Обратная сторона кейса выше: склейка обязана работать и для обязательных
+    # записей, иначе переформатирование живой строки даёт ложную тревогу.
+    _sub awg_common.sh "printf 'HeaderProtectionKey = %s\n' \"\$key\"" "printf '%s\n' \\
+        \"HeaderProtectionKey = \$key\""
+    grep -q '^        "HeaderProtectionKey = \$key"' "$TMP/awg_common.sh" \
+        || { echo "мутация не легла в файл"; return 1; }
+    run _check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"совпадает с источниками"* ]]
+}
+
 @test "facts: второй ключ в одном printf и ключ в нижнем регистре ловятся" {
     {
         printf '\n    printf "Jc = %%s\\nKeepaliveTimeout = %%s\\n" 3 25 >> "$t"\n'

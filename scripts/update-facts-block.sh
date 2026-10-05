@@ -272,14 +272,14 @@ for name in SCRIPTS:
                            m.group(1) or m.group(2)))
 for name in LIBS:
     for param in AWG3_PROFILE:
-        if not config_writer_re((param,)).search(BODY[name]):
+        if not config_writer_re((param,)).search(JOINED[name]):
             problems.append('%s: нет записи %s в конфиг, а блок обещает профиль 3.1'
                             % (name, param))
     # Запись есть - ещё не значит, что она доходит до конфига: строки профиля
     # пишет _awg31_append_profile_lines, и её зовут ОБА рендера (серверный и
     # клиентский). Убранный вызов оставил бы printf на месте, а профиль - пустым.
     calls = re.findall(r'^[^\n#]*(?<![A-Za-z0-9_])_awg31_append_profile_lines[ \t]+["$]',
-                       BODY[name], re.M)
+                       JOINED[name], re.M)
     if len(calls) < 2:
         problems.append('%s: _awg31_append_profile_lines вызывается %d раз(а), нужно из '
                         'обоих рендеров, а блок обещает профиль 3.1' % (name, len(calls)))
@@ -290,7 +290,7 @@ for name in INSTALLERS:
     # Любое присваивание в строке, а не только в её начале: `[[ ... ]] &&
     # PROTOCOL_DEFAULT="2.0"`, export и local тоже переопределяют умолчание.
     defs = re.findall(r'(?<![A-Za-z0-9_$])PROTOCOL_DEFAULT=(\S*)',
-                      BODY[name], re.M)
+                      JOINED[name], re.M)
     if len(defs) != 1 or defs[0].strip('"\'') != '3.1':
         problems.append('%s: PROTOCOL_DEFAULT должен присваиваться один раз и равняться '
                         '"3.1" (найдено: %s), а блок обещает 3.1 для новой установки'
@@ -298,9 +298,9 @@ for name in INSTALLERS:
     if not re.search(r'AWG_PROTOCOL=["\']?\$\{?PROTOCOL_DEFAULT\}?["\']?', BODY[name]):
         problems.append('%s: умолчание PROTOCOL_DEFAULT нигде не применяется' % name)
     # Остальные обещания строки: флаг --protocol и переход на 2.0 сам.
-    if not re.search(r'^[ \t]*--protocol=\*\)', BODY[name], re.M):
+    if not re.search(r'^[ \t]*--protocol=\*\)', JOINED[name], re.M):
         problems.append('%s: нет разбора --protocol=, а блок обещает флаг' % name)
-    if not re.search(r'^[ \t]*_awg31_announce_fallback[ \t]+"', BODY[name], re.M):
+    if not re.search(r'^[ \t]*_awg31_announce_fallback[ \t]+"', JOINED[name], re.M):
         problems.append('%s: переход на 2.0 сам (_awg31_announce_fallback) не вызывается, '
                         'а блок его обещает' % name)
 if problems:
