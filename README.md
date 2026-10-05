@@ -600,7 +600,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 <details>
   <summary><strong>В: Клиенты не подключаются, что делать?</strong></summary>
-  <b>О:</b> 1. Проверьте статус: <code>sudo bash /root/awg/manage_amneziawg.sh check</code>. 2. Проверьте фаервол: <code>sudo ufw status verbose</code>. 3. Проверьте конфиг клиента. 4. Проверьте логи: <code>sudo journalctl -u awg-quick@awg0 -n 50</code>. 5. Убедитесь, что клиент понимает поколение сервера (строка «Поколение протокола» в итоговом отчёте установщика): для 3.1 нужны Amnezia VPN <b>>= 5.0.1.5</b> или AmneziaWG <b>3.1.x</b>, для 2.0 - Amnezia VPN <b>>= 4.8.12.7</b> или AmneziaWG <b>>= 2.0.0</b>.
+  <b>О:</b> 1. Проверьте статус: <code>sudo bash /root/awg/manage_amneziawg.sh check</code>. 2. Проверьте фаервол: <code>sudo ufw status verbose</code>. 3. Проверьте конфиг клиента. 4. Проверьте логи: <code>sudo journalctl -u awg-quick@awg0 -n 50</code>. 5. Убедитесь, что клиент понимает поколение сервера (строка «Поколение протокола» в итоговом отчёте установщика): для 3.1 нужны Amnezia VPN <b>>= 5.0.1.5</b> или AmneziaWG <b>>= 3.1.0</b> для Windows, <b>>= 3.1.4</b> для Android и iOS, для 2.0 - Amnezia VPN <b>>= 4.8.12.7</b> или AmneziaWG <b>>= 2.0.0</b>.
 </details>
 
 <details>

@@ -218,7 +218,9 @@ arch_line = ', '.join(['x86_64'] + arches)
 # ⚠️ Граница названа честно: параметр, чьё ИМЯ собирается из переменной, сюда не
 # попадёт. Сужение осознанное - широкий поиск по именам даёт ложные срабатывания
 # на перечнях параметров и на маскировании секретов в диагностическом отчёте,
-# где имена законны.
+# где имена законны. Обратная граница: строка, где имя стоит после `#` в конце
+# строки или в сообщении в stderr, даёт громкую ложную тревогу - направление
+# безопасное, такую строку переписывают.
 # 🔴 Набор обязан совпадать с тем, что перечисляет ADVANCED.md (раздел про
 # параметры 3.0, таблица из СЕМИ ключей плюс RandomTrailers и DisableCookies из
 # 3.1). Меняешь профиль или таблицу в ADVANCED.md - поправь и здесь.
@@ -256,11 +258,15 @@ INSTALLERS = ('install_amneziawg.sh', 'install_amneziawg_en.sh')
 # строкой, а не вырезаются: иначе номера строк в отчёте съедут.
 COMMENT_RE = re.compile(r'^[ \t]*#.*$', re.M)
 BODY = {name: COMMENT_RE.sub('', read(name)) for name in SCRIPTS}
+# Продолжение строки обратным слешем склеивается для поиска: `printf '%s\n' \`
+# с ключом на следующей строке - та же запись. Замена "\<перевод строки>" на
+# "\ " сохраняет длину, поэтому номер строки в отчёте считается по исходнику.
+JOINED = {name: BODY[name].replace('\\\n', '\\ ') for name in SCRIPTS}
 
 problems = []
 absent_re = config_writer_re(AWG3_ABSENT)
 for name in SCRIPTS:
-    for m in absent_re.finditer(BODY[name]):
+    for m in absent_re.finditer(JOINED[name]):
         problems.append('%s:%d: в конфиг пишется %s, а профиль 3.1 его не обещает'
                         % (name, BODY[name][:m.start()].count('\n') + 1,
                            m.group(1) or m.group(2)))
@@ -281,7 +287,9 @@ for name in INSTALLERS:
     # Ровно одно присваивание и оно 3.1: позднее переопределение ниже по файлу
     # иначе прошло бы мимо. Плюс точка использования: константа без неё ничего
     # не значит.
-    defs = re.findall(r'^[ \t]*(?:readonly[ \t]+|declare[^\n=]*?[ \t]+)?PROTOCOL_DEFAULT=(\S*)',
+    # Любое присваивание в строке, а не только в её начале: `[[ ... ]] &&
+    # PROTOCOL_DEFAULT="2.0"`, export и local тоже переопределяют умолчание.
+    defs = re.findall(r'(?<![A-Za-z0-9_$])PROTOCOL_DEFAULT=(\S*)',
                       BODY[name], re.M)
     if len(defs) != 1 or defs[0].strip('"\'') != '3.1':
         problems.append('%s: PROTOCOL_DEFAULT должен присваиваться один раз и равняться '

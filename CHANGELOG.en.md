@@ -15,7 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### What changes for you
 
 - **A new install gets AmneziaWG 3.1 by default.** The server and the client profiles get header encryption (`HeaderProtectionKey`, a key of its own per install) and extra padding `ContentPaddingAddition = 32-128`; `H1`-`H4` are set to 1-4 in the 3.1 profile because the key hides the message type, and `S3` and `S4` start at 12. `Jc`, `S1`-`S4` and `I1` stay. The profile does not set `RandomTrailers`, `DisableCookies` or the timer parameters. The install command is the same.
-- **Who needs `--protocol=2.0`.** A client without 3.1 support will not connect to a 3.1 server, and will not show an error: routers on stock firmware (stable KeeneticOS, OpenWrt with an old amneziawg package), Hiddify, apps that have not been updated for a long time. If you have any of these, install the server with `--protocol=2.0`. Which clients understand 3.1 is in the table in ADVANCED, section "Client compatibility".
+- **Who needs `--protocol=2.0`.** A client without 3.1 support will not connect to a 3.1 server, and may show no error: routers on stock firmware (stable KeeneticOS, OpenWrt with an old amneziawg package), Hiddify, apps that have not been updated for a long time. If you have any of these, install the server with `--protocol=2.0`. Which clients understand 3.1 is in the table in ADVANCED, section "Client compatibility".
 - **Servers that already run keep their generation.** Updating the scripts, `manage` and `--force` do not change it; a server without a generation marker reads as 2.0. Moving to 3.1 means `--uninstall` and a fresh install, with every client profile issued again.
 
 ### Changed
