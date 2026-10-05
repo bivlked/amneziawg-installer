@@ -457,6 +457,13 @@ _aip_endpoint_v4() {
     return 0
 }
 
+# _aip_warn_endpoint_not_v4 <client> <Endpoint> : no hole at the server address
+# is possible, and the list has IPv4 routes other than 0.0.0.0/0 - a Linux client
+# needs a manual route. The caller checks the list the client ends up with.
+_aip_warn_endpoint_not_v4() {
+    log_warn "Client '$1': Endpoint '$2' is not an IPv4 address, so the server address is not excluded from AllowedIPs. A Linux client (awg-quick) needs a manual route to the server, see ADVANCED, the section on a split route list."
+}
+
 # _aip_carve_endpoints <list> <address>... : the list without the server
 # addresses. Every IPv4 route that holds an address is replaced by its complement
 # around it: a /n route gives 32-n routes from the largest to the smallest, a /32
@@ -3519,8 +3526,11 @@ render_client_config() {
             return 1
         fi
         allowed_ips="$_aip_cut"
-    elif _aip_has_v4 "$allowed_ips" && ! _aip_has_token "$allowed_ips" "0.0.0.0/0"; then
-        log_warn "Client '$name': Endpoint '$endpoint' is not an IPv4 address, so the server address is not excluded from AllowedIPs. A Linux client (awg-quick) needs a manual route to the server, see ADVANCED, the section on a split route list."
+    elif [[ "${_AWG_EP_WARN_LATER:-0}" != "1" ]] \
+         && _aip_has_v4 "$allowed_ips" && ! _aip_has_token "$allowed_ips" "0.0.0.0/0"; then
+        # _AWG_EP_WARN_LATER=1 is set by regen, which replaces this list with the
+        # client's saved one and checks the final list itself.
+        _aip_warn_endpoint_not_v4 "$name" "$endpoint"
     fi
 
     # A per-client list with explicit IPv6 but no ::/0 over a full tunnel:
@@ -5845,6 +5855,10 @@ regenerate_client() {
         fi
     fi
     _awg31_set_snapshot "$name" || { exec {lock_fd}>&-; unset CLIENT_PSK; return 1; }
+    # When the client's list is going to be restored, render keeps quiet about a
+    # non-IPv4 Endpoint: its list is intermediate, the warning goes on the final one below.
+    local _AWG_EP_WARN_LATER=0
+    [[ "${AWG_REGEN_RESET_ROUTES:-0}" != "1" && "$_had_conf" -eq 1 ]] && _AWG_EP_WARN_LATER=1
     render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" "$_keep_dns" || {
         _awg31_set_restore_noted "$name"
         exec {lock_fd}>&-
@@ -5966,6 +5980,8 @@ regenerate_client() {
                 return 1
             fi
             current_allowed_ips="$_aip_new"
+        elif _aip_has_v4 "$current_allowed_ips" && ! _aip_has_token "$current_allowed_ips" "0.0.0.0/0"; then
+            _aip_warn_endpoint_not_v4 "$name" "$endpoint"
         fi
     fi
     # A lone 1.1.1.1 from older versions becomes the pair, but not when it is a

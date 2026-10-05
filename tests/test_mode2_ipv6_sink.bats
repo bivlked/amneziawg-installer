@@ -328,6 +328,11 @@ EOF
         regenerate_client r1; echo "RC2=$?"'
 }
 
+# no_ep_warn <output> : the output without the warning about a non-IPv4 Endpoint.
+# The endpoint above is a name, and a kept route list rightly gets that warning;
+# the checks that use this are about the IPv6 hints only.
+no_ep_warn() { printf '%s\n' "$1" | grep -v -e 'не IPv4-адрес' -e 'is not an IPv4 address' || true; }
+
 regen_migrates() {
     local lib="$1" list out
     list=$(mode2_list)
@@ -430,7 +435,7 @@ regen_keep_advice() {
     [[ "$out" == *"RC=0"* && "$out" == *"WARN:"*"2000::/3"* && "$out" != *"reset-routes"* ]] || { echo "server list with ::/0: wrong hint ($lib): $out"; return 1; }
     # a split list with ::/0 is not a full tunnel: nothing to warn about
     out=$(regen_run "$lib" "$list" "10.0.0.0/8, ::/0" "10.9.9.20/32")
-    [[ "$out" == *"RC=0"* && "$out" != *"WARN:"* ]] || { echo "false warning on a split list ($lib): $out"; return 1; }
+    [[ "$out" == *"RC=0"* && "$(no_ep_warn "$out")" != *"WARN:"* ]] || { echo "false warning on a split list ($lib): $out"; return 1; }
 }
 @test "regen: the hint for a kept ::/0 fits the server's routing mode, both twins" {
     require_flock
@@ -443,6 +448,23 @@ regen_ipv6_only() {
     [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = ::/0" ] || { echo "IPv6-only list lost ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
 }
+# The endpoint here is a name: the kept split list gets the Linux-route warning
+# once per regen (on the final list), the kept full tunnel gets none.
+regen_ep_name_warn() {
+    local lib="$1" out n
+    out=$(regen_run "$lib" "$(mode2_list)" "10.0.0.0/8" "10.9.9.20/32")
+    [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
+    n=$(grep -c -e 'не IPv4-адрес' -e 'is not an IPv4 address' <<< "$out" || true)
+    [ "$n" -eq 2 ] || { echo "expected one warning per regen, got $n ($lib): $out"; return 1; }
+    out=$(regen_run "$lib" "$(mode2_list)" "0.0.0.0/0" "10.9.9.20/32")
+    [[ "$out" == *"RC=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
+    [[ "$out" != *"Endpoint"* ]] || { echo "warned on a kept full tunnel ($lib): $out"; return 1; }
+}
+@test "regen: a name as the endpoint warns on the kept split list, not on a kept full tunnel, both twins" {
+    require_flock
+    both regen_ep_name_warn
+}
+
 @test "regen: an IPv6-only AllowedIPs survives regen under pipefail, both twins" {
     require_flock
     both regen_ipv6_only
@@ -461,7 +483,7 @@ regen_dual_native() {
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = $list, ::/0" ] || { echo "dual-stack route flipped ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
     [ "$(conf_line "$lib" Address r1)" = "Address = 10.9.9.20/32, fddd:2c4:2c4:2c4::20/128" ] || { echo "dual-stack address ($lib): $(conf_line "$lib" Address r1)"; return 1; }
     # ::/0 is present, nothing to warn about
-    [[ "$out" != *"WARN:"* ]] || { echo "false warning ($lib): $out"; return 1; }
+    [[ "$(no_ep_warn "$out")" != *"WARN:"* ]] || { echo "false warning ($lib): $out"; return 1; }
 }
 @test "regen: a dual-stack client on a native-IPv6 server keeps ::/0, both twins" {
     require_flock

@@ -358,6 +358,38 @@ EOF
     [ "$(aips_of spl)" = "10.0.0.0/8" ]
 }
 
+# epw_count : warnings about a non-IPv4 Endpoint in the regen log
+epw_count() { grep -c 'WARN:.*Endpoint.*vpn\.example\.com' "$WARN_LOG" || true; }
+
+@test "regen: a name as the endpoint is judged by the list the client keeps, not the server list" {
+    require_flock
+    # the server list (mode 2) is only an intermediate step: the kept 0.0.0.0/0 needs no warning
+    setup_regen_ep nfull 10.9.9.18 "0.0.0.0/0" vpn.example.com vpn.example.com
+    run regenerate_client nfull
+    [ "$status" -eq 0 ] || { echo "$output"; cat "$WARN_LOG"; return 1; }
+    [[ "$(aips_of nfull)" == "0.0.0.0/0"* ]] || { aips_of nfull; return 1; }
+    [ "$(epw_count)" -eq 0 ] || { cat "$WARN_LOG"; return 1; }
+    # a kept route list does need it, once
+    setup_regen_ep nsplit 10.9.9.19 "10.0.0.0/8" vpn.example.com vpn.example.com
+    run regenerate_client nsplit
+    [ "$status" -eq 0 ] || { echo "$output"; cat "$WARN_LOG"; return 1; }
+    [ "$(aips_of nsplit)" = "10.0.0.0/8" ]
+    [ "$(epw_count)" -eq 1 ] || { cat "$WARN_LOG"; return 1; }
+}
+
+@test "regen: a name as the endpoint warns once on the server list it hands out (--reset-routes, lost config)" {
+    require_flock
+    setup_regen_ep nrst 10.9.9.20 "0.0.0.0/0" vpn.example.com vpn.example.com
+    AWG_REGEN_RESET_ROUTES=1 run regenerate_client nrst
+    [ "$status" -eq 0 ] || { echo "$output"; cat "$WARN_LOG"; return 1; }
+    [ "$(epw_count)" -eq 1 ] || { cat "$WARN_LOG"; return 1; }
+    setup_regen_ep nlost 10.9.9.21 "0.0.0.0/0" vpn.example.com vpn.example.com
+    rm -f "$AWG_DIR/nlost.conf"
+    run regenerate_client nlost
+    [ "$status" -eq 0 ] || { echo "$output"; cat "$WARN_LOG"; return 1; }
+    [ "$(epw_count)" -eq 1 ] || { cat "$WARN_LOG"; return 1; }
+}
+
 # --- both language twins carry the same code ---
 
 @test "twins: the carve helpers are identical in code in both libraries" {

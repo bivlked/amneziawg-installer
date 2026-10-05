@@ -453,6 +453,13 @@ _aip_endpoint_v4() {
     return 0
 }
 
+# _aip_warn_endpoint_not_v4 <клиент> <Endpoint> : дыру у адреса сервера сделать
+# нельзя, а список с IPv4-маршрутами не 0.0.0.0/0 - Linux-клиенту нужен ручной
+# маршрут. Вызывающий проверяет список, который клиент получит в итоге.
+_aip_warn_endpoint_not_v4() {
+    log_warn "Клиент '$1': Endpoint '$2' - не IPv4-адрес, поэтому адрес сервера из AllowedIPs не исключён. Клиенту на Linux (awg-quick) нужен ручной маршрут до сервера, см. ADVANCED, раздел про раздельный список маршрутов."
+}
+
 # _aip_carve_endpoints <список> <адрес>... : список без адресов сервера. Каждый
 # IPv4-маршрут, содержащий адрес, заменяется дополнением до него: маршрут /n
 # даёт 32-n маршрутов от крупного к мелкому, /32 с самим адресом исчезает.
@@ -3442,8 +3449,11 @@ render_client_config() {
             return 1
         fi
         allowed_ips="$_aip_cut"
-    elif _aip_has_v4 "$allowed_ips" && ! _aip_has_token "$allowed_ips" "0.0.0.0/0"; then
-        log_warn "Клиент '$name': Endpoint '$endpoint' - не IPv4-адрес, поэтому адрес сервера из AllowedIPs не исключён. Клиенту на Linux (awg-quick) нужен ручной маршрут до сервера, см. ADVANCED, раздел про раздельный список маршрутов."
+    elif [[ "${_AWG_EP_WARN_LATER:-0}" != "1" ]] \
+         && _aip_has_v4 "$allowed_ips" && ! _aip_has_token "$allowed_ips" "0.0.0.0/0"; then
+        # _AWG_EP_WARN_LATER=1 ставит regen, который заменит этот список
+        # сохранённым списком клиента и проверит уже итоговый.
+        _aip_warn_endpoint_not_v4 "$name" "$endpoint"
     fi
 
     # Индивидуальный список с явным IPv6 без ::/0 при полном туннеле: regen о
@@ -5750,6 +5760,10 @@ regenerate_client() {
         fi
     fi
     _awg31_set_snapshot "$name" || { exec {lock_fd}>&-; unset CLIENT_PSK; return 1; }
+    # Когда список клиента будет восстановлен, рендер о «не IPv4 Endpoint» молчит:
+    # его список промежуточный, предупреждение - по итоговому, ниже.
+    local _AWG_EP_WARN_LATER=0
+    [[ "${AWG_REGEN_RESET_ROUTES:-0}" != "1" && "$_had_conf" -eq 1 ]] && _AWG_EP_WARN_LATER=1
     render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" "$_keep_dns" || {
         _awg31_set_restore_noted "$name"
         exec {lock_fd}>&-
@@ -5869,6 +5883,8 @@ regenerate_client() {
                 return 1
             fi
             current_allowed_ips="$_aip_new"
+        elif _aip_has_v4 "$current_allowed_ips" && ! _aip_has_token "$current_allowed_ips" "0.0.0.0/0"; then
+            _aip_warn_endpoint_not_v4 "$name" "$endpoint"
         fi
     fi
     # Одиночный 1.1.1.1 от старых версий становится парой, но не когда это
