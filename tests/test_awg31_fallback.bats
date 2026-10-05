@@ -463,6 +463,24 @@ _s3() {
     done
 }
 
+@test "step 3: tools_old whose 2.0 set also fails points at the tools, not at the module" {
+    # Stand, 5 oct 2026: second-line tools with a third-line module cannot set the
+    # H1-H4 ranges, so the 2.0 candidate fails too; the cure is newer tools.
+    local s
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="tools_old" PROBE_RC=1 _s3 "$s"
+        [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"* ]] || { echo "$s: $output"; return 1; }
+        [[ "$output" == *"--only-upgrade amneziawg-tools"* ]] || { echo "$s: no tools advice: $output"; return 1; }
+        [[ "$output" != *"dkms status"* ]] || { echo "$s: still sent to the module: $output"; return 1; }
+        ! grep -q '^SAVE' "$EVLOG" || { echo "$s: written despite the failed probe"; return 1; }
+    done
+    # Any other code keeps the module advice.
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_probe_failed" PROBE_RC=1 _s3 "$s"
+        [[ "$output" == *"dkms status"* ]] || { echo "$s: module advice lost: $output"; return 1; }
+    done
+}
+
 @test "step 3: tools_old with no awg at all dies before a candidate is even generated" {
     local s
     for s in "$INSTALL_RU" "$INSTALL_EN"; do

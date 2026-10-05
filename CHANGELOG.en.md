@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **Step 6 no longer rewrites the server config when its backup fails, on 2.0 too.** The peers are carried into the new config from that backup, so on 2.0 a failed copy (no space, permissions) used to print a warning, then a line saying the backup was made, and rewrite the live `awg0.conf` without a single client. Now the install stops before the rewrite on either generation and says what to check.
+- **Old `awg` tools with a third-line module: the advice points at the tools.** Second-line tools with a third-line module cannot set the `H1`-`H4` ranges, so neither the 3.1 profile nor the 2.0 set applies on such a machine, and the install stops at step 3. The refusal used to send people to check the module (`modprobe`, `dkms status`); now it names the cause and the command to upgrade `amneziawg-tools`. `--help` no longer promises a switch to 2.0 with old tools.
 
 ## [5.37.1] - 2026-10-04
 
