@@ -13,6 +13,11 @@
 # test_awg31_render_golden.bats.
 #
 # Both library twins run for real in a separate shell.
+#
+# What this does NOT pin: that we write exactly our own key set. The parsers also
+# accept keys we never render (RandomTrailers, timers, ...); a client profile
+# that starts carrying one passes here and is caught by the golden key sequences
+# (2.0 in test_awg31_render_golden.bats, 3.1 below).
 
 # The [Interface] keys the strict vendor parsers accept (Android Interface.java,
 # the same set in the iOS and Windows parsers), lower case.
@@ -65,9 +70,9 @@ lib_run() {
         get_main_nic() { echo eth0; }
         render_server_config || { echo "RC=90"; exit 0; }
         if [[ -n "$5" ]]; then export CLIENT_PSK="$5"; else unset CLIENT_PSK; fi
-        render_client_config c1 10.9.9.2 "$3" "$4" 203.0.113.10 39743 "$2" || { echo "RC=91"; exit 0; }
+        render_client_config c1 10.9.9.2 "$3" "$4" "$6" 39743 "$2" || { echo "RC=91"; exit 0; }
         echo "RC=0"
-    ' _ "$BATS_TEST_DIRNAME/../$lib" "$c6" "$KEY_PRIV" "$KEY_PUB" "$psk"
+    ' _ "$BATS_TEST_DIRNAME/../$lib" "$c6" "$KEY_PRIV" "$KEY_PUB" "$psk" "${EP:-203.0.113.10}"
 }
 
 conf_of() { echo "$BATS_TEST_TMPDIR/k-$(basename "$1" .sh)/c1.conf"; }
@@ -75,29 +80,45 @@ conf_of() { echo "$BATS_TEST_TMPDIR/k-$(basename "$1" .sh)/c1.conf"; }
 # strict_ok <client conf> : every content line is `Key = value` with a value,
 # in a known section, with a key the strict parsers accept and a value of the
 # form they accept (keys: 32 bytes of base64; MTU, Jc..S4: a number; H1-H4: a
-# number or a range); one [Interface], at least one [Peer]. Prints the first
+# number or a range, ContentPaddingAddition too; Address and AllowedIPs a list
+# of CIDRs; Endpoint host:port with an IPv6 host in brackets); one [Interface],
+# at least one [Peer], no key twice in a section except Address, AllowedIPs and
+# DNS (the iOS parser refuses any other repeat). Prints the first
 # offending line and fails otherwise. Values are checked for FORM only: what the
 # parsers do with a well-formed but wrong value is the device gate's business.
 strict_ok() {
-    local f="$1" line sec="" key low val seen_i=0 seen_p=0
+    local f="$1" line sec="" key low val tok seen_i=0 seen_p=0
+    local -A seen=()
     [ -s "$f" ] || { echo "no client config: $f"; return 1; }
     while IFS= read -r line || [[ -n "$line" ]]; do
         line="${line%$'\r'}"
         [[ -z "$line" ]] && continue
         case "$line" in
             '[Interface]') (( seen_i == 0 )) || { echo "a second [Interface]"; return 1; }
-                           sec=i; seen_i=1; continue ;;
-            '[Peer]')      sec=p; seen_p=1; continue ;;
+                           sec=i; seen_i=1; seen=(); continue ;;
+            '[Peer]')      sec=p; seen_p=1; seen=(); continue ;;
         esac
         [[ "$line" =~ ^([A-Za-z0-9]+)\ =\ (.*[^[:space:]].*)$ ]] || { echo "not a key line: '$line'"; return 1; }
         key="${BASH_REMATCH[1]}"; low="${key,,}"; val="${BASH_REMATCH[2]}"
+        case "$low" in
+            address|allowedips|dns) : ;;
+            *) [[ -z "${seen[$low]:-}" ]] || { echo "a key repeated in its section: '$line'"; return 1; }
+               seen[$low]=1 ;;
+        esac
         case "$low" in
             privatekey|publickey|presharedkey|headerprotectionkey)
                 [[ "$val" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]] || { echo "not a key value: '$line'"; return 1; } ;;
             mtu|jc|jmin|jmax|s1|s2|s3|s4|persistentkeepalive)
                 [[ "$val" =~ ^[0-9]+$ ]] || { echo "not a number: '$line'"; return 1; } ;;
-            h1|h2|h3|h4)
+            h1|h2|h3|h4|contentpaddingaddition)
                 [[ "$val" =~ ^[0-9]+(-[0-9]+)?$ ]] || { echo "not a number or range: '$line'"; return 1; } ;;
+            address|allowedips)
+                for tok in ${val//,/ }; do
+                    [[ "$tok" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ || "$tok" =~ ^[0-9A-Fa-f:]*:[0-9A-Fa-f:]*/[0-9]{1,3}$ ]] \
+                        || { echo "not a CIDR list: '$line'"; return 1; }
+                done ;;
+            endpoint)
+                [[ "$val" =~ ^(\[[0-9A-Fa-f:]+\]|[A-Za-z0-9.-]+):[0-9]{1,5}$ ]] || { echo "not host:port: '$line'"; return 1; } ;;
         esac
         case "$sec" in
             i) [[ "$IFACE_KEYS" == *" $low "* ]] || { echo "[Interface] key the strict clients reject: '$line'"; return 1; } ;;
@@ -156,6 +177,14 @@ check() {
     ! strict_ok "$f" >/dev/null || { echo "a malformed key accepted"; return 1; }
     printf '%s' "${good/MTU = 1280/MTU = 1280x}" > "$f"
     ! strict_ok "$f" >/dev/null || { echo "a malformed MTU accepted"; return 1; }
+    printf '%s' "${good/MTU = 1280/MTU = 1280$'\n'MTU = 1380}" > "$f"
+    ! strict_ok "$f" >/dev/null || { echo "a repeated MTU accepted"; return 1; }
+    printf '%s' "${good/AllowedIPs = 0.0.0.0\/0/AllowedIPs = 0.0.0.0\/0$'\n'Endpoint = 2001:db8::1:39743}" > "$f"
+    ! strict_ok "$f" >/dev/null || { echo "an unbracketed IPv6 endpoint accepted"; return 1; }
+    printf '%s' "${good/Address = 10.9.9.2\/32/Address = 10.9.9.2}" > "$f"
+    ! strict_ok "$f" >/dev/null || { echo "an Address without a prefix accepted"; return 1; }
+    printf '%s' "${good/MTU = 1280/MTU = 1280$'\n'DNS = 1.1.1.1$'\n'DNS = 1.0.0.1}" > "$f"
+    strict_ok "$f" || { echo "a repeated DNS rejected"; return 1; }
 }
 
 k_variants() {
@@ -170,6 +199,7 @@ k_variants() {
         check "$lib" "$gen" $'export DISABLE_IPV6=0\nexport ALLOW_IPV6_TUNNEL=1\nexport IPV6_SUBNET=\'fddd:2c4:2c4:2c4::/64\'' \
             "fddd:2c4:2c4:2c4::2" '^Address = 10\.9\.9\.2/32, fddd:2c4:2c4:2c4::2' || return 1
         check "$lib" "$gen" "" "" "^PresharedKey = $KEY_PSK\$" "" "$KEY_PSK" || return 1
+        EP='[2001:db8::1]' check "$lib" "$gen" "" "" '^Endpoint = \[2001:db8::1\]:39743$' || return 1
     done
 }
 @test "strict keys: every render variant of both generations imports into the strict clients, both twins" {
