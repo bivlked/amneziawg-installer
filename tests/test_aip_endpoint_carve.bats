@@ -408,7 +408,8 @@ epw_count() { grep -c 'WARN:.*Endpoint.*vpn\.example\.com' "$WARN_LOG" || true; 
 # mrun <lib> <extra init> <AllowedIPs in m1.conf> <Endpoint in m1.conf> <modify args...>
 mrun() {
     local lib="$1" initx="$2" aips="$3" ep="$4"; shift 4
-    local manage="${lib/awg_common/manage_amneziawg}" d="$BATS_TEST_TMPDIR/m-$(basename "$lib" .sh)"
+    local manage="${lib/awg_common/manage_amneziawg}" d
+    d="$BATS_TEST_TMPDIR/m-$(basename "$lib" .sh)"
     rm -rf "$d"; mkdir -p "$d/keys" "$d/expiry"
     {
         printf "export AWG_PORT=39743\nexport AWG_TUNNEL_SUBNET='10.9.9.1/24'\nexport DISABLE_IPV6=1\n"
