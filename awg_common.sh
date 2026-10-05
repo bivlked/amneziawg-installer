@@ -454,8 +454,8 @@ _aip_endpoint_v4() {
 }
 
 # _aip_warn_endpoint_not_v4 <клиент> <Endpoint> : дыру у адреса сервера сделать
-# нельзя, а список с IPv4-маршрутами не 0.0.0.0/0 - Linux-клиенту нужен ручной
-# маршрут. Вызывающий проверяет список, который клиент получит в итоге.
+# нельзя, а в списке есть IPv4-маршруты, но нет 0.0.0.0/0 - Linux-клиенту нужен
+# ручной маршрут. Вызывающий проверяет список, который клиент получит в итоге.
 _aip_warn_endpoint_not_v4() {
     log_warn "Клиент '$1': Endpoint '$2' - не IPv4-адрес, поэтому адрес сервера из AllowedIPs не исключён. Клиенту на Linux (awg-quick) нужен ручной маршрут до сервера, см. ADVANCED, раздел про раздельный список маршрутов."
 }
@@ -5452,7 +5452,9 @@ generate_client() {
         return 1
     fi
 
-    # Конфиг клиента
+    # Конфиг клиента. Список рендера здесь итоговый: предупреждение о «не IPv4
+    # Endpoint» печатает он сам, флаг regen из окружения его не глушит.
+    local _AWG_EP_WARN_LATER=0
     render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" || {
         log_error "Откат: удаление артефактов '$name'"
         _rollback_client_artifacts "$name"

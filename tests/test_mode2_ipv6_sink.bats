@@ -332,6 +332,8 @@ EOF
 # The endpoint above is a name, and a kept route list rightly gets that warning;
 # the checks that use this are about the IPv6 hints only.
 no_ep_warn() { printf '%s\n' "$1" | grep -v -e 'не IPv4-адрес' -e 'is not an IPv4 address' || true; }
+# ep_warn_n <output> : how many times that warning was printed (regen_run runs regen twice)
+ep_warn_n() { grep -c -e 'не IPv4-адрес' -e 'is not an IPv4 address' <<< "$1" || true; }
 
 regen_migrates() {
     local lib="$1" list out
@@ -382,6 +384,8 @@ regen_reset() {
     [[ "$out" == *"RC=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = $list, 2000::/3" ] || { echo "routes ($lib)"; return 1; }
     [ "$(conf_line "$lib" Address r1)" = "Address = 10.9.9.20/32, ${SINK_PREFIX}::a09:914/128" ] || { echo "address ($lib)"; return 1; }
+    # the server list it hands out, with a name as the endpoint: render warns, once per regen
+    [ "$(ep_warn_n "$out")" -eq 2 ] || { echo "Endpoint warning count ($lib): $out"; return 1; }
 }
 @test "regen --reset-routes: back to the mode-2 list with 2000::/3 and the sink, both twins" {
     require_flock
@@ -436,6 +440,7 @@ regen_keep_advice() {
     # a split list with ::/0 is not a full tunnel: nothing to warn about
     out=$(regen_run "$lib" "$list" "10.0.0.0/8, ::/0" "10.9.9.20/32")
     [[ "$out" == *"RC=0"* && "$(no_ep_warn "$out")" != *"WARN:"* ]] || { echo "false warning on a split list ($lib): $out"; return 1; }
+    [ "$(ep_warn_n "$out")" -eq 2 ] || { echo "Endpoint warning count on a split list ($lib): $out"; return 1; }
 }
 @test "regen: the hint for a kept ::/0 fits the server's routing mode, both twins" {
     require_flock
@@ -447,22 +452,39 @@ regen_ipv6_only() {
     out=$(regen_run "$lib" "$(mode2_list)" "::/0" "10.9.9.20/32")
     [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = ::/0" ] || { echo "IPv6-only list lost ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
+    # no IPv4 goes into the tunnel, so no IPv4 route to the server is needed
+    [ "$(ep_warn_n "$out")" -eq 0 ] || { echo "warned on an IPv6-only list ($lib): $out"; return 1; }
 }
 # The endpoint here is a name: the kept split list gets the Linux-route warning
-# once per regen (on the final list), the kept full tunnel gets none.
+# once per regen (on the final list), a kept list with 0.0.0.0/0 gets none,
+# wherever 0.0.0.0/0 stands in it.
 regen_ep_name_warn() {
-    local lib="$1" out n
+    local lib="$1" out kept
     out=$(regen_run "$lib" "$(mode2_list)" "10.0.0.0/8" "10.9.9.20/32")
     [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
-    n=$(grep -c -e 'не IPv4-адрес' -e 'is not an IPv4 address' <<< "$out" || true)
-    [ "$n" -eq 2 ] || { echo "expected one warning per regen, got $n ($lib): $out"; return 1; }
-    out=$(regen_run "$lib" "$(mode2_list)" "0.0.0.0/0" "10.9.9.20/32")
-    [[ "$out" == *"RC=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
-    [[ "$out" != *"Endpoint"* ]] || { echo "warned on a kept full tunnel ($lib): $out"; return 1; }
+    [ "$(ep_warn_n "$out")" -eq 2 ] || { echo "expected one warning per regen ($lib): $out"; return 1; }
+    for kept in "0.0.0.0/0" "10.0.0.0/8, 0.0.0.0/0"; do
+        out=$(regen_run "$lib" "$(mode2_list)" "$kept" "10.9.9.20/32")
+        [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib, $kept): $out"; return 1; }
+        [ "$(ep_warn_n "$out")" -eq 0 ] || { echo "warned on a kept 0.0.0.0/0 ($lib, $kept): $out"; return 1; }
+    done
 }
-@test "regen: a name as the endpoint warns on the kept split list, not on a kept full tunnel, both twins" {
+@test "regen: a name as the endpoint warns on the kept split list, not on a kept 0.0.0.0/0, both twins" {
     require_flock
     both regen_ep_name_warn
+}
+
+# A lost client config is rebuilt from the server list: render warns on it in the
+# first regen, the second regen restores that list and warns on the final one.
+regen_ep_name_lost() {
+    local lib="$1" out
+    out=$(regen_run "$lib" "$(mode2_list)" "0.0.0.0/0" "10.9.9.20/32" 'rm -f "$AWG_DIR/r1.conf"')
+    [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
+    [ "$(ep_warn_n "$out")" -eq 2 ] || { echo "Endpoint warning count ($lib): $out"; return 1; }
+}
+@test "regen: a lost config rebuilt with a name as the endpoint warns on the server list, both twins" {
+    require_flock
+    both regen_ep_name_lost
 }
 
 @test "regen: an IPv6-only AllowedIPs survives regen under pipefail, both twins" {
@@ -484,6 +506,7 @@ regen_dual_native() {
     [ "$(conf_line "$lib" Address r1)" = "Address = 10.9.9.20/32, fddd:2c4:2c4:2c4::20/128" ] || { echo "dual-stack address ($lib): $(conf_line "$lib" Address r1)"; return 1; }
     # ::/0 is present, nothing to warn about
     [[ "$(no_ep_warn "$out")" != *"WARN:"* ]] || { echo "false warning ($lib): $out"; return 1; }
+    [ "$(ep_warn_n "$out")" -eq 2 ] || { echo "Endpoint warning count, dual-stack ($lib): $out"; return 1; }
 }
 @test "regen: a dual-stack client on a native-IPv6 server keeps ::/0, both twins" {
     require_flock

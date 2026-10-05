@@ -458,7 +458,7 @@ _aip_endpoint_v4() {
 }
 
 # _aip_warn_endpoint_not_v4 <client> <Endpoint> : no hole at the server address
-# is possible, and the list has IPv4 routes other than 0.0.0.0/0 - a Linux client
+# is possible, and the list has IPv4 routes but no 0.0.0.0/0 - a Linux client
 # needs a manual route. The caller checks the list the client ends up with.
 _aip_warn_endpoint_not_v4() {
     log_warn "Client '$1': Endpoint '$2' is not an IPv4 address, so the server address is not excluded from AllowedIPs. A Linux client (awg-quick) needs a manual route to the server, see ADVANCED, the section on a split route list."
@@ -5541,7 +5541,9 @@ generate_client() {
         return 1
     fi
 
-    # Client config
+    # Client config. The render list is final here: render prints the non-IPv4
+    # Endpoint warning itself, and a regen flag from the environment cannot mute it.
+    local _AWG_EP_WARN_LATER=0
     render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" || {
         log_error "Rollback: removing artifacts for '$name'"
         _rollback_client_artifacts "$name"
