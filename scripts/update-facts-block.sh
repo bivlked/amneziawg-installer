@@ -198,7 +198,10 @@ arch_line = ', '.join(['x86_64'] + arches)
 #   2. профиль 3.1 несёт HeaderProtectionKey и ContentPaddingAddition - обе
 #      библиотеки пишут их в конфиг;
 #   3. остальных параметров третьей линии (таймеры, RandomTrailers,
-#      DisableCookies) профиль не задаёт - ни один скрипт их в конфиг не пишет.
+#      DisableCookies) профиль не задаёт - ни один скрипт их в конфиг не пишет;
+#   4. флаг --protocol есть, и переход на 2.0 сам вызывается.
+# Обещание «работающий сервер остаётся на своём поколении» сюда не привязано:
+# это поведение нескольких веток, его держат тесты lifecycle, а не греп.
 # Пункт 3 - прежний сторож, пункты 1-2 - его обратная сторона: раньше блок
 # обещал 2.0, и опасно было ПОЯВЛЕНИЕ параметра 3.x, теперь блок обещает 3.1, и
 # опасно ещё и его ИСЧЕЗНОВЕНИЕ.
@@ -226,11 +229,16 @@ AWG3_ABSENT = ('RekeyAfterTime', 'RekeyTimeout', 'RejectAfterTime',
 
 
 def config_writer_re(names):
+    # Форма 1 - литерал в начале строки шаблона. Формы 2-3 - имя ГДЕ УГОДНО в
+    # строке с echo, printf или sed: `printf '%s\n' "Имя = 1"`, перевод строки
+    # перед именем, два ключа в одном printf, `sed '/.../a Имя = 1'`. Регистр не
+    # важен: awg читает ключи без учёта регистра.
     alt = '|'.join(names)
     return re.compile(
-        r'^[ \t]*(%s)[ \t]*='                        # форма 1: литерал в шаблоне
-        r'|(?:echo|printf)[^"\'\n]*["\'][ \t]*(%s)[ \t]*='  # формы 2-3: строкой
-        % (alt, alt), re.M)
+        r'^[ \t]*(%s)[ \t]*='
+        r'|^[^\n]*\b(?:echo|printf|sed)\b[^\n]*?'
+        r'(?:(?<=\\n)|(?<=\\t)|(?<![A-Za-z0-9_]))(%s)[ \t]*='   # и после \n, \t в строке
+        % (alt, alt), re.M | re.I)
 
 
 SCRIPTS = ('awg_common.sh', 'awg_common_en.sh',
@@ -261,10 +269,32 @@ for name in LIBS:
         if not config_writer_re((param,)).search(BODY[name]):
             problems.append('%s: нет записи %s в конфиг, а блок обещает профиль 3.1'
                             % (name, param))
+    # Запись есть - ещё не значит, что она доходит до конфига: строки профиля
+    # пишет _awg31_append_profile_lines, и её зовут ОБА рендера (серверный и
+    # клиентский). Убранный вызов оставил бы printf на месте, а профиль - пустым.
+    calls = re.findall(r'^[^\n#]*(?<![A-Za-z0-9_])_awg31_append_profile_lines[ \t]+["$]',
+                       BODY[name], re.M)
+    if len(calls) < 2:
+        problems.append('%s: _awg31_append_profile_lines вызывается %d раз(а), нужно из '
+                        'обоих рендеров, а блок обещает профиль 3.1' % (name, len(calls)))
 for name in INSTALLERS:
-    if not re.search(r'^PROTOCOL_DEFAULT="3\.1"[ \t]*$', BODY[name], re.M):
-        problems.append('%s: PROTOCOL_DEFAULT не "3.1", а блок обещает 3.1 '
-                        'для новой установки' % name)
+    # Ровно одно присваивание и оно 3.1: позднее переопределение ниже по файлу
+    # иначе прошло бы мимо. Плюс точка использования: константа без неё ничего
+    # не значит.
+    defs = re.findall(r'^[ \t]*(?:readonly[ \t]+|declare[^\n=]*?[ \t]+)?PROTOCOL_DEFAULT=(\S*)',
+                      BODY[name], re.M)
+    if len(defs) != 1 or defs[0].strip('"\'') != '3.1':
+        problems.append('%s: PROTOCOL_DEFAULT должен присваиваться один раз и равняться '
+                        '"3.1" (найдено: %s), а блок обещает 3.1 для новой установки'
+                        % (name, ', '.join(defs) or 'нет'))
+    if not re.search(r'AWG_PROTOCOL=["\']?\$\{?PROTOCOL_DEFAULT\}?["\']?', BODY[name]):
+        problems.append('%s: умолчание PROTOCOL_DEFAULT нигде не применяется' % name)
+    # Остальные обещания строки: флаг --protocol и переход на 2.0 сам.
+    if not re.search(r'^[ \t]*--protocol=\*\)', BODY[name], re.M):
+        problems.append('%s: нет разбора --protocol=, а блок обещает флаг' % name)
+    if not re.search(r'^[ \t]*_awg31_announce_fallback[ \t]+"', BODY[name], re.M):
+        problems.append('%s: переход на 2.0 сам (_awg31_announce_fallback) не вызывается, '
+                        'а блок его обещает' % name)
 if problems:
     for h in problems:
         sys.stderr.write('  %s\n' % h)

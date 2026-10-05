@@ -333,9 +333,9 @@ echo "module amneziawg -p" > /sys/kernel/debug/dynamic_debug/control
 | `--protocol=2.0` | ставит 2.0, проверки третьей линии не нужны |
 | сервер уже выдал профили (дошёл до шага 6) | поколение не меняет. Если сервер 3.1 перестал проходить проверку, установщик называет причину и лечение (обновить утилиты или модуль, загрузиться в подходящее ядро); удаление он называет только последним вариантом |
 
-Коды причин: `kernel`, `arm`, `arch_unsupported`, `arch_unknown` (шаг 0); `tools_old`, `module_line2`, `module_probe_failed` (шаг 3).
+Коды причин: `kernel`, `arm`, `arch_unsupported`, `arch_unknown` (проверяются на шаге 0 и ещё раз на шаге 3); `tools_old`, `module_line2`, `module_probe_failed` (шаг 3).
 
-Поколение и то, как оно выбрано, записываются в `/root/awg/awgsetup_cfg.init`: `AWG_PROTOCOL` (`2.0` или `3.1`), `AWG_PROTOCOL_SOURCE` (`default`, если поколение взято по умолчанию, `explicit`, если флагом) и `AWG_PROTOCOL_FALLBACK` (код причины, если установщик перешёл на 2.0 сам). Сервер, поставленный до версии 6.0.0, маркера не имеет и читается как 2.0.
+Поколение и то, как оно выбрано, записываются в `/root/awg/awgsetup_cfg.init`: `AWG_PROTOCOL` (`2.0` или `3.1`), `AWG_PROTOCOL_SOURCE` (`default`, если поколение взято по умолчанию, `explicit`, если флагом) и `AWG_PROTOCOL_FALLBACK` (код причины, если установщик перешёл на 2.0 сам). У сервера, поставленного до версии 6.0.0, нет `AWG_PROTOCOL_SOURCE`, а маркер `AWG_PROTOCOL` равен `2.0` (с v5.32.0) или отсутствует (раньше); в обоих случаях сервер читается как 2.0.
 
 **Сменить поколение работающего сервера** можно только переустановкой: `--uninstall`, затем установка с нужным `--protocol`. Профили всех клиентов при этом выдаются заново, поэтому решать лучше до установки.
 
@@ -1210,12 +1210,12 @@ done
 
 <details>
   <summary><strong>В: Ошибка «Неверный ключ: s3» при импорте конфига в Windows-клиент?</strong></summary>
-  <b>О:</b> Вы используете устаревшую версию <code>amneziawg-windows-client</code> (< 2.0.0), которая не понимает параметры AWG 2.0. Обновите до <a href="https://github.com/amnezia-vpn/amneziawg-windows-client/releases"><b>версии 2.0.0+</b></a>. Альтернатива — <a href="https://github.com/amnezia-vpn/amnezia-client/releases"><b>Amnezia VPN</b></a> >= 4.8.12.7.
+  <b>О:</b> Вы используете устаревшую версию <code>amneziawg-windows-client</code> (< 2.0.0), которая не понимает параметры AWG 2.0. Обновите до <a href="https://github.com/amnezia-vpn/amneziawg-windows-client/releases"><b>версии 2.0.0+</b></a>, а для сервера 3.1 до 3.1.0+. Альтернатива - <a href="https://github.com/amnezia-vpn/amnezia-client/releases"><b>Amnezia VPN</b></a> >= 4.8.12.7, для 3.1 >= 5.0.1.5.
 </details>
 
 <details>
   <summary><strong>В: AWG 2.0-сервер не handshake-ится с моим старым AWG 1.0-клиентом — почему?</strong></summary>
-  <b>О:</b> Когда сервер генерирует <code>S3>0</code> или <code>S4>0</code> (cookie-/data-padding из AWG 2.0), AWG 1.0-клиент не сможет с ним handshake-нуться — это <b>известная upstream-проблема</b>: <a href="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/168">amnezia-vpn/amneziawg-linux-kernel-module#168</a>. Мой инсталлятор всегда генерирует <code>S3=8..55</code>, <code>S4=4..27</code> — оба <code>>0</code>.
+  <b>О:</b> Когда сервер генерирует <code>S3>0</code> или <code>S4>0</code> (cookie-/data-padding из AWG 2.0), AWG 1.0-клиент не сможет с ним handshake-нуться - это <b>известная upstream-проблема</b>: <a href="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/168">amnezia-vpn/amneziawg-linux-kernel-module#168</a>. Мой инсталлятор всегда генерирует оба <code>>0</code>: в профиле 2.0 <code>S3=8..55</code>, <code>S4=4..27</code>, в профиле 3.1 от 12.
   <br><br>
   <b>В типичном сценарии</b> (Amnezia VPN client / WireGuard-Tools 2.0+ на клиентах + клиентские <code>.conf</code>, сгенерированные <code>manage add</code>) проблемы нет: <code>manage</code> всегда вписывает <code>S3</code>/<code>S4</code> в клиентский <code>.conf</code> автоматически. Риск возникает <b>только</b> при:
   <ul>

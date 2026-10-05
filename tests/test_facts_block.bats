@@ -398,14 +398,70 @@ PY
     [[ "$output" == *"install_amneziawg_en.sh: PROTOCOL_DEFAULT"* ]]
 }
 
-@test "facts: закомментированное умолчание 3.1 не засчитывается" {
-    # Комментарии гасятся до сверки: строка-напоминание не должна держать
-    # обещание вместо настоящего присваивания.
-    _sub install_amneziawg.sh 'PROTOCOL_DEFAULT="3.1"' '# PROTOCOL_DEFAULT="3.1"
+@test "facts: printf с форматом и ключом в аргументе ловится" {
+    # Самая частая идиома: первая кавычка открывает формат, имя - в аргументе.
+    printf '\n    printf '"'"'%%s\\n'"'"' "RandomTrailers = 1" >> "$t"\n' >> "$TMP/awg_common.sh"
+    grep -q 'printf .%s.n. "RandomTrailers = 1"' "$TMP/awg_common.sh" \
+        || { echo "мутация не легла в файл"; return 1; }
+    run _check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"RandomTrailers"* ]]
+}
+
+@test "facts: второй ключ в одном printf и ключ в нижнем регистре ловятся" {
+    {
+        printf '\n    printf "Jc = %%s\\nKeepaliveTimeout = %%s\\n" 3 25 >> "$t"\n'
+        printf '    echo "disablecookies = 1" >> "$t"\n'
+    } >> "$TMP/awg_common.sh"
+    run _check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"KeepaliveTimeout"* ]]
+    [[ "$output" == *"disablecookies"* ]]
+}
+
+@test "facts: закомментированная запись HeaderProtectionKey наличием не считается" {
+    _sub awg_common.sh "printf 'HeaderProtectionKey = %s\n'" "# printf 'HeaderProtectionKey = %s\n'"
+    run _check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"awg_common.sh: нет записи HeaderProtectionKey"* ]]
+}
+
+@test "facts: убранный вызов профиля из рендера роняет обещание 3.1" {
+    # printf остаётся на месте, но до конфига строки уже не доходят.
+    _sub awg_common_en.sh '_awg31_append_profile_lines "$tmpfile"' ': "$tmpfile"'
+    run _check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"awg_common_en.sh: _awg31_append_profile_lines"* ]]
+}
+
+@test "facts: позднее переопределение PROTOCOL_DEFAULT ловится" {
+    _sub install_amneziawg.sh 'PROTOCOL_DEFAULT="3.1"' 'PROTOCOL_DEFAULT="3.1"
 PROTOCOL_DEFAULT="2.0"'
     run _check
     [ "$status" -eq 1 ]
     [[ "$output" == *"install_amneziawg.sh: PROTOCOL_DEFAULT"* ]]
+}
+
+@test "facts: умолчание, которое нигде не применяется, ловится" {
+    _sub install_amneziawg_en.sh 'AWG_PROTOCOL="$PROTOCOL_DEFAULT"' 'AWG_PROTOCOL="2.0"'
+    run _check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"install_amneziawg_en.sh: умолчание PROTOCOL_DEFAULT"* ]]
+}
+
+@test "facts: пропавший переход на 2.0 сам роняет обещание строки" {
+    _sub install_amneziawg.sh '_awg31_announce_fallback "$code"' ': "$code"'
+    _sub install_amneziawg.sh '_awg31_announce_fallback "$_awg31_blocker"' ': "$_awg31_blocker"'
+    run _check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"install_amneziawg.sh: переход на 2.0"* ]]
+}
+
+@test "facts: пропавший разбор --protocol= роняет обещание флага" {
+    _sub install_amneziawg_en.sh '--protocol=*)' '--protocolx=*)'
+    run _check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"install_amneziawg_en.sh: нет разбора --protocol="* ]]
 }
 
 @test "facts: комментарий про параметр 3.x гейт не краснит" {
@@ -439,7 +495,7 @@ PROTOCOL_DEFAULT="2.0"'
     # маскирование секретов в диагностическом отчёте.
     {
         printf '\n        ContentPaddingAddition RandomTrailers MaxHandshakeAttempts \\\n'
-        printf "        -e 's/^([[:space:]]*(PrivateKey|HeaderProtectionKey)[[:space:]]*=[[:space:]]*).*/x/I' \\\\\n"
+        printf "        -e 's/(Line unrecognized:[[:space:]]*.?(PrivateKey|RandomTrailers|DisableCookies|KeepaliveTimeout)[[:space:]]*=).*/x/' \\\\\n"
     } >> "$TMP/awg_common.sh"
     run _check
     [ "$status" -eq 0 ]

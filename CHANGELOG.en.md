@@ -28,7 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **The "facts as of" guard did not see every way of writing to a config.** It caught a third-line parameter in a template and in `echo "..."`, but not in a single-quoted `printf '...'`, which is exactly how `HeaderProtectionKey` and `ContentPaddingAddition` are written. The guard now sees all three forms, requires that the 3.1 profile really is written into the config and that the default is 3.1, and still rejects parameters the profile does not set.
+- **The "facts as of" guard did not see every way of writing to a config.** It caught a third-line parameter in a template and in `echo "..."`, but not in a single-quoted `printf '...'`, which is exactly how `HeaderProtectionKey` and `ContentPaddingAddition` are written. It now looks for the parameter name anywhere on a line with `echo`, `printf` or `sed`, case-insensitively; it requires the 3.1 profile lines to be written and called from both renderers, the 3.1 default to be assigned once and actually used, and the `--protocol` flag and the switch to 2.0 to be present; and it still rejects parameters the profile does not set.
 
 ## [5.37.1] - 2026-10-04
 
