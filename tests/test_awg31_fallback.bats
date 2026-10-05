@@ -9,7 +9,7 @@
 #    answering normally. An explicit --protocol=3.1, an existing install, an
 #    unknown source, internal_error or a gate that failed are refusals;
 #  - at step 0 the parameters are generated after the decision (new install)
-#    or regenerated with the SAVED J values and preset (unfinished install);
+#    or regenerated from the SAVED J values and preset (unfinished install);
 #  - at step 3 one candidate is generated, probed on a temporary interface and
 #    only then written; a failed probe leaves the disk alone;
 #  - the veto AWG_INSTALL_STATE_AT_START is taken at step 0 of the same

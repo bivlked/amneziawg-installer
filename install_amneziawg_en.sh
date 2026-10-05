@@ -1583,7 +1583,7 @@ _awg31_announce_fallback() {
 # 🔴 An explicit preset of THIS run (--preset, --mobile) sets J anew: the saved
 # J would carry the previous preset and override the new one (Jc=6 instead of 3
 # for mobile). Then only the explicit --jc/--jmin/--jmax of this run carry over.
-# Found by Codex.
+# Found by review.
 _awg_fallback_params() {
     if [[ -n "${CLI_PRESET:-}" ]]; then
         generate_awg_params
@@ -1748,7 +1748,7 @@ _awg_gen_switch_rewind() {
     elif [[ "${AWG_INSTALL_STATE_AT_START:-}" == 2 && -n "${AWG_PROTOCOL_FALLBACK:-}" ]]; then
         # The fallback 2.0 set is probed at step 3; a resume after it (other
         # tools or module, regeneration by configuration flags) would otherwise
-        # reach the step 6 keys unchecked. Found by Codex.
+        # reach the step 6 keys unchecked. Found by review.
         why="Resuming an install after the fallback to 2.0"
     else
         return 0
@@ -1918,7 +1918,7 @@ _awg31_resolve_protocol() {
         # from the known set, with the gate answering normally. An explicit
         # --protocol=3.1, an existing install, an empty source, a gate failure -
         # the refusal below, as before. At step 0 the parameters are not
-        # generated yet (new install) or will be regenerated with the saved J
+        # generated yet (new install) or will be regenerated from the saved J
         # (unfinished install, AWG_AUTO_FALLBACK).
         if (( _awg31_rc == 0 )) && [[ "${AWG_PROTOCOL_SOURCE:-}" == "default" ]] \
            && [[ "$install_state" -eq 0 || "$install_state" -eq 2 ]] \
