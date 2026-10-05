@@ -383,7 +383,7 @@ u_31_worst_case_v4() {
         safe_load_config "$CONFIG_FILE" >/dev/null 2>&1 || { echo "RC=93"; exit 0; }
         render_server_config || { echo "RC=94"; exit 0; }
         export CLIENT_PSK="$WC_PSK"
-        render_client_config c1 10.9.9.254 "$WC_CLI" "$WC_SRV" 64.233.160.1 65535 fddd:2c4:2c4:2c4::fffe \
+        render_client_config c1 10.9.9.254 "$WC_CLI" "$WC_SRV" 111.199.199.199 65535 fddd:2c4:2c4:2c4::fffe \
             || { echo "RC=92"; exit 0; }
         generate_vpn_uri c1; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "worst-case uri not created ($lib): $out"; return 1; }
@@ -394,9 +394,9 @@ u_31_worst_case_v4() {
     grep -q '32.0.0.0/3' "$d/c1.conf" || { echo "the worst case lost the mode-2 routes ($lib)"; return 1; }
     # the cut really happened: the /2 that held the endpoint is gone, 30 routes replace it
     ! grep -q '64.0.0.0/2' "$d/c1.conf" || { echo "the endpoint was not cut out ($lib)"; return 1; }
-    grep -q '64.233.160.0/32\|64.233.160.0/' "$d/c1.conf" || { echo "the cut routes are missing ($lib)"; return 1; }
+    grep -q '111.199.199.198/32' "$d/c1.conf" || { echo "the cut routes are missing ($lib)"; return 1; }
     grep -qF "$k_hpk" "$d/c1.conf" || { echo "the worst case lost its random key ($lib)"; return 1; }
-    grep -q '^Endpoint = 64.233.160.1:65535$' "$d/c1.conf" || { echo "the worst case lost its endpoint ($lib)"; return 1; }
+    grep -q '^Endpoint = 111.199.199.199:65535$' "$d/c1.conf" || { echo "the worst case lost its endpoint ($lib)"; return 1; }
     grep -q '^Jc = 128' "$d/c1.conf" || { echo "the worst case lost its junk sizes ($lib)"; return 1; }
     # The long inputs must reach the link itself, not only the .conf: a name
     # dropped from the link would understate the size.
@@ -405,7 +405,19 @@ import base64, json, sys, zlib
 uri = open(sys.argv[1], encoding="utf-8").read().strip().replace("vpn://", "")
 raw = base64.urlsafe_b64decode(uri + "=" * (-len(uri) % 4))
 outer = json.loads(zlib.decompress(raw[4:]))
-sys.exit(0 if outer.get("description") == sys.argv[2] and outer.get("hostName") == "64.233.160.1" else 1)
+sys.exit(0 if outer.get("description") == sys.argv[2] and outer.get("hostName") == "111.199.199.199" else 1)
+PY
+    # the routes inside the link are the cut routes of the .conf
+    python3 - "$d/c1.vpnuri" "$d/c1.conf" <<'PY' || { echo "the link routes differ from the .conf ($lib)"; return 1; }
+import base64, json, re, sys, zlib
+uri = open(sys.argv[1], encoding="utf-8").read().strip().replace("vpn://", "")
+raw = base64.urlsafe_b64decode(uri + "=" * (-len(uri) % 4))
+outer = json.loads(zlib.decompress(raw[4:]))
+inner = outer["containers"][0]["awg"]["last_config"]
+conf = open(sys.argv[2], encoding="utf-8").read()
+want = re.search(r"^AllowedIPs = (.*)$", conf, re.M).group(1).replace(" ", "")
+got = re.search(r"AllowedIPs = ([^\n\\]*)", inner).group(1).replace(" ", "")
+sys.exit(0 if got == want and "111.199.199.198/32" in got else 1)
 PY
     len=$(wc -c < "$d/c1.vpnuri")
     echo "worst-case 3.1 vpn:// with a cut IPv4 endpoint is $len bytes, cap 2953, headroom $((2953 - len)) ($lib)"

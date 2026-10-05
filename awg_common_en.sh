@@ -466,11 +466,15 @@ _aip_endpoint_v4() {
 # call. An empty result is an empty string, the caller decides.
 _aip_carve_endpoints() {
     local list="$1"; shift
-    local ep e tok t b lo hi p k net out
+    local ep e tok t a p o1 o2 o3 o4 ip mask lo hi k net out
     local -a toks=()
+    # The route bounds are computed with arithmetic in this same shell: a command
+    # substitution per route would make a list of thousands of networks take
+    # minutes (the same reason as the cap in _is_full_tunnel).
     for ep in "$@"; do
         _valid_ipv4 "$ep" || continue
-        e=$(_ipv4_to_int "$ep") || return 1
+        IFS=. read -r o1 o2 o3 o4 <<< "$ep"
+        e=$(( (10#$o1 << 24) | (10#$o2 << 16) | (10#$o3 << 8) | 10#$o4 ))
         mapfile -t toks < <(_aip_tokens "$list")
         out=""
         for tok in "${toks[@]}"; do
@@ -480,19 +484,23 @@ _aip_carve_endpoints() {
             fi
             t="$tok"
             [[ "$t" == */* ]] || t="${t}/32"
-            b=$(_cidr_bounds "$t") || {
+            a="${t%/*}"; p="${t##*/}"
+            if [[ ! "$p" =~ ^[0-9]{1,2}$ ]] || (( 10#$p > 32 )) || ! _valid_ipv4 "$a"; then
                 log_warn "AllowedIPs: route '$tok' not parsed - the server address is not excluded from the list."
                 return 1
-            }
-            lo="${b%% *}"; hi="${b##* }"
+            fi
+            p=$(( 10#$p ))
+            IFS=. read -r o1 o2 o3 o4 <<< "$a"
+            ip=$(( (10#$o1 << 24) | (10#$o2 << 16) | (10#$o3 << 8) | 10#$o4 ))
+            if (( p == 0 )); then mask=0; else mask=$(( (0xFFFFFFFF << (32 - p)) & 0xFFFFFFFF )); fi
+            lo=$(( ip & mask )); hi=$(( lo | (0xFFFFFFFF ^ mask) ))
             if (( e < lo || e > hi )); then
                 out+="${out:+, }${tok}"
                 continue
             fi
-            p=$(( 10#${t##*/} ))
             for (( k = p + 1; k <= 32; k++ )); do
                 net=$(( ((e >> (32 - k)) ^ 1) << (32 - k) ))
-                out+="${out:+, }$(_int_to_ipv4 "$net")/${k}"
+                out+="${out:+, }$(( (net >> 24) & 255 )).$(( (net >> 16) & 255 )).$(( (net >> 8) & 255 )).$(( net & 255 ))/${k}"
             done
         done
         list="$out"
@@ -510,7 +518,19 @@ _aip_v4_norm() {
         l=$(_aip_carve_endpoints "$l" ${_AWG_CARVE_EPS}) || return 1
     fi
     t=$(_aip_tokens "$l") || return 1
-    { grep -vF ':' <<< "$t" || true; } | LC_ALL=C sort -u
+    local v4 rc
+    v4=$(grep -vF ':' <<< "$t"); rc=$?
+    (( rc > 1 )) && return 1
+    [[ -n "$v4" ]] || return 0
+    LC_ALL=C sort -u <<< "$v4"
+}
+
+# _aip_has_v4 <list> : whether the list keeps at least one IPv4 route.
+_aip_has_v4() {
+    local t
+    t=$(_aip_tokens "$1") || return 1
+    [[ -n "$t" ]] || return 1
+    grep -qvF ':' <<< "$t"
 }
 
 
@@ -3494,11 +3514,13 @@ render_client_config() {
             log_error "Failed to exclude the server address from AllowedIPs - client config not created."
             return 1
         }
-        if [[ -z "$(_aip_tokens "$_aip_cut")" ]]; then
-            log_error "Client '$name': AllowedIPs routes only the server's own address ($_AWG_CARVE_EPS) into the tunnel, and it must not go there - no routes are left, config not created."
+        if _aip_has_v4 "$allowed_ips" && ! _aip_has_v4 "$_aip_cut"; then
+            log_error "Client '$name': of the IPv4 routes in AllowedIPs only the server's own address ($_AWG_CARVE_EPS) goes into the tunnel, and it must not go there - no IPv4 routes are left, config not created."
             return 1
         fi
         allowed_ips="$_aip_cut"
+    elif _aip_has_v4 "$allowed_ips" && ! _aip_has_token "$allowed_ips" "0.0.0.0/0"; then
+        log_warn "Client '$name': Endpoint '$endpoint' is not an IPv4 address, so the server address is not excluded from AllowedIPs. A Linux client (awg-quick) needs a manual route to the server, see ADVANCED, the section on a split route list."
     fi
 
     # A per-client list with explicit IPv6 but no ::/0 over a full tunnel:
@@ -5802,6 +5824,26 @@ regenerate_client() {
     [[ "$_had_conf" -eq 1 && -n "$current_dns" ]] && _keep_dns="$current_dns"
     # On 3.1 the copy of the set is taken under the same lock the .conf is
     # rewritten under, and it comes back on any failure below.
+    # A list where only the server address is left of the IPv4 routes is refused
+    # BEFORE the config is rewritten: after render the file is already rewritten
+    # from the server mode, and on 2.0 there is nothing to bring back. The check
+    # matters only where the list is going to be restored.
+    if [[ "${AWG_REGEN_RESET_ROUTES:-0}" != "1" && "$_had_conf" -eq 1 && -n "$_ep_new" ]] \
+       && _aip_has_v4 "$current_allowed_ips"; then
+        local _aip_pre
+        _aip_pre=$(_aip_carve_endpoints "$current_allowed_ips" "$_ep_new") || {
+            log_error "Failed to exclude the server address from AllowedIPs of client '$name' - config unchanged."
+            exec {lock_fd}>&-
+            unset CLIENT_PSK
+            return 1
+        }
+        if ! _aip_has_v4 "$_aip_pre"; then
+            log_error "Client '$name': of the IPv4 routes only the server's own address ($_ep_new) goes into the tunnel, and it must not go there. Config unchanged. Give the client routes (modify '$name' AllowedIPs) or run regen --reset-routes '$name'."
+            exec {lock_fd}>&-
+            unset CLIENT_PSK
+            return 1
+        fi
+    fi
     _awg31_set_snapshot "$name" || { exec {lock_fd}>&-; unset CLIENT_PSK; return 1; }
     render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" "$_keep_dns" || {
         _awg31_set_restore_noted "$name"
@@ -5916,8 +5958,8 @@ regenerate_client() {
                 unset CLIENT_PSK
                 return 1
             }
-            if [[ -z "$(_aip_tokens "$_aip_new")" ]]; then
-                log_error "Client '$name': AllowedIPs routes only the server's own address ($_ep_new) into the tunnel - without it no routes are left. Give the client routes (modify '$name' AllowedIPs) or run regen --reset-routes '$name'."
+            if _aip_has_v4 "$current_allowed_ips" && ! _aip_has_v4 "$_aip_new"; then
+                log_error "Client '$name': of the IPv4 routes only the server's own address ($_ep_new) goes into the tunnel. The config was already regenerated from the current routing mode, but the custom settings were NOT restored - check $AWG_DIR/${name}.conf."
                 _awg31_set_restore_noted "$name"
                 exec {lock_fd}>&-
                 unset CLIENT_PSK

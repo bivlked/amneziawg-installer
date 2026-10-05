@@ -13,6 +13,9 @@
 
 load test_helper
 
+# A bare `! cmd` does not fail a bats test (errexit ignores it): every negation
+# below carries `|| return 1`.
+
 mode2_list() {
     sed -n 's/^[[:space:]]*ALLOWED_IPS="\(1\.0\.0\.0\/8,.*\)"$/\1/p' \
         "${BATS_TEST_DIRNAME}/../install_amneziawg.sh" | head -1
@@ -50,7 +53,7 @@ EP=150.241.230.21
 @test "carve: the route holding the endpoint becomes its complement, one address smaller" {
     out=$(_aip_carve_endpoints "128.0.0.0/3" "$EP")
     [ "$(_aip_tokens "$out" | wc -l)" -eq 29 ]
-    ! covers "$out" "$EP"
+    ! covers "$out" "$EP" || return 1
     [ "$(size "$out")" -eq $(( (1 << 29) - 1 )) ]
     covers "$out" 150.241.230.20
     covers "$out" 150.241.230.22
@@ -62,21 +65,21 @@ EP=150.241.230.21
     out=$(_aip_carve_endpoints "1.0.0.0/8, 128.0.0.0/3, 8.8.8.8/32" "$EP")
     [[ "$out" == "1.0.0.0/8, "* ]]
     [[ "$out" == *", 8.8.8.8/32" ]]
-    ! covers "$out" "$EP"
+    ! covers "$out" "$EP" || return 1
 }
 
 @test "carve: every route holding the endpoint is cut, a duplicate /32 included" {
     out=$(_aip_carve_endpoints "128.0.0.0/3, 150.241.230.0/24, $EP/32, $EP" "$EP")
-    ! covers "$out" "$EP"
-    ! _aip_has_token "$out" "$EP/32"
-    ! _aip_has_token "$out" "$EP"
+    ! covers "$out" "$EP" || return 1
+    ! _aip_has_token "$out" "$EP/32" || return 1
+    ! _aip_has_token "$out" "$EP" || return 1
 }
 
 @test "carve: 0.0.0.0/0 is left alone, a narrower route next to it is still cut" {
     out=$(_aip_carve_endpoints "0.0.0.0/0, 150.241.0.0/16, ::/0" "$EP")
     _aip_has_token "$out" "0.0.0.0/0"
     _aip_has_token "$out" "::/0"
-    ! _aip_has_token "$out" "150.241.0.0/16"
+    ! _aip_has_token "$out" "150.241.0.0/16" || return 1
     run _aip_carve_endpoints "0.0.0.0/0, ::/0" "$EP"
     [ "$output" = "0.0.0.0/0, ::/0" ]
 }
@@ -105,7 +108,7 @@ EP=150.241.230.21
 
 @test "carve: a non-canonical route is cut by its real bounds" {
     out=$(_aip_carve_endpoints "150.241.230.77/24" "$EP")
-    ! covers "$out" "$EP"
+    ! covers "$out" "$EP" || return 1
     [ "$(size "$out")" -eq 255 ]
 }
 
@@ -128,19 +131,19 @@ EP=150.241.230.21
 
 @test "full tunnel: the mode-2 list with the endpoint cut is full only when the endpoint is named" {
     cut=$(_aip_carve_endpoints "$(mode2_list)" "$EP")
-    ! _is_full_tunnel "$cut"
+    ! _is_full_tunnel "$cut" || return 1
     _AWG_CARVE_EPS="$EP" _is_full_tunnel "$cut"
 }
 
 @test "full tunnel: naming the endpoint does not excuse any other hole" {
     cut=$(_aip_carve_endpoints "$(mode2_list)" "$EP" 150.241.230.99)
-    ! _AWG_CARVE_EPS="$EP" _is_full_tunnel "$cut"
+    ! _AWG_CARVE_EPS="$EP" _is_full_tunnel "$cut" || return 1
     _AWG_CARVE_EPS="$EP 150.241.230.99" _is_full_tunnel "$cut"
 }
 
 @test "same set: a cut client list equals the server list once both are cut by the same endpoint" {
     cut=$(_aip_carve_endpoints "$(mode2_list)" "$EP")
-    ! _aip_same_set "$cut" "$(mode2_list)"
+    ! _aip_same_set "$cut" "$(mode2_list)" || return 1
     _AWG_CARVE_EPS="$EP" _aip_same_set "$cut" "$(mode2_list)"
 }
 
@@ -161,7 +164,7 @@ aips_of() { sed -n 's/^AllowedIPs = //p' "$AWG_DIR/$1.conf"; }
     setup_list "$(mode2_list)" 2
     render_client_config c2 10.9.9.2 FAKEPRIV FAKEPUB "$EP" 39743
     a=$(aips_of c2)
-    ! covers "$a" "$EP"
+    ! covers "$a" "$EP" || return 1
     [[ "$a" == *", 2000::/3" ]]
     grep -q "^Endpoint = $EP:39743$" "$AWG_DIR/c2.conf"
 }
@@ -170,7 +173,7 @@ aips_of() { sed -n 's/^AllowedIPs = //p' "$AWG_DIR/$1.conf"; }
     setup_list "150.241.0.0/16, 10.0.0.0/8" 3
     render_client_config c3 10.9.9.3 FAKEPRIV FAKEPUB "$EP" 39743
     a=$(aips_of c3)
-    ! covers "$a" "$EP"
+    ! covers "$a" "$EP" || return 1
     covers "$a" 150.241.0.1
     _aip_has_token "$a" "10.0.0.0/8"
 }
@@ -192,6 +195,37 @@ aips_of() { sed -n 's/^AllowedIPs = //p' "$AWG_DIR/$1.conf"; }
     run render_client_config ce 10.9.9.6 FAKEPRIV FAKEPUB "$EP" 39743
     [ "$status" -ne 0 ]
     [ ! -e "$AWG_DIR/ce.conf" ]
+}
+
+@test "render: mode 2 with a cut endpoint keeps the IPv6 sink address next to 2000::/3" {
+    setup_list "$(mode2_list)" 2
+    render_client_config cs 10.9.9.7 FAKEPRIV FAKEPUB "$EP" 39743
+    grep -q "^Address = 10.9.9.7/32, fddd:2c4:2c4:ffff::" "$AWG_DIR/cs.conf" || { cat "$AWG_DIR/cs.conf"; return 1; }
+}
+
+@test "render: a dual-stack list of the server address alone is refused, not written IPv6-only" {
+    setup_list "$EP/32" 3
+    cat >> "$CONFIG_FILE" << 'CONF'
+export ALLOW_IPV6_TUNNEL=1
+export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
+CONF
+    safe_load_config "$CONFIG_FILE"
+    run render_client_config cd 10.9.9.8 FAKEPRIV FAKEPUB "$EP" 39743 fddd:2c4:2c4:2c4::8
+    [ "$status" -ne 0 ]
+    [ ! -e "$AWG_DIR/cd.conf" ]
+}
+
+@test "render: a name as the endpoint with a route list warns once that Linux needs a manual route" {
+    setup_list "$(mode2_list)" 2
+    WL="$TEST_DIR/w.log"; : > "$WL"
+    log_warn() { echo "WARN: $*" >> "$WL"; }
+    render_client_config cw 10.9.9.9 FAKEPRIV FAKEPUB vpn.example.com 39743
+    [ "$(grep -c 'WARN:.*Endpoint' "$WL")" -eq 1 ] || { cat "$WL"; return 1; }
+    : > "$WL"
+    setup_list "0.0.0.0/0" 1
+    log_warn() { echo "WARN: $*" >> "$WL"; }
+    render_client_config cw1 10.9.9.10 FAKEPRIV FAKEPUB vpn.example.com 39743
+    ! grep -q 'WARN:.*Endpoint' "$WL" || { echo "mode 1 warned"; cat "$WL"; return 1; }
 }
 
 # --- regen: clients issued before the fix are cured, the server-list rules keep working ---
@@ -237,7 +271,7 @@ EOF
     run regenerate_client old
     [ "$status" -eq 0 ] || { echo "$output"; cat "$WARN_LOG"; return 1; }
     a=$(aips_of old)
-    ! covers "$a" "$EP"
+    ! covers "$a" "$EP" || return 1
     [[ "$a" == *", 2000::/3" ]]
     ! grep -q 'WARN' "$WARN_LOG" || { cat "$WARN_LOG"; return 1; }
     # twice is idempotent
@@ -252,9 +286,9 @@ EOF
     run regenerate_client leg
     [ "$status" -eq 0 ] || { echo "$output"; cat "$WARN_LOG"; return 1; }
     a=$(aips_of leg)
-    ! _aip_has_token "$a" "::/0"
+    ! _aip_has_token "$a" "::/0" || return 1
     _aip_has_token "$a" "2000::/3"
-    ! covers "$a" "$EP"
+    ! covers "$a" "$EP" || return 1
     ! grep -q 'WARN' "$WARN_LOG" || { cat "$WARN_LOG"; return 1; }
 }
 
@@ -265,8 +299,8 @@ EOF
     run regenerate_client dir
     [ "$status" -eq 0 ] || { echo "$output"; cat "$WARN_LOG"; return 1; }
     a=$(aips_of dir)
-    ! _aip_has_token "$a" "2000::/3"
-    ! covers "$a" "$EP"
+    ! _aip_has_token "$a" "2000::/3" || return 1
+    ! covers "$a" "$EP" || return 1
     ! grep -q 'WARN' "$WARN_LOG" || { cat "$WARN_LOG"; return 1; }
 }
 
@@ -277,10 +311,11 @@ EOF
     run regenerate_client mv
     [ "$status" -eq 0 ] || { echo "$output"; cat "$WARN_LOG"; return 1; }
     a=$(aips_of mv)
-    ! covers "$a" "$EP"
-    ! covers "$a" 64.1.2.3
+    ! covers "$a" "$EP" || return 1
+    ! covers "$a" 64.1.2.3 || return 1
     _aip_has_token "$a" "2000::/3"
-    ! _aip_has_token "$a" "::/0"
+    ! _aip_has_token "$a" "::/0" || return 1
+    covers "$a" 64.1.2.2 && covers "$a" 64.1.2.4 || { echo "the new hole is wider than one address: $a"; return 1; }
     grep -q '^Endpoint = 64.1.2.3:39743$' "$AWG_DIR/mv.conf"
     ! grep -q 'WARN' "$WARN_LOG" || { cat "$WARN_LOG"; return 1; }
 }
@@ -288,9 +323,31 @@ EOF
 @test "regen: a hand-made list of the server address alone is refused, with a way out" {
     require_flock
     setup_regen_ep only 10.9.9.14 "$EP/32" "$EP" "$EP"
+    before=$(cksum < "$AWG_DIR/only.conf")
     run regenerate_client only
     [ "$status" -ne 0 ]
     grep -q "ERR: .*$EP" "$WARN_LOG" || { cat "$WARN_LOG"; return 1; }
+    # refused BEFORE the rewrite: the client config is exactly as it was
+    [ "$(cksum < "$AWG_DIR/only.conf")" = "$before" ] || { echo "config changed by a refused regen"; cat "$AWG_DIR/only.conf"; return 1; }
+}
+
+@test "regen: the server address alone next to an IPv6 route is refused too, config untouched" {
+    require_flock
+    setup_regen_ep only6 10.9.9.16 "$EP/32, 2000::/3" "$EP" "$EP"
+    before=$(cksum < "$AWG_DIR/only6.conf")
+    run regenerate_client only6
+    [ "$status" -ne 0 ]
+    [ "$(cksum < "$AWG_DIR/only6.conf")" = "$before" ] || { echo "config changed by a refused regen"; return 1; }
+}
+
+@test "regen --reset-routes: a list of the server address alone is replaced by the server list, not refused" {
+    require_flock
+    setup_regen_ep rst 10.9.9.17 "$EP/32" "$EP" "$EP"
+    AWG_REGEN_RESET_ROUTES=1 run regenerate_client rst
+    [ "$status" -eq 0 ] || { echo "$output"; cat "$WARN_LOG"; return 1; }
+    a=$(aips_of rst)
+    ! covers "$a" "$EP" || return 1
+    _aip_has_token "$a" "2000::/3"
 }
 
 @test "regen: a split client whose routes do not hold the server address keeps its list" {

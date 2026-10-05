@@ -462,11 +462,15 @@ _aip_endpoint_v4() {
 # решение за вызывающим.
 _aip_carve_endpoints() {
     local list="$1"; shift
-    local ep e tok t b lo hi p k net out
+    local ep e tok t a p o1 o2 o3 o4 ip mask lo hi k net out
     local -a toks=()
+    # Границы маршрута считаются арифметикой в этой же оболочке: подстановка
+    # команды на каждый маршрут сделала бы список в тысячи сетей многоминутным
+    # (тот же довод, что у предела в _is_full_tunnel).
     for ep in "$@"; do
         _valid_ipv4 "$ep" || continue
-        e=$(_ipv4_to_int "$ep") || return 1
+        IFS=. read -r o1 o2 o3 o4 <<< "$ep"
+        e=$(( (10#$o1 << 24) | (10#$o2 << 16) | (10#$o3 << 8) | 10#$o4 ))
         mapfile -t toks < <(_aip_tokens "$list")
         out=""
         for tok in "${toks[@]}"; do
@@ -476,19 +480,23 @@ _aip_carve_endpoints() {
             fi
             t="$tok"
             [[ "$t" == */* ]] || t="${t}/32"
-            b=$(_cidr_bounds "$t") || {
+            a="${t%/*}"; p="${t##*/}"
+            if [[ ! "$p" =~ ^[0-9]{1,2}$ ]] || (( 10#$p > 32 )) || ! _valid_ipv4 "$a"; then
                 log_warn "AllowedIPs: маршрут '$tok' не разобран - адрес сервера из списка не исключён."
                 return 1
-            }
-            lo="${b%% *}"; hi="${b##* }"
+            fi
+            p=$(( 10#$p ))
+            IFS=. read -r o1 o2 o3 o4 <<< "$a"
+            ip=$(( (10#$o1 << 24) | (10#$o2 << 16) | (10#$o3 << 8) | 10#$o4 ))
+            if (( p == 0 )); then mask=0; else mask=$(( (0xFFFFFFFF << (32 - p)) & 0xFFFFFFFF )); fi
+            lo=$(( ip & mask )); hi=$(( lo | (0xFFFFFFFF ^ mask) ))
             if (( e < lo || e > hi )); then
                 out+="${out:+, }${tok}"
                 continue
             fi
-            p=$(( 10#${t##*/} ))
             for (( k = p + 1; k <= 32; k++ )); do
                 net=$(( ((e >> (32 - k)) ^ 1) << (32 - k) ))
-                out+="${out:+, }$(_int_to_ipv4 "$net")/${k}"
+                out+="${out:+, }$(( (net >> 24) & 255 )).$(( (net >> 16) & 255 )).$(( (net >> 8) & 255 )).$(( net & 255 ))/${k}"
             done
         done
         list="$out"
@@ -506,7 +514,19 @@ _aip_v4_norm() {
         l=$(_aip_carve_endpoints "$l" ${_AWG_CARVE_EPS}) || return 1
     fi
     t=$(_aip_tokens "$l") || return 1
-    { grep -vF ':' <<< "$t" || true; } | LC_ALL=C sort -u
+    local v4 rc
+    v4=$(grep -vF ':' <<< "$t"); rc=$?
+    (( rc > 1 )) && return 1
+    [[ -n "$v4" ]] || return 0
+    LC_ALL=C sort -u <<< "$v4"
+}
+
+# _aip_has_v4 <список> : есть ли в списке хоть один IPv4-маршрут.
+_aip_has_v4() {
+    local t
+    t=$(_aip_tokens "$1") || return 1
+    [[ -n "$t" ]] || return 1
+    grep -qvF ':' <<< "$t"
 }
 
 # _aip_wants_v6_sink <список> : нужен ли клиенту адрес стока - в списке есть
@@ -3417,11 +3437,13 @@ render_client_config() {
             log_error "Не удалось исключить адрес сервера из AllowedIPs - клиентский конфиг не создан."
             return 1
         }
-        if [[ -z "$(_aip_tokens "$_aip_cut")" ]]; then
-            log_error "Клиент '$name': AllowedIPs ведёт в туннель только адрес самого сервера ($_AWG_CARVE_EPS), а его в туннель вести нельзя - маршрутов не остаётся, конфиг не создан."
+        if _aip_has_v4 "$allowed_ips" && ! _aip_has_v4 "$_aip_cut"; then
+            log_error "Клиент '$name': из IPv4-маршрутов AllowedIPs в туннель ведёт только адрес самого сервера ($_AWG_CARVE_EPS), а его в туннель вести нельзя - IPv4-маршрутов не остаётся, конфиг не создан."
             return 1
         fi
         allowed_ips="$_aip_cut"
+    elif _aip_has_v4 "$allowed_ips" && ! _aip_has_token "$allowed_ips" "0.0.0.0/0"; then
+        log_warn "Клиент '$name': Endpoint '$endpoint' - не IPv4-адрес, поэтому адрес сервера из AllowedIPs не исключён. Клиенту на Linux (awg-quick) нужен ручной маршрут до сервера, см. ADVANCED, раздел про раздельный список маршрутов."
     fi
 
     # Индивидуальный список с явным IPv6 без ::/0 при полном туннеле: regen о
@@ -5708,6 +5730,25 @@ regenerate_client() {
     [[ "$_had_conf" -eq 1 && -n "$current_dns" ]] && _keep_dns="$current_dns"
     # На 3.1 копия комплекта снимается под той же блокировкой, под которой
     # переписывается .conf, и возвращается на любом отказе ниже.
+    # Список, где из IPv4 остаётся только адрес сервера, отвергается ДО перезаписи
+    # конфига: после render файл уже переписан из режима сервера, а на 2.0 его
+    # некуда вернуть. Проверка нужна только там, где список будет восстановлен.
+    if [[ "${AWG_REGEN_RESET_ROUTES:-0}" != "1" && "$_had_conf" -eq 1 && -n "$_ep_new" ]] \
+       && _aip_has_v4 "$current_allowed_ips"; then
+        local _aip_pre
+        _aip_pre=$(_aip_carve_endpoints "$current_allowed_ips" "$_ep_new") || {
+            log_error "Не удалось исключить адрес сервера из AllowedIPs клиента '$name' - конфиг не изменён."
+            exec {lock_fd}>&-
+            unset CLIENT_PSK
+            return 1
+        }
+        if ! _aip_has_v4 "$_aip_pre"; then
+            log_error "Клиент '$name': из IPv4-маршрутов в туннель ведёт только адрес самого сервера ($_ep_new), а его туда вести нельзя. Конфиг не изменён. Задайте клиенту маршруты (modify '$name' AllowedIPs) или выполните regen --reset-routes '$name'."
+            exec {lock_fd}>&-
+            unset CLIENT_PSK
+            return 1
+        fi
+    fi
     _awg31_set_snapshot "$name" || { exec {lock_fd}>&-; unset CLIENT_PSK; return 1; }
     render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" "$_keep_dns" || {
         _awg31_set_restore_noted "$name"
@@ -5820,8 +5861,8 @@ regenerate_client() {
                 unset CLIENT_PSK
                 return 1
             }
-            if [[ -z "$(_aip_tokens "$_aip_new")" ]]; then
-                log_error "Клиент '$name': AllowedIPs ведёт в туннель только адрес самого сервера ($_ep_new) - без него маршрутов не остаётся. Задайте клиенту маршруты (modify '$name' AllowedIPs) или выполните regen --reset-routes '$name'."
+            if _aip_has_v4 "$current_allowed_ips" && ! _aip_has_v4 "$_aip_new"; then
+                log_error "Клиент '$name': из IPv4-маршрутов в туннель ведёт только адрес самого сервера ($_ep_new). Конфиг уже перегенерирован из текущего режима маршрутизации, но индивидуальные настройки НЕ восстановлены - проверьте $AWG_DIR/${name}.conf."
                 _awg31_set_restore_noted "$name"
                 exec {lock_fd}>&-
                 unset CLIENT_PSK
