@@ -486,8 +486,10 @@ _s3() {
     # (verdict stale, code 2) keeps its own refusal, even on tools_old.
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
         AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="tools_old" PROBE_RC=2 _s3 "$s"
-        [ "$status" -eq 1 ] || { echo "$s: stale did not stop: $output"; return 1; }
+        [ "$status" -eq 1 ] && [[ "$output" == *"DIE:"*"awgp"* ]] || { echo "$s: not the stale refusal: $output"; return 1; }
         [[ "$output" != *"--only-upgrade amneziawg-tools"* ]] || { echo "$s: stale swallowed by the tools advice: $output"; return 1; }
+        ! grep -q '^SAVE' "$EVLOG" || { echo "$s: written despite the stale probe"; return 1; }
+        ! grep -qx 4 "$STATE_LOG" || { echo "$s: state advanced"; return 1; }
     done
 }
 
