@@ -88,22 +88,22 @@ conf_of() { echo "$BATS_TEST_TMPDIR/k-$(basename "$1" .sh)/c1.conf"; }
 # parsers do with a well-formed but wrong value is the device gate's business.
 strict_ok() {
     local f="$1" line sec="" key low val tok seen_i=0 seen_p=0
-    local -A seen=()
+    local -A keyseen=()
     [ -s "$f" ] || { echo "no client config: $f"; return 1; }
     while IFS= read -r line || [[ -n "$line" ]]; do
         line="${line%$'\r'}"
         [[ -z "$line" ]] && continue
         case "$line" in
             '[Interface]') (( seen_i == 0 )) || { echo "a second [Interface]"; return 1; }
-                           sec=i; seen_i=1; seen=(); continue ;;
-            '[Peer]')      sec=p; seen_p=1; seen=(); continue ;;
+                           sec=i; seen_i=1; keyseen=(); continue ;;
+            '[Peer]')      sec=p; seen_p=1; keyseen=(); continue ;;
         esac
         [[ "$line" =~ ^([A-Za-z0-9]+)\ =\ (.*[^[:space:]].*)$ ]] || { echo "not a key line: '$line'"; return 1; }
         key="${BASH_REMATCH[1]}"; low="${key,,}"; val="${BASH_REMATCH[2]}"
         case "$low" in
             address|allowedips|dns) : ;;
-            *) [[ -z "${seen[$low]:-}" ]] || { echo "a key repeated in its section: '$line'"; return 1; }
-               seen[$low]=1 ;;
+            *) [[ -z "${keyseen[$low]:-}" ]] || { echo "a key repeated in its section: '$line'"; return 1; }
+               keyseen[$low]=1 ;;
         esac
         case "$low" in
             privatekey|publickey|presharedkey|headerprotectionkey)
