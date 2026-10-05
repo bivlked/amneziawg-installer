@@ -8420,9 +8420,10 @@ step6_generate_configs() {
         local s_bak
         s_bak="${SERVER_CONF_FILE}.bak-$(date +%F_%H%M%S)"
         if ! cp "$SERVER_CONF_FILE" "$s_bak"; then
-            # On 3.1 the undo restores the config from this backup: no backup, no rewrite.
-            (( gen31 )) && die "Backup error $s_bak: on a 3.1 install the server config is not rewritten without a backup."
-            log_warn "Backup error $s_bak"
+            # No backup, no rewrite, on either generation: the render carries the peers
+            # over from this backup, so a rewrite would leave the live config without
+            # clients, and on 3.1 the undo would have nothing to go back to.
+            die "Backup error $s_bak: the server config is not rewritten without a backup, or the clients would lose access. Check disk space and permissions, then run the installer again."
         fi
         log "Server config backup: $s_bak"
     fi

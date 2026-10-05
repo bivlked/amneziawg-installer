@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Step 6 no longer rewrites the server config when its backup fails, on 2.0 too.** The peers are carried into the new config from that backup, so on 2.0 a failed copy (no space, permissions) used to print a warning, then a line saying the backup was made, and rewrite the live `awg0.conf` without a single client. Now the install stops before the rewrite on either generation and says what to check.
+
 ## [5.37.1] - 2026-10-04
 
 **v5.37.1** - the AmneziaWG module builds on 7.0.0-38 kernels, `--jc=0`, direct device IPv6 and backup checks before the service stops.

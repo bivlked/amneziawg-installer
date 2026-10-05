@@ -264,6 +264,22 @@ t_31_backup_failure() {
     both t_31_backup_failure
 }
 
+# The same failure on 2.0: it used to print the backup as made and
+# render the live config from a backup that does not exist, dropping every peer.
+t_20_backup_failure() {
+    local src="$1" out calls d
+    out=$(STUB_GEN=2.0 STUB_FAIL_CP=1 step6_run "$src" "$S6_EXISTING")
+    d=$(s6_dir "$src")
+    [[ "$out" == *"DIE:"* ]] || { echo "a failed backup did not stop a 2.0 rerun ($src): $out"; return 1; }
+    calls=$(s6_calls "$src")
+    [[ "$calls" != *render* ]] || { echo "the 2.0 config was rewritten without a backup ($src): $calls"; return 1; }
+    cmp -s "$d/awg0.conf" "$d/awg0.conf.orig" || { echo "the 2.0 server config changed ($src): $(cat "$d/awg0.conf")"; return 1; }
+    grep -q '^\[Peer\]' "$d/awg0.conf" || { echo "the peers are gone ($src)"; return 1; }
+}
+@test "step 6 on 2.0: without a backup of the server config nothing is rewritten, both twins" {
+    both t_20_backup_failure
+}
+
 t_31_checks_before_server_keys() {
     local src="$1" out calls var
     for var in STUB_FAIL_TOOLS STUB_FAIL_LEFT; do
