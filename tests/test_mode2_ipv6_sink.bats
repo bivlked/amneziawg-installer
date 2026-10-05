@@ -381,7 +381,7 @@ regen_reset() {
     local lib="$1" list out
     list=$(mode2_list)
     out=$(regen_run "$lib" "$list" "10.0.0.0/8" "10.9.9.20/32" 'export AWG_REGEN_RESET_ROUTES=1')
-    [[ "$out" == *"RC=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
+    [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = $list, 2000::/3" ] || { echo "routes ($lib)"; return 1; }
     [ "$(conf_line "$lib" Address r1)" = "Address = 10.9.9.20/32, ${SINK_PREFIX}::a09:914/128" ] || { echo "address ($lib)"; return 1; }
     # the server list it hands out, with a name as the endpoint: render warns, once per regen
@@ -439,7 +439,7 @@ regen_keep_advice() {
     [[ "$out" == *"RC=0"* && "$out" == *"WARN:"*"2000::/3"* && "$out" != *"reset-routes"* ]] || { echo "server list with ::/0: wrong hint ($lib): $out"; return 1; }
     # a split list with ::/0 is not a full tunnel: nothing to warn about
     out=$(regen_run "$lib" "$list" "10.0.0.0/8, ::/0" "10.9.9.20/32")
-    [[ "$out" == *"RC=0"* && "$(no_ep_warn "$out")" != *"WARN:"* ]] || { echo "false warning on a split list ($lib): $out"; return 1; }
+    [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* && "$(no_ep_warn "$out")" != *"WARN:"* ]] || { echo "false warning on a split list ($lib): $out"; return 1; }
     [ "$(ep_warn_n "$out")" -eq 2 ] || { echo "Endpoint warning count on a split list ($lib): $out"; return 1; }
 }
 @test "regen: the hint for a kept ::/0 fits the server's routing mode, both twins" {
@@ -482,6 +482,41 @@ regen_ep_name_lost() {
     [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
     [ "$(ep_warn_n "$out")" -eq 2 ] || { echo "Endpoint warning count ($lib): $out"; return 1; }
 }
+# add hands out the render list as is, so it warns through render, and a regen
+# flag inherited from the environment must not mute that.
+add_ep_name_env_flag() {
+    local lib="$1" out
+    out=$(lr "$lib" "$(mode2_list)" '
+        awg() { case "$1" in
+            genkey|genpsk) echo "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;
+            pubkey) cat >/dev/null; echo "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=" ;;
+            *) return 0 ;; esac; }
+        generate_qr() { return 0; }; generate_vpn_uri() { return 0; }; generate_qr_vpnuri() { return 0; }
+        export _AWG_EP_WARN_LATER=1
+        generate_client a1 vpn.example.com; echo "RC=$?"')
+    [[ "$out" == *"RC=0"* ]] || { echo "add failed ($lib): $out"; return 1; }
+    [ "$(ep_warn_n "$out")" -eq 1 ] || { echo "Endpoint warning count on add ($lib): $out"; return 1; }
+    # an own list with 0.0.0.0/0 anywhere in it, or with no IPv4 at all: nothing to warn about
+    local own
+    for own in "10.0.0.0/8, 0.0.0.0/0" "::/0"; do
+        out=$(lr "$lib" "$(mode2_list)" '
+            awg() { case "$1" in
+                genkey|genpsk) echo "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;
+                pubkey) cat >/dev/null; echo "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=" ;;
+                *) return 0 ;; esac; }
+            generate_qr() { return 0; }; generate_vpn_uri() { return 0; }; generate_qr_vpnuri() { return 0; }
+            export CLIENT_ALLOWED_IPS="'"$own"'"
+            generate_client a2 vpn.example.com; echo "RC=$?"
+            sed -n "s/^AllowedIPs = /AIPS=/p" "$AWG_DIR/a2.conf"')
+        [[ "$out" == *"RC=0"* && "$out" == *"AIPS=$own"* ]] || { echo "add with an own list failed ($lib, $own): $out"; return 1; }
+        [ "$(ep_warn_n "$out")" -eq 0 ] || { echo "warned on an own list ($lib, $own): $out"; return 1; }
+    done
+}
+@test "add: a name as the endpoint warns even with the regen flag in the environment, both twins" {
+    require_flock
+    both add_ep_name_env_flag
+}
+
 @test "regen: a lost config rebuilt with a name as the endpoint warns on the server list, both twins" {
     require_flock
     both regen_ep_name_lost
