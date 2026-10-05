@@ -475,9 +475,19 @@ _s3() {
         ! grep -q '^SAVE' "$EVLOG" || { echo "$s: written despite the failed probe"; return 1; }
     done
     # Any other code keeps the module advice.
+    local code
     for s in "$INSTALL_RU" "$INSTALL_EN"; do
-        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="module_probe_failed" PROBE_RC=1 _s3 "$s"
-        [[ "$output" == *"dkms status"* ]] || { echo "$s: module advice lost: $output"; return 1; }
+        for code in module_probe_failed module_line2 kernel; do
+            AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="$code" PROBE_RC=1 _s3 "$s"
+            [[ "$output" == *"dkms status"* ]] || { echo "$s/$code: module advice lost: $output"; return 1; }
+        done
+    done
+    # A probe that could not run because a record of an earlier probe is left
+    # (verdict stale, code 2) keeps its own refusal, even on tools_old.
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_INSTALL_STATE_AT_START=0 BLOCKER_CODE="tools_old" PROBE_RC=2 _s3 "$s"
+        [ "$status" -eq 1 ] || { echo "$s: stale did not stop: $output"; return 1; }
+        [[ "$output" != *"--only-upgrade amneziawg-tools"* ]] || { echo "$s: stale swallowed by the tools advice: $output"; return 1; }
     done
 }
 
