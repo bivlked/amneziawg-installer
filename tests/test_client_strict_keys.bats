@@ -26,11 +26,15 @@ IFACE_KEYS=" $(echo $IFACE_KEYS) "
 PEER_KEYS=" publickey presharedkey allowedips endpoint persistentkeepalive "
 
 KEY_OK="QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQA="
+# Keys of the right form (32 bytes of base64): the strict clients check that too.
+KEY_PRIV="cccccccccccccccccccccccccccccccccccccccccc4="
+KEY_PUB="ssssssssssssssssssssssssssssssssssssssssssk="
+KEY_PSK="pppppppppppppppppppppppppppppppppppppppppp8="
 
-# lib_run <lib> <generation> <extra init lines> <client IPv6 or empty>
+# lib_run <lib> <generation> <extra init lines> <client IPv6 or empty> [preshared key]
 # renders the server and client c1 of that install; prints RC= and the client path
 lib_run() {
-    local lib="$1" gen="$2" extra="$3" c6="${4:-}" d cpa=""
+    local lib="$1" gen="$2" extra="$3" c6="${4:-}" psk="${5:-}" d cpa=""
     d="$BATS_TEST_TMPDIR/k-$(basename "$lib" .sh)"
     [[ "$gen" == "3.1" ]] && cpa="32-128"
     rm -rf "$d"; mkdir -p "$d/keys"
@@ -50,7 +54,7 @@ lib_run() {
         [[ -n "$extra" ]] && printf '%s\n' "$extra"
     } > "$d/awgsetup_cfg.init"
     printf 'SRVPRIVKEYPLACEHOLDER\n' > "$d/server_private.key"
-    printf 'SRVPUBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n' > "$d/server_public.key"
+    printf '%s\n' "$KEY_PUB" > "$d/server_public.key"
     [[ "$gen" == "3.1" ]] && printf '%s\n' "$KEY_OK" > "$d/server_hpk.key"
     AWG_DIR="$d" timeout 60 bash -c '
         export CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init" SERVER_CONF_FILE="$AWG_DIR/awg0.conf"
@@ -60,29 +64,41 @@ lib_run() {
         safe_load_config "$CONFIG_FILE" >/dev/null 2>&1
         get_main_nic() { echo eth0; }
         render_server_config || { echo "RC=90"; exit 0; }
-        render_client_config c1 10.9.9.2 CLIENTPRIVKEYPLACEHOLDER SRVPUBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
-            203.0.113.10 39743 "$2" || { echo "RC=91"; exit 0; }
+        if [[ -n "$5" ]]; then export CLIENT_PSK="$5"; else unset CLIENT_PSK; fi
+        render_client_config c1 10.9.9.2 "$3" "$4" 203.0.113.10 39743 "$2" || { echo "RC=91"; exit 0; }
         echo "RC=0"
-    ' _ "$BATS_TEST_DIRNAME/../$lib" "$c6"
+    ' _ "$BATS_TEST_DIRNAME/../$lib" "$c6" "$KEY_PRIV" "$KEY_PUB" "$psk"
 }
 
 conf_of() { echo "$BATS_TEST_TMPDIR/k-$(basename "$1" .sh)/c1.conf"; }
 
 # strict_ok <client conf> : every content line is `Key = value` with a value,
-# in a known section, with a key the strict parsers accept; prints the first
-# offending line and fails otherwise. The file must have both sections.
+# in a known section, with a key the strict parsers accept and a value of the
+# form they accept (keys: 32 bytes of base64; MTU, Jc..S4: a number; H1-H4: a
+# number or a range); one [Interface], at least one [Peer]. Prints the first
+# offending line and fails otherwise. Values are checked for FORM only: what the
+# parsers do with a well-formed but wrong value is the device gate's business.
 strict_ok() {
-    local f="$1" line sec="" key low seen_i=0 seen_p=0
+    local f="$1" line sec="" key low val seen_i=0 seen_p=0
     [ -s "$f" ] || { echo "no client config: $f"; return 1; }
     while IFS= read -r line || [[ -n "$line" ]]; do
         line="${line%$'\r'}"
         [[ -z "$line" ]] && continue
         case "$line" in
-            '[Interface]') sec=i; seen_i=1; continue ;;
+            '[Interface]') (( seen_i == 0 )) || { echo "a second [Interface]"; return 1; }
+                           sec=i; seen_i=1; continue ;;
             '[Peer]')      sec=p; seen_p=1; continue ;;
         esac
         [[ "$line" =~ ^([A-Za-z0-9]+)\ =\ (.*[^[:space:]].*)$ ]] || { echo "not a key line: '$line'"; return 1; }
-        key="${BASH_REMATCH[1]}"; low="${key,,}"
+        key="${BASH_REMATCH[1]}"; low="${key,,}"; val="${BASH_REMATCH[2]}"
+        case "$low" in
+            privatekey|publickey|presharedkey|headerprotectionkey)
+                [[ "$val" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]] || { echo "not a key value: '$line'"; return 1; } ;;
+            mtu|jc|jmin|jmax|s1|s2|s3|s4|persistentkeepalive)
+                [[ "$val" =~ ^[0-9]+$ ]] || { echo "not a number: '$line'"; return 1; } ;;
+            h1|h2|h3|h4)
+                [[ "$val" =~ ^[0-9]+(-[0-9]+)?$ ]] || { echo "not a number or range: '$line'"; return 1; } ;;
+        esac
         case "$sec" in
             i) [[ "$IFACE_KEYS" == *" $low "* ]] || { echo "[Interface] key the strict clients reject: '$line'"; return 1; } ;;
             p) [[ "$PEER_KEYS" == *" $low "* ]] || { echo "[Peer] key the strict clients reject: '$line'"; return 1; } ;;
@@ -101,24 +117,29 @@ both() {
     [ "$seen" -eq 2 ]
 }
 
-# check <lib> <generation> <extra init> <client IPv6 or empty> <must> [<must not>]
-# render, prove the variant took effect (a line matching <must>, none matching
-# <must not>), then strict_ok
+# check <lib> <generation> <extra init> <client IPv6 or empty> <musts> [<must not>] [<psk>]
+# render, prove the variant took effect (a line for every pattern in <musts>,
+# separated by ';;', and none matching <must not>), then strict_ok
 check() {
-    local out f
-    out=$(lib_run "$1" "$2" "$3" "$4")
+    local out f m
+    local -a musts
+    out=$(lib_run "$1" "$2" "$3" "$4" "${7:-}")
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($1, $2, $3): $out"; return 1; }
     f=$(conf_of "$1")
-    grep -qE "$5" "$f" || { echo "variant did not take effect, no /$5/ ($1, $2, $3)"; cat "$f"; return 1; }
+    IFS=$'\n' read -r -d '' -a musts < <(printf '%s' "${5//;;/$'\n'}"; printf '\0') || true
+    [ "${#musts[@]}" -gt 0 ] || { echo "no must pattern given"; return 1; }
+    for m in "${musts[@]}"; do
+        grep -qE "$m" "$f" || { echo "variant did not take effect, no /$m/ ($1, $2, $3)"; cat "$f"; return 1; }
+    done
     if [[ -n "${6:-}" ]]; then
         ! grep -qE "$6" "$f" || { echo "variant did not take effect, /$6/ still there ($1, $2, $3)"; cat "$f"; return 1; }
     fi
     strict_ok "$f" || { echo "($1, $2, $3)"; cat "$f"; return 1; }
 }
 
-@test "strict keys: the checker itself rejects an unknown key, a comment, an empty value" {
+@test "strict keys: the checker itself rejects an unknown key, a comment, an empty value, a bad form" {
     local f="$BATS_TEST_TMPDIR/bad.conf" good
-    good=$'[Interface]\nPrivateKey = X\nAddress = 10.9.9.2/32\n\n[Peer]\nPublicKey = Y\nAllowedIPs = 0.0.0.0/0\n'
+    good="[Interface]"$'\n'"PrivateKey = $KEY_PRIV"$'\nAddress = 10.9.9.2/32\nMTU = 1280\n\n[Peer]\n'"PublicKey = $KEY_PUB"$'\nAllowedIPs = 0.0.0.0/0\n'
     printf '%s' "$good" > "$f"
     strict_ok "$f" || { echo "a valid profile was rejected"; return 1; }
     printf '%s' "${good/Address/Table = off$'\n'Address}" > "$f"
@@ -127,8 +148,14 @@ check() {
     ! strict_ok "$f" >/dev/null || { echo "comment accepted"; return 1; }
     printf '%s' "${good/Address = 10.9.9.2\/32/Address = }" > "$f"
     ! strict_ok "$f" >/dev/null || { echo "empty value accepted"; return 1; }
-    printf '%s' "${good/PublicKey = Y/PublicKey = Y$'\n'Jc = 4}" > "$f"
+    printf '%s' "${good/AllowedIPs/Jc = 4$'\n'AllowedIPs}" > "$f"
     ! strict_ok "$f" >/dev/null || { echo "Interface key under [Peer] accepted"; return 1; }
+    printf '%s' "${good/\[Peer\]/[Interface]$'\n'DNS = 9.9.9.9$'\n\n'[Peer]}" > "$f"
+    ! strict_ok "$f" >/dev/null || { echo "a second [Interface] accepted"; return 1; }
+    printf '%s' "${good/$KEY_PRIV/CLIENTPRIVKEYPLACEHOLDER}" > "$f"
+    ! strict_ok "$f" >/dev/null || { echo "a malformed key accepted"; return 1; }
+    printf '%s' "${good/MTU = 1280/MTU = 1280x}" > "$f"
+    ! strict_ok "$f" >/dev/null || { echo "a malformed MTU accepted"; return 1; }
 }
 
 k_variants() {
@@ -137,11 +164,12 @@ k_variants() {
         check "$lib" "$gen" "" "" '^I1 = <r 128>$' || return 1
         check "$lib" "$gen" "export AWG_I1=''" "" '^Jc = 6$' '^I1 ' || return 1
         check "$lib" "$gen" $'export AWG_I2=\'<r 10>\'\nexport AWG_I3=\'<rc 8>\'\nexport AWG_I4=\'<rd 6>\'\nexport AWG_I5=\'<t>\'' "" \
-            '^I5 = <t>$' || return 1
-        check "$lib" "$gen" $'export CLIENT_DNS=\'9.9.9.9\'\nexport AWG_MTU=1380' "" '^DNS = 9\.9\.9\.9$' || return 1
+            '^I2 = <r 10>$;;^I3 = <rc 8>$;;^I4 = <rd 6>$;;^I5 = <t>$' || return 1
+        check "$lib" "$gen" $'export CLIENT_DNS=\'9.9.9.9\'\nexport AWG_MTU=1380' "" '^DNS = 9\.9\.9\.9$;;^MTU = 1380$' || return 1
         check "$lib" "$gen" $'export AWG_MTU=1380' "" '^MTU = 1380$' || return 1
         check "$lib" "$gen" $'export DISABLE_IPV6=0\nexport ALLOW_IPV6_TUNNEL=1\nexport IPV6_SUBNET=\'fddd:2c4:2c4:2c4::/64\'' \
             "fddd:2c4:2c4:2c4::2" '^Address = 10\.9\.9\.2/32, fddd:2c4:2c4:2c4::2' || return 1
+        check "$lib" "$gen" "" "" "^PresharedKey = $KEY_PSK\$" "" "$KEY_PSK" || return 1
     done
 }
 @test "strict keys: every render variant of both generations imports into the strict clients, both twins" {
