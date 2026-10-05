@@ -77,6 +77,28 @@ lib_run() {
 
 conf_of() { echo "$BATS_TEST_TMPDIR/k-$(basename "$1" .sh)/c1.conf"; }
 
+# v6ok <address> : a syntactically valid IPv6 address (groups of 1-4 hex digits,
+# at most one ::, eight groups without it, fewer than eight with it)
+v6ok() {
+    local a="$1" g n=0
+    [[ "$a" =~ ^[0-9A-Fa-f:]+$ && "$a" == *:* ]] || return 1
+    [[ "$a" != *:::* ]] || return 1
+    if [[ "$a" == *::* ]]; then
+        local rest="${a/::/}"
+        [[ "$rest" != *::* ]] || return 1
+        [[ "$a" == ::* || "$a" != :* ]] && [[ "$a" == *:: || "$a" != *: ]] || return 1
+    else
+        [[ "$a" != :* && "$a" != *: ]] || return 1
+    fi
+    local IFS=:
+    for g in $a; do
+        [[ -z "$g" ]] && continue
+        [[ "$g" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+        n=$((n + 1))
+    done
+    if [[ "$a" == *::* ]]; then (( n <= 7 )); else (( n == 8 )); fi
+}
+
 # strict_ok <client conf> : every content line is `Key = value` with a value,
 # in a known section, with a key the strict parsers accept and a value of the
 # form they accept (keys: 32 bytes of base64; MTU, Jc..S4: a number; H1-H4: a
@@ -87,7 +109,7 @@ conf_of() { echo "$BATS_TEST_TMPDIR/k-$(basename "$1" .sh)/c1.conf"; }
 # offending line and fails otherwise. Values are checked for FORM only: what the
 # parsers do with a well-formed but wrong value is the device gate's business.
 strict_ok() {
-    local f="$1" line sec="" key low val tok seen_i=0 seen_p=0
+    local f="$1" line sec="" key low val tok v6a v6p seen_i=0 seen_p=0
     local -A keyseen=()
     [ -s "$f" ] || { echo "no client config: $f"; return 1; }
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -113,12 +135,23 @@ strict_ok() {
             h1|h2|h3|h4|contentpaddingaddition)
                 [[ "$val" =~ ^[0-9]+(-[0-9]+)?$ ]] || { echo "not a number or range: '$line'"; return 1; } ;;
             address|allowedips)
-                for tok in ${val//,/ }; do
-                    [[ "$tok" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ || "$tok" =~ ^[0-9A-Fa-f:]*:[0-9A-Fa-f:]*/[0-9]{1,3}$ ]] \
-                        || { echo "not a CIDR list: '$line'"; return 1; }
+                local -a toks=()
+                IFS=',' read -r -a toks <<< "$val,"
+                [ "${#toks[@]}" -gt 0 ] || { echo "an empty list: '$line'"; return 1; }
+                for tok in "${toks[@]}"; do
+                    tok="${tok## }"; tok="${tok%% }"
+                    if [[ "$tok" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]]; then :
+                    elif [[ "$tok" =~ ^([^/]+)/([0-9]{1,3})$ ]] && v6a="${BASH_REMATCH[1]}" && v6p="${BASH_REMATCH[2]}" \
+                         && v6ok "$v6a" && (( v6p <= 128 )); then :
+                    else echo "not a CIDR list: '$line'"; return 1
+                    fi
                 done ;;
             endpoint)
-                [[ "$val" =~ ^(\[[0-9A-Fa-f:]+\]|[A-Za-z0-9.-]+):[0-9]{1,5}$ ]] || { echo "not host:port: '$line'"; return 1; } ;;
+                if [[ "$val" =~ ^\[([^]]+)\]:[0-9]{1,5}$ ]]; then
+                    v6ok "${BASH_REMATCH[1]}" || { echo "not host:port: '$line'"; return 1; }
+                else
+                    [[ "$val" =~ ^[A-Za-z0-9.-]+:[0-9]{1,5}$ ]] || { echo "not host:port: '$line'"; return 1; }
+                fi ;;
         esac
         case "$sec" in
             i) [[ "$IFACE_KEYS" == *" $low "* ]] || { echo "[Interface] key the strict clients reject: '$line'"; return 1; } ;;
@@ -183,6 +216,21 @@ check() {
     ! strict_ok "$f" >/dev/null || { echo "an unbracketed IPv6 endpoint accepted"; return 1; }
     printf '%s' "${good/Address = 10.9.9.2\/32/Address = 10.9.9.2}" > "$f"
     ! strict_ok "$f" >/dev/null || { echo "an Address without a prefix accepted"; return 1; }
+    local bad
+    for bad in "Address = ," "Address = 10.9.9.2/32, " "Address = :/128" "Address = 2001:::1/128" \
+               "Address = 1:2:3:4:5:6:7:8:9/128" "Address = fddd::/129"; do
+        printf '%s' "${good/Address = 10.9.9.2\/32/$bad}" > "$f"
+        ! strict_ok "$f" >/dev/null || { echo "accepted: $bad"; return 1; }
+    done
+    for bad in "Endpoint = [abcd]:39743" "Endpoint = [:::]:39743" "Endpoint = host:"; do
+        printf '%s' "${good/AllowedIPs = 0.0.0.0\/0/AllowedIPs = 0.0.0.0\/0$'\n'$bad}" > "$f"
+        ! strict_ok "$f" >/dev/null || { echo "accepted: $bad"; return 1; }
+    done
+    local fine
+    for fine in "Address = 10.9.9.2/32, fddd:2c4:2c4:2c4::2/128" "Address = ::/0" "Address = 2000::/3"; do
+        printf '%s' "${good/Address = 10.9.9.2\/32/$fine}" > "$f"
+        strict_ok "$f" >/dev/null || { echo "rejected: $fine"; return 1; }
+    done
     printf '%s' "${good/MTU = 1280/MTU = 1280$'\n'DNS = 1.1.1.1$'\n'DNS = 1.0.0.1}" > "$f"
     strict_ok "$f" || { echo "a repeated DNS rejected"; return 1; }
 }
