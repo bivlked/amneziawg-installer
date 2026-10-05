@@ -8604,7 +8604,7 @@ step99_finish() {
     if [[ "${AWG_PROTOCOL:-2.0}" == "3.1" ]]; then
         log "IMPORTANT: third-line (3.1) profiles. You need a client with AmneziaWG 3.1 support"
         log "           (recent AmneziaVPN, AmneziaWG, WG Tunnel; see the section \"Which AmneziaWG generation"
-        log "           a client speaks\": https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.en.md)."
+        log "           a client speaks\": https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.en.md#client-gen-adv)."
         log "           Routers without 3.1 support in their firmware and Hiddify need a 2.0 server."
     else
         log "IMPORTANT: Use Amnezia VPN client >= 4.8.12.7 to connect"
