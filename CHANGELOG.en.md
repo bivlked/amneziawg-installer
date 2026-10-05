@@ -12,6 +12,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### What changes for you
+
+- **A new install gets AmneziaWG 3.1 by default.** The server and the client profiles get header encryption (`HeaderProtectionKey`, a key of its own per install) and extra padding `ContentPaddingAddition = 32-128`; `H1`-`H4` are set to 1-4 in the 3.1 profile because the key hides the message type, and `S3` and `S4` start at 12. `Jc`, `S1`-`S4` and `I1` stay. The profile does not set `RandomTrailers`, `DisableCookies` or the timer parameters. The install command is the same.
+- **Who needs `--protocol=2.0`.** A client without 3.1 support will not connect to a 3.1 server, and will not show an error: routers on stock firmware (stable KeeneticOS, OpenWrt with an old amneziawg package), Hiddify, apps that have not been updated for a long time. If you have any of these, install the server with `--protocol=2.0`. Which clients understand 3.1 is in the table in ADVANCED, section "Client compatibility".
+- **Servers that already run keep their generation.** Updating the scripts, `manage` and `--force` do not change it; a server without a generation marker reads as 2.0. Moving to 3.1 means `--uninstall` and a fresh install, with every client profile issued again.
+
+### Changed
+
+- **Where 3.1 cannot run, the installer installs 2.0 by itself.** With no generation chosen, at step 0 it switches to 2.0 for a kernel older than 6.7 (a stock Debian 12) and for an architecture other than x86_64, ARM included, and at step 3, once the packages are in, for `awg` tools and a loaded module that do not understand the third line. At step 3 it generates one 2.0 set with the saved `Jc`/`Jmin`/`Jmax` and preset (`--jc=0`, `--preset=mobile` and `--no-cps` carry over), applies exactly that set to a temporary interface, reads it back, and only then rewrites the settings file; if the module refuses the set, the install stops with the settings file untouched. A 2.0 set saved by the step 0 switch is probed the same way at step 3, before any key is made. The reason is printed as a separate block, the same interactively and under `--yes`, and repeated in the final report. An explicit `--protocol=3.1` on such a machine stops the install and names the reason code.
+- **An install that has reached step 6 is never downgraded.** The signs are server keys, configs, profiles or a live `awg0`; the check runs at step 0 and again right before the switch to 2.0. Step 6 hands out 3.1 profiles only after the step 3 check passed in the same run. A 3.1 server that no longer passes the check gets the reason and a repair that leaves it alone (upgrade the tools or the module, boot a suitable kernel, rerun with `--verbose`); removal is named as the last resort, and a failure of the check itself is reported as an installer error, not as a reason to remove anything.
+- **Two new keys in `awgsetup_cfg.init`:** `AWG_PROTOCOL_SOURCE` (`default` or `explicit`) and `AWG_PROTOCOL_FALLBACK` (the reason code of the switch to 2.0).
+- **Messages.** A short notice before step 1 that the default is 3.1 and who should rerun with `--protocol=2.0`; the final report names the generation, the reason for the switch to 2.0 if there was one, and the clients needed; `--help` describes the default and the switch. Texts saying that this version does not issue 3.1 are gone.
+- **Documentation.** README, INSTALL_VPS and ADVANCED describe the new default: what the 3.1 profile is made of, where 2.0 is installed instead, who needs `--protocol=2.0` and what changing the generation costs. The client table is updated. The DeepWiki badge in the README is served from the repository: `deepwiki.com/badge.svg` answers automated clients with a 429 checkpoint, and the GitHub image proxy showed a broken image.
+
+### Fixed
+
+- **The "facts as of" guard did not see every way of writing to a config.** It caught a third-line parameter in a template and in `echo "..."`, but not in a single-quoted `printf '...'`, which is exactly how `HeaderProtectionKey` and `ContentPaddingAddition` are written. The guard now sees all three forms, requires that the 3.1 profile really is written into the config and that the default is 3.1, and still rejects parameters the profile does not set.
+
 ## [5.37.1] - 2026-10-04
 
 **v5.37.1** - the AmneziaWG module builds on 7.0.0-38 kernels, `--jc=0`, direct device IPv6 and backup checks before the service stops.

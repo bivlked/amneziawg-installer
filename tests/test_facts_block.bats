@@ -336,23 +336,34 @@ PY
 
 # --- профиль конфигурации ------------------------------------------------
 
-@test "facts: параметр третьей линии литералом в шаблоне роняет обещание про 2.0" {
-    printf '\nHeaderProtectionKey = ${AWG_HPK}\n' >> "$TMP/awg_common.sh"
+@test "facts: параметр, которого профиль 3.1 не задаёт, литералом в шаблоне роняет блок" {
+    printf '\nRandomTrailers = 1\n' >> "$TMP/awg_common.sh"
     run _check
     [ "$status" -eq 1 ]
-    [[ "$output" == *"AmneziaWG 2.0"* ]]
+    [[ "$output" == *"RandomTrailers"* ]]
     [[ "$output" == *"awg_common.sh"* ]]
 }
 
-@test "facts: параметр третьей линии в форме echo ловится так же" {
-    # 🔴 Форма, которую первая редакция сторожа пропускала ЦЕЛИКОМ, хотя именно
-    # ею пишутся в конфиг опциональные I1-I5. HeaderProtectionKey тоже
-    # опционален, значит его добавят ровно по этому образцу.
-    printf '\n[[ -n "${AWG_HPK:-}" ]] && echo "HeaderProtectionKey = ${AWG_HPK}" >> "$tmpfile"\n' \
+@test "facts: параметр, которого профиль 3.1 не задаёт, в форме echo ловится так же" {
+    # Форма, которой пишутся в конфиг опциональные I1-I5.
+    printf '\n[[ -n "${k:-}" ]] && echo "DisableCookies = ${k}" >> "$tmpfile"\n' \
         >> "$TMP/awg_common.sh"
     run _check
     [ "$status" -eq 1 ]
-    [[ "$output" == *"AmneziaWG 2.0"* ]]
+    [[ "$output" == *"DisableCookies"* ]]
+}
+
+@test "facts: запись printf в ОДИНАРНЫХ кавычках ловится" {
+    # 🔴 Форма, которую прежняя редакция сторожа не видела: регулярка ждала
+    # двойную кавычку, и профиль 3.1 вошёл в код, не уронив обещание про 2.0.
+    # Именно так пишутся HeaderProtectionKey и ContentPaddingAddition.
+    printf "\n    printf 'KeepaliveTimeout = %%s\\\\n' \"\$t\" >> \"\$target\"\n" \
+        >> "$TMP/awg_common_en.sh"
+    grep -q "printf 'KeepaliveTimeout = " "$TMP/awg_common_en.sh" \
+        || { echo "мутация не легла в файл"; return 1; }
+    run _check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"awg_common_en.sh"*"KeepaliveTimeout"* ]]
 }
 
 @test "facts: сторож смотрит все шесть скриптов и не слепнет на отступе" {
@@ -364,13 +375,46 @@ PY
     [[ "$output" == *"manage_amneziawg_en.sh"* ]]
 }
 
+@test "facts: пропавшая запись HeaderProtectionKey роняет обещание профиля 3.1" {
+    _sub awg_common.sh "printf 'HeaderProtectionKey = %s\n'" "printf 'X = %s\n'"
+    run _check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"awg_common.sh: нет записи HeaderProtectionKey"* ]]
+}
+
+@test "facts: пропавшая запись ContentPaddingAddition в EN-библиотеке ловится отдельно" {
+    # Библиотеки две, и обещание держат обе: пропажа в одной не прикрывается другой.
+    _sub awg_common_en.sh "printf 'ContentPaddingAddition = %s\n'" "printf 'X = %s\n'"
+    run _check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"awg_common_en.sh: нет записи ContentPaddingAddition"* ]]
+    [[ "$output" != *"awg_common.sh: нет записи"* ]]
+}
+
+@test "facts: умолчание 2.0 в одном установщике роняет обещание 3.1" {
+    _sub install_amneziawg_en.sh 'PROTOCOL_DEFAULT="3.1"' 'PROTOCOL_DEFAULT="2.0"'
+    run _check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"install_amneziawg_en.sh: PROTOCOL_DEFAULT"* ]]
+}
+
+@test "facts: закомментированное умолчание 3.1 не засчитывается" {
+    # Комментарии гасятся до сверки: строка-напоминание не должна держать
+    # обещание вместо настоящего присваивания.
+    _sub install_amneziawg.sh 'PROTOCOL_DEFAULT="3.1"' '# PROTOCOL_DEFAULT="3.1"
+PROTOCOL_DEFAULT="2.0"'
+    run _check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"install_amneziawg.sh: PROTOCOL_DEFAULT"* ]]
+}
+
 @test "facts: комментарий про параметр 3.x гейт не краснит" {
     # 🔴 Найдено пробой уже ПОСЛЕ мержа: форма 2 не привязана к началу
     # строки, поэтому объяснение в комментарии срабатывало неотличимо от
     # настоящей записи (rc=1). Первая строка ниже - буквально тот текст, который
     # напишет человек, документируя, почему параметра здесь НЕТ.
     {
-        printf '\n# Раньше было: echo "HeaderProtectionKey = $k" >> "$conf" - убрано.\n'
+        printf '\n# Раньше было: echo "RandomTrailers = 1" >> "$conf" - убрано.\n'
         printf '    # RandomTrailers = 1 отрезал бы клиентов 3.0, поэтому не пишем\n'
     } >> "$TMP/awg_common.sh"
     run _check
@@ -382,7 +426,7 @@ PY
     # Обратная сторона правки выше: гасятся только строки, ЦЕЛИКОМ являющиеся
     # комментарием. Настоящая запись с пояснением на хвосте обязана ловиться,
     # иначе лечение ложной тревоги превратилось бы в выключение сторожа.
-    printf '\n    echo "HeaderProtectionKey = $k" >> "$conf"  # 3.1, включаем позже\n' \
+    printf '\n    echo "RandomTrailers = 1" >> "$conf"  # включаем позже\n' \
         >> "$TMP/manage_amneziawg.sh"
     run _check
     [ "$status" -eq 1 ]
@@ -390,11 +434,11 @@ PY
 }
 
 @test "facts: законное упоминание параметра 3.x ложной тревоги не даёт" {
-    # Обратная сторона трёх кейсов выше, и пробы здесь НЕ синтетические: это
+    # Обратная сторона кейсов выше, и пробы здесь НЕ синтетические: это
     # реальные формы из нашего дерева - продолжение перечня параметров и
     # маскирование секретов в диагностическом отчёте.
     {
-        printf '\n        ContentPaddingAddition HeaderProtectionKey MaxHandshakeAttempts \\\n'
+        printf '\n        ContentPaddingAddition RandomTrailers MaxHandshakeAttempts \\\n'
         printf "        -e 's/^([[:space:]]*(PrivateKey|HeaderProtectionKey)[[:space:]]*=[[:space:]]*).*/x/I' \\\\\n"
     } >> "$TMP/awg_common.sh"
     run _check

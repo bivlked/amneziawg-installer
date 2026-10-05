@@ -4,19 +4,19 @@
 </p>
 
 <p align="center">
-  <img src="logo.jpg" alt="AmneziaWG 2.0 / 3.0 VPN installer for Ubuntu, Debian, Raspberry Pi and ARM64 VPS" width="600">
+  <img src="logo.jpg" alt="AmneziaWG 3.1 / 2.0 VPN installer for Ubuntu, Debian, Raspberry Pi and ARM64 VPS" width="600">
 </p>
 
-<h1 align="center">Install AmneziaWG 2.0 / 3.0 VPN on Ubuntu and Debian VPS</h1>
+<h1 align="center">Install AmneziaWG 3.1 / 2.0 VPN on Ubuntu and Debian VPS</h1>
 
-<p align="center"><em>One-command, self-hosted AmneziaWG 2.0 / 3.0 VPN for Ubuntu 24.04 / 26.04 and Debian 13. Kernel-native DKMS, no Docker, no web panel, runs on any cheap VPS.</em></p>
+<p align="center"><em>One-command, self-hosted AmneziaWG 3.1 VPN for Ubuntu 24.04 / 26.04 and Debian 13, with AmneziaWG 2.0 for older clients and routers. Kernel-native DKMS, no Docker, no web panel, runs on any cheap VPS.</em></p>
 
 <p align="center">
   <a href="https://bivlked.github.io/amneziawg-installer/"><img src="https://img.shields.io/badge/Website-bivlked.github.io-3ddc97" alt="Project website"></a>
   <img src="https://img.shields.io/badge/Ubuntu-24.04_|_26.04-orange" alt="Ubuntu 24.04 | 26.04">
   <img src="https://img.shields.io/badge/Debian-13-A81D33" alt="Debian 13">
   <img src="https://img.shields.io/badge/Architecture-x86__64_|_ARM64_|_ARMv7-green" alt="x86_64 | ARM64 | ARMv7">
-  <img src="https://img.shields.io/badge/AmneziaWG-2.0_&#124;_3.x-blueviolet" alt="AmneziaWG 2.0 and 3.x">
+  <img src="https://img.shields.io/badge/AmneziaWG-3.1_&#124;_2.0-blueviolet" alt="AmneziaWG 3.1 and 2.0">
   <a href="https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-5.37.1-blue" alt="Version"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
@@ -42,7 +42,7 @@
 | **Not for new servers** | Ubuntu 25.10, Debian 12 - no longer under standard vendor support |
 | **Architectures** | x86_64, ARM64, ARMv7 |
 | **Kernel module** | DKMS from the Amnezia PPA; on kernels older than 6.7 (a stock Debian 12) a pinned 2.0 module built from source; prebuilt packages for some ARM targets |
-| **Config profile** | AmneziaWG 2.0 (the kernel module may be 3.x - generated configs stay 2.0) |
+| **Config profile** | AmneziaWG 3.1 for a new install; 2.0 with `--protocol=2.0`, or automatically where 3.1 cannot run (kernel older than 6.7, ARM); a running server keeps its generation |
 <!-- facts:end -->
 
 <a id="quickstart"></a>
@@ -54,7 +54,8 @@ chmod +x install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh
 ```
 
-> What it does: installs AmneziaWG (kernel module via DKMS, or a prebuilt package on some ARM boards; which protocol line you end up with is covered in [AmneziaWG 3.x](#awg3)), sets up the server and forwarding, offers to turn on the UFW firewall, and creates two clients, `my_phone` and `my_laptop`. Their configs, QR codes and `vpn://` links are saved in `/root/awg/`; how to get them onto your phone is in [After installation](#after-installation). Adding a friend or a device later is a single `add` command.
+> What it does: installs AmneziaWG (kernel module via DKMS, or a prebuilt package on some ARM boards; AmneziaWG 3.1 by default, when you need 2.0 is covered in [AmneziaWG 3.1 by default](#awg3)), sets up the server and forwarding, offers to turn on the UFW firewall, and creates two clients, `my_phone` and `my_laptop`. Their configs, QR codes and `vpn://` links are saved in `/root/awg/`; how to get them onto your phone is in [After installation](#after-installation). Adding a friend or a device later is a single `add` command.
+> Have a router on stock firmware, Hiddify, or apps that have not been updated for a long time? Add `--protocol=2.0` to the last command, [here is why](#awg3).
 > 3 commands. 2 reboots along the way. About 20 minutes to a working VPN. For a clean Ubuntu/Debian VPS, not a home router or shared hosting. [Details →](#installation)
 
 > 📘 Full deployment guide: [Install AmneziaWG VPN server on Ubuntu/Debian VPS](INSTALL_VPS.md) - covers VPS choice, ARM, troubleshooting, and uninstall.
@@ -138,22 +139,30 @@ Recommended: Ubuntu 24.04 LTS and Debian 13. Ubuntu 26.04 is supported as well: 
 ---
 
 <a id="awg3"></a>
-## 🆕 The third AmneziaWG line ships already
+## 🆕 AmneziaWG 3.1 by default
 
-**AmneziaWG 3.0** was released in late July 2026 and the PPA now points at it; on 12 August **3.1** followed inside the same line, and that is what the PPA now carries. On x86 with kernel 6.7 or newer the installer **already gives you a third-line module** - there is nothing to switch on, and the configs you have already handed out keep working untouched. Which exact release you get depends on what sits in the PPA on the day you install, so the command below is the one that answers precisely.
+Since version 6.0.0 a new install gets **AmneziaWG 3.1** by default: both the server and the client profiles carry third-line parameters - header encryption (`HeaderProtectionKey`) and extra padding inside the encrypted part (`ContentPaddingAddition`). The install command is the same, no flags needed. Junk packets `Jc`, padding `S1`-`S4` and the `I1` concealment packet stay. `H1`-`H4` are set to 1-4 in the 3.1 profile: header encryption now hides the message type, and random ranges no longer conceal anything.
 
-To see what you actually have:
+**Who needs `--protocol=2.0`.** A client without 3.1 support will not accept a 3.1 profile: there is no handshake, and no error message either. So if any of your devices runs such a client, install the server on 2.0 from the start:
+
+```bash
+sudo bash ./install_amneziawg_en.sh --protocol=2.0
+```
+
+Still without 3.1 support: routers on stock firmware (stable KeeneticOS, OpenWrt with an old amneziawg package), Hiddify, and apps that have not been updated for a long time. Which clients understand 3.1 and from which version is in the [client table](ADVANCED.en.md#client-gen-adv). Better decide before installing: the generation of a running server changes only through a reinstall, and then every client profile is issued again.
+
+**Where the installer picks 2.0 by itself.** On kernels older than 6.7 (a stock Debian 12 with kernel 6.1), on ARM, and where the installed `awg` tools or the kernel module do not understand third-line parameters, 3.1 cannot run. If you did not choose a generation, the installer installs 2.0 by itself, explains the reason in the log and repeats it in the final report. An explicit `--protocol=3.1` on such a machine stops the install and names the reason.
+
+**Servers that already run** keep their generation: updating the scripts and `manage` do not change it. Moving from 2.0 to 3.1 means removing the install (`--uninstall`) and installing again, and every client profile is issued again.
+
+The installer prints the generation in the final report, on the "Protocol generation" line. Versions of the tools and of the loaded module:
 
 ```bash
 awg --version                        # tools version
 cat /sys/module/amneziawg/version    # version of the loaded module
 ```
 
-If the module is not loaded the second command prints nothing - then `modinfo amneziawg | grep ^version` reports the version of the file on disk. Why these are different questions is explained in [ADVANCED.en.md](ADVANCED.en.md#awg3-adv).
-
-Kernels older than 6.7 (Debian 12 on 6.1) and ARM hosts with a prebuilt package for their kernel still get the proven 2.0: that is where the 3.0 line has had the least mileage, and the threshold is deliberate.
-
-The 3.0 features themselves - header encryption, extra padding, timing knobs - are not in generated configs yet. They need client apps, and those have not landed on every platform. The detailed write-up (what changes on the wire, which parameters were added, what has to match between server and client) lives in [ADVANCED.en.md](ADVANCED.en.md#awg3-adv).
+The detailed write-up - what changes on the wire, what has to match between server and client, and what the 3.1 profile is made of - lives in [ADVANCED.en.md](ADVANCED.en.md#awg3-adv).
 
 ---
 
@@ -229,10 +238,10 @@ The official Amnezia app is the official graphical client: you install the app, 
 * **No Docker, and none of its overhead.** AmneziaWG runs as a kernel module rather than inside a container. There is no Docker daemon sitting in the background, so RAM and CPU use stay lower. On a cheap VPS that matters a lot, and it does no harm on a bigger one either.
 * **The whole server is tuned to the hardware.** The script reads the server's RAM, then sets sysctl buffers and swap size and turns on BBR - it wrings the most out of the plan you are paying for. The official app deploys its containers and does not optimize or tune the server itself.
 * **Smaller attack surface.** Unneeded packages and services are stripped, so the box does one thing - VPN. On top of that: UFW deny-all, Fail2Ban, strict file permissions, and sysctl hardening.
-* **Fine control over the obfuscation.** A mobile-network preset (`--preset=mobile`), direct access to the AmneziaWG 2.0 parameters, and field data on carriers and DPI - you can tune it for a specific network or carrier.
+* **Fine control over the obfuscation.** A mobile-network preset (`--preset=mobile`), direct access to the AmneziaWG parameters, and field data on carriers and DPI - you can tune it for a specific network or carrier.
 * **Headless and scriptable.** One SSH command, every parameter as a flag, CLI client management, time-limited guests (`--expires`), QR or `vpn://` import, and prebuilt modules for ARM.
 
-The protocol and the DPI resistance are the same - it is the same AmneziaWG 2.0 underneath. The code is open under the MIT license, it is readable bash you can review before running, and it has 2000+ automated tests. It installs the same upstream AmneziaWG - this is automation and server tuning, not a fork of the protocol.
+The protocol and the DPI resistance are the same - it is the same AmneziaWG protocol underneath. The code is open under the MIT license, it is readable bash you can review before running, and it has 2000+ automated tests. It installs the same upstream AmneziaWG - this is automation and server tuning, not a fork of the protocol.
 
 Detailed comparison: [amneziawg-installer vs the official Amnezia app](https://bivlked.github.io/amneziawg-installer/compare/).
 
@@ -241,7 +250,7 @@ Detailed comparison: [amneziawg-installer vs the official Amnezia app](https://b
 <a id="features"></a>
 ## ✨ Features
 
-* **DPI bypass** - AmneziaWG 2.0 with traffic obfuscation. DPI cannot detect the connection
+* **DPI bypass** - AmneziaWG 3.1 (or 2.0 for older clients) with traffic obfuscation. DPI cannot detect the connection
 * **One command - working VPN** - from a clean VPS to a running server with client configs and QR codes
 * **Secure by default** - UFW, Fail2Ban, sysctl hardening, strict file permissions (600/700)
 * **Easy management** - add/remove clients, temporary clients with auto-removal, traffic stats, backups
@@ -270,7 +279,7 @@ Detailed comparison: [amneziawg-installer vs the official Amnezia app](https://b
 <a id="carriers"></a>
 ## 📡 Tested mobile carriers (Russia)
 
-The installer tunes AmneziaWG 2.0 obfuscation for mobile networks with DPI: `--mobile` switches on the mobile preset and port 443/udp in a single flag. If your VPN is unstable on mobile data, use `--mobile` right away on a new server. On a running server this means reinstalling with `--force --mobile`: the obfuscation parameters and the port change, and every client needs its config reissued with `regen`. If the handshake never completes on mobile data, read the [walkthrough](ADVANCED.en.md#no-hs-mobile-adv) first. The configurations below come from user reports in issues and discussions (no guarantee: blocking and carrier parameters change over time):
+The installer tunes AmneziaWG obfuscation for mobile networks with DPI: `--mobile` switches on the mobile preset and port 443/udp in a single flag. If your VPN is unstable on mobile data, use `--mobile` right away on a new server. On a running server this means reinstalling with `--force --mobile`: the obfuscation parameters and the port change, and every client needs its config reissued with `regen`. If the handshake never completes on mobile data, read the [walkthrough](ADVANCED.en.md#no-hs-mobile-adv) first. The configurations below come from user reports in issues and discussions (no guarantee: blocking and carrier parameters change over time):
 
 - **Yota** - Moscow, `--preset=mobile`
 - **Tele2** - Moscow (`--preset=mobile`); Krasnoyarsk (`--preset=mobile`; the May 2026 wave needed `I1=<r 48>`)
@@ -317,10 +326,10 @@ Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work - o
 > ⚠️ **Non-standard SSH port:** The installer usually detects the SSH port automatically. If SSH runs on a non-standard port or autodetection is unavailable, run with `--ssh-port=YOUR_PORT` (comma-separated for several ports). As an extra conservative safeguard you can run `sudo ufw allow YOUR_PORT/tcp` **before** starting the installer.
 
 **Clients:**
-* **All platforms:** [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) **>= 4.8.12.7** - full-featured VPN client with AWG 2.0. Import via `vpn://` URI
-* **Windows:** [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) **>= 2.0.0** - lightweight tunnel manager with AWG 2.0. Import via `.conf` files
+* **All platforms:** [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) - full-featured VPN client: the 3.1 profile from version **5.0.1.5**, the 2.0 profile from **4.8.12.7**. Import via `vpn://` URI
+* **Windows:** [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) - lightweight tunnel manager: the 3.1 profile from version **3.1.0**, the 2.0 profile from **2.0.0**. Import via `.conf` files
 
-> [Full client compatibility table →](ADVANCED.en.md#client-compat-adv)
+> [Full client compatibility table →](ADVANCED.en.md#client-gen-adv)
 
 ---
 
@@ -389,7 +398,7 @@ Installing AmneziaWG on Ubuntu or Debian comes down to three commands: download 
     * **Server name:** The server shows up under this name in the Amnezia app on `vpn://` import. Default `AWG Server`; non-interactive: `--server-name=NAME`.
     * **Package cleanup:** the script lists what it would remove (snapd, unattended-upgrades and others) and asks first. To keep them, answer `n` or pass `--keep-packages`.
 
-    AWG 2.0 parameters (Jc, S1-S4, H1-H4, I1) are generated **automatically** - no action required.
+    Obfuscation parameters (on 3.1 together with the header protection key) are generated **automatically** - no action required.
 
 6.  **Reboots:** **TWO** reboots are required. The script will ask for confirmation `[y/N]`. Type `y` and press Enter.
 
@@ -400,7 +409,7 @@ Installing AmneziaWG on Ubuntu or Debian comes down to three commands: download 
     The script resumes from where it left off, and earlier questions are not asked again. If UFW is not on yet, one new question comes in the third run: "Enable UFW? [y/N]". Answer `y`: pressing Enter leaves the firewall off, and the server stays without one. With `--yes`, UFW is enabled without asking.
 
 8.  **Completion:** After the second reboot and the third script run, you will see the message:
-    `AmneziaWG 2.0 installation and configuration completed SUCCESSFULLY!`
+    `AmneziaWG 3.1 installation and configuration COMPLETED SUCCESSFULLY!` (or `2.0` if the server was installed on it) and a "Protocol generation" line with the reason when the installer picked 2.0 by itself.
 
 ---
 
@@ -561,7 +570,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Restart
 <a id="additional-information"></a>
 ## ℹ️ Additional Information
 
-For detailed information on configuration, security settings, AWG 2.0 parameters, management commands, technical details, and more, see **[ADVANCED.en.md](ADVANCED.en.md)**.
+For detailed information on configuration, security settings, AmneziaWG 2.0 and 3.1 parameters, management commands, technical details, and more, see **[ADVANCED.en.md](ADVANCED.en.md)**.
 
 For the changelog, see **[CHANGELOG.en.md](CHANGELOG.en.md)**.
 
@@ -590,7 +599,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: Clients can't connect - what should I do?</strong></summary>
-  <b>A:</b> 1. Check status: <code>sudo bash /root/awg/manage_amneziawg.sh check</code>. 2. Check firewall: <code>sudo ufw status verbose</code>. 3. Verify client config. 4. Check logs: <code>sudo journalctl -u awg-quick@awg0 -n 50</code>. 5. Make sure the client supports AWG 2.0: Amnezia VPN <b>>= 4.8.12.7</b> or AmneziaWG <b>>= 2.0.0</b>.
+  <b>A:</b> 1. Check status: <code>sudo bash /root/awg/manage_amneziawg.sh check</code>. 2. Check firewall: <code>sudo ufw status verbose</code>. 3. Verify client config. 4. Check logs: <code>sudo journalctl -u awg-quick@awg0 -n 50</code>. 5. Make sure the client understands the server generation (the "Protocol generation" line in the installer final report): 3.1 needs Amnezia VPN <b>>= 5.0.1.5</b> or AmneziaWG <b>3.1.x</b>, 2.0 needs Amnezia VPN <b>>= 4.8.12.7</b> or AmneziaWG <b>>= 2.0.0</b>.
 </details>
 
 <details>
@@ -607,12 +616,12 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: Can I use this with AWG 1.x clients?</strong></summary>
-  <b>A:</b> No. AWG 2.0 is not compatible with AWG 1.x. All clients must support the 2.0 protocol. For AWG 1.x, use the <a href="https://github.com/bivlked/amneziawg-installer/tree/legacy/v4">legacy/v4</a> branch.
+  <b>A:</b> No. AWG 1.x clients understand neither the 3.1 profile nor the 2.0 one: a client has to support the server generation - 3.1 by default, or 2.0 if the server was installed on it. For AWG 1.x, use the <a href="https://github.com/bivlked/amneziawg-installer/tree/legacy/v4">legacy/v4</a> branch.
 </details>
 
 <details>
   <summary><strong>Q: Config import error "Invalid key: s3" - what's wrong?</strong></summary>
-  <b>A:</b> You're using an outdated version of <code>amneziawg-windows-client</code> (< 2.0.0). Update to <a href="https://github.com/amnezia-vpn/amneziawg-windows-client/releases"><b>version 2.0.0+</b></a> which supports AWG 2.0. Alternatively, use <a href="https://github.com/amnezia-vpn/amnezia-client/releases"><b>Amnezia VPN</b></a> >= 4.8.12.7.
+  <b>A:</b> You're using an outdated version of <code>amneziawg-windows-client</code> (< 2.0.0). Update to <a href="https://github.com/amnezia-vpn/amneziawg-windows-client/releases"><b>version 2.0.0+</b></a> which supports AWG 2.0; a 3.1 server needs version 3.1.0 or newer. Alternatively, use <a href="https://github.com/amnezia-vpn/amnezia-client/releases"><b>Amnezia VPN</b></a> >= 4.8.12.7, or >= 5.0.1.5 for 3.1.
 </details>
 
 <details>
@@ -754,19 +763,20 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 ### Clients
 
-> **Which client should I use?** Install [**Amnezia VPN**](https://github.com/amnezia-vpn/amnezia-client/releases) (>= 4.8.12.7) - works on all platforms, supports `vpn://` URI import.
+> **Which client should I use?** Install [**Amnezia VPN**](https://github.com/amnezia-vpn/amnezia-client/releases) (>= 5.0.1.5 for a 3.1 server, >= 4.8.12.7 for 2.0) - works on all platforms, supports `vpn://` URI import. It is not in the Russian App Store: on an iPhone there, use the lightweight AmneziaWG.
 > For a lightweight connection (`.conf` import only), use **AmneziaWG** for your platform.
 
-| Client | Platform | AWG 2.0 | Type | Notes |
-|--------|----------|:-------:|------|-------|
-| **[Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases)** | Windows, macOS, Linux, Android, iOS | ✅ >= 4.8.12.7 | Official | **Recommended.** Full-featured, `vpn://` URI |
-| [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) | Windows | ✅ >= 2.0.0 | Official | Lightweight tunnel manager, `.conf` import |
-| [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-android) | Android | ✅ >= 2.0.0 | Official | Lightweight tunnel manager, `.conf` import |
-| [AmneziaWG](https://apps.apple.com/app/amneziawg/id6478942365) | iOS | ✅ | Official | Lightweight tunnel manager, `.conf` import |
-| [WG Tunnel](https://github.com/wgtunnel/android) | Android | ⚠️ partial | Third-party, FOSS | Auto-tunneling, split tunnel, F-Droid |
-| [VeilBox](https://github.com/artem4150/VeilBox) | Windows, macOS | ✅ | Third-party, FOSS | Also supports VLESS |
+| Client | Platform | AWG 3.1 | AWG 2.0 | Type | Notes |
+|--------|----------|:-------:|:-------:|------|-------|
+| **[Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases)** | Windows, macOS, Linux, Android, iOS | ✅ >= 5.0.1.5 | ✅ >= 4.8.12.7 | Official | **Recommended.** Full-featured, `vpn://` URI; not in the Russian App Store |
+| [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) | Windows | ✅ >= 3.1.0 | ✅ >= 2.0.0 | Official | Lightweight tunnel manager, `.conf` import |
+| [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-android) | Android | ✅ >= 3.1.4 on Google Play | ✅ >= 2.0.0 | Official | Lightweight tunnel manager, `.conf` import |
+| [AmneziaWG](https://apps.apple.com/app/amneziawg/id6478942365) | iOS, macOS | ✅ >= 3.1.4 | ✅ | Official | Lightweight tunnel manager, `.conf` import; available in the Russian App Store |
+| [WG Tunnel](https://github.com/wgtunnel/android) | Android | ✅ >= 5.6.0 | ✅ | Third-party, FOSS | Auto-tunneling, split tunnel; Google Play, IzzyOnDroid |
+| [WG Tunnel Desktop](https://github.com/wgtunnel/desktop) | Windows, Linux, macOS | ✅ v2 | ✅ | Third-party, FOSS | Same engine as the Android version |
+| [VeilBox](https://github.com/artem4150/VeilBox) | Windows, macOS | not verified | ✅ | Third-party, FOSS | Also supports VLESS |
 
-> [Full compatibility table with AWG 1.x details →](ADVANCED.en.md#client-compat-adv)
+> Versions with 3.1 support are taken from release notes as of 5 October 2026. [Full client compatibility table →](ADVANCED.en.md#client-compat-adv)
 
 ### Configuration Tools
 
