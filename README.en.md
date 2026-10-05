@@ -143,7 +143,7 @@ Recommended: Ubuntu 24.04 LTS and Debian 13. Ubuntu 26.04 is supported as well: 
 
 Since version 6.0.0 a new install gets **AmneziaWG 3.1** by default: both the server and the client profiles carry third-line parameters - header encryption (`HeaderProtectionKey`) and extra padding inside the encrypted part (`ContentPaddingAddition`). The install command is the same, no flags needed. Junk packets `Jc`, padding `S1`-`S4` and the `I1` concealment packet stay. `H1`-`H4` are set to 1-4 in the 3.1 profile: header encryption now hides the message type, and random ranges no longer conceal anything.
 
-**Who needs `--protocol=2.0`.** A client without 3.1 support will not accept a 3.1 profile: there is no handshake, and no error message either. So if any of your devices runs such a client, install the server on 2.0 from the start:
+**Who needs `--protocol=2.0`.** A client without 3.1 support will not accept a 3.1 profile: there is no handshake, and there may be no error message either. So if any of your devices runs such a client, install the server on 2.0 from the start:
 
 ```bash
 sudo bash ./install_amneziawg_en.sh --protocol=2.0
@@ -724,7 +724,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: Why is my AmneziaWG config marked yellow in the Amnezia app?</strong></summary>
-  <b>A:</b> It is not an error: the Amnezia app marks second-line AmneziaWG configs in yellow, and those are what the installer issues. The mark on its own does not mean anything is wrong with the connection, and nothing needs redoing because of it. More in the <a href="ADVANCED.en.md#faq-yellow-adv">ADVANCED.en.md FAQ</a>.
+  <b>A:</b> It is not an error: the Amnezia app marks second-line AmneziaWG configs in yellow. Those come from 2.0 servers: installed before version 6.0.0, with <code>--protocol=2.0</code>, or where the installer picked 2.0 by itself. The mark on its own does not mean anything is wrong with the connection, and nothing needs redoing because of it. More in the <a href="ADVANCED.en.md#faq-yellow-adv">ADVANCED.en.md FAQ</a>.
 </details>
 
 <details>
