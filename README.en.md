@@ -599,7 +599,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: Clients can't connect - what should I do?</strong></summary>
-  <b>A:</b> 1. Check status: <code>sudo bash /root/awg/manage_amneziawg.sh check</code>. 2. Check firewall: <code>sudo ufw status verbose</code>. 3. Verify client config. 4. Check logs: <code>sudo journalctl -u awg-quick@awg0 -n 50</code>. 5. Make sure the client understands the server generation (the "Protocol generation" line in the installer final report): 3.1 needs Amnezia VPN <b>>= 5.0.1.5</b> or AmneziaWG <b>3.1.x</b>, 2.0 needs Amnezia VPN <b>>= 4.8.12.7</b> or AmneziaWG <b>>= 2.0.0</b>.
+  <b>A:</b> 1. Check status: <code>sudo bash /root/awg/manage_amneziawg.sh check</code>. 2. Check firewall: <code>sudo ufw status verbose</code>. 3. Verify client config. 4. Check logs: <code>sudo journalctl -u awg-quick@awg0 -n 50</code>. 5. Make sure the client understands the server generation (the "Protocol generation" line in the installer final report): 3.1 needs Amnezia VPN <b>>= 5.0.1.5</b> or AmneziaWG <b>>= 3.1.0</b> on Windows, <b>>= 3.1.4</b> on Android and iOS, 2.0 needs Amnezia VPN <b>>= 4.8.12.7</b> or AmneziaWG <b>>= 2.0.0</b>.
 </details>
 
 <details>

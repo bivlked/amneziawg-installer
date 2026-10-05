@@ -408,6 +408,18 @@ PY
     [[ "$output" == *"RandomTrailers"* ]]
 }
 
+@test "facts: ключ на строке продолжения после обратного слеша ловится" {
+    {
+        printf "\n    printf '%%s\\\\n' \\\\\n"
+        printf "        'RandomTrailers = 1' >> \"\$target\"\n"
+    } >> "$TMP/awg_common.sh"
+    grep -q "^        'RandomTrailers = 1'" "$TMP/awg_common.sh" \
+        || { echo "мутация не легла в файл"; return 1; }
+    run _check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"awg_common.sh:"*"RandomTrailers"* ]]
+}
+
 @test "facts: второй ключ в одном printf и ключ в нижнем регистре ловятся" {
     {
         printf '\n    printf "Jc = %%s\\nKeepaliveTimeout = %%s\\n" 3 25 >> "$t"\n'
@@ -440,6 +452,14 @@ PROTOCOL_DEFAULT="2.0"'
     run _check
     [ "$status" -eq 1 ]
     [[ "$output" == *"install_amneziawg.sh: PROTOCOL_DEFAULT"* ]]
+}
+
+@test "facts: условное переопределение PROTOCOL_DEFAULT посреди строки ловится" {
+    _sub install_amneziawg_en.sh 'PROTOCOL_DEFAULT="3.1"' 'PROTOCOL_DEFAULT="3.1"
+[[ "$(uname -m)" == aarch64 ]] && PROTOCOL_DEFAULT="2.0"'
+    run _check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"install_amneziawg_en.sh: PROTOCOL_DEFAULT"* ]]
 }
 
 @test "facts: умолчание, которое нигде не применяется, ловится" {

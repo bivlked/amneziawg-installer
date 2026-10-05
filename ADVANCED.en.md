@@ -1103,7 +1103,7 @@ If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULL
 <a id="faq-yellow-adv"></a>
 <details>
   <summary><strong>Q: Why is my config highlighted yellow in the Amnezia app?</strong></summary>
-  <b>A:</b> The yellow mark reports the profile generation, not an error: that is how the Amnezia app marks second-line AmneziaWG configurations. On its own the mark does not say anything is wrong with the connection, and nothing needs redoing because of it. Since version 6.0.0 a new install gets the 3.1 profile by default. A 2.0 profile - on servers installed earlier, installed with <code>--protocol=2.0</code>, or where the installer picked 2.0 by itself (Debian 12, ARM) - gets the mark as expected. Removing it takes a 3.1 server, that is, a reinstall with every profile reissued, and all your clients have to understand 3.1.
+  <b>A:</b> The yellow mark reports the profile generation, not an error: that is how the Amnezia app marks second-line AmneziaWG configurations. On its own the mark does not say anything is wrong with the connection, and nothing needs redoing because of it. Since version 6.0.0 a new install gets the 3.1 profile by default. A 2.0 profile - on servers installed earlier, installed with <code>--protocol=2.0</code>, or where the installer picked 2.0 by itself (a stock Debian 12 with kernel 6.1, ARM) - gets the mark as expected. Removing it takes a 3.1 server, that is, a reinstall with every profile reissued, and all your clients have to understand 3.1.
 </details>
 
 <details>
@@ -1392,7 +1392,7 @@ sudo ufw reload</pre>
 
 <details>
   <summary><strong>Q: Which client should I use for AmneziaWG?</strong></summary>
-  <b>A:</b> Recommended: <a href="https://github.com/amnezia-vpn/amnezia-client/releases">Amnezia VPN</a>, version >= 5.0.1.5 for a 3.1 server, >= 4.8.12.7 for 2.0. The lightweight AmneziaWG clients for Android, iOS and Windows also work (3.1.x versions for 3.1). The standard WireGuard client <b>does not</b> support AWG parameters. See <a href="#client-compat-adv">Client Compatibility</a> for the full table.
+  <b>A:</b> Recommended: <a href="https://github.com/amnezia-vpn/amnezia-client/releases">Amnezia VPN</a>, version >= 5.0.1.5 for a 3.1 server, >= 4.8.12.7 for 2.0. The lightweight AmneziaWG clients for Android, iOS and Windows also work (for 3.1: Windows >= 3.1.0, Android and iOS >= 3.1.4). The standard WireGuard client <b>does not</b> support AWG parameters. See <a href="#client-compat-adv">Client Compatibility</a> for the full table.
 </details>
 
 <details>
@@ -1903,7 +1903,7 @@ Control: a tunnel to a server in a different AS (US) came up and held on all thr
 <a id="client-compat-adv"></a>
 ## 📋 Client Compatibility
 
-A client has to understand your server's generation: a new install gives the 3.1 profile by default, and with `--protocol=2.0` or on Debian 12 and ARM the 2.0 profile. The installer prints the server generation in the final report, on the "Protocol generation" line.
+A client has to understand your server's generation: a new install gives the 3.1 profile by default, and with `--protocol=2.0`, on a kernel older than 6.7 (a stock Debian 12) and on ARM the 2.0 profile. The installer prints the server generation in the final report, on the "Protocol generation" line.
 
 | Client | Platform | AWG 3.1 | AWG 2.0 | Notes |
 |--------|----------|---------|---------|-------|

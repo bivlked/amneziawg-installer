@@ -11,7 +11,7 @@ A step-by-step guide for deploying an AmneziaWG VPN server (3.1 by default, 2.0 
 - Built for cheap VPS budgets: $3 to $5 a month, 1 vCPU, 512 MB RAM minimum (1 GB recommended), 2 GB disk minimum (3+ GB recommended).
 - Both x86_64 (amd64) and ARM64 (aarch64), with prebuilt kernel modules covering Raspberry Pi 4/5, Ubuntu 24.04/25.10 ARM64, and Debian 12/13 ARM64 (Hetzner CAX, Oracle Ampere A1, AWS Graviton all run on these stock kernels). Ubuntu 26.04 ARM64 builds the module from source via DKMS.
 - DPI bypass for Russia (ТСПУ), Iran, China, school and corporate firewalls.
-- AmneziaWG 3.1 for a new install by default; routers on stock firmware, Hiddify and old apps need `--protocol=2.0`. On Debian 12 and ARM the installer picks 2.0 by itself.
+- AmneziaWG 3.1 for a new install by default; routers on stock firmware, Hiddify and old apps need `--protocol=2.0`. On a stock Debian 12 (kernel 6.1) and on ARM the installer picks 2.0 by itself.
 - Survives kernel upgrades automatically via DKMS auto-repair (since v5.12.0). On ARM with a prebuilt module there is no DKMS: after a kernel change, run the installer again.
 - Ubuntu 25.10 and 26.04: if the PPA does not answer for the release codename, the installer switches to `noble` itself (since v5.13.0).
 
