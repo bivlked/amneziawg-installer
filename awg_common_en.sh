@@ -1672,9 +1672,11 @@ awg31_module_support() {
     esac
 }
 
+# A copy of the installer function (kept byte-identical by a test). Modes: line31 (default) and candidate20 - described at the installer copy.
 _awg31_module_probe() (
     case $- in *x*) set +x ;; esac
     umask 077
+    local mode="${1:-line31}"
     # 🔴 The probe can refuse for a good many different reasons, and until this
     # was added a person learned none of them. There is deliberately NO number
     # here: it has already drifted from the code twice, and the second time it
@@ -1697,6 +1699,7 @@ _awg31_module_probe() (
             printf 'module probe: %s\n' "$1" >&2
         fi
     }
+    case "$mode" in line31|candidate20) : ;; *) _probe_say "unknown probe mode '$mode'"; printf 'failed'; exit 0 ;; esac
     local ifn="" kf="" rec="" key="" out="" line="" ctl="" rc=0 arc=0 i=0 made=0 cleaned=0
     local klines=() kraw="" kbytes="" krc=0
     local seen=0 hpk=0 cpa=0 hpk_name=0 cpa_name=0
@@ -1712,6 +1715,16 @@ _awg31_module_probe() (
     # installer gets a SIGKILL, the record and the interface stay until a reboot:
     # the next run only looks for records of its own $$.
     rec="${TMPDIR:-/tmp}/awg31probe.$$.iface"
+    # 🔴 A record of an earlier probe of THIS process means its interface was
+    # not removed (the delete failed), and the installer cleanup finds it by
+    # that record. With the fallback the probe runs twice per process (line31,
+    # then candidate20), and the second would overwrite the first record: the
+    # interface would be left with no trace.
+    # A regular file only: anything else on this path (a directory, a link) is caught by the write refusal below.
+    if [[ -f "$rec" && ! -L "$rec" ]]; then
+        rm -f "$kf" 2>/dev/null
+        _probe_say "a record of an earlier probe of this run is left ($rec): its interface was not removed, not starting a new probe"; printf 'stale'; exit 0
+    fi
     # The cleanup has to survive both an ordinary exit and a signal: the machine
     # must not keep an interface of ours after the probe.
     _probe_cleanup() {
@@ -1741,6 +1754,7 @@ _awg31_module_probe() (
     trap '_probe_cleanup' EXIT
     trap '_probe_cleanup; printf "failed"; exit 0' INT TERM HUP
 
+    if [[ "$mode" == line31 ]]; then
     timeout -k 1 5 awg genkey </dev/null > "$kf" 2>/dev/null || { _probe_say "awg genkey did not produce a key"; printf 'failed'; exit 0; }
     # 🔴 But BOTH lines have to be read. `read` takes only the first, while the
     # module is handed the WHOLE file: a file with a correct first line and junk
@@ -1820,6 +1834,7 @@ _awg31_module_probe() (
     # would then refuse over the KEY FILE, and we would call a healthy module
     # second line and send its owner to rebuild it for nothing.
     [[ "$key" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]] || { _probe_say "the key is not of the shape the library requires"; printf 'failed'; exit 0; }
+    fi
 
     # A name shorter than 15 characters and never awg0: the probe has no
     # business touching the working interface. The protection here is the SHAPE
@@ -1869,6 +1884,46 @@ _awg31_module_probe() (
         printf 'failed'; exit 0
     done
     [[ "$made" -eq 1 ]] || { _probe_say "all five temporary names are taken"; printf 'failed'; exit 0; }
+
+    if [[ "$mode" == candidate20 ]]; then
+        # The candidate set as a whole, exactly as it goes into awg0.conf. An
+        # empty I1 (--no-cps) is not sent: that is how the config renders it.
+        local -a cargs=(jc "${AWG_Jc-}" jmin "${AWG_Jmin-}" jmax "${AWG_Jmax-}"
+                        s1 "${AWG_S1-}" s2 "${AWG_S2-}" s3 "${AWG_S3-}" s4 "${AWG_S4-}"
+                        h1 "${AWG_H1-}" h2 "${AWG_H2-}" h3 "${AWG_H3-}" h4 "${AWG_H4-}")
+        local -a want=("Jc = ${AWG_Jc-}" "Jmin = ${AWG_Jmin-}" "Jmax = ${AWG_Jmax-}"
+                       "S1 = ${AWG_S1-}" "S2 = ${AWG_S2-}" "S3 = ${AWG_S3-}" "S4 = ${AWG_S4-}"
+                       "H1 = ${AWG_H1-}" "H2 = ${AWG_H2-}" "H3 = ${AWG_H3-}" "H4 = ${AWG_H4-}")
+        if [[ -n "${AWG_I1-}" ]]; then cargs+=(i1 "$AWG_I1"); want+=("I1 = $AWG_I1"); fi
+        timeout -k 1 5 awg set "$ifn" "${cargs[@]}" </dev/null >/dev/null 2>&1
+        rc=$?
+        (( rc == 0 )) || { _probe_say "the 2.0 set was not applied (awg set, code $rc)"; printf 'failed'; exit 0; }
+        out=$(timeout -k 1 5 awg showconf "$ifn" </dev/null 2>/dev/null) || { _probe_say "awg showconf refused on the 2.0 set"; printf 'failed'; exit 0; }
+        local -A got=()
+        while IFS= read -r line; do
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            [[ -n "$line" ]] && got["$line"]=1
+        done <<< "$out"
+        local w miss=""
+        for w in "${want[@]}"; do [[ -n "${got[$w]-}" ]] || miss+=" ${w%% =*}"; done
+        # The comparison is EXACT: measured 4 oct 2026 (tools v3.1.20260812),
+        # H ranges and I1 read back verbatim. A mismatch is "unknown", not "works".
+        if [[ -n "$miss" ]]; then
+            # What came back instead - every J, S, H and I line (they carry no secret): the comparison
+            # is exact, and another module build may answer in another form.
+            _probe_say "  lines in the answer: ${#got[@]}"
+            for line in "${!got[@]}"; do
+                [[ "${line,,}" =~ ^(jc|jmin|jmax|s[1-4]|h[1-4]|i[1-5])[[:space:]]*= ]] && _probe_say "  came back: $line"
+            done
+            _probe_say "the 2.0 set came back with different values:${miss}"
+            printf 'failed'
+        else
+            _probe_say "the 2.0 set applied and read back without differences"
+            printf 'ok'
+        fi
+        exit 0
+    fi
 
     timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 \
         header-protection-key "$kf" content-padding-addition 32-128 </dev/null >/dev/null 2>&1

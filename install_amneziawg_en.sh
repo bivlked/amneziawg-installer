@@ -105,13 +105,21 @@ CLI_PROTOCOL=""
 # default instead of a clear refusal. Found by external review 9 sep 2026;
 # our own test missed it because it passed a space, not an empty string.
 CLI_PROTOCOL_SET=0
-# 🔴 The default of this PHASE, not of the final release. eng.md describes
-# v6.0.0, where the default is 3.1; the switch is a separate, later phase
-# (phase 5), after the third-line path is ready as a whole, with downgrade and
-# the lifecycle of both generations. Until then the default is 2.0, and that
-# is not a forgotten edit: the 3.1 generator and render already exist, but a
-# profile with no way back must not be handed out.
-PROTOCOL_DEFAULT="2.0"
+# Generation of a NEW install without the flag. Since v6.0.0 it is 3.1; on a
+# machine where 3.1 cannot run, the installer installs 2.0 by itself and says
+# so out loud (automatic fallback, see _awg31_resolve_protocol and
+# step3_check_module). The rule for reading the marker of an existing install
+# is separate and unchanged: no marker = 2.0.
+PROTOCOL_DEFAULT="3.1"
+# Bookkeeping of the current process, NOT read from the environment and not
+# written to the init: the install state at step 0 (0/1/2, see
+# _awg_install_state) - a veto on the fallback for an existing install - and
+# the "post gate passed in this process" flag without which step 6 does not
+# hand out 3.1 profiles. AWG_AUTO_FALLBACK - the step 0 fallback of an
+# unfinished install (regenerate with the saved J, go back to step 3).
+AWG_INSTALL_STATE_AT_START=""
+AWG31_POST_OK=0
+AWG_AUTO_FALLBACK=0
 
 # --- Auto-cleanup of temporary files ---
 _install_temp_files=()
@@ -526,7 +534,7 @@ apt_wait_for_ppa_package() {
 show_help() {
     cat << 'EOF'
 Usage: sudo bash install_amneziawg_en.sh [OPTIONS]
-Script for installation and configuration of AmneziaWG 2.0 on Ubuntu (24.04 / 25.10 / 26.04) and Debian (12 / 13).
+Script for installation and configuration of AmneziaWG (generation 3.1 by default; 2.0 by flag or automatically where 3.1 cannot run) on Ubuntu (24.04 / 25.10 / 26.04) and Debian (12 / 13).
 
 Options:
   -h, --help            Show this help and exit
@@ -558,14 +566,19 @@ Options:
   --mobile              Mobile setup in one flag: --preset=mobile + port 443/udp
                         (mobile carriers often kill non-standard UDP ports).
                         An explicit --port=N wins over port 443
-  --protocol=2.0|3.1    Protocol generation for a NEW install (default 2.0).
-                        On an already configured server a flag naming a
-                        DIFFERENT generation ends the install: the generation
-                        of a running install changes only by reinstalling and
-                        reissuing every client profile. A matching one is
-                        accepted quietly.
-                        This version does not emit 3.1 - it refuses and
-                        names the reason
+  --protocol=2.0|3.1    Protocol generation for a new install or for one that
+                        started but has not reached step 6 (default 3.1).
+                        Without the flag, on a machine where 3.1 cannot run
+                        (kernel older than 6.7, a non-x86_64 architecture, ARM
+                        included, old tools or module), 2.0 is installed with
+                        an explanation. --protocol=2.0 is
+                        needed if the clients are routers on stock firmware,
+                        Hiddify or apps that are not updated. An explicit
+                        --protocol=3.1 on an unsuitable machine ends the install
+                        and names the reason. On an already configured server a
+                        flag naming a DIFFERENT generation ends the install: the
+                        generation of a running install changes only by
+                        reinstalling and reissuing every client profile.
   -y, --yes             Auto-confirm (reboots, UFW, etc.)
   -f, --force           Force reinstall on top of an already-running AmneziaWG
                         (by default a run on a configured server aborts;
@@ -906,16 +919,56 @@ awg31_module_support() {
     esac
 }
 
-# _awg31_module_probe : prints ok | line2 | failed. The body is a subshell
+# awg20_candidate_support : whether the current 2.0 set (AWG_Jc..AWG_I1)
+# applies to a temporary interface and reads back without differences. 0 - yes;
+# 2 - not checked at all: a temporary interface of an earlier probe of this run
+# is left (the module is not to blame); 1 - the module refused the set or
+# returned something else.
+awg20_candidate_support() {
+    local verdict=""
+    verdict=$(_awg31_module_probe candidate20)
+    case "$verdict" in
+        ok)    return 0 ;;
+        stale) return 2 ;;
+        *)     return 1 ;;
+    esac
+}
+
+# _awg20_candidate_stale_die : the refusal when the 2.0 set was not checked
+# because an earlier probe interface was left. A rerun is a new process with its
+# own record, so the advice is simple.
+_awg20_candidate_stale_die() {
+    # 🔴 The record lives in the shared /tmp under a predictable name and may be
+    # planted - it is read the way the cleanup reads it: with a time limit (a
+    # FIFO would hang the installer otherwise), the first line only, and only a
+    # name matching our probe mask goes out. A planted "eth0" in the
+    # "ip link del" advice would take the machine off the network. Found by review.
+    local _left=""
+    _left=$(timeout -k 1 5 head -c 64 "${TMPDIR:-/tmp}/awg31probe.$$.iface" 2>/dev/null)
+    _left="${_left%%$'\n'*}"
+    [[ "$_left" =~ ^awgp$$x[1-5]$ ]] || _left=""
+    die "The 2.0 parameter set was not checked (there is no verdict on it): a temporary interface of an earlier check of this run was not removed (${_left:-awgp$$x*}), and the installer did not probe on top of it. The removal may have failed because of a hung netlink or module: look at dmesg and ip link show type amneziawg. The cleanup on exit tries to remove the interface once more; if it stays, remove it yourself: timeout 5 ip link del <name>. Then run the installer again."
+}
+
+# _awg31_module_probe : prints ok | line2 | failed | stale (stale - a record of
+# an earlier probe of this process is left, the probe did not start). The body is a subshell
 # (round brackets instead of braces) on purpose: the cleanup trap then leaves
 # the caller's traps alone, and the interface and the key file are removed on
 # every exit, a signal included. The showconf output never reaches the log: it
 # carries the header protection key in clear. There is no private key in it -
 # the probe never sets one, and a fresh amneziawg interface does not carry one
 # (measured on a stand, 19 sep 2026).
+#
+# Mode candidate20 (argument $1): instead of the third-line parameters, the
+# CURRENT 2.0 set from the variables AWG_Jc .. AWG_I1 is applied in full to the
+# same temporary interface and read back; prints ok | failed | stale. Step 3 uses it to
+# check the candidate before a fallback to 2.0 (the control steps of the 3.1
+# mode only send S1-S4 and the key and prove nothing about H ranges, J and I1).
+# No header protection key is created or checked in this mode.
 _awg31_module_probe() (
     case $- in *x*) set +x ;; esac
     umask 077
+    local mode="${1:-line31}"
     # 🔴 The probe can refuse for a good many different reasons, and until this
     # was added a person learned none of them. There is deliberately NO number
     # here: it has already drifted from the code twice, and the second time it
@@ -938,6 +991,7 @@ _awg31_module_probe() (
             printf 'module probe: %s\n' "$1" >&2
         fi
     }
+    case "$mode" in line31|candidate20) : ;; *) _probe_say "unknown probe mode '$mode'"; printf 'failed'; exit 0 ;; esac
     local ifn="" kf="" rec="" key="" out="" line="" ctl="" rc=0 arc=0 i=0 made=0 cleaned=0
     local klines=() kraw="" kbytes="" krc=0
     local seen=0 hpk=0 cpa=0 hpk_name=0 cpa_name=0
@@ -953,6 +1007,16 @@ _awg31_module_probe() (
     # installer gets a SIGKILL, the record and the interface stay until a reboot:
     # the next run only looks for records of its own $$.
     rec="${TMPDIR:-/tmp}/awg31probe.$$.iface"
+    # 🔴 A record of an earlier probe of THIS process means its interface was
+    # not removed (the delete failed), and the installer cleanup finds it by
+    # that record. With the fallback the probe runs twice per process (line31,
+    # then candidate20), and the second would overwrite the first record: the
+    # interface would be left with no trace.
+    # A regular file only: anything else on this path (a directory, a link) is caught by the write refusal below.
+    if [[ -f "$rec" && ! -L "$rec" ]]; then
+        rm -f "$kf" 2>/dev/null
+        _probe_say "a record of an earlier probe of this run is left ($rec): its interface was not removed, not starting a new probe"; printf 'stale'; exit 0
+    fi
     # The cleanup has to survive both an ordinary exit and a signal: the machine
     # must not keep an interface of ours after the probe.
     _probe_cleanup() {
@@ -982,6 +1046,7 @@ _awg31_module_probe() (
     trap '_probe_cleanup' EXIT
     trap '_probe_cleanup; printf "failed"; exit 0' INT TERM HUP
 
+    if [[ "$mode" == line31 ]]; then
     timeout -k 1 5 awg genkey </dev/null > "$kf" 2>/dev/null || { _probe_say "awg genkey did not produce a key"; printf 'failed'; exit 0; }
     # 🔴 But BOTH lines have to be read. `read` takes only the first, while the
     # module is handed the WHOLE file: a file with a correct first line and junk
@@ -1061,6 +1126,7 @@ _awg31_module_probe() (
     # would then refuse over the KEY FILE, and we would call a healthy module
     # second line and send its owner to rebuild it for nothing.
     [[ "$key" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]] || { _probe_say "the key is not of the shape the library requires"; printf 'failed'; exit 0; }
+    fi
 
     # A name shorter than 15 characters and never awg0: the probe has no
     # business touching the working interface. The protection here is the SHAPE
@@ -1110,6 +1176,46 @@ _awg31_module_probe() (
         printf 'failed'; exit 0
     done
     [[ "$made" -eq 1 ]] || { _probe_say "all five temporary names are taken"; printf 'failed'; exit 0; }
+
+    if [[ "$mode" == candidate20 ]]; then
+        # The candidate set as a whole, exactly as it goes into awg0.conf. An
+        # empty I1 (--no-cps) is not sent: that is how the config renders it.
+        local -a cargs=(jc "${AWG_Jc-}" jmin "${AWG_Jmin-}" jmax "${AWG_Jmax-}"
+                        s1 "${AWG_S1-}" s2 "${AWG_S2-}" s3 "${AWG_S3-}" s4 "${AWG_S4-}"
+                        h1 "${AWG_H1-}" h2 "${AWG_H2-}" h3 "${AWG_H3-}" h4 "${AWG_H4-}")
+        local -a want=("Jc = ${AWG_Jc-}" "Jmin = ${AWG_Jmin-}" "Jmax = ${AWG_Jmax-}"
+                       "S1 = ${AWG_S1-}" "S2 = ${AWG_S2-}" "S3 = ${AWG_S3-}" "S4 = ${AWG_S4-}"
+                       "H1 = ${AWG_H1-}" "H2 = ${AWG_H2-}" "H3 = ${AWG_H3-}" "H4 = ${AWG_H4-}")
+        if [[ -n "${AWG_I1-}" ]]; then cargs+=(i1 "$AWG_I1"); want+=("I1 = $AWG_I1"); fi
+        timeout -k 1 5 awg set "$ifn" "${cargs[@]}" </dev/null >/dev/null 2>&1
+        rc=$?
+        (( rc == 0 )) || { _probe_say "the 2.0 set was not applied (awg set, code $rc)"; printf 'failed'; exit 0; }
+        out=$(timeout -k 1 5 awg showconf "$ifn" </dev/null 2>/dev/null) || { _probe_say "awg showconf refused on the 2.0 set"; printf 'failed'; exit 0; }
+        local -A got=()
+        while IFS= read -r line; do
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            [[ -n "$line" ]] && got["$line"]=1
+        done <<< "$out"
+        local w miss=""
+        for w in "${want[@]}"; do [[ -n "${got[$w]-}" ]] || miss+=" ${w%% =*}"; done
+        # The comparison is EXACT: measured 4 oct 2026 (tools v3.1.20260812),
+        # H ranges and I1 read back verbatim. A mismatch is "unknown", not "works".
+        if [[ -n "$miss" ]]; then
+            # What came back instead - every J, S, H and I line (they carry no secret): the comparison
+            # is exact, and another module build may answer in another form.
+            _probe_say "  lines in the answer: ${#got[@]}"
+            for line in "${!got[@]}"; do
+                [[ "${line,,}" =~ ^(jc|jmin|jmax|s[1-4]|h[1-4]|i[1-5])[[:space:]]*= ]] && _probe_say "  came back: $line"
+            done
+            _probe_say "the 2.0 set came back with different values:${miss}"
+            printf 'failed'
+        else
+            _probe_say "the 2.0 set applied and read back without differences"
+            printf 'ok'
+        fi
+        exit 0
+    fi
 
     timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 \
         header-protection-key "$kf" content-padding-addition 32-128 </dev/null >/dev/null 2>&1
@@ -1256,7 +1362,7 @@ _awg31_module_probe() (
 # awg31_environment_blocker : empty when the 3.1 profile is available on this
 # environment, otherwise the reason CODE.
 # Codes: arch_unknown | arch_unsupported | arm | kernel | tools_old |
-#        module_line2 | module_probe_failed | not_implemented_yet | internal_error.
+#        module_line2 | module_probe_failed | internal_error.
 # Arg $1: stage, REQUIRED: 'pre' or 'post'.
 # Arg $2: architecture (for tests; defaults to _awg31_host_arch).
 # Arg $3: kernel release (for tests; defaults to uname -r).
@@ -1359,24 +1465,10 @@ awg31_environment_blocker() {
         esac
     fi
 
-    # UNTIL PHASE 5: the 3.1 profile generator, the header protection key and
-    # writing the profile into the configs already exist, but it is too early to
-    # hand the third line to people - there is no downgrade and no lifecycle of
-    # both generations (phase 4). So the environment may be as suitable as it
-    # likes and the installer still refuses. This check is LAST on purpose: that
-    # way an operator on an unsuitable platform gets the durable reason, the one
-    # that stays true after the path opens, instead of a temporary one. This line
-    # goes away in phase 5, and removing it must turn red the test that watches
-    # for it.
-    printf 'not_implemented_yet'
-    return 0
-
     # 🔴 The explicit "environment fits" terminal: empty output, status 0.
-    # Unreachable today, and here for phase 5: delete the TWO lines above
-    # without leaving this one and the function's last command becomes the
-    # stage check, which is false on pre - the function would return 1 with
-    # empty output. The refusal would be safe, but the third line would be
-    # dead on arrival and the symptom would look like a crashed gate.
+    # Without this line the function's last command would be the stage check,
+    # which is false on pre - the function would return 1 with empty output,
+    # and a suitable machine would get the "gate could not answer" refusal.
     return 0
 }
 
@@ -1398,7 +1490,7 @@ _awg31_blocker_message() {
     local code="${1-}"
     case "$code" in
         kernel)
-            printf '%s' "The AmneziaWG 3.1 profile will not run on this server: kernel $(uname -r) is older than 6.7. On such kernels the installer deliberately builds the proven second-line module, and the third line will not work here. Way out: install with --protocol=2.0, which is a working and supported path. If you need the third line on this very machine, it takes a system with kernel 6.7 or newer; note that this installer version emits no 3.1 profile on any machine."
+            printf '%s' "The AmneziaWG 3.1 profile will not run on this server: kernel $(uname -r) is older than 6.7. On such kernels the installer deliberately builds the proven second-line module, and the third line will not work here. Way out: install with --protocol=2.0, which is a working and supported path. If you need the third line on this very machine, it takes a system with kernel 6.7 or newer."
             ;;
         arm)
             # 🔴 The text makes NO claim about which module gets installed here,
@@ -1410,15 +1502,10 @@ _awg31_blocker_message() {
             # module arrives from the PPA. A refusal must explain the REASON FOR THE
             # REFUSAL, not describe someone else's machine from memory. The precise
             # wording about prebuilts lives in the README.
-            printf '%s' "An AmneziaWG 3.1 profile is not issued on ARM: this architecture has not been measured for the third line, and the decision is deliberate until a separate measurement. Upgrading packages changes nothing. Separately, so you do not look for the way out in the wrong place: no architecture gets a 3.1 profile from this installer version. Way out: --protocol=2.0."
+            printf '%s' "An AmneziaWG 3.1 profile is not issued on ARM: this architecture has not been measured for the third line, and the decision is deliberate until a separate measurement. Upgrading packages changes nothing. Way out: --protocol=2.0."
             ;;
         arch_unsupported)
-            # 🔴 "REQUIRES x86_64", not "ships for x86_64 only": today the 3.1
-            # profile ships NOWHERE, and on a suitable machine the gate ends at
-            # not_implemented_yet. The check order is such that the owner of an ARM
-            # or exotic box sees THIS text and never sees not_implemented_yet, so
-            # they would leave believing x86_64 already gets the third line.
-            printf '%s' "The AmneziaWG 3.1 profile requires x86_64, and this machine is '$(_awg31_host_arch)'. We have not measured it and will not emit the third line there. Separately, so you do not change machines for nothing: no architecture gets a 3.1 profile from this installer version. Way out: --protocol=2.0."
+            printf '%s' "The AmneziaWG 3.1 profile requires x86_64, and this machine is '$(_awg31_host_arch)'. We have not measured it and will not emit the third line there. Way out: --protocol=2.0."
             ;;
         arch_unknown)
             printf '%s' "The machine architecture could not be determined, and not knowing it is not the same as knowing it fits. Way out: --protocol=2.0. If you believe this is wrong, send the output of 'dpkg --print-architecture' and 'uname -m'."
@@ -1432,9 +1519,6 @@ _awg31_blocker_message() {
         module_probe_failed)
             printf '%s' "Whether the loaded module understands the third-line parameters could not be checked: the probe either could not create a temporary interface and get an answer, or got an answer that does not name the generation. The reasons differ - permissions, the state of netlink, the network namespace of a container. We do not know whether the module fits, and guessing is not an option here. Way out: install with --protocol=2.0. If you think this is wrong, send the output of six commands: 'ip link add awgprobe type amneziawg', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <a file with a 32-byte key in base64> content-padding-addition 32-128' (the main command of the probe; the probe can stop here too), 'awg set awgprobe s1 15 s2 15 s3 12 s4 12', 'awg set awgprobe s1 15 s2 15 s3 12 s4 12 header-protection-key <the same file>', 'awg showconf awgprobe' (the read back; the probe can stop here too) and 'ip link del awgprobe' (the last one takes the temporary interface away again). The key file is made like this: 'umask 077; awg genkey > /tmp/probekey', and take it away afterwards: 'rm -f /tmp/probekey'. The probe also stops before any of these commands - if it cannot create a temporary file, or if 'awg genkey' does not give a key of the right shape - and on the third and fourth commands, that is on either control step. The first command is a stopping point too, and the most common one: if the module is not loaded, the amneziawg link type is not registered and the interface is not created, even though the awg tool itself is present. Quicker than running the commands by hand: start the installer with --verbose and the probe writes to the log where exactly it stopped."
             ;;
-        not_implemented_yet)
-            printf '%s' "This installer version (v${SCRIPT_VERSION}) does not issue the AmneziaWG 3.1 profile: your environment fits, and it is not your machine. Way out: --protocol=2.0."
-            ;;
         internal_error)
             printf '%s' "Internal error in the environment gate: the gate itself got invalid input. This is our defect, not a problem with your machine. Install with --protocol=2.0 and report it with the installer output attached."
             ;;
@@ -1445,6 +1529,140 @@ _awg31_blocker_message() {
             printf '%s' "The AmneziaWG 3.1 profile is unavailable, and reason code '${code}' is unknown to this installer version. Install with --protocol=2.0 and report the code to the developer."
             ;;
     esac
+}
+
+# Reason codes on which an UNchosen 3.1 default gives way to 2.0. Everything
+# else (internal_error, an unknown code, a failure of the gate itself) is no
+# evidence that 2.0 works here and leads to a refusal.
+AWG31_FALLBACK_PRE_CODES="arm kernel arch_unsupported arch_unknown"
+AWG31_FALLBACK_POST_CODES="tools_old module_line2 module_probe_failed"
+
+# _awg31_code_in <code> <list> : whether the code is in the space-separated list.
+_awg31_code_in() {
+    local c="${1-}" w
+    [[ -n "$c" ]] || return 1
+    for w in ${2-}; do [[ "$w" == "$c" ]] && return 0; done
+    return 1
+}
+
+# _awg31_fallback_reason <code> : a short reason for the fallback block. The
+# refusal texts (_awg31_blocker_message) are written for someone who ASKED for
+# 3.1 and advise a flag; here nobody asked, they need a reason, not instructions.
+_awg31_fallback_reason() {
+    case "${1-}" in
+        kernel)              printf '%s' "kernel $(uname -r) is older than 6.7" ;;
+        arm)                 printf '%s' "the ARM architecture has not been measured for the third line" ;;
+        arch_unsupported)    printf '%s' "architecture '$(_awg31_host_arch)' is not x86_64" ;;
+        arch_unknown)        printf '%s' "the machine architecture could not be determined" ;;
+        tools_old)           printf '%s' "the installed awg tools do not understand third-line parameters" ;;
+        module_line2)        printf '%s' "the loaded amneziawg kernel module is second line" ;;
+        module_probe_failed) printf '%s' "the kernel module could not be checked for the third line" ;;
+        *)                   printf '%s' "reason code '${1-}'" ;;
+    esac
+}
+
+# _awg31_announce_fallback <code> : the loud fallback block. No question, the
+# same interactively and under --yes: it reports something forced, not a choice.
+_awg31_announce_fallback() {
+    log_warn "=============================================================================="
+    log_warn "A new install defaults to AmneziaWG 3.1, but 3.1 cannot run on this machine:"
+    log_warn "  $(_awg31_fallback_reason "${1-}") (reason code: ${1-})."
+    log_warn "Installing AmneziaWG 2.0: second-line clients work with it, including routers whose firmware supports AmneziaWG 2.0."
+    log_warn "To choose 2.0 deliberately and not see this message, run with --protocol=2.0."
+    log_warn "=============================================================================="
+}
+
+# _awg_fallback_params : the full 2.0 parameter set on a fallback. Unlike a
+# generation switch by flag (_awg_switch_params) it carries the SAVED
+# Jc/Jmin/Jmax over: they hold the preset and the explicit --jc/--jmin/--jmax of
+# the first run, and after a reboot this process has no flags any more; an
+# explicit flag of the current run wins. J does not depend on the generation;
+# S3/S4, H and CPA do, and the generator recomputes them with the whole set.
+# The assignments are temporary: after the call CLI_* are back, and the
+# --no-cps logic below does not mistake them for an explicit flag.
+# 🔴 An explicit preset of THIS run (--preset, --mobile) sets J anew: the saved
+# J would carry the previous preset and override the new one (Jc=6 instead of 3
+# for mobile). Then only the explicit --jc/--jmin/--jmax of this run carry over.
+# Found by review.
+_awg_fallback_params() {
+    if [[ -n "${CLI_PRESET:-}" ]]; then
+        generate_awg_params
+        return
+    fi
+    CLI_PRESET="${AWG_PRESET:-default}" \
+    CLI_JC="${CLI_JC:-${AWG_Jc:-}}" \
+    CLI_JMIN="${CLI_JMIN:-${AWG_Jmin:-}}" \
+    CLI_JMAX="${CLI_JMAX:-${AWG_Jmax:-}}" \
+        generate_awg_params
+}
+
+# _awg31_post_fallback_allowed <code> <rc> : whether step 3 may replace 3.1
+# with 2.0. Every condition is required:
+#  - the gate answered normally, and the code is from the known set (pre or post);
+#  - 3.1 was not chosen (AWG_PROTOCOL_SOURCE=default);
+#  - at step 0 of THIS process the install was new or unfinished (the veto
+#    AWG_INSTALL_STATE_AT_START: step 0 and step 3 rewrite setup_state, and a
+#    recount now could pass an existing install off as an unfinished one);
+#  - and right now there is no trace of step 6 (_awg_install_state gives 2).
+_awg31_post_fallback_allowed() {
+    local code="${1-}" rc="${2-}" now=""
+    [[ "$rc" == 0 ]] || return 1
+    _awg31_code_in "$code" "$AWG31_FALLBACK_PRE_CODES $AWG31_FALLBACK_POST_CODES" || return 1
+    [[ "${AWG_PROTOCOL_SOURCE:-}" == "default" ]] || return 1
+    [[ "${AWG_INSTALL_STATE_AT_START:-}" == 0 || "${AWG_INSTALL_STATE_AT_START:-}" == 2 ]] || return 1
+    now=$(_awg_install_state "$([[ -f "$CONFIG_FILE" ]] && echo 1 || echo 0)") || return 1
+    [[ "$now" == 2 ]]
+}
+
+# _awg31_post_fallback <code> : the fallback to 2.0 at step 3. The order is
+# mandatory: one complete candidate in memory (saved J and preset, --no-cps), a
+# probe of EXACTLY that candidate on a temporary interface, and only after it
+# succeeds the init is written. A failed probe dies with the disk untouched: the
+# init keeps the 3.1 marker, and a retry with --protocol=2.0 is allowed (the
+# install has not reached step 6).
+_awg31_post_fallback() {
+    local code="${1-}"
+    if [[ "$code" == tools_old ]] && ! command -v awg >/dev/null 2>&1; then
+        die "The AmneziaWG 3.1 profile cannot run here, and a fallback to 2.0 is impossible: there is no awg command at all, and no generation works without it. Check the amneziawg-tools package (apt-get install amneziawg-tools) and run the installer again."
+    fi
+    AWG_PROTOCOL="2.0"
+    _awg_fallback_params
+    if [[ "${NO_CPS:-0}" -eq 1 ]]; then AWG_I1=''; fi
+    local _crc=0
+    awg20_candidate_support || _crc=$?
+    (( _crc == 2 )) && _awg20_candidate_stale_die
+    if (( _crc != 0 )); then
+        die "The AmneziaWG 3.1 profile cannot run here ($(_awg31_fallback_reason "$code"), reason code: ${code}), and the module refused the 2.0 parameter set or returned different values. The installer sees no working 2.0 on this machine and stops; the init is unchanged. Run with --verbose to see where the probe stopped, and check the module: modprobe amneziawg; dkms status."
+    fi
+    AWG_PROTOCOL_FALLBACK="$code"
+    export AWG_PROTOCOL
+    _awg_save_init
+    _awg31_announce_fallback "$code"
+    log "Fallback to 2.0 at step 3: parameters regenerated, init rewritten."
+}
+
+# _awg31_existing_refusal <code> : the refusal text for an EXISTING 3.1 install
+# (profiles may be out) that no longer passes the gate. The reason and a repair
+# that leaves the install alone come first; removal is only the last resort.
+# Advising --protocol=2.0 here would be wrong: the resolver refuses it, and an
+# internal installer error is no verdict on the machine and no reason to wipe it.
+# Arg $2: the gate exit code. Non-zero means the gate failed, and its answer
+# (even a known code) is no verdict: the same text as for an unknown code.
+_awg31_existing_refusal() {
+    local code="${1-}" rc="${2:-0}" fix=""
+    if [[ "$rc" != 0 ]] || ! _awg31_code_in "$code" "$AWG31_FALLBACK_PRE_CODES $AWG31_FALLBACK_POST_CODES"; then
+        printf '%s' "The 3.1 environment gate gave no answer that can be trusted (reason code '${code:-none}', exit code ${rc}): it is an internal installer error or a transient failure, not a finding about your machine. Do not remove the installation and do not change its generation; run the installer again with --verbose and, if it repeats, report the error with the output attached."
+        return 0
+    fi
+    case "$code" in
+        kernel)              fix="Boot kernel 6.7 or newer (it may have changed on a reboot: uname -r) and run the installer again." ;;
+        tools_old)           fix="Upgrade the tools: apt-get update && apt-get install --only-upgrade amneziawg-tools, then run the installer again." ;;
+        module_line2)        fix="Upgrade the module: apt-get update && apt-get install --only-upgrade amneziawg-dkms, reboot and run the installer again." ;;
+        module_probe_failed) fix="The check may have failed for a passing reason: run the installer again with --verbose, the log will say where it stopped." ;;
+        arch_unknown)        fix="Check what dpkg --print-architecture and uname -m answer and run the installer again." ;;
+        *)                   fix="" ;;
+    esac
+    printf '%s' "The AmneziaWG 3.1 profile of this installation does not pass the environment check right now: $(_awg31_fallback_reason "$code") (reason code: ${code}).${fix:+ ${fix}} The generation of the installation does not change: it may already have handed out 3.1 profiles. If it cannot be repaired, the way to 2.0 is removal (sudo bash $0 --uninstall) and a new install with --protocol=2.0."
 }
 
 # _awg_install_state <config_exists> : which state the installation is in, for
@@ -1514,12 +1732,31 @@ _awg_install_state() {
 # rewind would carry on without the flag on the NEW generation from the saved
 # step (4-6), and a switch to 3.1 would bypass the step 3 gate. A crash in this
 # order is harmless: the marker is still the old one, and only steps 3-6 repeat.
+# The same rules for the fallback of an unfinished install (AWG_AUTO_FALLBACK)
+# and for an unfinished 3.1 install resumed after step 3: the tools or the
+# module may have changed between runs, and 3.1 profiles are handed out only
+# after the post gate in THIS process (step 6 checks AWG31_POST_OK), so step 3
+# runs again and falls back to 2.0 before step 6 if needed.
 _awg_gen_switch_rewind() {
-    [[ "${AWG_GEN_SWITCHED:-0}" -eq 1 ]] || return 0
+    local why=""
+    if [[ "${AWG_GEN_SWITCHED:-0}" -eq 1 ]]; then
+        why="Generation change"
+    elif [[ "${AWG_AUTO_FALLBACK:-0}" -eq 1 ]]; then
+        why="Fallback to 2.0"
+    elif [[ "${AWG_INSTALL_STATE_AT_START:-}" == 2 && "${AWG_PROTOCOL:-}" == "3.1" ]]; then
+        why="Resuming a 3.1 install"
+    elif [[ "${AWG_INSTALL_STATE_AT_START:-}" == 2 && -n "${AWG_PROTOCOL_FALLBACK:-}" ]]; then
+        # The fallback 2.0 set is probed at step 3; a resume after it (other
+        # tools or module, regeneration by configuration flags) would otherwise
+        # reach the step 6 keys unchecked. Found by review.
+        why="Resuming an install after the fallback to 2.0"
+    else
+        return 0
+    fi
     local st=""
     [[ -f "$STATE_FILE" ]] && st=$(cat "$STATE_FILE" 2>/dev/null)
     if [[ "$st" =~ ^[0-9]+$ ]] && (( st > 3 )); then
-        log "Generation change: going back from step $st to step 3."
+        log "${why}: going back from step $st to step 3."
         update_state 3
     fi
 }
@@ -1586,6 +1823,10 @@ _awg31_resolve_protocol() {
             else
                 log "The requested generation ${CLI_PROTOCOL} matches the generation of the installation under way."
             fi
+            # An explicit choice: the generation is no longer "by default", and
+            # the reason of an earlier fallback, if any, no longer applies.
+            AWG_PROTOCOL_SOURCE="explicit"
+            AWG_PROTOCOL_FALLBACK=""
         elif [[ "$install_state" -eq 1 ]]; then
             # 🔴 The flag does NOT change the generation of an existing install,
             # and staying silent about that is not an option. Changing the
@@ -1629,9 +1870,15 @@ _awg31_resolve_protocol() {
                 die "--protocol=${CLI_PROTOCOL} cannot be carried out on this server: ${_why}. ${_way}"
             else
                 log "The requested generation ${CLI_PROTOCOL} matches the generation of this installation."
+                # A matching flag is an explicit choice too: the report must not
+                # call such a generation "default" or "fallback".
+                AWG_PROTOCOL_SOURCE="explicit"
+                AWG_PROTOCOL_FALLBACK=""
             fi
         else
             AWG_PROTOCOL="$CLI_PROTOCOL"
+            AWG_PROTOCOL_SOURCE="explicit"
+            AWG_PROTOCOL_FALLBACK=""
             log "Generation for the new installation set by flag: ${AWG_PROTOCOL}."
         fi
     elif [[ "$install_state" -eq 0 ]]; then
@@ -1643,12 +1890,15 @@ _awg31_resolve_protocol() {
         # DIFFERENT things and must not share a line. awg_installed_protocol has
         # to read a missing marker as 2.0 forever: that is how every install made
         # before the marker existed is marked, and changing it would declare them
-        # third-line after the fact. The new-install default, in turn, flips in
-        # phase 5. Today both values are 2.0, so the line below changes nothing -
-        # it exists so that in phase 5 the edit is in ONE place and in plain
-        # sight, rather than found by searching the file.
+        # third-line after the fact. The new-install default is 3.1 since v6.0.0.
         AWG_PROTOCOL="$PROTOCOL_DEFAULT"
+        AWG_PROTOCOL_SOURCE="default"
+        AWG_PROTOCOL_FALLBACK=""
     fi
+    # States 1 and 2 without the flag keep the source and the fallback reason
+    # from the init (checked by initialize_setup). An empty source with a 3.1
+    # marker forbids the fallback: not knowing whether 3.1 was chosen, we must
+    # not downgrade.
 
     # ── Environment gate, stage pre ──────────────────────────────────────────
     # Called ONLY when the third line is requested. On an ordinary 2.0 install
@@ -1662,8 +1912,34 @@ _awg31_resolve_protocol() {
     if [[ "$AWG_PROTOCOL" == "3.1" ]]; then
         local _awg31_blocker _awg31_rc
         _awg31_blocker=$(awg31_environment_blocker pre); _awg31_rc=$?
+        # ── Fallback to 2.0, stage pre ──
+        # Only if 3.1 was NOT chosen (the default), the install is new or has not
+        # reached step 6 (no profiles - nothing to downgrade) and the reason is
+        # from the known set, with the gate answering normally. An explicit
+        # --protocol=3.1, an existing install, an empty source, a gate failure -
+        # the refusal below, as before. At step 0 the parameters are not
+        # generated yet (new install) or will be regenerated from the saved J
+        # (unfinished install, AWG_AUTO_FALLBACK).
+        if (( _awg31_rc == 0 )) && [[ "${AWG_PROTOCOL_SOURCE:-}" == "default" ]] \
+           && [[ "$install_state" -eq 0 || "$install_state" -eq 2 ]] \
+           && _awg31_code_in "$_awg31_blocker" "$AWG31_FALLBACK_PRE_CODES"; then
+            log "3.1 environment gate (pre): reason code '${_awg31_blocker}', the generation was not chosen - falling back to 2.0."
+            _awg31_announce_fallback "$_awg31_blocker"
+            AWG_PROTOCOL="2.0"
+            AWG_PROTOCOL_FALLBACK="$_awg31_blocker"
+            if [[ "$install_state" -eq 2 ]]; then AWG_AUTO_FALLBACK=1; fi
+            return 0
+        fi
+        # An existing install (profiles may be out): the resolver refuses it the
+        # --protocol=2.0 advice, so the refusal is built separately - reason,
+        # repair, removal as the last resort, and a failure of the gate itself is
+        # no reason to remove anything.
+        if [[ "$install_state" -eq 1 ]] && [[ -n "$_awg31_blocker" || "$_awg31_rc" -ne 0 ]]; then
+            log "3.1 environment gate (pre) for an existing install: reason code '${_awg31_blocker:-none}', exit code ${_awg31_rc}."
+            die "$(_awg31_existing_refusal "$_awg31_blocker" "$_awg31_rc")"
+        fi
         if [[ -n "$_awg31_blocker" ]]; then
-            log "3.1 environment gate (pre): reason code '${_awg31_blocker}'."
+            log "3.1 environment gate (pre): reason code '${_awg31_blocker}', exit code ${_awg31_rc}."
             die "$(_awg31_blocker_message "$_awg31_blocker")"
         fi
         # 🔴 A GATE THAT COULD NOT ANSWER IS NOT PERMISSION. Empty output means
@@ -1674,6 +1950,13 @@ _awg31_resolve_protocol() {
         if (( _awg31_rc != 0 )); then
             die "The environment gate could not determine whether this machine fits the AmneziaWG 3.1 profile (exit code ${_awg31_rc}, no reason given). Without an answer we do not ship the third line. Install with --protocol=2.0 and report this."
         fi
+    fi
+
+    # The default-generation notice - before the init is written and before
+    # step 1, with no question and no pause (owner decision 27 sep): whoever has
+    # a router or an old client can stop before the system is changed.
+    if [[ "$install_state" -eq 0 && "$AWG_PROTOCOL" == "3.1" && "${AWG_PROTOCOL_SOURCE:-}" == "default" ]]; then
+        log_warn "The default generation is AmneziaWG 3.1 (if the tools or the module turn out unable to run it, the installer installs 2.0 or stops and explains why). If your clients include a router without 3.1 support in its firmware (stock Keenetic, OpenWrt with an old amneziawg package), Hiddify or apps that are not updated - stop now (Ctrl+C) and run with --protocol=2.0."
     fi
 
     if (( AWG_GEN_SWITCHED )); then
@@ -1965,7 +2248,8 @@ safe_load_config() {
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
                 AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PREBUILT|KEEP_PACKAGES|\
-                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT)
+                AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT|\
+                AWG_PROTOCOL_SOURCE|AWG_PROTOCOL_FALLBACK)
                     export "$key=$value"
                     ;;
                 *)
@@ -4238,15 +4522,15 @@ check_service_status() {
     # Jmin/Jmax are no sign of active obfuscation: at Jc = 0 they have no effect.
     _show_awg0=$(timeout 10 awg show awg0 2>/dev/null) || _show_awg0=""
     if grep -qE '^[[:space:]]*jc:' <<< "$_show_awg0"; then
-        log "AWG 2.0 parameters active."
+        log "AmneziaWG ${AWG_PROTOCOL:-2.0} obfuscation parameters active."
     elif grep -qE '^[[:space:]]*(s[1-4]|h[1-4]):' <<< "$_show_awg0"; then
         if [[ -z "${AWG_Jc:-}" || "${AWG_Jc}" =~ ^0+$ ]]; then
-            log "AWG 2.0 parameters active (Jc = 0: junk packets off)."
+            log "AmneziaWG ${AWG_PROTOCOL:-2.0} obfuscation parameters active (Jc = 0: junk packets off)."
         else
             log_warn "The interface runs with Jc = 0 (awg show has no jc line), but Jc=${AWG_Jc} is set: no junk packets are sent."
         fi
     else
-        log_warn "AWG 2.0 parameters not detected in awg show."
+        log_warn "AmneziaWG ${AWG_PROTOCOL:-2.0} obfuscation parameters not detected in awg show."
     fi
 
     if [[ "$ok" -eq 1 ]]; then
@@ -4967,6 +5251,95 @@ repair_module_cmd() {
 # STEP 0: Initialization
 # ==============================================================================
 
+# _awg_save_init : write $CONFIG_FILE atomically from the current variables.
+# A temp file in the init directory, a checked heredoc write, the PREV_AWG_PORT
+# append, mv, chmod. Any failure dies and leaves the working init untouched.
+# Moved out of initialize_setup so that the same writer serves step 3 (the
+# fallback to 2.0): a second writer with its own key list would drift from
+# this one silently.
+_awg_save_init() {
+    log "Saving settings to $CONFIG_FILE..."
+    # temp in the target config's directory -> mv = atomic rename on the same
+    # filesystem (not a cross-fs copy+unlink when /tmp is mounted as tmpfs).
+    local temp_conf cfg_dir
+    cfg_dir="$(dirname "$CONFIG_FILE")"
+    mkdir -p "$cfg_dir" 2>/dev/null
+    temp_conf=$(mktemp -p "$cfg_dir") || die "mktemp error."
+    _install_temp_files+=("$temp_conf")
+    # The write status is checked: on ENOSPC/EFBIG a truncated temp would otherwise
+    # replace the working init, and the next run would regenerate the obfuscation set.
+    cat > "$temp_conf" << EOF || { rm -f "$temp_conf"; die "Error writing settings to $temp_conf, $CONFIG_FILE left unchanged"; }
+# AmneziaWG installation configuration (Auto-generated)
+# Used by installation and management scripts
+export OS_ID='${OS_ID:-ubuntu}'
+export OS_VERSION='${OS_VERSION:-}'
+export OS_CODENAME='${OS_CODENAME:-}'
+export AWG_PORT=${AWG_PORT}
+export AWG_TUNNEL_SUBNET='${AWG_TUNNEL_SUBNET}'
+export DISABLE_IPV6=${DISABLE_IPV6}
+export ALLOWED_IPS_MODE=${ALLOWED_IPS_MODE}
+export ALLOWED_IPS='${ALLOWED_IPS}'
+export CLIENT_ISOLATION=${CLIENT_ISOLATION:-1}
+export CLIENT_ISOLATION_NET='${CLIENT_ISOLATION_NET:-}'
+export AWG_ENDPOINT='${AWG_ENDPOINT}'
+export AWG_SERVER_NAME='${AWG_SERVER_NAME:-AWG Server}'
+export AWG_MTU=${AWG_MTU:-1280}
+# Obfuscation parameters
+export AWG_Jc=${AWG_Jc}
+export AWG_Jmin=${AWG_Jmin}
+export AWG_Jmax=${AWG_Jmax}
+export AWG_S1=${AWG_S1}
+export AWG_S2=${AWG_S2}
+export AWG_S3=${AWG_S3}
+export AWG_S4=${AWG_S4}
+export AWG_H1='${AWG_H1}'
+export AWG_H2='${AWG_H2}'
+export AWG_H3='${AWG_H3}'
+export AWG_H4='${AWG_H4}'
+export AWG_I1='${AWG_I1}'
+export AWG_I2='${AWG_I2:-}'
+export AWG_I3='${AWG_I3:-}'
+export AWG_I4='${AWG_I4:-}'
+export AWG_I5='${AWG_I5:-}'
+export AWG_PRESET='${AWG_PRESET:-default}'
+export NO_TWEAKS=${NO_TWEAKS}
+export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
+export NO_CPS=${NO_CPS}
+export NO_PREBUILT=${NO_PREBUILT:-0}
+# Client devices' IPv6 directly, around the tunnel (mode 2 only). 0 - through the tunnel.
+export CLIENT_IPV6_DIRECT=${CLIENT_IPV6_DIRECT:-0}
+# DNS for NEW clients (IPs separated by commas). Empty means 1.1.1.1, 1.0.0.1.
+export CLIENT_DNS='${CLIENT_DNS:-}'
+export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
+export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
+export IPV6_SUBNET='${IPV6_SUBNET}'
+export SERVER_HAS_NATIVE_IPV6=${SERVER_HAS_NATIVE_IPV6:-0}
+# How the generation was chosen (default - by default, explicit - by flag;
+# empty - before v6.0.0) and the reason code if the 3.1 default gave way to 2.0.
+# Used until the install finishes and in the final report.
+export AWG_PROTOCOL_SOURCE='${AWG_PROTOCOL_SOURCE:-}'
+export AWG_PROTOCOL_FALLBACK='${AWG_PROTOCOL_FALLBACK:-}'
+export AWG_CPA='${AWG_CPA:-}'
+# Protocol generation of this installation. Do not edit by hand: a different
+# generation requires reissuing every client profile. A missing field reads as 2.0.
+export AWG_PROTOCOL='${AWG_PROTOCOL}'
+EOF
+    # The pending delete of the old port's UFW rule must survive a reboot:
+    # step 4 runs in a different process after 1-2 reboots, a process variable
+    # does not live that long (PR #176). setup_improved_firewall removes the
+    # key after a successful ufw delete.
+    if [[ "$PREV_AWG_PORT" =~ ^[0-9]+$ ]]; then
+        echo "export PREV_AWG_PORT=${PREV_AWG_PORT}" >> "$temp_conf" \
+            || die "Error writing PREV_AWG_PORT to $temp_conf"
+    fi
+    if ! mv "$temp_conf" "$CONFIG_FILE"; then
+        rm -f "$temp_conf"
+        die "Error saving $CONFIG_FILE"
+    fi
+    chmod 600 "$CONFIG_FILE" || log_warn "chmod $CONFIG_FILE error"
+    log "Settings saved."
+}
+
 initialize_setup() {
     if [ "$(id -u)" -ne 0 ]; then die "Run the script as root (sudo bash $0)."; fi
 
@@ -4988,7 +5361,7 @@ initialize_setup() {
 
     touch "$LOG_FILE" || die "Failed to create log file $LOG_FILE"
     chmod 640 "$LOG_FILE"
-    log "--- STARTING AmneziaWG 2.0 INSTALLATION (v${SCRIPT_VERSION}) ---"
+    log "--- STARTING AmneziaWG INSTALLATION (v${SCRIPT_VERSION}) ---"
     log "### STEP 0: Initialization and parameter check ###"
     cd "$AWG_DIR" || die "Error changing to $AWG_DIR"
     log "Working directory: $AWG_DIR"
@@ -5021,6 +5394,14 @@ initialize_setup() {
     # The generation marker is reset the same way: `AWG_PROTOCOL=3.1 bash install.sh`
     # must not mark an install as third-line behind the file's back.
     AWG_PROTOCOL=""
+    # The generation source and the fallback reason - from the file only, too.
+    AWG_PROTOCOL_SOURCE=""
+    AWG_PROTOCOL_FALLBACK=""
+    # The process bookkeeping is not inherited from the environment:
+    # AWG31_POST_OK=1 from outside would skip the step 6 check.
+    AWG31_POST_OK=0
+    AWG_AUTO_FALLBACK=0
+    AWG_INSTALL_STATE_AT_START=""
     # The preset too: a generation change takes it from the init, and a value
     # from the environment would stand in for the saved one where the init lacks
     # the line.
@@ -5091,17 +5472,40 @@ initialize_setup() {
     # check.
     local _proto_raw="${AWG_PROTOCOL:-}"
     AWG_PROTOCOL=$(awg_installed_protocol "$CONFIG_FILE") || die "The generation marker AWG_PROTOCOL in $CONFIG_FILE cannot be read (value '${_proto_raw}'; 2.0 and 3.1 are allowed, the line must look like export AWG_PROTOCOL='2.0'; found: $(grep -niE '^[[:space:]]*(export[[:space:]]+)?AWG_PROTOCOL' "$CONFIG_FILE" 2>/dev/null | head -3 | tr '\n' ' ')). Fix the file by hand, stating the generation the server actually runs."
-    # A 3.1 marker is no longer a refusal here by itself: the environment gate in
-    # the resolver decides (while the third-line path is closed it answers
-    # not_implemented_yet). A refusal in this place would block switching an
-    # unfinished 3.1 install to 2.0, and, once the path opens, resuming it after
-    # a reboot.
+    # A 3.1 marker is not a refusal here by itself: the environment gate in the
+    # resolver decides. A refusal in this place would block switching an
+    # unfinished 3.1 install to 2.0 and resuming it after a reboot.
 
-    # The installation generation and, when the third line is requested, the
-    # environment gate. The body lives in _awg31_resolve_protocol - see there.
+    # The source and the fallback reason from the init: known values only.
+    # Garbage becomes neither "default" (that would allow a downgrade) nor an
+    # invented reason in the final report.
+    case "$AWG_PROTOCOL_SOURCE" in
+        ""|default|explicit) : ;;
+        *) log_warn "AWG_PROTOCOL_SOURCE='${AWG_PROTOCOL_SOURCE}' in $CONFIG_FILE is not recognised (default or explicit are allowed) - treating the source as unknown, the fallback is forbidden."
+           AWG_PROTOCOL_SOURCE="" ;;
+    esac
+    if [[ -n "$AWG_PROTOCOL_FALLBACK" ]] \
+       && ! _awg31_code_in "$AWG_PROTOCOL_FALLBACK" "$AWG31_FALLBACK_PRE_CODES $AWG31_FALLBACK_POST_CODES"; then
+        log_warn "AWG_PROTOCOL_FALLBACK='${AWG_PROTOCOL_FALLBACK}' in $CONFIG_FILE is not recognised - resetting it."
+        AWG_PROTOCOL_FALLBACK=""
+    fi
+    # A fallback reason only makes sense with a 2.0 marker: with 3.1 it was left
+    # by a hand edit, and the report would call a 3.1 server a "fallback".
+    if [[ -n "$AWG_PROTOCOL_FALLBACK" && "$AWG_PROTOCOL" != "2.0" ]]; then
+        log_warn "AWG_PROTOCOL_FALLBACK='${AWG_PROTOCOL_FALLBACK}' in $CONFIG_FILE is set with marker ${AWG_PROTOCOL} - resetting it."
+        AWG_PROTOCOL_FALLBACK=""
+    fi
+
     local install_state
     install_state=$(_awg_install_state "$config_exists") \
         || die "Internal error: could not determine the installation state."
+    # The original state is kept BEFORE the resolver and before setup_state is
+    # written: step 0 below repairs a missing setup_state, step 3 writes its own,
+    # and a recount later could turn an existing install (1) into an unfinished
+    # one (2) - that is, allow it a fallback. This is a veto for the whole process.
+    AWG_INSTALL_STATE_AT_START="$install_state"
+    # The installation generation and, when the third line is requested, the
+    # environment gate. The body lives in _awg31_resolve_protocol - see there.
     _awg31_resolve_protocol "$install_state"
     _awg_gen_switch_rewind
 
@@ -5298,24 +5702,27 @@ initialize_setup() {
     # Regenerate if: first run, a generation change of an unfinished install
     # (3.1 has its own S3/S4 lower bounds, H and ContentPaddingAddition) OR
     # explicit CLI override (--preset/--jc/--jmin/--jmax)
-    if [[ -z "${AWG_Jc:-}" ]] || [[ "${AWG_GEN_SWITCHED:-0}" -eq 1 ]] || [[ -n "${CLI_PRESET:-}" ]] || [[ -n "${CLI_JC:-}" ]] \
+    if [[ -z "${AWG_Jc:-}" ]] || [[ "${AWG_GEN_SWITCHED:-0}" -eq 1 ]] || [[ "${AWG_AUTO_FALLBACK:-0}" -eq 1 ]] \
+        || [[ -n "${CLI_PRESET:-}" ]] || [[ -n "${CLI_JC:-}" ]] \
         || [[ -n "${CLI_JMIN:-}" ]] || [[ -n "${CLI_JMAX:-}" ]]; then
         # generate_awg_params regenerates the WHOLE set (S1-S4, H1-H4, I1),
         # not just the requested parameter: on a reinstall over a live server
         # every issued client config still holds the old H1-H4 and will stop
         # connecting. Warn loudly. On a generation change there are no profiles
         # yet, and the change already has its own warning.
-        if [[ "$config_exists" -eq 1 && -n "${AWG_Jc:-}" && "${AWG_GEN_SWITCHED:-0}" -ne 1 ]]; then
+        if [[ "$config_exists" -eq 1 && -n "${AWG_Jc:-}" && "${AWG_GEN_SWITCHED:-0}" -ne 1 && "${AWG_AUTO_FALLBACK:-0}" -ne 1 ]]; then
             log_warn "WARNING: --preset/--jc/--jmin/--jmax on a reinstall regenerate ALL obfuscation parameters (including H1-H4/S1-S4/I1)."
             log_warn "All existing client configs will stop connecting - reissue them after the install: sudo bash $MANAGE_SCRIPT_PATH regen"
         fi
         if [[ "${AWG_GEN_SWITCHED:-0}" -eq 1 ]]; then
             _awg_switch_params
+        elif [[ "${AWG_AUTO_FALLBACK:-0}" -eq 1 ]]; then
+            _awg_fallback_params
         else
             generate_awg_params
         fi
     else
-        log "AWG 2.0 parameters already set from config."
+        log "Obfuscation parameters already set from config (generation ${AWG_PROTOCOL})."
         # Installations made before September 2026 carry an I1 of random bytes.
         # On some cellular networks such a packet is dropped together with the
         # handshake packet and the tunnel never comes up, even though the server
@@ -5340,7 +5747,7 @@ initialize_setup() {
     fi
     if [[ "${NO_CPS:-0}" -eq 1 ]]; then
         # On a generation change there are no clients yet, nobody to reissue.
-        if [[ -n "${AWG_I1:-}" && "$config_exists" -eq 1 && "${AWG_GEN_SWITCHED:-0}" -ne 1 ]]; then
+        if [[ -n "${AWG_I1:-}" && "$config_exists" -eq 1 && "${AWG_GEN_SWITCHED:-0}" -ne 1 && "${AWG_AUTO_FALLBACK:-0}" -ne 1 ]]; then
             log_warn "WARNING: --no-cps drops the I1 (CPS) parameter. Existing client configs that still carry I1 will stop connecting - reissue them: sudo bash $MANAGE_SCRIPT_PATH regen"
         fi
         AWG_I1=''
@@ -5372,81 +5779,7 @@ initialize_setup() {
     fi
 
     # Save configuration
-    log "Saving settings to $CONFIG_FILE..."
-    # temp in the target config's directory -> mv = atomic rename on the same
-    # filesystem (not a cross-fs copy+unlink when /tmp is mounted as tmpfs).
-    local temp_conf cfg_dir
-    cfg_dir="$(dirname "$CONFIG_FILE")"
-    mkdir -p "$cfg_dir" 2>/dev/null
-    temp_conf=$(mktemp -p "$cfg_dir") || die "mktemp error."
-    _install_temp_files+=("$temp_conf")
-    # The write status is checked: on ENOSPC/EFBIG a truncated temp would otherwise
-    # replace the working init, and the next run would regenerate the obfuscation set.
-    cat > "$temp_conf" << EOF || { rm -f "$temp_conf"; die "Error writing settings to $temp_conf, $CONFIG_FILE left unchanged"; }
-# AmneziaWG 2.0 installation configuration (Auto-generated)
-# Used by installation and management scripts
-export OS_ID='${OS_ID:-ubuntu}'
-export OS_VERSION='${OS_VERSION:-}'
-export OS_CODENAME='${OS_CODENAME:-}'
-export AWG_PORT=${AWG_PORT}
-export AWG_TUNNEL_SUBNET='${AWG_TUNNEL_SUBNET}'
-export DISABLE_IPV6=${DISABLE_IPV6}
-export ALLOWED_IPS_MODE=${ALLOWED_IPS_MODE}
-export ALLOWED_IPS='${ALLOWED_IPS}'
-export CLIENT_ISOLATION=${CLIENT_ISOLATION:-1}
-export CLIENT_ISOLATION_NET='${CLIENT_ISOLATION_NET:-}'
-export AWG_ENDPOINT='${AWG_ENDPOINT}'
-export AWG_SERVER_NAME='${AWG_SERVER_NAME:-AWG Server}'
-export AWG_MTU=${AWG_MTU:-1280}
-# AWG 2.0 Parameters
-export AWG_Jc=${AWG_Jc}
-export AWG_Jmin=${AWG_Jmin}
-export AWG_Jmax=${AWG_Jmax}
-export AWG_S1=${AWG_S1}
-export AWG_S2=${AWG_S2}
-export AWG_S3=${AWG_S3}
-export AWG_S4=${AWG_S4}
-export AWG_H1='${AWG_H1}'
-export AWG_H2='${AWG_H2}'
-export AWG_H3='${AWG_H3}'
-export AWG_H4='${AWG_H4}'
-export AWG_I1='${AWG_I1}'
-export AWG_I2='${AWG_I2:-}'
-export AWG_I3='${AWG_I3:-}'
-export AWG_I4='${AWG_I4:-}'
-export AWG_I5='${AWG_I5:-}'
-export AWG_PRESET='${AWG_PRESET:-default}'
-export NO_TWEAKS=${NO_TWEAKS}
-export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
-export NO_CPS=${NO_CPS}
-export NO_PREBUILT=${NO_PREBUILT:-0}
-# Client devices' IPv6 directly, around the tunnel (mode 2 only). 0 - through the tunnel.
-export CLIENT_IPV6_DIRECT=${CLIENT_IPV6_DIRECT:-0}
-# DNS for NEW clients (IPs separated by commas). Empty means 1.1.1.1, 1.0.0.1.
-export CLIENT_DNS='${CLIENT_DNS:-}'
-export AWG_APPLY_MODE='${AWG_APPLY_MODE:-syncconf}'
-export ALLOW_IPV6_TUNNEL=${ALLOW_IPV6_TUNNEL:-0}
-export IPV6_SUBNET='${IPV6_SUBNET}'
-export SERVER_HAS_NATIVE_IPV6=${SERVER_HAS_NATIVE_IPV6:-0}
-export AWG_CPA='${AWG_CPA:-}'
-# Protocol generation of this installation. Do not edit by hand: a different
-# generation requires reissuing every client profile. A missing field reads as 2.0.
-export AWG_PROTOCOL='${AWG_PROTOCOL}'
-EOF
-    # The pending delete of the old port's UFW rule must survive a reboot:
-    # step 4 runs in a different process after 1-2 reboots, a process variable
-    # does not live that long (PR #176). setup_improved_firewall removes the
-    # key after a successful ufw delete.
-    if [[ "$PREV_AWG_PORT" =~ ^[0-9]+$ ]]; then
-        echo "export PREV_AWG_PORT=${PREV_AWG_PORT}" >> "$temp_conf" \
-            || die "Error writing PREV_AWG_PORT to $temp_conf"
-    fi
-    if ! mv "$temp_conf" "$CONFIG_FILE"; then
-        rm -f "$temp_conf"
-        die "Error saving $CONFIG_FILE"
-    fi
-    chmod 600 "$CONFIG_FILE" || log_warn "chmod $CONFIG_FILE error"
-    log "Settings saved."
+    _awg_save_init
     export AWG_PORT AWG_TUNNEL_SUBNET DISABLE_IPV6 ALLOWED_IPS_MODE ALLOWED_IPS AWG_ENDPOINT AWG_PROTOCOL
     log "Port: ${AWG_PORT}/udp"
     log "Subnet: ${AWG_TUNNEL_SUBNET}"
@@ -7759,6 +8092,42 @@ AWG_SYSTEMD_UNIT_EOF
 # STEP 3: Kernel module check
 # ==============================================================================
 
+# _awg31_step3_gate : the post gate for a 3.1 marker at step 3 (and at step 6
+# if step 3 did not run in this process). Passed - AWG31_POST_OK=1 (assigned
+# here, in the parent shell: inside $( ) it would be lost). A blocker with the
+# unchosen default of an unfinished install - fallback to 2.0; otherwise die.
+# Arg $1: "step6" forbids the fallback (there is never a downgrade at step 6).
+_awg31_step3_gate() {
+    local where="${1:-step3}" _awg31_blocker _awg31_rc
+    _awg31_blocker=$(awg31_environment_blocker post); _awg31_rc=$?
+    if [[ -z "$_awg31_blocker" && "$_awg31_rc" -eq 0 ]]; then
+        AWG31_POST_OK=1
+        log "3.1 environment gate (post) passed."
+        return 0
+    fi
+    log "3.1 environment gate (post): reason code '${_awg31_blocker:-none}', exit code ${_awg31_rc}."
+    if [[ "$where" == step3 ]] && _awg31_post_fallback_allowed "$_awg31_blocker" "$_awg31_rc"; then
+        _awg31_post_fallback "$_awg31_blocker"
+        return 0
+    fi
+    # Existing - if it was so at step 0 OR a step 6 trace is there now: for it
+    # the resolver refuses --protocol=2.0, and the advice must lead to removal.
+    local _tail="" _now=""
+    _now=$(_awg_install_state "$([[ -f "$CONFIG_FILE" ]] && echo 1 || echo 0)" 2>/dev/null) || _now=1
+    if [[ "${AWG_INSTALL_STATE_AT_START:-}" != 0 && "${AWG_INSTALL_STATE_AT_START:-}" != 2 ]] || [[ "$_now" != 2 ]]; then
+        # Existing: reason and repair, removal as the last resort; a failure of
+        # the gate itself (non-zero exit code, no reason) is no reason to remove.
+        die "$(_awg31_existing_refusal "$_awg31_blocker" "$_awg31_rc")"
+    fi
+    _tail=" The server keys and profiles are not created yet, so you can switch to 2.0 without removing anything: sudo bash $0 --protocol=2.0"
+    if [[ -n "$_awg31_blocker" ]]; then
+        die "$(_awg31_blocker_message "$_awg31_blocker")${_tail}"
+    fi
+    # The same fail-closed rule as at step 0: the silence of a gate that
+    # crashed is not permission.
+    die "The environment gate could not check the tools and the module for the AmneziaWG 3.1 profile (exit code ${_awg31_rc}, no reason given). The installation stops: without an answer we do not ship the third line.${_tail}"
+}
+
 step3_check_module() {
     update_state 3
     log "### STEP 3: Kernel module check ###"
@@ -7810,32 +8179,32 @@ step3_check_module() {
     # and 3, so the generation comes from the marker read afresh from disk, not
     # from the memory of an earlier run.
     #
-    # ⚠️ THE BRANCH COMES ALIVE IN PHASE 5, when the 3.1 path opens to people.
-    # Today a 3.1 marker never reaches here: stage pre at step 0 refuses both the
-    # flag and a 3.1 marker in the config (not_implemented_yet). It stands
-    # here in advance for one reason: forgetting it in phase 5 would mean
-    # shipping the third line on tools that cannot parse it, and hearing about it
-    # from a user whose handshake silently never happens. A test calls it
-    # directly with the marker injected, so the branch cannot rot unnoticed.
-    # ⚠️ The 2.0 default here is the one place in this change where absence
-    # reads as an answer, and it is safe for two reasons at once:
-    # initialize_setup runs before EVERY step and either sets the marker or
-    # dies, so an empty one never reaches here; and if it did, the mistake
-    # would lead to 2.0, the generation that works everywhere. The opposite
-    # default would be permission. Noted by review of this pull request.
+    # ⚠️ The 2.0 default here is the one place where absence reads as an
+    # answer, and it is safe for two reasons at once: step 0
+    # (initialize_setup, once per process, before the first step) either sets
+    # the marker or dies, so an empty one never reaches here; and if it did,
+    # the mistake would lead to 2.0, the generation that works everywhere. The
+    # opposite default would be permission. Noted by review of the gate PR.
     if [[ "${AWG_PROTOCOL:-2.0}" == "3.1" ]]; then
-        local _awg31_blocker _awg31_rc
-        _awg31_blocker=$(awg31_environment_blocker post); _awg31_rc=$?
-        if [[ -n "$_awg31_blocker" ]]; then
-            log "3.1 environment gate (post): reason code '${_awg31_blocker}'."
-            die "$(_awg31_blocker_message "$_awg31_blocker")"
+        _awg31_step3_gate
+    elif [[ -n "${AWG_PROTOCOL_FALLBACK:-}" ]]; then
+        # A recorded fallback (from step 0, or from step 3 of an earlier run)
+        # saved a 2.0 set, and the module and the tools may have changed. That same set (no regeneration) is checked on a
+        # temporary interface BEFORE step 6: otherwise H ranges or an I1 the
+        # module does not take would surface only at service start, when the
+        # server keys have already locked the generation. An explicit
+        # --protocol=2.0 clears the reason, and then there is no check - as for
+        # any explicitly chosen 2.0. The state veto does
+        # NOT apply here: it forbids a downgrade, not a check, and an install
+        # that step 0 took for an existing one (say, after an ip failure) is
+        # checked too.
+        local _crc=0
+        awg20_candidate_support || _crc=$?
+        (( _crc == 2 )) && _awg20_candidate_stale_die
+        if (( _crc != 0 )); then
+            die "The installation fell back to AmneziaWG 2.0 automatically ($(_awg31_fallback_reason "$AWG_PROTOCOL_FALLBACK")), but the module refused the 2.0 parameter set or returned different values. The installation stops before step 4. Run with --verbose to see where the probe stopped, and check the module: modprobe amneziawg; dkms status."
         fi
-        # The same fail-closed rule as at step 0: the silence of a gate that
-        # crashed is not permission.
-        if (( _awg31_rc != 0 )); then
-            die "The environment gate could not check the tools and the module for the AmneziaWG 3.1 profile (exit code ${_awg31_rc}, no reason given). The installation stops: without an answer we do not ship the third line."
-        fi
-        log "3.1 environment gate (post) passed."
+        log "The 2.0 parameter set (fallback: ${AWG_PROTOCOL_FALLBACK}) checked on a temporary interface."
     fi
 
     log "Step 3 completed."
@@ -7983,7 +8352,7 @@ _step6_undo_31() {
 
 step6_generate_configs() {
     update_state 6
-    log "### STEP 6: AWG 2.0 config generation ###"
+    log "### STEP 6: AmneziaWG ${AWG_PROTOCOL:-2.0} config generation ###"
     cd "$AWG_DIR" || die "cd $AWG_DIR error"
 
     # Load shared library
@@ -8015,6 +8384,17 @@ step6_generate_configs() {
         grep -qxF "#_Name = ${client_name}" "$SERVER_CONF_FILE" 2>/dev/null || new_clients+=("$client_name")
     done
     if (( gen31 )); then
+        # 3.1 profiles are handed out only after the post gate in THIS process.
+        # Without step 3 an existing install (state 1) gets here after the
+        # "configuration flags -> step 4" rewind; an unfinished one (2) is sent
+        # back to step 3 by the rewind itself, and for it this is defence in
+        # depth. The tools or the module may have changed between runs, and the
+        # client-set check below does not probe the module. There is never a
+        # downgrade here.
+        if [[ "${AWG31_POST_OK:-0}" -ne 1 ]]; then
+            log "The post gate did not run in this run - checking before handing out 3.1 profiles."
+            _awg31_step3_gate step6
+        fi
         _awg31_require_client_tools || die "The 3.1 install stopped before any change: tools for the client set are missing."
         _awg31_refuse_client_leftovers "${new_clients[@]}" || die "The 3.1 install stopped before any change: files of earlier clients are left."
     fi
@@ -8182,10 +8562,32 @@ step7_start_service() {
 # STEP 99: Completion
 # ==============================================================================
 
+# _awg_generation_summary : the generation line for the final report. Four
+# cases: 3.1; 2.0 by flag; 2.0 by fallback (with the reason); 2.0 of an existing
+# install without a source (made before v6.0.0, "chosen by flag" would be
+# untrue).
+_awg_generation_summary() {
+    local p="${AWG_PROTOCOL:-2.0}" src="${AWG_PROTOCOL_SOURCE:-}" fb="${AWG_PROTOCOL_FALLBACK:-}"
+    if [[ "$p" == "3.1" ]]; then
+        case "$src" in
+            explicit) printf '%s' "3.1 (chosen by flag)" ;;
+            default)  printf '%s' "3.1 (default)" ;;
+            *)        printf '%s' "3.1" ;;
+        esac
+    elif [[ -n "$fb" ]]; then
+        printf '%s' "2.0 - fallback: $(_awg31_fallback_reason "$fb")"
+    elif [[ "$src" == explicit ]]; then
+        printf '%s' "2.0 (chosen by flag)"
+    else
+        printf '%s' "2.0 (existing installation)"
+    fi
+}
+
 step99_finish() {
     log "### INSTALLATION COMPLETE ###"
     log "=============================================================================="
-    log "AmneziaWG 2.0 installation and configuration COMPLETED SUCCESSFULLY!"
+    log "AmneziaWG ${AWG_PROTOCOL:-2.0} installation and configuration COMPLETED SUCCESSFULLY!"
+    log "Protocol generation: $(_awg_generation_summary)"
     log " "
     log "CLIENT FILES:"
     log "  Configs (.conf) and QR codes (.png) in: $AWG_DIR"
@@ -8199,8 +8601,18 @@ step99_finish() {
     log "  awg show                              # AmneziaWG status"
     log "  ufw status verbose                    # Firewall status"
     log " "
-    log "IMPORTANT: Use Amnezia VPN client >= 4.8.12.7 to connect"
-    log "           with AWG 2.0 protocol support"
+    if [[ "${AWG_PROTOCOL:-2.0}" == "3.1" ]]; then
+        log "IMPORTANT: third-line (3.1) profiles. You need a client with AmneziaWG 3.1 support"
+        log "           (recent AmneziaVPN, AmneziaWG, WG Tunnel; see the section \"Which AmneziaWG generation"
+        log "           a client speaks\": https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.en.md)."
+        log "           Routers without 3.1 support in their firmware and Hiddify need a 2.0 server."
+    else
+        log "IMPORTANT: Use Amnezia VPN client >= 4.8.12.7 to connect"
+        log "           with AWG 2.0 protocol support"
+    fi
+    if [[ -n "${AWG_PROTOCOL_FALLBACK:-}" ]]; then
+        log_warn "The server was set to 2.0 automatically: $(_awg31_fallback_reason "$AWG_PROTOCOL_FALLBACK")."
+    fi
     log " "
     cleanup_apt
     log " "

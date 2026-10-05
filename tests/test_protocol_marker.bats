@@ -298,8 +298,7 @@ render_init() {
 
 @test "installer RU/EN: the marker is read before the generation is resolved" {
     # Step 0 no longer refuses a 3.1 marker by itself: the environment gate in
-    # the resolver decides (and answers not_implemented_yet until the 3.1 path
-    # opens). What must hold is the order - the resolver keeps or compares the
+    # the resolver decides. What must hold is the order - the resolver keeps or compares the
     # marker, so it has to be read first.
     local f body assign_line resolve_line
     for f in "$INSTALL_RU" "$INSTALL_EN"; do
@@ -420,6 +419,9 @@ initialize_setup_body() {
             if [[ "$line" == "export AWG_PROTOCOL='\${AWG_PROTOCOL}'" ]]; then n=$((n+1)); continue; fi
             if [[ "$line" =~ ^[[:space:]]*AWG_PROTOCOL=\"\$CLI_PROTOCOL\"$ ]]; then n=$((n+1)); continue; fi
             if [[ "$line" =~ ^[[:space:]]*AWG_PROTOCOL=\"\$PROTOCOL_DEFAULT\"$ ]]; then n=$((n+1)); continue; fi
+            # the two fallback assignments (pre in the resolver, post at step 3):
+            # the only literal generation an assignment may carry is 2.0
+            if [[ "$line" =~ ^[[:space:]]*AWG_PROTOCOL=\"2\.0\"$ ]]; then n=$((n+1)); continue; fi
             if [[ "$line" =~ AWG_PROTOCOL\+?= ]] \
                || [[ "$line" =~ AWG_PROTOCOL:= ]] \
                || [[ "$line" =~ -v[[:space:]]+[^A-Za-z0-9_]?AWG_PROTOCOL([^A-Za-z0-9_]|$) ]] \
@@ -428,7 +430,7 @@ initialize_setup_body() {
                 extra+="$line"$'\n'
             fi
         done < "$f"
-        [ "$n" -eq 6 ] || { echo "$f: expected the 6 known assignment lines, matched $n"; false; }
+        [ "$n" -eq 8 ] || { echo "$f: expected the 8 known assignment lines, matched $n"; false; }
         [ -z "$extra" ] || { echo "$f: extra assignment(s):"; echo "$extra"; false; }
     done
     # The management script must not assign the marker at all (backup/restore

@@ -1640,9 +1640,11 @@ awg31_module_support() {
     esac
 }
 
+# Копия функции установщика (держится байт в байт тестом). Режимы: line31 (по умолчанию) и candidate20 - описание у копии в установщике.
 _awg31_module_probe() (
     case $- in *x*) set +x ;; esac
     umask 077
+    local mode="${1:-line31}"
     # 🔴 Проба может отказать по многу разных причин, и до этой правки человек
     # не узнавал ни одной. Числа тут НЕТ намеренно: оно уже дважды разошлось с
     # кодом, причём второй раз его подняли до значения ПРЕДЫДУЩЕГО коммита -
@@ -1664,6 +1666,7 @@ _awg31_module_probe() (
             printf 'проба модуля: %s\n' "$1" >&2
         fi
     }
+    case "$mode" in line31|candidate20) : ;; *) _probe_say "неизвестный режим пробы '$mode'"; printf 'failed'; exit 0 ;; esac
     local ifn="" kf="" rec="" key="" out="" line="" ctl="" rc=0 arc=0 i=0 made=0 cleaned=0
     local klines=() kraw="" kbytes="" krc=0
     local seen=0 hpk=0 cpa=0 hpk_name=0 cpa_name=0
@@ -1678,6 +1681,15 @@ _awg31_module_probe() (
     # «проба была». ⚠️ Если SIGKILL получит весь установщик, запись и интерфейс
     # останутся до перезагрузки: следующий запуск ищет только записи своего $$.
     rec="${TMPDIR:-/tmp}/awg31probe.$$.iface"
+    # 🔴 Запись прошлой пробы ЭТОГО процесса на месте - значит, её интерфейс не
+    # убран (удаление не прошло), и уборка установщика ищет его по этой записи.
+    # С автооткатом проба зовётся дважды за процесс (line31, затем candidate20),
+    # и вторая затёрла бы запись первой: интерфейс остался бы без следа.
+    # Только обычный файл: всё прочее на этом пути (каталог, ссылка) ловит отказ записи ниже.
+    if [[ -f "$rec" && ! -L "$rec" ]]; then
+        rm -f "$kf" 2>/dev/null
+        _probe_say "осталась запись прошлой пробы этого запуска ($rec): её интерфейс не убран, новую пробу не начинаю"; printf 'stale'; exit 0
+    fi
     # Уборка обязана пережить и обычный выход, и сигнал: без интерфейса на
     # машине не должно остаться следа пробы.
     _probe_cleanup() {
@@ -1705,6 +1717,7 @@ _awg31_module_probe() (
     trap '_probe_cleanup' EXIT
     trap '_probe_cleanup; printf "failed"; exit 0' INT TERM HUP
 
+    if [[ "$mode" == line31 ]]; then
     timeout -k 1 5 awg genkey </dev/null > "$kf" 2>/dev/null || { _probe_say "awg genkey не дал ключ"; printf 'failed'; exit 0; }
     # 🔴 Но читать надо ОБЕ строки. `read` берёт только первую, а модулю уходит
     # файл ЦЕЛИКОМ: файл с верной первой строкой и мусором в хвосте прошёл бы
@@ -1781,6 +1794,7 @@ _awg31_module_probe() (
     # объявили бы второй линией исправный модуль, отправив человека пересобирать
     # его впустую.
     [[ "$key" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]] || { _probe_say "ключ не той формы, какой требует библиотека"; printf 'failed'; exit 0; }
+    fi
 
     # Имя короче 15 символов и никогда не awg0: проба не имеет права трогать
     # рабочий интерфейс. Защита тут - сама ФОРМА имени (`awgp<pid>x<n>` не может
@@ -1828,6 +1842,46 @@ _awg31_module_probe() (
         printf 'failed'; exit 0
     done
     [[ "$made" -eq 1 ]] || { _probe_say "все пять временных имён заняты"; printf 'failed'; exit 0; }
+
+    if [[ "$mode" == candidate20 ]]; then
+        # Набор кандидата целиком, ровно в том виде, в каком он пойдёт в
+        # awg0.conf. Пустой I1 (--no-cps) не подаётся: так его и рендерит конфиг.
+        local -a cargs=(jc "${AWG_Jc-}" jmin "${AWG_Jmin-}" jmax "${AWG_Jmax-}"
+                        s1 "${AWG_S1-}" s2 "${AWG_S2-}" s3 "${AWG_S3-}" s4 "${AWG_S4-}"
+                        h1 "${AWG_H1-}" h2 "${AWG_H2-}" h3 "${AWG_H3-}" h4 "${AWG_H4-}")
+        local -a want=("Jc = ${AWG_Jc-}" "Jmin = ${AWG_Jmin-}" "Jmax = ${AWG_Jmax-}"
+                       "S1 = ${AWG_S1-}" "S2 = ${AWG_S2-}" "S3 = ${AWG_S3-}" "S4 = ${AWG_S4-}"
+                       "H1 = ${AWG_H1-}" "H2 = ${AWG_H2-}" "H3 = ${AWG_H3-}" "H4 = ${AWG_H4-}")
+        if [[ -n "${AWG_I1-}" ]]; then cargs+=(i1 "$AWG_I1"); want+=("I1 = $AWG_I1"); fi
+        timeout -k 1 5 awg set "$ifn" "${cargs[@]}" </dev/null >/dev/null 2>&1
+        rc=$?
+        (( rc == 0 )) || { _probe_say "набор 2.0 не применился (awg set, код $rc)"; printf 'failed'; exit 0; }
+        out=$(timeout -k 1 5 awg showconf "$ifn" </dev/null 2>/dev/null) || { _probe_say "awg showconf отказал на наборе 2.0"; printf 'failed'; exit 0; }
+        local -A got=()
+        while IFS= read -r line; do
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            [[ -n "$line" ]] && got["$line"]=1
+        done <<< "$out"
+        local w miss=""
+        for w in "${want[@]}"; do [[ -n "${got[$w]-}" ]] || miss+=" ${w%% =*}"; done
+        # Сверка ТОЧНАЯ: замер 4 oct 2026 (tools v3.1.20260812) - H-диапазоны и
+        # I1 читаются обратно дословно. Несовпадение - «не знаю», а не «работает».
+        if [[ -n "$miss" ]]; then
+            # Что вернулось вместо них - все строки J, S, H и I (секретов в них нет): сверка точная,
+            # и на другой сборке модуля форма ответа может отличаться.
+            _probe_say "  строк в ответе: ${#got[@]}"
+            for line in "${!got[@]}"; do
+                [[ "${line,,}" =~ ^(jc|jmin|jmax|s[1-4]|h[1-4]|i[1-5])[[:space:]]*= ]] && _probe_say "  вернулось: $line"
+            done
+            _probe_say "набор 2.0 вернулся не теми значениями:${miss}"
+            printf 'failed'
+        else
+            _probe_say "набор 2.0 применён и прочитан обратно без расхождений"
+            printf 'ok'
+        fi
+        exit 0
+    fi
 
     timeout -k 1 5 awg set "$ifn" s1 15 s2 15 s3 12 s4 12 \
         header-protection-key "$kf" content-padding-addition 32-128 </dev/null >/dev/null 2>&1

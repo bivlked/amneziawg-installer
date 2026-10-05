@@ -194,8 +194,7 @@ break_arch_detection() {
 
 @test "ARM wins over an old kernel - the reason given is the permanent one" {
     # A modern kernel on ARM passes the kernel check, so without the arm branch
-    # the answer would be not_implemented_yet today and empty after phase 5 -
-    # that is, it would ship on ARM. And on an old kernel the arm code must still
+    # the answer would be empty - that is, 3.1 would ship on ARM. And on an old kernel the arm code must still
     # win, because upgrading the kernel would not make ARM shippable.
     load_gate
     run awg31_environment_blocker pre "arm64" "6.1.0-18-arm64"
@@ -207,7 +206,8 @@ break_arch_detection() {
     run awg31_environment_blocker pre "amd64" "6.6.99-generic"
     [ "$output" = "kernel" ]
     run awg31_environment_blocker pre "amd64" "6.7.0-generic"
-    [ "$output" = "not_implemented_yet" ]
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
     run awg31_environment_blocker pre "amd64" "not-a-version"
     [ "$output" = "kernel" ]
 }
@@ -253,16 +253,14 @@ break_arch_detection() {
     [ "$output" = "arch_unknown" ]
 }
 
-@test "a suitable environment reports not_implemented_yet until phase 5" {
-    # The tripwire for the phase 5 change. The 3.1 generator, key and render
-    # already exist; the path stays closed until downgrade and the lifecycle of
-    # both generations are in. When it opens, this assertion MUST be rewritten to
-    # expect an empty string; if it is not, the suite goes red and nobody ships a
-    # half-wired default.
+@test "a suitable environment passes pre: empty output, status 0" {
+    # Since v6.0.0 the third-line path is open: an empty answer with status 0
+    # means "install 3.1". Both halves are asserted, because an empty answer
+    # with a non-zero status is the "gate could not answer" refusal.
     load_gate
     run awg31_environment_blocker pre "amd64" "6.14.0-generic"
     [ "$status" -eq 0 ]
-    [ "$output" = "not_implemented_yet" ]
+    [ "$output" = "" ]
 }
 
 # --------------------------------------------------- stage ordering and scope
@@ -291,7 +289,8 @@ break_arch_detection() {
     load_gate
     make_awg_stub 31
     run awg31_environment_blocker pre "amd64" "6.14.0-generic"
-    [ "$output" = "not_implemented_yet" ]
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
     [ ! -e "$TEST_DIR/awg.argv" ]
 }
 
@@ -310,12 +309,15 @@ gate_case() {
     [ "$output" = "$want" ] || { echo "expected $want, got $output ($script)"; return 1; }
 }
 
-@test "post: a fully suitable environment still reports not_implemented_yet, both twins" {
-    # The second half of the tripwire. If post ever answers empty before the
-    # path opens, the installer would be told to write a 3.1 profile that has no
-    # downgrade and no lifecycle behind it.
-    gate_case "$INSTALL_RU" 31 ok not_implemented_yet
-    gate_case "$INSTALL_EN" 31 ok not_implemented_yet
+@test "post: a fully suitable environment passes with an empty answer, both twins" {
+    # Capable tools and a third-line module on a suitable machine: post answers
+    # empty with status 0, and the MODULE probe really ran - a temporary
+    # interface was created - so the empty answer is a verdict, not a skipped
+    # check. (awg.argv alone would not prove it: the tools check writes it too.)
+    gate_case "$INSTALL_RU" 31 ok ""
+    grep -q '^link add awgp' "$TEST_DIR/ip.argv" || { echo "the module probe did not run (RU)"; return 1; }
+    gate_case "$INSTALL_EN" 31 ok ""
+    grep -q '^link add awgp' "$TEST_DIR/ip.argv" || { echo "the module probe did not run (EN)"; return 1; }
 }
 
 @test "post: a second-line module is refused with its own code, both twins" {
@@ -503,7 +505,7 @@ gate_case() {
 @test "an omitted stage is refused, not silently downgraded to pre" {
     # The stage has no default on purpose: an unset variable would otherwise
     # become pre, and the tools probe would be skipped without a word. With 2.0
-    # tools present, a silent downgrade to pre would answer not_implemented_yet
+    # tools present, a silent downgrade to pre would answer empty (install 3.1)
     # while post answers tools_old, so this distinguishes the two.
     load_gate
     make_awg_stub 20
@@ -561,7 +563,8 @@ gate_case() {
         run awg31_environment_blocker pre "riscv64" "6.14.0-generic"
         [ "$output" = "arch_unsupported" ]
         run awg31_environment_blocker pre "amd64" "6.14.0-generic"
-        [ "$output" = "not_implemented_yet" ]
+        [ "$status" -eq 0 ]
+        [ "$output" = "" ]
         run awg31_environment_blocker sideways "amd64" "6.14.0-generic"
         [ "$status" -ne 0 ]
     done
@@ -590,8 +593,9 @@ gate_case() {
     local body
     for f in "$INSTALL_RU" "$INSTALL_EN"; do
         body=$(func_from "$f" awg31_environment_blocker)
-        for code in arch_unknown arch_unsupported arm kernel tools_old module_line2 module_probe_failed not_implemented_yet internal_error; do
+        for code in arch_unknown arch_unsupported arm kernel tools_old module_line2 module_probe_failed internal_error; do
             [[ "$body" == *"printf '$code'"* ]]
         done
+        [[ "$body" != *not_implemented_yet* ]] || { echo "not_implemented_yet still in $f"; return 1; }
     done
 }
