@@ -570,8 +570,10 @@ Options:
                         started but has not reached step 6 (default 3.1).
                         Without the flag, on a machine where 3.1 cannot run
                         (kernel older than 6.7, a non-x86_64 architecture, ARM
-                        included, old tools or module), 2.0 is installed with
-                        an explanation. --protocol=2.0 is
+                        included, a second-line kernel module or a failed module
+                        check), 2.0 is installed with an explanation; if the awg
+                        tools are older than a third-line module, the install
+                        stops and asks to upgrade them. --protocol=2.0 is
                         needed if the clients are routers on stock firmware,
                         Hiddify or apps that are not updated. An explicit
                         --protocol=3.1 on an unsuitable machine ends the install
@@ -1631,6 +1633,12 @@ _awg31_post_fallback() {
     local _crc=0
     awg20_candidate_support || _crc=$?
     (( _crc == 2 )) && _awg20_candidate_stale_die
+    if (( _crc != 0 )) && [[ "$code" == tools_old ]]; then
+        # Measured 5 oct 2026: second-line tools with a third-line module cannot set
+        # the H1-H4 ranges (Invalid argument), so they do not apply our 2.0 set either.
+        # The cure is newer tools, not a module check.
+        die "The AmneziaWG 3.1 profile cannot run here: the installed awg tools do not understand third-line parameters (reason code: tools_old), and the 2.0 parameter set did not apply through them either. Most often this means the tools are older than the kernel module: with a third-line module they cannot set the H1-H4 ranges. Upgrade the tools (apt-get update && apt-get install --only-upgrade amneziawg-tools) and run the installer again; the init is unchanged."
+    fi
     if (( _crc != 0 )); then
         die "The AmneziaWG 3.1 profile cannot run here ($(_awg31_fallback_reason "$code"), reason code: ${code}), and the module refused the 2.0 parameter set or returned different values. The installer sees no working 2.0 on this machine and stops; the init is unchanged. Run with --verbose to see where the probe stopped, and check the module: modprobe amneziawg; dkms status."
     fi
@@ -8420,9 +8428,10 @@ step6_generate_configs() {
         local s_bak
         s_bak="${SERVER_CONF_FILE}.bak-$(date +%F_%H%M%S)"
         if ! cp "$SERVER_CONF_FILE" "$s_bak"; then
-            # On 3.1 the undo restores the config from this backup: no backup, no rewrite.
-            (( gen31 )) && die "Backup error $s_bak: on a 3.1 install the server config is not rewritten without a backup."
-            log_warn "Backup error $s_bak"
+            # No backup, no rewrite, on either generation: the render carries the peers
+            # over from this backup, so a rewrite would leave the live config without
+            # clients, and on 3.1 the undo would have nothing to go back to.
+            die "Backup error $s_bak: the server config is not rewritten without a backup, or the clients would lose access. Check disk space and permissions, then run the installer again."
         fi
         log "Server config backup: $s_bak"
     fi
