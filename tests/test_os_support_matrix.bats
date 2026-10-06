@@ -58,11 +58,15 @@ _run_os_check() {
 
 @test "matrix: every version comparison in check_os_version is one the parser reads (RU + EN)" {
     # The set below only sees "$OS_VERSION" == "X"; a version added in another
-    # form would slip past the "code wider than the matrix" direction.
-    local f body n_eq n_read
+    # form ("${OS_VERSION}", a single =, =~, a nested case) would slip past the
+    # "code wider than the matrix" direction. So every mention of OS_VERSION
+    # inside the ubuntu) and debian) branches must be one the parser read.
+    local f n_eq n_read
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
-        body=$(awk '/^check_os_version\(\) \{$/,/^}$/' "$ROOT/$f")
-        n_eq=$(grep -oE 'OS_VERSION"? *(==|=~|!=)' <<<"$body" | wc -l)
+        n_eq=$(awk '/^check_os_version\(\) \{$/,/^}$/' "$ROOT/$f" | awk '
+            /^[[:space:]]*(ubuntu|debian)\)/ { on = 1 }
+            /;;/ { on = 0 }
+            on' | grep -o 'OS_VERSION' | wc -l)
         n_read=$(_installer_set "$ROOT/$f" | wc -l)
         [ "$n_eq" -gt 0 ] && [ "$n_eq" -eq "$n_read" ] || { echo "$f: comparisons $n_eq, parsed $n_read"; false; }
     done
