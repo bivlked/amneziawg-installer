@@ -60,15 +60,18 @@ _run_os_check() {
     # The set below only sees "$OS_VERSION" == "X"; a version added in another
     # form ("${OS_VERSION}", a single =, =~, a nested case) would slip past the
     # "code wider than the matrix" direction. So every mention of OS_VERSION
-    # inside the ubuntu) and debian) branches must be one the parser read.
-    local f n_eq n_read
+    # inside the outer `case "$OS_ID" in ... esac` block must be one the parser
+    # read, and `supported=1` may only be set inside that block.
+    local f fn blk n_eq n_read
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
-        n_eq=$(awk '/^check_os_version\(\) \{$/,/^}$/' "$ROOT/$f" | awk '
-            /^[[:space:]]*(ubuntu|debian)\)/ { on = 1 }
-            /;;/ { on = 0 }
-            on' | grep -o 'OS_VERSION' | wc -l)
+        fn=$(awk '/^check_os_version\(\) \{$/,/^}$/' "$ROOT/$f")
+        blk=$(sed -n '/^    case "\$OS_ID" in$/,/^    esac$/p' <<<"$fn")
+        [ -n "$blk" ] || { echo "$f: outer case block not found"; false; }
+        n_eq=$(grep -o 'OS_VERSION' <<<"$blk" | wc -l)
         n_read=$(_installer_set "$ROOT/$f" | wc -l)
-        [ "$n_eq" -gt 0 ] && [ "$n_eq" -eq "$n_read" ] || { echo "$f: comparisons $n_eq, parsed $n_read"; false; }
+        [ "$n_eq" -gt 0 ] && [ "$n_eq" -eq "$n_read" ] || { echo "$f: mentions $n_eq, parsed $n_read"; false; }
+        [ "$(grep -c 'supported=1' <<<"$fn")" -eq "$(grep -c 'supported=1' <<<"$blk")" ] \
+            || { echo "$f: supported=1 set outside the case block"; false; }
     done
 }
 
@@ -218,6 +221,28 @@ amneziawg-kmod-near|install ok installed|/lib/modules/6.6.31rpt-rpi-v8/extra/amn
             g() { eval "$1"; echo CONTINUED; }; g "$1"' _ "$blk"
         [ "$status" -ne 0 ] && [[ "$output" == *"DIE:"*"apt-get purge -y amneziawg-kmod-ubuntu-2510-arm64"* ]] \
             && [[ "$output" != *CONTINUED* ]] || { echo "$f leftover: $output"; false; }
+    done
+}
+
+@test "check_os_version: behaviour follows the matrix, whatever the syntax (RU + EN)" {
+    # Every matrix platform passes silently; neighbours outside it are warned
+    # about. Catches a version added under another variable (VERSION_ID,
+    # OS_CODENAME), outside the case block or as a new family branch, which no
+    # text check of the function sees.
+    local f line os ver
+    local -a outside=("ubuntu 25.10 questing" "ubuntu 24.10 oracular" "ubuntu 22.04 jammy"
+                      "debian 11 bullseye" "debian 14 forky" "raspbian 12 bookworm")
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        while IFS=: read -r os ver; do
+            [ -n "$os" ] || continue
+            run _run_os_check "$ROOT/$f" "$os" "$ver" x 0
+            [ "$status" -eq 0 ] && [[ "$output" != *"WARN:"* ]] || { echo "$f $os $ver (matrix): $output"; false; }
+        done < <(_matrix_set)
+        for line in "${outside[@]}"; do
+            read -r os ver _ <<<"$line"
+            run _run_os_check "$ROOT/$f" $line 1
+            [ "$status" -eq 0 ] && [[ "$output" == *"WARN:"* ]] || { echo "$f $os $ver (outside): $output"; false; }
+        done
     done
 }
 
