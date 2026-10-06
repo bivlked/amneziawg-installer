@@ -76,6 +76,9 @@ _run_os_check() {
         # the set while every count above still matches.
         [ "$(grep -cE 'VERSION_ID|CODENAME|lsb_release|ID_LIKE' <<<"$blk")" -eq 0 ] \
             || { echo "$f: the case block reads the version from another source"; false; }
+        # Mapping a derivative onto a supported family ahead of the case (e.g.
+        # OS_ID from ID_LIKE) would let it through as that family.
+        [ "$(grep -c 'ID_LIKE' <<<"$fn")" -eq 0 ] || { echo "$f: check_os_version reads ID_LIKE"; false; }
         # The arms of the outer case are exactly the matrix families: a new
         # family or a catch-all arm would accept systems the matrix does not list.
         local arms fams
@@ -241,7 +244,7 @@ amneziawg-kmod-near|install ok installed|/lib/modules/6.6.31rpt-rpi-v8/extra/amn
     # the text check above closes them for any value.
     local f line os ver n want
     local -a outside=("ubuntu 25.10 questing" "ubuntu 24.10 oracular" "ubuntu 22.04 jammy"
-                      "ubuntu 20.04 focal" "debian 11 bullseye" "debian 14 forky" "raspbian 12 bookworm")
+                      "ubuntu 20.04 focal" "debian 11 bullseye" "debian 14 forky" "raspbian 12 bookworm" "pop 24.04 noble")
     want=$(_matrix_set | grep -c ':')
     [ "$want" -ge 1 ] || { echo "matrix unreadable"; false; }
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
