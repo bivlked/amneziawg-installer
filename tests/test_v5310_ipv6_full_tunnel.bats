@@ -1,4 +1,8 @@
 #!/usr/bin/env bats
+# The server endpoint in these fixtures is a NAME on purpose: a literal IPv4
+# address inside the client routes would be cut out of AllowedIPs (see
+# test_aip_endpoint_carve.bats), and these tests are about other parts of the
+# list.
 # v5.31.0 - the list-based routing mode 2 stopped leaking IPv6.
 # (mode 2 was the install default until the default moved to mode 1)
 #
@@ -276,13 +280,13 @@ setup_mode2() {
 
 @test "v5.31.0 render: mode 2 writes an IPv6 route into the client config (2000::/3 since the LAN fix)" {
     setup_mode2
-    render_client_config "def" "10.9.9.2" "FAKEPRIV" "FAKEPUB" "1.2.3.4" "39743"
+    render_client_config "def" "10.9.9.2" "FAKEPRIV" "FAKEPUB" "vpn.example.com" "39743"
     grep -q "^AllowedIPs = .*, 2000::/3$" "$AWG_DIR/def.conf"
 }
 
 @test "v5.31.0 render: the mode-2 client keeps its whole IPv4 list" {
     setup_mode2
-    render_client_config "def2" "10.9.9.3" "FAKEPRIV" "FAKEPUB" "1.2.3.4" "39743"
+    render_client_config "def2" "10.9.9.3" "FAKEPRIV" "FAKEPUB" "vpn.example.com" "39743"
     grep -q "^AllowedIPs = 1.0.0.0/8, .*208.0.0.0/4, 8.8.8.8/32, 1.1.1.1/32, 2000::/3$" "$AWG_DIR/def2.conf"
 }
 
@@ -291,7 +295,7 @@ setup_mode2() {
     create_init_config
     sed -i "s|^export ALLOWED_IPS=.*|export ALLOWED_IPS='0.0.0.0/0'|" "$CONFIG_FILE"
     safe_load_config "$CONFIG_FILE"
-    render_client_config "one" "10.9.9.4" "FAKEPRIV" "FAKEPUB" "1.2.3.4" "39743"
+    render_client_config "one" "10.9.9.4" "FAKEPRIV" "FAKEPUB" "vpn.example.com" "39743"
     grep -qxF "AllowedIPs = 0.0.0.0/0, ::/0" "$AWG_DIR/one.conf"
 }
 
@@ -300,7 +304,7 @@ setup_mode2() {
     create_init_config
     sed -i "s|^export ALLOWED_IPS=.*|export ALLOWED_IPS='10.0.0.0/8, 192.168.0.0/16'|" "$CONFIG_FILE"
     safe_load_config "$CONFIG_FILE"
-    render_client_config "split" "10.9.9.5" "FAKEPRIV" "FAKEPUB" "1.2.3.4" "39743"
+    render_client_config "split" "10.9.9.5" "FAKEPRIV" "FAKEPUB" "vpn.example.com" "39743"
     grep -qxF "AllowedIPs = 10.0.0.0/8, 192.168.0.0/16" "$AWG_DIR/split.conf"
     run grep -qF "::/0" "$AWG_DIR/split.conf"
     [ "$status" -ne 0 ]
@@ -316,7 +320,7 @@ export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
 export SERVER_HAS_NATIVE_IPV6=1
 CONF
     safe_load_config "$CONFIG_FILE"
-    render_client_config "d6" "10.9.9.6" "FAKEPRIV" "FAKEPUB" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::6"
+    render_client_config "d6" "10.9.9.6" "FAKEPRIV" "FAKEPUB" "vpn.example.com" "39743" "fddd:2c4:2c4:2c4::6"
     grep -q "^AllowedIPs = .*, ::/0$" "$AWG_DIR/d6.conf"
 }
 
@@ -328,7 +332,7 @@ export IPV6_SUBNET='fddd:2c4:2c4:2c4::/64'
 export SERVER_HAS_NATIVE_IPV6=0
 CONF
     safe_load_config "$CONFIG_FILE"
-    render_client_config "d7" "10.9.9.7" "FAKEPRIV" "FAKEPUB" "1.2.3.4" "39743" "fddd:2c4:2c4:2c4::7"
+    render_client_config "d7" "10.9.9.7" "FAKEPRIV" "FAKEPUB" "vpn.example.com" "39743" "fddd:2c4:2c4:2c4::7"
     grep -q "^AllowedIPs = .*, fddd:2c4:2c4:2c4::/64$" "$AWG_DIR/d7.conf"
     run grep -qF "::/0" "$AWG_DIR/d7.conf"
     [ "$status" -ne 0 ]
@@ -358,11 +362,11 @@ MTU = 1280
 
 [Peer]
 PublicKey = FAKESERVERPUB
-Endpoint = 1.2.3.4:39743
+Endpoint = vpn.example.com:39743
 AllowedIPs = $3
 PersistentKeepalive = 33
 EOF
-    get_server_public_ip() { echo "1.2.3.4"; }
+    get_server_public_ip() { echo vpn.example.com; }
     _ensure_server_public_key() { return 0; }
     generate_qr()        { return 0; }
     generate_vpn_uri()   { return 0; }
@@ -435,11 +439,11 @@ MTU = 1280
 
 [Peer]
 PublicKey = FAKESERVERPUB
-Endpoint = 1.2.3.4:39743
+Endpoint = vpn.example.com:39743
 AllowedIPs = $4
 PersistentKeepalive = 33
 EOF
-    get_server_public_ip() { echo "1.2.3.4"; }
+    get_server_public_ip() { echo vpn.example.com; }
     _ensure_server_public_key() { return 0; }
     generate_qr()        { return 0; }
     generate_vpn_uri()   { return 0; }
@@ -561,7 +565,7 @@ MTU = 1280
 
 [Peer]
 PublicKey = FAKESERVERPUB
-Endpoint = 1.2.3.4:39743
+Endpoint = vpn.example.com:39743
 AllowedIPs = ${list}, ::/0
 PersistentKeepalive = 33
 EOF

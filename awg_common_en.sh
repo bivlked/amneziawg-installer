@@ -325,6 +325,14 @@ _is_full_tunnel() {
     done
     # An empty list (or an IPv6-only one) is not a full tunnel.
     [[ -n "$pairs" ]] || return 1
+    # The hole at the server address (_AWG_CARVE_EPS) does not break fullness:
+    # that address is cut by us, any other hole still makes the list a split.
+    local _ep _epi
+    for _ep in ${_AWG_CARVE_EPS:-}; do
+        _valid_ipv4 "$_ep" || continue
+        _epi=$(_ipv4_to_int "$_ep") || continue
+        pairs+="${_epi} ${_epi}"$'\n'
+    done
     # Sweep the union of the intervals: whatever stays uncovered must lie
     # entirely inside the non-public ranges. sort -n gives ascending order;
     # overlaps and duplicates collapse into the cursor.
@@ -420,6 +428,118 @@ _aip_has_token() {
     toks=$(_aip_tokens "$1") || return 1
     grep -qxF -- "$2" <<< "$toks"
 }
+# --- The server address out of AllowedIPs (routing modes 2 and 3) ---
+#
+# Linux awg-quick sets up the fwmark and the routing rule only for 0.0.0.0/0.
+# When the AllowedIPs list covers the server's own public address, encrypted
+# packets to the Endpoint go into the tunnel itself: the handshake goes through
+# (the first packet leaves before the routes), then rx freezes, tx grows and ping
+# gives ENOBUFS. The apps (Windows, Android, iOS) add a route to the Endpoint
+# themselves, Linux does not. So the issued list carries a hole at the server
+# address.
+#
+# _AWG_CARVE_EPS - server addresses separated by spaces, a local variable of the
+# caller (render, regen, modify). Bash shows it to nested calls, and through it
+# _is_full_tunnel and the comparisons with the server list account for the
+# hole. Empty - everything as before.
+
+# _aip_endpoint_v4 <Endpoint> : the IPv4 address of an Endpoint (with or without
+# a port), otherwise nothing. A name and IPv6 give nothing: a name may change its
+# address and a static hole would silently go stale; a /128 hole in 2000::/3 is
+# 125 routes.
+_aip_endpoint_v4() {
+    local e="${1:-}"
+    e="${e//[[:space:]]/}"
+    [[ -z "$e" || "$e" == \[* ]] && return 0
+    [[ "$e" == *:*:* ]] && return 0
+    e="${e%:*}"
+    _valid_ipv4 "$e" && printf '%s' "$e"
+    return 0
+}
+
+# _aip_warn_endpoint_not_v4 <client> <Endpoint> : no hole at the server address
+# is possible, and the list has IPv4 routes but no 0.0.0.0/0 - a Linux client
+# needs a manual route. The caller checks the list the client ends up with.
+_aip_warn_endpoint_not_v4() {
+    log_warn "Client '$1': Endpoint '$2' is not an IPv4 address, so the server address is not excluded from AllowedIPs. A Linux client (awg-quick) needs a manual route to the server, see ADVANCED, the section on a split route list."
+}
+
+# _aip_carve_endpoints <list> <address>... : the list without the server
+# addresses. Every IPv4 route that holds an address is replaced by its complement
+# around it: a /n route gives 32-n routes from the largest to the smallest, a /32
+# of the address itself disappears. 0.0.0.0/0 is left alone (mode 1, awg-quick
+# handles it itself), IPv6 and the other routes stay where they were. The result
+# does not depend on the order of the addresses and does not change on a repeated
+# call. An empty result is an empty string, the caller decides.
+_aip_carve_endpoints() {
+    local list="$1"; shift
+    local ep e tok t a p o1 o2 o3 o4 ip mask lo hi k net out
+    local -a toks=()
+    # The route bounds are computed with arithmetic in this same shell: a command
+    # substitution per route would make a list of thousands of networks take
+    # minutes (the same reason as the cap in _is_full_tunnel).
+    for ep in "$@"; do
+        _valid_ipv4 "$ep" || continue
+        IFS=. read -r o1 o2 o3 o4 <<< "$ep"
+        e=$(( (10#$o1 << 24) | (10#$o2 << 16) | (10#$o3 << 8) | 10#$o4 ))
+        mapfile -t toks < <(_aip_tokens "$list")
+        out=""
+        for tok in "${toks[@]}"; do
+            if [[ "$tok" == *:* || "$tok" == "0.0.0.0/0" ]]; then
+                out+="${out:+, }${tok}"
+                continue
+            fi
+            t="$tok"
+            [[ "$t" == */* ]] || t="${t}/32"
+            a="${t%/*}"; p="${t##*/}"
+            if [[ ! "$p" =~ ^[0-9]{1,2}$ ]] || (( 10#$p > 32 )) || ! _valid_ipv4 "$a"; then
+                log_warn "AllowedIPs: route '$tok' not parsed - the server address is not excluded from the list."
+                return 1
+            fi
+            p=$(( 10#$p ))
+            IFS=. read -r o1 o2 o3 o4 <<< "$a"
+            ip=$(( (10#$o1 << 24) | (10#$o2 << 16) | (10#$o3 << 8) | 10#$o4 ))
+            if (( p == 0 )); then mask=0; else mask=$(( (0xFFFFFFFF << (32 - p)) & 0xFFFFFFFF )); fi
+            lo=$(( ip & mask )); hi=$(( lo | (0xFFFFFFFF ^ mask) ))
+            if (( e < lo || e > hi )); then
+                out+="${out:+, }${tok}"
+                continue
+            fi
+            for (( k = p + 1; k <= 32; k++ )); do
+                net=$(( ((e >> (32 - k)) ^ 1) << (32 - k) ))
+                out+="${out:+, }$(( (net >> 24) & 255 )).$(( (net >> 16) & 255 )).$(( (net >> 8) & 255 )).$(( net & 255 ))/${k}"
+            done
+        done
+        list="$out"
+    done
+    printf '%s' "$list"
+}
+
+# _aip_v4_norm <list> : the IPv4 routes of the list after cutting the addresses
+# of _AWG_CARVE_EPS, sorted, one per line. For comparing a client list with the
+# server list: the hole at the server address is the same on both sides.
+_aip_v4_norm() {
+    local l="$1" t
+    if [[ -n "${_AWG_CARVE_EPS:-}" ]]; then
+        # shellcheck disable=SC2086  # addresses separated by spaces, split on purpose
+        l=$(_aip_carve_endpoints "$l" ${_AWG_CARVE_EPS}) || return 1
+    fi
+    t=$(_aip_tokens "$l") || return 1
+    local v4 rc
+    v4=$(grep -vF ':' <<< "$t"); rc=$?
+    (( rc > 1 )) && return 1
+    [[ -n "$v4" ]] || return 0
+    LC_ALL=C sort -u <<< "$v4"
+}
+
+# _aip_has_v4 <list> : whether the list keeps at least one IPv4 route.
+_aip_has_v4() {
+    local t
+    t=$(_aip_tokens "$1") || return 1
+    [[ -n "$t" ]] || return 1
+    grep -qvF ':' <<< "$t"
+}
+
 
 # _aip_wants_v6_sink <list> : whether the client needs the sink address - the
 # list has 2000::/3 and no ::/0 (with ::/0 the Windows kill switch is on anyway).
@@ -498,11 +618,21 @@ _client_ipv6_direct() {
 # _aip_same_set <list> <list> : the same set of routes (order and spaces do
 # not matter). An empty list matches nothing.
 _aip_same_set() {
-    local a b
-    a=$(_aip_tokens "$1" | LC_ALL=C sort -u) || return 1
-    b=$(_aip_tokens "$2" | LC_ALL=C sort -u) || return 1
+    local a b la="$1" lb="$2"
+    # With a known server address both lists are compared with the hole at it:
+    # a client list that already has the hole and the server list without it are
+    # one set.
+    if [[ -n "${_AWG_CARVE_EPS:-}" ]]; then
+        # shellcheck disable=SC2086  # addresses separated by spaces, split on purpose
+        la=$(_aip_carve_endpoints "$la" ${_AWG_CARVE_EPS}) || return 1
+        # shellcheck disable=SC2086
+        lb=$(_aip_carve_endpoints "$lb" ${_AWG_CARVE_EPS}) || return 1
+    fi
+    a=$(_aip_tokens "$la" | LC_ALL=C sort -u) || return 1
+    b=$(_aip_tokens "$lb" | LC_ALL=C sort -u) || return 1
     [[ -n "$a" && "$a" == "$b" ]]
 }
+
 
 # _aip_direct_applies <list> : CLIENT_IPV6_DIRECT covers this list - the server
 # is in mode 2, the list equals its list, and the key is on. Mode 3 and a full
@@ -535,8 +665,9 @@ _aip_drop_our_v6() {
     mine=$(grep -vF ':' <<< "$toks"); rc=$?
     (( rc > 1 )) && return 1
     [[ -n "$mine" ]] || { printf '%s' "$list"; return 0; }
-    srv=$(_aip_tokens "$base" | LC_ALL=C sort -u) || return 1
-    [[ "$(LC_ALL=C sort -u <<< "$mine")" == "$srv" ]] || { printf '%s' "$list"; return 0; }
+    # The sets are compared with the hole at the server address on both sides (_aip_v4_norm).
+    srv=$(_aip_v4_norm "$base") || return 1
+    [[ "$(_aip_v4_norm "$mine")" == "$srv" ]] || { printf '%s' "$list"; return 0; }
     while IFS= read -r tok; do
         out+="${out:+, }${tok}"
     done <<< "$mine"
@@ -568,8 +699,9 @@ _aip_migrate_legacy_v6() {
     mine=$(grep -vF ':' <<< "$toks"); rc=$?
     (( rc > 1 )) && return 1
     [[ -n "$mine" ]] || { printf '%s' "$list"; return 0; }
-    mine=$(LC_ALL=C sort -u <<< "$mine") || return 1
-    srv=$(_aip_tokens "$base" | LC_ALL=C sort -u) || return 1
+    # The sets are compared with the hole at the server address on both sides (_aip_v4_norm).
+    mine=$(_aip_v4_norm "$mine") || return 1
+    srv=$(_aip_v4_norm "$base") || return 1
     if [[ "$mine" == "$srv" ]]; then
         while IFS= read -r tok; do
             [[ "$tok" == "::/0" ]] && tok="2000::/3"
@@ -3303,6 +3435,10 @@ render_client_config() {
     # The 8th argument is a live client's DNS from regenerate_client. An argument, not a
     # variable: a variable can be inherited from the environment and skip the CLIENT_DNS check.
     local keep_dns="${8:-}"
+    # The server address for the hole in AllowedIPs (see _aip_carve_endpoints).
+    # Nested calls see it too: tunnel fullness and the comparisons account for it.
+    local _AWG_CARVE_EPS
+    _AWG_CARVE_EPS=$(_aip_endpoint_v4 "$endpoint")
 
     load_awg_params || return 1
 
@@ -3375,6 +3511,26 @@ render_client_config() {
             return 1
         }
         allowed_ips="$_aip_new"
+    fi
+
+    # The server address out of the tunnel: otherwise Linux awg-quick routes the
+    # packets to the Endpoint itself into the tunnel (see _aip_carve_endpoints).
+    if [[ -n "$_AWG_CARVE_EPS" ]]; then
+        local _aip_cut
+        _aip_cut=$(_aip_carve_endpoints "$allowed_ips" "$_AWG_CARVE_EPS") || {
+            log_error "Failed to exclude the server address from AllowedIPs - client config not created."
+            return 1
+        }
+        if _aip_has_v4 "$allowed_ips" && ! _aip_has_v4 "$_aip_cut"; then
+            log_error "Client '$name': of the IPv4 routes in AllowedIPs only the server's own address ($_AWG_CARVE_EPS) goes into the tunnel, and it must not go there - no IPv4 routes are left, config not created."
+            return 1
+        fi
+        allowed_ips="$_aip_cut"
+    elif [[ "${_AWG_EP_WARN_LATER:-0}" != "1" ]] \
+         && _aip_has_v4 "$allowed_ips" && ! _aip_has_token "$allowed_ips" "0.0.0.0/0"; then
+        # _AWG_EP_WARN_LATER=1 is set by regen, which replaces this list with the
+        # client's saved one and checks the final list itself.
+        _aip_warn_endpoint_not_v4 "$name" "$endpoint"
     fi
 
     # A per-client list with explicit IPv6 but no ::/0 over a full tunnel:
@@ -5385,7 +5541,9 @@ generate_client() {
         return 1
     fi
 
-    # Client config
+    # Client config. The render list is final here: render prints the non-IPv4
+    # Endpoint warning itself, and a regen flag from the environment cannot mute it.
+    local _AWG_EP_WARN_LATER=0
     render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" || {
         log_error "Rollback: removing artifacts for '$name'"
         _rollback_client_artifacts "$name"
@@ -5586,6 +5744,19 @@ regenerate_client() {
         return 1
     fi
 
+    # The server addresses for the hole in AllowedIPs: the new one and the one in
+    # the client's previous config. The comparisons with the server list and the
+    # tunnel fullness account for both holes, and only the new address is cut in
+    # the final list: an old hole cannot be told from a deliberate exclusion, and
+    # it must not be filled.
+    local _AWG_CARVE_EPS _ep_new _ep_old=""
+    _ep_new=$(_aip_endpoint_v4 "$endpoint")
+    if [[ -f "$AWG_DIR/${name}.conf" ]]; then
+        _ep_old=$(_aip_endpoint_v4 "$(sed -n 's/^Endpoint[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | head -n 1 | tr -d '\r')")
+    fi
+    _AWG_CARVE_EPS="$_ep_new"
+    [[ -n "$_ep_old" && "$_ep_old" != "$_ep_new" ]] && _AWG_CARVE_EPS="${_AWG_CARVE_EPS:+$_AWG_CARVE_EPS }$_ep_old"
+
     # Preserve user settings from current .conf (modified via modify command)
     # current_dns stays empty without an old .conf: the DNS in the config is then the
     # one render_client_config wrote (CLIENT_DNS or the default), and overwriting it
@@ -5665,7 +5836,31 @@ regenerate_client() {
     [[ "$_had_conf" -eq 1 && -n "$current_dns" ]] && _keep_dns="$current_dns"
     # On 3.1 the copy of the set is taken under the same lock the .conf is
     # rewritten under, and it comes back on any failure below.
+    # A list where only the server address is left of the IPv4 routes is refused
+    # BEFORE the config is rewritten: after render the file is already rewritten
+    # from the server mode, and on 2.0 there is nothing to bring back. The check
+    # matters only where the list is going to be restored.
+    if [[ "${AWG_REGEN_RESET_ROUTES:-0}" != "1" && "$_had_conf" -eq 1 && -n "$_ep_new" ]] \
+       && _aip_has_v4 "$current_allowed_ips"; then
+        local _aip_pre
+        _aip_pre=$(_aip_carve_endpoints "$current_allowed_ips" "$_ep_new") || {
+            log_error "Failed to exclude the server address from AllowedIPs of client '$name' - config unchanged."
+            exec {lock_fd}>&-
+            unset CLIENT_PSK
+            return 1
+        }
+        if ! _aip_has_v4 "$_aip_pre"; then
+            log_error "Client '$name': of the IPv4 routes only the server's own address ($_ep_new) goes into the tunnel, and it must not go there. Config unchanged. Give the client routes (modify '$name' AllowedIPs) or run regen --reset-routes '$name'."
+            exec {lock_fd}>&-
+            unset CLIENT_PSK
+            return 1
+        fi
+    fi
     _awg31_set_snapshot "$name" || { exec {lock_fd}>&-; unset CLIENT_PSK; return 1; }
+    # When the client's list is going to be restored, render keeps quiet about a
+    # non-IPv4 Endpoint: its list is intermediate, the warning goes on the final one below.
+    local _AWG_EP_WARN_LATER=0
+    [[ "${AWG_REGEN_RESET_ROUTES:-0}" != "1" && "$_had_conf" -eq 1 ]] && _AWG_EP_WARN_LATER=1
     render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" "$_keep_dns" || {
         _awg31_set_restore_noted "$name"
         exec {lock_fd}>&-
@@ -5769,6 +5964,27 @@ regenerate_client() {
             log_warn "Client '$name': the IPv6 part of AllowedIPs was kept as-is, ::/0 not appended. Run regen --reset-routes to roll out the current routing mode."
         fi
         current_allowed_ips="$_aip_new"
+        # The preserved list gets the hole at the server address too: so clients
+        # issued before the fix are cured by a plain regen.
+        if [[ -n "$_ep_new" ]]; then
+            _aip_new=$(_aip_carve_endpoints "$current_allowed_ips" "$_ep_new") || {
+                log_error "Failed to exclude the server address from AllowedIPs of client '$name'. The config was already regenerated from the current routing mode, but the custom settings were NOT restored - check $AWG_DIR/${name}.conf."
+                _awg31_set_restore_noted "$name"
+                exec {lock_fd}>&-
+                unset CLIENT_PSK
+                return 1
+            }
+            if _aip_has_v4 "$current_allowed_ips" && ! _aip_has_v4 "$_aip_new"; then
+                log_error "Client '$name': of the IPv4 routes only the server's own address ($_ep_new) goes into the tunnel. The config was already regenerated from the current routing mode, but the custom settings were NOT restored - check $AWG_DIR/${name}.conf."
+                _awg31_set_restore_noted "$name"
+                exec {lock_fd}>&-
+                unset CLIENT_PSK
+                return 1
+            fi
+            current_allowed_ips="$_aip_new"
+        elif _aip_has_v4 "$current_allowed_ips" && ! _aip_has_token "$current_allowed_ips" "0.0.0.0/0"; then
+            _aip_warn_endpoint_not_v4 "$name" "$endpoint"
+        fi
     fi
     # A lone 1.1.1.1 from older versions becomes the pair, but not when it is a
     # deliberate choice through CLIENT_DNS='1.1.1.1'.

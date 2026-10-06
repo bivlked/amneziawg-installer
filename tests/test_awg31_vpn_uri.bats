@@ -338,6 +338,105 @@ PY
     both u_31_worst_case
 }
 
+u_31_worst_case_v4() {
+    local lib="$1" d out len aips i1
+    d=$(dir_of "$lib")
+    # Longest routes the installer writes itself: the mode-2 list.
+    aips=$(grep -oP 'ALLOWED_IPS="\K1\.0\.0\.0/8[^"]*' "$BATS_TEST_DIRNAME/../install_amneziawg.sh" | head -1)
+    [ -n "$aips" ] || { echo "mode-2 list not found in the installer"; return 1; }
+    # Longest I1 the generator can emit: every random range at its top.
+    i1=$(bash -c '
+        eval "$(sed -n "/^generate_cps_i1()/,/^}/p" "$1")"
+        rand_range() { echo "$2"; }
+        generate_cps_i1
+    ' _ "$BATS_TEST_DIRNAME/../install_amneziawg.sh")
+    [ -n "$i1" ] || { echo "I1 generator produced nothing"; return 1; }
+    # Values reach the snippet through the environment: they carry angle
+    # brackets, spaces and commas, and nesting them into quoted code breaks.
+    # They go into the init, because generate_vpn_uri reloads it.
+    # Keys are random: placeholder keys compress well and understated the size
+    # by about 250 bytes. The endpoint is a 253-character name, the DNS maximum,
+    # and the server name takes the 128 bytes the installer allows.
+    local k_srv k_cli k_hpk k_psk fqdn name
+    k_srv=$(head -c 32 /dev/urandom | base64); k_cli=$(head -c 32 /dev/urandom | base64)
+    k_hpk=$(head -c 32 /dev/urandom | base64); k_psk=$(head -c 32 /dev/urandom | base64)
+    _rand_label() { head -c 400 /dev/urandom | base64 | tr -dc 'a-z0-9' | head -c "$1"; }
+    fqdn="$(_rand_label 63).$(_rand_label 63).$(_rand_label 63).$(_rand_label 61)"
+    name=$(head -c 400 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 128)
+    [ "${#fqdn}" -eq 253 ] && [ "${#name}" -eq 128 ] || { echo "random inputs came out short"; return 1; }
+    out=$(WC_AIPS="$aips" WC_I1="$i1" WC_SRV="$k_srv" WC_CLI="$k_cli" WC_HPK="$k_hpk" WC_PSK="$k_psk" \
+          WC_FQDN="$fqdn" WC_NAME="$name" lib_run "$lib" 3.1 '
+        sed -i "/^export AWG_I1=/d; /^export AWG_CPA=/d; /^export ALLOWED_IPS/d; /^export DISABLE_IPV6=/d; /^export AWG_J/d; /^export AWG_S[1-4]=/d" "$CONFIG_FILE"
+        {
+            printf "export ALLOWED_IPS_MODE=2\nexport ALLOWED_IPS=\"%s\"\n" "$WC_AIPS"
+            printf "export DISABLE_IPV6=0\nexport ALLOW_IPV6_TUNNEL=1\nexport IPV6_SUBNET=fddd:2c4:2c4:2c4::/64\n"
+            printf "export AWG_I1=\"%s\"\nexport AWG_CPA=10000-65535\n" "$WC_I1"
+            printf "export AWG_Jc=128\nexport AWG_Jmin=1280\nexport AWG_Jmax=1280\n"
+            printf "export AWG_S1=150\nexport AWG_S2=149\nexport AWG_S3=64\nexport AWG_S4=32\n"
+            printf "export AWG_SERVER_NAME=\"%s\"\n" "$WC_NAME"
+        } >> "$CONFIG_FILE"
+        printf "%s\n" "$WC_SRV" > "$AWG_DIR/server_public.key"
+        printf "%s\n" "$WC_HPK" > "$AWG_DIR/server_hpk.key"
+        # The live server config is the source of the obfuscation values, so it
+        # is rendered again from the rewritten init.
+        rm -f "$SERVER_CONF_FILE"
+        safe_load_config "$CONFIG_FILE" >/dev/null 2>&1 || { echo "RC=93"; exit 0; }
+        render_server_config || { echo "RC=94"; exit 0; }
+        export CLIENT_PSK="$WC_PSK"
+        render_client_config c1 10.9.9.254 "$WC_CLI" "$WC_SRV" 111.199.199.199 65535 fddd:2c4:2c4:2c4::fffe \
+            || { echo "RC=92"; exit 0; }
+        generate_vpn_uri c1; echo "RC=$?"')
+    [[ "$out" == *"RC=0"* ]] || { echo "worst-case uri not created ($lib): $out"; return 1; }
+    grep -q 'HeaderProtectionKey' "$d/c1.conf" || { echo "the worst case is not a 3.1 config ($lib)"; return 1; }
+    grep -q 'PresharedKey' "$d/c1.conf" || { echo "the worst case lost its PSK ($lib)"; return 1; }
+    grep -q 'fddd:2c4:2c4:2c4::fffe' "$d/c1.conf" || { echo "the worst case lost its IPv6 address ($lib)"; return 1; }
+    grep -qF "$i1" "$d/c1.conf" || { echo "the worst case lost its I1 ($lib)"; return 1; }
+    grep -q '32.0.0.0/3' "$d/c1.conf" || { echo "the worst case lost the mode-2 routes ($lib)"; return 1; }
+    # the cut really happened: the /2 that held the endpoint is gone, 30 routes replace it
+    ! grep -q '64.0.0.0/2' "$d/c1.conf" || { echo "the endpoint was not cut out ($lib)"; return 1; }
+    grep -q '111.199.199.198/32' "$d/c1.conf" || { echo "the cut routes are missing ($lib)"; return 1; }
+    grep -qF "$k_hpk" "$d/c1.conf" || { echo "the worst case lost its random key ($lib)"; return 1; }
+    grep -q '^Endpoint = 111.199.199.199:65535$' "$d/c1.conf" || { echo "the worst case lost its endpoint ($lib)"; return 1; }
+    grep -q '^Jc = 128' "$d/c1.conf" || { echo "the worst case lost its junk sizes ($lib)"; return 1; }
+    # The long inputs must reach the link itself, not only the .conf: a name
+    # dropped from the link would understate the size.
+    python3 - "$d/c1.vpnuri" "$name" "$fqdn" <<'PY' || { echo "the link lost the long name or endpoint ($lib)"; return 1; }
+import base64, json, sys, zlib
+uri = open(sys.argv[1], encoding="utf-8").read().strip().replace("vpn://", "")
+raw = base64.urlsafe_b64decode(uri + "=" * (-len(uri) % 4))
+outer = json.loads(zlib.decompress(raw[4:]))
+sys.exit(0 if outer.get("description") == sys.argv[2] and outer.get("hostName") == "111.199.199.199" else 1)
+PY
+    # the routes inside the link are the cut routes of the .conf
+    python3 - "$d/c1.vpnuri" "$d/c1.conf" <<'PY' || { echo "the link routes differ from the .conf ($lib)"; return 1; }
+import base64, json, re, sys, zlib
+uri = open(sys.argv[1], encoding="utf-8").read().strip().replace("vpn://", "")
+raw = base64.urlsafe_b64decode(uri + "=" * (-len(uri) % 4))
+outer = json.loads(zlib.decompress(raw[4:]))
+inner = outer["containers"][0]["awg"]["last_config"]
+conf = open(sys.argv[2], encoding="utf-8").read()
+want = re.search(r"^AllowedIPs = (.*)$", conf, re.M).group(1).replace(" ", "")
+got = re.search(r"AllowedIPs = ([^\n\\]*)", inner).group(1).replace(" ", "")
+sys.exit(0 if got == want and "111.199.199.198/32" in got else 1)
+PY
+    len=$(wc -c < "$d/c1.vpnuri")
+    echo "worst-case 3.1 vpn:// with a cut IPv4 endpoint is $len bytes, cap 2953, headroom $((2953 - len)) ($lib)"
+    [ "$len" -le 2953 ] || { echo "worst-case 3.1 link exceeds one QR code ($lib): $len"; return 1; }
+    # The .conf QR is not compressed: its size is the whole file.
+    len=$(wc -c < "$d/c1.conf")
+    echo "worst-case 3.1 .conf with a cut IPv4 endpoint is $len bytes, cap 2953, headroom $((2953 - len)) ($lib)"
+    [ "$len" -le 2953 ] || { echo "worst-case 3.1 .conf exceeds one QR code ($lib): $len"; return 1; }
+    if command -v qrencode >/dev/null 2>&1; then
+        qrencode -t png -o "$d/c1.png" < "$d/c1.conf" || { echo "qrencode refused the worst-case .conf ($lib)"; return 1; }
+    fi
+}
+
+@test "vpn uri 3.1: the worst case with an IPv4 endpoint cut out of the routes still fits one QR code, .conf too, both twins" {
+    require_perl_zlib
+    require_python3
+    both u_31_worst_case_v4
+}
+
 @test "qrencode: the flags the installer uses take 2953 bytes and refuse 2954" {
     # Pins the ceiling the budget above is measured against. With other flags the
     # capacity is different, and the budget test would compare against a number

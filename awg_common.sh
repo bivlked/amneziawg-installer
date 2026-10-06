@@ -324,6 +324,14 @@ _is_full_tunnel() {
     done
     # Пустой список (или только IPv6) - не полный туннель.
     [[ -n "$pairs" ]] || return 1
+    # Дыра у адреса сервера (_AWG_CARVE_EPS) полноте не мешает: этот адрес
+    # вырезан нами, остальные дыры по-прежнему делают список раздельным.
+    local _ep _epi
+    for _ep in ${_AWG_CARVE_EPS:-}; do
+        _valid_ipv4 "$_ep" || continue
+        _epi=$(_ipv4_to_int "$_ep") || continue
+        pairs+="${_epi} ${_epi}"$'\n'
+    done
     # Проход по объединению интервалов: всё, что осталось непокрытым, обязано
     # целиком лежать в служебных диапазонах. sort -n даёт возрастающий порядок,
     # перекрытия и дубликаты схлопываются курсором cur.
@@ -418,6 +426,116 @@ _aip_has_token() {
     grep -qxF -- "$2" <<< "$toks"
 }
 
+# --- Адрес сервера вне AllowedIPs (режимы 2 и 3) ---
+#
+# Linux awg-quick ставит fwmark и правило маршрутизации только для 0.0.0.0/0.
+# Если список AllowedIPs покрывает публичный адрес самого сервера, шифрованные
+# пакеты к Endpoint уходят в сам туннель: рукопожатие проходит (первый пакет
+# уходит до маршрутов), потом rx замирает, tx растёт, ping даёт ENOBUFS.
+# Приложения (Windows, Android, iOS) ставят маршрут до Endpoint сами, Linux нет.
+# Поэтому в выдаваемом списке у адреса сервера делается дыра.
+#
+# _AWG_CARVE_EPS - адреса сервера через пробел, локальная переменная вызывающего
+# (render, regen, modify). Bash видит её во вложенных вызовах, и по ней
+# _is_full_tunnel и сравнения со списком сервера учитывают дыру. Пустая - всё
+# как раньше.
+
+# _aip_endpoint_v4 <Endpoint> : IPv4-адрес из Endpoint (с портом или без), иначе
+# пусто. Имя и IPv6 ничего не дают: имя может сменить адрес, и статическая дыра
+# молча устарела бы; дыра /128 в 2000::/3 - это 125 маршрутов.
+_aip_endpoint_v4() {
+    local e="${1:-}"
+    e="${e//[[:space:]]/}"
+    [[ -z "$e" || "$e" == \[* ]] && return 0
+    [[ "$e" == *:*:* ]] && return 0
+    e="${e%:*}"
+    _valid_ipv4 "$e" && printf '%s' "$e"
+    return 0
+}
+
+# _aip_warn_endpoint_not_v4 <клиент> <Endpoint> : дыру у адреса сервера сделать
+# нельзя, а в списке есть IPv4-маршруты, но нет 0.0.0.0/0 - Linux-клиенту нужен
+# ручной маршрут. Вызывающий проверяет список, который клиент получит в итоге.
+_aip_warn_endpoint_not_v4() {
+    log_warn "Клиент '$1': Endpoint '$2' - не IPv4-адрес, поэтому адрес сервера из AllowedIPs не исключён. Клиенту на Linux (awg-quick) нужен ручной маршрут до сервера, см. ADVANCED, раздел про раздельный список маршрутов."
+}
+
+# _aip_carve_endpoints <список> <адрес>... : список без адресов сервера. Каждый
+# IPv4-маршрут, содержащий адрес, заменяется дополнением до него: маршрут /n
+# даёт 32-n маршрутов от крупного к мелкому, /32 с самим адресом исчезает.
+# 0.0.0.0/0 не трогается (это режим 1, awg-quick разводит его сам), IPv6 и
+# остальные маршруты остаются на своих местах. Результат не зависит от порядка
+# адресов и не меняется при повторном вызове. Пустой результат - пустая строка,
+# решение за вызывающим.
+_aip_carve_endpoints() {
+    local list="$1"; shift
+    local ep e tok t a p o1 o2 o3 o4 ip mask lo hi k net out
+    local -a toks=()
+    # Границы маршрута считаются арифметикой в этой же оболочке: подстановка
+    # команды на каждый маршрут сделала бы список в тысячи сетей многоминутным
+    # (тот же довод, что у предела в _is_full_tunnel).
+    for ep in "$@"; do
+        _valid_ipv4 "$ep" || continue
+        IFS=. read -r o1 o2 o3 o4 <<< "$ep"
+        e=$(( (10#$o1 << 24) | (10#$o2 << 16) | (10#$o3 << 8) | 10#$o4 ))
+        mapfile -t toks < <(_aip_tokens "$list")
+        out=""
+        for tok in "${toks[@]}"; do
+            if [[ "$tok" == *:* || "$tok" == "0.0.0.0/0" ]]; then
+                out+="${out:+, }${tok}"
+                continue
+            fi
+            t="$tok"
+            [[ "$t" == */* ]] || t="${t}/32"
+            a="${t%/*}"; p="${t##*/}"
+            if [[ ! "$p" =~ ^[0-9]{1,2}$ ]] || (( 10#$p > 32 )) || ! _valid_ipv4 "$a"; then
+                log_warn "AllowedIPs: маршрут '$tok' не разобран - адрес сервера из списка не исключён."
+                return 1
+            fi
+            p=$(( 10#$p ))
+            IFS=. read -r o1 o2 o3 o4 <<< "$a"
+            ip=$(( (10#$o1 << 24) | (10#$o2 << 16) | (10#$o3 << 8) | 10#$o4 ))
+            if (( p == 0 )); then mask=0; else mask=$(( (0xFFFFFFFF << (32 - p)) & 0xFFFFFFFF )); fi
+            lo=$(( ip & mask )); hi=$(( lo | (0xFFFFFFFF ^ mask) ))
+            if (( e < lo || e > hi )); then
+                out+="${out:+, }${tok}"
+                continue
+            fi
+            for (( k = p + 1; k <= 32; k++ )); do
+                net=$(( ((e >> (32 - k)) ^ 1) << (32 - k) ))
+                out+="${out:+, }$(( (net >> 24) & 255 )).$(( (net >> 16) & 255 )).$(( (net >> 8) & 255 )).$(( net & 255 ))/${k}"
+            done
+        done
+        list="$out"
+    done
+    printf '%s' "$list"
+}
+
+# _aip_v4_norm <список> : IPv4-маршруты списка после выреза адресов из
+# _AWG_CARVE_EPS, отсортированные, по одному в строке. Для сравнения списка
+# клиента со списком сервера: дыра у адреса сервера одинакова с обеих сторон.
+_aip_v4_norm() {
+    local l="$1" t
+    if [[ -n "${_AWG_CARVE_EPS:-}" ]]; then
+        # shellcheck disable=SC2086  # адреса через пробел, раскрываются намеренно
+        l=$(_aip_carve_endpoints "$l" ${_AWG_CARVE_EPS}) || return 1
+    fi
+    t=$(_aip_tokens "$l") || return 1
+    local v4 rc
+    v4=$(grep -vF ':' <<< "$t"); rc=$?
+    (( rc > 1 )) && return 1
+    [[ -n "$v4" ]] || return 0
+    LC_ALL=C sort -u <<< "$v4"
+}
+
+# _aip_has_v4 <список> : есть ли в списке хоть один IPv4-маршрут.
+_aip_has_v4() {
+    local t
+    t=$(_aip_tokens "$1") || return 1
+    [[ -n "$t" ]] || return 1
+    grep -qvF ':' <<< "$t"
+}
+
 # _aip_wants_v6_sink <список> : нужен ли клиенту адрес стока - в списке есть
 # 2000::/3 и нет ::/0 (с ::/0 kill-switch Windows включается всё равно).
 _aip_wants_v6_sink() {
@@ -492,9 +610,17 @@ _client_ipv6_direct() {
 # _aip_same_set <список> <список> : одинаковый набор маршрутов (порядок и
 # пробелы не важны). Пустой список ни с чем не совпадает.
 _aip_same_set() {
-    local a b
-    a=$(_aip_tokens "$1" | LC_ALL=C sort -u) || return 1
-    b=$(_aip_tokens "$2" | LC_ALL=C sort -u) || return 1
+    local a b la="$1" lb="$2"
+    # С известным адресом сервера оба списка сравниваются с дырой у него:
+    # список клиента, где дыра уже есть, и список сервера без неё - один набор.
+    if [[ -n "${_AWG_CARVE_EPS:-}" ]]; then
+        # shellcheck disable=SC2086  # адреса через пробел, раскрываются намеренно
+        la=$(_aip_carve_endpoints "$la" ${_AWG_CARVE_EPS}) || return 1
+        # shellcheck disable=SC2086
+        lb=$(_aip_carve_endpoints "$lb" ${_AWG_CARVE_EPS}) || return 1
+    fi
+    a=$(_aip_tokens "$la" | LC_ALL=C sort -u) || return 1
+    b=$(_aip_tokens "$lb" | LC_ALL=C sort -u) || return 1
     [[ -n "$a" && "$a" == "$b" ]]
 }
 
@@ -528,8 +654,9 @@ _aip_drop_our_v6() {
     mine=$(grep -vF ':' <<< "$toks"); rc=$?
     (( rc > 1 )) && return 1
     [[ -n "$mine" ]] || { printf '%s' "$list"; return 0; }
-    srv=$(_aip_tokens "$base" | LC_ALL=C sort -u) || return 1
-    [[ "$(LC_ALL=C sort -u <<< "$mine")" == "$srv" ]] || { printf '%s' "$list"; return 0; }
+    # Наборы сравниваются с дырой у адреса сервера с обеих сторон (_aip_v4_norm).
+    srv=$(_aip_v4_norm "$base") || return 1
+    [[ "$(_aip_v4_norm "$mine")" == "$srv" ]] || { printf '%s' "$list"; return 0; }
     while IFS= read -r tok; do
         out+="${out:+, }${tok}"
     done <<< "$mine"
@@ -561,8 +688,9 @@ _aip_migrate_legacy_v6() {
     mine=$(grep -vF ':' <<< "$toks"); rc=$?
     (( rc > 1 )) && return 1
     [[ -n "$mine" ]] || { printf '%s' "$list"; return 0; }
-    mine=$(LC_ALL=C sort -u <<< "$mine") || return 1
-    srv=$(_aip_tokens "$base" | LC_ALL=C sort -u) || return 1
+    # Наборы сравниваются с дырой у адреса сервера с обеих сторон (_aip_v4_norm).
+    mine=$(_aip_v4_norm "$mine") || return 1
+    srv=$(_aip_v4_norm "$base") || return 1
     if [[ "$mine" == "$srv" ]]; then
         while IFS= read -r tok; do
             [[ "$tok" == "::/0" ]] && tok="2000::/3"
@@ -3231,6 +3359,10 @@ render_client_config() {
     # 8-й аргумент - DNS живого клиента от regenerate_client. Аргумент, а не переменная:
     # переменную можно унаследовать из окружения и обойти проверку CLIENT_DNS.
     local keep_dns="${8:-}"
+    # Адрес сервера для дыры в AllowedIPs (см. _aip_carve_endpoints). Видна и
+    # вложенным вызовам: полнота туннеля и сравнения учитывают эту дыру.
+    local _AWG_CARVE_EPS
+    _AWG_CARVE_EPS=$(_aip_endpoint_v4 "$endpoint")
 
     load_awg_params || return 1
 
@@ -3302,6 +3434,26 @@ render_client_config() {
             return 1
         }
         allowed_ips="$_aip_new"
+    fi
+
+    # Адрес сервера вне туннеля: иначе Linux awg-quick заворачивает в туннель
+    # пакеты к самому Endpoint (см. _aip_carve_endpoints).
+    if [[ -n "$_AWG_CARVE_EPS" ]]; then
+        local _aip_cut
+        _aip_cut=$(_aip_carve_endpoints "$allowed_ips" "$_AWG_CARVE_EPS") || {
+            log_error "Не удалось исключить адрес сервера из AllowedIPs - клиентский конфиг не создан."
+            return 1
+        }
+        if _aip_has_v4 "$allowed_ips" && ! _aip_has_v4 "$_aip_cut"; then
+            log_error "Клиент '$name': из IPv4-маршрутов AllowedIPs в туннель ведёт только адрес самого сервера ($_AWG_CARVE_EPS), а его в туннель вести нельзя - IPv4-маршрутов не остаётся, конфиг не создан."
+            return 1
+        fi
+        allowed_ips="$_aip_cut"
+    elif [[ "${_AWG_EP_WARN_LATER:-0}" != "1" ]] \
+         && _aip_has_v4 "$allowed_ips" && ! _aip_has_token "$allowed_ips" "0.0.0.0/0"; then
+        # _AWG_EP_WARN_LATER=1 ставит regen, который заменит этот список
+        # сохранённым списком клиента и проверит уже итоговый.
+        _aip_warn_endpoint_not_v4 "$name" "$endpoint"
     fi
 
     # Индивидуальный список с явным IPv6 без ::/0 при полном туннеле: regen о
@@ -5300,7 +5452,9 @@ generate_client() {
         return 1
     fi
 
-    # Конфиг клиента
+    # Конфиг клиента. Список рендера здесь итоговый: предупреждение о «не IPv4
+    # Endpoint» печатает он сам, флаг regen из окружения его не глушит.
+    local _AWG_EP_WARN_LATER=0
     render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" || {
         log_error "Откат: удаление артефактов '$name'"
         _rollback_client_artifacts "$name"
@@ -5499,6 +5653,18 @@ regenerate_client() {
         return 1
     fi
 
+    # Адреса сервера для дыры в AllowedIPs: новый и тот, что стоит в прежнем
+    # конфиге клиента. Сравнения со списком сервера и полнота туннеля учитывают
+    # обе дыры, а вырезается в итоговом списке только новый адрес: старую дыру
+    # от намеренного исключения не отличить, и заполнять её нельзя.
+    local _AWG_CARVE_EPS _ep_new _ep_old=""
+    _ep_new=$(_aip_endpoint_v4 "$endpoint")
+    if [[ -f "$AWG_DIR/${name}.conf" ]]; then
+        _ep_old=$(_aip_endpoint_v4 "$(sed -n 's/^Endpoint[ \t]*=[ \t]*//p' "$AWG_DIR/${name}.conf" | head -n 1 | tr -d '\r')")
+    fi
+    _AWG_CARVE_EPS="$_ep_new"
+    [[ -n "$_ep_old" && "$_ep_old" != "$_ep_new" ]] && _AWG_CARVE_EPS="${_AWG_CARVE_EPS:+$_AWG_CARVE_EPS }$_ep_old"
+
     # Сохраняем пользовательские настройки из текущего .conf (modify)
     # current_dns пуст, пока нет старого .conf: тогда DNS в конфиге - тот, что записал
     # render_client_config (CLIENT_DNS или значение по умолчанию), и перезаписывать его
@@ -5576,7 +5742,30 @@ regenerate_client() {
     [[ "$_had_conf" -eq 1 && -n "$current_dns" ]] && _keep_dns="$current_dns"
     # На 3.1 копия комплекта снимается под той же блокировкой, под которой
     # переписывается .conf, и возвращается на любом отказе ниже.
+    # Список, где из IPv4 остаётся только адрес сервера, отвергается ДО перезаписи
+    # конфига: после render файл уже переписан из режима сервера, а на 2.0 его
+    # некуда вернуть. Проверка нужна только там, где список будет восстановлен.
+    if [[ "${AWG_REGEN_RESET_ROUTES:-0}" != "1" && "$_had_conf" -eq 1 && -n "$_ep_new" ]] \
+       && _aip_has_v4 "$current_allowed_ips"; then
+        local _aip_pre
+        _aip_pre=$(_aip_carve_endpoints "$current_allowed_ips" "$_ep_new") || {
+            log_error "Не удалось исключить адрес сервера из AllowedIPs клиента '$name' - конфиг не изменён."
+            exec {lock_fd}>&-
+            unset CLIENT_PSK
+            return 1
+        }
+        if ! _aip_has_v4 "$_aip_pre"; then
+            log_error "Клиент '$name': из IPv4-маршрутов в туннель ведёт только адрес самого сервера ($_ep_new), а его туда вести нельзя. Конфиг не изменён. Задайте клиенту маршруты (modify '$name' AllowedIPs) или выполните regen --reset-routes '$name'."
+            exec {lock_fd}>&-
+            unset CLIENT_PSK
+            return 1
+        fi
+    fi
     _awg31_set_snapshot "$name" || { exec {lock_fd}>&-; unset CLIENT_PSK; return 1; }
+    # Когда список клиента будет восстановлен, рендер о «не IPv4 Endpoint» молчит:
+    # его список промежуточный, предупреждение - по итоговому, ниже.
+    local _AWG_EP_WARN_LATER=0
+    [[ "${AWG_REGEN_RESET_ROUTES:-0}" != "1" && "$_had_conf" -eq 1 ]] && _AWG_EP_WARN_LATER=1
     render_client_config "$name" "$client_ip" "$client_privkey" "$server_pubkey" "$endpoint" "$_cport" "$client_ipv6" "$_keep_dns" || {
         _awg31_set_restore_noted "$name"
         exec {lock_fd}>&-
@@ -5678,6 +5867,27 @@ regenerate_client() {
             log_warn "Клиент '$name': IPv6-часть AllowedIPs сохранена как есть, ::/0 не дописан. Чтобы раздать текущий режим маршрутизации, выполните regen --reset-routes."
         fi
         current_allowed_ips="$_aip_new"
+        # Сохранённый список тоже получает дыру у адреса сервера: так клиенты,
+        # выданные до исправления, лечатся обычным regen.
+        if [[ -n "$_ep_new" ]]; then
+            _aip_new=$(_aip_carve_endpoints "$current_allowed_ips" "$_ep_new") || {
+                log_error "Не удалось исключить адрес сервера из AllowedIPs клиента '$name'. Конфиг уже перегенерирован из текущего режима маршрутизации, но индивидуальные настройки НЕ восстановлены - проверьте $AWG_DIR/${name}.conf."
+                _awg31_set_restore_noted "$name"
+                exec {lock_fd}>&-
+                unset CLIENT_PSK
+                return 1
+            }
+            if _aip_has_v4 "$current_allowed_ips" && ! _aip_has_v4 "$_aip_new"; then
+                log_error "Клиент '$name': из IPv4-маршрутов в туннель ведёт только адрес самого сервера ($_ep_new). Конфиг уже перегенерирован из текущего режима маршрутизации, но индивидуальные настройки НЕ восстановлены - проверьте $AWG_DIR/${name}.conf."
+                _awg31_set_restore_noted "$name"
+                exec {lock_fd}>&-
+                unset CLIENT_PSK
+                return 1
+            fi
+            current_allowed_ips="$_aip_new"
+        elif _aip_has_v4 "$current_allowed_ips" && ! _aip_has_token "$current_allowed_ips" "0.0.0.0/0"; then
+            _aip_warn_endpoint_not_v4 "$name" "$endpoint"
+        fi
     fi
     # Одиночный 1.1.1.1 от старых версий становится парой, но не когда это
     # осознанный выбор через CLIENT_DNS='1.1.1.1'.

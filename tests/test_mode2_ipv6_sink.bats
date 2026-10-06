@@ -1,4 +1,8 @@
 #!/usr/bin/env bats
+# The server endpoint in these fixtures is a NAME on purpose: a literal IPv4
+# address inside the client routes would be cut out of AllowedIPs (see
+# test_aip_endpoint_carve.bats), and these tests are about other parts of the
+# list.
 # Routing mode 2 on Windows: LAN stays reachable, IPv6 still does not leak.
 #
 # Since v5.31.0 the list-based mode 2 got a bare ::/0 appended. The AmneziaWG
@@ -82,7 +86,7 @@ CONF
         source "$1" >/dev/null 2>&1 || true
         safe_load_config "$CONFIG_FILE" >/dev/null 2>&1
         get_main_nic() { echo eth0; }
-        get_server_public_ip() { echo 203.0.113.10; }
+        get_server_public_ip() { echo vpn.example.com; }
         _ensure_server_public_key() { return 0; }
         eval "$2"
     ' _ "$BATS_TEST_DIRNAME/../$lib" "$snippet" 2>&1
@@ -239,7 +243,7 @@ has_token_pipefail() {
 
 render_mode2() {
     local lib="$1" out
-    out=$(lr "$lib" "$(mode2_list)" 'render_client_config c1 10.9.9.2 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+    out=$(lr "$lib" "$(mode2_list)" 'render_client_config c1 10.9.9.2 FAKEPRIV FAKEPUB vpn.example.com 39743; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" Address c1)" = "Address = 10.9.9.2/32, ${SINK_PREFIX}::a09:902/128" ] || { echo "address ($lib): $(conf_line "$lib" Address c1)"; return 1; }
     [[ "$(conf_line "$lib" AllowedIPs c1)" == "AllowedIPs = 1.0.0.0/8, "*"208.0.0.0/4, 8.8.8.8/32, 1.1.1.1/32, 2000::/3" ]] || { echo "routes ($lib): $(conf_line "$lib" AllowedIPs c1)"; return 1; }
@@ -251,7 +255,7 @@ render_mode2() {
 
 render_mode1() {
     local lib="$1" out
-    out=$(lr "$lib" "0.0.0.0/0" 'render_client_config c1 10.9.9.4 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+    out=$(lr "$lib" "0.0.0.0/0" 'render_client_config c1 10.9.9.4 FAKEPRIV FAKEPUB vpn.example.com 39743; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" Address c1)" = "Address = 10.9.9.4/32" ] || { echo "address ($lib): $(conf_line "$lib" Address c1)"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs c1)" = "AllowedIPs = 0.0.0.0/0, ::/0" ] || { echo "routes ($lib)"; return 1; }
@@ -262,7 +266,7 @@ render_mode1() {
 
 render_split() {
     local lib="$1" out
-    out=$(lr "$lib" "10.0.0.0/8, 192.168.0.0/16" 'render_client_config c1 10.9.9.5 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+    out=$(lr "$lib" "10.0.0.0/8, 192.168.0.0/16" 'render_client_config c1 10.9.9.5 FAKEPRIV FAKEPUB vpn.example.com 39743; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" Address c1)" = "Address = 10.9.9.5/32" ] || { echo "address ($lib)"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs c1)" = "AllowedIPs = 10.0.0.0/8, 192.168.0.0/16" ] || { echo "routes ($lib)"; return 1; }
@@ -275,7 +279,7 @@ render_dual() {
     local lib="$1" out
     out=$(lr "$lib" "$(mode2_list)" '
         export ALLOW_IPV6_TUNNEL=1 IPV6_SUBNET="fddd:2c4:2c4:2c4::/64" SERVER_HAS_NATIVE_IPV6=0
-        render_client_config c1 10.9.9.6 FAKEPRIV FAKEPUB 203.0.113.10 39743 fddd:2c4:2c4:2c4::6; echo "RC=$?"')
+        render_client_config c1 10.9.9.6 FAKEPRIV FAKEPUB vpn.example.com 39743 fddd:2c4:2c4:2c4::6; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" Address c1)" = "Address = 10.9.9.6/32, fddd:2c4:2c4:2c4::6/128" ] || { echo "address ($lib): $(conf_line "$lib" Address c1)"; return 1; }
     ! grep -qF "$SINK_PREFIX" "$(dir_of "$lib")/c1.conf" || { echo "sink on a dual-stack client ($lib)"; return 1; }
@@ -288,7 +292,7 @@ render_explicit_v6() {
     local lib="$1" out
     out=$(lr "$lib" "$(mode2_list)" '
         export CLIENT_ALLOWED_IPS="0.0.0.0/1, 128.0.0.0/1, ::/0"
-        render_client_config c1 10.9.9.7 FAKEPRIV FAKEPUB 203.0.113.10 39743; echo "RC=$?"')
+        render_client_config c1 10.9.9.7 FAKEPRIV FAKEPUB vpn.example.com 39743; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs c1)" = "AllowedIPs = 0.0.0.0/1, 128.0.0.0/1, ::/0" ] || { echo "explicit list rewritten ($lib): $(conf_line "$lib" AllowedIPs c1)"; return 1; }
     [ "$(conf_line "$lib" Address c1)" = "Address = 10.9.9.7/32" ] || { echo "sink on an explicit ::/0 ($lib): $(conf_line "$lib" Address c1)"; return 1; }
@@ -314,7 +318,7 @@ MTU = 1280
 
 [Peer]
 PublicKey = SRVPUB
-Endpoint = 203.0.113.10:39743
+Endpoint = vpn.example.com:39743
 AllowedIPs = '"$caips"'
 PersistentKeepalive = 33
 EOF
@@ -323,6 +327,13 @@ EOF
         regenerate_client r1; echo "RC=$?"
         regenerate_client r1; echo "RC2=$?"'
 }
+
+# no_ep_warn <output> : the output without the warning about a non-IPv4 Endpoint.
+# The endpoint above is a name, and a kept route list rightly gets that warning;
+# the checks that use this are about the IPv6 hints only.
+no_ep_warn() { printf '%s\n' "$1" | grep -v -e 'не IPv4-адрес' -e 'is not an IPv4 address' || true; }
+# ep_warn_n <output> : how many times that warning was printed (regen_run runs regen twice)
+ep_warn_n() { grep -c -e 'не IPv4-адрес' -e 'is not an IPv4 address' <<< "$1" || true; }
 
 regen_migrates() {
     local lib="$1" list out
@@ -370,9 +381,11 @@ regen_reset() {
     local lib="$1" list out
     list=$(mode2_list)
     out=$(regen_run "$lib" "$list" "10.0.0.0/8" "10.9.9.20/32" 'export AWG_REGEN_RESET_ROUTES=1')
-    [[ "$out" == *"RC=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
+    [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = $list, 2000::/3" ] || { echo "routes ($lib)"; return 1; }
     [ "$(conf_line "$lib" Address r1)" = "Address = 10.9.9.20/32, ${SINK_PREFIX}::a09:914/128" ] || { echo "address ($lib)"; return 1; }
+    # the server list it hands out, with a name as the endpoint: render warns, once per regen
+    [ "$(ep_warn_n "$out")" -eq 2 ] || { echo "Endpoint warning count ($lib): $out"; return 1; }
 }
 @test "regen --reset-routes: back to the mode-2 list with 2000::/3 and the sink, both twins" {
     require_flock
@@ -426,7 +439,8 @@ regen_keep_advice() {
     [[ "$out" == *"RC=0"* && "$out" == *"WARN:"*"2000::/3"* && "$out" != *"reset-routes"* ]] || { echo "server list with ::/0: wrong hint ($lib): $out"; return 1; }
     # a split list with ::/0 is not a full tunnel: nothing to warn about
     out=$(regen_run "$lib" "$list" "10.0.0.0/8, ::/0" "10.9.9.20/32")
-    [[ "$out" == *"RC=0"* && "$out" != *"WARN:"* ]] || { echo "false warning on a split list ($lib): $out"; return 1; }
+    [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* && "$(no_ep_warn "$out")" != *"WARN:"* ]] || { echo "false warning on a split list ($lib): $out"; return 1; }
+    [ "$(ep_warn_n "$out")" -eq 2 ] || { echo "Endpoint warning count on a split list ($lib): $out"; return 1; }
 }
 @test "regen: the hint for a kept ::/0 fits the server's routing mode, both twins" {
     require_flock
@@ -438,7 +452,75 @@ regen_ipv6_only() {
     out=$(regen_run "$lib" "$(mode2_list)" "::/0" "10.9.9.20/32")
     [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = ::/0" ] || { echo "IPv6-only list lost ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
+    # no IPv4 goes into the tunnel, so no IPv4 route to the server is needed
+    [ "$(ep_warn_n "$out")" -eq 0 ] || { echo "warned on an IPv6-only list ($lib): $out"; return 1; }
 }
+# The endpoint here is a name: the kept split list gets the Linux-route warning
+# once per regen (on the final list), a kept list with 0.0.0.0/0 gets none,
+# wherever 0.0.0.0/0 stands in it.
+regen_ep_name_warn() {
+    local lib="$1" out kept
+    out=$(regen_run "$lib" "$(mode2_list)" "10.0.0.0/8" "10.9.9.20/32")
+    [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
+    [ "$(ep_warn_n "$out")" -eq 2 ] || { echo "expected one warning per regen ($lib): $out"; return 1; }
+    for kept in "0.0.0.0/0" "10.0.0.0/8, 0.0.0.0/0"; do
+        out=$(regen_run "$lib" "$(mode2_list)" "$kept" "10.9.9.20/32")
+        [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib, $kept): $out"; return 1; }
+        [ "$(ep_warn_n "$out")" -eq 0 ] || { echo "warned on a kept 0.0.0.0/0 ($lib, $kept): $out"; return 1; }
+    done
+}
+@test "regen: a name as the endpoint warns on the kept split list, not on a kept 0.0.0.0/0, both twins" {
+    require_flock
+    both regen_ep_name_warn
+}
+
+# A lost client config is rebuilt from the server list: render warns on it in the
+# first regen, the second regen restores that list and warns on the final one.
+regen_ep_name_lost() {
+    local lib="$1" out
+    out=$(regen_run "$lib" "$(mode2_list)" "0.0.0.0/0" "10.9.9.20/32" 'rm -f "$AWG_DIR/r1.conf"')
+    [[ "$out" == *"RC=0"* && "$out" == *"RC2=0"* ]] || { echo "regen failed ($lib): $out"; return 1; }
+    [ "$(ep_warn_n "$out")" -eq 2 ] || { echo "Endpoint warning count ($lib): $out"; return 1; }
+}
+# add hands out the render list as is, so it warns through render, and a regen
+# flag inherited from the environment must not mute that.
+ADD_STUBS='
+    awg() { case "$1" in
+        genkey|genpsk) echo "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;
+        pubkey) cat >/dev/null; echo "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=" ;;
+        *) return 0 ;; esac; }
+    generate_qr() { return 0; }; generate_vpn_uri() { return 0; }; generate_qr_vpnuri() { return 0; }'
+add_ep_name_env_flag() {
+    local lib="$1" out own want i
+    out=$(lr "$lib" "$(mode2_list)" "$ADD_STUBS"'
+        export _AWG_EP_WARN_LATER=1
+        generate_client a1 vpn.example.com; echo "RC=$?"')
+    [[ "$out" == *"RC=0"* ]] || { echo "add failed ($lib): $out"; return 1; }
+    [ "$(ep_warn_n "$out")" -eq 1 ] || { echo "Endpoint warning count on add ($lib): $out"; return 1; }
+    # an own list with 0.0.0.0/0 anywhere in it, or with no IPv4 at all: nothing
+    # to warn about (render adds ::/0 to the full tunnel, as for any client)
+    local -a owns=("10.0.0.0/8, 0.0.0.0/0" "::/0") wants=("10.0.0.0/8, 0.0.0.0/0, ::/0" "::/0")
+    for i in 0 1; do
+        own="${owns[$i]}"; want="${wants[$i]}"
+        out=$(lr "$lib" "$(mode2_list)" "$ADD_STUBS"'
+            export CLIENT_ALLOWED_IPS="'"$own"'"
+            generate_client a2 vpn.example.com; echo "RC=$?"
+            sed -n "s/^AllowedIPs = /AIPS=/p" "$AWG_DIR/a2.conf"')
+        [[ "$out" == *"RC=0"* ]] || { echo "add with an own list failed ($lib, $own): $out"; return 1; }
+        grep -qxF "AIPS=$want" <<< "$out" || { echo "routes ($lib, $own): $out"; return 1; }
+        [ "$(ep_warn_n "$out")" -eq 0 ] || { echo "warned on an own list ($lib, $own): $out"; return 1; }
+    done
+}
+@test "add: a name as the endpoint warns even with the regen flag in the environment, both twins" {
+    require_flock
+    both add_ep_name_env_flag
+}
+
+@test "regen: a lost config rebuilt with a name as the endpoint warns on the server list, both twins" {
+    require_flock
+    both regen_ep_name_lost
+}
+
 @test "regen: an IPv6-only AllowedIPs survives regen under pipefail, both twins" {
     require_flock
     both regen_ipv6_only
@@ -457,7 +539,8 @@ regen_dual_native() {
     [ "$(conf_line "$lib" AllowedIPs r1)" = "AllowedIPs = $list, ::/0" ] || { echo "dual-stack route flipped ($lib): $(conf_line "$lib" AllowedIPs r1)"; return 1; }
     [ "$(conf_line "$lib" Address r1)" = "Address = 10.9.9.20/32, fddd:2c4:2c4:2c4::20/128" ] || { echo "dual-stack address ($lib): $(conf_line "$lib" Address r1)"; return 1; }
     # ::/0 is present, nothing to warn about
-    [[ "$out" != *"WARN:"* ]] || { echo "false warning ($lib): $out"; return 1; }
+    [[ "$(no_ep_warn "$out")" != *"WARN:"* ]] || { echo "false warning ($lib): $out"; return 1; }
+    [ "$(ep_warn_n "$out")" -eq 2 ] || { echo "Endpoint warning count, dual-stack ($lib): $out"; return 1; }
 }
 @test "regen: a dual-stack client on a native-IPv6 server keeps ::/0, both twins" {
     require_flock
@@ -503,7 +586,7 @@ MTU = 1280
 
 [Peer]
 PublicKey = SRVPUB
-Endpoint = 203.0.113.10:39743
+Endpoint = vpn.example.com:39743
 AllowedIPs = '"$caips"'
 PersistentKeepalive = 33
 EOF
@@ -669,7 +752,7 @@ vpnuri_no_sink() {
     local lib="$1" out inner
     out=$(lr "$lib" "$(mode2_list)" '
         render_server_config >/dev/null 2>&1
-        render_client_config c1 10.9.9.2 CLIENTPRIVKEYPLACEHOLDER SRVPUBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= 203.0.113.10 39743 || echo RC=91
+        render_client_config c1 10.9.9.2 CLIENTPRIVKEYPLACEHOLDER SRVPUBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= vpn.example.com 39743 || echo RC=91
         generate_vpn_uri c1; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "uri not created ($lib): $out"; return 1; }
     inner=$(inner_json "$(dir_of "$lib")/c1.vpnuri") || { echo "cannot decode ($lib)"; return 1; }
