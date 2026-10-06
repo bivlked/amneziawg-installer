@@ -4901,7 +4901,7 @@ step_uninstall() {
         done
         if ! _kout=$(DEBIAN_FRONTEND=noninteractive apt-get purge -y "${_kmod_pkgs[@]}" 2>&1); then
             log_warn "Не удалось удалить готовый пакет модуля: ${_kmods}. Ответ apt: $(printf '%s' "$_kout" | tr '\n' ' ' | tail -c 300)"
-            log_warn "Удалите вручную: sudo apt-get purge -y ${_kmods}"
+            log_warn "Удалите вручную: sudo apt-mark unhold ${_kmods} && sudo apt-get purge -y ${_kmods}"
         fi
     fi
     # apt-get autoremove здесь НЕ вызываем, как и в cleanup_system (Issue #84). Он чистит
@@ -5951,8 +5951,7 @@ _awg_installed_kmod_pkgs() {
         [[ "$e" == *"no packages found matching"* ]] && return 0
         return 2
     fi
-    awk '$NF != "not-installed" && $NF != "config-files" {print $1}' <<<"$q" | paste -sd' ' -
-    return 0
+    awk '$NF != "not-installed" && $NF != "config-files" {print $1}' <<<"$q" | paste -sd' ' - || return 2
 }
 
 # Перед остановкой шага 2 на ARM при уже стоящем готовом пакете вернуть hold:

@@ -22,7 +22,12 @@ dpkg-query() {
         echo "dpkg-query: unexpected arguments: $*" >&2; return 2
     fi
     if [ "${DPKG_FAIL:-0}" = 1 ]; then echo "dpkg-query: error: parsing file /var/lib/dpkg/status" >&2; return 2; fi
-    if [ -z "$PKGS" ]; then echo "dpkg-query: no packages found matching amneziawg-kmod-*" >&2; return 1; fi
+    if [ -z "$PKGS" ]; then
+        # dpkg translates its messages: only LC_ALL=C gives the English text
+        if [ "${LC_ALL:-}" = C ]; then echo "dpkg-query: no packages found matching amneziawg-kmod-*" >&2
+        else echo "dpkg-query: не найдено пакетов, соответствующих amneziawg-kmod-*" >&2; fi
+        return 1
+    fi
     local n s
     while IFS="|" read -r n s; do [ -n "$n" ] && printf "%s %s\n" "$n" "$s"; done <<<"$PKGS"
 }'
@@ -53,9 +58,20 @@ amneziawg-kmod-debian-trixie-arm64|install ok unpacked"
     done
 }
 
-@test "kmod list: nothing installed -> empty answer, rc 0 (RU + EN)" {
+@test "kmod list: nothing installed -> empty answer, rc 0, under any locale (RU + EN)" {
     local f
-    export PKGS=""
+    export PKGS="" LANG=ru_RU.UTF-8
+    unset LC_ALL
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        run _run_kmod_list "$ROOT/$f"
+        [ "$output" = "rc=0 out=[]" ] || { echo "$f: got '$output'"; false; }
+    done
+}
+
+@test "kmod list: only removed packages left -> empty answer, rc 0 (RU + EN)" {
+    local f
+    export PKGS="amneziawg-kmod-gone|deinstall ok config-files
+amneziawg-kmod-purged|unknown ok not-installed"
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         run _run_kmod_list "$ROOT/$f"
         [ "$output" = "rc=0 out=[]" ] || { echo "$f: got '$output'"; false; }
@@ -104,6 +120,9 @@ _run_uninstall_purge() { # installer no_tweaks
             { printf "APT"; printf " <%s>" "$@"; echo; } >>"$EV"
             if [ "${APT_FAIL_KMOD:-0}" = 1 ] && [[ " $* " == *" amneziawg-kmod-"* ]]; then
                 echo "E: sub-process returned an error code"; return 100
+            fi
+            if [ "${APT_FAIL_MAIN:-0}" = 1 ] && [[ " $* " == *" amneziawg-dkms "* ]]; then
+                echo "E: main purge failed"; return 100
             fi
             return 0
         }
@@ -175,16 +194,32 @@ amneziawg-kmod-old|hold ok installed"
             run _run_uninstall_purge "$ROOT/$f" "$nt"
             grep -qxF 'APT <purge> <-y> <amneziawg-dkms> <amneziawg-tools> <qrencode>' <<<"$output" \
                 && grep -q '^WARN .*sub-process returned an error code' <<<"$output" \
-                && grep -q '^WARN .*sudo apt-get purge -y amneziawg-kmod-ubuntu-2404-arm64' <<<"$output" \
+                && grep -q '^WARN .*sudo apt-mark unhold amneziawg-kmod-ubuntu-2404-arm64 && sudo apt-get purge -y amneziawg-kmod-ubuntu-2404-arm64' <<<"$output" \
+                && [[ "$output" != *"<>"* ]] \
                 || { echo "$f nt=$nt: $output"; false; }
         done
     done
 }
 
+@test "uninstall: a failed usual purge does not cancel the prebuilt purge (RU + EN)" {
+    local f nt
+    export PKGS="amneziawg-kmod-ubuntu-2404-arm64|install ok installed" APT_FAIL_MAIN=1
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        for nt in 0 1; do
+            run _run_uninstall_purge "$ROOT/$f" "$nt"
+            grep -qxF 'APT <purge> <-y> <amneziawg-kmod-ubuntu-2404-arm64>' <<<"$output" \
+                || { echo "$f nt=$nt: $output"; false; }
+        done
+    done
+}
+
+
 # A stop block of the ARM branch in step2_install_amnezia with the real
 # _awg_rehold_for_prebuilt; die, apt-mark and the package helpers stubbed. Events
 # are recorded in a file: the real function captures apt-mark's output, so a stub
-# printing to stdout would show nothing.
+# printing to stdout would show nothing. The two helpers answer separately
+# (LEFT_HERE/LRC_HERE for _awg_prebuilt_for_running_kernel, LEFT_ALL/LRC_ALL for
+# _awg_installed_kmod_pkgs), so a stop asking the wrong one is caught.
 _run_arm_stop() { # installer start-line-regex
     local blk rehold
     blk=$(sed -n '/^step2_install_amnezia() {$/,/^}$/p' "$1" | sed -n "/$2/,/^            fi\$/p")
@@ -199,8 +234,8 @@ _run_arm_stop() { # installer start-line-regex
         apt-mark() { echo "APT-MARK $*" >>"$EV"; echo "apt-mark said: lock busy"; }
         _awg_hold_refusal_log() { echo "REFUSAL: $1" >>"$EV"; }
         _awg_pkg_held() { [ "$1" = amneziawg-dkms ] && [ "${HELD:-1}" = 1 ]; }
-        _awg_prebuilt_for_running_kernel() { printf "%s" "$LEFT"; return "${LRC:-0}"; }
-        _awg_installed_kmod_pkgs() { printf "%s" "$LEFT"; return "${LRC:-0}"; }
+        _awg_prebuilt_for_running_kernel() { printf "%s" "${LEFT_HERE:-}"; return "${LRC_HERE:-0}"; }
+        _awg_installed_kmod_pkgs() { printf "%s" "${LEFT_ALL:-}"; return "${LRC_ALL:-0}"; }
         uname() { echo 6.8.0-146-generic; }
         eval "$2"
         g() { eval "$1"; echo CONTINUED >>"$EV"; cat "$EV"; }; g "$1"
@@ -210,61 +245,78 @@ _run_arm_stop() { # installer start-line-regex
     return $rc
 }
 
-STARTS=('^            local _kmod_here _kmod_rc=0$' '^            local _kmod _kmod_rc=0$')
+# stop kind: start line of the block and the helper it must ask
+#   here - the fallback stop (#343): _awg_prebuilt_for_running_kernel
+#   all  - the --no-prebuilt refusal: _awg_installed_kmod_pkgs
+_stop_start() { # kind
+    case "$1" in
+        here) echo '^            local _kmod_here _kmod_rc=0$' ;;
+        all)  echo '^            local _kmod _kmod_rc=0$' ;;
+    esac
+}
+# The asked helper names <pkg> with rc <rc>; the other one names a decoy, so a
+# stop that asks the wrong helper names the decoy (or nothing) instead.
+_stop_env() { # kind pkg rc
+    export LEFT_HERE=amneziawg-kmod-decoy LRC_HERE=0 LEFT_ALL=amneziawg-kmod-decoy LRC_ALL=0
+    if [ "$1" = here ]; then export LEFT_HERE="$2" LRC_HERE="$3"
+    else export LEFT_ALL="$2" LRC_ALL="$3"; fi
+}
+HOLD_LINE='APT-MARK hold amneziawg-dkms amneziawg'
 
 @test "ARM stops in step 2 put the hold back before stopping (RU + EN)" {
-    local f start
+    local f k
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
-        # the fallback stop (#343) and the --no-prebuilt refusal
-        for start in "${STARTS[@]}"; do
-            export LEFT=amneziawg-kmod-ubuntu-2404-arm64 LRC=0 HELD=1
-            run _run_arm_stop "$ROOT/$f" "$start"
-            [ "$status" -ne 0 ] && [[ "$output" == *"DIE:"*"apt-get purge -y amneziawg-kmod-ubuntu-2404-arm64"* ]] \
-                && [[ "$output" != *CONTINUED* && "$output" != *WARN:* ]] \
-                || { echo "$f [$start]: $output"; false; }
-            awk '/^APT-MARK hold .*amneziawg-dkms/{h=NR} /^DIE:/{d=NR} END{exit !(h && d && h < d)}' <<<"$output" \
-                || { echo "$f [$start]: hold not restored before the stop: $output"; false; }
+        for k in here all; do
+            _stop_env "$k" "amneziawg-kmod-$k" 0; export HELD=1
+            run _run_arm_stop "$ROOT/$f" "$(_stop_start "$k")"
+            [ "$status" -ne 0 ] && [[ "$output" == *"DIE:"*"apt-get purge -y amneziawg-kmod-$k"* ]] \
+                && [[ "$output" != *CONTINUED* && "$output" != *WARN:* && "$output" != *decoy* ]] \
+                || { echo "$f [$k]: $output"; false; }
+            awk -v h="$HOLD_LINE" '$0 == h {m=NR} /^DIE:/{d=NR} END{exit !(m && d && m < d)}' <<<"$output" \
+                || { echo "$f [$k]: hold not restored before the stop: $output"; false; }
         done
     done
 }
 
 @test "ARM stops in step 2: a hold that did not take is said out loud, with apt's answer and the command (RU + EN)" {
-    local f start
+    local f k
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
-        for start in "${STARTS[@]}"; do
-            export LEFT=amneziawg-kmod-ubuntu-2404-arm64 LRC=0 HELD=0
-            run _run_arm_stop "$ROOT/$f" "$start"
+        for k in here all; do
+            _stop_env "$k" "amneziawg-kmod-$k" 0; export HELD=0
+            run _run_arm_stop "$ROOT/$f" "$(_stop_start "$k")"
             [[ "$output" == *"REFUSAL: apt-mark said: lock busy"* ]] \
                 && [[ "$output" == *"WARN:"*"sudo apt-mark hold amneziawg-dkms amneziawg"* ]] \
                 && [[ "$output" == *"DIE:"* ]] \
-                || { echo "$f [$start]: $output"; false; }
+                || { echo "$f [$k]: $output"; false; }
         done
     done
 }
 
 @test "ARM stops in step 2: dpkg could not be asked -> hold back and stop, without the purge advice (RU + EN)" {
-    local f start
+    local f k
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
-        for start in "${STARTS[@]}"; do
-            export LEFT="" LRC=2 HELD=1
-            run _run_arm_stop "$ROOT/$f" "$start"
+        for k in here all; do
+            _stop_env "$k" "" 2; export HELD=1
+            # the helper that is not asked says "nothing": asking it would go on
+            if [ "$k" = here ]; then export LEFT_ALL=""; else export LEFT_HERE=""; fi
+            run _run_arm_stop "$ROOT/$f" "$(_stop_start "$k")"
             [ "$status" -ne 0 ] && [[ "$output" == *"DIE:"*"dpkg -l 'amneziawg-kmod-*'"* ]] \
                 && [[ "$output" != *"apt-get purge"* && "$output" != *CONTINUED* ]] \
-                || { echo "$f [$start]: $output"; false; }
-            awk '/^APT-MARK hold .*amneziawg-dkms/{h=NR} /^DIE:/{d=NR} END{exit !(h && d && h < d)}' <<<"$output" \
-                || { echo "$f [$start]: hold not restored before the stop: $output"; false; }
+                || { echo "$f [$k]: $output"; false; }
+            awk -v h="$HOLD_LINE" '$0 == h {m=NR} /^DIE:/{d=NR} END{exit !(m && d && m < d)}' <<<"$output" \
+                || { echo "$f [$k]: hold not restored before the stop: $output"; false; }
         done
     done
 }
 
 @test "ARM step 2: nothing installed -> no hold, no stop, the DKMS path goes on (RU + EN)" {
-    local f start
+    local f k
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
-        for start in "${STARTS[@]}"; do
-            export LEFT="" LRC=0 HELD=1
-            run _run_arm_stop "$ROOT/$f" "$start"
+        for k in here all; do
+            export LEFT_HERE="" LRC_HERE=0 LEFT_ALL="" LRC_ALL=0 HELD=1
+            run _run_arm_stop "$ROOT/$f" "$(_stop_start "$k")"
             [ "$status" -eq 0 ] && [[ "$output" == *CONTINUED* ]] && [[ "$output" != *APT-MARK* ]] \
-                || { echo "$f [$start]: $output"; false; }
+                || { echo "$f [$k]: $output"; false; }
         done
     done
 }

@@ -5009,7 +5009,7 @@ step_uninstall() {
         done
         if ! _kout=$(DEBIAN_FRONTEND=noninteractive apt-get purge -y "${_kmod_pkgs[@]}" 2>&1); then
             log_warn "Could not remove the prebuilt module package: ${_kmods}. apt said: $(printf '%s' "$_kout" | tr '\n' ' ' | tail -c 300)"
-            log_warn "Remove it by hand: sudo apt-get purge -y ${_kmods}"
+            log_warn "Remove it by hand: sudo apt-mark unhold ${_kmods} && sudo apt-get purge -y ${_kmods}"
         fi
     fi
     # No apt-get autoremove here, same as in cleanup_system (Issue #84). It removes
@@ -6071,8 +6071,7 @@ _awg_installed_kmod_pkgs() {
         [[ "$e" == *"no packages found matching"* ]] && return 0
         return 2
     fi
-    awk '$NF != "not-installed" && $NF != "config-files" {print $1}' <<<"$q" | paste -sd' ' -
-    return 0
+    awk '$NF != "not-installed" && $NF != "config-files" {print $1}' <<<"$q" | paste -sd' ' - || return 2
 }
 
 # Before a step 2 stop on ARM with a prebuilt package already installed, put the
