@@ -72,6 +72,10 @@ _run_os_check() {
         [ "$n_eq" -gt 0 ] && [ "$n_eq" -eq "$n_read" ] || { echo "$f: mentions $n_eq, parsed $n_read"; false; }
         [ "$(grep -c 'supported=1' <<<"$fn")" -eq "$(grep -c 'supported=1' <<<"$blk")" ] \
             || { echo "$f: supported=1 set outside the case block"; false; }
+        # Another source of the version (e.g. "$VERSION_ID" == "20.04") would widen
+        # the set while every count above still matches.
+        [ "$(grep -cE 'VERSION_ID|CODENAME|lsb_release|ID_LIKE' <<<"$blk")" -eq 0 ] \
+            || { echo "$f: the case block reads the version from another source"; false; }
     done
 }
 
@@ -225,19 +229,24 @@ amneziawg-kmod-near|install ok installed|/lib/modules/6.6.31rpt-rpi-v8/extra/amn
 }
 
 @test "check_os_version: behaviour follows the matrix, whatever the syntax (RU + EN)" {
-    # Every matrix platform passes silently; neighbours outside it are warned
-    # about. Catches a version added under another variable (VERSION_ID,
-    # OS_CODENAME), outside the case block or as a new family branch, which no
-    # text check of the function sees.
-    local f line os ver
+    # Every matrix platform passes silently; a sample of neighbours outside it is
+    # warned about. The sample catches the usual ways to widen the set (another
+    # variable, outside the case block, a new family branch) for those releases;
+    # the text check above closes them for any value.
+    local f line os ver n want
     local -a outside=("ubuntu 25.10 questing" "ubuntu 24.10 oracular" "ubuntu 22.04 jammy"
-                      "debian 11 bullseye" "debian 14 forky" "raspbian 12 bookworm")
+                      "ubuntu 20.04 focal" "debian 11 bullseye" "debian 14 forky" "raspbian 12 bookworm")
+    want=$(_matrix_set | grep -c ':')
+    [ "$want" -ge 1 ] || { echo "matrix unreadable"; false; }
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        n=0
         while IFS=: read -r os ver; do
             [ -n "$os" ] || continue
+            n=$((n + 1))
             run _run_os_check "$ROOT/$f" "$os" "$ver" x 0
             [ "$status" -eq 0 ] && [[ "$output" != *"WARN:"* ]] || { echo "$f $os $ver (matrix): $output"; false; }
         done < <(_matrix_set)
+        [ "$n" -eq "$want" ] || { echo "$f: checked $n of $want matrix platforms"; false; }
         for line in "${outside[@]}"; do
             read -r os ver _ <<<"$line"
             run _run_os_check "$ROOT/$f" $line 1
