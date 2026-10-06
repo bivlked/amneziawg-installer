@@ -37,11 +37,12 @@ _installer_set() { # file
 }
 
 # Run check_os_version from <installer> against a fake os-release.
-# $1 installer, $2 ID, $3 VERSION_ID, $4 codename, $5 AUTO_YES
+# $1 installer, $2 ID, $3 VERSION_ID, $4 codename, $5 AUTO_YES, $6 ID_LIKE (optional)
 _run_os_check() {
     local inst="$1" rel
     rel="$BATS_TEST_TMPDIR/os-release"
     printf 'ID=%s\nVERSION_ID="%s"\nVERSION_CODENAME=%s\n' "$2" "$3" "$4" > "$rel"
+    [ -z "${6:-}" ] || printf 'ID_LIKE="%s"\n' "$6" >> "$rel"
     local body
     body=$(awk '/^check_os_version\(\) \{$/,/^}$/' "$inst" \
         | sed -e "s|/etc/os-release|$rel|g" -e 's|< /dev/tty|< /dev/null|g')
@@ -242,9 +243,12 @@ amneziawg-kmod-near|install ok installed|/lib/modules/6.6.31rpt-rpi-v8/extra/amn
     # warned about. The sample catches the usual ways to widen the set (another
     # variable, outside the case block, a new family branch) for those releases;
     # the text check above closes them for any value.
-    local f line os ver n want
-    local -a outside=("ubuntu 25.10 questing" "ubuntu 24.10 oracular" "ubuntu 22.04 jammy"
-                      "ubuntu 20.04 focal" "debian 11 bullseye" "debian 14 forky" "raspbian 12 bookworm" "pop 24.04 noble")
+    local f line os ver code like n want
+    # id:version:codename[:ID_LIKE] - derivatives carry their real ID_LIKE, so a
+    # mapping through it is caught by behaviour, not only by the text check.
+    local -a outside=("ubuntu:25.10:questing" "ubuntu:24.10:oracular" "ubuntu:22.04:jammy"
+                      "ubuntu:20.04:focal" "debian:11:bullseye" "debian:14:forky"
+                      "raspbian:12:bookworm:debian" "pop:24.04:noble:ubuntu debian")
     want=$(_matrix_set | grep -c ':')
     [ "$want" -ge 1 ] || { echo "matrix unreadable"; false; }
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
@@ -257,8 +261,8 @@ amneziawg-kmod-near|install ok installed|/lib/modules/6.6.31rpt-rpi-v8/extra/amn
         done < <(_matrix_set)
         [ "$n" -eq "$want" ] || { echo "$f: checked $n of $want matrix platforms"; false; }
         for line in "${outside[@]}"; do
-            read -r os ver _ <<<"$line"
-            run _run_os_check "$ROOT/$f" $line 1
+            IFS=: read -r os ver code like <<<"$line"
+            run _run_os_check "$ROOT/$f" "$os" "$ver" "$code" 1 "$like"
             [ "$status" -eq 0 ] && [[ "$output" == *"WARN:"* ]] || { echo "$f $os $ver (outside): $output"; false; }
         done
     done
