@@ -76,6 +76,12 @@ _run_os_check() {
         # the set while every count above still matches.
         [ "$(grep -cE 'VERSION_ID|CODENAME|lsb_release|ID_LIKE' <<<"$blk")" -eq 0 ] \
             || { echo "$f: the case block reads the version from another source"; false; }
+        # The arms of the outer case are exactly the matrix families: a new
+        # family or a catch-all arm would accept systems the matrix does not list.
+        local arms fams
+        arms=$(grep -oE '^        [^ ][^)]*\)' <<<"$blk" | sed 's/^ *//; s/)$//' | sort)
+        fams=$(_matrix_set | cut -d: -f1 | sort -u)
+        [ -n "$arms" ] && [ "$arms" = "$fams" ] || { echo "$f: case arms [$arms] != matrix families [$fams]"; false; }
     done
 }
 
