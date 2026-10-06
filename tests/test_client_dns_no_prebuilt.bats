@@ -463,8 +463,10 @@ _lib_check() {
 
 @test "no-prebuilt: the installed-package filter catches half-installed packages, not removed ones (both languages)" {
     for f in "${INSTALLERS[@]}"; do
-        line=$(grep -E '^[[:space:]]+_kmod=\$\(dpkg-query ' "$BATS_TEST_DIRNAME/../$f" | head -1)
-        [ -n "$line" ] || { echo "$f: _kmod line not found" >&2; return 1; }
+        # The filter lives in _awg_installed_kmod_pkgs; _kmod takes its output.
+        line=$(awk '/^_awg_installed_kmod_pkgs\(\) \{$/,/^}$/' "$BATS_TEST_DIRNAME/../$f")
+        [ -n "$line" ] || { echo "$f: _awg_installed_kmod_pkgs not found" >&2; return 1; }
+        line+=$'\n''_kmod=$(_awg_installed_kmod_pkgs)'
         out=$(bash -c '
             dpkg-query() { printf "%s\n" \
                 "amneziawg-kmod-a install ok installed" \
@@ -507,7 +509,8 @@ _lib_check() {
 @test "no-prebuilt: stops when a prebuilt module package is already installed (both languages)" {
     for f in "${INSTALLERS[@]}"; do
         body=$(sed -n '/^step2_install_amnezia() {$/,/^}$/p' "$BATS_TEST_DIRNAME/../$f")
-        echo "$body" | grep -qF "dpkg-query -W -f='\${Package} \${Status}\n' 'amneziawg-kmod-*'" \
+        # The list itself is _awg_installed_kmod_pkgs (behaviour: test_arm_kmod_leftovers.bats).
+        echo "$body" | grep -qF '_kmod=$(_awg_installed_kmod_pkgs)' \
             || { echo "$f: no check for an installed prebuilt package" >&2; return 1; }
         echo "$body" | grep -qE 'die .*apt-get purge -y \$_kmod' \
             || { echo "$f: no stop with the purge command" >&2; return 1; }

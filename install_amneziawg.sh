@@ -4868,6 +4868,10 @@ step_uninstall() {
             echo "$_hp deinstall" | dpkg --set-selections >/dev/null 2>&1 || true
         fi
     done
+    # Готовые пакеты модуля на ARM (несут файл модуля в /lib/modules) - список до
+    # purge, удаление отдельным вызовом ниже.
+    local _kmods="" _kmods_rc=0
+    _kmods=$(_awg_installed_kmod_pkgs) || _kmods_rc=$?
     if [[ "$saved_no_tweaks" -eq 0 ]]; then
         local _purge_pkgs=(amneziawg-dkms amneziawg-tools qrencode)
         # fail2ban purge-им только если сами его доустановили (маркер из
@@ -4883,6 +4887,22 @@ step_uninstall() {
         DEBIAN_FRONTEND=noninteractive apt-get purge -y "${_purge_pkgs[@]}" 2>/dev/null || log_warn "Ошибка purge."
     else
         DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg-tools qrencode 2>/dev/null || log_warn "Ошибка purge."
+    fi
+    # Отдельно, чтобы сбой этих пакетов не оставлял остальные; hold, если его
+    # поставили руками, apt-get purge -y не даст снять.
+    if (( _kmods_rc != 0 )); then
+        log_warn "Не удалось спросить dpkg о готовых пакетах модуля (amneziawg-kmod-*). Проверьте: dpkg -l 'amneziawg-kmod-*'; найденные удалите: sudo apt-get purge -y <имя>."
+    elif [[ -n "$_kmods" ]]; then
+        local -a _kmod_pkgs=()
+        local _kp _kout
+        read -r -a _kmod_pkgs <<< "$_kmods"
+        for _kp in "${_kmod_pkgs[@]}"; do
+            apt-mark unhold "$_kp" >/dev/null 2>&1 || true
+        done
+        if ! _kout=$(DEBIAN_FRONTEND=noninteractive apt-get purge -y "${_kmod_pkgs[@]}" 2>&1); then
+            log_warn "Не удалось удалить готовый пакет модуля: ${_kmods}. Ответ apt: $(printf '%s' "$_kout" | tr '\n' ' ' | tail -c 300)"
+            log_warn "Удалите вручную: sudo apt-mark unhold ${_kmods} && sudo apt-get purge -y ${_kmods}"
+        fi
     fi
     # apt-get autoremove здесь НЕ вызываем, как и в cleanup_system (Issue #84). Он чистит
     # всё, что apt считает ненужным, по всей системе, а не только оставшееся от нас; при
@@ -5906,16 +5926,47 @@ _rpi_headers_pkg() {
 # Готовые пакеты модуля (amneziawg-kmod-*), которые несут модуль для РАБОТАЮЩЕГО
 # ядра, через пробел. Пакет, оставшийся от прежнего ядра, сборке DKMS под новое
 # ядро не мешает и сюда не попадает. Пакет, чей список файлов не прочитать,
-# считается мешающим: «не смог проверить» не равно «не мешает».
+# считается мешающим: «не смог проверить» не равно «не мешает». Возврат 2 -
+# dpkg не ответил на вопрос о пакетах вообще (ответа нет).
 _awg_prebuilt_for_running_kernel() {
-    local k p files out=""
+    local k p files out="" list
     k="$(uname -r)"
-    for p in $(dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '$NF != "not-installed" && $NF != "config-files" {print $1}'); do
+    list=$(_awg_installed_kmod_pkgs) || return 2
+    for p in $list; do
         if ! files=$(dpkg -L "$p" 2>/dev/null) || grep -qF -- "/lib/modules/${k}/" <<<"$files"; then
             out+="${out:+ }$p"
         fi
     done
     printf '%s' "$out"
+}
+
+# Готовые пакеты модуля (amneziawg-kmod-*) под любое ядро, кроме удалённых
+# (недонастроенные считаются), через пробел. Возврат 0 - ответ (пустой, если
+# пакетов нет); 2 - dpkg спросить не удалось: «не смог» не должно читаться как
+# «не нашёл» (так же, как в _awg_kmod_prebuilt_present).
+_awg_installed_kmod_pkgs() {
+    local q e
+    if ! q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null); then
+        e=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>&1 >/dev/null || true)
+        [[ "$e" == *"no packages found matching"* ]] && return 0
+        return 2
+    fi
+    awk '$NF != "not-installed" && $NF != "config-files" {print $1}' <<<"$q" | paste -sd' ' - || return 2
+}
+
+# Перед остановкой шага 2 на ARM при уже стоящем готовом пакете вернуть hold:
+# на ядрах 6.7+ шаг 2 его снимает, а ставит снова только после установки
+# готового пакета. Без hold ручная установка пакетов amneziawg до повторного
+# запуска (amneziawg тянет amneziawg-dkms через Depends, amneziawg-tools - через
+# Recommends) могла бы поставить amneziawg-dkms, и рядом с готовым модулем встал
+# бы второй.
+_awg_rehold_for_prebuilt() {
+    local out
+    out=$(apt-mark hold amneziawg-dkms amneziawg 2>&1) || true
+    if ! _awg_pkg_held amneziawg-dkms; then
+        _awg_hold_refusal_log "$out"
+        log_warn "Не удалось вернуть hold на amneziawg-dkms. Верните вручную: sudo apt-mark hold amneziawg-dkms amneziawg. До этого не ставьте пакеты amneziawg вручную: рядом с готовым модулем мог бы встать второй."
+    fi
 }
 
 # _try_install_prebuilt_arm — скачать и установить предсобранный .deb для
@@ -6414,9 +6465,13 @@ PPASRC
             log "Готовый пакет модуля пропущен (--no-prebuilt), модуль соберётся через DKMS."
             # Готовый пакет, поставленный прошлым прогоном, сам не уйдёт: рядом встанет
             # DKMS-модуль, и в системе окажутся два дерева amneziawg.
-            local _kmod
-            _kmod=$(dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '$NF != "not-installed" && $NF != "config-files" {print $1}' | paste -sd' ' -)
-            if [[ -n "$_kmod" ]]; then
+            local _kmod _kmod_rc=0
+            _kmod=$(_awg_installed_kmod_pkgs) || _kmod_rc=$?
+            if (( _kmod_rc != 0 )); then
+                _awg_rehold_for_prebuilt
+                die "Не удалось спросить dpkg о готовых пакетах модуля (amneziawg-kmod-*), а без ответа нельзя понять, не соберётся ли с --no-prebuilt второй модуль рядом с готовым. Проверьте: dpkg -l 'amneziawg-kmod-*', затем запустите установщик снова."
+            elif [[ -n "$_kmod" ]]; then
+                _awg_rehold_for_prebuilt
                 die "Уже установлен готовый пакет модуля: $_kmod. С --no-prebuilt рядом собрался бы второй модуль. Удалите готовый: sudo apt-get purge -y $_kmod, затем запустите установщик снова."
             fi
         elif _try_install_prebuilt_arm; then
@@ -6471,9 +6526,13 @@ PPASRC
             # Готовый пакет прошлого прогона для ЭТОГО ядра (например, на Ubuntu
             # 25.10, для которой пакеты больше не собираются) рядом со сборкой
             # DKMS дал бы второе дерево модуля amneziawg.
-            local _kmod_here
-            _kmod_here=$(_awg_prebuilt_for_running_kernel)
-            if [[ -n "$_kmod_here" ]]; then
+            local _kmod_here _kmod_rc=0
+            _kmod_here=$(_awg_prebuilt_for_running_kernel) || _kmod_rc=$?
+            if (( _kmod_rc != 0 )); then
+                _awg_rehold_for_prebuilt
+                die "Не удалось спросить dpkg о готовых пакетах модуля (amneziawg-kmod-*), а без ответа нельзя понять, не встанет ли сборка через DKMS вторым модулем рядом с готовым. Проверьте: dpkg -l 'amneziawg-kmod-*', затем запустите установщик снова."
+            elif [[ -n "$_kmod_here" ]]; then
+                _awg_rehold_for_prebuilt
                 die "Для ядра $(uname -r) уже установлен готовый пакет модуля: $_kmod_here, а поставить готовый пакет на этот раз не удалось. Сборка через DKMS поставила бы рядом второй модуль. Если причина во временном сбое сети, просто запустите установщик позже. Если готового пакета для этого ядра больше нет (так на Ubuntu 25.10), удалите прежний: sudo apt-get purge -y $_kmod_here, затем запустите установщик снова - модуль соберётся через DKMS."
             fi
         fi
