@@ -4868,8 +4868,12 @@ step_uninstall() {
             echo "$_hp deinstall" | dpkg --set-selections >/dev/null 2>&1 || true
         fi
     done
+    # Готовый пакет модуля на ARM несёт файл модуля в /lib/modules: уходит вместе
+    # с остальными.
+    local -a _kmod_pkgs=()
+    read -r -a _kmod_pkgs <<< "$(_awg_installed_kmod_pkgs)"
     if [[ "$saved_no_tweaks" -eq 0 ]]; then
-        local _purge_pkgs=(amneziawg-dkms amneziawg-tools qrencode)
+        local _purge_pkgs=(amneziawg-dkms amneziawg-tools qrencode "${_kmod_pkgs[@]}")
         # fail2ban purge-им только если сами его доустановили (маркер из
         # setup_fail2ban) - иначе пользовательская SSH-защита, стоявшая до
         # установщика, не должна исчезать вместе с VPN. Наш jail-файл
@@ -4882,7 +4886,7 @@ step_uninstall() {
         fi
         DEBIAN_FRONTEND=noninteractive apt-get purge -y "${_purge_pkgs[@]}" 2>/dev/null || log_warn "Ошибка purge."
     else
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg-tools qrencode 2>/dev/null || log_warn "Ошибка purge."
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg-tools qrencode "${_kmod_pkgs[@]}" 2>/dev/null || log_warn "Ошибка purge."
     fi
     # apt-get autoremove здесь НЕ вызываем, как и в cleanup_system (Issue #84). Он чистит
     # всё, что apt считает ненужным, по всей системе, а не только оставшееся от нас; при
@@ -5918,6 +5922,22 @@ _awg_prebuilt_for_running_kernel() {
     printf '%s' "$out"
 }
 
+# Все установленные готовые пакеты модуля (amneziawg-kmod-*), под любое ядро,
+# через пробел.
+_awg_installed_kmod_pkgs() {
+    dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '$NF != "not-installed" && $NF != "config-files" {print $1}' | paste -sd' ' -
+}
+
+# Перед остановкой шага 2 на ARM при уже стоящем готовом пакете вернуть hold:
+# на ядрах 6.7+ шаг 2 его снимает, а ставит снова только после установки
+# готового пакета. Без hold до повторного запуска amneziawg-tools (Recommends)
+# дотянул бы amneziawg-dkms, и рядом встал бы второй модуль.
+_awg_rehold_for_prebuilt() {
+    apt-mark hold amneziawg-dkms amneziawg >/dev/null 2>&1 || true
+    _awg_pkg_held amneziawg-dkms \
+        || log_warn "Не удалось вернуть hold на amneziawg-dkms. До повторного запуска установщика не ставьте пакеты amneziawg вручную: рядом с готовым модулем встал бы второй."
+}
+
 # _try_install_prebuilt_arm — скачать и установить предсобранный .deb для
 # текущего ARM-ядра из релиза arm-packages на GitHub.
 #
@@ -6415,8 +6435,9 @@ PPASRC
             # Готовый пакет, поставленный прошлым прогоном, сам не уйдёт: рядом встанет
             # DKMS-модуль, и в системе окажутся два дерева amneziawg.
             local _kmod
-            _kmod=$(dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '$NF != "not-installed" && $NF != "config-files" {print $1}' | paste -sd' ' -)
+            _kmod=$(_awg_installed_kmod_pkgs)
             if [[ -n "$_kmod" ]]; then
+                _awg_rehold_for_prebuilt
                 die "Уже установлен готовый пакет модуля: $_kmod. С --no-prebuilt рядом собрался бы второй модуль. Удалите готовый: sudo apt-get purge -y $_kmod, затем запустите установщик снова."
             fi
         elif _try_install_prebuilt_arm; then
@@ -6474,6 +6495,7 @@ PPASRC
             local _kmod_here
             _kmod_here=$(_awg_prebuilt_for_running_kernel)
             if [[ -n "$_kmod_here" ]]; then
+                _awg_rehold_for_prebuilt
                 die "Для ядра $(uname -r) уже установлен готовый пакет модуля: $_kmod_here, а поставить готовый пакет на этот раз не удалось. Сборка через DKMS поставила бы рядом второй модуль. Если причина во временном сбое сети, просто запустите установщик позже. Если готового пакета для этого ядра больше нет (так на Ubuntu 25.10), удалите прежний: sudo apt-get purge -y $_kmod_here, затем запустите установщик снова - модуль соберётся через DKMS."
             fi
         fi

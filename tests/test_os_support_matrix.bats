@@ -225,12 +225,14 @@ amneziawg-kmod-near|install ok installed|/lib/modules/6.6.31rpt-rpi-v8/extra/amn
         [ -n "$blk" ] || { echo "$f: guard block not found"; false; }
         unset LEFT
         run bash -c 'die() { echo "DIE: $*"; exit 1; }
+            _awg_rehold_for_prebuilt() { :; }
             _awg_prebuilt_for_running_kernel() { printf "%s" "$LEFT"; }
             g() { eval "$1"; echo CONTINUED; }; g "$1"' _ "$blk"
         # LEFT unset -> nothing in the way -> the DKMS path goes on
         [ "$status" -eq 0 ] && [[ "$output" == *CONTINUED* ]] || { echo "$f none: $output"; false; }
         export LEFT=amneziawg-kmod-ubuntu-2510-arm64
         run bash -c 'die() { echo "DIE: $*"; exit 1; }
+            _awg_rehold_for_prebuilt() { :; }
             _awg_prebuilt_for_running_kernel() { printf "%s" "$LEFT"; }
             g() { eval "$1"; echo CONTINUED; }; g "$1"' _ "$blk"
         [ "$status" -ne 0 ] && [[ "$output" == *"DIE:"*"apt-get purge -y amneziawg-kmod-ubuntu-2510-arm64"* ]] \

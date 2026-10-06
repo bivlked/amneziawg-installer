@@ -4976,8 +4976,12 @@ step_uninstall() {
             echo "$_hp deinstall" | dpkg --set-selections >/dev/null 2>&1 || true
         fi
     done
+    # The ARM prebuilt module package carries the module file in /lib/modules:
+    # it goes with the rest.
+    local -a _kmod_pkgs=()
+    read -r -a _kmod_pkgs <<< "$(_awg_installed_kmod_pkgs)"
     if [[ "$saved_no_tweaks" -eq 0 ]]; then
-        local _purge_pkgs=(amneziawg-dkms amneziawg-tools qrencode)
+        local _purge_pkgs=(amneziawg-dkms amneziawg-tools qrencode "${_kmod_pkgs[@]}")
         # Purge fail2ban only if we installed it ourselves (marker from
         # setup_fail2ban) - otherwise SSH protection the user had before the
         # installer must not disappear together with the VPN. Our jail file
@@ -4990,7 +4994,7 @@ step_uninstall() {
         fi
         DEBIAN_FRONTEND=noninteractive apt-get purge -y "${_purge_pkgs[@]}" 2>/dev/null || log_warn "Purge error."
     else
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg-tools qrencode 2>/dev/null || log_warn "Purge error."
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg-tools qrencode "${_kmod_pkgs[@]}" 2>/dev/null || log_warn "Purge error."
     fi
     # No apt-get autoremove here, same as in cleanup_system (Issue #84). It removes
     # everything apt considers unneeded across the whole system, not just what we left;
@@ -6038,6 +6042,23 @@ _awg_prebuilt_for_running_kernel() {
     printf '%s' "$out"
 }
 
+# Every installed prebuilt module package (amneziawg-kmod-*), for any kernel,
+# space-separated.
+_awg_installed_kmod_pkgs() {
+    dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '$NF != "not-installed" && $NF != "config-files" {print $1}' | paste -sd' ' -
+}
+
+# Before a step 2 stop on ARM with a prebuilt package already installed, put the
+# hold back: on kernels 6.7+ step 2 removes it and sets it again only after the
+# prebuilt package is installed. Without the hold, amneziawg-tools (Recommends)
+# could pull amneziawg-dkms before the next run, and a second module would land
+# next to the prebuilt one.
+_awg_rehold_for_prebuilt() {
+    apt-mark hold amneziawg-dkms amneziawg >/dev/null 2>&1 || true
+    _awg_pkg_held amneziawg-dkms \
+        || log_warn "Could not put amneziawg-dkms back on hold. Until you run the installer again, do not install amneziawg packages by hand: a second module would land next to the prebuilt one."
+}
+
 # _try_install_prebuilt_arm — download and install a prebuilt amneziawg .deb
 # for the current ARM kernel from the arm-packages GitHub release.
 #
@@ -6551,8 +6572,9 @@ PPASRC
             # A prebuilt package installed by an earlier run does not go away by itself:
             # a DKMS module would land next to it, leaving two amneziawg trees.
             local _kmod
-            _kmod=$(dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '$NF != "not-installed" && $NF != "config-files" {print $1}' | paste -sd' ' -)
+            _kmod=$(_awg_installed_kmod_pkgs)
             if [[ -n "$_kmod" ]]; then
+                _awg_rehold_for_prebuilt
                 die "A prebuilt module package is already installed: $_kmod. With --no-prebuilt a second module would be built next to it. Remove the prebuilt one: sudo apt-get purge -y $_kmod, then run the installer again."
             fi
         elif _try_install_prebuilt_arm; then
@@ -6612,6 +6634,7 @@ PPASRC
             local _kmod_here
             _kmod_here=$(_awg_prebuilt_for_running_kernel)
             if [[ -n "$_kmod_here" ]]; then
+                _awg_rehold_for_prebuilt
                 die "A prebuilt module package for kernel $(uname -r) is already installed: $_kmod_here, and installing a prebuilt package failed this time. A DKMS build would put a second module next to it. If a temporary network failure is the cause, just run the installer again later. If there is no prebuilt package for this kernel any more (as on Ubuntu 25.10), remove the old one: sudo apt-get purge -y $_kmod_here, then run the installer again - the module will be built through DKMS."
             fi
         fi
