@@ -33,7 +33,7 @@ setup() {
     _kernel_supports_awg3 "6.12.85+deb13-amd64"
 }
 
-@test "6.17.0-5-generic supported (Ubuntu 25.10)" {
+@test "6.17.0-5-generic supported (kernel 6.17)" {
     _kernel_supports_awg3 "6.17.0-5-generic"
 }
 

@@ -58,7 +58,7 @@ ROOT="$BATS_TEST_DIRNAME/.."
     [ "$status" -eq 0 ]
 }
 
-@test "D4: the tokens derived from the matrix are the five expected ones" {
+@test "D4: the tokens derived from the matrix are the four expected ones" {
     # Проверяем не id, а ТОКЕНЫ, которые чекер потом ищет в документах.
     # По id тест был слабее: подмена поля os у debian-12 на ubuntu
     # деградирует токен до голого "12", который грепается где угодно, а id
@@ -72,17 +72,19 @@ print(';'.join(p['version'] if p['os'] == 'ubuntu' else 'Debian ' + p['version']
                 for p in d['platforms']))
 " "$m"
     [ "$status" -eq 0 ]
-    for tok in "24.04" "25.10" "26.04" "Debian 12" "Debian 13"; do
+    for tok in "24.04" "26.04" "Debian 12" "Debian 13"; do
         [[ "$output" == *"$tok"* ]]
     done
-    # Ровно пять, ни больше ни меньше: выпавшая платформа гасит заодно и
+    # Ubuntu 25.10 снята с поддержки (v6.0.0): вернуть её можно только решением.
+    [[ "$output" != *"25.10"* ]]
+    # Ровно четыре, ни больше ни меньше: выпавшая платформа гасит заодно и
     # проверку ARM-таргетов, которая ходит по тому же набору.
-    [ "$(printf '%s' "$output" | tr -cd ';' | wc -c)" -eq 4 ]
+    [ "$(printf '%s' "$output" | tr -cd ';' | wc -c)" -eq 3 ]
 }
 
 @test "D4 functional: every OS-matrix doc carries the whole release set" {
     local files=(README.md README.en.md install_amneziawg.sh install_amneziawg_en.sh .github/ISSUE_TEMPLATE/bug_report.yml)
-    local tokens=("24.04" "25.10" "26.04" "Debian 12" "Debian 13")
+    local tokens=("24.04" "26.04" "Debian 12" "Debian 13")
     for f in "${files[@]}"; do
         for t in "${tokens[@]}"; do
             run grep -qF "$t" "$ROOT/$f"

@@ -13,7 +13,6 @@ body:
         - Ubuntu 24.04 LTS
         - Ubuntu 26.04
         - Debian 13 (trixie)
-        - Ubuntu 25.10 (past end of support)
         - Debian 12 (bookworm, LTS only)
         - Other
     validations:

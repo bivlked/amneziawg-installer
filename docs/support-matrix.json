@@ -76,19 +76,6 @@
       "arm_prebuilt_targets": []
     },
     {
-      "id": "ubuntu-25.10",
-      "os": "ubuntu",
-      "version": "25.10",
-      "codename": "questing",
-      "released": "2025-10-09",
-      "vendor_regular_eol": "2026-07-01",
-      "vendor_lts_eol": null,
-      "lifecycle": "eol",
-      "project_policy": "discouraged",
-      "ppa_suite": "noble",
-      "arm_prebuilt_targets": ["ubuntu-2510-arm64"]
-    },
-    {
       "id": "debian-13",
       "os": "debian",
       "version": "13",

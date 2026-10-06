@@ -78,14 +78,6 @@ jobs:
             headers_pkg: linux-headers-generic
             arch: arm64
 
-          # Ubuntu 25.10 Questing — arm64 (latest non-LTS, kernel 6.17+)
-          - id: ubuntu-2510-arm64
-            platform: linux/arm64
-            image: ubuntu:25.10
-            extra_sources: ''
-            headers_pkg: linux-headers-generic
-            arch: arm64
-
           # Debian 12 Bookworm — arm64 (mainline kernel, VPS/cloud)
           - id: debian-bookworm-arm64
             platform: linux/arm64

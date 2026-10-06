@@ -66,12 +66,23 @@ setup_detect() {
 # install --help text (E: 26.04, C13: /24) - source-level assertions
 # ---------------------------------------------------------------------------
 
-@test "v5.15.1 E: RU installer help OS line includes 26.04" {
-    grep -q "Ubuntu (24.04 / 25.10 / 26.04)" "${BATS_TEST_DIRNAME}/../install_amneziawg.sh"
+@test "v5.15.1 E: RU installer help OS line includes 26.04 (25.10 dropped in v6.0.0)" {
+    grep -q "Ubuntu (24.04 / 26.04)" "${BATS_TEST_DIRNAME}/../install_amneziawg.sh"
 }
 
-@test "v5.15.1 E: EN installer help OS line includes 26.04" {
-    grep -q "Ubuntu (24.04 / 25.10 / 26.04)" "${BATS_TEST_DIRNAME}/../install_amneziawg_en.sh"
+@test "v5.15.1 E: EN installer help OS line includes 26.04 (25.10 dropped in v6.0.0)" {
+    grep -q "Ubuntu (24.04 / 26.04)" "${BATS_TEST_DIRNAME}/../install_amneziawg_en.sh"
+}
+
+@test "v6.0.0: Ubuntu 25.10 is no longer in the supported-OS check (RU + EN)" {
+    local f body
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        body=$(awk '/^check_os_version\(\) \{$/,/^}$/' "${BATS_TEST_DIRNAME}/../$f")
+        [ -n "$body" ] || { echo "check_os_version not found in $f"; false; }
+        run grep -qF '25.10' <<< "$body"; [ "$status" -ne 0 ] || { echo "25.10 still in $f"; false; }
+        grep -qF '"24.04"' <<< "$body"
+        grep -qF '"26.04"' <<< "$body"
+    done
 }
 
 @test "v5.15.1 C13: RU installer --subnet help states supported CIDR range (v5.19: /16-/30)" {

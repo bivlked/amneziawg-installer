@@ -24,7 +24,7 @@
 #      в RU == EN; [Unreleased] присутствует в обоих.
 #   3. Version triple: README badge == SCRIPT_VERSION == верхний changelog
 #      heading (RU и EN).
-#   4. Матрица ОС: полный набор релизов (Ubuntu 24.04/25.10/26.04, Debian 12/13)
+#   4. Матрица ОС: полный набор релизов из docs/support-matrix.json
 #      + архитектур (x86_64/ARM64/ARMv7) во всех заявленных местах.
 #   5. SECURITY/CONTRIBUTING не протухли (текущий minor в supported-таблице;
 #      нет захардкоженного test-count baseline).
