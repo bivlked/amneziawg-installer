@@ -302,7 +302,7 @@ Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work - o
 | Debian 13 (trixie) | ✅ default pick | until 2028-08-09 | Tested. PPA via codename mapping to noble, DEB822 |
 | Ubuntu 26.04 | ⚠️ for now, with a caveat | until 2031-05-29 | The PPA module does not build for kernel 7.0.0-38 on its own, since v5.37.1 the installer fixes its source itself ([details](ADVANCED.en.md#kernel-70-backport-adv)). The installer checks whether the PPA answers for the release codename and switches to `noble` itself if it does not (since v5.13.0) |
 | Debian 12 (bookworm) | ⚠️ for migration | regular ended 2026-07-11, Debian LTS until 2028-06-30 | Works and is tested, security updates continue through Debian LTS. PPA via codename mapping to focal. For a new server prefer Debian 13 |
-| Ubuntu 25.10 (questing) | ❌ not supported since v6.0.0 | ended 2026-07-01, no extension | Out of vendor support, no security updates are published for it. The installer warns about an untested release; move to 26.04 LTS (`do-release-upgrade`) or 24.04 LTS |
+| Ubuntu 25.10 (questing) | ❌ not supported since v6.0.0 | ended 2026-07-01, no extension | Out of vendor support, no security updates are published for it. The installer warns about an untested release and asks for confirmation. Move to 26.04 LTS (`do-release-upgrade`, then run the latest installer again) or reinstall on 24.04 LTS |
 
 **Architecture support (v5.10.0+):**
 

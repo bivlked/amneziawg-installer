@@ -21,7 +21,7 @@ tracked in issues and discussions, not here:
 - ARM prebuilt `.deb` assets ship with a build manifest (installer tag,
   upstream commit, kernel, SHA256) and support pinning the upstream module
   revision.
-- Ubuntu 24.04 / 26.04 and Debian 12 / 13 support (Ubuntu 25.10 dropped in v6.0.0: out of vendor support).
+- Ubuntu 24.04 / 26.04 and Debian 12 / 13 support.
 - CI and docs-consistency gates around releases.
 - Signed releases (since v5.29.0): every installer and helper script carries a detached minisign signature made offline; the release workflow refuses to publish if one does not verify ([SIGNING_DESIGN.md](SIGNING_DESIGN.md)).
 - Security and reliability hardening across installation and client management (atomic peer carry-over in the server config on `--force` reinstall, strict key permissions, careful temp-file and secret handling, Amnezia PPA GPG key pinned by full fingerprint).
@@ -74,7 +74,7 @@ Carrier reports (operator, region, working parameters) are especially useful.
 - ARM-сборки `.deb` поставляются с build-манифестом (тег установщика,
   upstream-коммит, ядро, SHA256) и поддерживают закрепление ревизии
   upstream-модуля.
-- Поддержка Ubuntu 24.04 / 26.04 и Debian 12 / 13 (Ubuntu 25.10 убрана в v6.0.0: вендор снял её с поддержки).
+- Поддержка Ubuntu 24.04 / 26.04 и Debian 12 / 13.
 - CI и проверки согласованности документации вокруг релизов.
 - Подписанные релизы (с v5.29.0): у каждого установщика и вспомогательного скрипта есть отдельная подпись minisign, сделанная офлайн; релиз не публикуется, если хоть одна подпись не сходится ([SIGNING_DESIGN.md](SIGNING_DESIGN.md)).
 - Закалка безопасности и надёжности при установке и управлении клиентами (атомарный перенос peer-блоков в серверном конфиге при переустановке `--force`, строгие права на ключи, аккуратная работа с временными файлами и секретами, GPG-ключ Amnezia PPA закреплён по полному отпечатку).

@@ -6022,6 +6022,22 @@ _rpi_headers_pkg() {
     fi
 }
 
+# Prebuilt module packages (amneziawg-kmod-*) that carry a module for the
+# RUNNING kernel, space-separated. A package left from an earlier kernel does
+# not get in the way of a DKMS build for the new one and is not listed. A
+# package whose file list cannot be read counts as in the way: "could not
+# check" is not "does not conflict".
+_awg_prebuilt_for_running_kernel() {
+    local k p files out=""
+    k="$(uname -r)"
+    for p in $(dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '$NF != "not-installed" && $NF != "config-files" {print $1}'); do
+        if ! files=$(dpkg -L "$p" 2>/dev/null) || grep -qF -- "/lib/modules/${k}/" <<<"$files"; then
+            out+="${out:+ }$p"
+        fi
+    done
+    printf '%s' "$out"
+}
+
 # _try_install_prebuilt_arm — download and install a prebuilt amneziawg .deb
 # for the current ARM kernel from the arm-packages GitHub release.
 #
@@ -6590,6 +6606,14 @@ PPASRC
             request_reboot 3
         else
             log "No matching prebuilt - falling back to DKMS build."
+            # A prebuilt package from an earlier run for THIS kernel (for
+            # example on Ubuntu 25.10, whose packages are no longer built)
+            # next to a DKMS build would leave a second amneziawg module tree.
+            local _kmod_here
+            _kmod_here=$(_awg_prebuilt_for_running_kernel)
+            if [[ -n "$_kmod_here" ]]; then
+                die "A prebuilt module package for kernel $(uname -r) is already installed: $_kmod_here, and installing a prebuilt package failed this time. A DKMS build would put a second module next to it. Remove the prebuilt one: sudo apt-get purge -y $_kmod_here, then run the installer again - the module will be built through DKMS."
+            fi
         fi
     fi
 

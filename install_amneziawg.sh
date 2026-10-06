@@ -5903,6 +5903,21 @@ _rpi_headers_pkg() {
     fi
 }
 
+# Готовые пакеты модуля (amneziawg-kmod-*), которые несут модуль для РАБОТАЮЩЕГО
+# ядра, через пробел. Пакет, оставшийся от прежнего ядра, сборке DKMS под новое
+# ядро не мешает и сюда не попадает. Пакет, чей список файлов не прочитать,
+# считается мешающим: «не смог проверить» не равно «не мешает».
+_awg_prebuilt_for_running_kernel() {
+    local k p files out=""
+    k="$(uname -r)"
+    for p in $(dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '$NF != "not-installed" && $NF != "config-files" {print $1}'); do
+        if ! files=$(dpkg -L "$p" 2>/dev/null) || grep -qF -- "/lib/modules/${k}/" <<<"$files"; then
+            out+="${out:+ }$p"
+        fi
+    done
+    printf '%s' "$out"
+}
+
 # _try_install_prebuilt_arm — скачать и установить предсобранный .deb для
 # текущего ARM-ядра из релиза arm-packages на GitHub.
 #
@@ -6453,6 +6468,14 @@ PPASRC
             request_reboot 3
         else
             log "Совпадений не найдено - откат на DKMS."
+            # Готовый пакет прошлого прогона для ЭТОГО ядра (например, на Ubuntu
+            # 25.10, для которой пакеты больше не собираются) рядом со сборкой
+            # DKMS дал бы второе дерево модуля amneziawg.
+            local _kmod_here
+            _kmod_here=$(_awg_prebuilt_for_running_kernel)
+            if [[ -n "$_kmod_here" ]]; then
+                die "Для ядра $(uname -r) уже установлен готовый пакет модуля: $_kmod_here, а поставить готовый пакет на этот раз не удалось. Сборка через DKMS поставила бы рядом второй модуль. Удалите готовый: sudo apt-get purge -y $_kmod_here, затем запустите установщик снова - модуль соберётся через DKMS."
+            fi
         fi
     fi
 

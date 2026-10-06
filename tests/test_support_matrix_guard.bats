@@ -103,10 +103,12 @@ _run_guard() {
 }
 
 @test "matrix-guard: рекомендовать систему без поддержки вендора нельзя" {
-    # Debian 12: регулярная поддержка кончилась (extended-support), allowed для неё - ложь.
+    # Debian 12: обычная поддержка вендора кончилась (extended-support), allowed для неё - ложь.
     _mutate "[x.__setitem__('project_policy', 'allowed') for x in d['platforms'] if x['id'] == 'debian-12']"
     run _run_guard
     [ "$status" -ne 0 ]
+    [[ "$output" == *"debian-12"* ]]
+    [[ "$output" == *"без поддержки вендора"* ]]
 }
 
 @test "matrix-guard: расхождение lifecycle с датами называется своим именем" {

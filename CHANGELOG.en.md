@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
-- **Ubuntu 25.10 is no longer supported.** Canonical ended support for the release on 2026-07-01, and no security updates are published for it. 25.10 is gone from the list of supported systems, the documentation and the templates, and the prebuilt ARM module for it is no longer built (packages built earlier stay in the `arm-packages` release). On 25.10 the installer does not refuse: it warns about an untested release, as on any other version outside the list; on ARM the module is built through DKMS. For a server, take Ubuntu 24.04 LTS, 26.04 LTS or Debian 13; a running 25.10 server moves to 26.04 with `do-release-upgrade`. Debian 12 stays on the list.
+- **Ubuntu 25.10 is no longer supported.** Canonical ended support for the release on 2026-07-01, and no security updates are published for it. 25.10 is gone from the supported-system listings and the templates, and the prebuilt ARM module for it is no longer built (packages built earlier stay in the `arm-packages` release). On 25.10 the installer does not refuse: as on any version outside the list, it warns about an untested release and asks for confirmation, and with `--yes` it carries on without asking; on ARM the module is built through DKMS. If on ARM a prebuilt module package is already installed for the running kernel and installing a prebuilt package fails, the install stops and names the removal command: a DKMS build would put a second module next to it. For a server, take Ubuntu 24.04 LTS, 26.04 LTS or Debian 13; a running 25.10 server moves to 26.04 with `do-release-upgrade`, then the latest installer is run again. Debian 12 stays on the list.
 
 ## [5.37.1] - 2026-10-04
 
