@@ -534,7 +534,7 @@ apt_wait_for_ppa_package() {
 show_help() {
     cat << 'EOF'
 Usage: sudo bash install_amneziawg_en.sh [OPTIONS]
-Script for installation and configuration of AmneziaWG (generation 3.1 by default; 2.0 by flag or automatically where 3.1 cannot run) on Ubuntu (24.04 / 25.10 / 26.04) and Debian (12 / 13).
+Script for installation and configuration of AmneziaWG (generation 3.1 by default; 2.0 by flag or automatically where 3.1 cannot run) on Ubuntu (24.04 / 26.04) and Debian (12 / 13).
 
 Options:
   -h, --help            Show this help and exit
@@ -719,7 +719,7 @@ check_os_version() {
     local supported=0
     case "$OS_ID" in
         ubuntu)
-            if [[ "$OS_VERSION" == "24.04" || "$OS_VERSION" == "25.10" || "$OS_VERSION" == "26.04" ]]; then
+            if [[ "$OS_VERSION" == "24.04" || "$OS_VERSION" == "26.04" ]]; then
                 supported=1
             fi
             ;;
@@ -733,7 +733,8 @@ check_os_version() {
     if [[ "$supported" -eq 1 ]]; then
         log "OS: ${OS_ID^} $OS_VERSION ($OS_CODENAME) — supported"
     else
-        log_warn "Detected $OS_ID $OS_VERSION ($OS_CODENAME). Script tested on Ubuntu 24.04/25.10/26.04 and Debian 12/13."
+        log_warn "Detected $OS_ID $OS_VERSION ($OS_CODENAME). Script tested on Ubuntu 24.04/26.04 and Debian 12/13."
+        log_warn "For a server, pick a supported release: Ubuntu 24.04 LTS, 26.04 LTS or Debian 13."
         if [[ "$AUTO_YES" -eq 0 ]]; then
             read -rp "Continue? [y/N]: " confirm < /dev/tty
             if ! [[ "$confirm" =~ ^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$ ]]; then die "Cancelled."; fi
@@ -759,7 +760,7 @@ check_kernel_version() {
     fi
     if (( kmaj < 5 || (kmaj == 5 && kmin < 15) )); then
         log_warn "Kernel $kver is older than 5.15 - usually too old for the AmneziaWG 2.0 module."
-        log_warn "The DKMS module build on such a kernel most often fails. Reinstall the VPS on Ubuntu 24.04 LTS or Debian 13. The script also runs on Ubuntu 25.10/26.04 and Debian 12, but 25.10 and Debian 12 are past regular support, so do not pick either for a new server."
+        log_warn "The DKMS module build on such a kernel most often fails. Reinstall the VPS on Ubuntu 24.04 LTS or Debian 13. The script also runs on Ubuntu 26.04 and Debian 12, but Debian 12 is past regular support, so do not pick it for a new server."
         if [[ "$AUTO_YES" -eq 0 ]]; then
             read -rp "Continue anyway? [y/N]: " confirm < /dev/tty
             if ! [[ "$confirm" =~ ^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$ ]]; then die "Cancelled: kernel $kver is too old for the AmneziaWG 2.0 module."; fi
@@ -6047,8 +6048,6 @@ _try_install_prebuilt_arm() {
         target_id="rpi-bookworm-armhf"
     elif [[ "$kernel" == *-generic* && "${OS_VERSION:-}" == "24.04" ]]; then
         target_id="ubuntu-2404-arm64"
-    elif [[ "$kernel" == *-generic* && "${OS_VERSION:-}" == "25.10" ]]; then
-        target_id="ubuntu-2510-arm64"
     elif [[ "$kernel" == *-arm64* && "${OS_ID:-}" == "debian" && "${OS_VERSION:-}" == "13" ]]; then
         target_id="debian-trixie-arm64"
     elif [[ "$kernel" == *-arm64* && "${OS_ID:-}" == "debian" ]]; then
@@ -6554,7 +6553,7 @@ PPASRC
             # without the hold apt would pull amneziawg-dkms from the PPA, and a
             # 3.0 tree in updates/dkms/ would land next to our 2.0 module in
             # extra/. Two trees carrying a module of the SAME name is exactly what
-            # the hold exists to prevent. Reachable: the ubuntu-2510-arm64 and
+            # the hold exists to prevent. Reachable: the ubuntu-2404-arm64 and
             # debian-trixie-arm64 prebuilt targets ship kernels 6.7+.
             local _hold_out=""
             _hold_out=$(apt-mark hold amneziawg-dkms amneziawg 2>&1) || true

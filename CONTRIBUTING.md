@@ -68,7 +68,6 @@ Before submitting a PR, ensure:
 
 4. **VPS testing** (for script changes): test on a clean server (Ubuntu 24.04 LTS or Debian 12/13 minimal). The full test matrix includes:
    - Fresh install on clean Ubuntu 24.04 LTS
-   - Fresh install on clean Ubuntu 25.10 (noble fallback path)
    - Fresh install on clean Ubuntu 26.04 (the installer probes the PPA for `resolute` and falls back to `noble` if it does not answer)
    - All management commands: add, remove, list, regen, check, restart
    - Reboot-resume between critical installer steps

@@ -7,12 +7,12 @@ A step-by-step guide for deploying an AmneziaWG 2.0 VPN server on a clean Ubuntu
 ## TL;DR
 
 - One command, MIT-licensed, fully self-hosted, no third-party dependencies at runtime.
-- Works on Ubuntu 24.04 LTS and Debian 13 (trixie); Ubuntu 26.04 works with a temporary kernel caveat (see below). Ubuntu 25.10 and Debian 12 (bookworm) work too, but both are past regular support; details below.
+- Works on Ubuntu 24.04 LTS and Debian 13 (trixie); Ubuntu 26.04 works with a temporary kernel caveat (see below). Debian 12 (bookworm) works too, but it is past regular support; Ubuntu 25.10 is not supported since v6.0.0. Details below.
 - Built for cheap VPS budgets: $3 to $5 a month, 1 vCPU, 512 MB RAM minimum (1 GB recommended), 2 GB disk minimum (3+ GB recommended).
-- Both x86_64 (amd64) and ARM64 (aarch64), with prebuilt kernel modules covering Raspberry Pi 4/5, Ubuntu 24.04/25.10 ARM64, and Debian 12/13 ARM64 (Hetzner CAX, Oracle Ampere A1, AWS Graviton all run on these stock kernels). Ubuntu 26.04 ARM64 builds the module from source via DKMS.
+- Both x86_64 (amd64) and ARM64 (aarch64), with prebuilt kernel modules covering Raspberry Pi 4/5, Ubuntu 24.04 ARM64, and Debian 12/13 ARM64 (Hetzner CAX, Oracle Ampere A1, AWS Graviton all run on these stock kernels). Ubuntu 26.04 ARM64 builds the module from source via DKMS.
 - DPI bypass for Russia (ТСПУ), Iran, China, school and corporate firewalls.
 - Survives kernel upgrades automatically via DKMS auto-repair (since v5.12.0). On ARM with a prebuilt module there is no DKMS: after a kernel change, run the installer again.
-- Ubuntu 25.10 and 26.04: if the PPA does not answer for the release codename, the installer switches to `noble` itself (since v5.13.0).
+- Ubuntu 26.04: if the PPA does not answer for the release codename, the installer switches to `noble` itself (since v5.13.0).
 
 ## Choosing a VPS
 
@@ -30,7 +30,7 @@ Country matters mostly for latency and jurisdiction. ARM versus amd64 has no rea
 
 - **Ubuntu 24.04 LTS** is the best-tested platform. Default pick if you have no other preference. The HWE kernel 7.0.0-38 is supported since v5.37.1: the installer fixes the PPA module source itself ([details](ADVANCED.en.md#kernel-70-backport-adv)).
 - **Ubuntu 26.04** works since v5.13.0. The PPA codename remaps to `noble` automatically when the running codename PPA is unreachable (404 or network failure). Resilient against do-release-upgrade from 24.04. The PPA module does not build for the 26.04 kernel 7.0.0-38 on its own; since v5.37.1 the installer fixes its source itself, see [known limitations](ADVANCED.en.md#kernel-70-backport-adv).
-- ⚠️ **Ubuntu 25.10** (questing) works the same way, through the same remap to `noble`. But Ubuntu itself stopped supporting it on 2026-07-01, and being an interim release it gets no extended support either: no security updates of any kind are published for it. There is nothing to gain by choosing it for a new server, so take 24.04 LTS or Debian 13 instead. If a box is already on 25.10, the installer handles it.
+- ❌ **Ubuntu 25.10** (questing) is not supported since v6.0.0. Ubuntu itself stopped supporting it on 2026-07-01, and being an interim release it gets no extended support either: no security updates of any kind are published for it. The installer treats it as an untested release and warns. Move the box to 26.04 LTS with `do-release-upgrade`, or reinstall on 24.04 LTS or Debian 13.
 - **Debian 13** (trixie) is fully supported, with the codename mapped to `noble`.
 - ⚠️ **Debian 12** (bookworm) is just as fully supported by the installer, with the codename mapped to `focal`. Debian itself ended regular support on 2026-07-11; security updates continue through Debian LTS until 2028-06-30, so the system is still patched, though no longer by the main team. Prefer Debian 13 for a new server. Note: upstream shipped AmneziaWG 3.0 in late July 2026. On kernels older than 6.7, which includes Debian 12 (kernel 6.1), the installer deliberately stays on AmneziaWG 2.0: it builds a pinned 2.0 module from source instead of taking 3.0 from the PPA, so the install keeps working (since v5.23.0); see [ADVANCED](ADVANCED.en.md#debian-support-adv) for the details.
 - Use a minimal install. The script assumes the box is single-purpose and will strip modemmanager, snapd, cloud-init leftovers and similar to free resources.
@@ -198,8 +198,8 @@ Re-installing later starts from a clean slate.
 
 ## Troubleshooting
 
-- **PPA 404 on Ubuntu 25.10 or 26.04.** Since v5.13.0 the installer checks whether the PPA answers for the codename and switches to `noble` itself when it does not. If you are still on v5.12.x, upgrade the installer.
-- **DKMS build fails on stale kernel headers** (typical after `do-release-upgrade` 24.04 to 25.10). v5.13.0 detects stale headers (kernel version differs from the running kernel) and installs gcc-13 as a fallback compiler so DKMS autoinstall succeeds across the version mismatch. If DKMS still fails, `sudo bash /root/awg/manage_amneziawg.sh repair-module` forces a rebuild.
+- **PPA 404 on Ubuntu 26.04.** Since v5.13.0 the installer checks whether the PPA answers for the codename and switches to `noble` itself when it does not. If you are still on v5.12.x, upgrade the installer.
+- **DKMS build fails on stale kernel headers** (typical after a `do-release-upgrade`, for example 24.04 to 26.04). v5.13.0 detects stale headers (kernel version differs from the running kernel) and installs gcc-13 as a fallback compiler so DKMS autoinstall succeeds across the version mismatch. If DKMS still fails, `sudo bash /root/awg/manage_amneziawg.sh repair-module` forces a rebuild.
 - **Mobile carrier unstable or only connects on the third attempt.** On a new server, install with `--mobile` - it enables the mobile obfuscation preset and moves the port to 443/udp in one flag (carriers often drop unfamiliar UDP ports; an explicit `--port` wins if you pass both). On a running server that is a `--force --mobile` reinstall, after which every client config has to be reissued with `regen`; if the handshake never completes at all, read [the walkthrough](ADVANCED.en.md#no-hs-mobile-adv) first. Tested carriers (Russia): Yota (Moscow), Tele2 (Moscow), Tattelecom / Letai (Tatarstan), Beeline (default preset). Tele2 (Krasnoyarsk) needed `I1 = <r 48>` in May 2026, and Megafon (regional networks) needed I1 removed. Full per-carrier table and the underlying Jc / Jmin / Jmax mechanics are in [ADVANCED.en.md FAQ](ADVANCED.en.md#faq-mobile-unstable-adv).
 - **Handshake completes but no packets flow.** Almost always the AllowedIPs gotcha on a custom split-tunnel config. Cover the server subnet too, not just the destinations you want. See [ADVANCED.en.md AllowedIPs](ADVANCED.en.md#allowedips-adv).
 - **iPhone does not connect over cellular.** MTU issue. The installer sets `MTU = 1280` by default since v5.7.4; older configs need the line added manually. See [MTU and Mobile Clients](ADVANCED.en.md#mtu-mobile-adv).

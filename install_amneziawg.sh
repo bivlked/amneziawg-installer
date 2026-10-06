@@ -517,7 +517,7 @@ apt_wait_for_ppa_package() {
 show_help() {
     cat << 'EOF'
 Использование: sudo bash install_amneziawg.sh [ОПЦИИ]
-Скрипт для установки и настройки AmneziaWG (по умолчанию поколение 3.1; 2.0 по флагу или автоматически, где 3.1 не поднять) на Ubuntu (24.04 / 25.10 / 26.04) и Debian (12 / 13).
+Скрипт для установки и настройки AmneziaWG (по умолчанию поколение 3.1; 2.0 по флагу или автоматически, где 3.1 не поднять) на Ubuntu (24.04 / 26.04) и Debian (12 / 13).
 
 Опции:
   -h, --help            Показать эту справку и выйти
@@ -699,7 +699,7 @@ check_os_version() {
     local supported=0
     case "$OS_ID" in
         ubuntu)
-            if [[ "$OS_VERSION" == "24.04" || "$OS_VERSION" == "25.10" || "$OS_VERSION" == "26.04" ]]; then
+            if [[ "$OS_VERSION" == "24.04" || "$OS_VERSION" == "26.04" ]]; then
                 supported=1
             fi
             ;;
@@ -713,7 +713,8 @@ check_os_version() {
     if [[ "$supported" -eq 1 ]]; then
         log "ОС: ${OS_ID^} $OS_VERSION ($OS_CODENAME) — поддерживается"
     else
-        log_warn "Обнаружена $OS_ID $OS_VERSION ($OS_CODENAME). Скрипт протестирован на Ubuntu 24.04/25.10/26.04 и Debian 12/13."
+        log_warn "Обнаружена $OS_ID $OS_VERSION ($OS_CODENAME). Скрипт протестирован на Ubuntu 24.04/26.04 и Debian 12/13."
+        log_warn "Для сервера берите выпуск с поддержкой: Ubuntu 24.04 LTS, 26.04 LTS или Debian 13."
         if [[ "$AUTO_YES" -eq 0 ]]; then
             read -rp "Продолжить? [y/N]: " confirm < /dev/tty
             if ! [[ "$confirm" =~ ^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$ ]]; then die "Отмена."; fi
@@ -739,7 +740,7 @@ check_kernel_version() {
     fi
     if (( kmaj < 5 || (kmaj == 5 && kmin < 15) )); then
         log_warn "Ядро $kver старее 5.15 - для модуля AmneziaWG 2.0 это обычно слишком старо."
-        log_warn "DKMS-сборка модуля на таком ядре чаще всего падает. Рекомендуется переустановить VPS на Ubuntu 24.04 LTS или Debian 13. Скрипт работает и на Ubuntu 25.10/26.04 и на Debian 12, но у 25.10 и Debian 12 обычная поддержка уже закончилась - для нового сервера их брать не стоит."
+        log_warn "DKMS-сборка модуля на таком ядре чаще всего падает. Рекомендуется переустановить VPS на Ubuntu 24.04 LTS или Debian 13. Скрипт работает и на Ubuntu 26.04 и на Debian 12, но у Debian 12 обычная поддержка уже закончилась - для нового сервера его брать не стоит."
         if [[ "$AUTO_YES" -eq 0 ]]; then
             read -rp "Всё равно продолжить? [y/N]: " confirm < /dev/tty
             if ! [[ "$confirm" =~ ^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$ ]]; then die "Отмена: ядро $kver слишком старое для модуля AmneziaWG 2.0."; fi
@@ -5920,8 +5921,6 @@ _try_install_prebuilt_arm() {
         target_id="rpi-bookworm-armhf"
     elif [[ "$kernel" == *-generic* && "${OS_VERSION:-}" == "24.04" ]]; then
         target_id="ubuntu-2404-arm64"
-    elif [[ "$kernel" == *-generic* && "${OS_VERSION:-}" == "25.10" ]]; then
-        target_id="ubuntu-2510-arm64"
     elif [[ "$kernel" == *-arm64* && "${OS_ID:-}" == "debian" && "${OS_VERSION:-}" == "13" ]]; then
         target_id="debian-trixie-arm64"
     elif [[ "$kernel" == *-arm64* && "${OS_ID:-}" == "debian" ]]; then
@@ -6419,7 +6418,7 @@ PPASRC
             # значит без hold apt дотянул бы amneziawg-dkms из PPA, и рядом с
             # нашим 2.0-модулем в extra/ встало бы 3.0-дерево в updates/dkms/.
             # Два дерева с модулем ОДНОГО имени - ровно то, от чего hold нужен.
-            # Достижимо: target-ы пребилдов ubuntu-2510-arm64 и
+            # Достижимо: target-ы пребилдов ubuntu-2404-arm64 и
             # debian-trixie-arm64 - это ядра 6.7+.
             local _hold_out=""
             _hold_out=$(apt-mark hold amneziawg-dkms amneziawg 2>&1) || true

@@ -6,7 +6,8 @@
 #     supported-OS check.
 #   • install_amneziawg.sh _try_install_prebuilt_arm target_id strings match
 #     the matrix `id:` fields (otherwise installer downloads 404 assets).
-#   • Dropped OS (22.04) is absent from both workflow and installer mapping.
+#   • Dropped OS (22.04; 25.10 since v6.0.0, past vendor support) is absent
+#     from both workflow and installer mapping.
 
 setup() {
     WF="${BATS_TEST_DIRNAME}/../.github/workflows/arm-build.yml"
@@ -21,9 +22,9 @@ setup() {
 # arm-build.yml matrix coverage (A7.2)
 # -------------------------------------------------------------------------
 
-@test "arm-build.yml has ubuntu-2510-arm64 matrix entry (Ubuntu 25.10)" {
-    grep -qE 'id: ubuntu-2510-arm64' "$WF"
-    grep -qE 'image: ubuntu:25\.10' "$WF"
+@test "arm-build.yml dropped Ubuntu 25.10 entry (past vendor support since 2026-07-01)" {
+    run grep -qE 'ubuntu-2510-arm64' "$WF"; [ "$status" -ne 0 ]
+    run grep -qE 'image: ubuntu:25\.10' "$WF"; [ "$status" -ne 0 ]
 }
 
 @test "arm-build.yml has debian-trixie-arm64 matrix entry (Debian 13)" {
@@ -56,16 +57,20 @@ setup() {
 # install_amneziawg.sh target_id mapping (A7.2)
 # -------------------------------------------------------------------------
 
-@test "install_amneziawg.sh maps 25.10 -> ubuntu-2510-arm64" {
-    awk '/^_try_install_prebuilt_arm\(\) \{$/,/^}$/' "$INSTALL_RU" | \
-        grep -qE 'OS_VERSION.*25\.10.*target_id="ubuntu-2510-arm64"' || \
-        (awk '/^_try_install_prebuilt_arm\(\) \{$/,/^}$/' "$INSTALL_RU" | \
-         grep -A1 '25\.10' | grep -qE 'target_id="ubuntu-2510-arm64"')
+@test "install_amneziawg.sh no longer maps 25.10 -> ubuntu-2510" {
+    local body
+    body=$(awk '/^_try_install_prebuilt_arm\(\) \{$/,/^}$/' "$INSTALL_RU")
+    [ -n "$body" ]
+    run grep -qE 'ubuntu-2510-arm64' <<< "$body"; [ "$status" -ne 0 ]
+    run grep -qE 'OS_VERSION.*"25\.10"' <<< "$body"; [ "$status" -ne 0 ]
 }
 
-@test "install_amneziawg_en.sh maps 25.10 -> ubuntu-2510-arm64" {
-    awk '/^_try_install_prebuilt_arm\(\) \{$/,/^}$/' "$INSTALL_EN" | \
-        grep -A1 '25\.10' | grep -qE 'target_id="ubuntu-2510-arm64"'
+@test "install_amneziawg_en.sh no longer maps 25.10 -> ubuntu-2510" {
+    local body
+    body=$(awk '/^_try_install_prebuilt_arm\(\) \{$/,/^}$/' "$INSTALL_EN")
+    [ -n "$body" ]
+    run grep -qE 'ubuntu-2510-arm64' <<< "$body"; [ "$status" -ne 0 ]
+    run grep -qE 'OS_VERSION.*"25\.10"' <<< "$body"; [ "$status" -ne 0 ]
 }
 
 @test "install_amneziawg.sh maps Debian 13 -> debian-trixie-arm64" {

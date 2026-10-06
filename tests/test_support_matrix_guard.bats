@@ -103,7 +103,8 @@ _run_guard() {
 }
 
 @test "matrix-guard: рекомендовать систему без поддержки вендора нельзя" {
-    _mutate "[x.__setitem__('project_policy', 'allowed') for x in d['platforms'] if x['id'] == 'ubuntu-25.10']"
+    # Debian 12: регулярная поддержка кончилась (extended-support), allowed для неё - ложь.
+    _mutate "[x.__setitem__('project_policy', 'allowed') for x in d['platforms'] if x['id'] == 'debian-12']"
     run _run_guard
     [ "$status" -ne 0 ]
 }
