@@ -6612,7 +6612,7 @@ PPASRC
             local _kmod_here
             _kmod_here=$(_awg_prebuilt_for_running_kernel)
             if [[ -n "$_kmod_here" ]]; then
-                die "A prebuilt module package for kernel $(uname -r) is already installed: $_kmod_here, and installing a prebuilt package failed this time. A DKMS build would put a second module next to it. Remove the prebuilt one: sudo apt-get purge -y $_kmod_here, then run the installer again - the module will be built through DKMS."
+                die "A prebuilt module package for kernel $(uname -r) is already installed: $_kmod_here, and installing a prebuilt package failed this time. A DKMS build would put a second module next to it. If a temporary network failure is the cause, just run the installer again later. If there is no prebuilt package for this kernel any more (as on Ubuntu 25.10), remove the old one: sudo apt-get purge -y $_kmod_here, then run the installer again - the module will be built through DKMS."
             fi
         fi
     fi

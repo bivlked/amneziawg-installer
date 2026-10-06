@@ -56,6 +56,18 @@ _run_os_check() {
     ' _ "$body"
 }
 
+@test "matrix: every version comparison in check_os_version is one the parser reads (RU + EN)" {
+    # The set below only sees "$OS_VERSION" == "X"; a version added in another
+    # form would slip past the "code wider than the matrix" direction.
+    local f body n_eq n_read
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        body=$(awk '/^check_os_version\(\) \{$/,/^}$/' "$ROOT/$f")
+        n_eq=$(grep -oE 'OS_VERSION"? *(==|=~|!=)' <<<"$body" | wc -l)
+        n_read=$(_installer_set "$ROOT/$f" | wc -l)
+        [ "$n_eq" -gt 0 ] && [ "$n_eq" -eq "$n_read" ] || { echo "$f: comparisons $n_eq, parsed $n_read"; false; }
+    done
+}
+
 @test "matrix: check_os_version literals equal the matrix platforms, both ways (RU)" {
     run diff <(_matrix_set) <(_installer_set "$ROOT/install_amneziawg.sh")
     [ "$status" -eq 0 ] || { echo "$output"; false; }
@@ -135,7 +147,9 @@ _run_prebuilt_probe() { # installer kernel
 amneziawg-kmod-usr|install ok installed|/usr/lib/modules/6.17.0-5-generic/updates/amneziawg.ko
 amneziawg-kmod-old|install ok installed|/lib/modules/6.17.0-4-generic/extra/amneziawg.ko
 amneziawg-kmod-unreadable|install ok half-configured|FAIL
-amneziawg-kmod-gone|deinstall ok config-files|/lib/modules/6.17.0-5-generic/extra/amneziawg.ko"
+amneziawg-kmod-gone|deinstall ok config-files|/lib/modules/6.17.0-5-generic/extra/amneziawg.ko
+amneziawg-kmod-purged|unknown ok not-installed|FAIL
+amneziawg-kmod-64k|install ok installed|/lib/modules/6.17.0-5-generic-64k/extra/amneziawg.ko"
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         run _run_prebuilt_probe "$ROOT/$f" 6.17.0-5-generic
         [ "$status" -eq 0 ] || { echo "$f: rc=$status $output"; false; }
@@ -177,6 +191,29 @@ amneziawg-kmod-near|install ok installed|/lib/modules/6.6.31rpt-rpi-v8/extra/amn
             || { echo "$f: no leftover check in the fallback branch"; false; }
         grep -qE 'die .*apt-get purge -y \$_kmod_here' <<<"$tail" \
             || { echo "$f: no stop with the purge command"; false; }
+    done
+}
+
+@test "prebuilt leftover: the fallback stops only when the helper names a package (RU + EN, behaviour)" {
+    # Runs the guard block itself, so an inverted condition is caught, not only
+    # the presence of the text.
+    local f blk
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        blk=$(sed -n '/^step2_install_amnezia() {$/,/^}$/p' "$ROOT/$f" \
+            | sed -n '/^            local _kmod_here$/,/^            fi$/p')
+        [ -n "$blk" ] || { echo "$f: guard block not found"; false; }
+        unset LEFT
+        run bash -c 'die() { echo "DIE: $*"; exit 1; }
+            _awg_prebuilt_for_running_kernel() { printf "%s" "$LEFT"; }
+            g() { eval "$1"; echo CONTINUED; }; g "$1"' _ "$blk"
+        # LEFT unset -> nothing in the way -> the DKMS path goes on
+        [ "$status" -eq 0 ] && [[ "$output" == *CONTINUED* ]] || { echo "$f none: $output"; false; }
+        export LEFT=amneziawg-kmod-ubuntu-2510-arm64
+        run bash -c 'die() { echo "DIE: $*"; exit 1; }
+            _awg_prebuilt_for_running_kernel() { printf "%s" "$LEFT"; }
+            g() { eval "$1"; echo CONTINUED; }; g "$1"' _ "$blk"
+        [ "$status" -ne 0 ] && [[ "$output" == *"DIE:"*"apt-get purge -y amneziawg-kmod-ubuntu-2510-arm64"* ]] \
+            && [[ "$output" != *CONTINUED* ]] || { echo "$f leftover: $output"; false; }
     done
 }
 
