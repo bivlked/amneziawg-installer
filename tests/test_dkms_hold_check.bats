@@ -231,8 +231,9 @@ both_rc() {
     for f in "${INSTALLERS[@]}"; do
         ! grep -nE 'apt-mark showhold[^|]*\|[[:space:]]*grep' "$BATS_TEST_DIRNAME/../$f" \
             | grep -v '^[0-9]*:[[:space:]]*#' || { echo "$f still pipes showhold into grep"; return 1; }
+        # pinned path, ARM prebuilt path, and _awg_rehold_for_prebuilt before the ARM stops
         n=$(grep -cE '^[[:space:]]*if ! _awg_pkg_held amneziawg-dkms; then' "$BATS_TEST_DIRNAME/../$f")
-        [ "$n" -eq 2 ] || { echo "$f: expected 2 guarded hold sites, found $n"; return 1; }
+        [ "$n" -eq 3 ] || { echo "$f: expected 3 guarded hold sites, found $n"; return 1; }
     done
 }
 

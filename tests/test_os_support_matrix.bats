@@ -141,11 +141,17 @@ print('\n'.join(sorted({t for p in d['platforms'] for t in p['arm_prebuilt_targe
 # Fake packages: name|status|files ("FAIL" = dpkg -L fails), one per line in $PKGS.
 _run_prebuilt_probe() { # installer kernel
     local body
+    # the package list comes from _awg_installed_kmod_pkgs
     body=$(awk '/^_awg_prebuilt_for_running_kernel\(\) \{$/,/^}$/' "$1")
     [ -n "$body" ] || return 99
+    body+=$'\n'$(awk '/^_awg_installed_kmod_pkgs\(\) \{$/,/^}$/' "$1")
     KREL="$2" bash -c '
         uname() { printf "%s\n" "$KREL"; }
-        dpkg-query() { while IFS="|" read -r n s _; do [ -n "$n" ] && printf "%s %s\n" "$n" "$s"; done <<<"$PKGS"; }
+        dpkg-query() {
+            # as dpkg answers: nothing matched -> rc 1 with this message
+            [ -n "$PKGS" ] || { echo "dpkg-query: no packages found matching amneziawg-kmod-*" >&2; return 1; }
+            while IFS="|" read -r n s _; do [ -n "$n" ] && printf "%s %s\n" "$n" "$s"; done <<<"$PKGS"; return 0
+        }
         dpkg() {
             [ "$1" = "-L" ] || return 2
             local n s f
@@ -221,7 +227,7 @@ amneziawg-kmod-near|install ok installed|/lib/modules/6.6.31rpt-rpi-v8/extra/amn
     local f blk
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         blk=$(sed -n '/^step2_install_amnezia() {$/,/^}$/p' "$ROOT/$f" \
-            | sed -n '/^            local _kmod_here$/,/^            fi$/p')
+            | sed -n '/^            local _kmod_here _kmod_rc=0$/,/^            fi$/p')
         [ -n "$blk" ] || { echo "$f: guard block not found"; false; }
         unset LEFT
         run bash -c 'die() { echo "DIE: $*"; exit 1; }

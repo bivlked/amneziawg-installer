@@ -4976,12 +4976,12 @@ step_uninstall() {
             echo "$_hp deinstall" | dpkg --set-selections >/dev/null 2>&1 || true
         fi
     done
-    # The ARM prebuilt module package carries the module file in /lib/modules:
-    # it goes with the rest.
-    local -a _kmod_pkgs=()
-    read -r -a _kmod_pkgs <<< "$(_awg_installed_kmod_pkgs)"
+    # Prebuilt module packages on ARM (they carry the module file in
+    # /lib/modules) - listed before the purge, removed by a separate call below.
+    local _kmods="" _kmods_rc=0
+    _kmods=$(_awg_installed_kmod_pkgs) || _kmods_rc=$?
     if [[ "$saved_no_tweaks" -eq 0 ]]; then
-        local _purge_pkgs=(amneziawg-dkms amneziawg-tools qrencode "${_kmod_pkgs[@]}")
+        local _purge_pkgs=(amneziawg-dkms amneziawg-tools qrencode)
         # Purge fail2ban only if we installed it ourselves (marker from
         # setup_fail2ban) - otherwise SSH protection the user had before the
         # installer must not disappear together with the VPN. Our jail file
@@ -4994,7 +4994,23 @@ step_uninstall() {
         fi
         DEBIAN_FRONTEND=noninteractive apt-get purge -y "${_purge_pkgs[@]}" 2>/dev/null || log_warn "Purge error."
     else
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg-tools qrencode "${_kmod_pkgs[@]}" 2>/dev/null || log_warn "Purge error."
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg-tools qrencode 2>/dev/null || log_warn "Purge error."
+    fi
+    # Separately, so a failure of these packages does not keep the others; a
+    # hold set by hand would make apt-get purge -y refuse.
+    if (( _kmods_rc != 0 )); then
+        log_warn "Could not ask dpkg about prebuilt module packages (amneziawg-kmod-*). Check: dpkg -l 'amneziawg-kmod-*'; remove what it lists: sudo apt-get purge -y <name>."
+    elif [[ -n "$_kmods" ]]; then
+        local -a _kmod_pkgs=()
+        local _kp _kout
+        read -r -a _kmod_pkgs <<< "$_kmods"
+        for _kp in "${_kmod_pkgs[@]}"; do
+            apt-mark unhold "$_kp" >/dev/null 2>&1 || true
+        done
+        if ! _kout=$(DEBIAN_FRONTEND=noninteractive apt-get purge -y "${_kmod_pkgs[@]}" 2>&1); then
+            log_warn "Could not remove the prebuilt module package: ${_kmods}. apt said: $(printf '%s' "$_kout" | tr '\n' ' ' | tail -c 300)"
+            log_warn "Remove it by hand: sudo apt-get purge -y ${_kmods}"
+        fi
     fi
     # No apt-get autoremove here, same as in cleanup_system (Issue #84). It removes
     # everything apt considers unneeded across the whole system, not just what we left;
@@ -6030,11 +6046,13 @@ _rpi_headers_pkg() {
 # RUNNING kernel, space-separated. A package left from an earlier kernel does
 # not get in the way of a DKMS build for the new one and is not listed. A
 # package whose file list cannot be read counts as in the way: "could not
-# check" is not "does not conflict".
+# check" is not "does not conflict". Returns 2 when dpkg did not answer the
+# question about the packages at all (no answer).
 _awg_prebuilt_for_running_kernel() {
-    local k p files out=""
+    local k p files out="" list
     k="$(uname -r)"
-    for p in $(dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '$NF != "not-installed" && $NF != "config-files" {print $1}'); do
+    list=$(_awg_installed_kmod_pkgs) || return 2
+    for p in $list; do
         if ! files=$(dpkg -L "$p" 2>/dev/null) || grep -qF -- "/lib/modules/${k}/" <<<"$files"; then
             out+="${out:+ }$p"
         fi
@@ -6042,21 +6060,34 @@ _awg_prebuilt_for_running_kernel() {
     printf '%s' "$out"
 }
 
-# Every installed prebuilt module package (amneziawg-kmod-*), for any kernel,
-# space-separated.
+# Prebuilt module packages (amneziawg-kmod-*) for any kernel, except removed
+# ones (unfinished ones count), space-separated. Returns 0 with the answer
+# (empty when there are none); 2 when dpkg could not be asked: "could not" must
+# not read as "found none" (same as _awg_kmod_prebuilt_present).
 _awg_installed_kmod_pkgs() {
-    dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null | awk '$NF != "not-installed" && $NF != "config-files" {print $1}' | paste -sd' ' -
+    local q e
+    if ! q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null); then
+        e=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>&1 >/dev/null || true)
+        [[ "$e" == *"no packages found matching"* ]] && return 0
+        return 2
+    fi
+    awk '$NF != "not-installed" && $NF != "config-files" {print $1}' <<<"$q" | paste -sd' ' -
+    return 0
 }
 
 # Before a step 2 stop on ARM with a prebuilt package already installed, put the
 # hold back: on kernels 6.7+ step 2 removes it and sets it again only after the
-# prebuilt package is installed. Without the hold, amneziawg-tools (Recommends)
-# could pull amneziawg-dkms before the next run, and a second module would land
-# next to the prebuilt one.
+# prebuilt package is installed. Without the hold, installing amneziawg packages
+# by hand before the next run (amneziawg pulls amneziawg-dkms through Depends,
+# amneziawg-tools through Recommends) could install amneziawg-dkms, and a second
+# module would land next to the prebuilt one.
 _awg_rehold_for_prebuilt() {
-    apt-mark hold amneziawg-dkms amneziawg >/dev/null 2>&1 || true
-    _awg_pkg_held amneziawg-dkms \
-        || log_warn "Could not put amneziawg-dkms back on hold. Until you run the installer again, do not install amneziawg packages by hand: a second module would land next to the prebuilt one."
+    local out
+    out=$(apt-mark hold amneziawg-dkms amneziawg 2>&1) || true
+    if ! _awg_pkg_held amneziawg-dkms; then
+        _awg_hold_refusal_log "$out"
+        log_warn "Could not put amneziawg-dkms back on hold. Put it back by hand: sudo apt-mark hold amneziawg-dkms amneziawg. Until then, do not install amneziawg packages by hand: a second module could land next to the prebuilt one."
+    fi
 }
 
 # _try_install_prebuilt_arm — download and install a prebuilt amneziawg .deb
@@ -6571,9 +6602,12 @@ PPASRC
             log "Prebuilt module package skipped (--no-prebuilt), the module will be built with DKMS."
             # A prebuilt package installed by an earlier run does not go away by itself:
             # a DKMS module would land next to it, leaving two amneziawg trees.
-            local _kmod
-            _kmod=$(_awg_installed_kmod_pkgs)
-            if [[ -n "$_kmod" ]]; then
+            local _kmod _kmod_rc=0
+            _kmod=$(_awg_installed_kmod_pkgs) || _kmod_rc=$?
+            if (( _kmod_rc != 0 )); then
+                _awg_rehold_for_prebuilt
+                die "Could not ask dpkg about prebuilt module packages (amneziawg-kmod-*), and without the answer there is no telling whether --no-prebuilt would build a second module next to a prebuilt one. Check: dpkg -l 'amneziawg-kmod-*', then run the installer again."
+            elif [[ -n "$_kmod" ]]; then
                 _awg_rehold_for_prebuilt
                 die "A prebuilt module package is already installed: $_kmod. With --no-prebuilt a second module would be built next to it. Remove the prebuilt one: sudo apt-get purge -y $_kmod, then run the installer again."
             fi
@@ -6631,9 +6665,12 @@ PPASRC
             # A prebuilt package from an earlier run for THIS kernel (for
             # example on Ubuntu 25.10, whose packages are no longer built)
             # next to a DKMS build would leave a second amneziawg module tree.
-            local _kmod_here
-            _kmod_here=$(_awg_prebuilt_for_running_kernel)
-            if [[ -n "$_kmod_here" ]]; then
+            local _kmod_here _kmod_rc=0
+            _kmod_here=$(_awg_prebuilt_for_running_kernel) || _kmod_rc=$?
+            if (( _kmod_rc != 0 )); then
+                _awg_rehold_for_prebuilt
+                die "Could not ask dpkg about prebuilt module packages (amneziawg-kmod-*), and without the answer there is no telling whether a DKMS build would land as a second module next to a prebuilt one. Check: dpkg -l 'amneziawg-kmod-*', then run the installer again."
+            elif [[ -n "$_kmod_here" ]]; then
                 _awg_rehold_for_prebuilt
                 die "A prebuilt module package for kernel $(uname -r) is already installed: $_kmod_here, and installing a prebuilt package failed this time. A DKMS build would put a second module next to it. If a temporary network failure is the cause, just run the installer again later. If there is no prebuilt package for this kernel any more (as on Ubuntu 25.10), remove the old one: sudo apt-get purge -y $_kmod_here, then run the installer again - the module will be built through DKMS."
             fi
