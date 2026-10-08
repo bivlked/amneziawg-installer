@@ -8547,6 +8547,8 @@ step99_finish() {
         log "       (свежие AmneziaVPN, AmneziaWG, WG Tunnel; список - раздел «Какое поколение"
         log "       AmneziaWG понимает клиент»: https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.md)."
         log "       Роутерам без поддержки 3.1 в прошивке и Hiddify нужен сервер 2.0."
+        log "       Вернуться на 2.0: sudo bash $0 --uninstall (удалит сервер и профили 3.1, по умолчанию сохранив копию в бэкап),"
+        log "       затем новая установка с --protocol=2.0 и новые профили для всех клиентов."
     else
         log "ВАЖНО: Для подключения используйте клиент Amnezia VPN >= 4.8.12.7"
         log "       с поддержкой протокола AWG 2.0"
