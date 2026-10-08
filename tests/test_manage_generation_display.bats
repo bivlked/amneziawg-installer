@@ -252,6 +252,53 @@ d_jmin_gt_jmax() {
     both d_jmin_gt_jmax
 }
 
+# The same harness runs the size-collision warning (data packet as long as a
+# handshake message, Г2.14; the helper itself is in test_size_collision.bats):
+# check keeps its verdict, diagnose adds a WARN line with the fix and counts it.
+# _sizes_conf <S1 S2 S3 S4> : S and H lines in the stub awg0.conf, H2 8.6% of 2^32
+_sizes_conf() {
+    printf 'Jc = 4\nJmin = 40\nJmax = 70\nS1 = %s\nS2 = %s\nS3 = %s\nS4 = %s\n' "$@" >> "$BATS_TEST_TMPDIR/awg/awg0.conf"
+    printf 'H1 = 158796025-276895233\nH2 = 351164001-721039105\nH3 = 848364242-1111224741\nH4 = 1254688896-2141645164\n' >> "$BATS_TEST_TMPDIR/awg/awg0.conf"
+}
+d_size_collision() {
+    local base
+    _write_init "export AWG_PROTOCOL='2.0'"; _sizes_conf 94 62 21 14
+    run _run "$1" diagnose_server 0
+    [[ "$output" =~ WARN=([0-9]+) ]] || { echo "no summary ($1): $output"; return 1; }
+    base="${BASH_REMATCH[1]}"
+    [[ "$output" != *"81-96"* ]] || { echo "a warning without a match ($1): $output"; return 1; }
+    _write_init "export AWG_PROTOCOL='2.0'"; _sizes_conf 94 62 21 26
+    run _run "$1" diagnose_server 0
+    [ "$status" -eq 0 ] || { echo "diagnose failed on a match ($1): $output"; return 1; }
+    [[ "$output" == *"[WARN] "*"81-96"*"8.61%"* ]] || { echo "no WARN line for the match ($1): $output"; return 1; }
+    [[ "$output" == *"Fix: "*"--force --preset=default"*"regen"* ]] || { echo "no fix line ($1): $output"; return 1; }
+    [[ "$output" == *"WARN=$((base + 1)) "* ]] || { echo "the WARN was not counted, base $base ($1): $output"; return 1; }
+    [[ "$output" == *"FAIL=0"* ]] || { echo "the match was counted as a FAIL ($1): $output"; return 1; }
+}
+@test "diagnose: a data/handshake length match is one counted WARN with the fix, both twins" {
+    both d_size_collision
+}
+c_size_collision() {
+    _write_init "export AWG_PROTOCOL='2.0'"; _sizes_conf 94 62 21 26
+    run _run "$1" check_server 0
+    [ "$status" -eq 0 ] || { echo "check failed on a match ($1): $output"; return 1; }
+    [[ "$output" == *"WARN: "*"81-96"*"8.61%"* ]] || { echo "no warning in check ($1): $output"; return 1; }
+}
+@test "check: a data/handshake length match warns and keeps the verdict, both twins" {
+    both c_size_collision
+}
+c_size_collision_json() {
+    _write_init "export AWG_PROTOCOL='2.0'"; _sizes_conf 94 62 21 26
+    run --separate-stderr _run "$1" check_server 1
+    [ "$status" -eq 0 ] || { echo "check --json failed on a match ($1): $output $stderr"; return 1; }
+    jq -s -e 'length == 1 and .[0].ok == true' <<< "$output" >/dev/null || { echo "stdout is not one JSON verdict ($1): $output"; return 1; }
+    [[ "$stderr" == *"81-96"* ]] || { echo "the warning did not go to stderr ($1): $stderr"; return 1; }
+}
+@test "check --json: a length match keeps stdout to the JSON document, both twins" {
+    require_jq
+    both c_size_collision_json
+}
+
 d_jmin_le_jmax() {
     _write_init ""
     run _run "$1" diagnose_server 0 50 50

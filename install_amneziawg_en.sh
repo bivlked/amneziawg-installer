@@ -2885,6 +2885,38 @@ rand_range() {
     echo $(( (random_val % range) + min ))
 }
 
+# _awg_size_collisions <S1> <S2> <S3> <S4> : whether the receiver can take a DATA
+# packet for a handshake message. Prints a "class P" line per such case (init,
+# response, cookie; P is the padded payload of the data packet), nothing when
+# there is none. The receiver (module src/receive.c awg_determine_type_and_padding;
+# amneziawg-go DeterminePacketTypeAndPadding) tries init, response and cookie by
+# EXACT length (148 + S1, 92 + S2, 64 + S3) and by the 4 bytes at offset S falling
+# into H, and only then transport. A data packet of length 32 + P + S4 with such a
+# length goes to the handshake handler and is lost when those 4 bytes land in H
+# (measured in G2.14, 8 oct 2026). What sits at that offset depends on o = S - S4
+# inside the data packet (P % 16 == 0 makes o = 12, 4, 0 modulo 16 for init,
+# response, cookie, so no other field and no offset across a field boundary
+# occurs): with o < 0 the random S4 padding, with o >= 16 the
+# ciphertext, and the chance is the share of H; with o = 4 (response, P = 64) the
+# receiver index, fixed for a session, so some sessions lose every such packet and
+# the rest none; with o = 12 (init, P = 128) the high half of the counter, that is
+# 0, which H1 does not hold (the generator gives H1 from 5, and 3.1 has H1 = 1);
+# with o = 0 (cookie, P = 32) the data packet's own type
+# from H4, and H4 does not overlap H3. The last two give no loss and are not named.
+# P < 32 cannot happen: no IP packet is shorter than 20 bytes, and within the
+# generator's ranges (S4 <= 27) a keepalive (P = 0) never reaches a handshake
+# length. The model is the 2.0 transport: 3.1 adds ContentPaddingAddition to the
+# length, and there the single H values, not the S4 choice, keep the loss away. The
+# body is the same in the installers and in awg_common (RU and EN) - a test
+# compares them.
+_awg_size_collisions() {
+    local p
+    p=$(( $1 - $4 + 116 )); (( p >= 32 && p % 16 == 0 && p != 128 )) && echo "init $p"
+    p=$(( $2 - $4 + 60 )); (( p >= 32 && p % 16 == 0 )) && echo "response $p"
+    p=$(( $3 - $4 + 32 )); (( p >= 48 && p % 16 == 0 )) && echo "cookie $p"
+    return 0
+}
+
 # Generate 4 non-overlapping ranges for AWG H1-H4.
 # Algorithm: 8 random values → sort → 4 (low, high) pairs.
 # Sorting gives low <= high; the strict checks below guarantee a gap between
@@ -3158,7 +3190,21 @@ generate_awg_params() {
         AWG_S3=$(rand_range "$_s3_min" 55)
     done
 
-    AWG_S4=$(rand_range "$_s4_min" 27)
+    # Third collision - a DATA packet against the handshake messages (G2.14,
+    # 8 oct 2026): see _awg_size_collisions. S4 is one draw of an index into the
+    # list of values with no match, not a "draw until it fits" loop.
+    # Each condition forbids at most one residue of S4 modulo 16, and the S4 range holds
+    # at least 16 values, so free values always exist. Without the helper the
+    # generator stops: a silently skipped check would hand out a set that drops packets.
+    declare -F _awg_size_collisions >/dev/null \
+        || die "Internal error: _awg_size_collisions is missing, obfuscation parameters were not generated."
+    local _s4 _s4_free=()
+    for ((_s4 = _s4_min; _s4 <= 27; _s4++)); do
+        [[ -z "$(_awg_size_collisions "$AWG_S1" "$AWG_S2" "$AWG_S3" "$_s4")" ]] && _s4_free+=("$_s4")
+    done
+    (( ${#_s4_free[@]} > 0 )) \
+        || die "Internal error: no S4 without a length match (S1=$AWG_S1 S2=$AWG_S2 S3=$AWG_S3)."
+    AWG_S4=${_s4_free[$(rand_range 0 $(( ${#_s4_free[@]} - 1 )))]}
 
     # H1-H4: 4 random non-overlapping uint32 ranges.
     # Per-install randomization protects against Russian DPI fingerprinting
