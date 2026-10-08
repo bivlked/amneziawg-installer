@@ -8697,6 +8697,8 @@ step99_finish() {
         log "           (recent AmneziaVPN, AmneziaWG, WG Tunnel; see the section \"Which AmneziaWG generation"
         log "           a client speaks\": https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.en.md)."
         log "           Routers without 3.1 support in their firmware and Hiddify need a 2.0 server."
+        log "           Back to 2.0: sudo bash $0 --uninstall (removes the server and its 3.1 profiles, keeping a backup copy by default),"
+        log "           then a new install with --protocol=2.0 and new profiles for every client."
     else
         log "IMPORTANT: Use Amnezia VPN client >= 4.8.12.7 to connect"
         log "           with AWG 2.0 protocol support"
