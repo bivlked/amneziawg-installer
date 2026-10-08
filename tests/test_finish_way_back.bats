@@ -13,6 +13,8 @@
 # The real step99_finish is lifted out of both installers and run with stubs, so the
 # test fails if the lines are removed from the shipped function.
 
+# shellcheck disable=SC2034  # the variables set in finish_output are read by the lifted step99_finish, which shellcheck does not see
+
 RU_INSTALL() { echo "$BATS_TEST_DIRNAME/../install_amneziawg.sh"; }
 EN_INSTALL() { echo "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"; }
 
