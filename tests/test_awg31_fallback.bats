@@ -75,7 +75,7 @@ _gen() {
         echo "source '$lib' >/dev/null 2>&1 || true"
         echo 'log() { :; }; log_warn() { :; }; log_error() { :; }; log_debug() { :; }'
         echo 'die() { echo "DIE: $*" >&2; exit 1; }'
-        for f in rand_range validate_jc_value validate_junk_size generate_awg_h_ranges generate_cps_i1 generate_awg_params _awg_fallback_params; do
+        for f in rand_range validate_jc_value validate_junk_size generate_awg_h_ranges generate_cps_i1 _awg_size_collisions generate_awg_params _awg_fallback_params; do
             func_from "$s" "$f"
         done
     } > "$TEST_DIR/gen.sh"
@@ -898,7 +898,7 @@ _s0gen() {
         echo "source '$lib' >/dev/null 2>&1 || true"
         echo 'log() { :; }; log_warn() { echo "WARN: $*"; }; log_error() { :; }; log_debug() { :; }'
         echo 'die() { echo "DIE: $*" >&2; exit 1; }'
-        for f in rand_range validate_jc_value validate_junk_size generate_awg_h_ranges generate_cps_i1 generate_awg_params _awg_fallback_params _awg_switch_params; do
+        for f in rand_range validate_jc_value validate_junk_size generate_awg_h_ranges generate_cps_i1 _awg_size_collisions generate_awg_params _awg_fallback_params _awg_switch_params; do
             func_from "$s" "$f"
         done
         echo 'gen_slice() {'

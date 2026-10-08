@@ -2662,6 +2662,97 @@ _mask_report_secrets() {
         -e "s|\`[A-Za-z0-9+/]{20,}={0,2}'|\`[HIDDEN]'|g"
 }
 
+# _awg_size_collisions <S1> <S2> <S3> <S4> : whether the receiver can take a DATA
+# packet for a handshake message. Prints a "class P" line per such case (init,
+# response, cookie; P is the payload padded to 16), nothing when there is none. The
+# mechanism (which length matches lose packets and which do not) is described at
+# the same function in the installer; the body is the same in the installers and
+# here, RU and EN - a test compares them.
+_awg_size_collisions() {
+    local p
+    p=$(( $1 - $4 + 116 )); (( p >= 32 && p % 16 == 0 && p != 128 )) && echo "init $p"
+    p=$(( $2 - $4 + 60 )); (( p >= 32 && p % 16 == 0 )) && echo "response $p"
+    p=$(( $3 - $4 + 32 )); (( p >= 48 && p % 16 == 0 )) && echo "cookie $p"
+    return 0
+}
+
+# awg_size_collision_lines [config] : for check and diagnose - one
+# "message<TAB>how to fix" line per case when, in the server config, the receiver
+# can take data packets of one size class for a handshake message and that
+# message's H range is wide enough for the loss to matter (from 0.1% per side). A
+# single H value (the 3.1 profile: 1/2/3/4) gives about 2^-32 and is not named. No
+# config, a failed parse, S or H not numbers - it stays quiet: the installer
+# writes every Jc-H4 line, so a config that does not parse (a key in another
+# case, a missing line) is a hand edit, and a false alarm here would teach people
+# to ignore the real one. Only new S values fix it, that is, regenerated parameters
+# and reissued profiles; --preset also brings I1 back, so for a server installed
+# with --no-cps the advice carries that flag. Leading zeros are stripped before
+# the arithmetic: in $(( )) 094 reads as an octal number. With
+# ContentPaddingAddition (the 3.1 profile) a data packet is not 32 + P + S4 bytes
+# long, the model does not apply, and the function stays quiet. The helper leaves
+# out the init match at P = 128 (the zero half of the counter sits there, and a
+# generated H1 never holds 0); for a config whose H1 starts at 0 it is named on
+# its own: there every such packet is lost. AWG_CPA is unset before the load: the
+# loader sets it only for a line in the config, and check has already read the
+# init, where a 3.1 install has it. Spaces inside values (H1 = 100 - 200) are
+# dropped, as awg does.
+awg_size_collision_lines() {
+    local conf="${1:-$SERVER_CONF_FILE}" vals s1 s2 s3 s4 h1 h2 h3 cpa cls p h lo hi share preset nocps name note fix
+    vals=$(unset AWG_CPA; load_awg_params_from_server_conf "$conf" >/dev/null 2>&1 \
+        && printf '%s %s %s %s %s %s %s %s' "${AWG_S1//[[:space:]]/}" "${AWG_S2//[[:space:]]/}" "${AWG_S3//[[:space:]]/}" "${AWG_S4//[[:space:]]/}" \
+            "${AWG_H1//[[:space:]]/}" "${AWG_H2//[[:space:]]/}" "${AWG_H3//[[:space:]]/}" "${AWG_CPA:+${AWG_CPA//[[:space:]]/}}") || return 0
+    read -r s1 s2 s3 s4 h1 h2 h3 cpa <<< "$vals"
+    [[ -z "$cpa" || "$cpa" =~ ^0+(-0+)?$ ]] || return 0
+    [[ "$s1" =~ ^0*[0-9]{1,5}$ && "$s2" =~ ^0*[0-9]{1,5}$ && "$s3" =~ ^0*[0-9]{1,5}$ && "$s4" =~ ^0*[0-9]{1,5}$ ]] || return 0
+    s1=$((10#$s1)) s2=$((10#$s2)) s3=$((10#$s3)) s4=$((10#$s4))
+    read -r preset nocps <<< "$(AWG_PRESET="" NO_CPS=""; [[ -f "${CONFIG_FILE:-}" ]] && safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s %s' "${AWG_PRESET:--}" "${NO_CPS:-0}")"
+    [[ "$preset" == default || "$preset" == mobile ]] || preset=default
+    if [[ "$nocps" == 1 ]]; then nocps=" --no-cps"; else nocps=""; fi
+    fix="New S1-S4 values are needed: sudo bash install_amneziawg_en.sh --force --preset=${preset}${nocps} (regenerates all obfuscation parameters, Jc/Jmin/Jmax set by hand included; reboots, run it again after the reboot), then sudo bash ${MANAGE_SCRIPT_PATH:-$0} regen and a new import of the profiles on every device."
+    while read -r cls p; do
+        [[ -n "$cls" ]] || continue
+        case "$cls" in
+            init) h="$h1"; name="the handshake initiation" ;;
+            response) h="$h2"; name="the handshake response" ;;
+            cookie) h="$h3"; name="the cookie reply" ;;
+            *) continue ;;
+        esac
+        if [[ "$h" =~ ^0*([0-9]{1,10})-0*([0-9]{1,10})$ ]]; then
+            lo=${BASH_REMATCH[1]}; hi=${BASH_REMATCH[2]}
+        elif [[ "$h" =~ ^0*([0-9]{1,10})$ ]]; then
+            lo=${BASH_REMATCH[1]}; hi=$lo
+        else
+            continue
+        fi
+        (( hi >= lo )) || continue
+        share=$(LC_ALL=C awk -v w=$(( hi - lo + 1 )) 'BEGIN { s = w * 100 / 4294967296; if (s >= 0.1) printf "%.2f", s }')
+        [[ -n "$share" ]] || continue
+        note=""
+        [[ "$cls" == response && "$p" == 64 ]] \
+            && note=" At the checked place these packets carry the receiver index, which is fixed for a session: some sessions lose every such packet, the rest none."
+        printf '%s\t%s\n' \
+            "Data packets with an inner size of $(( p - 15 ))-${p} bytes have the length of ${name} (S1-S4 = ${s1}/${s2}/${s3}/${s4}): each side silently drops on average about ${share}% of them.${note}" \
+            "$fix"
+    done <<< "$(_awg_size_collisions "$s1" "$s2" "$s3" "$s4")"
+    if (( s1 - s4 == 12 )) && [[ "$h1" =~ ^0*([0-9]{1,10})(-|$) ]] && (( 10#${BASH_REMATCH[1]} == 0 )); then
+        printf '%s\t%s\n' \
+            "Data packets with an inner size of 113-128 bytes have the length of the handshake initiation, and H1 starts at 0 (S1-S4 = ${s1}/${s2}/${s3}/${s4}): at the checked place they carry the zero half of the counter, and each side drops every one of them." \
+            "$fix"
+    fi
+    return 0
+}
+
+# awg_size_collision_warn [config] : the same for check - as warnings in the log.
+awg_size_collision_warn() {
+    local msg fix
+    while IFS=$'\t' read -r msg fix; do
+        [[ -n "$msg" ]] || continue
+        log_warn " - $msg"
+        log_warn "   $fix"
+    done <<< "$(awg_size_collision_lines "$@")"
+    return 0
+}
+
 # awg_hpk_path : path to the header protection key (HeaderProtectionKey) file.
 # One place, and only from the current AWG_DIR: the path is not stored in init,
 # or a second source of the path would have to be reconciled with this one every

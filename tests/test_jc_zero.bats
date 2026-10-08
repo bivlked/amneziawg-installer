@@ -99,7 +99,7 @@ gen() {
         log() { echo "LOG: $*"; }; log_warn() { :; }; log_error() { :; }; log_debug() { :; }
         die() { echo "DIE: $*"; exit 1; }
         source "$2" >/dev/null 2>&1 || true
-        for f in rand_range validate_jc_value validate_junk_size generate_awg_h_ranges generate_cps_i1 generate_awg_params; do
+        for f in rand_range validate_jc_value validate_junk_size generate_awg_h_ranges generate_cps_i1 _awg_size_collisions generate_awg_params; do
             eval "$(sed -n "/^${f}()/,/^}/p" "$1")"
         done
         unset CLI_PRESET CLI_JC CLI_JMIN CLI_JMAX

@@ -1858,6 +1858,9 @@ check_server() {
             log_warn " - Параметры обфускации не обнаружены"
         fi
     fi
+    # Пакет данных той же длины, что пакет рукопожатия (Г2.14): только предупреждение,
+    # вердикт check не меняется - туннель работает, теряется часть небольших пакетов.
+    awg_size_collision_warn
 
     if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
         local _c_clients _jok=false
@@ -2397,6 +2400,16 @@ diagnose_server() {
         _diag_line FAIL "Маркер поколения AWG_PROTOCOL в $CONFIG_FILE не читается: поколение конфигурации неизвестно"
         fail=$((fail+1))
     fi
+
+    # 1c. Пакет данных той же длины, что пакет рукопожатия (Г2.14): часть небольших
+    # пакетов молча теряется. Предупреждение, не провал: туннель работает.
+    local _sc_msg _sc_fix
+    while IFS=$'\t' read -r _sc_msg _sc_fix; do
+        [[ -n "$_sc_msg" ]] || continue
+        _diag_line WARN "$_sc_msg"
+        echo "        Fix: $_sc_fix"
+        warn=$((warn+1))
+    done <<< "$(awg_size_collision_lines)"
 
     # 2. Service active
     if systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then

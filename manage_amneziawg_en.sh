@@ -1893,6 +1893,9 @@ check_server() {
             log_warn " - Obfuscation parameters not detected"
         fi
     fi
+    # A data packet of the same length as a handshake message (G2.14): a warning only,
+    # the check verdict does not change - the tunnel works, part of the small packets is lost.
+    awg_size_collision_warn
 
     if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
         local _c_clients _jok=false
@@ -2435,6 +2438,16 @@ diagnose_server() {
         _diag_line FAIL "The AWG_PROTOCOL generation marker in $CONFIG_FILE cannot be read: the configuration generation is unknown"
         fail=$((fail+1))
     fi
+
+    # 1c. A data packet of the same length as a handshake message (G2.14): part of
+    # the small packets is silently lost. A warning, not a failure: the tunnel works.
+    local _sc_msg _sc_fix
+    while IFS=$'\t' read -r _sc_msg _sc_fix; do
+        [[ -n "$_sc_msg" ]] || continue
+        _diag_line WARN "$_sc_msg"
+        echo "        Fix: $_sc_fix"
+        warn=$((warn+1))
+    done <<< "$(awg_size_collision_lines)"
 
     # 2. Service active
     if systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then

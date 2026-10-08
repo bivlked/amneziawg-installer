@@ -44,7 +44,7 @@ gen() {
         log() { :; }; log_warn() { :; }; log_error() { :; }; log_debug() { :; }
         die() { echo "DIE: $*" >&2; exit 1; }
         source "$2" >/dev/null 2>&1 || true
-        for f in rand_range validate_jc_value validate_junk_size generate_awg_h_ranges generate_cps_i1 generate_awg_params; do
+        for f in rand_range validate_jc_value validate_junk_size generate_awg_h_ranges generate_cps_i1 _awg_size_collisions generate_awg_params; do
             eval "$(sed -n "/^${f}()/,/^}/p" "$1")"
         done
         unset CLI_PRESET CLI_JC CLI_JMIN CLI_JMAX
@@ -71,7 +71,7 @@ forced_retry() {
         log() { :; }; log_warn() { :; }; log_error() { :; }; log_debug() { :; }
         die() { echo "DIE: $*" >&2; exit 1; }
         source "$2" >/dev/null 2>&1 || true
-        for f in validate_jc_value validate_junk_size generate_awg_params; do
+        for f in validate_jc_value validate_junk_size _awg_size_collisions generate_awg_params; do
             eval "$(sed -n "/^${f}()/,/^}/p" "$1")"
         done
         mark="$4/s3hit"
@@ -237,6 +237,9 @@ expect_accepted() {
 }
 
 @test "gen 3.1: the S3 collision retry keeps the raised bound, both twins" {
+    # S3 lands on its raised bound 12, and S4 = 12 stays free: with S3 = S4 a data
+    # packet of the cookie length carries its own type (from H4) where the cookie
+    # check reads, so it is never taken for a cookie (tests/test_size_collision.bats).
     run --separate-stderr forced_retry "$INST" "$COMMON" 3.1
     [ "$status" -eq 0 ]
     [ "$output" = "12 12" ]
