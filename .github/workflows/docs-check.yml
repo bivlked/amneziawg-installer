@@ -20,6 +20,8 @@ on:
       - 'scripts/check-docs-consistency.sh'
       # Генератор блока фактов: его правка меняет то, что checker сверяет.
       - 'scripts/update-facts-block.sh'
+      # Сборщик таблиц клиентов и хостов в ADVANCED: то же самое.
+      - 'scripts/update-client-tables.sh'
   pull_request:
     paths:
       - '**/*.md'
@@ -31,6 +33,8 @@ on:
       - 'scripts/check-docs-consistency.sh'
       # Генератор блока фактов: его правка меняет то, что checker сверяет.
       - 'scripts/update-facts-block.sh'
+      # Сборщик таблиц клиентов и хостов в ADVANCED: то же самое.
+      - 'scripts/update-client-tables.sh'
 
 permissions:
   contents: read

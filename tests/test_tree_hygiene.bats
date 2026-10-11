@@ -32,6 +32,7 @@ setup() {
         scripts/preflight-check.sh \
         scripts/sign-release.sh \
         scripts/signed-file-list.sh \
+        scripts/update-client-tables.sh \
         scripts/update-facts-block.sh \
         scripts/update-sha-pins.sh \
         scripts/verify-signatures.sh \

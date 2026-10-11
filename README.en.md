@@ -153,7 +153,7 @@ Still without 3.1 support: routers on stock firmware (stable KeeneticOS, OpenWrt
 
 **Where the installer picks 2.0 by itself.** On kernels older than 6.7 (a stock Debian 12 with kernel 6.1), on ARM, and where the installed `awg` tools or the kernel module do not understand third-line parameters, 3.1 cannot run. If you did not choose a generation, the installer installs 2.0 by itself, explains the reason in the log and repeats it in the final report. An explicit `--protocol=3.1` on such a machine stops the install and names the reason.
 
-**Servers that already run** keep their generation: updating the scripts and `manage` do not change it. Moving from 2.0 to 3.1 means removing the install (`--uninstall`) and installing again, and every client profile is issued again.
+**Servers that already run** keep their generation: updating the scripts and `manage` do not change it. Moving from 2.0 to 3.1 means removing the install (`--uninstall`) and installing again, and every client profile is issued again. Back from 3.1 to 2.0 works the same way: `--uninstall` (it removes the server and its 3.1 profiles, keeping a backup copy by default), then an install with `--protocol=2.0` and new profiles for every client.
 
 The installer prints the generation in the final report, on the "Protocol generation" line. Versions of the tools and of the loaded module:
 

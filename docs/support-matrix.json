@@ -7,7 +7,8 @@
       "vendor_regular_eol and vendor_lts_eol against the lifecycle source",
       "ppa_suite against the codename mapping in install_amneziawg.sh; for Ubuntu outside noble, jammy and focal the installer probes the PPA live, so the value there is the suite used when the PPA answers",
       "arm_prebuilt_targets against the job ids in .github/workflows/arm-build.yml",
-      "project_policy against what the documentation actually recommends"
+      "project_policy against what the documentation actually recommends",
+      "stock_kernel against the kernel the release ships by default (GA kernel, not HWE or backports); the installer looks at the RUNNING kernel, so this value only documents the generation a stock install gets and drives the host table in ADVANCED"
     ],
     "rule": "advancing last_verified requires rechecking every item in scope, not only the one that prompted the edit",
     "lifecycle_source": "https://endoflife.date/api/{os}.json"
@@ -54,6 +55,7 @@
       "os": "ubuntu",
       "version": "24.04",
       "codename": "noble",
+      "stock_kernel": "6.8",
       "released": "2024-04-25",
       "vendor_regular_eol": "2029-05-31",
       "vendor_lts_eol": "2034-04-25",
@@ -67,6 +69,7 @@
       "os": "ubuntu",
       "version": "26.04",
       "codename": "resolute",
+      "stock_kernel": "7.0",
       "released": "2026-04-23",
       "vendor_regular_eol": "2031-05-29",
       "vendor_lts_eol": "2036-04-23",
@@ -80,6 +83,7 @@
       "os": "debian",
       "version": "13",
       "codename": "trixie",
+      "stock_kernel": "6.12",
       "released": "2025-08-09",
       "vendor_regular_eol": "2028-08-09",
       "vendor_lts_eol": "2030-06-30",
@@ -93,6 +97,7 @@
       "os": "debian",
       "version": "12",
       "codename": "bookworm",
+      "stock_kernel": "6.1",
       "released": "2023-06-10",
       "vendor_regular_eol": "2026-07-11",
       "vendor_lts_eol": "2028-06-30",

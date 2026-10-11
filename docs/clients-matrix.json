@@ -1,0 +1,176 @@
+{
+  "$comment": "Machine-readable client matrix: which client apps understand the AmneziaWG 3.1 profile, on what basis that is known and when it was checked. The tables in ADVANCED.md and ADVANCED.en.md are rendered from this file by scripts/update-client-tables.sh and are not edited by hand. Text fields (name, version, since, since_note, where) are either one language-neutral string or an object with exactly ru and en. Dates are YYYY-MM-DD; checked_at may be at most one day ahead of the UTC date. freshness_days is 1 to 90.",
+  "schema_version": 1,
+  "freshness_days": 30,
+  "freshness_rule": "every checked_at must be at most freshness_days before the release date of the current SCRIPT_VERSION in CHANGELOG.md; the date comes from the repository, not from a clock, so the check fails when a release is prepared on a stale table and not on an ordinary day",
+  "support_values": {
+    "yes": "the released app understands the 3.1 profile",
+    "no": "it does not",
+    "dev-channel": "only in a development or pre-release channel",
+    "nightly": "only in untagged daily builds",
+    "unknown": "we do not know; such a row must not name a generation, so it has no since, since_date or since_note"
+  },
+  "basis_values": {
+    "verified-behaviour": "tested on a generated 3.1 profile; evidence needs version and env",
+    "build-pin": "read in the project code at a fixed ref; evidence needs ref",
+    "vendor-docs": "the project's release notes, store page or docs; evidence needs url",
+    "inference-from-dates": "inferred from release dates; evidence needs url",
+    "unknown": "no basis; support must be unknown"
+  },
+  "clients": [
+    {
+      "id": "amnezia-vpn",
+      "name": {"ru": "Amnezia VPN (флагман, все платформы)", "en": "Amnezia VPN (flagship, all platforms)"},
+      "support": "yes",
+      "version": "5.0.3.0 (GitHub), 5.0.3.1 (Google Play)",
+      "since": "5.0.1.5",
+      "since_date": "2026-08-21",
+      "where": {"ru": "GitHub, магазины; в российском App Store нет; Windows - по прямой ссылке со страницы релизов", "en": "GitHub, app stores; not in the Russian App Store; on Windows use the direct link from the releases page"},
+      "basis": "vendor-docs",
+      "evidence": {"url": "https://github.com/amnezia-vpn/amnezia-client/releases"},
+      "checked_at": "2026-10-05"
+    },
+    {
+      "id": "amneziawg-android",
+      "name": {"ru": "AmneziaWG для Android (лёгкий)", "en": "AmneziaWG for Android (light)"},
+      "support": "yes",
+      "version": "3.1.4, Google Play",
+      "version_date": "2026-09-21",
+      "since": {"ru": "3.1.4 в Google Play, v3.1.20260814 в APK", "en": "3.1.4 on Google Play, v3.1.20260814 as APK"},
+      "where": {"ru": "Google Play, страница релизов", "en": "Google Play, releases page"},
+      "basis": "vendor-docs",
+      "evidence": {"url": "https://github.com/amnezia-vpn/amneziawg-android"},
+      "checked_at": "2026-10-05"
+    },
+    {
+      "id": "amneziawg-apple",
+      "name": {"ru": "AmneziaWG для iOS и macOS (лёгкий)", "en": "AmneziaWG for iOS and macOS (light)"},
+      "support": "yes",
+      "version": "3.1.4",
+      "version_date": "2026-08-24",
+      "since": "3.1.4",
+      "where": {"ru": "App Store, в том числе российский", "en": "App Store, the Russian one included"},
+      "basis": "vendor-docs",
+      "evidence": {"url": "https://apps.apple.com/app/amneziawg/id6478942365"},
+      "checked_at": "2026-10-05"
+    },
+    {
+      "id": "amneziawg-windows",
+      "name": {"ru": "AmneziaWG для Windows (лёгкий)", "en": "AmneziaWG for Windows (light)"},
+      "support": "yes",
+      "version": "3.1.0",
+      "version_date": "2026-08-21",
+      "since": "3.1.0",
+      "where": {"ru": "страница релизов проекта", "en": "project releases page"},
+      "basis": "vendor-docs",
+      "evidence": {"url": "https://github.com/amnezia-vpn/amneziawg-windows-client/releases"},
+      "checked_at": "2026-10-05"
+    },
+    {
+      "id": "wg-tunnel-android",
+      "name": {"ru": "WG Tunnel (Android, сторонний)", "en": "WG Tunnel (Android, third-party)"},
+      "support": "yes",
+      "version": "5.7.5",
+      "version_date": "2026-09-26",
+      "since": "5.6.0",
+      "where": "Google Play, IzzyOnDroid, APK",
+      "basis": "vendor-docs",
+      "evidence": {"url": "https://github.com/wgtunnel/android"},
+      "checked_at": "2026-10-05"
+    },
+    {
+      "id": "wg-tunnel-desktop",
+      "name": {"ru": "WG Tunnel Desktop (сторонний)", "en": "WG Tunnel Desktop (third-party)"},
+      "support": "yes",
+      "version": "v2.3.0",
+      "version_date": "2026-10-03",
+      "since": {"ru": "линия v2", "en": "v2 line"},
+      "where": {"ru": "страница релизов проекта, choco, apt, AUR", "en": "project releases page, choco, apt, AUR"},
+      "basis": "vendor-docs",
+      "evidence": {"url": "https://github.com/wgtunnel/desktop"},
+      "checked_at": "2026-10-05"
+    },
+    {
+      "id": "mihomo",
+      "name": {"ru": "mihomo (ядро для Clash Verge Rev и других)", "en": "mihomo (core for Clash Verge Rev and others)"},
+      "support": "yes",
+      "version": "v1.19.32",
+      "version_date": "2026-09-30",
+      "since": "v1.19.30",
+      "where": {"ru": "страница релизов проекта", "en": "project releases page"},
+      "basis": "vendor-docs",
+      "evidence": {"url": "https://github.com/MetaCubeX/mihomo"},
+      "checked_at": "2026-10-05"
+    },
+    {
+      "id": "hiddify",
+      "name": "Hiddify",
+      "support": "no",
+      "version": "4.1.1",
+      "version_date": "2026-03-05",
+      "basis": "build-pin",
+      "evidence": {"url": "https://github.com/hiddify/hiddify-app", "ref": "hiddifydeveloper/amneziawg-go@70b344f"},
+      "checked_at": "2026-10-05"
+    },
+    {
+      "id": "keeneticos",
+      "name": {"ru": "KeeneticOS (штатная прошивка)", "en": "KeeneticOS (stock firmware)"},
+      "support": "dev-channel",
+      "version": "5.2 Beta 0",
+      "version_date": "2026-10-02",
+      "since": "5.2 Alpha 11",
+      "since_date": "2026-09-25",
+      "since_note": {"ru": "в стабильной 5.1 нет", "en": "not in stable 5.1"},
+      "where": {"ru": "канал разработки Keenetic", "en": "Keenetic development channel"},
+      "basis": "vendor-docs",
+      "evidence": {"url": "https://forum.keenetic.com/topic/26598-changelog-52/"},
+      "checked_at": "2026-10-05"
+    },
+    {
+      "id": "awg-manager",
+      "name": {"ru": "AWG Manager (Keenetic, сторонний)", "en": "AWG Manager (Keenetic, third-party)"},
+      "support": "yes",
+      "version": "v2.19.12",
+      "version_date": "2026-09-29",
+      "since": {"ru": "на KeeneticOS 5.2 Alpha 11 и новее", "en": "on KeeneticOS 5.2 Alpha 11 and newer"},
+      "where": {"ru": "страница релизов проекта", "en": "project releases page"},
+      "basis": "vendor-docs",
+      "evidence": {"url": "https://github.com/hoaxisr/awg-manager"},
+      "checked_at": "2026-10-05"
+    },
+    {
+      "id": "awg-openwrt",
+      "name": {"ru": "awg-openwrt (OpenWrt, сторонний)", "en": "awg-openwrt (OpenWrt, third-party)"},
+      "support": "nightly",
+      "version": {"ru": "фид для 25.12", "en": "feed for 25.12"},
+      "version_date": "2026-10-05",
+      "where": {"ru": "фид проекта", "en": "project feed"},
+      "basis": "vendor-docs",
+      "evidence": {"url": "https://github.com/Slava-Shchipunov/awg-openwrt"},
+      "checked_at": "2026-10-05"
+    },
+    {
+      "id": "amneziawg-mikrotik-c",
+      "name": {"ru": "amneziawg-mikrotik-c (MikroTik, сторонний)", "en": "amneziawg-mikrotik-c (MikroTik, third-party)"},
+      "support": "yes",
+      "version": "v1.4.2",
+      "version_date": "2026-10-04",
+      "where": {"ru": "страница релизов проекта", "en": "project releases page"},
+      "basis": "vendor-docs",
+      "evidence": {"url": "https://github.com/timbrs/amneziawg-mikrotik-c"},
+      "checked_at": "2026-10-05"
+    },
+    {
+      "id": "amneziawg-mikrotik",
+      "name": {"ru": "AmneziaWG-MikroTik (сторонний)", "en": "AmneziaWG-MikroTik (third-party)"},
+      "support": "yes",
+      "version": "Containers_3.1",
+      "version_date": "2026-08-30",
+      "since": "Containers_3.1",
+      "where": {"ru": "страница релизов проекта", "en": "project releases page"},
+      "basis": "vendor-docs",
+      "evidence": {"url": "https://github.com/catesin/AmneziaWG-MikroTik"},
+      "checked_at": "2026-10-05"
+    }
+  ]
+}
