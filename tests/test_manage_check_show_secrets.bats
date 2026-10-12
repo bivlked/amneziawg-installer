@@ -16,6 +16,12 @@
 # $output holds exactly what a person would see. Every case runs both twins and
 # asserts the text in the language of the script under test.
 
+# The user namespace warning in check/diagnose reads /proc, /sys and
+# /lib/modules; point it at an empty root so a runner with the amneziawg module
+# installed does not add a WARN to these cases (its own tests are in
+# test_userns_module_warning.bats).
+export AWG_USERNS_ROOT=/nonexistent-awg-userns-root
+
 SECRET="SECRETHPKVALUEAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 _make_stubs() {

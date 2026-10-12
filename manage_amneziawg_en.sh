@@ -1896,6 +1896,15 @@ check_server() {
     # A data packet of the same length as a handshake message (G2.14): a warning only,
     # the check verdict does not change - the tunnel works, part of the small packets is lost.
     awg_size_collision_warn
+    # The kernel module reachable by unprivileged processes through user namespaces
+    # (vendor bug amneziawg-linux-kernel-module#233): a warning only, the check
+    # verdict does not change - the server works. An older library of the same
+    # MAJOR.MINOR lacks the function: say the check was skipped, do not stay quiet.
+    if declare -F awg_userns_module_warn >/dev/null; then
+        awg_userns_module_warn
+    else
+        log_warn " - The check for kernel module access without root was skipped: awg_common.sh is older than manage. Update both halves to the same version."
+    fi
 
     if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
         local _c_clients _jok=false
@@ -2448,6 +2457,22 @@ diagnose_server() {
         echo "        Fix: $_sc_fix"
         warn=$((warn+1))
     done <<< "$(awg_size_collision_lines)"
+
+    # 1d. The kernel module reachable by unprivileged processes through user namespaces
+    # (amneziawg-linux-kernel-module#233). A warning, not a failure: the server works.
+    local _un_msg _un_fix
+    if declare -F awg_userns_module_lines >/dev/null; then
+        while IFS=$'\t' read -r _un_msg _un_fix; do
+            [[ -n "$_un_msg" ]] || continue
+            _diag_line WARN "$_un_msg"
+            echo "        Fix: $_un_fix"
+            warn=$((warn+1))
+        done <<< "$(awg_userns_module_lines)"
+    else
+        _diag_line WARN "The check for kernel module access without root was skipped: awg_common.sh is older than manage"
+        echo "        Fix: update both halves (manage and awg_common.sh) to the same version"
+        warn=$((warn+1))
+    fi
 
     # 2. Service active
     if systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then

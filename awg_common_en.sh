@@ -2753,6 +2753,129 @@ awg_size_collision_warn() {
     return 0
 }
 
+# _awg_sysctl_num <file> : the number in a /proc or /sys file (first line, all
+# whitespace removed, leading zeros read as decimal), empty when the file is
+# missing, unreadable, holds no number or a number longer than 10 digits. "Could
+# not read" and "read a non-number" are merged on purpose: in both cases the
+# caller does not know the value and must not make one up.
+_awg_sysctl_num() {
+    local v=""
+    [[ -r "$1" ]] || return 0
+    IFS= read -r v 2>/dev/null < "$1" || true
+    v="${v//[[:space:]]/}"
+    [[ "$v" =~ ^[0-9]{1,10}$ ]] && printf '%s' "$((10#$v))"
+    return 0
+}
+
+# awg_userns_module_lines : for check and diagnose - a "message<TAB>how to close
+# it" line when the amneziawg kernel module is on the system and unprivileged
+# user namespaces are allowed without restriction.
+#
+# Why. The module's netlink commands carry GENL_UNS_ADMIN_PERM and the family is
+# netnsok, so CAP_NET_ADMIN inside a process's OWN user namespace is enough to
+# create an amneziawg interface in its own network namespace and set I1-I5 on
+# it. The module's I1-I5 parser reads the length in <r>/<rc>/<rd> as a signed int
+# and never rejects a negative one (amneziawg-linux-kernel-module#233,
+# src/junk.c; the same code is in the pinned 2.0 source the ARM prebuilts are
+# built from), which in some tag combinations writes past a kernel buffer. Our
+# commands refuse such values (awg_cps_check_safe); the warning is about the
+# other users and programs on the host. The module declares
+# MODULE_ALIAS_RTNL_LINK and MODULE_ALIAS_GENL_FAMILY, so once installed but not
+# loaded it may load by itself on the first request. The sources of both lines
+# and the Debian kernel patch are kept in
+# RESEARCH/upstream-snapshots/2026-10-12/server/ (the workspace, not this
+# repository). Checked on an Ubuntu 24.04 stand on 12 oct 2026 without touching
+# the bug: with kernel.apparmor_restrict_unprivileged_userns = 0 an ordinary user
+# created the interface and set I1 = <r 8>; with kernel.unprivileged_userns_clone
+# = 0 unshare failed with EPERM; the stock AppArmor restriction (= 1) refused a
+# plain attempt but did NOT stop an ordinary user on the stand.
+#
+# Quiet when the module is not on the system (not loaded, and no non-empty
+# module file for the running kernel, or module loading is disabled:
+# kernel.modules_disabled = 1; a blacklist in modprobe.d is not taken into
+# account); when the path is closed (unprivileged_userns_clone,
+# max_user_namespaces or max_net_namespaces is 0); when max_user_namespaces or
+# max_net_namespaces is missing (we do not know whether the namespaces exist at
+# all); when the AppArmor restriction is in force (= 1, AppArmor not known to be
+# off and not in complain mode, where the restriction only logs); and when a
+# value the verdict needs exists but was not read: a guess here would teach
+# people not to trust the warning.
+# 🔴 The AppArmor restriction does NOT close the path (stand above). Staying
+# quiet under it is the owner's decision of 12 oct 2026 (the warning would
+# otherwise sit on every stock Ubuntu); ADVANCED says so plainly. So the advice
+# never suggests turning the AppArmor restriction on: check would then go quiet
+# with the path still open. The advice: unprivileged_userns_clone = 0 (a Debian
+# patch; Ubuntu carries it, checked on 24.04), without it max_user_namespaces = 0,
+# which costs more.
+# The module itself cannot be checked for the bug: a probe with a negative
+# length is the bug.
+# 🔴 To revisit (MyAI-9zrc.31): once the vendor fix (#237/#247) reaches the PPA,
+# "unfixed bug" becomes false for PPA builds - tell builds apart by srcversion or
+# narrow the warning to the pinned 2.0 and ARM.
+#
+# AWG_USERNS_ROOT is overridden only by tests (bats): a prefix for /proc, /sys
+# and /lib/modules.
+awg_userns_module_lines() {
+    local root="${AWG_USERNS_ROOT:-}" loaded=1 clone maxns netns aa aac md aa_on="" f kver key="" val="" price="" pre=""
+    if [[ ! -d "$root/sys/module/amneziawg" ]]; then
+        loaded=0
+        kver=$(uname -r 2>/dev/null) || return 0
+        [[ -n "$kver" && -d "$root/lib/modules/$kver" ]] || return 0
+        [[ -n "$(find "$root/lib/modules/$kver" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]] || return 0
+    fi
+    # A setting that exists but was not read (or holds no number) is "do not
+    # know", not "allowed": otherwise a closed host with one unreadable file
+    # would get the warning "any user may".
+    for f in kernel/unprivileged_userns_clone user/max_user_namespaces user/max_net_namespaces \
+             kernel/apparmor_restrict_unprivileged_userns kernel/apparmor_restrict_unprivileged_userns_complain; do
+        [[ -e "$root/proc/sys/$f" && -z "$(_awg_sysctl_num "$root/proc/sys/$f")" ]] && return 0
+    done
+    clone=$(_awg_sysctl_num "$root/proc/sys/kernel/unprivileged_userns_clone")
+    maxns=$(_awg_sysctl_num "$root/proc/sys/user/max_user_namespaces")
+    netns=$(_awg_sysctl_num "$root/proc/sys/user/max_net_namespaces")
+    aa=$(_awg_sysctl_num "$root/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
+    aac=$(_awg_sysctl_num "$root/proc/sys/kernel/apparmor_restrict_unprivileged_userns_complain")
+    # Not loaded and module loading disabled: it will not load by itself. Only
+    # needed for a module that is not loaded, so only then "not read" means quiet.
+    if [[ "$loaded" == 0 ]]; then
+        md=$(_awg_sysctl_num "$root/proc/sys/kernel/modules_disabled")
+        [[ -e "$root/proc/sys/kernel/modules_disabled" && -z "$md" ]] && return 0
+        [[ "$md" == 1 ]] && return 0
+    fi
+    # The path needs a network namespace of its own, so both limits are needed.
+    [[ -n "$maxns" && -n "$netns" ]] || return 0
+    [[ "$clone" == 0 || "$maxns" == 0 || "$netns" == 0 ]] && return 0
+    # Is AppArmor on: Y - yes, N - no, no file or not read - do not know.
+    if [[ -r "$root/sys/module/apparmor/parameters/enabled" ]]; then
+        IFS= read -r aa_on 2>/dev/null < "$root/sys/module/apparmor/parameters/enabled" || true
+        aa_on="${aa_on//[[:space:]]/}"
+    fi
+    [[ "$aa" == 1 && "$aa_on" != N && "${aac:-0}" == 0 ]] && return 0
+    if [[ -n "$clone" ]]; then
+        key=kernel.unprivileged_userns_clone val=0
+        price="rootless containers (Podman, rootless Docker), application sandboxes and any programs and services that create such namespaces without CAP_SYS_ADMIN on the host (root inside an ordinary container included) stop working; the Docker daemon in its usual mode is not affected."
+    else
+        key=user.max_user_namespaces val=0
+        pre="First write down the previous value (sysctl user.max_user_namespaces), so you can put it back. "
+        price="user namespaces can no longer be created at all, root included: rootless containers, application sandboxes, systemd services with PrivateUsers= and Docker with userns-remap stop working."
+    fi
+    printf '%s\t%s\n' \
+        "The amneziawg kernel module is on the system (loaded, or it may load on the first request), and any user may create user namespaces. That lets an unprivileged process set up its own AmneziaWG interface and hand the module I1-I5 values. The vendor module has an unfixed bug in parsing <r>/<rc>/<rd> tags with a negative length (amneziawg-linux-kernel-module#233): in some combinations it writes past a kernel buffer. Our commands refuse such values; the risk comes from other users and programs on this server." \
+        "${pre}To close this path: sudo sysctl -w ${key}=${val}, and to keep it after a reboot: echo '${key} = ${val}' | sudo tee /etc/sysctl.d/99-userns.conf. The cost: ${price} Namespaces that already exist are not affected: reboot after it to be sure. Details: ADVANCED.en.md#userns-module-adv"
+    return 0
+}
+
+# awg_userns_module_warn : the same for check - as warnings in the log.
+awg_userns_module_warn() {
+    local msg fix
+    while IFS=$'\t' read -r msg fix; do
+        [[ -n "$msg" ]] || continue
+        log_warn " - $msg"
+        log_warn "   $fix"
+    done <<< "$(awg_userns_module_lines)"
+    return 0
+}
+
 # awg_hpk_path : path to the header protection key (HeaderProtectionKey) file.
 # One place, and only from the current AWG_DIR: the path is not stored in init,
 # or a second source of the path would have to be reconciled with this one every

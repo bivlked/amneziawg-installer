@@ -15,6 +15,12 @@
 # journal form. Harness: the whole awg_common.sh is sourced, the manage function is
 # lifted out by awk, every system command is a stub in front of PATH. Both twins.
 
+# The user namespace warning in check reads /proc, /sys and /lib/modules; point
+# it at an empty root so a runner with the amneziawg module installed does not
+# add a warning to these cases (its own tests are in
+# test_userns_module_warning.bats).
+export AWG_USERNS_ROOT=/nonexistent-awg-userns-root
+
 PRIV="SECRETPRIVKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 BAD="SECRETBADLENGTHKEYBBBBBBBBBBBBBBBBBBBBBBBBB"
 # Every secret below carries the marker LEAK, so a partial disclosure (a cut value,

@@ -25,6 +25,12 @@
 # print a reason are asserted by it, not only by the exit status.
 
 # shellcheck disable=SC2016,SC2034,SC2154  # bash -c bodies expand in the child; $output/$status come from bats
+# The user namespace warning in check/diagnose reads /proc, /sys and
+# /lib/modules; point it at an empty root so a runner with the amneziawg module
+# installed does not add a WARN to these cases (its own tests are in
+# test_userns_module_warning.bats).
+export AWG_USERNS_ROOT=/nonexistent-awg-userns-root
+
 bats_require_minimum_version 1.5.0
 
 INST="${BATS_TEST_DIRNAME}/../install_amneziawg.sh"

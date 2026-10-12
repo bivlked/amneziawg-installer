@@ -14,6 +14,12 @@
 # failed restart run the whole script under `bash -x` instead, with the trace
 # in its own file.
 
+# The user namespace warning in check/diagnose reads /proc, /sys and
+# /lib/modules; point it at an empty root so a runner with the amneziawg module
+# installed does not add a WARN to these cases (its own tests are in
+# test_userns_module_warning.bats).
+export AWG_USERNS_ROOT=/nonexistent-awg-userns-root
+
 SRV_PRIV="SRVPRIVSECRETAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 CLI_PRIV="CLIPRIVSECRETAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 PSK_VAL="PSKSECRETVALUEAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="

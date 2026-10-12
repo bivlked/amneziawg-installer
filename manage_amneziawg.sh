@@ -1861,6 +1861,15 @@ check_server() {
     # Пакет данных той же длины, что пакет рукопожатия (Г2.14): только предупреждение,
     # вердикт check не меняется - туннель работает, теряется часть небольших пакетов.
     awg_size_collision_warn
+    # Модуль ядра, доступный непривилегированным процессам через user namespaces
+    # (ошибка вендора amneziawg-linux-kernel-module#233): только предупреждение,
+    # вердикт check не меняется - сервер работает. Со старой библиотекой того же
+    # MAJOR.MINOR функции нет: говорим, что проверка пропущена, а не молчим.
+    if declare -F awg_userns_module_warn >/dev/null; then
+        awg_userns_module_warn
+    else
+        log_warn " - Проверка доступа к модулю ядра без root пропущена: awg_common.sh старше manage. Обновите обе половины под одну версию."
+    fi
 
     if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
         local _c_clients _jok=false
@@ -2410,6 +2419,22 @@ diagnose_server() {
         echo "        Fix: $_sc_fix"
         warn=$((warn+1))
     done <<< "$(awg_size_collision_lines)"
+
+    # 1d. Модуль ядра доступен непривилегированным процессам через user namespaces
+    # (amneziawg-linux-kernel-module#233). Предупреждение, не провал: сервер работает.
+    local _un_msg _un_fix
+    if declare -F awg_userns_module_lines >/dev/null; then
+        while IFS=$'\t' read -r _un_msg _un_fix; do
+            [[ -n "$_un_msg" ]] || continue
+            _diag_line WARN "$_un_msg"
+            echo "        Fix: $_un_fix"
+            warn=$((warn+1))
+        done <<< "$(awg_userns_module_lines)"
+    else
+        _diag_line WARN "Проверка доступа к модулю ядра без root пропущена: awg_common.sh старше manage"
+        echo "        Fix: обновите обе половины (manage и awg_common.sh) под одну версию"
+        warn=$((warn+1))
+    fi
 
     # 2. Service active
     if systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then

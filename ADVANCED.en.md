@@ -34,6 +34,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 - [🔒 Server Security Settings](#security-adv)
   - [UFW Firewall](#ufw-adv)
   - [Kernel Parameters (Sysctl)](#sysctl-adv)
+  - [The kernel module and user namespaces](#userns-module-adv)
   - [Fail2Ban (Automatic Setup)](#fail2ban-adv)
   - [Rotating the server key](#server-key-rotation-adv)
 - [🧹 Server Optimization](#optimization-adv)
@@ -256,7 +257,7 @@ All seven work through `awg-quick` as well: it hands every key it does not consu
 
 🔴 **Six of the seven take a RANGE rather than a single number, and the value is drawn from it at random on every use.** Those are `ContentPaddingAddition`, `RekeyAfterTime`, `RekeyTimeout`, `RejectAfterTime`, `KeepaliveTimeout` and `MaxHandshakeAttempts`: the format is `lo-hi`, and a bare number is accepted too as a range of zero width. Verified in both implementations from the sources rather than from documentation: the kernel module declares them as `u16_range_t` (`src/device.h`) and draws the value in `u16_range_pick_one()` via `get_random_u32_inclusive()` (`src/type.h`); `amneziawg-go` uses the `UintRange` type with `FromString` and `PickOne` (`device/noise-types.go`) and parses the keys in `device/uapi.go`. That is the whole point: a constant handshake and keepalive interval was a tell in itself, and a range removes it. The one exception among the seven is `HeaderProtectionKey`, which is a key rather than a number.
 
-⚠️ Practical consequence: if you set these by hand, remember that `KeepaliveTimeout = 20-30` is neither a typo nor a "between these" timeout, it means a fresh random pick on every use. Of the seven the installer sets two, `HeaderProtectionKey` and `ContentPaddingAddition` (the 3.1 profile, see [below](#awg3-not-yet-adv)), and leaves the timers alone.
+⚠️ Practical consequence: if you set these by hand, remember that `KeepaliveTimeout = 20-30` is neither a typo nor a "between these" timeout, it means a fresh random pick on every use. Of the seven the installer sets two, `HeaderProtectionKey` and `ContentPaddingAddition` (the 3.1 profile, see [below](#awg3-not-yet-adv)), and leaves the timers alone. The timers act only on the side where they are set: there is no need to match them with the client, and the script does not carry them into client profiles, even if you wrote them into the server's `awg0.conf`.
 
 <a id="awg3-must-match-adv"></a>
 ### What has to match and what does not
@@ -288,7 +289,7 @@ than the cause.
 <a id="awg3-gotchas-adv"></a>
 ### Three things that can cost you an evening
 
-**`HeaderProtectionKey` requires `S1`-`S4` to be at least 12.** The nonce for header encryption is never transmitted; it is taken from the first 12 bytes of the S padding, so a smaller value makes the config invalid. Exactly 12 is fine, even though the kernel message says "must be more then 12".
+**`HeaderProtectionKey` requires `S1`-`S4` to be at least 12.** The nonce for header encryption is never transmitted; it is taken from the first 12 bytes of the S padding, so a smaller value makes the config invalid. Exactly 12 is fine, even though the kernel message says "must be more then 12". `amneziawg-go` also names the parameter off by one: an error about `S0` means `S1`, one about `S2` means `S3` ([amneziawg-go#201](https://github.com/amnezia-vpn/amneziawg-go/issues/201)). The key itself is 32 bytes in base64, a 44-character string ending in `=`, the kind `awg genkey` prints. A number or a password in its place will not be accepted.
 
 **That message is invisible by default.** `awg` prints only `Unable to modify interface: Invalid argument`, while the explanation goes to the kernel debug log. To see it:
 
@@ -582,6 +583,39 @@ File: `/etc/sysctl.d/99-amneziawg-security.conf`. Includes:
 * Adaptive network buffers (rmem/wmem based on RAM)
 * nf_conntrack_max = 65536
 * kernel.sysrq = 0
+
+<a id="userns-module-adv"></a>
+### The kernel module and user namespaces
+
+The vendor's AmneziaWG kernel module has an unfixed bug: its `I1`-`I5` parser accepts a negative length in the `<r>`, `<rc>` and `<rd>` tags, and in some tag combinations that writes past a kernel buffer ([amneziawg-linux-kernel-module#233](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/233); as of 12 October 2026 the fixes in PRs #237 and #247 are not merged). The bug is in every build of the module the script installs: from the PPA, from the pinned 2.0 source and in the ready-made ARM packages built from it. It does not depend on the protocol generation.
+
+**Who it concerns.** Root is not the only one who can hand the module parameters through an interface of their own. The module's commands are open to any process with `CAP_NET_ADMIN` in its own user namespace and its own network namespace, and on Debian 12 and 13 any user can create one by default (the Debian kernel patch decides this, with `kernel.unprivileged_userns_clone = 1`). The module does not have to be loaded: once installed, it may load by itself on the first request, unless module loading is disabled. We checked this on an Ubuntu 24.04 test server without touching the bug itself: with the AppArmor restriction turned off, an ordinary user created their own AmneziaWG interface and set `I1` on it. On Ubuntu 24.04 and newer the AppArmor restriction (`kernel.apparmor_restrict_unprivileged_userns = 1`) is on by default, but it is a policy, not a ban: on our test server it refused a plain attempt but did not stop an ordinary user. What closes the path is `kernel.unprivileged_userns_clone = 0`: with it the kernel refuses an unprivileged process the namespace right in `unshare`/`clone`, before AppArmor is asked (that is how the kernel patch works), and on the test server `unshare` was refused with it.
+
+If the server has no other users and no unrelated programs, the risk is small. It appears when the machine has other accounts or services through which an outsider could get onto it.
+
+**What the script does.** Our commands never write negative lengths, overlong numbers or a total above 65535 bytes, and refuse them on install, `add`, `regen`, `modify` and `restore`. `manage check` and `manage diagnose` warn when the module is on the system and unprivileged user namespaces are allowed without any restriction, and name the command that closes this path on your machine. Under the AppArmor restriction (stock Ubuntu) they stay quiet: that was decided so the warning does not sit on every Ubuntu server, although the restriction does not close the path. To close it there as well, use the same command as below. The script does not change this setting itself: the cost of such a measure depends on what else runs on the server.
+
+**How to close it by hand.** On the stock Debian and Ubuntu kernels (both carry the kernel patch with this setting; on Ubuntu checked on 24.04):
+
+```bash
+sudo sysctl -w kernel.unprivileged_userns_clone=0
+echo 'kernel.unprivileged_userns_clone = 0' | sudo tee /etc/sysctl.d/99-userns.conf
+```
+
+The cost: rootless containers (Podman, rootless Docker), application sandboxes and any programs and services that create such namespaces without `CAP_SYS_ADMIN` on the host (root inside an ordinary container included) stop working. The Docker daemon in its usual mode is not affected. Namespaces that already exist are not affected: a process that entered its own namespace earlier keeps its access, so reboot after writing the file to be sure.
+
+On kernels without this setting (the Raspberry Pi OS kernel, for example, or one you built; check with `sysctl kernel.unprivileged_userns_clone`) what is left is `user.max_user_namespaces`. Write down its previous value first (`sysctl user.max_user_namespaces`), then:
+
+```bash
+sudo sysctl -w user.max_user_namespaces=0
+echo 'user.max_user_namespaces = 0' | sudo tee /etc/sysctl.d/99-userns.conf
+```
+
+This costs more: user namespaces can no longer be created at all, root included, so systemd services with `PrivateUsers=` and Docker with `userns-remap` stop working as well.
+
+To undo: `sudo rm /etc/sysctl.d/99-userns.conf`, then, if you set `kernel.unprivileged_userns_clone`, `sudo sysctl -w kernel.unprivileged_userns_clone=1`, and if you set `user.max_user_namespaces`, `sudo sysctl -w user.max_user_namespaces=<the value you wrote down>`.
+
+**If you edit `I1`-`I5` by hand.** Lengths in `<r>`, `<rc>` and `<rd>` must be non-negative whole numbers, at most 1000 per the vendor's documentation; our check does not enforce that limit, it refuses negative lengths, overlong numbers and a total above 65535 bytes. `manage restart`, a service restart, the start at boot and the other paths that apply an existing `awg0.conf` do it without our check, so they will not stop a mistake in a hand edit.
 
 <a id="fail2ban-adv"></a>
 ### Fail2Ban (Automatic Setup)

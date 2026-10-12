@@ -69,7 +69,10 @@ _run() {
     bin="$BATS_TEST_TMPDIR/bin"
     dir="$BATS_TEST_TMPDIR/awg"
     _make_stubs "$bin" "${4:-40}" "${5:-70}"
+    # The user namespace warning reads /proc, /sys and /lib/modules; without a root
+    # of its own a runner with the module installed would add a WARN to every case.
     PATH="$bin:$PATH" AWG_DIR="$dir" CONFIG_FILE="$dir/awgsetup_cfg.init" SERVER_CONF_FILE="$dir/awg0.conf" \
+    AWG_USERNS_ROOT="${AWG_USERNS_ROOT:-$BATS_TEST_TMPDIR/no-userns-root}" \
     _JSON="$json" timeout 60 bash -c '
         set -o pipefail
         if [[ "$_JSON" == 1 ]]; then
@@ -297,6 +300,120 @@ c_size_collision_json() {
 @test "check --json: a length match keeps stdout to the JSON document, both twins" {
     require_jq
     both c_size_collision_json
+}
+
+# The same harness runs the user namespace warning (the vendor module reachable
+# without root, amneziawg-linux-kernel-module#233; the helper itself is in
+# test_userns_module_warning.bats): check keeps its verdict and its JSON,
+# diagnose adds a WARN line with the fix and counts it.
+# _userns_root <open|closed> : a fake /proc and /sys with the module loaded and
+# the stock Debian knobs, or the same with unprivileged_userns_clone = 0.
+_userns_root() {
+    local r="$BATS_TEST_TMPDIR/userns-root"
+    rm -rf "$r"
+    mkdir -p "$r/sys/module/amneziawg" "$r/proc/sys/kernel" "$r/proc/sys/user"
+    if [[ "$1" == open ]]; then echo 1 > "$r/proc/sys/kernel/unprivileged_userns_clone"; else echo 0 > "$r/proc/sys/kernel/unprivileged_userns_clone"; fi
+    echo 15329 > "$r/proc/sys/user/max_user_namespaces"
+    echo 15329 > "$r/proc/sys/user/max_net_namespaces"
+    printf '%s' "$r"
+}
+d_userns() {
+    local base
+    _write_init "export AWG_PROTOCOL='3.1'"
+    AWG_USERNS_ROOT=$(_userns_root closed) run _run "$1" diagnose_server 0
+    [[ "$output" =~ WARN=([0-9]+) ]] || { echo "no summary ($1): $output"; return 1; }
+    base="${BASH_REMATCH[1]}"
+    [[ "$output" != *"#233"* ]] || { echo "a warning on a closed host ($1): $output"; return 1; }
+    AWG_USERNS_ROOT=$(_userns_root open) run _run "$1" diagnose_server 0
+    [ "$status" -eq 0 ] || { echo "diagnose failed on an open host ($1): $output"; return 1; }
+    [[ "$output" == *"[WARN] "*"#233"* ]] || { echo "no WARN line ($1): $output"; return 1; }
+    [[ "$output" == *"Fix: "*"sysctl -w kernel.unprivileged_userns_clone=0"* ]] || { echo "no fix line ($1): $output"; return 1; }
+    [[ "$output" == *"WARN=$((base + 1)) "* ]] || { echo "the WARN was not counted, base $base ($1): $output"; return 1; }
+    [[ "$output" == *"FAIL=0"* ]] || { echo "the warning was counted as a FAIL ($1): $output"; return 1; }
+}
+@test "diagnose: the module reachable through user namespaces is one counted WARN with the fix, both twins" {
+    both d_userns
+}
+c_userns() {
+    _write_init "export AWG_PROTOCOL='3.1'"
+    AWG_USERNS_ROOT=$(_userns_root open) run _run "$1" check_server 0
+    [ "$status" -eq 0 ] || { echo "check failed on an open host ($1): $output"; return 1; }
+    [[ "$output" == *"WARN: "*"#233"* ]] || { echo "no warning in check ($1): $output"; return 1; }
+    [[ "$output" == *"WARN: "*"kernel.unprivileged_userns_clone=0"* ]] || { echo "no fix in check ($1): $output"; return 1; }
+}
+@test "check: the module reachable through user namespaces warns and keeps the verdict, both twins" {
+    both c_userns
+}
+c_userns_json() {
+    _write_init "export AWG_PROTOCOL='3.1'"
+    AWG_USERNS_ROOT=$(_userns_root open) run --separate-stderr _run "$1" check_server 1
+    [ "$status" -eq 0 ] || { echo "check --json failed on an open host ($1): $output $stderr"; return 1; }
+    jq -s -e 'length == 1 and .[0].ok == true' <<< "$output" >/dev/null || { echo "stdout is not one JSON verdict ($1): $output"; return 1; }
+    [[ "$stderr" == *"#233"* ]] || { echo "the warning did not go to stderr ($1): $stderr"; return 1; }
+}
+@test "check --json: the user namespace warning keeps stdout to the JSON document, both twins" {
+    require_jq
+    both c_userns_json
+}
+
+# An older awg_common of the same MAJOR.MINOR has no userns functions: check and
+# diagnose say the check was skipped (diagnose counts it), not "command not
+# found" and not silence. _old_pair <manage> : copies of manage and its library
+# without the two functions, the library path derived the way _run derives it.
+_old_pair() {
+    local src="$1" d="$BATS_TEST_TMPDIR/oldlib" base common
+    mkdir -p "$d"
+    base=$(basename "$src"); common="${src/manage_amneziawg/awg_common}"
+    cp "$src" "$d/$base"
+    awk '/^awg_userns_module_(lines|warn)\(\) \{/{skip=1} skip&&/^\}/{skip=0; next} !skip' "$common" > "$d/$(basename "$common")"
+    ! grep -qE '^awg_userns_module_(lines|warn)\(\)' "$d/$(basename "$common")" || return 1
+    printf '%s' "$d/$base"
+}
+d_userns_oldlib() {
+    local m base
+    _write_init "export AWG_PROTOCOL='3.1'"
+    m=$(_old_pair "$1") || { echo "could not strip the library ($1)"; return 1; }
+    AWG_USERNS_ROOT=$(_userns_root closed) run _run "$m" diagnose_server 0
+    [[ "$output" =~ WARN=([0-9]+) ]] || { echo "no summary ($1): $output"; return 1; }
+    if ru "$1"; then
+        [[ "$output" == *"[WARN] "*"пропущена"* ]] || { echo "no skipped WARN ($1): $output"; return 1; }
+    else
+        [[ "$output" == *"[WARN] "*"was skipped"* ]] || { echo "no skipped WARN ($1): $output"; return 1; }
+    fi
+    [[ "$output" != *"awg_userns_module_"*"command not found"* ]] || { echo "command not found leaked ($1): $output"; return 1; }
+    AWG_USERNS_ROOT=$(_userns_root closed) run _run "$1" diagnose_server 0
+    [[ "$output" =~ WARN=([0-9]+) ]] || { echo "no summary, new library ($1): $output"; return 1; }
+    base="${BASH_REMATCH[1]}"
+    AWG_USERNS_ROOT=$(_userns_root closed) run _run "$m" diagnose_server 0
+    [[ "$output" == *"WARN=$((base + 1)) "* ]] || { echo "the skipped check was not counted, base $base ($1): $output"; return 1; }
+}
+@test "diagnose: an older library without the userns check is one counted WARN, both twins" {
+    shopt -s extglob
+    both d_userns_oldlib
+}
+c_userns_oldlib() {
+    local m
+    _write_init "export AWG_PROTOCOL='3.1'"
+    m=$(_old_pair "$1") || { echo "could not strip the library ($1)"; return 1; }
+    AWG_USERNS_ROOT=$(_userns_root open) run _run "$m" check_server 0
+    [ "$status" -eq 0 ] || { echo "check failed with an older library ($1): $output"; return 1; }
+    if ru "$1"; then
+        [[ "$output" == *"WARN: "*"пропущена"* ]] || { echo "no skipped warning in check ($1): $output"; return 1; }
+    else
+        [[ "$output" == *"WARN: "*"was skipped"* ]] || { echo "no skipped warning in check ($1): $output"; return 1; }
+    fi
+    [[ "$output" != *"awg_userns_module_"*"command not found"* ]] || { echo "command not found leaked ($1): $output"; return 1; }
+    # and with --json the notice goes to stderr, stdout stays one JSON verdict
+    AWG_USERNS_ROOT=$(_userns_root open) run --separate-stderr _run "$m" check_server 1
+    [ "$status" -eq 0 ] || { echo "check --json failed with an older library ($1): $output $stderr"; return 1; }
+    jq -s -e 'length == 1 and .[0].ok == true' <<< "$output" >/dev/null || { echo "stdout is not one JSON verdict ($1): $output"; return 1; }
+    [[ "$stderr" == *@(пропущена|was skipped)* ]] || { echo "the notice did not go to stderr ($1): $stderr"; return 1; }
+    [[ "$stderr" != *"awg_userns_module_"*"command not found"* ]] || { echo "command not found leaked to stderr ($1): $stderr"; return 1; }
+}
+@test "check: an older library without the userns check says it was skipped, both twins" {
+    require_jq
+    shopt -s extglob
+    both c_userns_oldlib
 }
 
 d_jmin_le_jmax() {

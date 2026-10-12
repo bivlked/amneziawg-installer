@@ -102,6 +102,9 @@ _run_check() {
         # the length-collision warning reads awg0.conf through awg_common, which this
         # harness does not load; it has its own tests in test_size_collision.bats
         awg_size_collision_warn() { :; }
+        # the user namespace warning reads /proc, /sys and /lib/modules; its own tests are in
+        # test_userns_module_warning.bats
+        awg_userns_module_warn() { :; }
         JSON_OUTPUT=1
         _JSON_EMITTED=0
         '"$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$common_src")"'
@@ -170,7 +173,7 @@ _run_check() {
         SERVER_CONF_FILE="$SERVER_CONF_FILE" bash -c '
             set -o pipefail
             log() { :; }; log_warn() { :; }; log_error() { :; }; log_debug() { :; }
-            safe_load_config() { return 0; }; awg_size_collision_warn() { :; }
+            safe_load_config() { return 0; }; awg_size_collision_warn() { :; }; awg_userns_module_warn() { :; }
             JSON_OUTPUT=1
             _JSON_EMITTED=0
             '"$(awk '/^_sanitize_port\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../awg_common.sh")"'

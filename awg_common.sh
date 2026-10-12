@@ -2689,6 +2689,125 @@ awg_size_collision_warn() {
     return 0
 }
 
+# _awg_sysctl_num <файл> : число из файла /proc или /sys (первая строка, все
+# пробельные символы удалены, ведущие нули - десятичные), пусто - если файла нет,
+# он не читается, в нём не число или число длиннее 10 цифр. «Не прочитал» и
+# «прочитал не число» намеренно сливаются: вызывающий в обоих случаях не знает
+# значения и не должен его додумывать.
+_awg_sysctl_num() {
+    local v=""
+    [[ -r "$1" ]] || return 0
+    IFS= read -r v 2>/dev/null < "$1" || true
+    v="${v//[[:space:]]/}"
+    [[ "$v" =~ ^[0-9]{1,10}$ ]] && printf '%s' "$((10#$v))"
+    return 0
+}
+
+# awg_userns_module_lines : для check и diagnose - строка «сообщение<TAB>как
+# закрыть», когда модуль ядра amneziawg есть в системе, а непривилегированные
+# пространства имён пользователей (user namespaces) разрешены без ограничений.
+#
+# Зачем. Netlink-команды модуля помечены GENL_UNS_ADMIN_PERM, семейство - netnsok,
+# поэтому прав CAP_NET_ADMIN в СОБСТВЕННОМ user namespace хватает, чтобы завести
+# интерфейс amneziawg в своём сетевом пространстве и задать ему I1-I5. А
+# разборщик I1-I5 в модуле читает длину в <r>/<rc>/<rd> знаковым int и
+# отрицательную не отвергает (amneziawg-linux-kernel-module#233, src/junk.c;
+# тот же код и в пиновом исходнике 2.0, из которого собраны пребилты ARM), что в
+# некоторых сочетаниях тегов пишет за границу буфера в ядре. Наши команды такие
+# значения отвергают (awg_cps_check_safe), а предупреждение - про остальных
+# пользователей и программы на хосте. Модуль объявляет MODULE_ALIAS_RTNL_LINK и
+# MODULE_ALIAS_GENL_FAMILY, поэтому установленный, но не загруженный, он может
+# подгрузиться сам по первому запросу. Исходники обеих линий и патч ядра Debian
+# сохранены в RESEARCH/upstream-snapshots/2026-10-12/server/ (рабочая папка, не
+# репозиторий). Проверено на стенде Ubuntu 24.04 12 oct 2026, дыру не трогая:
+# при kernel.apparmor_restrict_unprivileged_userns = 0 обычный пользователь
+# создал интерфейс и задал I1 = <r 8>; при kernel.unprivileged_userns_clone = 0
+# unshare отказал с EPERM; штатное ограничение AppArmor (= 1) простую попытку
+# отклонило, но обычного пользователя на стенде НЕ остановило.
+#
+# Молчит, если модуля нет в системе (не загружен, и нет непустого файла модуля
+# для текущего ядра, или загрузка модулей запрещена: kernel.modules_disabled = 1;
+# blacklist в modprobe.d не учитываем); если путь закрыт (unprivileged_userns_clone,
+# max_user_namespaces или max_net_namespaces равен 0); если нет max_user_namespaces
+# или max_net_namespaces (значит, неизвестно, есть ли пространства вообще); если
+# действует ограничение AppArmor (= 1, AppArmor не выключен заведомо и не стоит
+# режим complain, в котором ограничение только пишет в журнал); и если значение,
+# нужное для вывода, есть, но не прочитано: догадка здесь учила бы не верить
+# предупреждению.
+# 🔴 Ограничение AppArmor путь НЕ закрывает (стенд выше). Молчать при нём -
+# решение владельца 12 oct 2026 (иначе предупреждение стояло бы на каждой штатной
+# Ubuntu); ADVANCED говорит об этом прямо. Поэтому совет никогда не предлагает
+# включить ограничение AppArmor: после него check замолчал бы при открытом пути.
+# Совет: unprivileged_userns_clone = 0 (патч Debian; в Ubuntu он есть, проверено
+# на 24.04), без него - max_user_namespaces = 0, он дороже.
+# Проверить сам модуль на ошибку нельзя: проба отрицательной длиной и есть дыра.
+# 🔴 Пересмотр (MyAI-9zrc.31): когда исправление вендора (#237/#247) выйдет в
+# PPA, для сборок PPA текст «неисправленная ошибка» станет ложным - различать
+# сборку по srcversion или сузить предупреждение до пинового 2.0 и ARM.
+#
+# AWG_USERNS_ROOT переопределяется только тестами (bats): префикс к /proc, /sys
+# и /lib/modules.
+awg_userns_module_lines() {
+    local root="${AWG_USERNS_ROOT:-}" loaded=1 clone maxns netns aa aac md aa_on="" f kver key="" val="" price="" pre=""
+    if [[ ! -d "$root/sys/module/amneziawg" ]]; then
+        loaded=0
+        kver=$(uname -r 2>/dev/null) || return 0
+        [[ -n "$kver" && -d "$root/lib/modules/$kver" ]] || return 0
+        [[ -n "$(find "$root/lib/modules/$kver" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]] || return 0
+    fi
+    # Параметр, который есть, но не прочитан (или в нём не число), - это «не
+    # знаю», а не «разрешено»: иначе закрытый хост с одним нечитаемым файлом
+    # получал бы предупреждение «может любой пользователь».
+    for f in kernel/unprivileged_userns_clone user/max_user_namespaces user/max_net_namespaces \
+             kernel/apparmor_restrict_unprivileged_userns kernel/apparmor_restrict_unprivileged_userns_complain; do
+        [[ -e "$root/proc/sys/$f" && -z "$(_awg_sysctl_num "$root/proc/sys/$f")" ]] && return 0
+    done
+    clone=$(_awg_sysctl_num "$root/proc/sys/kernel/unprivileged_userns_clone")
+    maxns=$(_awg_sysctl_num "$root/proc/sys/user/max_user_namespaces")
+    netns=$(_awg_sysctl_num "$root/proc/sys/user/max_net_namespaces")
+    aa=$(_awg_sysctl_num "$root/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
+    aac=$(_awg_sysctl_num "$root/proc/sys/kernel/apparmor_restrict_unprivileged_userns_complain")
+    # Не загружен, а загрузка модулей запрещена: сам он не подгрузится. Нужно
+    # только незагруженному, поэтому и «не прочитал» значит молчать только тогда.
+    if [[ "$loaded" == 0 ]]; then
+        md=$(_awg_sysctl_num "$root/proc/sys/kernel/modules_disabled")
+        [[ -e "$root/proc/sys/kernel/modules_disabled" && -z "$md" ]] && return 0
+        [[ "$md" == 1 ]] && return 0
+    fi
+    # Свой network namespace для этого пути обязателен, поэтому нужны оба лимита.
+    [[ -n "$maxns" && -n "$netns" ]] || return 0
+    [[ "$clone" == 0 || "$maxns" == 0 || "$netns" == 0 ]] && return 0
+    # Включён ли AppArmor: Y - да, N - нет, нет файла или не прочитан - не знаю.
+    if [[ -r "$root/sys/module/apparmor/parameters/enabled" ]]; then
+        IFS= read -r aa_on 2>/dev/null < "$root/sys/module/apparmor/parameters/enabled" || true
+        aa_on="${aa_on//[[:space:]]/}"
+    fi
+    [[ "$aa" == 1 && "$aa_on" != N && "${aac:-0}" == 0 ]] && return 0
+    if [[ -n "$clone" ]]; then
+        key=kernel.unprivileged_userns_clone val=0
+        price="перестанут работать rootless-контейнеры (Podman, Docker в режиме rootless), песочницы приложений и любые программы и службы, которые без права CAP_SYS_ADMIN на хосте (в том числе от root внутри обычного контейнера) сами создают такие пространства; демон Docker в обычном режиме не затрагивается."
+    else
+        key=user.max_user_namespaces val=0
+        pre="Сначала запишите прежнее значение (sysctl user.max_user_namespaces), чтобы было что вернуть. "
+        price="user namespaces перестанут создаваться совсем, в том числе от root: перестанут работать rootless-контейнеры, песочницы приложений, службы systemd с PrivateUsers= и Docker с userns-remap."
+    fi
+    printf '%s\t%s\n' \
+        "Модуль ядра amneziawg есть в системе (загружен или может подгрузиться по первому запросу), а создавать пространства имён пользователей (user namespaces) может любой пользователь. Тогда и непривилегированный процесс способен завести свой интерфейс AmneziaWG и передать модулю параметры I1-I5. В модуле вендора есть неисправленная ошибка разбора тегов <r>/<rc>/<rd> с отрицательной длиной (amneziawg-linux-kernel-module#233): в некоторых сочетаниях она пишет за границу буфера в ядре. Наши команды такие значения отвергают; риск - от других пользователей и программ на этом сервере." \
+        "${pre}Закрыть этот путь: sudo sysctl -w ${key}=${val}, а чтобы пережило перезагрузку: echo '${key} = ${val}' | sudo tee /etc/sysctl.d/99-userns.conf. Цена: ${price} Уже созданные пространства настройка не трогает: после неё надёжнее перезагрузиться. Подробнее: ADVANCED.md#userns-module-adv"
+    return 0
+}
+
+# awg_userns_module_warn : то же для check - предупреждениями в журнал.
+awg_userns_module_warn() {
+    local msg fix
+    while IFS=$'\t' read -r msg fix; do
+        [[ -n "$msg" ]] || continue
+        log_warn " - $msg"
+        log_warn "   $fix"
+    done <<< "$(awg_userns_module_lines)"
+    return 0
+}
+
 # awg_hpk_path : путь к файлу ключа защиты заголовков (HeaderProtectionKey).
 # Одно место и только по текущему AWG_DIR: путь не хранится в init, иначе второй
 # источник пути пришлось бы сверять с этим при каждом переносе бэкапа.
