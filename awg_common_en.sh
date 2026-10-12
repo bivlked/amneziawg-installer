@@ -2809,7 +2809,7 @@ _awg_sysctl_num() {
 # which costs more.
 # The module itself cannot be checked for the bug: a probe with a negative
 # length is the bug.
-# 🔴 To revisit (MyAI-9zrc.31): once the vendor fix (#237/#247) reaches the PPA,
+# 🔴 To revisit: once the vendor fix (#237/#247) reaches the PPA,
 # "unfixed bug" becomes false for PPA builds - tell builds apart by srcversion or
 # narrow the warning to the pinned 2.0 and ARM.
 #
