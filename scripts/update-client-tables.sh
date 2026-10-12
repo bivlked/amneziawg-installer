@@ -516,7 +516,7 @@ T = {
                 '     Руками не править: check-docs-consistency.sh сверит таблицу с файлом. -->',
         'intro': 'Снято {date} со страниц релизов, магазинов и кода проектов, проверить можно там же. '
                  'Клиенты двигаются раз в несколько дней, поэтому у строк стоят даты. «С какой '
-                 'версии» - по заметкам к выпускам и страницам самих проектов, «Основание» - откуда '
+                 'версии» - по заметкам к выпускам, страницам и коду самих проектов, «Основание» - откуда '
                  'известно поколение.',
         'intro_mixed': ' Строки, проверенные позже, несут свою дату в столбце «Основание».',
         'head': '| Клиент | 3.1 | Версия на {short} | С какой версии 3.1 | Где брать | Основание |',
@@ -541,7 +541,7 @@ T = {
                 '     Do not edit by hand: check-docs-consistency.sh verifies it against the file. -->',
         'intro': 'Recorded {date} from the release pages, the app stores and the projects\' code, '
                  'and you can check the same way. Clients move every few days, so the rows carry '
-                 'dates. "3.1 since" comes from the projects\' own release notes and pages, "Basis" '
+                 'dates. "3.1 since" comes from the projects\' own release notes, pages and code, "Basis" '
                  'says how the generation is known.',
         'intro_mixed': ' Rows checked later carry their own date in the "Basis" column.',
         'head': '| Client | 3.1 | Version on {short} | 3.1 since | Where to get it | Basis |',

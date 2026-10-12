@@ -776,7 +776,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 | [WG Tunnel Desktop](https://github.com/wgtunnel/desktop) | Windows, Linux, macOS | ✅ v2 | ✅ | Third-party, FOSS | Same engine as the Android version |
 | [VeilBox](https://github.com/artem4150/VeilBox) | Windows, macOS | not verified | ✅ | Third-party, FOSS | Also supports VLESS |
 
-> Versions with 3.1 support are taken from release notes as of 5 October 2026. [Full client compatibility table →](ADVANCED.en.md#client-compat-adv)
+> Versions with 3.1 support are taken from release notes as of 12 October 2026. [Full client compatibility table →](ADVANCED.en.md#client-compat-adv)
 
 ### Configuration Tools
 

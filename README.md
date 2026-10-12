@@ -777,7 +777,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 | [WG Tunnel Desktop](https://github.com/wgtunnel/desktop) | Windows, Linux, macOS | ✅ v2 | ✅ | Сторонний, FOSS | Тот же движок, что у Android-версии |
 | [VeilBox](https://github.com/artem4150/VeilBox) | Windows, macOS | не проверено | ✅ | Сторонний, FOSS | Также поддерживает VLESS |
 
-> Версии с поддержкой 3.1 взяты из заметок к выпускам на 5 октября 2026. [Полная таблица совместимости клиентов →](ADVANCED.md#client-compat-adv)
+> Версии с поддержкой 3.1 взяты из заметок к выпускам на 12 октября 2026. [Полная таблица совместимости клиентов →](ADVANCED.md#client-compat-adv)
 
 ### Инструменты настройки
 

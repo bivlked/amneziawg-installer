@@ -28,7 +28,7 @@
       "where": {"ru": "GitHub, магазины; в российском App Store нет; Windows - по прямой ссылке со страницы релизов", "en": "GitHub, app stores; not in the Russian App Store; on Windows use the direct link from the releases page"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/amnezia-vpn/amnezia-client/releases"},
-      "checked_at": "2026-10-05"
+      "checked_at": "2026-10-12"
     },
     {
       "id": "amneziawg-android",
@@ -40,7 +40,7 @@
       "where": {"ru": "Google Play, страница релизов", "en": "Google Play, releases page"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/amnezia-vpn/amneziawg-android"},
-      "checked_at": "2026-10-05"
+      "checked_at": "2026-10-12"
     },
     {
       "id": "amneziawg-apple",
@@ -52,7 +52,7 @@
       "where": {"ru": "App Store, в том числе российский", "en": "App Store, the Russian one included"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://apps.apple.com/app/amneziawg/id6478942365"},
-      "checked_at": "2026-10-05"
+      "checked_at": "2026-10-12"
     },
     {
       "id": "amneziawg-windows",
@@ -64,31 +64,43 @@
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/amnezia-vpn/amneziawg-windows-client/releases"},
-      "checked_at": "2026-10-05"
+      "checked_at": "2026-10-12"
+    },
+    {
+      "id": "amneziawg-windows-romikb",
+      "name": {"ru": "AmneziaWG для Windows 7 и 8 (сборка RomikB, сторонняя)", "en": "AmneziaWG for Windows 7 and 8 (RomikB build, third-party)"},
+      "support": "yes",
+      "version": "v3.1.1",
+      "version_date": "2026-08-28",
+      "since": "v3.1.1",
+      "where": {"ru": "страница релизов проекта, файлы с windows7 в имени", "en": "project releases page, files with windows7 in the name"},
+      "basis": "build-pin",
+      "evidence": {"url": "https://github.com/RomikB/amneziawg-windows-client", "ref": "go.mod at v3.1.1: amnezia-vpn/amneziawg-go/v3 v3.1.20260814"},
+      "checked_at": "2026-10-12"
     },
     {
       "id": "wg-tunnel-android",
       "name": {"ru": "WG Tunnel (Android, сторонний)", "en": "WG Tunnel (Android, third-party)"},
       "support": "yes",
-      "version": "5.7.5",
-      "version_date": "2026-09-26",
+      "version": "5.8.1",
+      "version_date": "2026-10-12",
       "since": "5.6.0",
       "where": "Google Play, IzzyOnDroid, APK",
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/wgtunnel/android"},
-      "checked_at": "2026-10-05"
+      "checked_at": "2026-10-12"
     },
     {
       "id": "wg-tunnel-desktop",
       "name": {"ru": "WG Tunnel Desktop (сторонний)", "en": "WG Tunnel Desktop (third-party)"},
       "support": "yes",
-      "version": "v2.3.0",
-      "version_date": "2026-10-03",
+      "version": "v2.4.0",
+      "version_date": "2026-10-11",
       "since": {"ru": "линия v2", "en": "v2 line"},
       "where": {"ru": "страница релизов проекта, choco, apt, AUR", "en": "project releases page, choco, apt, AUR"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/wgtunnel/desktop"},
-      "checked_at": "2026-10-05"
+      "checked_at": "2026-10-12"
     },
     {
       "id": "mihomo",
@@ -100,7 +112,21 @@
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/MetaCubeX/mihomo"},
-      "checked_at": "2026-10-05"
+      "checked_at": "2026-10-12"
+    },
+    {
+      "id": "throne",
+      "name": {"ru": "Throne (Windows, Linux, macOS, сторонний)", "en": "Throne (Windows, Linux, macOS, third-party)"},
+      "support": "yes",
+      "version": "1.3.2",
+      "version_date": "2026-09-29",
+      "since": "1.3.0",
+      "since_date": "2026-09-17",
+      "since_note": {"ru": "в 1.3.x часть пакетов уходит с паддингом меньше заданного, исправлено в 1.4.0-beta.1", "en": "in 1.3.x some packets go out with less padding than set, fixed in 1.4.0-beta.1"},
+      "where": {"ru": "страница релизов проекта", "en": "project releases page"},
+      "basis": "build-pin",
+      "evidence": {"url": "https://github.com/throneproj/Throne", "ref": "core/go.mod at 1.3.2: throneproj/wireguard-go f60e4eda0d08; 1.4.0-beta.1 pins 3517ea9271e4 with padding fix ca68c0e"},
+      "checked_at": "2026-10-12"
     },
     {
       "id": "hiddify",
@@ -110,7 +136,7 @@
       "version_date": "2026-03-05",
       "basis": "build-pin",
       "evidence": {"url": "https://github.com/hiddify/hiddify-app", "ref": "hiddifydeveloper/amneziawg-go@70b344f"},
-      "checked_at": "2026-10-05"
+      "checked_at": "2026-10-12"
     },
     {
       "id": "keeneticos",
@@ -124,41 +150,52 @@
       "where": {"ru": "канал разработки Keenetic", "en": "Keenetic development channel"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://forum.keenetic.com/topic/26598-changelog-52/"},
-      "checked_at": "2026-10-05"
+      "checked_at": "2026-10-12"
     },
     {
       "id": "awg-manager",
       "name": {"ru": "AWG Manager (Keenetic, сторонний)", "en": "AWG Manager (Keenetic, third-party)"},
       "support": "yes",
-      "version": "v2.19.12",
-      "version_date": "2026-09-29",
+      "version": "v2.19.13",
+      "version_date": "2026-10-07",
       "since": {"ru": "на KeeneticOS 5.2 Alpha 11 и новее", "en": "on KeeneticOS 5.2 Alpha 11 and newer"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/hoaxisr/awg-manager"},
-      "checked_at": "2026-10-05"
+      "checked_at": "2026-10-12"
+    },
+    {
+      "id": "openwrt",
+      "name": {"ru": "OpenWrt (официальные пакеты)", "en": "OpenWrt (official packages)"},
+      "support": "no",
+      "version": {"ru": "пакета нет; PR openwrt/packages #30492 и #30493 открыты", "en": "no package; openwrt/packages PRs #30492 and #30493 are open"},
+      "basis": "vendor-docs",
+      "evidence": {"url": "https://github.com/openwrt/packages/pull/30492"},
+      "checked_at": "2026-10-12"
     },
     {
       "id": "awg-openwrt",
       "name": {"ru": "awg-openwrt (OpenWrt, сторонний)", "en": "awg-openwrt (OpenWrt, third-party)"},
-      "support": "nightly",
-      "version": {"ru": "фид для 25.12", "en": "feed for 25.12"},
-      "version_date": "2026-10-05",
-      "where": {"ru": "фид проекта", "en": "project feed"},
-      "basis": "vendor-docs",
-      "evidence": {"url": "https://github.com/Slava-Shchipunov/awg-openwrt"},
-      "checked_at": "2026-10-05"
+      "support": "yes",
+      "version": "v25.12.5, v24.10.8",
+      "since": "v25.12.5, v24.10.8",
+      "since_date": "2026-09-22",
+      "since_note": {"ru": "пакеты этих релизов заменены под прежними тегами; скачанные раньше и пакеты для более старых OpenWrt - без 3.1", "en": "the packages of these releases were replaced under the same tags; ones downloaded earlier and packages for older OpenWrt have no 3.1"},
+      "where": {"ru": "страница релизов проекта, фид проекта", "en": "project releases page, project feed"},
+      "basis": "build-pin",
+      "evidence": {"url": "https://github.com/Slava-Shchipunov/awg-openwrt/releases", "ref": "x86_64 packages of v24.10.8 and v25.12.5: kmod-amneziawg 3.1.20260906-r1 (6.6.144.3.1.20260906-r1 for 24.10), amneziawg-tools 3.1.20260812-r1"},
+      "checked_at": "2026-10-12"
     },
     {
       "id": "amneziawg-mikrotik-c",
       "name": {"ru": "amneziawg-mikrotik-c (MikroTik, сторонний)", "en": "amneziawg-mikrotik-c (MikroTik, third-party)"},
       "support": "yes",
-      "version": "v1.4.2",
-      "version_date": "2026-10-04",
+      "version": "v1.4.3",
+      "version_date": "2026-10-08",
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/timbrs/amneziawg-mikrotik-c"},
-      "checked_at": "2026-10-05"
+      "checked_at": "2026-10-12"
     },
     {
       "id": "amneziawg-mikrotik",
@@ -170,7 +207,7 @@
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/catesin/AmneziaWG-MikroTik"},
-      "checked_at": "2026-10-05"
+      "checked_at": "2026-10-12"
     }
   ]
 }
