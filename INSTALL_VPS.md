@@ -6,36 +6,37 @@ A step-by-step guide for deploying an AmneziaWG VPN server (3.1 by default, 2.0 
 
 ## TL;DR
 
-- One command, MIT-licensed, fully self-hosted, no third-party dependencies at runtime.
-- Works on Ubuntu 24.04 LTS and Debian 13 (trixie); Ubuntu 26.04 works with a temporary kernel caveat (see below). Debian 12 (bookworm) works too, but it is past regular support; Ubuntu 25.10 is not supported since v6.0.0. Details below.
-- Built for cheap VPS budgets: $3 to $5 a month, 1 vCPU, 512 MB RAM minimum (1 GB recommended), 2 GB disk minimum (3+ GB recommended).
-- Both x86_64 (amd64) and ARM64 (aarch64), with prebuilt kernel modules covering Raspberry Pi 4/5, Ubuntu 24.04 ARM64, and Debian 12/13 ARM64 (Hetzner CAX, Oracle Ampere A1, AWS Graviton all run on these stock kernels). Ubuntu 26.04 ARM64 builds the module from source via DKMS.
-- DPI bypass for Russia (ТСПУ), Iran, China, school and corporate firewalls.
-- AmneziaWG 3.1 for a new install by default; routers on stock firmware, Hiddify and old apps need `--protocol=2.0`. On a stock Debian 12 (kernel 6.1) and on ARM the installer picks 2.0 by itself.
-- Survives kernel upgrades automatically via DKMS auto-repair (since v5.12.0). On ARM with a prebuilt module there is no DKMS: after a kernel change, run the installer again.
-- Ubuntu releases the PPA publishes nothing for: if the PPA does not answer for the release codename, the installer switches to `noble` itself (since v5.13.0).
+- A fresh install gets **AmneziaWG 3.1**: header encryption and extra padding on top of the usual obfuscation. Routers on stock firmware, Hiddify and apps that have not been updated need `--protocol=2.0`; on a stock Debian 12 (kernel 6.1) and on ARM the installer picks 2.0 by itself.
+- One command, MIT-licensed, fully self-hosted: no third-party service carries your traffic or holds your keys. The server reaches out only for package updates (your distribution's mirrors and the Amnezia PPA on Launchpad) and, when a client config is made without `--endpoint`, to a public-IP lookup service (api.ipify.org and fallbacks).
+- 3.1 out of the box on x86_64 with Ubuntu 24.04 LTS, Ubuntu 26.04 LTS or Debian 13 (trixie). Debian 12 (bookworm) works too, on 2.0, but it is past regular support; Ubuntu 25.10 is not supported since v6.0.0. Details below.
+- Built for cheap VPS budgets: $3 to $5 a month, 1 vCPU, 512 MB RAM minimum (1 GB recommended), 2 GB disk minimum (3+ GB recommended). It needs a KVM VPS: the installer stops in OpenVZ and LXC containers.
+- ARM64 (aarch64) works too, on AmneziaWG 2.0, with prebuilt kernel modules for Raspberry Pi 4/5, Ubuntu 24.04 ARM64 and Debian 12/13 ARM64 (Hetzner CAX, Oracle Ampere A1 and AWS Graviton run these stock kernels). Ubuntu 26.04 ARM64 builds the module from source via DKMS.
+- DPI bypass for Russia (ТСПУ), Iran, China, school and corporate firewalls. No guarantees: the result depends on the network and the parameters.
+- Survives kernel upgrades: with DKMS the module is rebuilt at the next boot. On ARM with a prebuilt module there is no DKMS: after a kernel change, run the installer again ([details](#update-flow)).
 
 ## Choosing a VPS
 
-A VPN server is mostly idle CPU and steady network. Three picks I keep coming back to:
+A VPN server is mostly idle CPU and steady network. What to look for:
 
-- **Hetzner CAX11 / CAX21** (ARM Ampere, EU). About €4 / month for 2 vCPU and 4 GB RAM. Wide bandwidth, EU jurisdiction, prebuilt ARM kernel module is published for this exact platform. The catch: Hetzner subnets are widely blacklisted by Russian carriers (TSPU, Rostelecom, MTS), so do not use Hetzner if you are routing Russian mobile traffic into the tunnel. Pick a non-Russia-blacklisted host for that case.
-- **Oracle Cloud Always Free (ARM Ampere A1)**. 4 vCPU and 24 GB RAM in the free tier, no expiry, multiple regions. Reliable but capacity-limited (Oracle releases A1 quotas in waves).
-- **Generic budget VPS** (Vultr, RackNerd, your local provider). Pick anything with 1 GB RAM, root SSH access, and not on a known-bad subnet for your audience. ARM is fine where prebuilts apply, otherwise amd64 with DKMS-built kernel module works the same way.
+- **A KVM VPS on x86_64 (amd64)** with 1 GB RAM and root SSH access: this is what gets AmneziaWG 3.1. Any budget provider will do (Vultr, RackNerd, your local host), as long as its addresses are not on a known-bad subnet for your audience. OpenVZ and LXC containers cannot load a kernel module, and the installer stops on them.
+- **ARM hosts** work fine, but the installer sets up AmneziaWG 2.0 there. Two common ones: Hetzner CAX11 / CAX21 (about €4 a month for 2 vCPU and 4 GB RAM, EU) and Oracle Cloud Always Free (Ampere A1, 4 vCPU and 24 GB RAM, capacity released in waves). A prebuilt ARM kernel module is published for both.
+- **Hetzner and Russian carriers.** Hetzner subnets are widely blacklisted by Russian carriers (TSPU, Rostelecom, MTS), so do not use Hetzner if you are routing Russian mobile traffic into the tunnel. Pick a host that is not blacklisted for that case.
 
-Country matters mostly for latency and jurisdiction. ARM versus amd64 has no real performance difference for a personal-scale VPN.
+Country matters mostly for latency and jurisdiction. For a personal VPN, ARM versus amd64 makes no real speed difference; it decides the protocol generation, as above.
 
 **Check that your host gives you an emergency console, and that it works.** It is the simplest way back in if SSH stops answering after a reboot or because of a firewall rule. Without one, recovery means provider support, a snapshot rollback or a reinstall.
 
 ## OS choice
 
-- **Ubuntu 24.04 LTS** is the best-tested platform. Default pick if you have no other preference. The HWE kernel 7.0.0-38 is supported since v5.37.1: the installer fixes the PPA module source itself ([details](ADVANCED.en.md#kernel-70-backport-adv)).
-- **Ubuntu 26.04** works since v5.13.0. The PPA codename remaps to `noble` automatically when the running codename PPA is unreachable (404 or network failure). Resilient against do-release-upgrade from 24.04. The PPA module does not build for the 26.04 kernel 7.0.0-38 on its own; since v5.37.1 the installer fixes its source itself, see [known limitations](ADVANCED.en.md#kernel-70-backport-adv).
+**Which systems get 3.1:** Ubuntu 24.04, Ubuntu 26.04 and Debian 13 on x86_64. On Debian 12 and on ARM the installer sets up 2.0 by itself ([where 2.0 is installed instead](ADVANCED.en.md#awg3-fallback-adv)).
+
+- **Ubuntu 24.04 LTS** is the best-tested platform. Default pick if you have no other preference. The HWE kernel 7.0.0-38 is supported: the installer fixes the PPA module source itself ([details](ADVANCED.en.md#kernel-70-backport-adv)).
+- **Ubuntu 26.04 LTS** is supported. The PPA publishes packages for it (`resolute`); if the PPA does not answer for a release, the installer falls back to `noble` by itself. The PPA module does not build for the 26.04 kernel 7.0.0-38 on its own; the installer fixes its source itself ([details](ADVANCED.en.md#kernel-70-backport-adv)). An upgrade from 24.04 with `do-release-upgrade` works too.
 - ❌ **Ubuntu 25.10** (questing) is not supported since v6.0.0. Ubuntu itself stopped supporting it on 2026-07-01, and being an interim release it gets no extended support either: no security updates of any kind are published for it. The installer treats it as an untested release: it warns and asks for confirmation (`--yes` carries on without asking). Move the box to 26.04 LTS with `do-release-upgrade` and run the latest installer again, or reinstall on 24.04 LTS or Debian 13.
 - **Debian 13** (trixie) is fully supported, with the codename mapped to `noble`.
-- ⚠️ **Debian 12** (bookworm) is just as fully supported by the installer, with the codename mapped to `focal`. Debian itself ended regular support on 2026-07-11; security updates continue through Debian LTS until 2028-06-30, so the system is still patched, though no longer by the main team. Prefer Debian 13 for a new server. Note: upstream shipped AmneziaWG 3.0 in late July 2026. On kernels older than 6.7, which includes Debian 12 (kernel 6.1), the installer deliberately stays on AmneziaWG 2.0: it builds a pinned 2.0 module from source instead of taking 3.0 from the PPA, so the install keeps working (since v5.23.0); see [ADVANCED](ADVANCED.en.md#debian-support-adv) for the details.
+- ⚠️ **Debian 12** (bookworm) is just as fully supported by the installer, with the codename mapped to `focal`. Debian itself ended regular support on 2026-07-11; security updates continue through Debian LTS until 2028-06-30, so the system is still patched, though no longer by the main team. Prefer Debian 13 for a new server. On Debian 12 (kernel 6.1) the installer sets up AmneziaWG 2.0: 3.1 needs kernel 6.7 or newer, so it builds a pinned 2.0 module from source ([details](ADVANCED.en.md#debian-support-adv)).
 - Use a minimal install. The script assumes the box is single-purpose and will strip modemmanager, snapd, cloud-init leftovers and similar to free resources.
-- Avoid custom kernels (XanMod, Liquorix, Zen) on first install. DKMS compiles against the running kernel headers, but custom kernels can shift internal structs and trip a runtime panic. If you must, file a repro upstream rather than guessing.
+- Avoid custom kernels (XanMod, Liquorix, Zen) on first install. DKMS compiles against the running kernel headers, but custom kernels can shift internal structs and end in a kernel panic. If you must, file a repro upstream rather than guessing.
 
 ## One-command install
 
@@ -45,7 +46,7 @@ Connect as root (or as a sudo-capable user and prepend `sudo`). The installer us
 sudo ufw allow <your-ssh-port>/tcp
 ```
 
-Then:
+Then run the installer. It sets up AmneziaWG 3.1; if one of your devices is a router on stock firmware or uses Hiddify, read **Protocol generation** below first, because changing the generation later means a reinstall and new profiles for every client.
 
 ```bash
 wget -O install_amneziawg_en.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/install_amneziawg_en.sh
@@ -59,11 +60,11 @@ sudo bash ./install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh --protocol=2.0
 ```
 
-On kernels older than 6.7 (a stock Debian 12), on ARM, and where the installed tools or module do not understand third-line parameters, the installer installs 2.0 by itself and says why. The final report names the generation on the "Protocol generation" line. Which clients understand 3.1: [client table](ADVANCED.en.md#client-gen-adv); the details of both profiles: [ADVANCED.en.md](ADVANCED.en.md#awg3-fallback-adv).
+On kernels older than 6.7 (a stock Debian 12) and on ARM, the installer installs 2.0 by itself and says why. Where the installed awg tools or the kernel module do not understand third-line parameters, it switches to 2.0 if the module accepts the 2.0 set, and otherwise stops and names the package to upgrade. The final report names the generation on the "Protocol generation" line. Which clients understand 3.1: [client table](ADVANCED.en.md#client-gen-adv); the details of both profiles: [ADVANCED.en.md](ADVANCED.en.md#awg3-fallback-adv).
 
 The script walks through OS detection, base packages, PPA setup, kernel module install (DKMS or ARM prebuilt), UFW firewall, sysctl hardening, Fail2Ban, AmneziaWG service start, and default client config generation. Expect two reboots and 15 to 25 minutes of wall-clock time, mostly bound by `apt` and the kernel module build.
 
-The script is **idempotent and resume-safe**: after each reboot, run the same command again and it picks up from where it left off. State lives in `/root/awg/setup_state`. Two reboots are part of the normal flow:
+The script is **idempotent and resume-safe**. When it asks "Reboot now? [y/N]", answer `y` (Enter means no, and you reboot by hand). The SSH session drops; wait a minute or two, log in again and run the same command with the same flags: it picks up from where it left off. State lives in `/root/awg/setup_state`. Two reboots are part of the normal flow:
 
 ```mermaid
 flowchart LR
@@ -74,7 +75,7 @@ flowchart LR
     C --> D["VPN ready"]
 ```
 
-Two questions are easy to miss. At the start the script lists the packages it would remove (snapd, unattended-upgrades and others) and asks first; answer `n` or pass `--keep-packages` to keep them. If UFW is not on yet, the third run asks "Enable UFW? [y/N]": answer `y`, because pressing Enter leaves the server without a firewall.
+The first run asks for the port, the tunnel subnet, IPv6, client isolation, the server name shown in the Amnezia app and the routing mode; Enter takes the value shown in brackets. Two questions are easy to miss. At the start the script lists the packages it would remove (snapd, unattended-upgrades and others) and asks first; answer `n` or pass `--keep-packages` to keep them. If UFW is not on yet, the third run asks "Enable UFW? [y/N]": answer `y`, because pressing Enter leaves the server without a firewall.
 
 For a non-interactive run pass `--yes`: `sudo bash ./install_amneziawg_en.sh --yes`. The routing mode then falls back to the default, the packages are removed and UFW is enabled without asking.
 
@@ -133,23 +134,19 @@ With a non-standard SSH port, `scp` takes it as `-P` (capital P):
 scp -P YOUR_SSH_PORT root@SERVER_IP:/root/awg/my_iphone.conf .
 ```
 
-Where to import:
+Which app to put on which device (each of them needs a version with 3.1 support, see the [client table](ADVANCED.en.md#client-gen-adv)):
 
-- **WG Tunnel or AmneziaWG on Android, AmneziaWG on iPhone**: "+", then the QR code option for `<name>.png` (iPhone was not part of the check below). On Android these two are what we recommend: in our check on 13 October 2026 they reconnected in under a second and kept the tunnel across a Wi-Fi to mobile data switch.
-- **Amnezia VPN app** (Windows, macOS, Linux, Android, iOS): "Add VPN", then "Scan QR code" for `<name>.vpnuri.png`, or "Paste from clipboard" with the link from `sudo cat /root/awg/my_iphone.vpnuri`. If its scanner does not recognize the code (it did not on Android with 5.0.3), read the code with the phone's regular camera and paste the copied `vpn://` text.
-- **AmneziaWG client for Windows**: import `<name>.conf`.
-- **Linux**: put `<name>.conf` in place and bring it up with `awg-quick up`.
+| Device | App | What to import |
+|---|---|---|
+| Android | WG Tunnel or AmneziaWG | `<name>.png`: "+", then scan the QR code |
+| iPhone, iPad, Mac | AmneziaWG | `<name>.png` (QR code) or `<name>.conf` |
+| Windows | AmneziaWG | `<name>.conf` |
+| any of the above | Amnezia VPN | `<name>.vpnuri.png`: "Add VPN", then "Scan QR code"; or the `vpn://` text from `sudo cat /root/awg/<name>.vpnuri` via "Paste from clipboard" |
+| Linux | `awg-quick` with current amneziawg-tools | `<name>.conf`, brought up with `awg-quick up` ([Linux client](ADVANCED.en.md#linux-client-adv)) |
 
-Verify the handshake from the server side with `sudo awg show awg0` after the client connects. The `latest handshake` line should refresh every minute. If you need PresharedKey for Shadowrocket on iOS or macOS, add the `--psk` flag during `manage add`.
+On Android, WG Tunnel and AmneziaWG are what we recommend: in our check on 13 October 2026 they reconnected in under a second and kept the tunnel across a Wi-Fi to mobile data switch (iPhone was not part of that check). If the Amnezia VPN scanner does not recognize the code (it did not on Android with 5.0.3), read the code with the phone's regular camera and paste the copied `vpn://` text. If you need PresharedKey for Shadowrocket on iOS or macOS, add the `--psk` flag during `manage add`.
 
-You can drive the server from scripts too: since v5.21.0 the management commands take `--json` and reply with a single JSON object even when they fail, so a cron job or a bot can parse stdout without guesswork (the process exit code stays the source of truth). Add `--yes` for unattended runs, and set `AWG_STRICT_CONFIRM=1` if you want commands like `remove` to refuse when `--yes` is missing rather than quietly go ahead:
-
-```bash
-sudo bash /root/awg/manage_amneziawg.sh add phone --json --yes
-# {"command":"add","ok":true,"added":1,"failed":0,"applied":true,"results":[{"name":"phone","status":"created","conf":"/root/awg/phone.conf","qr":"/root/awg/phone.png","vpnuri":"/root/awg/phone.vpnuri","expires_at":null}]}
-```
-
-Per-command output formats and the compatibility promise: [ADVANCED.en.md JSON interface](ADVANCED.en.md#json-api-adv).
+**Check that it works.** After the client connects, `sudo awg show awg0` on the server should show a `latest handshake` within the last two or three minutes, and a "what is my IP" page on the client should show the server's address. `sudo bash /root/awg/manage_amneziawg.sh check` reports the server's health and its protocol generation ("Installation protocol generation").
 
 ## What next
 
@@ -158,6 +155,8 @@ Per-command output formats and the compatibility promise: [ADVANCED.en.md JSON i
 - Reissue a lost config: `regen <name>` (the keys stay the same). If a config leaked, revoke it instead: `remove <name>`, then `add <name>` and hand out the new file.
 - Back up before experiments: `backup`, and `restore` to go back.
 - Check server health: `check`.
+
+- Drive the server from scripts: the management commands take `--json` and reply with a single JSON object even when they fail; add `--yes` for unattended runs ([JSON interface](ADVANCED.en.md#json-api-adv)).
 
 All of them run as `sudo bash /root/awg/manage_amneziawg.sh <command>`. Common next steps: [two-server cascade](CASCADE.en.md), [Russian sites through WARP](WARP-RU.en.md).
 
@@ -172,11 +171,15 @@ sudo bash ./install_amneziawg_en.sh --force
 
 Set aside a few minutes for this. A reinstall walks the state machine from the top, so the box reboots twice, once after the system-update step and once after the kernel-module step, and you run the same command again after each reboot. Step 1 is replayed in full along the way: package cleanup, sysctl tuning, swap and BBR. The tunnel is down across those reboots, but nothing that clients hold is touched.
 
-The `--force` flag (or `AWG_FORCE_REINSTALL=1`) is required when reinstalling over an already-running AmneziaWG service, so an accidental re-run on a healthy box does not destroy state. First-time installs do not need it. Server keys, peer list, and obfuscation parameters survive a reinstall, and so does the protocol generation: a server installed before version 6.0.0 stays on AmneziaWG 2.0, and moving it to 3.1 takes `--uninstall` and a fresh install with every client profile issued again. The way back, from 3.1 to 2.0, is the same: `--uninstall`, then an install with `--protocol=2.0` and new profiles for every client. Since v5.21.0 the script pair is protected against drift: update one half and forget the other, and the scripts stop with the exact commands to fetch the missing piece, instead of throwing strange errors halfway through.
+The `--force` flag (or `AWG_FORCE_REINSTALL=1`) is required when reinstalling over an already-running AmneziaWG service, so an accidental re-run on a healthy box does not destroy state. First-time installs do not need it. Server keys, peer list, and obfuscation parameters survive a reinstall, and so does the protocol generation. Since v5.21.0 the script pair is protected against drift: update one half and forget the other, and the scripts stop with the exact commands to fetch the missing piece, instead of throwing strange errors halfway through.
 
 That is what keeps an update invisible to your users: config files and QR codes handed out earlier stay valid, and existing clients are preserved rather than recreated, the default `my_phone` and `my_laptop` included. One exception is worth remembering. Passing `--mobile`, `--preset`, `--jc`, `--jmin` or `--jmax` regenerates the whole `Jc`/`S`/`H`/`I1` set, while `--port` (as well as `--mobile`, which sets 443) changes the port. Either way every config issued before that stops connecting until you re-issue it with `sudo bash /root/awg/manage_amneziawg.sh regen` and hand it out again. `--endpoint` changes the address only in configs issued afterwards: the old ones keep the previous address and work as long as it still reaches the server, and they get the new one after `regen`. Leave those flags off when you are only updating. And if all you want is the newer management commands, `--force` is not needed at all: replacing the two scripts on the server is enough, and the installer only has to be re-run when the installer itself changed.
 
-A normal `apt-get upgrade` will pull a new kernel from time to time. For DKMS-based installs (typical for amd64 and most ARM64 deployments without a prebuilt for the new kernel), `amneziawg-ensure-module` rebuilds the module transparently at the next boot. Check its log with `journalctl -u amneziawg-ensure-module.service -b` or read the rolling apt-hook log at `/var/log/amneziawg-ensure-module.log`. Manual recovery if all three safety nets miss: `sudo bash /root/awg/manage_amneziawg.sh repair-module` reinstalls headers, rebuilds DKMS, and restarts the service. ARM users running an ARM prebuilt should rerun the installer after a kernel upgrade so it picks a fresh prebuilt or falls back to DKMS.
+**Moving an existing server to 3.1.** An update keeps the generation: a server installed before version 6.0.0 stays on AmneziaWG 2.0. To move it to 3.1, make a backup in case you need to go back, run `--uninstall`, install again with the latest installer and hand out new profiles to every client: profiles of the old generation do not connect to the new server. The way back, from 3.1 to 2.0, is the same with `--protocol=2.0`. Do not `restore` a backup made before the move: it brings the server back to the generation of the backup, and `restore` warns about that before it stops the service.
+
+A normal `apt-get upgrade` will pull a new kernel from time to time. For DKMS-based installs (typical for amd64 and for ARM64 without a prebuilt for the new kernel), `amneziawg-ensure-module` rebuilds the module transparently at the next boot. Check its log with `journalctl -u amneziawg-ensure-module.service -b` or read the rolling apt-hook log at `/var/log/amneziawg-ensure-module.log`. If the automatic rebuild did not help, `sudo bash /root/awg/manage_amneziawg.sh repair-module` reinstalls headers, rebuilds DKMS, and restarts the service.
+
+**ARM with a prebuilt module works differently, and it is worth knowing in advance.** On that path neither DKMS nor kernel headers are installed, and the `amneziawg-ensure-module` service is not created, so the commands above show and fix nothing there. A prebuilt module is built for one kernel version: after a kernel change the tunnel does not come up (`awg-quick@awg0` goes to `failed`, there is no `awg0` interface) and does not recover by itself. Run the installer again: it picks a package for the new kernel or falls back to DKMS.
 
 ## Uninstall
 
@@ -193,28 +196,29 @@ sudo bash ./install_amneziawg_en.sh --uninstall
 What `--uninstall` does:
 - stops and disables `awg-quick@awg0`, unloads the module, and removes the `amneziawg-ensure-module` unit, hook and log;
 - purges `amneziawg-dkms`, `amneziawg-tools` and `qrencode`, plus `fail2ban` only if the installer added it;
+- on ARM, purges the prebuilt module package `amneziawg-kmod-*` (if that fails, it prints the command to remove it by hand);
 - removes the PPA and its key, `/etc/apt/apt.conf.d/99-amneziawg-lock-timeout`, `/etc/amnezia/`, `/etc/modules-load.d/amneziawg.conf`, its sysctl files, `/etc/cron.d/awg-expiry`, its Fail2Ban jail, the DKMS registration and `/root/awg/`, including the backups in `/root/awg/backups/`;
 - in UFW removes the VPN port rule and the `awg0` forwarding rule; it turns UFW off only if the installer turned it on.
 
 What stays:
 - the uninstaller's archive `/root/awg_uninstall_backup_<date>.tar.gz` with every server and client key, and the log `/root/awg_uninstall.log`: archives accumulate, one per uninstall, so if you no longer need the server, copy the archive to your own machine and delete it from the server;
 - the dependencies: `dkms`, `build-essential`, `dpkg-dev`, kernel headers, `wireguard-tools`, `ufw`, plus `git`, `gcc-13` and `python3-systemd` if they were installed;
-- on ARM with a prebuilt module, the module package `amneziawg-kmod-*` itself;
 - `/swapfile` and its line in `/etc/fstab`;
 - packages removed during the install, which you have to reinstall by hand (`sudo apt install unattended-upgrades` and so on);
 - the SSH rule in UFW if UFW was active before the install, and rules you added yourself;
 - the sysctl values, until the next reboot.
 
-Re-installing later starts from a clean slate.
+Re-installing later starts from a clean slate. Already uninstalled and need it back? Look for the uninstaller's archive: `ls -la /root/awg_uninstall_backup_*.tar.gz`. It holds the server keys, the keys and configs of every client and the server config.
 
 ## Troubleshooting
 
-- **PPA 404 on an Ubuntu release the PPA publishes nothing for.** Since v5.13.0 the installer checks whether the PPA answers for the codename and switches to `noble` itself when it does not. If you are still on v5.12.x, upgrade the installer.
-- **DKMS build fails on stale kernel headers** (typical after a `do-release-upgrade`, for example 24.04 to 26.04). v5.13.0 detects stale headers (kernel version differs from the running kernel) and installs gcc-13 as a fallback compiler so DKMS autoinstall succeeds across the version mismatch. If DKMS still fails, `sudo bash /root/awg/manage_amneziawg.sh repair-module` forces a rebuild.
+- **A client does not connect to a new server, and shows no error.** Most often the client does not support AmneziaWG 3.1: check the app version against the [client table](ADVANCED.en.md#client-gen-adv), and `manage_amneziawg.sh check` for the server's generation. For a router or Hiddify that cannot be updated, the server has to be reinstalled with `--protocol=2.0`.
+- **PPA 404 on an Ubuntu release the PPA publishes nothing for.** The installer checks whether the PPA answers for the codename and switches to `noble` itself when it does not.
+- **DKMS build fails on stale kernel headers** (typical after a `do-release-upgrade`, for example 24.04 to 26.04). The installer detects stale headers (kernel version differs from the running kernel) and installs gcc-13 as a fallback compiler so DKMS autoinstall succeeds across the version mismatch. If DKMS still fails, `sudo bash /root/awg/manage_amneziawg.sh repair-module` forces a rebuild.
 - **Mobile carrier unstable or only connects on the third attempt.** On a new server, install with `--mobile` - it enables the mobile obfuscation preset and moves the port to 443/udp in one flag (carriers often drop unfamiliar UDP ports; an explicit `--port` wins if you pass both). On a running server that is a `--force --mobile` reinstall, after which every client config has to be reissued with `regen`; if the handshake never completes at all, read [the walkthrough](ADVANCED.en.md#no-hs-mobile-adv) first. Tested carriers (Russia): Yota (Moscow), Tele2 (Moscow), Tattelecom / Letai (Tatarstan), Beeline (default preset). Tele2 (Krasnoyarsk) needed `I1 = <r 48>` in May 2026, and Megafon (regional networks) needed I1 removed. Full per-carrier table and the underlying Jc / Jmin / Jmax mechanics are in [ADVANCED.en.md FAQ](ADVANCED.en.md#faq-mobile-unstable-adv).
 - **Handshake completes but no packets flow.** Almost always the AllowedIPs gotcha on a custom split-tunnel config. Cover the server subnet too, not just the destinations you want. See [ADVANCED.en.md AllowedIPs](ADVANCED.en.md#allowedips-adv).
-- **iPhone does not connect over cellular.** MTU issue. The installer sets `MTU = 1280` by default since v5.7.4; older configs need the line added manually. See [MTU and Mobile Clients](ADVANCED.en.md#mtu-mobile-adv).
-- **ARM prebuilt unavailable for your kernel.** The installer falls back to DKMS automatically since v5.12.1. If both fail, file an issue with `sudo bash ./install_amneziawg_en.sh --diagnostic` output.
+- **iPhone does not connect over cellular.** MTU issue. The installer sets `MTU = 1280` by default; configs made by very old versions need the line added manually. See [MTU and Mobile Clients](ADVANCED.en.md#mtu-mobile-adv).
+- **ARM prebuilt unavailable for your kernel.** The installer falls back to DKMS automatically. If both fail, file an issue with `sudo bash ./install_amneziawg_en.sh --diagnostic` output.
 - **Nothing answers at all, not even SSH or ping.** That is not the VPN. Check the address itself, ideally from another network: if the whole address is unreachable, no obfuscation setting will help.
 
 ## Where to ask
