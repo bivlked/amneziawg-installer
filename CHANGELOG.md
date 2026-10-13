@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [6.0.0] - 2026-10-13
+
+**v6.0.0** - новая установка по умолчанию ставит AmneziaWG 3.1: шифрование заголовков и добавочный паддинг. Там, где 3.1 не поднять, установщик сам ставит 2.0; работающие серверы остаются на своём поколении. Проект теперь называется AmneziaWG 3.x Installer.
+
 ### Что меняется для вас
 
 - **Новая установка по умолчанию ставит AmneziaWG 3.1.** Сервер и клиентские профили получают шифрование заголовков (`HeaderProtectionKey`, свой ключ на каждую установку) и добавочный паддинг `ContentPaddingAddition = 32-128`; `H1`-`H4` в профиле 3.1 стоят на 1-4, потому что тип сообщения прячет ключ, а `S3` и `S4` начинаются с 12. `Jc`, `S1`-`S4` и `I1` остаются. `RandomTrailers`, `DisableCookies` и параметры таймингов профиль не задаёт. Команда установки прежняя.
@@ -2106,7 +2110,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.0...HEAD
+[6.0.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.1...v6.0.0
 [5.37.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.0...v5.37.1
 [5.37.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.2...v5.37.0
 [5.36.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.1...v5.36.2

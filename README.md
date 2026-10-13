@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/Architecture-x86__64_|_ARM64_|_ARMv7-green" alt="x86_64 | ARM64 | ARMv7">
   <img src="https://img.shields.io/badge/AmneziaWG-3.1_&#124;_2.0-blueviolet" alt="AmneziaWG 3.1 and 2.0">
   <a href="https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
-  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-5.37.1-blue" alt="Version"></a>
+  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-6.0.0-blue" alt="Version"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/stargazers"><img src="https://img.shields.io/github/stars/bivlked/amneziawg-installer?style=flat" alt="Stars"></a>
   <img src="https://img.shields.io/github/last-commit/bivlked/amneziawg-installer" alt="Last commit">
@@ -34,7 +34,7 @@
 <!-- facts:begin -->
 <!-- Собирается scripts/update-facts-block.sh из данных репозитория.
      Руками не править: check-docs-consistency.sh сверит блок с источниками. -->
-**Факты на 2026-10-04.** Установщик 5.37.1. Сроки поддержки ОС проверены по данным вендоров на 2026-08-29.
+**Факты на 2026-10-13.** Установщик 6.0.0. Сроки поддержки ОС проверены по данным вендоров на 2026-08-29.
 
 | | |
 |---|---|

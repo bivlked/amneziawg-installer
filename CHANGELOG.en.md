@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.0] - 2026-10-13
+
+**v6.0.0** - a fresh install now sets up AmneziaWG 3.1 by default: header encryption and extra padding. Where 3.1 cannot run, the installer installs 2.0 by itself; running servers stay on their generation. The project is now named AmneziaWG 3.x Installer.
+
 ### What changes for you
 
 - **A new install gets AmneziaWG 3.1 by default.** The server and the client profiles get header encryption (`HeaderProtectionKey`, a key of its own per install) and extra padding `ContentPaddingAddition = 32-128`; `H1`-`H4` are set to 1-4 in the 3.1 profile because the key hides the message type, and `S3` and `S4` start at 12. `Jc`, `S1`-`S4` and `I1` stay. The profile does not set `RandomTrailers`, `DisableCookies` or the timer parameters. The install command is the same.
@@ -2106,7 +2110,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.0...HEAD
+[6.0.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.1...v6.0.0
 [5.37.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.0...v5.37.1
 [5.37.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.2...v5.37.0
 [5.36.2]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.1...v5.36.2
