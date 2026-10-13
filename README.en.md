@@ -459,11 +459,11 @@ scp root@SERVER_IP:/root/awg/my_phone.conf .
 ```
 
 <details>
-<summary><strong>Import into WG Tunnel or AmneziaWG (Android, iPhone)</strong></summary>
+<summary><strong>Import into WG Tunnel or AmneziaWG on Android, AmneziaWG on iPhone</strong></summary>
 
 1. Download the QR code of the config: `scp root@SERVER_IP:/root/awg/my_phone.png .`
 2. Open the file on your computer screen
-3. On your phone: "+" → "Scan QR code"
+3. On your phone: "+" → the QR code option
 </details>
 
 <details>

@@ -460,11 +460,11 @@ scp root@IP_СЕРВЕРА:/root/awg/my_phone.conf .
 ```
 
 <details>
-<summary><strong>Импорт в WG Tunnel или AmneziaWG (Android, iPhone)</strong></summary>
+<summary><strong>Импорт в WG Tunnel или AmneziaWG на Android, в AmneziaWG на iPhone</strong></summary>
 
 1. Скачайте QR-код конфига: `scp root@IP_СЕРВЕРА:/root/awg/my_phone.png .`
 2. Откройте файл на экране компьютера
-3. На телефоне: «+» → «Сканировать QR-код»
+3. На телефоне: «+» → пункт импорта по QR-коду
 </details>
 
 <details>
