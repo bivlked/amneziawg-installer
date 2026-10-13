@@ -134,7 +134,8 @@ scp -P YOUR_SSH_PORT root@SERVER_IP:/root/awg/my_iphone.conf .
 
 Where to import:
 
-- **Amnezia VPN app** (Windows, macOS, Linux, Android, iOS): "Add VPN", then "Scan QR code" for `<name>.vpnuri.png`, or "Paste from clipboard" with the link from `sudo cat /root/awg/my_iphone.vpnuri`.
+- **WG Tunnel or AmneziaWG on Android, AmneziaWG on iPhone**: "+", then "Scan QR code" for `<name>.png`. On Android these two are what we recommend: in our check on 13 October 2026 they reconnected in under a second and kept the tunnel across a Wi-Fi to mobile data switch.
+- **Amnezia VPN app** (Windows, macOS, Linux, Android, iOS): "Add VPN", then "Scan QR code" for `<name>.vpnuri.png`, or "Paste from clipboard" with the link from `sudo cat /root/awg/my_iphone.vpnuri`. If its scanner does not recognize the code (it did not on Android with 5.0.3), read the code with the phone's regular camera and paste the copied `vpn://` text.
 - **AmneziaWG client for Windows**: import `<name>.conf`.
 - **Linux**: put `<name>.conf` in place and bring it up with `awg-quick up`.
 

@@ -1439,7 +1439,15 @@ sudo ufw reload</pre>
 
 <details>
   <summary><strong>В: Какой клиент использовать для AmneziaWG?</strong></summary>
-  <b>О:</b> Рекомендуемый - <a href="https://github.com/amnezia-vpn/amnezia-client/releases">Amnezia VPN</a>: для сервера 3.1 версия >= 5.0.1.5, для 2.0 >= 4.8.12.7. Также работают лёгкие клиенты AmneziaWG для Android, iOS и Windows (для 3.1 - Windows >= 3.1.0, Android и iOS >= 3.1.4). Стандартный WireGuard-клиент <b>не подходит</b>. Полная таблица совместимости - в разделе <a href="#client-compat-adv">Совместимость клиентов</a>.
+  <b>О:</b> На Android - <a href="https://github.com/wgtunnel/android">WG Tunnel</a> (для 3.1 >= 5.6.0) или лёгкий <a href="https://github.com/amnezia-vpn/amneziawg-android">AmneziaWG</a> (для 3.1 >= 3.1.4 в Google Play). В нашей проверке 13 октября 2026 на профиле 3.1 оба импортировали <code>&lt;имя&gt;.png</code> своим сканером, переподключались меньше чем за секунду и не теряли туннель при переходе с Wi-Fi на мобильную сеть. На iPhone, Mac и Windows - лёгкий AmneziaWG для вашей платформы (для 3.1: iOS и macOS >= 3.1.4, Windows >= 3.1.0). <a href="https://github.com/amnezia-vpn/amnezia-client/releases">Amnezia VPN</a> (для 3.1 >= 5.0.1.5, для 2.0 >= 4.8.12.7) тоже поддерживается и принимает ссылку <code>vpn://</code>; на Android в той же проверке версия 5.0.3 подключалась около 2 секунд, а после выключения Wi-Fi туннель сам не восстановился, помог перезапуск приложения. Стандартный WireGuard-клиент <b>не подходит</b>. Полная таблица совместимости - в разделе <a href="#client-compat-adv">Совместимость клиентов</a>.
+</details>
+
+<a id="faq-first-packet-adv"></a>
+<details>
+  <summary><strong>В: Туннель включился, а первый запрос открывается с задержкой</strong></summary>
+  <b>О:</b> У клиентов на движке amneziawg-go (лёгкие AmneziaWG для Android, iOS, macOS и Windows, Amnezia VPN) известна гонка: самый первый пакет данных после включения туннеля может уйти с паддингом <code>S4</code> по умолчанию, а не с заданным в конфиге, и сервер его отбросит (<a href="https://github.com/amnezia-vpn/amneziawg-go/issues/168">amneziawg-go#168</a>; исправление предложено в <a href="https://github.com/amnezia-vpn/amneziawg-go/pull/184">#184</a> и на 13 октября 2026 не влито). Теряется один пакет: приложение повторит запрос, и дальше всё идёт штатно, поэтому выглядит это как задержка, а не как отказ. Чинить конфиг или сервер не нужно.
+  <br><br>
+  В нашей проверке 13 октября 2026 на профиле 3.1 заметной задержки не было: AmneziaWG 3.1.4 на Android открывал страницу меньше чем за секунду в 10 переподключениях из 10, WG Tunnel 5.8.1 - сразу. На Windows AmneziaWG 3.1.0 открывал первую страницу примерно через 3 секунды, но так же вёл себя и профиль 2.0: это время Windows проверяет адрес туннельного адаптера (DAD), на сам протокол приходится около 0.2 секунды. Результат относится к этим устройствам и сетям, на других бывает иначе.
 </details>
 
 <details>
@@ -1832,6 +1840,8 @@ sudo bash /root/awg/manage_amneziawg.sh list --json
 2. В Amnezia VPN на телефоне: «Добавить VPN» → «Считать QR-код».
 3. Наведите камеру на `.vpnuri.png` — импорт произойдёт автоматически.
 
+Код плотный: в ссылке около 1100 символов. На Android встроенный сканер Amnezia VPN 5.0.3 его не распознал (проверено 13 октября 2026), хотя обычная камера телефона читает его сразу. В таком случае считайте код камерой телефона, скопируйте текст `vpn://...` и вставьте его в Amnezia VPN, как в способе 2.
+
 **Способ 2 — копипаст URI:**
 
 1. Скопируйте содержимое `.vpnuri` файла.
@@ -1955,11 +1965,11 @@ sudo systemctl restart awg-quick@awg0
 
 | Клиент | Платформа | AWG 3.1 | AWG 2.0 | Примечание |
 |--------|-----------|---------|---------|------------|
-| [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) | Windows, macOS, Linux, Android, iOS | ✅ (>= 5.0.1.5) | ✅ (>= 4.8.12.7) | Рекомендуемый. Поддерживает vpn:// URI. В российском App Store нет |
-| [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-android) | Android | ✅ (Google Play >= 3.1.4, APK >= v3.1.20260814) | ✅ (>= 2.0.0) | Легковесный tunnel manager. Импорт через `.conf` |
+| [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) | Windows, macOS, Linux, Android, iOS | ✅ (>= 5.0.1.5) | ✅ (>= 4.8.12.7) | Поддерживает vpn:// URI. На Android при смене сети туннель может не восстановиться сам (5.0.3, проверка 13 окт 2026). В российском App Store нет |
+| [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-android) | Android | ✅ (Google Play >= 3.1.4, APK >= v3.1.20260814) | ✅ (>= 2.0.0) | Рекомендуемый для Android. Легковесный tunnel manager. Импорт через `.conf` и QR |
 | [AmneziaWG](https://apps.apple.com/app/amneziawg/id6478942365) | iOS, macOS | ✅ (>= 3.1.4) | ✅ | Легковесный клиент, есть в российском App Store |
 | [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) | Windows | ✅ (>= 3.1.0) | ✅ (>= 2.0.0) | Легковесный tunnel manager. Импорт через `.conf` |
-| [WG Tunnel](https://github.com/wgtunnel/android) | Android | ✅ (>= 5.6.0, лучше >= 5.7.5) | ✅ | FOSS-клиент с auto-tunneling и split tunneling; Google Play, IzzyOnDroid |
+| [WG Tunnel](https://github.com/wgtunnel/android) | Android | ✅ (>= 5.6.0, лучше >= 5.7.5) | ✅ | Рекомендуемый для Android. FOSS-клиент с auto-tunneling и split tunneling; Google Play, IzzyOnDroid |
 | [WG Tunnel Desktop](https://github.com/wgtunnel/desktop) | Windows, Linux, macOS | ✅ (линия v2) | ✅ | Тот же движок, что у Android-версии |
 | [WireSock VPN Client](https://www.ntkernel.com) | Windows | не проверено | ✅ | Коммерческий. Userspace WireGuard через NDISAPI |
 | Hiddify | все | ❌ | - | Движок ниже третьей линии: для Hiddify ставьте сервер с `--protocol=2.0` |
@@ -2001,7 +2011,10 @@ sudo systemctl restart awg-quick@awg0
 
 > ⚠️ Поколение у сторонних проектов указано по их коду и заметкам авторов, а у официальных - по
 > заметкам к выпускам и магазинам. Поведением на сгенерированном профиле 3.1 эта таблица не
-> проверялась.
+> проверялась. Отдельно 13 октября 2026 к серверу с профилем 3.1 от этого установщика подключались
+> AmneziaWG для Android 3.1.4, WG Tunnel 5.8.1 и Amnezia VPN 5.0.3 на Android и AmneziaWG 3.1.0
+> на Windows; результаты - в вопросах <a href="#faq-first-packet-adv">о задержке первого запроса</a>
+> и о выборе клиента в FAQ.
 
 ### Клиенты для роутеров
 

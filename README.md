@@ -459,6 +459,14 @@ scp root@IP_СЕРВЕРА:/root/awg/my_phone.conf .
 ```
 
 <details>
+<summary><strong>Импорт в WG Tunnel или AmneziaWG (телефон)</strong></summary>
+
+1. Скачайте QR-код конфига: `scp root@IP_СЕРВЕРА:/root/awg/my_phone.png .`
+2. Откройте файл на экране компьютера
+3. На телефоне: «+» → «Сканировать QR-код»
+</details>
+
+<details>
 <summary><strong>Импорт в Amnezia VPN (телефон) через vpn:// URI</strong></summary>
 
 1. На сервере выполните: `cat /root/awg/my_phone.vpnuri`
@@ -472,6 +480,8 @@ scp root@IP_СЕРВЕРА:/root/awg/my_phone.conf .
 1. Скачайте QR-код ссылки: `scp root@IP_СЕРВЕРА:/root/awg/my_phone.vpnuri.png .`
 2. Откройте файл на экране компьютера
 3. На телефоне: Amnezia VPN → «Добавить VPN» → «Сканировать QR-код»
+
+Если сканер Amnezia VPN код не распознаёт (так было на Android с версией 5.0.3), считайте его обычной камерой телефона, скопируйте текст `vpn://...` и вставьте в Amnezia VPN, как в способе выше.
 
 Файл `my_phone.png` без `vpnuri` в имени - это QR-код самого `.conf` для клиента AmneziaWG, в Amnezia VPN его не сканируйте.
 </details>
@@ -764,16 +774,16 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 ### Клиенты
 
-> **Какой клиент выбрать?** Установите [**Amnezia VPN**](https://github.com/amnezia-vpn/amnezia-client/releases) (для сервера 3.1 >= 5.0.1.5, для 2.0 >= 4.8.12.7) - работает на всех платформах, поддерживает импорт `vpn://` URI. В российском App Store его нет: на iPhone используйте лёгкий AmneziaWG.
-> Для легковесного подключения (только `.conf`) используйте **AmneziaWG** для вашей платформы.
+> **Какой клиент выбрать?** На Android - [**WG Tunnel**](https://github.com/wgtunnel/android) или лёгкий [**AmneziaWG**](https://github.com/amnezia-vpn/amneziawg-android): по нашей проверке 13 октября 2026 оба переподключаются меньше чем за секунду и не теряют туннель при переходе с Wi-Fi на мобильную сеть. На iPhone, Mac и Windows - лёгкий **AmneziaWG** для вашей платформы (импорт `.conf`).
+> [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) (для сервера 3.1 >= 5.0.1.5, для 2.0 >= 4.8.12.7) работает на всех платформах и принимает ссылку `vpn://`; в российском App Store его нет.
 
 | Клиент | Платформа | AWG 3.1 | AWG 2.0 | Тип | Примечание |
 |--------|-----------|:-------:|:-------:|-----|------------|
-| **[Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases)** | Windows, macOS, Linux, Android, iOS | ✅ >= 5.0.1.5 | ✅ >= 4.8.12.7 | Официальный | **Рекомендуется.** Полнофункциональный, `vpn://` URI; в российском App Store нет |
+| [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) | Windows, macOS, Linux, Android, iOS | ✅ >= 5.0.1.5 | ✅ >= 4.8.12.7 | Официальный | Полнофункциональный, `vpn://` URI; на Android при смене сети туннель может не восстановиться сам; в российском App Store нет |
 | [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) | Windows | ✅ >= 3.1.0 | ✅ >= 2.0.0 | Официальный | Легковесный tunnel manager, импорт `.conf` |
-| [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-android) | Android | ✅ >= 3.1.4 в Google Play | ✅ >= 2.0.0 | Официальный | Легковесный tunnel manager, импорт `.conf` |
+| **[AmneziaWG](https://github.com/amnezia-vpn/amneziawg-android)** | Android | ✅ >= 3.1.4 в Google Play | ✅ >= 2.0.0 | Официальный | **Рекомендуется для Android.** Легковесный tunnel manager, импорт `.conf` и QR |
 | [AmneziaWG](https://apps.apple.com/app/amneziawg/id6478942365) | iOS, macOS | ✅ >= 3.1.4 | ✅ | Официальный | Легковесный tunnel manager, импорт `.conf`; есть в российском App Store |
-| [WG Tunnel](https://github.com/wgtunnel/android) | Android | ✅ >= 5.6.0 | ✅ | Сторонний, FOSS | Auto-tunneling, split tunnel; Google Play, IzzyOnDroid |
+| **[WG Tunnel](https://github.com/wgtunnel/android)** | Android | ✅ >= 5.6.0 | ✅ | Сторонний, FOSS | **Рекомендуется для Android.** Auto-tunneling, split tunnel; Google Play, IzzyOnDroid |
 | [WG Tunnel Desktop](https://github.com/wgtunnel/desktop) | Windows, Linux, macOS | ✅ v2 | ✅ | Сторонний, FOSS | Тот же движок, что у Android-версии |
 | [VeilBox](https://github.com/artem4150/VeilBox) | Windows, macOS | не проверено | ✅ | Сторонний, FOSS | Также поддерживает VLESS |
 
