@@ -722,7 +722,7 @@ With `--yes` no question is asked and the behaviour stays as before, that is the
 <summary><strong>awgsetup_cfg.init (installation parameters)</strong></summary>
 
 ```bash
-# AmneziaWG 2.0 installation configuration (auto-generated)
+# AmneziaWG installation configuration (Auto-generated)
 export AWG_PORT=39743
 export AWG_TUNNEL_SUBNET='10.9.9.1/24'
 export DISABLE_IPV6=1

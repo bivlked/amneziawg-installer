@@ -718,7 +718,7 @@ bash /root/awg/manage_amneziawg.sh regen
 <summary><strong>awgsetup_cfg.init (параметры установки)</strong></summary>
 
 ```bash
-# Конфигурация установки AmneziaWG 2.0 (Авто-генерация)
+# Конфигурация установки AmneziaWG (Авто-генерация)
 export AWG_PORT=39743
 export AWG_TUNNEL_SUBNET='10.9.9.1/24'
 export DISABLE_IPV6=1
