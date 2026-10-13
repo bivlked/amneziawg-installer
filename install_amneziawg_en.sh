@@ -6,7 +6,7 @@ if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
 fi
 
 # ==============================================================================
-# AmneziaWG 3.x (3.1 by default, 2.0 by flag) installation and configuration script for Ubuntu/Debian servers
+# AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on ARM) installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
 # Version: 5.37.1
 # Date: 2026-10-04
