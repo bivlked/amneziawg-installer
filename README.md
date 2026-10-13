@@ -685,7 +685,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 <details>
   <summary><strong>В: Какой хостинг подходит?</strong></summary>
-  <b>О:</b> Любой VPS - полноценная виртуальная машина (KVM или аналог) на x86_64 с Ubuntu 24.04 LTS / Ubuntu 26.04 / Debian 13 (так ставится AmneziaWG 3.1; Debian 12 тоже поддержан, но на 2.0 и без обычной поддержки - см. таблицу совместимости), root-доступом и от 512 МБ RAM (рекомендуется 1 ГБ). В контейнере (OpenVZ, LXC, Docker) установщик не работает, для него есть путь через userspace - <a href="ADVANCED.md#lxc-userspace-adv">ADVANCED.md</a>. Беру хостинги с незаблокированными IP и неограниченным трафиком. См. <a href="#recomend-hosting">рекомендацию</a> ниже.
+  <b>О:</b> Любой VPS - полноценная виртуальная машина (KVM или аналог) на x86_64 с Ubuntu 24.04 LTS / Ubuntu 26.04 / Debian 13 (так ставится AmneziaWG 3.1; штатный Debian 12 (ядро 6.1) тоже поддержан, но на 2.0 и без обычной поддержки - см. таблицу совместимости), root-доступом и от 512 МБ RAM (рекомендуется 1 ГБ). В контейнере (OpenVZ, LXC, Docker) установщик не работает, для него есть путь через userspace - <a href="ADVANCED.md#lxc-userspace-adv">ADVANCED.md</a>. Беру хостинги с незаблокированными IP и неограниченным трафиком. См. <a href="#recomend-hosting">рекомендацию</a> ниже.
 </details>
 
 <details>

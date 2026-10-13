@@ -156,7 +156,6 @@ On Android, WG Tunnel and AmneziaWG are what we recommend: in our check on 13 Oc
 - Reissue a lost config: `regen <name>` (the keys stay the same). If a config leaked, revoke it instead: `remove <name>`, then `add <name>` and hand out the new file.
 - Back up before experiments: `backup`, and `restore` to go back.
 - Check server health: `check`.
-
 - Drive the server from scripts: the management commands take `--json` and reply with a single JSON object even when they fail; add `--yes` for unattended runs ([JSON interface](ADVANCED.en.md#json-api-adv)).
 
 All of them run as `sudo bash /root/awg/manage_amneziawg.sh <command>`. Common next steps: [two-server cascade](CASCADE.en.md), [Russian sites through WARP](WARP-RU.en.md).

@@ -684,7 +684,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: Which hosting providers work well?</strong></summary>
-  <b>A:</b> Any VPS that is a full virtual machine (KVM or similar) on x86_64 with Ubuntu 24.04 LTS / Ubuntu 26.04 / Debian 13 (that is what gets AmneziaWG 3.1; Debian 12 is supported too, but on 2.0 and past regular support - see the compatibility table), root access, and at least 512 MB RAM (1 GB recommended). The installer does not work in a container (OpenVZ, LXC, Docker); for that there is the userspace route in <a href="ADVANCED.en.md#lxc-userspace-adv">ADVANCED.en.md</a>. Pick providers with clean (non-blacklisted) IPs and unlimited traffic. See the <a href="#hosting-recommendation">recommendation</a> below.
+  <b>A:</b> Any VPS that is a full virtual machine (KVM or similar) on x86_64 with Ubuntu 24.04 LTS / Ubuntu 26.04 / Debian 13 (that is what gets AmneziaWG 3.1; a stock Debian 12 (kernel 6.1) is supported too, but on 2.0 and past regular support - see the compatibility table), root access, and at least 512 MB RAM (1 GB recommended). The installer does not work in a container (OpenVZ, LXC, Docker); for that there is the userspace route in <a href="ADVANCED.en.md#lxc-userspace-adv">ADVANCED.en.md</a>. Pick providers with clean (non-blacklisted) IPs and unlimited traffic. See the <a href="#hosting-recommendation">recommendation</a> below.
 </details>
 
 <details>
