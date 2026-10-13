@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>How to add and remove AmneziaWG clients on your own server</title>
-<meta name="description" content="manage_amneziawg.sh adds, removes, regenerates and lists AmneziaWG 2.0 clients from the command line: QR codes, vpn:// links, time-limited access, backups and JSON output for scripts and bots.">
+<meta name="description" content="manage_amneziawg.sh adds, removes, regenerates and lists AmneziaWG clients from the command line: QR codes, vpn:// links, time-limited access, backups and JSON output for scripts and bots.">
 <link rel="canonical" href="https://bivlked.github.io/amneziawg-installer/manage/">
 <link rel="alternate" hreflang="en" href="https://bivlked.github.io/amneziawg-installer/manage/">
 <link rel="alternate" hreflang="ru" href="https://bivlked.github.io/amneziawg-installer/ru/manage/">
 <link rel="alternate" hreflang="x-default" href="https://bivlked.github.io/amneziawg-installer/manage/">
 <meta property="og:type" content="article">
 <meta property="og:title" content="How to add and remove AmneziaWG clients on your own server">
-<meta property="og:description" content="One script manages AmneziaWG 2.0 clients: add, remove, regenerate, QR codes, time-limited access and JSON output for bots. No web panel needed.">
+<meta property="og:description" content="One script manages AmneziaWG clients: add, remove, regenerate, QR codes, time-limited access and JSON output for bots. No web panel needed.">
 <meta property="og:url" content="https://bivlked.github.io/amneziawg-installer/manage/">
 <meta property="og:site_name" content="amneziawg-installer">
 <meta property="og:image" content="https://bivlked.github.io/amneziawg-installer/assets/og-manage.png">
@@ -23,7 +23,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="https://bivlked.github.io/amneziawg-installer/assets/og-manage.png">
 <meta name="twitter:title" content="How to add and remove AmneziaWG clients on your own server">
-<meta name="twitter:description" content="Add, remove and regenerate AmneziaWG 2.0 clients from the command line, with JSON output for scripts and bots.">
+<meta name="twitter:description" content="Add, remove and regenerate AmneziaWG clients from the command line, with JSON output for scripts and bots.">
 <meta name="theme-color" content="#0e1116">
 <meta name="color-scheme" content="dark">
 <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
@@ -115,7 +115,8 @@
           <tr><td>Give a guest access for a week</td><td><code>add guest --expires=7d</code></td></tr>
           <tr><td>Revoke access</td><td><code>remove guest</code></td></tr>
           <tr><td>See who is connected and how much they used</td><td><code>stats</code></td></tr>
-          <tr><td>Reissue a config after a lost phone</td><td><code>regen phone</code></td></tr>
+          <tr><td>Reissue a config file you lost (the keys stay the same)</td><td><code>regen phone</code></td></tr>
+          <tr><td>Cut off a lost phone or a leaked config</td><td><code>remove phone</code>, then <code>add phone</code></td></tr>
           <tr><td>Back up before touching anything</td><td><code>backup</code></td></tr>
           <tr><td>Bring the tunnel back after a kernel upgrade</td><td><code>repair-module</code></td></tr>
         </tbody>
@@ -234,7 +235,7 @@
       <div class="card">
         <div class="ico" aria-hidden="true">&#9878;&#65039;</div>
         <h3>Compared to the official app</h3>
-        <p>The same AmneziaWG 2.0 protocol, delivered differently: no Docker, the whole server tuned and hardened.</p>
+        <p>The same AmneziaWG, delivered differently: no Docker, the whole server tuned and hardened.</p>
         <a class="go" href="/amneziawg-installer/compare/">What differs &#8594;</a>
       </div>
       <div class="card">
@@ -246,7 +247,7 @@
       <div class="card">
         <div class="ico" aria-hidden="true">&#128640;</div>
         <h3>Get started</h3>
-        <p>One command turns a clean Ubuntu or Debian VPS into a working AmneziaWG 2.0 / 3.0 server.</p>
+        <p>One command turns a clean Ubuntu or Debian VPS into a working AmneziaWG 3.1 server, with 2.0 for older clients and routers.</p>
         <a class="go" href="/amneziawg-installer/#quick-start">Quick start &#8594;</a>
       </div>
       <div class="card">

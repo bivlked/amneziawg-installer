@@ -3,27 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AmneziaWG 3.0 and 3.1 on your own server: which line you get and whether to upgrade</title>
-<meta name="description" content="Which AmneziaWG protocol line the installer puts on your server - 3.0 or 3.1, how to check the loaded module version with one command, whether you need to upgrade, and what happens to existing client configs.">
+<title>AmneziaWG 3.1 and 3.0 on your own server: what you get and how to go back to 2.0</title>
+<meta name="description" content="Since version 6.0.0 a new install gets AmneziaWG 3.1. Where 2.0 is installed instead, which clients need it, how to check what your server runs and how to switch between 3.1 and 2.0.">
 <link rel="canonical" href="https://bivlked.github.io/amneziawg-installer/awg3/">
 <link rel="alternate" hreflang="en" href="https://bivlked.github.io/amneziawg-installer/awg3/">
 <link rel="alternate" hreflang="ru" href="https://bivlked.github.io/amneziawg-installer/ru/awg3/">
 <link rel="alternate" hreflang="x-default" href="https://bivlked.github.io/amneziawg-installer/awg3/">
 <meta property="og:type" content="article">
-<meta property="og:title" content="AmneziaWG 3.0 and 3.1 on your own server: which line you get and whether to upgrade">
-<meta property="og:description" content="The installer picks the module line from your kernel and architecture. How to see what is running, and why the third line needs no manual switch.">
+<meta property="og:title" content="AmneziaWG 3.1 and 3.0 on your own server: what you get and how to go back to 2.0">
+<meta property="og:description" content="A new install gets AmneziaWG 3.1, and 2.0 where 3.1 cannot run or your clients need it. How to check your server and how to switch.">
 <meta property="og:url" content="https://bivlked.github.io/amneziawg-installer/awg3/">
 <meta property="og:site_name" content="amneziawg-installer">
 <meta property="og:image" content="https://bivlked.github.io/amneziawg-installer/assets/og-awg3.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Which AmneziaWG version runs on your server">
+<meta property="og:image:alt" content="AmneziaWG 3.1 or 2.0 on your server">
 <meta property="og:locale" content="en_US">
 <meta property="og:locale:alternate" content="ru_RU">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="https://bivlked.github.io/amneziawg-installer/assets/og-awg3.png">
-<meta name="twitter:title" content="AmneziaWG 3.0 and 3.1 on your own server: which line you get and whether to upgrade">
-<meta name="twitter:description" content="How to tell which AmneziaWG line runs on your server, and whether anything needs doing.">
+<meta name="twitter:title" content="AmneziaWG 3.1 and 3.0 on your own server: what you get and how to go back to 2.0">
+<meta name="twitter:description" content="A new install gets AmneziaWG 3.1. Where 2.0 is installed instead, and how to switch.">
 <meta name="theme-color" content="#0e1116">
 <meta name="color-scheme" content="dark">
 <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
@@ -34,14 +34,14 @@
   "@context": "https://schema.org",
   "@type": "FAQPage",
   "mainEntity": [
-    { "@type": "Question", "name": "Which AmneziaWG version does the installer put on a server?", "acceptedAnswer": { "@type": "Answer", "text": "It depends on your kernel and architecture, and the installer decides on its own. On x86_64 with kernel 6.7 or newer the module comes from the Amnezia team's PPA, and that PPA carries the third protocol line. On kernels older than 6.7, such as Debian 12 with 6.1, a pinned second line is built from source at tag v1.0.20260725. On ARM the order differs: the installer first tries our prebuilt package, pinned to that same second line, and the kernel rule decides the outcome only when nothing matched. So on ARM the second line is possible even with a recent kernel." } },
-    { "@type": "Question", "name": "How do I check which AmneziaWG version runs on my server?", "acceptedAnswer": { "@type": "Answer", "text": "Run cat /sys/module/amneziawg/version - it reads the version attribute of the module loaded into the kernel, not of a file on disk. For the userspace tools, run awg --version. Do not use modinfo for this: it reads a file on disk, and if two module trees with the same name ended up on the host it may name the one that is not running." } },
-    { "@type": "Question", "name": "Do I need to upgrade AmneziaWG on my own server?", "acceptedAnswer": { "@type": "Answer", "text": "The arrival of the third line requires no manual switch. Once the installer has chosen the PPA path, later releases arrive through a normal apt upgrade. On Debian 12 or on ARM with a matching prebuilt the module is pinned on purpose to an immutable tag, and a plain apt upgrade will not move it to the third line: the PPA package is held, and the choice is only revisited when the installer runs again. After a kernel change the module has to appear for the new kernel: on the DKMS path an apt hook and a boot-time service do that, while manage repair-module stays a manual recovery for when the automation fails. On ARM with a prebuilt there is nothing to rebuild, you run the installer again with --force." } },
-    { "@type": "Question", "name": "Will my existing client configs stop working?", "acceptedAnswer": { "@type": "Answer", "text": "No, configs you have already handed out keep working without a single edit. The installer generates them in second-line format, and a third-line module serves those configs. The vpn:// link shows this too: its protocol_version field is 2. There is no need to reissue clients. That is about the module line changing. Reissuing is needed in a different case: run the reinstall with obfuscation flags, that is --preset, --jc, --jmin, --jmax or --no-cps, and the installer regenerates the whole Jc, S, H and I1 set and warns you that the configs you handed out have to be replaced." } },
-    { "@type": "Question", "name": "What does the third AmneziaWG line add over the second?", "acceptedAnswer": { "@type": "Answer", "text": "The main addition is header encryption for the packet fields that stayed in the clear in the second line. It also adds extra padding inside the encrypted part and timings given as a range, with the value drawn from it at random on every use, so a constant handshake and keepalive rhythm stops being a tell. Each of these is set separately, and while none of them is set a third-line engine puts the same format on the wire as the second. The installer sets none of them." } },
-    { "@type": "Question", "name": "Why do third-line features not show up in my configs?", "acceptedAnswer": { "@type": "Answer", "text": "This does not depend on what your own client supports. Such parameters are set at interface level, that is for the whole server rather than for a single peer, and the installer does not set them. AmneziaWG has no capability negotiation: parameters are never sent over the wire, they shape the packet itself. Whether both ends have to match depends on the specific parameter, and HeaderProtectionKey from the third line does: a client without that key cannot complete a handshake. Enabling it would therefore mean new configs for every client of that server, and it cannot be taken back by applying a config without it - the interface would have to be recreated." } },
-    { "@type": "Question", "name": "Can the AmneziaWG version change by itself after a reboot?", "acceptedAnswer": { "@type": "Answer", "text": "On ARM it can. If the amneziawg-dkms package ends up alongside a prebuilt module, then once kernel headers appear DKMS builds, displaces the prebuilt module file, and after a reboot that build is what loads - a different protocol line. The tunnel does not go down, and dpkg still reports the prebuilt package as installed. The installer prints a warning for this case: it gives exact commands for removing the DKMS package and putting it back under hold, while installing the module again and rebooting is described in words. Stop after the removal and the new kernel can end up with no working module, so checking the version after a reboot is worth it regardless." } },
-    { "@type": "Question", "name": "Why does Debian 12 get the second line instead of the third?", "acceptedAnswer": { "@type": "Answer", "text": "That is a deliberate choice, not a technical limit. The third line genuinely failed to build on kernel 6.1 for the first day after release, upstream fixed it on 31 July 2026, and it builds today. The threshold stays because the third line has the least mileage precisely on older kernels, while the pinned second line is verified against an immutable commit." } }
+    { "@type": "Question", "name": "Which AmneziaWG version does the installer put on a server?", "acceptedAnswer": { "@type": "Answer", "text": "Since version 6.0.0 a new install gets AmneziaWG 3.1 on x86_64 with kernel 6.7 or newer: header encryption (HeaderProtectionKey) and extra padding on top of the 2.0 obfuscation. On a kernel older than 6.7, such as a stock Debian 12 with 6.1, and on ARM the installer picks 2.0 by itself and says why. It also switches to 2.0 when the installed awg tools or the loaded module do not understand the third line, as long as the 2.0 set passes the check; otherwise it stops and names the reason. --protocol=2.0 gives a new install the 2.0 profile on any supported system." } },
+    { "@type": "Question", "name": "How do I check which AmneziaWG version runs on my server?", "acceptedAnswer": { "@type": "Answer", "text": "For the profile the server issues, run sudo bash /root/awg/manage_amneziawg.sh show: it prints the installation protocol generation, 3.1 or 2.0. The same marker is AWG_PROTOCOL in /root/awg/awgsetup_cfg.init. For the module, run cat /sys/module/amneziawg/version - it reads the module loaded into the kernel, not a file on disk; for the tools, awg --version. Do not use modinfo for this: if two module trees with the same name ended up on the host, it may name the one that is not running." } },
+    { "@type": "Question", "name": "Do I need to move my running server to 3.1?", "acceptedAnswer": { "@type": "Answer", "text": "Nothing forces it. A running server keeps its generation through script updates, --force and everyday client management, and its clients keep working. To move to 3.1, run --uninstall and a new install on a machine that fits (x86_64, kernel 6.7 or newer), then give every client a new profile in an app that supports 3.1. If some of your devices are routers without 3.1 support, Hiddify or old apps, staying on 2.0 is the right call." } },
+    { "@type": "Question", "name": "Will my existing client configs stop working?", "acceptedAnswer": { "@type": "Answer", "text": "No, not because of an update: the installer keeps the generation of a running server, and the configs you handed out keep working without a single edit. They stop only when you change the server: a reinstall on the other generation, or a reinstall with --preset, --jc, --jmin or --jmax. Then the installer regenerates the obfuscation set and warns that the configs you handed out have to be replaced. --no-cps on its own only removes I1 and keeps the rest, though the installer still suggests reissuing profiles that carry I1." } },
+    { "@type": "Question", "name": "What does the third AmneziaWG line add over the second?", "acceptedAnswer": { "@type": "Answer", "text": "The main addition is header encryption for the packet fields that stayed in the clear in the second line. It also adds extra padding inside the encrypted part and timings given as a range, with the value drawn from it at random on every use. Each of these is set separately, and while none of them is set a third-line engine puts the same format on the wire as the second. The 3.1 profile turns on the first two; the timings, RandomTrailers and DisableCookies stay off." } },
+    { "@type": "Question", "name": "Why is there no HeaderProtectionKey in my config?", "acceptedAnswer": { "@type": "Answer", "text": "Because the server runs the 2.0 profile: it was installed before version 6.0.0, with --protocol=2.0, or on a machine where 3.1 cannot run. The key is set for the whole server, and it has to be identical on both sides: a client without it, or with a different one, cannot complete a handshake. So it cannot be added to one client or to the server alone. Moving a server to 3.1 means --uninstall, a new install and new profiles for every client." } },
+    { "@type": "Question", "name": "Can the module version change by itself after a reboot?", "acceptedAnswer": { "@type": "Answer", "text": "On ARM the module line can. If the amneziawg-dkms package ends up alongside a prebuilt module, then once kernel headers appear DKMS builds, displaces the prebuilt module file, and after a reboot that build is what loads. The tunnel does not go down, and dpkg still reports the prebuilt package as installed. The installer prints a warning for this case with exact commands for removing the DKMS package and putting it back under hold. The profile the server issues stays the same: a module change does not touch it." } },
+    { "@type": "Question", "name": "Why does Debian 12 get 2.0 instead of 3.1?", "acceptedAnswer": { "@type": "Answer", "text": "That is a deliberate choice, not a technical limit. Its stock kernel 6.1 is older than 6.7, so the installer builds the pinned 2.0 module and issues the 2.0 profile. The third line builds on kernel 6.1 today, but it has the least mileage precisely on older kernels, while the pinned module is verified against an immutable commit. With a backports kernel 6.7 or newer, a new install on Debian 12 can get 3.1, as long as the module and the tools pass the installer's check." } }
   ]
 }
 </script>
@@ -59,12 +59,12 @@
 {
   "@context": "https://schema.org",
   "@type": "TechArticle",
-  "headline": "AmneziaWG 3.0 on your own server: which module line you are running",
-  "description": "How the installer picks the AmneziaWG protocol line from your kernel and architecture, how to check the loaded module version, whether to upgrade, and what happens to client configs.",
+  "headline": "AmneziaWG 3.1 and 3.0 on your own server: what you get and how to go back to 2.0",
+  "description": "What a new install gets since version 6.0.0, where AmneziaWG 2.0 is installed instead, how to check the server generation and the module version, and how to switch between 3.1 and 2.0.",
   "inLanguage": "en",
   "image": "https://bivlked.github.io/amneziawg-installer/assets/og-awg3.png",
   "datePublished": "2026-08-17",
-  "dateModified": "2026-08-17",
+  "dateModified": "2026-10-13",
   "author": { "@type": "Person", "name": "bivlked" },
   "publisher": { "@type": "Organization", "name": "amneziawg-installer", "logo": { "@type": "ImageObject", "url": "https://bivlked.github.io/amneziawg-installer/assets/apple-touch-icon.png" } },
   "mainEntityOfPage": "https://bivlked.github.io/amneziawg-installer/awg3/",
@@ -92,11 +92,11 @@
 
 <section class="hero">
   <div class="wrap">
-    <h1>AmneziaWG 3.0 and 3.1 on your own server: which line you get and whether to upgrade</h1>
-    <p class="lede">Short answer: the installer picks the protocol line for your kernel and architecture, and you enable nothing by hand. On x86 with a recent kernel the third line already arrives on its own; on Debian 12 and on part of the ARM range the proven second line stays. Client configs work either way, and you do not need to reissue them.</p>
+    <h1>AmneziaWG 3.1 and 3.0 on your own server: what you get and how to go back to 2.0</h1>
+    <p class="lede">Short answer: since version 6.0.0 a new install gets AmneziaWG 3.1, with header encryption and extra padding on top of the 2.0 obfuscation. Where 3.1 cannot run (a kernel older than 6.7, ARM) the installer picks 2.0 by itself, and for routers and old apps you choose 2.0 with one flag. A server that already runs keeps its version.</p>
     <div class="cta-row">
       <a class="btn btn-primary" href="#check">Check your server</a>
-      <a class="btn" href="#upgrade">Do I need to upgrade</a>
+      <a class="btn" href="#upgrade">Switch between 3.1 and 2.0</a>
     </div>
   </div>
 </section>
@@ -104,89 +104,93 @@
 <section id="check">
   <div class="wrap">
     <h2>See what is running on your server</h2>
-    <p class="sub">Two commands over SSH. Both are read-only and change nothing.</p>
+    <p class="sub">Two questions with different answers: which profile the server issues to clients, and which module line runs in the kernel. None of them changes the VPN configuration; <code>manage show</code> only writes to its own log.</p>
     <div class="codeblock">
-      <p class="cap">What the server is running:</p>
+      <p class="cap">Which profile the server issues, 3.1 or 2.0:</p>
+      <pre>sudo bash /root/awg/manage_amneziawg.sh show   # the line "Installation protocol generation"
+grep AWG_PROTOCOL /root/awg/awgsetup_cfg.init   # the same marker, read directly</pre>
+    </div>
+    <p class="inline-note">The installer also prints the generation in its final report. A server installed before version 6.0.0 runs the 2.0 profile: its <code>AWG_PROTOCOL</code> marker reads 2.0 or is missing, and a missing marker counts as 2.0. A 3.1 server carries <code>HeaderProtectionKey</code> in the <code>[Interface]</code> section of <code>awg0.conf</code>.</p>
+    <div class="codeblock">
+      <p class="cap">Which module and tools the server runs:</p>
       <pre>cat /sys/module/amneziawg/version   # version of the loaded module
 awg --version                      # version of the userspace tools</pre>
     </div>
-    <p class="inline-note">The first command reads the <code>version</code> attribute of the module running in the kernel right now, not of a file on disk. That attribute is declared in both lines. If the module is not loaded there will be no output - then <code>modinfo amneziawg | grep ^version</code> shows what sits on disk.</p>
-    <p>Why not <code>modinfo</code> by default: it reads metadata from whichever file is selected on disk. If two module trees with the same name ended up on the host, which happens on ARM, it will name the wrong one. Since v5.25.0 both <code>manage check</code> and <code>manage diagnose</code> ask the loaded module first.</p>
-    <p class="inline-note">⚠️ The apt package version does not answer this question, and it is easy to be misled here. <code>dpkg -l amneziawg-dkms</code> prints a string starting with <code>1.0.0</code> - that is the <strong>packaging</strong> version, not the protocol one, and people who see it usually conclude they are on the first version. Only the commit hash after the plus identifies the build, and you cannot tell the line from it without going upstream. Rather than guessing from apt, ask the module itself with the command above.</p>
+    <p class="inline-note">The first command reads the <code>version</code> attribute of the module running in the kernel right now, not of a file on disk. If the module is not loaded there will be no output - then <code>modinfo amneziawg | grep ^version</code> shows what sits on disk. Why not <code>modinfo</code> by default: if two module trees with the same name ended up on the host, which happens on ARM, it names the wrong one.</p>
+    <p class="inline-note">⚠️ The apt package version does not answer this question. <code>dpkg -l amneziawg-dkms</code> prints a string starting with <code>1.0.0</code> - that is the <strong>packaging</strong> version, not the protocol one. Ask the module itself with the command above.</p>
   </div>
 </section>
 
 <section id="lines">
   <div class="wrap">
-    <h2>Which line your server gets</h2>
-    <p class="sub">One rule, applied automatically at install time.</p>
+    <h2>What a new install gets</h2>
+    <p class="sub">Without <code>--protocol</code> the installer decides from the architecture and the running kernel.</p>
     <div class="tablewrap">
       <table class="dtable">
-        <thead><tr><th>Your server</th><th>Where the module comes from</th><th>Line</th></tr></thead>
+        <thead><tr><th>Your server</th><th>Profile for clients</th><th>Kernel module</th></tr></thead>
         <tbody>
-          <tr><td>x86_64, kernel 6.7 or newer</td><td>Amnezia team's PPA</td><td class="y">third</td></tr>
-          <tr><td>Kernel older than 6.7 (Debian 12 with 6.1), and on ARM no prebuilt matched</td><td>pinned module built from source, tag <code>v1.0.20260725</code></td><td>second</td></tr>
-          <tr><td>ARM64 or armhf, a prebuilt package matches your kernel</td><td>our prebuilt package</td><td>second</td></tr>
-          <tr><td>ARM64 or armhf, no prebuilt match, kernel 6.7 or newer</td><td>Amnezia team's PPA</td><td class="y">third</td></tr>
+          <tr><td>x86_64, kernel 6.7 or newer</td><td class="y">3.1</td><td>third line from the Amnezia team's PPA</td></tr>
+          <tr><td>Kernel older than 6.7 (a stock Debian 12 with 6.1)</td><td>2.0, automatically</td><td>pinned 2.0 module built from source, tag <code>v1.0.20260725</code></td></tr>
+          <tr><td>ARM64 or armhf, a prebuilt package matches your kernel</td><td>2.0, automatically</td><td>our prebuilt package, pinned to the same 2.0 tag</td></tr>
+          <tr><td>ARM64 or armhf, no prebuilt match, kernel 6.7 or newer</td><td>2.0, automatically: ARM has not been measured for 3.1</td><td>third line from the PPA</td></tr>
         </tbody>
       </table>
     </div>
-    <p>The order on ARM matters and often surprises people: the prebuilt package is tried <strong>before the PPA module is installed</strong>, and if it fits, the PPA module is not installed at all - the installer keeps it under <code>apt-mark hold</code>. The PPA repository itself is already configured by then, and the userspace tools come from it. So on ARM with a recent kernel you may well get the second line: not by mistake, but because a match was found. Prebuilts are built for Raspberry Pi 3, 4 and 5, Ubuntu 24.04 and 25.10 ARM64, and Debian 12 and 13 ARM64, and all of them are pinned to the same <code>v1.0.20260725</code> tag as the source build. That is our choice rather than a limitation: the third line has been building on older kernels since late July. The pin exists for predictability - an ARM owner gets the same proven module as everyone else instead of a random line from a moving branch.</p>
-    <p class="inline-note">On kernels older than 6.7 the second line is chosen <strong>deliberately</strong>. The third one did fail to build there for the first day after release, upstream fixed that on 31 July 2026, and it builds today. The threshold stays because the third line has the least mileage precisely on older kernels, while the pinned second line is verified against an immutable commit. It will be lifted after a separate validation, not because the build passes again.</p>
+    <p>A third-line module is necessary for 3.1 but not enough. After the reboots the installer also checks the <code>awg</code> tools and the loaded module: it applies the profile to a temporary interface and reads it back. If they do not understand the third line, it switches to 2.0 by itself before any keys are created, as long as the 2.0 set passes the same check, and says why in the log and in the final report; if the module refuses that set too, the install stops without touching the settings file. An explicit <code>--protocol=3.1</code> on such a machine stops the install and names the reason.</p>
+    <p class="inline-note">On kernels older than 6.7 the 2.0 module is chosen <strong>deliberately</strong>. The third line builds there today, but it has the least mileage precisely on older kernels, while the pinned module is verified against an immutable commit. The pinned path receives no updates: upstream has frozen the <code>1.0.x</code> line. The per-system table, with reason codes, is in <a href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.en.md#awg3-fallback-adv">ADVANCED.en.md</a>.</p>
   </div>
 </section>
 
 <section id="upgrade">
   <div class="wrap">
-    <h2>Do you need to upgrade</h2>
-    <p class="sub">Three cases. The arrival of the third line requires no manual switch in any of them.</p>
+    <h2>Switching between 3.1 and 2.0</h2>
+    <p class="sub">The generation is chosen at install time. Updates never change it, so switching takes a reinstall.</p>
     <div class="grid">
       <div class="card">
         <div class="ico" aria-hidden="true">&#9989;</div>
-        <h3>x86 with a recent kernel</h3>
-        <p>Once the installer has chosen the PPA path, later releases of that package arrive through a normal <code>apt upgrade</code>: nothing to enable, and client configs are left alone. The reverse does not hold: <code>apt upgrade</code> on its own will not move a server off the pinned path - the package is held there, and the choice is only revisited when the installer runs again.</p>
-      </div>
-      <div class="card">
-        <div class="ico" aria-hidden="true">&#128274;</div>
-        <h3>Debian 12, or ARM with a prebuilt</h3>
-        <p>The module is pinned to the immutable tag <code>v1.0.20260725</code>, and new code does not reach it automatically. The installer keeps the PPA package <code>amneziawg-dkms</code> under <code>apt-mark hold</code> specifically so it cannot land beside the pinned or prebuilt module: otherwise the system would end up with two trees under one module name. The tunnel keeps working; updates simply do not arrive. One thing to keep in mind: after a kernel change the module has to appear for the new kernel. On the DKMS path that happens on its own, an apt hook and a boot-time service run the rebuild, and <code>manage repair-module</code> is only needed when that automation fails. On ARM with a prebuilt there is nothing to rebuild: run the installer again with <code>--force</code> and it picks a package for the new kernel or falls back to DKMS.</p>
+        <h3>A server that already runs</h3>
+        <p>Updating the scripts and <code>--force</code> keep its generation, and so does everyday client management: a 2.0 server stays on 2.0, and client configs you handed out keep working. Only <code>manage restore</code> of a backup made on the other generation changes it, with a warning first. The kernel module is a separate matter: on the PPA path new builds arrive with <code>apt upgrade</code>, and the pinned 2.0 module does not change.</p>
       </div>
       <div class="card">
         <div class="ico" aria-hidden="true">&#128260;</div>
-        <h3>You want the third line on such a host</h3>
-        <p>There is one supported path: get a kernel of 6.7 or newer (on Debian 12 that means a backports kernel) and reinstall. On ARM mind the order: if a prebuilt matches the new kernel, you will get the pinned second line again.</p>
+        <h3>Moving to 3.1</h3>
+        <p>Run <code>--uninstall</code> and then a new install: it gets 3.1 if the machine fits (x86_64, kernel 6.7 or newer; on Debian 12 that means a backports kernel). Every client gets a new profile, and each app has to support 3.1. On ARM the 3.1 profile is not issued for now.</p>
+      </div>
+      <div class="card">
+        <div class="ico" aria-hidden="true">&#8617;&#65039;</div>
+        <h3>Back to 2.0</h3>
+        <p>The same way round: <code>--uninstall</code> (it removes the server and its 3.1 profiles and by default tries to save a backup archive; check that it was created), then an install with <code>--protocol=2.0</code> and new profiles for every client. If a router or an old app is in the picture, choose 2.0 before installing: it is cheaper than switching later.</p>
       </div>
     </div>
-    <p class="inline-note">The current command set has no separate "upgrade the protocol" command: the module line is chosen during installation or reinstallation rather than switched on the fly.</p>
-    <p class="inline-note">🔴 One exception ARM owners should know about: <strong>the line can change by itself after a reboot</strong>. If the <code>amneziawg-dkms</code> package ends up alongside a prebuilt module, then once kernel headers appear DKMS builds, displaces the prebuilt file, and after a reboot that build is what loads - a different protocol line. The tunnel does not go down, and <code>dpkg</code> still reports the prebuilt package as installed. The installer prints a warning for this case: it gives exact commands for removing the DKMS package and putting it back under <code>hold</code>, while installing the module again and rebooting is described in words - stop after the removal and the new kernel can end up with no working module. Checking the version after a reboot is worth doing anyway: the answer to "what am I running" is not permanent.</p>
+    <p class="inline-note">🔴 One thing ARM owners should know about: <strong>the module line can change by itself after a reboot</strong>. If the <code>amneziawg-dkms</code> package ends up alongside a prebuilt module, then once kernel headers appear DKMS builds, displaces the prebuilt file, and after a reboot that build is what loads. The tunnel does not go down, and <code>dpkg</code> still reports the prebuilt package as installed. The installer prints a warning for this case with exact commands for removing the DKMS package and putting it back under <code>hold</code>; stop after the removal and the new kernel can end up with no working module. Checking the version after a reboot is worth doing anyway.</p>
   </div>
 </section>
 
 <section id="configs">
   <div class="wrap">
     <h2>What happens to client configs</h2>
-    <p>Nothing. Configs you have already handed out keep working without a single edit, and there is no need to reissue them. The installer writes them in second-line format: junk packets <code>Jc</code>, <code>Jmin</code>, <code>Jmax</code>, padding <code>S1</code>-<code>S4</code>, ranged headers <code>H1</code>-<code>H4</code>, and signature packets <code>I1</code>-<code>I5</code> when set. A third-line module serves those configs.</p>
-    <p class="inline-note">To leave no room for misreading: the installer selects a <strong>kernel-module line</strong>, while generated configs and <code>vpn://</code> links stay in protocol version 2 - the link itself carries <code>protocol_version</code> set to 2. The project does not enable or configure third-line features.</p>
-    <p>Third-line features do not make it into generated configs, and that is not an oversight. This does not depend on what your own client supports. Such parameters are set at interface level, that is for the whole server rather than for a single peer, and the installer does not set them. AmneziaWG has no capability negotiation: parameters are never sent over the wire, they shape the packet itself. Whether both ends have to match depends on the specific parameter, and <code>HeaderProtectionKey</code> from the third line does: a client without that key cannot complete a handshake. Enabling it would therefore mean new configs for every client of that server, and it cannot be taken back by applying a config without it - the interface would have to be recreated.</p>
+    <p>Configs of a server that already runs keep working without a single edit: updating the installer does not touch the generation. A new 3.1 install issues 3.1 profiles. They differ from 2.0 in four places: <code>HeaderProtectionKey</code> (one random key per install, shared by the server and all of its clients), <code>ContentPaddingAddition = 32-128</code>, <code>H1</code>-<code>H4</code> set to 1-4, and <code>S3</code>/<code>S4</code> starting at 12. Junk packets <code>Jc</code>, <code>Jmin</code>, <code>Jmax</code>, <code>S1</code>/<code>S2</code> and the <code>I1</code> concealment packet stay as before.</p>
+    <p class="inline-note">An app without 3.1 support does not accept a 3.1 profile: there is no handshake and often no error message either. Routers whose firmware does not support 3.1 yet (stable KeeneticOS, for one), Hiddify and apps that have not been updated for a long time are in this group. Which clients understand 3.1 and from which version: <a href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.en.md#client-gen-adv">client table</a>. Which app to pick: on Android WG Tunnel or AmneziaWG, on iPhone, Mac and Windows AmneziaWG (<a href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.en.md#faq-which-client-adv">why</a>).</p>
+    <p>Why <code>H1</code>-<code>H4</code> are 1-4: the key encrypts the header, so the message type is no longer visible on the wire whatever <code>H</code> is, and random ranges add nothing. Two consequences of the key. Changing it means reissuing every client profile. And it has to be identical on both sides: a client without it, or with a different one, cannot complete a handshake. A server installed on 2.0 has no key at all; adding it by hand to one side cuts that side off from the rest.</p>
   </div>
 </section>
 
 <section id="whats-new">
   <div class="wrap">
-    <h2>What the third line adds</h2>
+    <h2>What the third line adds, and what the 3.1 profile turns on</h2>
     <p class="sub">The short version, without byte-level detail. The full breakdown lives in the advanced docs.</p>
     <div class="tablewrap">
       <table class="dtable">
-        <thead><tr><th>What was added</th><th>What it is for</th></tr></thead>
+        <thead><tr><th>What was added</th><th>What it is for</th><th>In the 3.1 profile</th></tr></thead>
         <tbody>
-          <tr><td>Header encryption</td><td>Fields that stayed in the clear in the second line stop being a ready-made structure for an observer. WireGuard's own cryptography was left untouched.</td></tr>
-          <tr><td>Extra padding inside the encrypted part</td><td>Set as a range, with the length drawn from it at random, which blurs the predictable packet-length alignment that was itself a tell. It does not have to match between sides.</td></tr>
-          <tr><td>Timings as ranges</td><td>Rekey, handshake and keepalive intervals stop being hard-coded protocol constants: you give a range and the value is drawn from it at random on every use. They do not have to match between sides.</td></tr>
+          <tr><td>Header encryption (<code>HeaderProtectionKey</code>)</td><td>Fields that stayed in the clear in the second line stop being a ready-made structure for an observer. WireGuard's own cryptography was left untouched. Must be identical on both sides.</td><td class="y">on</td></tr>
+          <tr><td>Extra padding inside the encrypted part (<code>ContentPaddingAddition</code>)</td><td>Set as a range, with the length drawn from it at random, which blurs the predictable packet-length alignment. Does not have to match between sides.</td><td class="y">on, 32-128</td></tr>
+          <tr><td>Timings as ranges</td><td>Rekey, handshake and keepalive intervals are drawn from a range on every use instead of being fixed. Act only on the side where they are set.</td><td>off</td></tr>
+          <tr><td><code>RandomTrailers</code>, <code>DisableCookies</code> (3.1)</td><td>The first must match on both sides and, together with the rest of the obfuscation, cuts throughput many times over. The second drops the protection against handshake floods along with the cookie-reply signature.</td><td>off, not even written as <code>off</code></td></tr>
         </tbody>
       </table>
     </div>
-    <p class="inline-note">All of these are optional and set separately. While none of them is set, a third-line engine puts exactly the same format on the wire as the second one - which is precisely why your current configs keep working. The installer sets none of them.</p>
-    <p>Inside the third line the number keeps going up - 3.0, 3.1 and onwards. Which release sits in the PPA on the day you install is up to the PPA, so we do not print a fixed number here. And it matters which question you are asking: the line is what the command above shows, while a specific build is only in the package version, because the string inside the module does not change between builds.</p>
+    <p class="inline-note">While none of these is set, a third-line engine puts the same format on the wire as the second one, which is why 2.0 configs keep working on a third-line module. Measurements and the reasoning behind each choice: <a href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.en.md#awg3-not-yet-adv">the 3.1 profile in ADVANCED.en.md</a>.</p>
   </div>
 </section>
 
@@ -194,14 +198,14 @@ awg --version                      # version of the userspace tools</pre>
   <div class="wrap">
     <h2>FAQ</h2>
     <div class="faq">
-      <details><summary>Which AmneziaWG version does the installer put on a server?</summary><div class="answer">It depends on your kernel and architecture, and the installer decides on its own. On x86_64 with kernel 6.7 or newer the module comes from the Amnezia team's PPA, and that PPA carries the third protocol line. On kernels older than 6.7, such as Debian 12 with 6.1, a pinned second line is built from source at tag <code>v1.0.20260725</code>. On ARM the order differs: the installer first tries our prebuilt package, pinned to that same second line, and the kernel rule decides the outcome only when nothing matched. So on ARM the second line is possible even with a recent kernel.</div></details>
-      <details><summary>How do I check which AmneziaWG version runs on my server?</summary><div class="answer">Run <code>cat /sys/module/amneziawg/version</code> - it reads the version attribute of the module loaded into the kernel, not of a file on disk. For the userspace tools, run <code>awg --version</code>. Do not use <code>modinfo</code> for this: it reads a file on disk, and if two module trees with the same name ended up on the host it may name the one that is not running.</div></details>
-      <details><summary>Do I need to upgrade AmneziaWG on my own server?</summary><div class="answer">The arrival of the third line requires no manual switch. Once the installer has chosen the PPA path, later releases arrive through a normal <code>apt upgrade</code>. On Debian 12 or on ARM with a matching prebuilt the module is pinned on purpose to an immutable tag, and a plain <code>apt upgrade</code> will not move it to the third line: the PPA package is held, and the choice is only revisited when the installer runs again. After a kernel change the module has to appear for the new kernel: on the DKMS path an apt hook and a boot-time service do that, while <code>manage repair-module</code> stays a manual recovery for when the automation fails. On ARM with a prebuilt there is nothing to rebuild, you run the installer again with <code>--force</code>.</div></details>
-      <details><summary>Will my existing client configs stop working?</summary><div class="answer">No, configs you have already handed out keep working without a single edit. The installer generates them in second-line format, and a third-line module serves those configs. The <code>vpn://</code> link shows this too: its <code>protocol_version</code> field is 2. There is no need to reissue clients. That is about the module line changing. Reissuing is needed in a different case: run the reinstall with obfuscation flags, that is <code>--preset</code>, <code>--jc</code>, <code>--jmin</code>, <code>--jmax</code> or <code>--no-cps</code>, and the installer regenerates the whole Jc, S, H and I1 set and warns you that the configs you handed out have to be replaced.</div></details>
-      <details><summary>What does the third AmneziaWG line add over the second?</summary><div class="answer">The main addition is header encryption for the packet fields that stayed in the clear in the second line. It also adds extra padding inside the encrypted part and timings given as a range, with the value drawn from it at random on every use, so a constant handshake and keepalive rhythm stops being a tell. Each of these is set separately, and while none of them is set a third-line engine puts the same format on the wire as the second. The installer sets none of them.</div></details>
-      <details><summary>Why do third-line features not show up in my configs?</summary><div class="answer">This does not depend on what your own client supports. Such parameters are set at interface level, that is for the whole server rather than for a single peer, and the installer does not set them. AmneziaWG has no capability negotiation: parameters are never sent over the wire, they shape the packet itself. Whether both ends have to match depends on the specific parameter, and <code>HeaderProtectionKey</code> from the third line does: a client without that key cannot complete a handshake. Enabling it would therefore mean new configs for every client of that server, and it cannot be taken back by applying a config without it - the interface would have to be recreated.</div></details>
-      <details><summary>Can the AmneziaWG version change by itself after a reboot?</summary><div class="answer">On ARM it can. If the <code>amneziawg-dkms</code> package ends up alongside a prebuilt module, then once kernel headers appear DKMS builds, displaces the prebuilt module file, and after a reboot that build is what loads - a different protocol line. The tunnel does not go down, and dpkg still reports the prebuilt package as installed. The installer prints a warning for this case: it gives exact commands for removing the DKMS package and putting it back under hold, while installing the module again and rebooting is described in words. Stop after the removal and the new kernel can end up with no working module, so checking the version after a reboot is worth it regardless.</div></details>
-      <details><summary>Why does Debian 12 get the second line instead of the third?</summary><div class="answer">That is a deliberate choice, not a technical limit. The third line genuinely failed to build on kernel 6.1 for the first day after release, upstream fixed it on 31 July 2026, and it builds today. The threshold stays because the third line has the least mileage precisely on older kernels, while the pinned second line is verified against an immutable commit.</div></details>
+      <details><summary>Which AmneziaWG version does the installer put on a server?</summary><div class="answer">Since version 6.0.0 a new install gets AmneziaWG 3.1 on x86_64 with kernel 6.7 or newer: header encryption (<code>HeaderProtectionKey</code>) and extra padding on top of the 2.0 obfuscation. On a kernel older than 6.7, such as a stock Debian 12 with 6.1, and on ARM the installer picks 2.0 by itself and says why. It also switches to 2.0 when the installed <code>awg</code> tools or the loaded module do not understand the third line, as long as the 2.0 set passes the check; otherwise it stops and names the reason. <code>--protocol=2.0</code> gives a new install the 2.0 profile on any supported system.</div></details>
+      <details><summary>How do I check which AmneziaWG version runs on my server?</summary><div class="answer">For the profile the server issues, run <code>sudo bash /root/awg/manage_amneziawg.sh show</code>: it prints the installation protocol generation, 3.1 or 2.0. The same marker is <code>AWG_PROTOCOL</code> in <code>/root/awg/awgsetup_cfg.init</code>. For the module, run <code>cat /sys/module/amneziawg/version</code> - it reads the module loaded into the kernel, not a file on disk; for the tools, <code>awg --version</code>. Do not use <code>modinfo</code> for this: if two module trees with the same name ended up on the host, it may name the one that is not running.</div></details>
+      <details><summary>Do I need to move my running server to 3.1?</summary><div class="answer">Nothing forces it. A running server keeps its generation through script updates, <code>--force</code> and everyday client management, and its clients keep working. To move to 3.1, run <code>--uninstall</code> and a new install on a machine that fits (x86_64, kernel 6.7 or newer), then give every client a new profile in an app that supports 3.1. If some of your devices are routers without 3.1 support, Hiddify or old apps, staying on 2.0 is the right call.</div></details>
+      <details><summary>Will my existing client configs stop working?</summary><div class="answer">No, not because of an update: the installer keeps the generation of a running server, and the configs you handed out keep working without a single edit. They stop only when you change the server: a reinstall on the other generation, or a reinstall with <code>--preset</code>, <code>--jc</code>, <code>--jmin</code> or <code>--jmax</code>. Then the installer regenerates the obfuscation set and warns that the configs you handed out have to be replaced. <code>--no-cps</code> on its own only removes <code>I1</code> and keeps the rest, though the installer still suggests reissuing profiles that carry <code>I1</code>.</div></details>
+      <details><summary>What does the third AmneziaWG line add over the second?</summary><div class="answer">The main addition is header encryption for the packet fields that stayed in the clear in the second line. It also adds extra padding inside the encrypted part and timings given as a range, with the value drawn from it at random on every use. Each of these is set separately, and while none of them is set a third-line engine puts the same format on the wire as the second. The 3.1 profile turns on the first two; the timings, <code>RandomTrailers</code> and <code>DisableCookies</code> stay off.</div></details>
+      <details><summary>Why is there no HeaderProtectionKey in my config?</summary><div class="answer">Because the server runs the 2.0 profile: it was installed before version 6.0.0, with <code>--protocol=2.0</code>, or on a machine where 3.1 cannot run. The key is set for the whole server, and it has to be identical on both sides: a client without it, or with a different one, cannot complete a handshake. So it cannot be added to one client or to the server alone. Moving a server to 3.1 means <code>--uninstall</code>, a new install and new profiles for every client.</div></details>
+      <details><summary>Can the module version change by itself after a reboot?</summary><div class="answer">On ARM the module line can. If the <code>amneziawg-dkms</code> package ends up alongside a prebuilt module, then once kernel headers appear DKMS builds, displaces the prebuilt module file, and after a reboot that build is what loads. The tunnel does not go down, and dpkg still reports the prebuilt package as installed. The installer prints a warning for this case with exact commands for removing the DKMS package and putting it back under hold. The profile the server issues stays the same: a module change does not touch it.</div></details>
+      <details><summary>Why does Debian 12 get 2.0 instead of 3.1?</summary><div class="answer">That is a deliberate choice, not a technical limit. Its stock kernel 6.1 is older than 6.7, so the installer builds the pinned 2.0 module and issues the 2.0 profile. The third line builds on kernel 6.1 today, but it has the least mileage precisely on older kernels, while the pinned module is verified against an immutable commit. With a backports kernel 6.7 or newer, a new install on Debian 12 can get 3.1, as long as the module and the tools pass the installer's check.</div></details>
     </div>
   </div>
 </section>
@@ -217,7 +221,7 @@ awg --version                      # version of the userspace tools</pre>
       <div class="card">
         <div class="ico" aria-hidden="true">&#128187;</div>
         <h3>Install from scratch</h3>
-        <p>A step-by-step guide for a clean VPS is in <a href="https://github.com/bivlked/amneziawg-installer/blob/main/INSTALL_VPS.md">INSTALL_VPS.md</a>. The installer picks the module line for you.</p>
+        <p>A step-by-step guide for a clean VPS is in <a href="https://github.com/bivlked/amneziawg-installer/blob/main/INSTALL_VPS.md">INSTALL_VPS.md</a>. The installer picks the module and the profile for you.</p>
       </div>
       <div class="card">
         <div class="ico" aria-hidden="true">&#128295;</div>

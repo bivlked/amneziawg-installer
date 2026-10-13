@@ -22,7 +22,7 @@
     </g>
     <text x="62" y="31" font-size="26" font-weight="700" fill="#e6edf3">amneziawg-installer</text>
   </g>
-  <text x="80" y="250" font-size="62" font-weight="800" fill="#e6edf3" letter-spacing="-1">VPN-сервер AmneziaWG 2.0</text>
+  <text x="80" y="250" font-size="62" font-weight="800" fill="#e6edf3" letter-spacing="-1">VPN-сервер AmneziaWG 3.1</text>
   <text x="80" y="326" font-size="62" font-weight="800" fill="#3ddc97" letter-spacing="-1">одной командой</text>
   <text x="80" y="384" font-size="28" fill="#9aa7b4">Self-hosted, с обходом DPI. VPS на Ubuntu и Debian.</text>
   <g transform="translate(80 432)">

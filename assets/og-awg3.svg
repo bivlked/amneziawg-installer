@@ -22,17 +22,17 @@
     </g>
     <text x="62" y="31" font-size="26" font-weight="700" fill="#e6edf3">amneziawg-installer</text>
   </g>
-  <text x="80" y="258" font-size="58" font-weight="800" fill="#e6edf3" letter-spacing="-1">Which AmneziaWG version</text>
-  <text x="80" y="334" font-size="58" font-weight="800" fill="#3ddc97" letter-spacing="-1">is on your server</text>
-  <text x="80" y="404" font-size="29" fill="#9aa7b4">The installer picks the protocol line for your kernel</text>
-  <text x="80" y="444" font-size="29" fill="#9aa7b4">and CPU, and client configs keep working either way.</text>
+  <text x="80" y="258" font-size="58" font-weight="800" fill="#e6edf3" letter-spacing="-1">AmneziaWG 3.1 or 2.0</text>
+  <text x="80" y="334" font-size="58" font-weight="800" fill="#3ddc97" letter-spacing="-1">on your server</text>
+  <text x="80" y="404" font-size="29" fill="#9aa7b4">New installs get 3.1. Where it cannot run,</text>
+  <text x="80" y="444" font-size="29" fill="#9aa7b4">the installer picks 2.0 by itself.</text>
   <g transform="translate(80 498)" font-size="24">
     <rect width="300" height="56" rx="12" fill="#10261c" stroke="#2bbd80"/>
     <text x="150" y="36" text-anchor="middle" fill="#3ddc97" font-weight="700">One command to check</text>
-    <rect x="322" width="260" height="56" rx="12" fill="#1b222c" stroke="#2a323d"/>
-    <text x="452" y="36" text-anchor="middle" fill="#e6edf3">Nothing to switch on</text>
-    <rect x="604" width="220" height="56" rx="12" fill="#1b222c" stroke="#2a323d"/>
-    <text x="714" y="36" text-anchor="middle" fill="#e6edf3">Upgrade optional</text>
+    <rect x="322" width="250" height="56" rx="12" fill="#1b222c" stroke="#2a323d"/>
+    <text x="447" y="36" text-anchor="middle" fill="#e6edf3">2.0 with one flag</text>
+    <rect x="594" width="370" height="56" rx="12" fill="#1b222c" stroke="#2a323d"/>
+    <text x="779" y="36" text-anchor="middle" fill="#e6edf3">Running servers keep theirs</text>
   </g>
   <text x="80" y="592" font-size="22" fill="#9aa7b4">MIT licensed  &#183;  github.com/bivlked/amneziawg-installer</text>
 </svg>

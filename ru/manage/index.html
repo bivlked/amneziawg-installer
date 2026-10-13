@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Как добавлять и удалять клиентов AmneziaWG на своём сервере</title>
-<meta name="description" content="manage_amneziawg.sh добавляет, удаляет, перевыпускает и перечисляет клиентов AmneziaWG 2.0 из командной строки: QR-коды, vpn://-ссылки, доступ с истечением срока, бэкапы и вывод в JSON для скриптов и ботов.">
+<meta name="description" content="manage_amneziawg.sh добавляет, удаляет, перевыпускает и перечисляет клиентов AmneziaWG из командной строки: QR-коды, vpn://-ссылки, доступ с истечением срока, бэкапы и вывод в JSON для скриптов и ботов.">
 <link rel="canonical" href="https://bivlked.github.io/amneziawg-installer/ru/manage/">
 <link rel="alternate" hreflang="en" href="https://bivlked.github.io/amneziawg-installer/manage/">
 <link rel="alternate" hreflang="ru" href="https://bivlked.github.io/amneziawg-installer/ru/manage/">
 <link rel="alternate" hreflang="x-default" href="https://bivlked.github.io/amneziawg-installer/manage/">
 <meta property="og:type" content="article">
 <meta property="og:title" content="Как добавлять и удалять клиентов AmneziaWG на своём сервере">
-<meta property="og:description" content="Один скрипт управляет клиентами AmneziaWG 2.0: добавить, удалить, перевыпустить, QR-код, доступ на время и вывод в JSON для ботов. Веб-панель не нужна.">
+<meta property="og:description" content="Один скрипт управляет клиентами AmneziaWG: добавить, удалить, перевыпустить, QR-код, доступ на время и вывод в JSON для ботов. Веб-панель не нужна.">
 <meta property="og:url" content="https://bivlked.github.io/amneziawg-installer/ru/manage/">
 <meta property="og:site_name" content="amneziawg-installer">
 <meta property="og:image" content="https://bivlked.github.io/amneziawg-installer/assets/og-manage-ru.png">
@@ -23,7 +23,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="https://bivlked.github.io/amneziawg-installer/assets/og-manage-ru.png">
 <meta name="twitter:title" content="Как добавлять и удалять клиентов AmneziaWG на своём сервере">
-<meta name="twitter:description" content="Добавление, удаление и перевыпуск клиентов AmneziaWG 2.0 из командной строки, с выводом в JSON для скриптов и ботов.">
+<meta name="twitter:description" content="Добавление, удаление и перевыпуск клиентов AmneziaWG из командной строки, с выводом в JSON для скриптов и ботов.">
 <meta name="theme-color" content="#0e1116">
 <meta name="color-scheme" content="dark">
 <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
@@ -115,7 +115,8 @@
           <tr><td>Дать гостю доступ на неделю</td><td><code>add guest --expires=7d</code></td></tr>
           <tr><td>Отозвать доступ</td><td><code>remove guest</code></td></tr>
           <tr><td>Посмотреть, кто подключён и сколько скачал</td><td><code>stats</code></td></tr>
-          <tr><td>Перевыпустить конфиг после потери телефона</td><td><code>regen phone</code></td></tr>
+          <tr><td>Перевыпустить потерянный файл конфига (ключи остаются прежними)</td><td><code>regen phone</code></td></tr>
+          <tr><td>Отрезать потерянный телефон или утёкший конфиг</td><td><code>remove phone</code>, затем <code>add phone</code></td></tr>
           <tr><td>Сделать бэкап перед любыми правками</td><td><code>backup</code></td></tr>
           <tr><td>Вернуть туннель после обновления ядра</td><td><code>repair-module</code></td></tr>
         </tbody>
@@ -234,7 +235,7 @@
       <div class="card">
         <div class="ico" aria-hidden="true">&#9878;&#65039;</div>
         <h3>Сравнение с приложением Amnezia</h3>
-        <p>Тот же протокол AmneziaWG 2.0, но иначе: без Docker, весь сервер оптимизирован и защищён.</p>
+        <p>Тот же AmneziaWG, но иначе: без Docker, весь сервер оптимизирован и защищён.</p>
         <a class="go" href="/amneziawg-installer/ru/compare/">Чем отличается &#8594;</a>
       </div>
       <div class="card">
@@ -246,7 +247,7 @@
       <div class="card">
         <div class="ico" aria-hidden="true">&#128640;</div>
         <h3>Начать</h3>
-        <p>Одна команда превращает чистый VPS на Ubuntu или Debian в рабочий сервер AmneziaWG 2.0 / 3.0.</p>
+        <p>Одна команда превращает чистый VPS на Ubuntu или Debian в рабочий сервер AmneziaWG 3.1, а для старых клиентов и роутеров в 2.0.</p>
         <a class="go" href="/amneziawg-installer/ru/#quick-start">Быстрый старт &#8594;</a>
       </div>
       <div class="card">

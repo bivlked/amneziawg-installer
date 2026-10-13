@@ -24,7 +24,7 @@
   </g>
   <text x="80" y="258" font-size="60" font-weight="800" fill="#e6edf3" letter-spacing="-1">Differs from the</text>
   <text x="80" y="334" font-size="60" font-weight="800" fill="#3ddc97" letter-spacing="-1">official Amnezia app</text>
-  <text x="80" y="404" font-size="29" fill="#9aa7b4">Same AmneziaWG 2.0 protocol. No Docker.</text>
+  <text x="80" y="404" font-size="29" fill="#9aa7b4">The same AmneziaWG. No Docker.</text>
   <text x="80" y="444" font-size="29" fill="#9aa7b4">The whole server tuned and hardened.</text>
   <g transform="translate(80 498)">
     <rect width="270" height="56" rx="28" fill="#161b22" stroke="#2a323d"/>

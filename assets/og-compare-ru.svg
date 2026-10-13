@@ -24,13 +24,13 @@
   </g>
   <text x="80" y="258" font-size="58" font-weight="800" fill="#e6edf3" letter-spacing="-1">Чем отличается от</text>
   <text x="80" y="334" font-size="58" font-weight="800" fill="#3ddc97" letter-spacing="-1">приложения Amnezia</text>
-  <text x="80" y="404" font-size="29" fill="#9aa7b4">Тот же протокол AmneziaWG 2.0. Без Docker.</text>
+  <text x="80" y="404" font-size="29" fill="#9aa7b4">Тот же AmneziaWG. Без Docker.</text>
   <text x="80" y="444" font-size="29" fill="#9aa7b4">Весь сервер настроен и защищён.</text>
   <g transform="translate(80 498)">
-    <rect width="300" height="56" rx="28" fill="#161b22" stroke="#2a323d"/>
-    <text x="150" y="36" text-anchor="middle" font-size="24" fill="#9aa7b4">Официальный GUI, Docker</text>
-    <rect x="330" width="300" height="56" rx="28" fill="#10261c" stroke="#2bbd80"/>
-    <text x="480" y="36" text-anchor="middle" font-size="24" font-weight="700" fill="#3ddc97">Модуль ядра, настроен</text>
+    <rect width="340" height="56" rx="28" fill="#161b22" stroke="#2a323d"/>
+    <text x="170" y="36" text-anchor="middle" font-size="24" fill="#9aa7b4">Официальный GUI, Docker</text>
+    <rect x="370" width="330" height="56" rx="28" fill="#10261c" stroke="#2bbd80"/>
+    <text x="535" y="36" text-anchor="middle" font-size="24" font-weight="700" fill="#3ddc97">Модуль ядра, настроен</text>
   </g>
   <text x="80" y="592" font-size="22" fill="#9aa7b4">MIT licensed  &#183;  github.com/bivlked/amneziawg-installer</text>
 </svg>
