@@ -54,11 +54,11 @@ chmod +x install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh
 ```
 
-> What you get: an AmneziaWG 3.1 server (kernel module via DKMS), tuned for VPN and hardened (forwarding, the UFW firewall if you agree), and two ready clients, `my_phone` and `my_laptop`: their configs, QR codes and `vpn://` links are in `/root/awg/`. 3 commands, 2 reboots along the way (after each one, run the last command again), about 20 minutes. For a clean Ubuntu/Debian VPS, not a home router or shared hosting. [Details →](#installation)
+> What you get (on x86_64 with Ubuntu 24.04 / 26.04 or Debian 13): an AmneziaWG 3.1 server tuned for VPN (forwarding, kernel tuning) and hardened (the UFW firewall, if you agree), and two ready clients, `my_phone` and `my_laptop`: their configs, QR codes and `vpn://` links are in `/root/awg/`. 3 commands, 2 reboots along the way (after each one, run the last command again), about 20 minutes. For a clean Ubuntu/Debian VPS, not a home router or shared hosting. [Details →](#installation)
 >
-> **Connect a device.** You need a client with 3.1 support: on Android, WG Tunnel or AmneziaWG; on iPhone and Mac, AmneziaWG (scan the `my_phone.png` QR code); on Windows, AmneziaWG (import `my_laptop.conf`); on any platform, Amnezia VPN (the `vpn://` link); on Linux, [with awg-quick](ADVANCED.en.md#linux-client-adv). How to get the files off the server is in [After installation](#after-installation); another device later is a single `add` command.
+> **Connect a device.** You need a client with 3.1 support: on Android, WG Tunnel or AmneziaWG; on iPhone, AmneziaWG (scan the `my_phone.png` QR code); on Mac, AmneziaWG (import the `.conf`); on Windows, AmneziaWG (import `my_laptop.conf`); on any platform, Amnezia VPN (the `vpn://` link); on Linux, [with awg-quick](ADVANCED.en.md#linux-client-adv). How to get the files off the server is in [After installation](#after-installation); another device later is a single `add` command.
 >
-> Have a router on stock firmware, Hiddify, or apps that have not been updated for a long time? Add `--protocol=2.0` to the last command, [here is why](#awg3). On ARM and on Debian 12 the installer picks 2.0 by itself.
+> Have a router on stock firmware, Hiddify, or apps that have not been updated for a long time? Add `--protocol=2.0` to the last command, [here is why](#awg3). On ARM and on a stock Debian 12 the installer picks 2.0 by itself.
 
 > 📘 Full deployment guide: [Install AmneziaWG VPN server on Ubuntu/Debian VPS](INSTALL_VPS.md) - covers VPS choice, ARM, troubleshooting, and uninstall.
 
@@ -153,7 +153,7 @@ sudo bash ./install_amneziawg_en.sh --protocol=2.0
 
 Still without 3.1 support: routers on stock firmware (stable KeeneticOS, OpenWrt with an old amneziawg package), Hiddify, and apps that have not been updated for a long time. Which clients understand 3.1 and from which version is in the [client table](ADVANCED.en.md#client-gen-adv). Better decide before installing: the generation of a running server changes only through a reinstall, and then every client profile is issued again.
 
-**Where the installer picks 2.0 by itself.** On kernels older than 6.7 (a stock Debian 12 with kernel 6.1) and on ARM, 3.1 cannot run. If you did not choose a generation, the installer installs 2.0 by itself, explains the reason in the log and repeats it in the final report. Where the installed `awg` tools or the kernel module do not understand third-line parameters, it switches to 2.0 if the module accepts the 2.0 set, and otherwise stops and names the package to upgrade. An explicit `--protocol=3.1` on an unsuitable machine stops the install and names the reason.
+**Where the installer picks 2.0 by itself.** On kernels older than 6.7 (a stock Debian 12 with kernel 6.1) and on ARM, 3.1 cannot run. If you did not choose a generation, the installer installs 2.0 by itself, explains the reason in the log and repeats it in the final report. Where the installed `awg` tools or the kernel module do not understand 3.1 parameters, it switches to 2.0 if the module accepts the 2.0 set, and otherwise stops and says what to fix (for old tools, the package to upgrade). An explicit `--protocol=3.1` on an unsuitable machine stops the install and names the reason.
 
 **Servers that already run** keep their generation: updating the scripts and `manage` do not change it. Moving from 2.0 to 3.1 means removing the install (`--uninstall`) and installing again, and every client profile is issued again. Back from 3.1 to 2.0 works the same way: `--uninstall` (it removes the server and its 3.1 profiles, keeping a backup copy by default), then an install with `--protocol=2.0` and new profiles for every client.
 
@@ -179,7 +179,7 @@ The detailed write-up - what changes on the wire, what has to match between serv
 | **Hardening** | DIY: UFW, Fail2Ban, sysctl | Automatic: firewall + brute-force protection + kernel tuning |
 | **Client management** | Edit configs by hand, restart | `add`/`remove`/`list`/`stats` with hot-reload |
 | **Temporary access** | Not built-in | `--expires=7d` with auto-cleanup |
-| **Server requirements** | - | Same - any $3-5/mo VPS, 1 GB RAM |
+| **Server requirements** | - | Same - any $3-5/mo VPS, 512 MB RAM and up (1 GB is comfortable) |
 | **Speed overhead** | Baseline | Kernel module: encryption and obfuscation run in kernel space, no userspace round-trip |
 
 > On speed: on a server with a single shared vCPU the CPU becomes the bottleneck, because encryption and obfuscation run on that same core. Diagnostics: [FAQ in ADVANCED](ADVANCED.en.md#faq-advanced-adv).
@@ -281,7 +281,7 @@ Detailed comparison: [amneziawg-installer vs the official Amnezia app](https://b
 <a id="carriers"></a>
 ## 📡 Tested mobile carriers (Russia)
 
-The installer tunes AmneziaWG obfuscation for mobile networks with DPI: `--mobile` switches on the mobile preset and port 443/udp in a single flag. If your VPN is unstable on mobile data, use `--mobile` right away on a new server. On a running server this means reinstalling with `--force --mobile`: the obfuscation parameters and the port change, and every client needs its config reissued with `regen`. If the handshake never completes on mobile data, read the [walkthrough](ADVANCED.en.md#no-hs-mobile-adv) first. The configurations below come from user reports in issues and discussions (no guarantee: blocking and carrier parameters change over time). The reports were collected on 2.0 servers; the presets and `I1` are set the same way in the 3.1 profile, and we collect 3.1 reports in [Discussions](https://github.com/bivlked/amneziawg-installer/discussions):
+The installer tunes AmneziaWG obfuscation for mobile networks with DPI: `--mobile` switches on the mobile preset and port 443/udp in a single flag. If your VPN is unstable on mobile data, use `--mobile` right away on a new server. On a running server this means reinstalling with `--force --mobile`: the obfuscation parameters and the port change, and every client needs its config reissued with `regen`. If the handshake never completes on mobile data, read the [walkthrough](ADVANCED.en.md#no-hs-mobile-adv) first. The configurations below come from user reports in issues and discussions, collected on 2.0 servers (no guarantee: blocking and carrier parameters change over time). The presets and `I1` are set the same way in the 3.1 profile; please share 3.1 results in [Discussions](https://github.com/bivlked/amneziawg-installer/discussions). Reported configurations:
 
 - **Yota** - Moscow, `--preset=mobile`
 - **Tele2** - Moscow (`--preset=mobile`); Krasnoyarsk (`--preset=mobile`; the May 2026 wave needed `I1=<r 48>`)
@@ -319,7 +319,7 @@ Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work - o
 
 | Architecture | Status | Protocol | Platforms |
 |---|---|---|---|
-| x86_64 (amd64) | ✅ Fully supported | AmneziaWG 3.1 | All cloud VPS |
+| x86_64 (amd64) | ✅ Fully supported | AmneziaWG 3.1 (on kernel 6.7+, otherwise 2.0) | All cloud VPS |
 | ARM64 (aarch64) | ✅ Supported | AmneziaWG 2.0 | Raspberry Pi 3/4/5, AWS Graviton, Oracle Ampere, Hetzner |
 | ARMv7 (armhf) | ✅ Supported | AmneziaWG 2.0 | Raspberry Pi 3/4 (32-bit) |
 
@@ -330,7 +330,7 @@ Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work - o
 **Clients:**
 * **Android:** [WG Tunnel](https://github.com/wgtunnel/android) (the 3.1 profile from version **5.6.0**) or the lightweight [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-android) (the 3.1 profile from **3.1.4** on Google Play). Import via the `name.png` QR code; why these two - [which client to choose](#ecosystem)
 * **All platforms:** [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) - full-featured VPN client: the 3.1 profile from version **5.0.1.5**, the 2.0 profile from **4.8.12.7**. Import via `vpn://` URI
-* **iPhone, iPad, Mac:** [AmneziaWG](https://apps.apple.com/app/amneziawg/id6478942365) (the 3.1 profile from version **3.1.4**, available in the Russian App Store too). Import via the `name.png` QR code or the `name.conf` file
+* **iPhone, iPad, Mac:** [AmneziaWG](https://apps.apple.com/app/amneziawg/id6478942365) (the 3.1 profile from version **3.1.4**, also in the Russian App Store as of October 2026). On iPhone and iPad import via the `name.png` QR code or the `name.conf` file, on Mac via the `name.conf` file
 * **Windows:** [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) - lightweight tunnel manager: the 3.1 profile from version **3.1.0**, the 2.0 profile from **2.0.0**. Import via `.conf` files
 * **Linux, including a server without a desktop:** `awg-quick` from `amneziawg-tools` - [connecting a Linux machine as a client](ADVANCED.en.md#linux-client-adv)
 
@@ -614,17 +614,17 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: Clients can't connect - what should I do?</strong></summary>
-  <b>A:</b> 1. Check status: <code>sudo bash /root/awg/manage_amneziawg.sh check</code>. 2. Check firewall: <code>sudo ufw status verbose</code>. 3. Verify client config. 4. Check logs: <code>sudo journalctl -u awg-quick@awg0 -n 50</code>. 5. Make sure the client understands the server generation (the "Protocol generation" line in the installer final report, or "Installation protocol generation" in the <code>check</code> output): 3.1 needs Amnezia VPN <b>>= 5.0.1.5</b> or AmneziaWG <b>>= 3.1.0</b> on Windows, <b>>= 3.1.4</b> on Android and iOS, 2.0 needs Amnezia VPN <b>>= 4.8.12.7</b> or AmneziaWG <b>>= 2.0.0</b>.
+  <b>A:</b> 1. Check status: <code>sudo bash /root/awg/manage_amneziawg.sh check</code>. 2. Check firewall: <code>sudo ufw status verbose</code>. 3. Verify client config. 4. Check logs: <code>sudo journalctl -u awg-quick@awg0 -n 50</code>. 5. Make sure the client understands the server generation (the "Protocol generation" line in the installer final report, or "Installation protocol generation" in the <code>check</code> output): 3.1 needs Amnezia VPN <b>>= 5.0.1.5</b>, AmneziaWG <b>>= 3.1.0</b> on Windows and <b>>= 3.1.4</b> on Android and iOS, or WG Tunnel <b>>= 5.6.0</b> on Android, 2.0 needs Amnezia VPN <b>>= 4.8.12.7</b> or AmneziaWG <b>>= 2.0.0</b>.
 </details>
 
 <details>
   <summary><strong>Q: Why did I get AmneziaWG 2.0 instead of 3.1?</strong></summary>
-  <b>A:</b> The installer picks 2.0 by itself where 3.1 cannot run: on ARM (Raspberry Pi, Oracle Ampere, Hetzner CAX) and on kernels older than 6.7, that is, a stock Debian 12. It names the reason in the final report. For 3.1 you need an x86_64 server with Ubuntu 24.04 / 26.04 or Debian 13. A server installed before version 6.0.0 stays on 2.0 after an update too: the move is <code>--uninstall</code> and a fresh install with new profiles for every client. Details in <a href="ADVANCED.en.md#awg3-fallback-adv">ADVANCED.en.md</a>.
+  <b>A:</b> The installer issues the 3.1 profile only on x86_64 with kernel 6.7 or newer, a deliberately cautious choice for platforms that have not been measured yet. So on ARM (Raspberry Pi, Oracle Ampere, Hetzner CAX) and on a stock Debian 12 (kernel 6.1) it sets up 2.0 by itself. It also switches to 2.0 when the installed <code>awg</code> tools or kernel module do not understand 3.1 parameters (or stops and says what to fix). It names the reason in the final report. For 3.1 you need an x86_64 server with Ubuntu 24.04 / 26.04 or Debian 13. A server installed before version 6.0.0 stays on 2.0 after an update too: the move is <code>--uninstall</code> and a fresh install with new profiles for every client. Copy a backup off the server first: <code>--uninstall</code> deletes <code>/root/awg/</code>. Details in <a href="ADVANCED.en.md#awg3-fallback-adv">ADVANCED.en.md</a>.
 </details>
 
 <details>
   <summary><strong>Q: How do I connect a Linux machine, including a server without a desktop?</strong></summary>
-  <b>A:</b> With <code>awg-quick</code> from <code>amneziawg-tools</code>: put the client file in place as <code>/etc/amnezia/amneziawg/awg0.conf</code> and bring the tunnel up with <code>sudo awg-quick up awg0</code>. For a 3.1 profile, the module and the tools on the client have to be third line too. Step by step: <a href="ADVANCED.en.md#linux-client-adv">ADVANCED.en.md → Connecting a Linux machine as a client</a>.
+  <b>A:</b> With <code>awg-quick</code> from <code>amneziawg-tools</code>: put the client file in place as <code>/etc/amnezia/amneziawg/awg0.conf</code> and bring the tunnel up with <code>sudo awg-quick up awg0</code>. For a 3.1 profile, the module (or amneziawg-go) and the tools on the client have to support 3.1 too. Step by step: <a href="ADVANCED.en.md#linux-client-adv">ADVANCED.en.md → Connecting a Linux machine as a client</a>.
 </details>
 
 <details>
@@ -684,7 +684,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: Which hosting providers work well?</strong></summary>
-  <b>A:</b> Any KVM VPS on x86_64 with Ubuntu 24.04 LTS / Ubuntu 26.04 / Debian 13 (that is what gets AmneziaWG 3.1; Debian 12 is supported too, but on 2.0 and past regular support - see the compatibility table), root access, and at least 512 MB RAM (1 GB recommended). The installer does not work in OpenVZ and LXC containers. Pick providers with clean (non-blacklisted) IPs and unlimited traffic. See the <a href="#hosting-recommendation">recommendation</a> below.
+  <b>A:</b> Any VPS that is a full virtual machine (KVM or similar) on x86_64 with Ubuntu 24.04 LTS / Ubuntu 26.04 / Debian 13 (that is what gets AmneziaWG 3.1; Debian 12 is supported too, but on 2.0 and past regular support - see the compatibility table), root access, and at least 512 MB RAM (1 GB recommended). The installer does not work in a container (OpenVZ, LXC, Docker); for that there is the userspace route in <a href="ADVANCED.en.md#lxc-userspace-adv">ADVANCED.en.md</a>. Pick providers with clean (non-blacklisted) IPs and unlimited traffic. See the <a href="#hosting-recommendation">recommendation</a> below.
 </details>
 
 <details>
