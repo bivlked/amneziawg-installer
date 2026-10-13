@@ -334,7 +334,7 @@ TEXT = {
                    'проверенный модуль 2.0 из исходников; для части ARM - готовые сборки'),
         'profile': ('Профиль конфигурации',
                     'AmneziaWG 3.1 для новой установки; 2.0 - флагом `--protocol=2.0` или '
-                    'автоматически там, где 3.1 не поднять (ядро старее 6.7, ARM); '
+                    'автоматически там, где установщик 3.1 не выдаёт (ядро старее 6.7, ARM); '
                     'уже работающий сервер остаётся на своём поколении'),
     },
     'README.en.md': {
@@ -353,7 +353,7 @@ TEXT = {
                    'a pinned 2.0 module built from source; prebuilt packages for some ARM targets'),
         'profile': ('Config profile',
                     'AmneziaWG 3.1 for a new install; 2.0 with `--protocol=2.0`, or '
-                    'automatically where 3.1 cannot run (kernel older than 6.7, ARM); '
+                    'automatically where the installer does not issue 3.1 (kernel older than 6.7, ARM); '
                     'a running server keeps its generation'),
     },
 }
