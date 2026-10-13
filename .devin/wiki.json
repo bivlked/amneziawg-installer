@@ -1,7 +1,7 @@
 {
   "repo_notes": [
     {
-      "content": "amneziawg-installer is an installer and management toolkit for AmneziaWG 2.0 VPN on dedicated Ubuntu (24.04, 26.04) and Debian (12, 13) servers, on x86_64 and ARM64/ARMv7. It targets users with no advanced Linux knowledge: a short quick start (download the script, make it executable, run it with sudo) sets up the DKMS kernel module, UFW firewall, Fail2Ban, sysctl hardening, and generates server and client configs with QR codes and vpn:// URIs for the Amnezia client. The overview should state the tool name, the quick-start commands, and the differentiators up front, since this wiki is used as a quick reference. Documentation is bilingual: Russian (README.md, ADVANCED.md, CASCADE.md) and English (the .en.md docs and _en.sh scripts). The server must be a dedicated host or a full VM; the installer does not support LXC containers because it builds a kernel module (a manual amneziawg-go userspace path for LXC is documented separately in ADVANCED).",
+      "content": "amneziawg-installer is an installer and management toolkit for AmneziaWG 3.x VPN (the 3.1 profile by default, 2.0 for older clients and routers) on dedicated Ubuntu (24.04, 26.04) and Debian (12, 13) servers, on x86_64 and ARM64/ARMv7. It targets users with no advanced Linux knowledge: a short quick start (download the script, make it executable, run it with sudo) sets up the DKMS kernel module, UFW firewall, Fail2Ban, sysctl hardening, and generates server and client configs with QR codes and vpn:// URIs for the Amnezia client. The overview should state the tool name, the quick-start commands, and the differentiators up front, since this wiki is used as a quick reference. Documentation is bilingual: Russian (README.md, ADVANCED.md, CASCADE.md) and English (the .en.md docs and _en.sh scripts). The server must be a dedicated host or a full VM; the installer does not support LXC containers because it builds a kernel module (a manual amneziawg-go userspace path for LXC is documented separately in ADVANCED).",
       "author": "maintainer"
     },
     {
@@ -48,23 +48,23 @@
       "parent": "Core Architecture"
     },
     {
-      "title": "AmneziaWG 2.0 Protocol and Obfuscation",
-      "purpose": "How AmneziaWG 2.0 differs from WireGuard and from AmneziaWG 1.x and 3.x"
+      "title": "AmneziaWG 3.1 and 2.0 Protocol and Obfuscation",
+      "purpose": "How AmneziaWG 3.1 and 2.0 differ from WireGuard, from AmneziaWG 1.x and from each other"
     },
     {
       "title": "Obfuscation Parameters (Jc, S1-S4, H1-H4, I1-I5)",
       "purpose": "Meaning, ranges and generation of each parameter, the portable CPS tag set, which values must match on both sides",
-      "parent": "AmneziaWG 2.0 Protocol and Obfuscation"
+      "parent": "AmneziaWG 3.1 and 2.0 Protocol and Obfuscation"
     },
     {
       "title": "Routing Modes and Split-Tunneling",
       "purpose": "Full tunnel default, the Amnezia list mode, custom routes, per-client AllowedIPs and IPv6 handling",
-      "parent": "AmneziaWG 2.0 Protocol and Obfuscation"
+      "parent": "AmneziaWG 3.1 and 2.0 Protocol and Obfuscation"
     },
     {
       "title": "Carrier Profiles and DPI Environments",
       "purpose": "Mobile carrier presets, the --mobile flag, I1 shaped as a DNS response and per-carrier diagnostics",
-      "parent": "AmneziaWG 2.0 Protocol and Obfuscation"
+      "parent": "AmneziaWG 3.1 and 2.0 Protocol and Obfuscation"
     },
     {
       "title": "Peer Management",

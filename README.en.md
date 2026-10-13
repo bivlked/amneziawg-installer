@@ -169,7 +169,7 @@ The detailed write-up - what changes on the wire, what has to match between serv
 <a id="comparison"></a>
 ## ⚖️ AmneziaWG vs WireGuard
 
-| | WireGuard | AmneziaWG 2.0 |
+| | WireGuard | AmneziaWG 3.1 |
 |---|---|---|
 | **DPI detection** | Fingerprinted by fixed packet sizes and magic bytes | Hard to fingerprint - randomized headers, padding, protocol mimicry |
 | **Blocked in** | China, Russia, Iran, UAE, Turkmenistan | Nothing to block by fixed signature - there is none. Address and UDP port blocking remain: another port or `--mobile` can help |
@@ -182,7 +182,7 @@ The detailed write-up - what changes on the wire, what has to match between serv
 
 > On speed: on a server with a single shared vCPU the CPU becomes the bottleneck, because encryption and obfuscation run on that same core. Diagnostics: [FAQ in ADVANCED](ADVANCED.en.md#faq-advanced-adv).
 
-> If WireGuard works for you and isn't blocked - keep using it. If it's blocked or throttled - AmneziaWG 2.0 is the drop-in replacement.
+> If WireGuard works for you and isn't blocked - keep using it. If it's blocked or throttled - AmneziaWG 3.1 is the drop-in replacement.
 
 ---
 

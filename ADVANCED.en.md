@@ -2,7 +2,7 @@
   <b>RU</b> <a href="ADVANCED.md">Русский</a> | <b>EN</b> English
 </p>
 
-# AmneziaWG 2.0 Installer: Advanced Documentation
+# AmneziaWG 3.x Installer: Advanced Documentation
 
 This is a supplement to the main [README.en.md](README.en.md), containing deeper technical details, explanations, and advanced options for the AmneziaWG 2.0 installation and management scripts. For a step-by-step VPS deployment guide (VPS choice, OS choice, install flow, first client, update, uninstall, troubleshooting), see [INSTALL_VPS.md](INSTALL_VPS.md).
 

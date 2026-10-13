@@ -6,7 +6,7 @@ if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
 fi
 
 # ==============================================================================
-# AmneziaWG 2.0 peer management script
+# AmneziaWG 3.x and 2.0 peer management script
 # Author: @bivlked
 # Version: 5.37.1
 # Date: 2026-10-04
