@@ -1442,17 +1442,18 @@ sudo ufw reload</pre>
   <b>A:</b> This is an upstream bug in the standalone Windows client <code>amneziawg-windows-client</code> (a wireguard-windows fork with AWG patches). Its built-in config editor in <code>ui/syntax/highlighter.go</code> caps H1-H4 at [0, 2147483647] (2^31-1, <code>INT32_MAX</code>), even though the AmneziaWG spec allows the full <code>uint32</code> (0-4294967295). Values above 2^31-1 work fine on the server, but the client underlines them as invalid and may block saving. Upstream issue: <a href="https://github.com/amnezia-vpn/amneziawg-windows-client/issues/85">amnezia-vpn/amneziawg-windows-client#85</a> (open since February 2026, not yet fixed). As of v5.8.1 our installer generates H1-H4 in the safe half of the range [0, 2^31-1] — fresh installs are compatible with the Windows client out of the box. If you already have a v5.8.0 install with "bad" H values: (1) upgrade via <code>--uninstall</code> + reinstall with v5.8.1 — new H values will be in the safe range; or (2) manually edit H2/H3/H4 in <code>awg0.conf</code> to values <b>less than 2147483647</b>, restart the service, and regenerate client configs with <code>manage regen &lt;name&gt;</code>; or (3) use the cross-platform <a href="https://github.com/amnezia-vpn/amnezia-client/releases">Amnezia VPN</a> client instead of <code>amneziawg-windows-client</code> — it does not have this limit. Discussion: <a href="https://github.com/bivlked/amneziawg-installer/discussions/40">#40</a>.
 </details>
 
+<a id="faq-which-client-adv"></a>
 <details>
   <summary><strong>Q: Which client should I use for AmneziaWG?</strong></summary>
-  <b>A:</b> On Android, <a href="https://github.com/wgtunnel/android">WG Tunnel</a> (>= 5.6.0 for 3.1) or the lightweight <a href="https://github.com/amnezia-vpn/amneziawg-android">AmneziaWG</a> (>= 3.1.4 on Google Play for 3.1). In our check on 13 October 2026 with a 3.1 profile, both imported <code>&lt;name&gt;.png</code> with their own scanner, reconnected in under a second and kept the tunnel when the phone moved from Wi-Fi to mobile data. On iPhone, Mac and Windows, the lightweight AmneziaWG for your platform (for 3.1: iOS and macOS >= 3.1.4, Windows >= 3.1.0). <a href="https://github.com/amnezia-vpn/amnezia-client/releases">Amnezia VPN</a> (>= 5.0.1.5 for 3.1, >= 4.8.12.7 for 2.0) is supported too and accepts the <code>vpn://</code> link; on Android in the same check, version 5.0.3 took about 2 seconds to connect, and after Wi-Fi was switched off the tunnel did not recover by itself until the app was restarted. The standard WireGuard client <b>does not</b> support AWG parameters. See <a href="#client-compat-adv">Client Compatibility</a> for the full table.
+  <b>A:</b> On Android, <a href="https://github.com/wgtunnel/android">WG Tunnel</a> (>= 5.6.0 for 3.1) or the lightweight <a href="https://github.com/amnezia-vpn/amneziawg-android">AmneziaWG</a> (>= 3.1.4 on Google Play for 3.1). In our check on 13 October 2026 with a 3.1 profile, both imported <code>&lt;name&gt;.png</code> with their own scanner, reconnected in under a second and kept the tunnel when the phone moved from Wi-Fi to mobile data. On iPhone, Mac and Windows, the lightweight AmneziaWG for your platform (for 3.1: iOS and macOS >= 3.1.4, Windows >= 3.1.0); iPhone and Mac were not part of that check. <a href="https://github.com/amnezia-vpn/amnezia-client/releases">Amnezia VPN</a> (>= 5.0.1.5 for 3.1, >= 4.8.12.7 for 2.0) is supported too and accepts the <code>vpn://</code> link; on Android in the same check, version 5.0.3 took about 2 seconds to connect, and after Wi-Fi was switched off the tunnel did not recover, not even with the Connect button, until the app was restarted. The standard WireGuard client <b>does not</b> support AWG parameters. See <a href="#client-compat-adv">Client Compatibility</a> for the full table.
 </details>
 
 <a id="faq-first-packet-adv"></a>
 <details>
   <summary><strong>Q: The tunnel is up, but the first request opens with a delay</strong></summary>
-  <b>A:</b> Clients built on the amneziawg-go engine (the lightweight AmneziaWG for Android, iOS, macOS and Windows, Amnezia VPN) have a known race: the very first data packet after the tunnel comes up can leave with the default <code>S4</code> padding instead of the configured one, and the server drops it (<a href="https://github.com/amnezia-vpn/amneziawg-go/issues/168">amneziawg-go#168</a>; a fix is proposed in <a href="https://github.com/amnezia-vpn/amneziawg-go/pull/184">#184</a> and is not merged as of 13 October 2026). One packet is lost: the app retries the request and everything continues normally, so it shows up as a delay, not as a failure. There is nothing to fix in the config or on the server.
+  <b>A:</b> Clients built on the amneziawg-go engine (the lightweight AmneziaWG for Android, iOS, macOS and Windows, Amnezia VPN; WG Tunnel is built on its own fork of that engine) have a known race: the very first data packet after the tunnel comes up can leave with the default <code>S4</code> padding (0) instead of the configured one, and the server drops it (<a href="https://github.com/amnezia-vpn/amneziawg-go/issues/168">amneziawg-go#168</a>; a fix is proposed in <a href="https://github.com/amnezia-vpn/amneziawg-go/pull/184">#184</a> and is not merged as of 13 October 2026). One packet is lost; the system resends it (TCP retransmission or a DNS retry), so it shows up as a delay, not as a failure. On its own this race does not point to a problem in the config or on the server.
   <br><br>
-  In our check on 13 October 2026 with a 3.1 profile there was no noticeable delay: AmneziaWG 3.1.4 on Android opened the page in under a second in 10 reconnects out of 10, WG Tunnel 5.8.1 immediately. On Windows, AmneziaWG 3.1.0 opened the first page after about 3 seconds, but the 2.0 profile behaved the same way: that is the time Windows spends checking the address of the tunnel adapter (DAD), and the protocol itself accounts for about 0.2 seconds. The result applies to these devices and networks; others can differ.
+  In our check on 13 October 2026 with a 3.1 profile there was no delay attributable to this race: AmneziaWG 3.1.4 on Android opened the page in under a second in 10 reconnects out of 10, WG Tunnel 5.8.1 just as fast. On Windows, AmneziaWG 3.1.0 opened the first page after about 3 seconds, but the 2.0 profile behaved the same way: that is the time Windows spends checking the address of the tunnel adapter (DAD), and the protocol itself accounts for about 0.2 seconds. The result applies to these devices and networks; others can differ.
 </details>
 
 <details>
@@ -1838,15 +1839,15 @@ When a client is created, a `.vpnuri` file is automatically generated with a `vp
 
 > Perl with `Compress::Zlib` and `MIME::Base64` modules must be present on the server. On Ubuntu and Debian they are installed by default. If Perl is absent, neither `.vpnuri` nor `.vpnuri.png` is created, but `.conf` files work as usual. `qrencode` (already required for `.conf` QR) is also used for `.vpnuri.png`.
 
-**Option 1 — QR code (recommended for mobile):**
+**Option 1 - QR code:**
 
 1. Copy `/root/awg/<name>.vpnuri.png` to your computer (`scp`) or open it locally.
 2. In the Amnezia VPN app on the phone: "Add VPN" → "Scan QR code".
 3. Point the camera at `.vpnuri.png` — the client imports automatically.
 
-The code is dense: the link is about 1100 characters long. On Android, the built-in scanner of Amnezia VPN 5.0.3 did not recognize it (checked 13 October 2026), while the phone's regular camera reads it at once. In that case, read the code with the phone's camera, copy the `vpn://...` text and paste it into Amnezia VPN as in option 2.
+The code is dense: with our profile the link is about 1100 characters long. On Android, the built-in scanner of Amnezia VPN 5.0.3 did not recognize it (checked 13 October 2026), while the stock camera of our test phone (Samsung) read it at once. In that case, read the code with the phone's camera, copy the `vpn://...` text and paste it into Amnezia VPN as in option 2.
 
-**Option 2 — URI paste:**
+**Option 2 - URI paste:**
 
 1. Copy the contents of the `.vpnuri` file.
 2. Open Amnezia VPN → "Add VPN" → "Paste from clipboard".
@@ -1969,7 +1970,7 @@ A client has to understand your server's generation: a new install gives the 3.1
 
 | Client | Platform | AWG 3.1 | AWG 2.0 | Notes |
 |--------|----------|---------|---------|-------|
-| [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) | Windows, macOS, Linux, Android, iOS | ✅ (>= 5.0.1.5) | ✅ (>= 4.8.12.7) | Supports vpn:// URI import. On Android the tunnel may not recover by itself after a network change (5.0.3, check of 13 Oct 2026). Not in the Russian App Store |
+| [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) | Windows, macOS, Linux, Android, iOS | ✅ (>= 5.0.1.5) | ✅ (>= 4.8.12.7) | Supports vpn:// URI import. On Android, after Wi-Fi was switched off the tunnel did not recover, even with the Connect button; an app restart helped (5.0.3, check of 13 Oct 2026). Not in the Russian App Store |
 | [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-android) | Android | ✅ (Google Play >= 3.1.4, APK >= v3.1.20260814) | ✅ (>= 2.0.0) | Recommended for Android. Lightweight tunnel manager. Import via `.conf` and QR |
 | [AmneziaWG](https://apps.apple.com/app/amneziawg/id6478942365) | iOS, macOS | ✅ (>= 3.1.4) | ✅ | Lightweight client, available in the Russian App Store |
 | [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) | Windows | ✅ (>= 3.1.0) | ✅ (>= 2.0.0) | Lightweight tunnel manager. Import via `.conf` |
@@ -2018,7 +2019,7 @@ Recorded 12 October 2026 from the release pages, the app stores and the projects
 > behaviour on a generated 3.1 profile. Separately, on 13 October 2026 AmneziaWG for Android 3.1.4,
 > WG Tunnel 5.8.1 and Amnezia VPN 5.0.3 on Android and AmneziaWG 3.1.0 on Windows connected to a
 > server with a 3.1 profile from this installer; the results are in the FAQ entries
-> <a href="#faq-first-packet-adv">on the delayed first request</a> and on choosing a client.
+> <a href="#faq-first-packet-adv">on the delayed first request</a> and <a href="#faq-which-client-adv">on choosing a client</a>.
 
 ### Router Clients
 

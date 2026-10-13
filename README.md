@@ -327,6 +327,7 @@ cat /sys/module/amneziawg/version    # версия загруженного м�
 > ⚠️ **Нестандартный порт SSH:** Установщик обычно определяет SSH-порт автоматически. Если SSH на нестандартном порту или автодетект недоступен, запускайте с `--ssh-port=ВАШ_ПОРТ` (несколько портов - списком через запятую). Как дополнительная консервативная страховка можно заранее выполнить `sudo ufw allow ВАШ_ПОРТ/tcp` **до** запуска установки.
 
 **Клиенты:**
+* **Android:** [WG Tunnel](https://github.com/wgtunnel/android) (профиль 3.1 с версии **5.6.0**) или лёгкий [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-android) (профиль 3.1 с **3.1.4** в Google Play). Импорт QR-кодом `имя.png`; почему они - [какой клиент выбрать](#ekosistema)
 * **Все платформы:** [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) - полнофункциональный VPN-клиент: профиль 3.1 с версии **5.0.1.5**, профиль 2.0 с **4.8.12.7**. Импорт через `vpn://` URI
 * **Windows:** [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) - легковесный tunnel manager: профиль 3.1 с версии **3.1.0**, профиль 2.0 с **2.0.0**. Импорт через `.conf` файлы
 
@@ -459,7 +460,7 @@ scp root@IP_СЕРВЕРА:/root/awg/my_phone.conf .
 ```
 
 <details>
-<summary><strong>Импорт в WG Tunnel или AmneziaWG (телефон)</strong></summary>
+<summary><strong>Импорт в WG Tunnel или AmneziaWG (Android, iPhone)</strong></summary>
 
 1. Скачайте QR-код конфига: `scp root@IP_СЕРВЕРА:/root/awg/my_phone.png .`
 2. Откройте файл на экране компьютера
@@ -475,7 +476,7 @@ scp root@IP_СЕРВЕРА:/root/awg/my_phone.conf .
 </details>
 
 <details>
-<summary><strong>Импорт через QR-код</strong></summary>
+<summary><strong>Импорт в Amnezia VPN через QR-код ссылки</strong></summary>
 
 1. Скачайте QR-код ссылки: `scp root@IP_СЕРВЕРА:/root/awg/my_phone.vpnuri.png .`
 2. Откройте файл на экране компьютера
@@ -774,12 +775,12 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 ### Клиенты
 
-> **Какой клиент выбрать?** На Android - [**WG Tunnel**](https://github.com/wgtunnel/android) или лёгкий [**AmneziaWG**](https://github.com/amnezia-vpn/amneziawg-android): по нашей проверке 13 октября 2026 оба переподключаются меньше чем за секунду и не теряют туннель при переходе с Wi-Fi на мобильную сеть. На iPhone, Mac и Windows - лёгкий **AmneziaWG** для вашей платформы (импорт `.conf`).
+> **Какой клиент выбрать?** На Android - [**WG Tunnel**](https://github.com/wgtunnel/android) или лёгкий [**AmneziaWG**](https://github.com/amnezia-vpn/amneziawg-android): по нашей проверке 13 октября 2026 оба переподключаются меньше чем за секунду и не теряют туннель при переходе с Wi-Fi на мобильную сеть. На iPhone, Mac и Windows - лёгкий **AmneziaWG** для вашей платформы (импорт `.conf`; iPhone и Mac в проверке не участвовали).
 > [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) (для сервера 3.1 >= 5.0.1.5, для 2.0 >= 4.8.12.7) работает на всех платформах и принимает ссылку `vpn://`; в российском App Store его нет.
 
 | Клиент | Платформа | AWG 3.1 | AWG 2.0 | Тип | Примечание |
 |--------|-----------|:-------:|:-------:|-----|------------|
-| [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) | Windows, macOS, Linux, Android, iOS | ✅ >= 5.0.1.5 | ✅ >= 4.8.12.7 | Официальный | Полнофункциональный, `vpn://` URI; на Android при смене сети туннель может не восстановиться сам; в российском App Store нет |
+| [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) | Windows, macOS, Linux, Android, iOS | ✅ >= 5.0.1.5 | ✅ >= 4.8.12.7 | Официальный | Полнофункциональный, `vpn://` URI; на Android после выключения Wi-Fi туннель не восстановился без перезапуска приложения (5.0.3, 13 окт 2026); в российском App Store нет |
 | [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) | Windows | ✅ >= 3.1.0 | ✅ >= 2.0.0 | Официальный | Легковесный tunnel manager, импорт `.conf` |
 | **[AmneziaWG](https://github.com/amnezia-vpn/amneziawg-android)** | Android | ✅ >= 3.1.4 в Google Play | ✅ >= 2.0.0 | Официальный | **Рекомендуется для Android.** Легковесный tunnel manager, импорт `.conf` и QR |
 | [AmneziaWG](https://apps.apple.com/app/amneziawg/id6478942365) | iOS, macOS | ✅ >= 3.1.4 | ✅ | Официальный | Легковесный tunnel manager, импорт `.conf`; есть в российском App Store |

@@ -115,7 +115,7 @@ All client files land in `/root/awg/`. There are four of them, and they are not 
 | `<name>.conf` | text config: AmneziaWG desktop clients, Linux `awg-quick`, routers |
 | `<name>.png` | QR code of that same `.conf`, for AmneziaWG clients with QR import (a plain WireGuard client cannot import it) |
 | `<name>.vpnuri` | the `vpn://` link for the Amnezia VPN app |
-| `<name>.vpnuri.png` | QR code of the `vpn://` link, to import into the Amnezia VPN app with one scan |
+| `<name>.vpnuri.png` | QR code of the `vpn://` link, for the Amnezia VPN app |
 
 **The two QR codes are easy to mix up.** `<name>.png` holds the config text, `<name>.vpnuri.png` holds the `vpn://` link. The Amnezia VPN app expects `<name>.vpnuri.png`; do not scan `<name>.png` in it. More: [ADVANCED, import via vpn://](ADVANCED.en.md#vpnuri-adv).
 
@@ -123,6 +123,7 @@ The installer does not print a QR code in the terminal; it saves the files. Copy
 
 ```bash
 scp root@SERVER_IP:/root/awg/my_iphone.conf .
+scp root@SERVER_IP:/root/awg/my_iphone.png .
 scp root@SERVER_IP:/root/awg/my_iphone.vpnuri.png .
 ```
 
@@ -134,7 +135,7 @@ scp -P YOUR_SSH_PORT root@SERVER_IP:/root/awg/my_iphone.conf .
 
 Where to import:
 
-- **WG Tunnel or AmneziaWG on Android, AmneziaWG on iPhone**: "+", then "Scan QR code" for `<name>.png`. On Android these two are what we recommend: in our check on 13 October 2026 they reconnected in under a second and kept the tunnel across a Wi-Fi to mobile data switch.
+- **WG Tunnel or AmneziaWG on Android, AmneziaWG on iPhone**: "+", then the QR code option for `<name>.png` (iPhone was not part of the check below). On Android these two are what we recommend: in our check on 13 October 2026 they reconnected in under a second and kept the tunnel across a Wi-Fi to mobile data switch.
 - **Amnezia VPN app** (Windows, macOS, Linux, Android, iOS): "Add VPN", then "Scan QR code" for `<name>.vpnuri.png`, or "Paste from clipboard" with the link from `sudo cat /root/awg/my_iphone.vpnuri`. If its scanner does not recognize the code (it did not on Android with 5.0.3), read the code with the phone's regular camera and paste the copied `vpn://` text.
 - **AmneziaWG client for Windows**: import `<name>.conf`.
 - **Linux**: put `<name>.conf` in place and bring it up with `awg-quick up`.

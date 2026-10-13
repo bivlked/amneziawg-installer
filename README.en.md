@@ -326,6 +326,7 @@ Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work - o
 > ⚠️ **Non-standard SSH port:** The installer usually detects the SSH port automatically. If SSH runs on a non-standard port or autodetection is unavailable, run with `--ssh-port=YOUR_PORT` (comma-separated for several ports). As an extra conservative safeguard you can run `sudo ufw allow YOUR_PORT/tcp` **before** starting the installer.
 
 **Clients:**
+* **Android:** [WG Tunnel](https://github.com/wgtunnel/android) (the 3.1 profile from version **5.6.0**) or the lightweight [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-android) (the 3.1 profile from **3.1.4** on Google Play). Import via the `name.png` QR code; why these two - [which client to choose](#ecosystem)
 * **All platforms:** [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) - full-featured VPN client: the 3.1 profile from version **5.0.1.5**, the 2.0 profile from **4.8.12.7**. Import via `vpn://` URI
 * **Windows:** [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) - lightweight tunnel manager: the 3.1 profile from version **3.1.0**, the 2.0 profile from **2.0.0**. Import via `.conf` files
 
@@ -458,7 +459,7 @@ scp root@SERVER_IP:/root/awg/my_phone.conf .
 ```
 
 <details>
-<summary><strong>Import into WG Tunnel or AmneziaWG (phone)</strong></summary>
+<summary><strong>Import into WG Tunnel or AmneziaWG (Android, iPhone)</strong></summary>
 
 1. Download the QR code of the config: `scp root@SERVER_IP:/root/awg/my_phone.png .`
 2. Open the file on your computer screen
@@ -474,7 +475,7 @@ scp root@SERVER_IP:/root/awg/my_phone.conf .
 </details>
 
 <details>
-<summary><strong>Import via QR code</strong></summary>
+<summary><strong>Import into Amnezia VPN via the link QR code</strong></summary>
 
 1. Download the QR code of the link: `scp root@SERVER_IP:/root/awg/my_phone.vpnuri.png .`
 2. Open the file on your computer screen
@@ -773,12 +774,12 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 ### Clients
 
-> **Which client should I use?** On Android, [**WG Tunnel**](https://github.com/wgtunnel/android) or the lightweight [**AmneziaWG**](https://github.com/amnezia-vpn/amneziawg-android): in our check on 13 October 2026 both reconnected in under a second and kept the tunnel when the phone moved from Wi-Fi to mobile data. On iPhone, Mac and Windows, the lightweight **AmneziaWG** for your platform (`.conf` import).
+> **Which client should I use?** On Android, [**WG Tunnel**](https://github.com/wgtunnel/android) or the lightweight [**AmneziaWG**](https://github.com/amnezia-vpn/amneziawg-android): in our check on 13 October 2026 both reconnected in under a second and kept the tunnel when the phone moved from Wi-Fi to mobile data. On iPhone, Mac and Windows, the lightweight **AmneziaWG** for your platform (`.conf` import; iPhone and Mac were not part of that check).
 > [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) (>= 5.0.1.5 for a 3.1 server, >= 4.8.12.7 for 2.0) works on all platforms and accepts the `vpn://` link; it is not in the Russian App Store.
 
 | Client | Platform | AWG 3.1 | AWG 2.0 | Type | Notes |
 |--------|----------|:-------:|:-------:|------|-------|
-| [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) | Windows, macOS, Linux, Android, iOS | ✅ >= 5.0.1.5 | ✅ >= 4.8.12.7 | Official | Full-featured, `vpn://` URI; on Android the tunnel may not recover by itself after a network change; not in the Russian App Store |
+| [Amnezia VPN](https://github.com/amnezia-vpn/amnezia-client/releases) | Windows, macOS, Linux, Android, iOS | ✅ >= 5.0.1.5 | ✅ >= 4.8.12.7 | Official | Full-featured, `vpn://` URI; on Android the tunnel did not recover after Wi-Fi was switched off until the app was restarted (5.0.3, 13 Oct 2026); not in the Russian App Store |
 | [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) | Windows | ✅ >= 3.1.0 | ✅ >= 2.0.0 | Official | Lightweight tunnel manager, `.conf` import |
 | **[AmneziaWG](https://github.com/amnezia-vpn/amneziawg-android)** | Android | ✅ >= 3.1.4 on Google Play | ✅ >= 2.0.0 | Official | **Recommended for Android.** Lightweight tunnel manager, `.conf` and QR import |
 | [AmneziaWG](https://apps.apple.com/app/amneziawg/id6478942365) | iOS, macOS | ✅ >= 3.1.4 | ✅ | Official | Lightweight tunnel manager, `.conf` import; available in the Russian App Store |
