@@ -571,9 +571,10 @@ Options:
                         Without the flag, on a machine where 3.1 cannot run
                         (kernel older than 6.7, a non-x86_64 architecture, ARM
                         included, a second-line kernel module or a failed module
-                        check), 2.0 is installed with an explanation; if the awg
-                        tools are older than a third-line module, the install
-                        stops and asks to upgrade them. --protocol=2.0 is
+                        check), 2.0 is installed with an explanation; if the
+                        module does not accept the 2.0 set either, the install
+                        stops. If the awg tools are older than a third-line
+                        module, the install stops and asks to upgrade them. --protocol=2.0 is
                         needed if the clients are routers on stock firmware,
                         Hiddify or apps that are not updated. An explicit
                         --protocol=3.1 on an unsuitable machine ends the install
