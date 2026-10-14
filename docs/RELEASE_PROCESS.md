@@ -103,7 +103,10 @@ BASE_REF=origin/main bash scripts/preflight-check.sh
 8. SHA pins in lockstep (`update-sha-pins.sh --verify`).
 9. Documentation consistency (`scripts/check-docs-consistency.sh`): internal
    anchors resolve, changelog headings have reference links and the RU/EN
-   version sets match, the version triple agrees, the OS matrix is current.
+   version sets match, the version triple agrees, the OS matrix is current,
+   the client and host tables in ADVANCED match
+   `scripts/update-client-tables.sh`, and no client row is older than the
+   freshness limit at the release date.
 10. Release signatures (`scripts/verify-signatures.sh`). Absent signatures
     are a warning, because preflight also runs on ordinary branches where no
     release is being prepared. Present but wrong is a hard failure. A warning
@@ -124,6 +127,10 @@ Also confirm by hand before tagging:
   with awk), plus the matching `[X.Y.Z]:` reference link, and the `[Unreleased]`
   link retargeted to `vX.Y.Z...HEAD`.
 - The RU and EN changelogs list the same set of versions.
+- Stale rows in `docs/clients-matrix.json` are refreshed and
+  `bash scripts/update-client-tables.sh --write` (then `--check`) has been run
+  before the version bump: rows older than the freshness limit at the release
+  date fail the documentation check.
 - The README version badge, `SCRIPT_VERSION`, and the newest changelog heading
   all agree.
 - Ubuntu / Debian support matrix is current everywhere it is stated (README,
@@ -152,17 +159,18 @@ below.
 
 A tag push (`git push origin vX.Y.Z`) triggers two independent workflows:
 
-- `release.yml` (three to four minutes): runs the preflight gate, verifies the
+- `release.yml` (20 to 28 minutes over the v5.37.1 and v6.0.0 tags, budget
+  40): runs the preflight gate, whose full serial bats run takes most of that
+  time, verifies the
   offline signatures under `signing/`, then creates the release as a draft,
   attaches the signed scripts, their `.minisig` files and `KEYS.txt`, checks
   that every expected asset is really there, and only then publishes. Both
   gates run before the release exists, so a tag that fails one produces no
   release at all rather than a half-published one. The body and title are
   assembled by `scripts/build-release-notes.sh` from both changelogs (see
-  "Release notes" below). Measured over the eight tag pushes before signing
-  was added: 177 to 226 seconds. Re-measure rather than trusting this line:
+  "Release notes" below). Re-measure rather than trusting this line:
   `gh run list --workflow=release.yml --json startedAt,updatedAt`.
-- `arm-build.yml` (about 11 minutes, measured over the same runs): builds the ARM prebuilt `.deb`
+- `arm-build.yml` (11 to 12 minutes over the same tags): builds the ARM prebuilt `.deb`
   packages under QEMU and publishes them to the separate `arm-packages`
   release. This is a separate, slower track and does not block the main
   release. For a reproducible build, pin the upstream kernel-module ref (a tag)
@@ -181,9 +189,9 @@ health check:
 - Download `releases/latest/download/install_amneziawg.sh` and check that its
   `SCRIPT_VERSION` is the new one.
 
-Note: `release.yml` only depends on the preflight gate, so the GitHub Release can
-appear before `arm-build.yml` finishes. For a release that advertises ARM
-prebuilt packages, wait for the ARM run to go green before announcing.
+Note: the two runs are independent. With the full bats suite in its preflight,
+`release.yml` now usually finishes after `arm-build.yml`, but do not rely on the
+order: announce only when both are green.
 
 If the preflight gate or the signature check fails on a pushed tag, no release
 is published. Fix the branch, then delete the tag

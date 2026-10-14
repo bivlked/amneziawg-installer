@@ -1,11 +1,11 @@
 {
   "repo_notes": [
     {
-      "content": "amneziawg-installer is an installer and management toolkit for AmneziaWG 3.x VPN (the 3.1 profile by default; 2.0 for older clients and routers, and automatically on kernels older than 6.7 and on ARM) on dedicated Ubuntu (24.04, 26.04) and Debian (12, 13) servers, on x86_64 and ARM64/ARMv7. It targets users with no advanced Linux knowledge: a short quick start (download the script, make it executable, run it with sudo) sets up the DKMS kernel module, UFW firewall, Fail2Ban, sysctl hardening, and generates server and client configs with QR codes and vpn:// URIs for the Amnezia client. The overview should state the tool name, the quick-start commands, and the differentiators up front, since this wiki is used as a quick reference. Documentation is bilingual: Russian (README.md, ADVANCED.md, CASCADE.md) and English (the .en.md docs and _en.sh scripts). The server must be a dedicated host or a full VM; the installer does not support LXC containers because it builds a kernel module (a manual amneziawg-go userspace path for LXC is documented separately in ADVANCED).",
+      "content": "amneziawg-installer is an installer and management toolkit for AmneziaWG 3.x VPN (the 3.1 profile by default; 2.0 for older clients and routers, and automatically on kernels older than 6.7 and on ARM) on dedicated Ubuntu (24.04, 26.04) and Debian (12, 13) servers, on x86_64 and ARM64/ARMv7. It targets users with no advanced Linux knowledge: a short quick start (download the script, make it executable, run it with sudo) sets up the DKMS kernel module, UFW firewall, Fail2Ban, sysctl hardening, and generates server and client configs with QR codes and vpn:// URIs for the Amnezia client. The overview should state the tool name, the quick-start commands, and the differentiators up front, since this wiki is used as a quick reference. Documentation is bilingual: Russian (README.md, ADVANCED.md, INSTALL_VPS.ru.md, CASCADE.md, WARP-RU.md) and English (README.en.md, ADVANCED.en.md, INSTALL_VPS.md, CASCADE.en.md, WARP-RU.en.md and the _en.sh scripts). The server must be a dedicated host or a full VM; the installer does not support LXC containers because it builds a kernel module (a manual amneziawg-go userspace path for LXC is documented separately in ADVANCED).",
       "author": "maintainer"
     },
     {
-      "content": "Prioritize the current 2026 feature set, which older snapshots miss: Debian 12/13 and Ubuntu 26.04 support (PPA codename remapping plus a from-source DKMS fallback), ARM prebuilt kernel modules when a matching target exists with a DKMS source fallback otherwise, a documented two-server cascade guide where Russian traffic goes direct and everything else exits abroad (CASCADE.md and CASCADE.en.md), automatic TCP MSS clamping for reliability on mobile carriers, double-NAT and cascade (added in v5.17.0), time-limited clients via the --expires=DURATION option, optional in-tunnel IPv6 via --allow-ipv6-tunnel (off by default), and mobile-carrier DPI tuning using AmneziaWG 2.0 concealment (the installer auto-generates the I1 CPS parameter; I2 to I5 are optional and manual; plus Jc/Jmin/Jmax junk) with per-carrier diagnostics. Note on routing: since v5.34.0 the default is the full tunnel (--route-all, AllowedIPs = 0.0.0.0/0, ::/0). The public-IPv4 subnet list (1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6, 8.0.0.0/7 and so on, with 2000::/3 for IPv6 since v5.36.2) is the optional --route-amnezia mode: it covers the same public IPv4 as the full tunnel and only keeps private and a few special-purpose ranges outside, so do not describe it as split tunneling. Real split tunneling is --route-custom=NETS or per-client --allowed-ips.",
+      "content": "Prioritize the current feature set, which older snapshots miss: since v6.0.0 new installs get the AmneziaWG 3.1 profile by default (encrypted headers via HeaderProtectionKey, ContentPaddingAddition 32-128, H1-H4 fixed at 1-4), with an automatic fallback to 2.0 on kernels older than 6.7, on ARM, or when the installed awg tools lack 3.1 support, and --protocol=2.0 for clients without 3.1; Debian 12/13 and Ubuntu 26.04 support (PPA codename remapping plus a from-source DKMS fallback), ARM prebuilt kernel modules when a matching target exists with a DKMS source fallback otherwise, a documented two-server cascade guide where Russian traffic goes direct and everything else exits abroad (CASCADE.md and CASCADE.en.md), automatic TCP MSS clamping for reliability on mobile carriers, double-NAT and cascade (added in v5.17.0), time-limited clients via the --expires=DURATION option, optional in-tunnel IPv6 via --allow-ipv6-tunnel (off by default), and mobile-carrier DPI tuning on both generations (the installer auto-generates the I1 CPS parameter; I2 to I5 are optional and manual; plus Jc/Jmin/Jmax junk) with per-carrier diagnostics. Note on routing: since v5.34.0 the default is the full tunnel (--route-all, AllowedIPs = 0.0.0.0/0, ::/0). The public-IPv4 subnet list (1.0.0.0/8, 2.0.0.0/7, 4.0.0.0/6, 8.0.0.0/7 and so on, with 2000::/3 for IPv6 since v5.36.2) is the optional --route-amnezia mode: it covers the same public IPv4 as the full tunnel and only keeps private and a few special-purpose ranges outside, so do not describe it as split tunneling. Real split tunneling is --route-custom=NETS or per-client --allowed-ips.",
       "author": "maintainer"
     },
     {
@@ -25,7 +25,7 @@
     },
     {
       "title": "Project Roadmap and Changelog",
-      "purpose": "Release history from CHANGELOG.md, the public roadmap in docs/ROADMAP.md, and the planned move to AmneziaWG 3.1 for new installs (the --protocol flag already exists, the Unreleased changelog entries track the rest)",
+      "purpose": "Release history from CHANGELOG.md and the public roadmap in docs/ROADMAP.md. Since v6.0.0 a new install defaults to the AmneziaWG 3.1 profile (HeaderProtectionKey and ContentPaddingAddition); 2.0 is chosen with --protocol=2.0 or automatically where the installer does not issue 3.1, and running servers keep their generation",
       "parent": "Overview"
     },
     {
@@ -39,7 +39,7 @@
     },
     {
       "title": "Shared Library (awg_common.sh)",
-      "purpose": "Key generation, config rendering, AWG 2.0 parameter generation, vpn:// URIs, expiry and backup helpers",
+      "purpose": "Key generation, config rendering, the AmneziaWG 3.1 profile (HeaderProtectionKey, ContentPaddingAddition) and 2.0 parameter generation, vpn:// URIs, expiry and backup helpers",
       "parent": "Core Architecture"
     },
     {
@@ -111,6 +111,11 @@
     {
       "title": "Two-Server Cascade: Split Exit Routing",
       "purpose": "CASCADE guide: Russian traffic exits through a server in Russia, everything else abroad, and how to remove it",
+      "parent": "Advanced Deployment Scenarios"
+    },
+    {
+      "title": "Russian Segment via Cloudflare WARP",
+      "purpose": "WARP-RU guide: Russian traffic exits through Cloudflare WARP selected by a BGP feed, everything else exits directly; failure modes and removal",
       "parent": "Advanced Deployment Scenarios"
     },
     {

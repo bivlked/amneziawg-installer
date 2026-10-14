@@ -114,9 +114,9 @@ Two consequences worth stating plainly, because they change the maintainer's rou
 
 User-side verification lives in README ([EN](../README.en.md#verifying-a-release), [RU](../README.md#proverka-podpisi)); keep one copy of the commands there. It checks the whole public key with `minisign -P`, not the key ID.
 
-## Implementation checkpoints
+## Implementation checkpoints (history)
 
-Activation steps, in order:
+How signing was switched on, kept as a record; all steps below are done. Activation steps, in order:
 
 1. **USER**: Generate offline keypair with `minisign -G` on a trusted machine. Backup the private key to encrypted offline storage. Set a strong password.
 2. **USER**: Hand over the public key file (`*.pub`) for commit to the repository as `KEYS.txt`.
@@ -132,15 +132,11 @@ Activation steps, in order:
 ## Per-release routine
 
 ```bash
-TAG=vX.Y.Z
-KEY=~/.minisign/amneziawg-installer.key
-mkdir -p signing
-for f in $(bash scripts/signed-file-list.sh); do
-  minisign -Sm "$f" -s "$KEY" -x "signing/$f.minisig" -t "amneziawg-installer $TAG $f"
-done
-bash scripts/verify-signatures.sh "$TAG"
-git add signing && git commit -m "chore: signatures for $TAG"
+bash scripts/sign-release.sh vX.Y.Z
+git add signing && git commit -m "chore: signatures for vX.Y.Z"
 ```
+
+`sign-release.sh` replaced the hand-written `minisign` loop that used to stand here: without a terminal that loop could finish having signed nothing. The full procedure, including the Windows notes, is in [RELEASE_PROCESS.md](RELEASE_PROCESS.md), section "Release signing"; keep one copy of the commands there.
 
 Sign **after** the last change to the six scripts and **before** the tag. Signing earlier and then amending a script produces signatures that verify against nothing; `verify-signatures.sh` and `preflight-check.sh` both catch that, but only if they are run.
 

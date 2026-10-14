@@ -15,6 +15,7 @@ tracked in issues and discussions, not here:
 
 ## Recently shipped
 
+- AmneziaWG 3.1 by default for new installs (v6.0.0): encrypted headers (`HeaderProtectionKey`) and content padding (`ContentPaddingAddition`), with an automatic fallback to 2.0 where the installer does not issue 3.1 (ARM, kernels older than 6.7) and `--protocol=2.0` for clients without 3.1.
 - AmneziaWG 2.0 support (H1-H4 ranges, S3/S4, I1-I5 CPS concealment).
 - Dual-stack IPv6 inside the tunnel (`--allow-ipv6-tunnel`), split-tunnel aware.
 - ARM64 / ARMv7 prebuilt kernel modules with DKMS fallback.
@@ -28,7 +29,7 @@ tracked in issues and discussions, not here:
 - iOS clients work correctly in the list-based routing mode (Amnezia List + DNS): the bundled route list no longer stalls the iOS tunnel.
 - Reliability on mobile, double-NAT and cascade paths: the TCP MSS is clamped to the tunnel size, which fixes the common PMTU-blackhole stall where large TCP pages and downloads hang when path-MTU discovery is blocked along the way.
 - Full special-junk pass-through: all CPS concealment params `I1`-`I5` set in the server `awg0.conf` now reach clients (`.conf`, QR, `vpn://`), not just `I1`. Multi-packet concealment profiles can be configured server-side and distributed with `manage regen`.
-- Companion guides: how the project compares to the official Amnezia app, and a two-server cascade with split-tunnel routing.
+- Companion guides: how the project compares to the official Amnezia app, a two-server cascade with split-tunnel routing, and routing the Russian segment through Cloudflare WARP selected by a BGP feed.
 - Bug fixes: `install --force --port=N` now actually changes the server port; full-tunnel clients get `0.0.0.0/0, ::/0` so iOS AmneziaVPN accepts the all-traffic mode; the default client DNS is a `1.1.1.1, 1.0.0.1` pair.
 
 ## Under consideration
@@ -36,6 +37,8 @@ tracked in issues and discussions, not here:
 These are directions, not commitments. Priority and timing are decided in
 issue #79 and the discussions.
 
+- **AmneziaWG 3.1 on more servers:** issue 3.1 on ARM once it has been measured there, and on kernels older than 6.7 once the module supports them.
+- **Client support for 3.1:** keep the client compatibility table current as apps and router firmware gain 3.1 (source: `docs/clients-matrix.json`).
 - **Release integrity, next steps:** sign the ARM prebuilt packages; publish
   the public key outside GitHub.
 - **ARM prebuilt reproducibility:** make a non-HEAD upstream kernel-module pin
@@ -68,6 +71,7 @@ Carrier reports (operator, region, working parameters) are especially useful.
 
 ## Уже сделано
 
+- AmneziaWG 3.1 по умолчанию для новых установок (v6.0.0): шифрование заголовков (`HeaderProtectionKey`) и добавочный паддинг (`ContentPaddingAddition`); там, где установщик 3.1 не выдаёт (ARM, ядра старее 6.7), автоматически ставится 2.0, а для клиентов без 3.1 есть `--protocol=2.0`.
 - Поддержка AmneziaWG 2.0 (диапазоны H1-H4, S3/S4, маскировка I1-I5 CPS).
 - Dual-stack IPv6 внутри туннеля (`--allow-ipv6-tunnel`), с учётом split-tunnel.
 - Готовые модули ядра ARM64 / ARMv7 с fallback на DKMS.
@@ -81,7 +85,7 @@ Carrier reports (operator, region, working parameters) are especially useful.
 - Клиенты iOS работают корректно в списочном режиме маршрутизации (Amnezia List + DNS): встроенный список маршрутов больше не подвешивает туннель на iOS.
 - Надёжность на мобильных, double-NAT и каскадных путях: TCP MSS ограничивается под размер туннеля, что устраняет типичный PMTU-блэкхол, когда крупные TCP-страницы и закачки зависают при заблокированном по пути обнаружении path-MTU.
 - Полный проброс special-junk: все CPS-параметры маскировки `I1`-`I5`, заданные в серверном `awg0.conf`, теперь доходят до клиентов (`.conf`, QR, `vpn://`), а не только `I1`. Многопакетные профили маскировки можно задать на сервере и раздать через `manage regen`.
-- Сопутствующие гайды: сравнение проекта с официальным приложением Amnezia и каскад из двух серверов со split-tunnel-маршрутизацией.
+- Сопутствующие гайды: сравнение проекта с официальным приложением Amnezia, каскад из двух серверов со split-tunnel-маршрутизацией и российский сегмент через Cloudflare WARP с выбором по BGP-фиду.
 - Багфиксы: `install --force --port=N` теперь действительно меняет порт сервера; полнотуннельные клиенты получают `0.0.0.0/0, ::/0`, чтобы iOS AmneziaVPN принимал режим всего трафика; DNS клиента по умолчанию - пара `1.1.1.1, 1.0.0.1`.
 
 ## На рассмотрении
@@ -89,6 +93,8 @@ Carrier reports (operator, region, working parameters) are especially useful.
 Это направления, а не обязательства. Приоритет и сроки определяются в issue #79
 и обсуждениях.
 
+- **AmneziaWG 3.1 на большем числе серверов:** выдавать 3.1 на ARM после отдельного замера там и на ядрах старее 6.7, когда их поддержит модуль.
+- **Поддержка 3.1 в клиентах:** держать таблицу совместимости клиентов актуальной по мере того, как приложения и прошивки роутеров получают 3.1 (источник: `docs/clients-matrix.json`).
 - **Целостность релизов, дальше:** подписывать готовые ARM-пакеты; опубликовать
   публичный ключ вне GitHub.
 - **Воспроизводимость ARM-сборок:** сделать закрепление не-HEAD ревизии
