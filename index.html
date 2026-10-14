@@ -49,7 +49,7 @@
   "featureList": [
     "One-command install on a clean Ubuntu or Debian VPS",
     "AmneziaWG 3.1 by default: header encryption and extra padding on top of junk packets, S1-S4 padding and the I1 concealment packet",
-    "AmneziaWG 2.0 with --protocol=2.0, and automatically where 3.1 cannot run",
+    "AmneziaWG 2.0 with --protocol=2.0, and automatically on ARM and older kernels",
     "UFW firewall, Fail2Ban, sysctl hardening and SSH rate limiting by default",
     "Client management: add, remove, list, regenerate, QR codes, vpn:// links, expiring guest configs",
     "JSON output for most management commands, for scripts and bots",
@@ -112,7 +112,7 @@
   <div class="wrap">
     <h1>AmneziaWG 3.1 VPN server in one command</h1>
     <p class="lede">Turn a clean Ubuntu or Debian VPS into a self-hosted, DPI-resistant VPN. No Docker, no web panel, no Linux experience required.</p>
-    <p class="inline-note">A new install gets AmneziaWG 3.1 by default. Routers whose firmware does not support 3.1 yet (stable KeeneticOS, for one), Hiddify and apps that have not been updated for a long time need 2.0: add <code>--protocol=2.0</code>. Where 3.1 cannot run (a kernel older than 6.7, ARM) the installer picks 2.0 by itself, and a server that already runs keeps its version. <a href="/amneziawg-installer/awg3/">What you get and how to go back to 2.0</a></p>
+    <p class="inline-note">A new install gets AmneziaWG 3.1 by default. Routers whose firmware does not support 3.1 yet (stable KeeneticOS, for one), Hiddify and apps that have not been updated for a long time need 2.0: add <code>--protocol=2.0</code>. On ARM and on kernels older than 6.7 the installer picks 2.0 by itself, and a server that already runs keeps its version. <a href="/amneziawg-installer/awg3/">What you get and how to go back to 2.0</a></p>
     <div class="cta-row">
       <a class="btn btn-primary" href="#quick-start">Quick start</a>
       <a class="btn" href="https://github.com/bivlked/amneziawg-installer/blob/main/INSTALL_VPS.md">Full guide</a>
@@ -189,7 +189,7 @@
     <ol class="steps">
       <li class="step"><span class="n" aria-hidden="true"></span><p>Rent a clean Ubuntu or Debian VPS and connect over SSH as root.</p></li>
       <li class="step"><span class="n" aria-hidden="true"></span><p>Run the command above. The script reboots when it needs to. After a reboot, run it again and it resumes from where it stopped.</p></li>
-      <li class="step"><span class="n" aria-hidden="true"></span><p>Download the client files from <code>/root/awg/</code> on the server (the <a href="https://github.com/bivlked/amneziawg-installer/blob/main/README.en.md#after-installation">README</a> shows how), then scan the QR code in the app: WG Tunnel or AmneziaWG on Android, AmneziaWG on iPhone, Mac and Windows (<a href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.en.md#faq-which-client-adv">why these</a>). Amnezia VPN takes the vpn:// link instead. For a 3.1 server the app has to support 3.1: <a href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.en.md#client-gen-adv">which ones do</a>.</p></li>
+      <li class="step"><span class="n" aria-hidden="true"></span><p>Download the client files from <code>/root/awg/</code> on the server (the <a href="https://github.com/bivlked/amneziawg-installer/blob/main/README.en.md#after-installation">README</a> shows how), then add them to the app: WG Tunnel or AmneziaWG on Android, AmneziaWG on iPhone (QR code or the .conf file), AmneziaWG on Mac and Windows (the .conf file) (<a href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.en.md#faq-which-client-adv">why these</a>). Amnezia VPN takes the vpn:// link instead. For a 3.1 server the app has to support 3.1: <a href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.en.md#client-gen-adv">which ones do</a>.</p></li>
     </ol>
     <p class="inline-note mt">For automation, the same script takes <code>--yes --route-all</code> and every other parameter as a flag. The <a href="https://github.com/bivlked/amneziawg-installer/blob/main/INSTALL_VPS.md">full guide</a> covers VPS choice, ARM notes, troubleshooting, and uninstall.</p>
   </div>
@@ -251,7 +251,7 @@
       <div class="card">
         <div class="ico" aria-hidden="true">&#127991;&#65039;</div>
         <h3>3.1 or 2.0 on your server</h3>
-        <p>A new install gets 3.1, and where it cannot run the installer picks 2.0 by itself. How to see which one you have, which clients need 2.0 and how to switch.</p>
+        <p>A new install gets 3.1, and on ARM and older kernels the installer picks 2.0 by itself. How to see which one you have, which clients need 2.0 and how to switch.</p>
         <a class="go" href="awg3/">Sort out the versions &#8594;</a>
       </div>
     </div>

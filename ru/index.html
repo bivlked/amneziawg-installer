@@ -49,7 +49,7 @@
   "featureList": [
     "Установка одной командой на чистый VPS с Ubuntu или Debian",
     "AmneziaWG 3.1 по умолчанию: шифрование заголовков и добавочный паддинг поверх мусорных пакетов, паддинга S1-S4 и маскирующего пакета I1",
-    "AmneziaWG 2.0 с флагом --protocol=2.0 и автоматически там, где 3.1 не поднять",
+    "AmneziaWG 2.0 с флагом --protocol=2.0 и автоматически на ARM и старых ядрах",
     "Firewall UFW, Fail2Ban, hardening через sysctl и лимит на SSH по умолчанию",
     "Управление клиентами: добавление, удаление, список, перегенерация, QR-коды, vpn://-ссылки, гостевые конфиги с истечением",
     "Вывод почти всех команд управления в JSON для скриптов и ботов",
@@ -112,7 +112,7 @@
   <div class="wrap">
     <h1>Свой VPN-сервер AmneziaWG 3.1 одной командой</h1>
     <p class="lede">Превратите чистый VPS с Ubuntu или Debian в self-hosted VPN с обходом DPI и блокировок. Без Docker, без веб-панели, без знаний Linux.</p>
-    <p class="inline-note">Новая установка по умолчанию ставит AmneziaWG 3.1. Роутерам, чья прошивка ещё не поддерживает 3.1 (например, стабильная KeeneticOS), Hiddify и давно не обновлявшимся приложениям нужен 2.0: добавьте <code>--protocol=2.0</code>. Там, где 3.1 не поднять (ядро старше 6.7, ARM), установщик сам ставит 2.0, а уже работающий сервер остаётся на своей версии. <a href="/amneziawg-installer/ru/awg3/">Что ставится и как вернуться на 2.0</a></p>
+    <p class="inline-note">Новая установка по умолчанию ставит AmneziaWG 3.1. Роутерам, чья прошивка ещё не поддерживает 3.1 (например, стабильная KeeneticOS), Hiddify и давно не обновлявшимся приложениям нужен 2.0: добавьте <code>--protocol=2.0</code>. На ARM и на ядре старше 6.7 установщик сам ставит 2.0, а уже работающий сервер остаётся на своей версии. <a href="/amneziawg-installer/ru/awg3/">Что ставится и как вернуться на 2.0</a></p>
     <div class="cta-row">
       <a class="btn btn-primary" href="#quick-start">Быстрый старт</a>
       <a class="btn" href="https://github.com/bivlked/amneziawg-installer/blob/main/INSTALL_VPS.ru.md">Полный гайд</a>
@@ -189,7 +189,7 @@
     <ol class="steps">
       <li class="step"><span class="n" aria-hidden="true"></span><p>Арендуйте чистый VPS с Ubuntu или Debian и подключитесь по SSH под root.</p></li>
       <li class="step"><span class="n" aria-hidden="true"></span><p>Запустите команду выше. Скрипт сам перезагрузит сервер, когда нужно. После ребута запустите её снова - она продолжит с того места, где остановилась.</p></li>
-      <li class="step"><span class="n" aria-hidden="true"></span><p>Заберите файлы клиента с сервера из <code>/root/awg/</code> (как это сделать, показано в <a href="https://github.com/bivlked/amneziawg-installer#posle-ustanovki">README</a>), затем отсканируйте QR-код в приложении: WG Tunnel или AmneziaWG на Android, AmneziaWG на iPhone, Mac и Windows (<a href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.md#faq-which-client-adv">почему эти</a>). Amnezia VPN вместо этого принимает ссылку vpn://. Для сервера 3.1 приложение должно поддерживать 3.1: <a href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.md#client-gen-adv">какие поддерживают</a>.</p></li>
+      <li class="step"><span class="n" aria-hidden="true"></span><p>Заберите файлы клиента с сервера из <code>/root/awg/</code> (как это сделать, показано в <a href="https://github.com/bivlked/amneziawg-installer#posle-ustanovki">README</a>), затем добавьте их в приложение: WG Tunnel или AmneziaWG на Android, AmneziaWG на iPhone (QR-код или файл .conf), AmneziaWG на Mac и Windows (файл .conf) (<a href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.md#faq-which-client-adv">почему эти</a>). Amnezia VPN вместо этого принимает ссылку vpn://. Для сервера 3.1 приложение должно поддерживать 3.1: <a href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.md#client-gen-adv">какие поддерживают</a>.</p></li>
     </ol>
     <p class="inline-note mt">Для автоматизации тот же скрипт принимает <code>--yes --route-all</code> и любой другой параметр флагом. <a href="https://github.com/bivlked/amneziawg-installer/blob/main/INSTALL_VPS.ru.md">Полный гайд</a> покрывает выбор VPS, нюансы ARM, диагностику и удаление.</p>
   </div>
@@ -251,7 +251,7 @@
       <div class="card">
         <div class="ico" aria-hidden="true">&#127991;&#65039;</div>
         <h3>3.1 или 2.0 на вашем сервере</h3>
-        <p>Новая установка ставит 3.1, а там, где её не поднять, установщик сам ставит 2.0. Как узнать, что стоит у вас, каким клиентам нужен 2.0 и как перейти.</p>
+        <p>Новая установка ставит 3.1, а на ARM и старых ядрах установщик сам ставит 2.0. Как узнать, что стоит у вас, каким клиентам нужен 2.0 и как перейти.</p>
         <a class="go" href="awg3/">Разобраться с версиями &#8594;</a>
       </div>
     </div>
