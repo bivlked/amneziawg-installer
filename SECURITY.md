@@ -43,6 +43,8 @@ The following are **out of scope**:
 
 Vulnerabilities in upstream AmneziaWG components (kernel module, userspace tools, client apps) should be reported directly to [amnezia-vpn](https://github.com/amnezia-vpn). Scripts are updated as upstream fixes arrive.
 
+A known upstream issue affects every build of the module the scripts install: [amneziawg-linux-kernel-module#233](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/233). `check` and `diagnose` warn when it is reachable without root; the mitigation is in [ADVANCED.en.md](ADVANCED.en.md#userns-module-adv).
+
 ## Disclosure Policy
 
 Coordinated disclosure. 30 days for a fix before public disclosure. If a vulnerability is actively exploited, indicate this in your report for priority handling.
@@ -53,6 +55,6 @@ Installer and management scripts carry detached `minisign` signatures. The priva
 
 Not covered by the signatures: the prebuilt ARM kernel-module packages in the `arm-packages` release. They are built by this project's CI, and the installer checks them only against a SHA256 file published next to them, which catches a broken download but not a replaced one. If that matters to you, install with `--no-prebuilt`: the module is then built on the server with DKMS.
 
-Signatures start with the first release published after this was switched on. Earlier releases have no `.minisig` assets, and for those the protection is what it always was: HTTPS from `raw.githubusercontent.com` at a pinned tag.
+Signatures start with v5.29.0 (30 August 2026). Earlier releases have no `.minisig` assets, and for those the protection is what it always was: HTTPS from `raw.githubusercontent.com` at a pinned tag.
 
 One limit worth stating plainly. Fetching the script, its signature and `KEYS.txt` from the same release in one go proves the three agree with each other, not who produced them: whoever could replace the script could replace the key beside it. The check starts to mean something once the key is one you saved earlier or obtained from an independent source.

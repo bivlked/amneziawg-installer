@@ -19,7 +19,7 @@ Thank you for your interest in contributing! This guide covers the process and c
 - All scripts use `set -o pipefail`
 - Russian scripts are the primary implementation; changes must be mirrored in the corresponding English scripts (`*_en.sh`)
 - Error handling: use `die()` for fatal errors, `log_error()` / `log_warn()` for non-fatal
-- Logging: all output through `log_msg()` with appropriate level (INFO, WARN, ERROR, DEBUG)
+- Logging: diagnostic output goes through `log_msg()` (via `log` / `log_warn` / `log_error` / `log_debug`) with the appropriate level (INFO, WARN, ERROR, DEBUG); JSON, `help`, QR codes and `vpn://` URIs are printed directly on purpose
 
 ### File Operations
 
@@ -52,9 +52,9 @@ Before submitting a PR, ensure:
    done
    ```
 
-   > Note: these two loops cover the six runtime scripts as a quick local shortcut. CI (`shellcheck.yml`) and `scripts/preflight-check.sh` check a wider scope - all tracked `*.sh`, including `scripts/*.sh` and `tests/`. The full local gate is `BASE_REF=origin/main bash scripts/preflight-check.sh`.
+   > Note: these two loops cover the six runtime scripts as a quick local shortcut. CI (`shellcheck.yml`) checks a wider scope: all tracked `*.sh`, `tests/*.bash` and `tests/*.bats`, with `-x`. `scripts/preflight-check.sh` lints the same six scripts as the loops above, so run the CI scope too if you touched `scripts/` or `tests/`. The full local gate is `BASE_REF=origin/main bash scripts/preflight-check.sh`.
 
-3. **Unit tests (bats-core)** pass. The suite grows every release, so there is no fixed count to match - run `bats tests/` and make sure the full suite is green before opening a PR. Install `bats`, `qrencode` and `jq` first, as CI does: without the last two some tests are skipped locally, so a green local run does not cover what CI checks.
+3. **Unit tests (bats-core)** pass. The suite grows every release, so there is no fixed count to match - run `bats tests/` and make sure the full suite is green before opening a PR. Install `bats`, `qrencode`, `jq` and `patch` first, as CI does: without the last three some tests are skipped locally, so a green local run does not cover what CI checks.
    ```bash
    bats tests/
    ```
@@ -66,9 +66,11 @@ Before submitting a PR, ensure:
 
    If you add a new function, add a corresponding test file (see `tests/test_*.bats` for the existing pattern). `test_helper.bash` provides common fixtures. Tests must pass on Linux with `flock` available; cross-platform edge cases use the `require_flock` skip helper where needed.
 
-4. **VPS testing** (for script changes): test on a clean server (Ubuntu 24.04 LTS or Debian 12/13 minimal). The full test matrix includes:
+4. **VPS testing** (for script changes): test on a clean server (Ubuntu 24.04 / 26.04 LTS or Debian 12/13 minimal). The full test matrix includes:
    - Fresh install on clean Ubuntu 24.04 LTS
-   - Fresh install on clean Ubuntu 26.04 (the installer probes the PPA for `resolute` and falls back to `noble` if it does not answer)
+   - Both protocol generations: the default (AmneziaWG 3.1) and `--protocol=2.0`; a client app with 3.1 support connects to a 3.1 server
+   - The automatic 2.0 fallback where the installer does not issue 3.1 (Debian 12 with its stock 6.1 kernel, or ARM): the installer names the reason and the final report shows generation 2.0
+   - Fresh install on clean Ubuntu 26.04 (the installer probes the PPA for `resolute` and falls back to `noble` if it does not answer; on the 7.0 kernel it patches the PPA module source, see ADVANCED `kernel-70-backport-adv`)
    - All management commands: add, remove, list, regen, check, restart
    - Reboot-resume between critical installer steps
    - Client connectivity (handshake, ping, DNS resolution)

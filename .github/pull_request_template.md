@@ -17,6 +17,8 @@
 - [ ] `bats tests/` passes (add a test for new behaviour)
 - [ ] `scripts/check-docs-consistency.sh` passes (if docs or metadata changed)
 - [ ] Tested on clean Ubuntu 24.04 LTS VPS (if script changes)
+- [ ] Checked on both generations, the default 3.1 and `--protocol=2.0` (if install, config or profile logic changes)
+- [ ] Fallback to 2.0 checked on Debian 12 or ARM (if the generation choice at step 0 or step 3 changes)
 - [ ] Tested on Ubuntu 26.04 (if PPA/install logic changes)
 - [ ] Tested on Debian 12/13 (if OS-specific changes)
 - [ ] CHANGELOG.md **and** CHANGELOG.en.md updated (including `[Unreleased]` comparator link), or not applicable (internal/test-only change)
@@ -38,4 +40,5 @@ Skip this section for ordinary PRs. For a release-bound PR, the tag is gated by
 - [ ] `bash scripts/update-sha-pins.sh --verify` passes (4 helper SHA pins in lockstep)
 - [ ] Pinned `raw.githubusercontent.com/.../vX.Y.Z/...` tags in ADVANCED and CASCADE (both languages) equal the release version
 - [ ] Signatures made for this tag and committed under `signing/`: `bash scripts/sign-release.sh vX.Y.Z` (after the SHA pins, before the tag); `bash scripts/verify-signatures.sh vX.Y.Z` passes
+- [ ] `docs/clients-matrix.json` rows are fresh for the release date and `bash scripts/update-client-tables.sh --check` passes
 - [ ] No `Co-authored-by` trailers and no AI/tool markers in the diff or commit log
