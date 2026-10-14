@@ -320,6 +320,24 @@ crender() {
                  unset AWG_Jc
                  echo "--- export run"
                  generate_vpn_uri c1 || exit 1 ;;
+            # the profile carries five I, the server one: the profile is
+            # counted by its own I, not by those of the server.
+            fivei) render_client_config c1 10.9.9.2 CLIENTPRIV SERVERPUB 203.0.113.10 39743 >/dev/null 2>&1 || exit 1
+                 _AWG_JC_GO_WARNED=""
+                 printf "I2 = <r 8>\nI3 = <r 8>\nI4 = <r 8>\nI5 = <r 8>\n" > "$AWG_DIR/i.tmp"
+                 sed -i "/^I1 = /r $AWG_DIR/i.tmp" "$AWG_DIR/c1.conf"
+                 echo "--- export run"
+                 generate_vpn_uri c1 || true ;;
+            # the same, on a machine without perl: generate_vpn_uri gives up on
+            # the dependency, the QR modify rebuilt is still the dangerous one.
+            noperl) render_client_config c1 10.9.9.2 CLIENTPRIV SERVERPUB 203.0.113.10 39743 >/dev/null 2>&1 || exit 1
+                 _AWG_JC_GO_WARNED=""
+                 sed -i "s/^export AWG_Jc=.*/export AWG_Jc=4/" "$CONFIG_FILE"
+                 unset AWG_Jc
+                 command() { [[ "$1 $2" == "-v perl" ]] && return 1; builtin command "$@"; }
+                 echo "--- export run"
+                 generate_vpn_uri c1
+                 echo "URI_RC=$?" ;;
         esac
         echo RC=0
     ' _ "$lib" "${4:-two}"
@@ -327,6 +345,32 @@ crender() {
 
 # exported <output> : the part of the output after the "--- export run" mark.
 exported() { sed -n '/^--- export run/,$p' <<< "$1"; }
+
+cr_noperl() {
+    # Runs without perl or python: the point is the machine that lacks them.
+    local gen out
+    for gen in 2.0 3.1; do
+        run crender "$1" "$gen" 127 noperl
+        [[ "$output" == *"URI_RC=1"* ]] || { echo "$1 $gen: the stub did not hide perl: $output"; return 1; }
+        out=$(exported "$output")
+        [ "$(grep -c "^WARN: Jc=127 .*$MARK" <<< "$out")" -eq 1 ] || { echo "$1 $gen: no warning when vpn:// gives up on perl: $out"; return 1; }
+    done
+}
+cr_fivei() {
+    local gen out
+    for gen in 2.0 3.1; do
+        run crender "$1" "$gen" 123 fivei
+        out=$(exported "$output")
+        [ "$(grep -c "^WARN: Jc=123 .*$MARK" <<< "$out")" -eq 1 ] || { echo "$1 $gen: a profile with five I and Jc=123 under a server with one I not warned: $output"; return 1; }
+    done
+}
+@test "modify/export: the profile is counted by its own I1-I5, both generations, both twins" {
+    twins cr_fivei "$COMMON" "$COMMON_EN"
+}
+
+@test "modify/export: the profile is checked even when vpn:// gives up for lack of perl, both generations, both twins" {
+    twins cr_noperl "$COMMON" "$COMMON_EN"
+}
 
 cr_export() {
     command -v python3 >/dev/null || skip "python3 not available"

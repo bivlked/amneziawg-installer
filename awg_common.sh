@@ -4297,11 +4297,14 @@ awg_conf_i_count() {
 # предупреждение на запуск, а не на каждого клиента regen.
 # Необязательный аргумент - .conf профиля: modify пересобирает QR и vpn:// из уже
 # лежащего файла, и его Jc/I могут разойтись с сервером (сервер снизили, regen не
-# сделали). Тогда проверяются оба набора, и предупреждает любой из них.
+# сделали). Тогда проверяются оба набора, и предупреждает любой из них. Второй
+# аргумент profile - только файл профиля, без серверных значений (они могут быть
+# ещё не загружены).
 _awg_jc_go_warn_once() {
     [[ -z "${_AWG_JC_GO_WARNED:-}" ]] || return 0
-    local n=0 v jc
-    if [[ -n "${1-}" && -f "$1" ]] && n=$(awg_conf_i_count "$1"); then
+    local n=0 v jc cnt
+    if [[ -n "${1-}" && -f "$1" ]] && cnt=$(awg_conf_i_count "$1"); then
+        n="$cnt"
         jc=$(_awg_conf_pairs "$1" 2>/dev/null | awk -F'\t' '$1 == "interface" && $2 == "jc" {v = $3} END {print v}')
         if awg_jc_go_overflow "$jc" "$n"; then
             awg_jc_go_warn "$(_awg_dec_strip "$jc")" "$n"
@@ -4309,6 +4312,7 @@ _awg_jc_go_warn_once() {
         fi
         n=0
     fi
+    [[ "${2-}" != profile ]] || return 0
     for v in "${AWG_I1:-}" "${AWG_I2:-}" "${AWG_I3:-}" "${AWG_I4:-}" "${AWG_I5:-}"; do
         [[ -n "$v" ]] && n=$((n + 1))
     done
@@ -4989,6 +4993,10 @@ generate_vpn_uri() {
         log_error "Конфиг клиента '$name' не найден: $conf_file"
         return 1
     fi
+    # Профиль проверяем до зависимостей vpn://: без perl функция выходит раньше,
+    # а QR этого профиля modify уже пересобрал. Серверные значения - ниже, после
+    # load_awg_params.
+    _awg_jc_go_warn_once "$conf_file" profile
 
     if ! command -v perl &>/dev/null; then
         log_warn "perl не найден, vpn:// URI не создан для '$name'."
