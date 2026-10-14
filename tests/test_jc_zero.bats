@@ -74,12 +74,12 @@ vjc() {
 
 v_accepts() {
     local v
-    for v in 0 1 3 128; do
+    for v in 0 1 3 122; do
         run vjc "$1" "$v"
         [[ "$output" == "rc=0" ]] || { echo "$1: --jc=$v refused: $output"; return 1; }
     done
 }
-@test "validator: 0, 1, 3 and 128 are accepted, both twins" {
+@test "validator: 0, 1, 3 and 122 are accepted, both twins" {
     twins v_accepts "$INST" "$INST_EN"
 }
 
@@ -87,12 +87,12 @@ v_refuses() {
     # 00 and 08: a leading zero either stores a non-canonical value or, in
     # arithmetic, is read as octal (08 is an error there).
     local v
-    for v in 129 1000 -1 abc "" " 0" 00 08 010 1.5; do
+    for v in 123 128 129 1000 -1 abc "" " 0" 00 08 010 1.5; do
         run vjc "$1" "$v"
         [[ "$output" == "rc=1" ]] || { echo "$1: --jc='$v' not refused cleanly: $output"; return 1; }
     done
 }
-@test "validator: 129, negative, empty, non-numeric and leading zeros are refused, both twins" {
+@test "validator: 123-129, negative, empty, non-numeric and leading zeros are refused, both twins" {
     twins v_refuses "$INST" "$INST_EN"
 }
 
@@ -173,21 +173,21 @@ g_refusal_text() {
     local inst="$1" lib="$COMMON" want
     en "$inst" && lib="$COMMON_EN"
     run gen "$inst" "$lib" 2.0 - 129
-    want="допустимо: 0-128"
-    en "$inst" && want="allowed: 0-128"
-    [[ "$output" == *"DIE: "*"--jc=129"*"$want"* ]] || { echo "$inst: refusal does not name 0-128: $output"; return 1; }
+    want="допустимо: 0-122"
+    en "$inst" && want="allowed: 0-122"
+    [[ "$output" == *"DIE: "*"--jc=129"*"$want"* ]] || { echo "$inst: refusal does not name 0-122: $output"; return 1; }
 }
-@test "generator: an out-of-range --jc is refused with the 0-128 range in the reason, both twins" {
+@test "generator: an out-of-range --jc is refused with the 0-122 range in the reason, both twins" {
     twins g_refusal_text "$INST" "$INST_EN"
 }
 
 h_help() {
-    local want="--jc=N               Задать Jc вручную (0-128"
-    en "$1" && want="--jc=N               Set Jc manually (0-128"
-    grep -qF -- "$want" "$1" || { echo "$1: --help does not show 0-128"; return 1; }
+    local want="--jc=N               Задать Jc вручную (0-122"
+    en "$1" && want="--jc=N               Set Jc manually (0-122"
+    grep -qF -- "$want" "$1" || { echo "$1: --help does not show 0-122"; return 1; }
     [ "$(grep -c -- '--jc=N.*1-128' "$1")" -eq 0 ] || { echo "$1: --help still says 1-128"; return 1; }
 }
-@test "help: --jc shows the 0-128 range, both twins" {
+@test "help: --jc shows the 0-122 range, both twins" {
     twins h_help "$INST" "$INST_EN"
 }
 

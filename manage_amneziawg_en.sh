@@ -1892,6 +1892,18 @@ check_server() {
         else
             log_warn " - Obfuscation parameters not detected"
         fi
+        # Jc over the amneziawg-go line, read from the interface, that is from
+        # what is applied. The awg_jc_go_overflow rule from awg_common.sh is written
+        # out here: manage checks only the library's MAJOR.MINOR, and the library of
+        # an earlier patch, without that function, may sit next to it. A warning;
+        # the check verdict stays. Length before arithmetic, as in diagnose.
+        local _ijc _ini
+        _ijc=$(awk '/^[[:space:]]*jc:/ {print $2; exit}' <<< "$_awg_out")
+        _ini=$(grep -cE '^[[:space:]]*i[1-5]:' <<< "$_awg_out") || true
+        if [[ "$_ijc" =~ ^[0-9]+$ ]] && (( ${#_ijc} > 3 || 10#$_ijc + _ini + 1 > 128 )); then
+            log_warn " - Jc=$_ijc with $_ini of I1-I5: clients on amneziawg-go will crash on the first handshake (more than 128 packets in one batch, amneziawg-go#111). The server on the kernel module works, the clients crash."
+            log_warn "   To fix without touching the other parameters: Jc 122 or less in $SERVER_CONF_FILE, then sudo systemctl restart awg-quick@awg0 and sudo bash $0 regen"
+        fi
     fi
     # A data packet of the same length as a handshake message (G2.14): a warning only,
     # the check verdict does not change - the tunnel works, part of the small packets is lost.
@@ -2643,6 +2655,16 @@ diagnose_server() {
                 echo "        Fix: sudo systemctl restart awg-quick@awg0"
                 warn=$((warn+1))
             fi
+        fi
+        # Jc over the amneziawg-go line: the awg_jc_go_overflow rule from
+        # awg_common.sh, written out here because the step 8 block also runs on its
+        # own. The length is checked before arithmetic: bash wraps a huge number silently.
+        local _dni
+        _dni=$(grep -cE '^[[:space:]]*i[1-5]:' <<< "$_awg_show") || true
+        if [[ "$jc" =~ ^[0-9]+$ ]] && (( ${#jc} > 3 || 10#$jc + _dni + 1 > 128 )); then
+            _diag_line WARN "Jc=$jc with $_dni of I1-I5: clients on amneziawg-go will crash on the first handshake (more than 128 packets in one batch, amneziawg-go#111)"
+            echo "        Fix: Jc 122 or less in awg0.conf, then sudo systemctl restart awg-quick@awg0 and sudo bash $0 regen"
+            warn=$((warn+1))
         fi
         # The kernel module does not compare Jmin with Jmax, and with Jmin above
         # Jmax it writes a junk packet past the end of a buffer sized Jmax

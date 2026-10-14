@@ -1857,6 +1857,18 @@ check_server() {
         else
             log_warn " - Параметры обфускации не обнаружены"
         fi
+        # Jc за чертой amneziawg-go - по интерфейсу, то есть по тому, что
+        # применено. Правило awg_jc_go_overflow из awg_common.sh записано здесь
+        # же: manage сверяет с библиотекой только MAJOR.MINOR, и рядом может
+        # лежать библиотека прошлого патча без этой функции. Предупреждение,
+        # вердикт check оно не меняет. Длина - до арифметики, как в diagnose.
+        local _ijc _ini
+        _ijc=$(awk '/^[[:space:]]*jc:/ {print $2; exit}' <<< "$_awg_out")
+        _ini=$(grep -cE '^[[:space:]]*i[1-5]:' <<< "$_awg_out") || true
+        if [[ "$_ijc" =~ ^[0-9]+$ ]] && (( ${#_ijc} > 3 || 10#$_ijc + _ini + 1 > 128 )); then
+            log_warn " - Jc=$_ijc при $_ini из I1-I5: клиенты на amneziawg-go упадут на первом рукопожатии (больше 128 пакетов в одной пачке, amneziawg-go#111). Сервер на модуле ядра работает, падают клиенты."
+            log_warn "   Исправить, не трогая остальные параметры: Jc не больше 122 в $SERVER_CONF_FILE, затем sudo systemctl restart awg-quick@awg0 и sudo bash $0 regen"
+        fi
     fi
     # Пакет данных той же длины, что пакет рукопожатия (Г2.14): только предупреждение,
     # вердикт check не меняется - туннель работает, теряется часть небольших пакетов.
@@ -2606,6 +2618,16 @@ diagnose_server() {
                 echo "        Fix: sudo systemctl restart awg-quick@awg0"
                 warn=$((warn+1))
             fi
+        fi
+        # Jc за чертой amneziawg-go: правило awg_jc_go_overflow из awg_common.sh,
+        # но записанное здесь - блок шага 8 исполняется и сам по себе. Длина
+        # проверяется до арифметики: огромное число bash молча заворачивает.
+        local _dni
+        _dni=$(grep -cE '^[[:space:]]*i[1-5]:' <<< "$_awg_show") || true
+        if [[ "$jc" =~ ^[0-9]+$ ]] && (( ${#jc} > 3 || 10#$jc + _dni + 1 > 128 )); then
+            _diag_line WARN "Jc=$jc при $_dni из I1-I5: клиенты на amneziawg-go упадут на первом рукопожатии (больше 128 пакетов в одной пачке, amneziawg-go#111)"
+            echo "        Fix: Jc не больше 122 в awg0.conf, затем sudo systemctl restart awg-quick@awg0 и sudo bash $0 regen"
+            warn=$((warn+1))
         fi
         # Модуль ядра пару Jmin/Jmax между собой не сравнивает, и при Jmin больше
         # Jmax пишет мусорный пакет за границу буфера размера Jmax

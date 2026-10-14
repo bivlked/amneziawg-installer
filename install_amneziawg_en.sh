@@ -595,7 +595,7 @@ Options:
                         takes installed snaps and their data in /var/snap with it
   --preset=TYPE         Obfuscation parameter preset: default, mobile
                         mobile: Jc=3, narrow Jmax — for mobile carriers (Tele2, Yota, Megafon)
-  --jc=N               Set Jc manually (0-128, overrides preset; 0 turns junk packets off)
+  --jc=N               Set Jc manually (0-122, overrides preset; 0 turns junk packets off)
   --jmin=N             Set Jmin manually (0-1280, overrides preset)
   --jmax=N             Set Jmax manually (0-1280, overrides preset, must be >= Jmin)
   --no-cps              Disable CPS (the I1 parameter) - needed if the desktop
@@ -748,7 +748,7 @@ check_os_version() {
 }
 
 check_kernel_version() {
-    # The AmneziaWG 2.0 module is built via DKMS against the host kernel. On
+    # The AmneziaWG module (of either generation) is built via DKMS against the host kernel. On
     # kernels older than 5.15 (Ubuntu < 22.04, e.g. 5.4 on 20.04) the build
     # usually fails at step 2 with an opaque package-failure. Warn EXPLICITLY and
     # early, before updates and reboots (issue #163). Not a die: on some older
@@ -762,16 +762,16 @@ check_kernel_version() {
         return 0
     fi
     if (( kmaj < 5 || (kmaj == 5 && kmin < 15) )); then
-        log_warn "Kernel $kver is older than 5.15 - usually too old for the AmneziaWG 2.0 module."
+        log_warn "Kernel $kver is older than 5.15 - usually too old to build the AmneziaWG module."
         log_warn "The DKMS module build on such a kernel most often fails. Reinstall the VPS on Ubuntu 24.04 LTS or Debian 13. The script also runs on Ubuntu 26.04 and Debian 12, but Debian 12 is past regular support, so do not pick it for a new server."
         if [[ "$AUTO_YES" -eq 0 ]]; then
             read -rp "Continue anyway? [y/N]: " confirm < /dev/tty
-            if ! [[ "$confirm" =~ ^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$ ]]; then die "Cancelled: kernel $kver is too old for the AmneziaWG 2.0 module."; fi
+            if ! [[ "$confirm" =~ ^[[:space:]]*[Yy]([Ee][Ss])?[[:space:]]*$ ]]; then die "Cancelled: kernel $kver is too old to build the AmneziaWG module."; fi
         else
             log "Continuing on kernel $kver (--yes)."
         fi
     else
-        log "Kernel $kver (OK for the AmneziaWG 2.0 module)."
+        log "Kernel $kver (5.15 or newer, the minimum to build the AmneziaWG module)."
     fi
 }
 
@@ -2373,9 +2373,29 @@ awg_installed_protocol() {
 # 0 turns junk packets off: the kernel module (src/send.c) and amneziawg-go
 # simply send none at Jc = 0. Leading zeros are refused: '08' is read as octal
 # in arithmetic and crashes the check, and '01' used to go into the config as is.
+# The ceiling is 122, not 128: amneziawg-go sends the junk packets, I1-I5 and the
+# handshake packet in one batch of 128 packets and crashes on the first handshake
+# when it overflows (amneziawg-go#111, details at awg_jc_go_overflow in
+# awg_common.sh). 122 leaves room for all five I.
 validate_jc_value() {
     local v="$1"
-    [[ "$v" =~ ^(0|[1-9][0-9]{0,2})$ ]] && [[ "$v" -le 128 ]]
+    [[ "$v" =~ ^(0|[1-9][0-9]{0,2})$ ]] && [[ "$v" -le 122 ]]
+}
+
+# _awg_saved_jc_guard : an unfinished first install whose init holds a Jc over
+# 122 (saved by a version whose ceiling was 128). There are no profiles yet, so
+# such a set is not carried through: stop and name the fix, because clients on
+# amneziawg-go crash with it. Leaves alone a finished install (its source is the
+# live awg0.conf, which the step 6 validator warns about), an explicit --jc or
+# --preset of this run (the generator sets the values and validate_jc_value
+# checks --jc), a generation switch (J are generated anew) and a non-number.
+_awg_saved_jc_guard() {
+    [[ "${AWG_INSTALL_STATE_AT_START:-}" == 2 ]] || return 0
+    [[ -z "${CLI_JC:-}" && -z "${CLI_PRESET:-}" && "${AWG_GEN_SWITCHED:-0}" != 1 ]] || return 0
+    [[ "${AWG_Jc:-}" =~ ^[0-9]+$ ]] || return 0
+    local j="${AWG_Jc#"${AWG_Jc%%[!0]*}"}"
+    validate_jc_value "${j:-0}" && return 0
+    die "$CONFIG_FILE holds Jc=$AWG_Jc and the install is not finished yet. A Jc over 122 crashes clients on amneziawg-go on the first handshake (amneziawg-go#111). Run the installer with a safe value, for example --jc=6, or with --preset=default: there are no profiles yet, so a new set disconnects nobody."
 }
 
 validate_junk_size() {
@@ -3126,7 +3146,7 @@ generate_awg_params() {
 
     # Individual CLI overrides (on top of preset)
     if [[ -n "${CLI_JC:-}" ]]; then
-        validate_jc_value "$CLI_JC" || die "Invalid --jc=$CLI_JC (allowed: 0-128, 0 turns junk packets off)"
+        validate_jc_value "$CLI_JC" || die "Invalid --jc=$CLI_JC (allowed: 0-122, 0 turns junk packets off)"
         AWG_Jc="$CLI_JC"
     fi
     if [[ -n "${CLI_JMIN:-}" ]]; then
@@ -5775,6 +5795,8 @@ initialize_setup() {
     else
         log "AWG service is active — skipping port check."
     fi
+
+    _awg_saved_jc_guard
 
     # AWG 2.0 parameter generation
     # Regenerate if: first run, a generation change of an unfinished install

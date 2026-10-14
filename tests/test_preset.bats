@@ -139,9 +139,14 @@ teardown() {
     [ "$status" -ne 0 ]
 }
 
-@test "validate: --jc=128 accepted" {
-    run validate_jc_value "128"
+@test "validate: --jc=122 accepted" {
+    run validate_jc_value "122"
     [ "$status" -eq 0 ]
+}
+
+@test "validate: --jc=123 rejected (amneziawg-go batch ceiling)" {
+    run validate_jc_value "123"
+    [ "$status" -ne 0 ]
 }
 
 @test "validate: --jmin=1281 rejected" {

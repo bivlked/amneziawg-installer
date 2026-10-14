@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **The `--diagnostic` report and `--help` are no longer tied to 2.0.** The report header no longer names a generation (on a 3.1 server it said "AMNEZIAWG 2.0"); the generation is in the `AWG_PROTOCOL` line from the settings file. The help and the automatic fallback warning say that it is the installer that sets up 2.0 on this machine: on a kernel older than 6.7 and on ARM this is its caution, not a protocol limit. The help also mentions the spaced form `--protocol 2.0`.
+- **`--jc` now takes 0 to 122.** Clients on amneziawg-go send the junk packets, `I1`-`I5` and the handshake packet in one batch that holds 128 packets, and with more than that they exit with an error on the first handshake (amneziawg-go#111). A ceiling of 122 leaves room for all five `I`. Servers that already run with `Jc` over 122 keep working as before: `check`, `diagnose`, `restore`, step 6 of the installer and `add`/`regen` warn and explain how to lower `Jc` without touching the other parameters. An unfinished first install with a saved `Jc` over 122 stops and asks for a safe value.
+- **The kernel check and the config validation summary no longer say 2.0 on a 3.1 install.** The kernel line speaks of the minimum to build the module, and the validation summary names the config's generation: 3.1 when it has the header protection key.
 
 ## [6.0.0] - 2026-10-13
 

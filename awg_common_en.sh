@@ -3656,6 +3656,21 @@ render_client_config() {
 
     load_awg_params || return 1
 
+    # Jc over the amneziawg-go line (awg_jc_go_overflow). The profile is issued
+    # anyway: clients on the kernel module work with it, and a refusal would leave
+    # everyone without a profile. Client paths ignore NO_CPS, so I are counted as
+    # they are. One warning per run, not one per client of regen.
+    if [[ -z "${_AWG_JC_GO_WARNED:-}" ]]; then
+        local _jc_ni=0 _jc_iv
+        for _jc_iv in "${AWG_I1:-}" "${AWG_I2:-}" "${AWG_I3:-}" "${AWG_I4:-}" "${AWG_I5:-}"; do
+            [[ -n "$_jc_iv" ]] && _jc_ni=$((_jc_ni + 1))
+        done
+        if awg_jc_go_overflow "${AWG_Jc:-}" "$_jc_ni"; then
+            awg_jc_go_warn "$AWG_Jc" "$_jc_ni"
+            _AWG_JC_GO_WARNED=1
+        fi
+    fi
+
     # DNS of the new client: CLIENT_DNS or the default. Computed BEFORE the tmpfile,
     # so an invalid CLIENT_DNS never leaves a half-written config behind.
     # regenerate_client with a live .conf passes the client's DNS as the 8th argument:
@@ -4326,6 +4341,55 @@ _awg_conf_pairs() {
             if (k != "") print sec "\t" tolower(k) "\t" v
         }
     ' "$1"
+}
+
+# Jc ceiling for clients on amneziawg-go. Before the handshake amneziawg-go sends
+# Jc junk packets, the non-empty I1-I5 and the handshake packet itself in one
+# SendBuffers call, and the batch holds 128 packets (conn/conn.go,
+# IdealBatchSize). One more and the client crashes on the first handshake with
+# "index out of range [128]" (amneziawg-go#111; the fix, PR #202, is not merged
+# as of 14 oct 2026). The kernel module sends packet by packet and is not
+# affected: the server works and the clients crash. The installer caps new values
+# at 122 (room for all five I). A config already over the line is not refused but
+# warned about: a refusal on restore or check would break what works for clients
+# on the kernel module.
+# The one-warning-per-run flag (add/regen) is reset when the library loads, so it
+# cannot be inherited from the environment.
+_AWG_JC_GO_WARNED=""
+
+# awg_jc_go_overflow <Jc> <number of non-empty I1-I5> : 0 if the batch overflows.
+# Jc is read the way amneziawg-tools read it (decimal, leading zeros do not make
+# it octal). A non-number and an I count outside 0-5 are not an overflow: other
+# checks report those.
+awg_jc_go_overflow() {
+    local jc="${1-}" ni="${2-}"
+    [[ "$jc" =~ ^[0-9]+$ && "$ni" =~ ^[0-5]$ ]] || return 1
+    jc=$(_awg_dec_strip "$jc")
+    (( ${#jc} > 3 )) && return 0
+    (( jc + ni + 1 > 128 ))
+}
+
+# awg_jc_go_warn <Jc> <number of I> : a warning with the fix. Not a refusal.
+awg_jc_go_warn() {
+    log_warn "Jc=$1 with $2 of I1-I5: clients on amneziawg-go will crash on the first handshake - the junk packets, the I packets and the handshake packet go out in one batch, and it holds 128 packets (amneziawg-go#111). The server on the kernel module works, the clients crash."
+    log_warn "To fix without touching the other parameters: set Jc to 122 or less in the server awg0.conf, apply it (sudo systemctl restart awg-quick@awg0) and reissue the profiles (sudo bash ${AWG_DIR:-/root/awg}/manage_amneziawg.sh regen)."
+}
+
+# awg_conf_i_count <file> : the number of non-empty I1-I5 in [Interface] as
+# amneziawg-tools apply them (section and key case-insensitive, last value wins).
+# _awg_conf_pairs loses the spaces inside a value, but only emptiness matters
+# here. A file that cannot be parsed - rc 1, no output.
+awg_conf_i_count() {
+    local pairs sec k v n=0
+    local -A last=()
+    pairs=$(_awg_conf_pairs "$1" 2>/dev/null) || return 1
+    while IFS=$'\t' read -r sec k v; do
+        [[ "$sec" == interface && "$k" =~ ^i[1-5]$ ]] && last[$k]="$v"
+    done <<< "$pairs"
+    for k in "${!last[@]}"; do
+        [[ -n "${last[$k]}" ]] && n=$((n + 1))
+    done
+    echo "$n"
 }
 
 # awg_cps_refuse_unsafe : check AWG_I1..AWG_I5 of the current environment.
@@ -6326,7 +6390,7 @@ _validate_awg_config_body() {
     fi
 
     local ok=1
-    local param val
+    local param val _jc_ni
     local int_params=("Jc" "Jmin" "Jmax" "S1" "S2" "S3" "S4")
     local range_params=("H1" "H2" "H3" "H4")
 
@@ -6444,6 +6508,10 @@ _validate_awg_config_body() {
         if (( ${#jc} > 3 )) || [[ "$jc" -gt 128 ]]; then
             log_error "Jc=$jc is out of range (0-128)"
             ok=0
+        elif _jc_ni=$(awg_conf_i_count "$SERVER_CONF_FILE") && awg_jc_go_overflow "$jc" "$_jc_ni"; then
+            # A warning, not a refusal (see awg_jc_go_overflow): restore and step 6
+            # of the installer do not stop on it.
+            awg_jc_go_warn "$jc" "$_jc_ni"
         fi
     fi
     if [[ "$jmin" =~ ^[0-9]+$ && "$jmax" =~ ^[0-9]+$ ]]; then
@@ -6583,7 +6651,13 @@ _validate_awg_config_body() {
     fi
 
     if [[ $ok -eq 1 ]]; then
-        log "AWG 2.0 config validation: OK"
+        # The generation by the header protection key, as in the rules above: the
+        # validator checks restored files too, and the init marker says nothing about them.
+        if (( _hpk )); then
+            log "AmneziaWG 3.1 config validation: OK"
+        else
+            log "AmneziaWG 2.0 config validation: OK"
+        fi
         return 0
     else
         return 1

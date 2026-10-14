@@ -168,9 +168,11 @@ sudo bash install_amneziawg_en.sh --jc=2 --jmin=20 --jmax=60 --yes
 
 | Flag | Range | Description |
 |------|-------|------------|
-| `--jc=N` | 0-128 | Number of junk packets; 0 turns them off |
+| `--jc=N` | 0-122 | Number of junk packets; 0 turns them off |
 | `--jmin=N` | 0-1280 | Minimum junk size (bytes) |
 | `--jmax=N` | 0-1280 | Maximum junk size (bytes), must be ≥ Jmin |
+
+The `Jc` ceiling is 122, not 128: clients on amneziawg-go send the junk packets, `I1`-`I5` and the handshake packet in one batch that holds 128 packets, and crash on the first handshake when `Jc + number of I + 1` is over 128 (amneziawg-go#111). The kernel module is not affected. If a server already runs with `Jc` over 122, `check`, `diagnose` and `add`/`regen` warn about it: set a value up to 122 in `awg0.conf`, restart `awg-quick@awg0` and reissue the profiles with `regen`. The other parameters stay as they are, while `--force --jc=N` would generate them anew.
 
 > **Tip:** If VPN works on home Wi-Fi but does not connect over mobile data, check `I1` first: the diagnosis and a ready fix are in <a href="#no-hs-mobile-adv">The handshake never completes on cellular</a>. On the measured route, lowering the junk packets did not help the handshake. Other mobile carrier cases are in the <a href="#faq-advanced-adv">FAQ</a>.
 
@@ -1020,7 +1022,7 @@ Options:
                         The spaced form is accepted too: --protocol 2.0
   --preset=TYPE         Obfuscation parameter preset: default, mobile
                         mobile: Jc=3, narrow Jmax — for mobile carriers (Tele2, Yota, Megafon)
-  --jc=N                Set Jc manually (0-128, overrides preset; 0 turns junk packets off)
+  --jc=N                Set Jc manually (0-122, overrides preset; 0 turns junk packets off)
   --jmin=N              Set Jmin manually (0-1280, overrides preset)
   --jmax=N              Set Jmax manually (0-1280, overrides preset, must be >= Jmin)
   --no-cps              Disable CPS (the I1 parameter) - for desktop clients that do not support it (e.g. macOS)
