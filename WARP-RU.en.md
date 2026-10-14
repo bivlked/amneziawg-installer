@@ -60,7 +60,7 @@ One consequence of this design matters a lot: table 200 holds no default route. 
 <a id="prereq"></a>
 ## What you will need
 
-- A working `amneziawg-installer` setup with `awg0` up and clients connecting.
+- A working `amneziawg-installer` setup with `awg0` up and clients connecting. The `warp` interface is plain WireGuard and has nothing to do with the `awg0` parameters, so the scheme is meant for a server of either generation, 3.1 or 2.0 (it was tested on 2.0, see below).
 - Root access over SSH.
 - Roughly 100 MB of free disk space and a little memory for BIRD; about 11800 routes fit comfortably.
 - Willingness to register the server's public IP with the antifilter.network service - without that the BGP session will not come up.
@@ -77,7 +77,7 @@ If table 200 is taken on your machine, pick another free number and substitute i
 
 If BIRD already runs on this server for another purpose, **do not replace its config wholesale** - in step 4 add the required blocks to the existing configuration and take a backup first. The [How to remove it](#uninstall) section does not apply in that case either: it purges BIRD along with the package.
 
-Tested on Ubuntu 24.04 LTS (kernel 6.8) with `amneziawg-tools v1.0.20260618-2`, `wgcf` 2.2.32 and BIRD 2.14.
+Tested on Ubuntu 24.04 LTS (kernel 6.8), an AmneziaWG 2.0 server (before v6.0.0), with `amneziawg-tools v1.0.20260618-2`, `wgcf` 2.2.32 and BIRD 2.14. The recipe has not yet been re-checked on a 3.1 server with third-line tools.
 
 <a id="step1"></a>
 ## Step 1. A WARP profile via wgcf
@@ -339,7 +339,7 @@ Hence the practical point about monitoring. Session state and route count are **
 
 - The scheme is not part of the installer and is not managed by it. Updating the scripts will not touch it, but it will not restore it either if you break it.
 - It works over IPv4: both the feed and table 200 carry IPv4 routes only. The installer keeps IPv6 disabled on the server by default; if you enabled it, the server's IPv6 traffic will bypass the split.
-- IPv6 on the client device is a separate layer, and this scheme does not touch it. These instructions go on top of an existing install and do not change the client's mode. Where IPv6 goes is decided by the client's `AllowedIPs`: since v5.31.0 a full tunnel gets an IPv6 route: "All traffic" gets `::/0`, the "Amnezia" mode gets `2000::/3` (since v5.36.2; an "Amnezia" profile issued with v5.31.0-v5.36.1 carries `::/0`: `manage regen` replaces it when the list matches the server's, then re-import the profile on the device), so IPv6 goes into the tunnel and dies there; profiles issued before v5.31.0, and real split routing (`--route-custom`), get no IPv6 route, and then the device's IPv6 goes around the tunnel and a Russian site sees your real home address directly, with no scripts involved. To check from the device: `curl -6 ifconfig.co` - if your home address comes back, IPv6 is going around. Details in [ADVANCED.en.md](ADVANCED.en.md#split-detect-adv).
+- IPv6 on the client device is a separate layer, and this scheme does not touch it. These instructions go on top of an existing install and do not change the client's mode. Where IPv6 goes is decided by the client's `AllowedIPs`. Full-tunnel profiles (the "All traffic" and "Amnezia" modes) send IPv6 into the tunnel, where it dies. Split routing (`--route-custom`) gets no IPv6 route, and then the device's IPv6 goes around the tunnel and a Russian site sees your real home address directly, with no scripts involved. To check from the device: `curl -6 ifconfig.co` - if your home address comes back, IPv6 is going around. Profiles from older versions and the details are in [ADVANCED.en.md](ADVANCED.en.md#split-detect-adv).
 - Splitting by destination is visible from outside: a site can compare the connection's address with whatever a script on its page reports. That is a property of any split - see [Troubleshooting](#trouble).
 - Russian sites will see a Cloudflare address, not a Russian one. For services that specifically require a Russian IP this may not be enough - that calls for a cascade with a server in Russia, see [CASCADE.en.md](CASCADE.en.md).
 - WARP addresses are shared. Some Russian services treat them with suspicion, and on certain sites you may see a captcha.

@@ -63,6 +63,7 @@ Clients are added on AWG0 as usual (`manage add name`) - no special setup on the
 - **Two VPS** on clean Debian 13 or Ubuntu 24.04 LTS / 26.04, with root access. Debian 12 is supported too, but it is past regular support and is not a good pick for new servers.
   - AWG0 (entry) - ideally in or near Russia, so Russian sites open from a nearby address without a detour.
   - AWG1 (exit) - abroad, a normal VPS.
+- **One protocol generation on both servers.** The installer sets up AmneziaWG 3.1 by default, but on a stock Debian 12 (kernel 6.1) and on ARM it installs 2.0 by itself. AWG0 connects to AWG1 as a client, so its module and tools have to understand the generation of AWG1: take both servers on x86_64 with Debian 13 or Ubuntu 24.04/26.04 (both get 3.1), or install both with `--protocol=2.0`. Clients connecting to AWG0 need an app that supports its generation.
 - `amneziawg-installer` installed on both (see below).
 - **A real public IP on both VPS** (not behind NAT/CGNAT). The routing script builds the path to the exit through the default gateway, so a server behind provider NAT usually will not work. Quick check: the external address from `curl -s ifconfig.me` matches the address on the interface (`ip -4 addr`) - i.e. the public IP is on the server itself. A red flag is specifically a private address on the interface itself (`10.x`, `100.64.x`) that differs from your external one: that is provider NAT and the cascade entry will be unreachable from outside. A public `/32` with a private gateway (as on Hetzner) is fine - the script handles that case via `onlink` (see [Troubleshooting](#trouble)).
 - IPv6 disabled **on the server** (the installer does this by default). The cascade works over IPv4; with the server's IPv6 on, that traffic would bypass the split. IPv6 on the client device is a separate matter, see [Limitations](#limits).
@@ -73,7 +74,7 @@ The two servers must use different subnets. In the examples: AWG0 is `172.16.17.
 <a id="step1"></a>
 ## Step 1. Install the package on both servers
 
-Download the installer on each server as described in the [Installation guide](README.en.md#installation) (the English build is `install_amneziawg_en.sh`), then run it with your own subnets:
+Download the installer on each server as described in the [Installation guide](README.en.md#quickstart) (the English build is `install_amneziawg_en.sh`), then run it with your own subnets:
 
 ```bash
 # on AWG1 (exit)
@@ -83,7 +84,7 @@ bash install_amneziawg_en.sh --yes --disallow-ipv6 --route-all --subnet=172.16.6
 bash install_amneziawg_en.sh --yes --disallow-ipv6 --route-all --subnet=172.16.17.1/24
 ```
 
-The install reboots the server twice (with `--yes`, without asking). After each reboot run the same command again; it ends with a success message.
+The install reboots the server twice (with `--yes`, without asking). After each reboot run the same command again; it ends with a success message. The final report names the protocol generation (the "Protocol generation" line): it has to be the same on both servers.
 
 The installer sets up forwarding and NAT itself (`iptables -I FORWARD -i awg0 -j ACCEPT` and `MASQUERADE` on the external interface), and UFW allows return traffic by connection state. So you do not need to edit the `awg0.conf` server config later - the cascade script adds only what is missing.
 
@@ -110,7 +111,7 @@ PrivateKey = ...
 Address = 172.16.61.4/32
 DNS = 1.1.1.1, 1.0.0.1
 MTU = 1280
-Jc = ... (obfuscation parameters)
+Jc = ... (obfuscation parameters; a 3.1 server adds HeaderProtectionKey and ContentPaddingAddition)
 
 [Peer]
 PublicKey = ...
@@ -124,7 +125,7 @@ Note the `Endpoint` (AWG1 public IP) - you will need it in the routing script.
 <a id="step3"></a>
 ## Step 3. AWG0 (entry): the tunnel to the exit
 
-On AWG0, save the config from AWG1 as `/etc/amnezia/amneziawg/awg1.conf`, add the line `Table = off` to the `[Interface]` section, and remove the `DNS = ...` line (it is not needed on a server and pulls in an extra dependency). `Table = off` tells `awg-quick` not to add routes automatically - the script will handle routing.
+On AWG0, save the config from AWG1 as `/etc/amnezia/amneziawg/awg1.conf`, add the line `Table = off` to the `[Interface]` section, and remove the `DNS = ...` line (it is not needed on a server and pulls in an extra dependency). `Table = off` tells `awg-quick` not to add routes automatically - the script will handle routing. Copy the rest as a whole instead of retyping it: without any of the obfuscation lines (and, on a 3.1 server, without `HeaderProtectionKey`) the tunnel to AWG1 does not come up.
 
 ```ini
 [Interface]
@@ -132,7 +133,7 @@ PrivateKey = ...
 Address = 172.16.61.4/32
 MTU = 1280
 Table = off
-Jc = ... (obfuscation parameters)
+Jc = ... (obfuscation parameters; a 3.1 server adds HeaderProtectionKey and ContentPaddingAddition)
 
 [Peer]
 PublicKey = ...
@@ -275,7 +276,6 @@ ip rule del fwmark "$FWMARK" table "$TABLE_ID" 2>/dev/null || true
 ip rule add fwmark "$FWMARK" table "$TABLE_ID" priority "$RULE_PRIO"
 
 # 4) Keep the route to AWG1 itself outside the tunnel (otherwise packets to it loop into awg1). replace = idempotent.
-#    If the default route has a gateway - via it; if not (point-to-point/on-link) - straight out the WAN.
 if [ -n "$WAN_GW" ]; then
     # On a VPS whose gateway is outside the server's subnet (e.g. Hetzner, a /32 interface) a plain
     # replace fails with "Nexthop has invalid gateway" - then retry with onlink (gateway is on the link).
@@ -309,14 +309,14 @@ else
 fi
 ```
 
-Set your `CLIENT_SUBNET` and `AWG1_ENDPOINT` at the top, make the file executable, and run it. `CLIENT_SUBNET` is the network (ending in zero), not the server address: if `awg0.conf` has `Address = 172.16.17.1/24`, then `CLIENT_SUBNET="172.16.17.0/24"`. `AWG1_ENDPOINT` is the AWG1 public IP (from `Endpoint` in `awg1.conf`, without the port):
+Set your `CLIENT_SUBNET` and `AWG1_ENDPOINT` at the top, make the file executable, and run it. `CLIENT_SUBNET` is the network (ending in zero), not the server address: if `awg0.conf` has `Address = 172.16.17.1/24`, then `CLIENT_SUBNET="172.16.17.0/24"`. `AWG1_ENDPOINT` is the AWG1 public IP (from `Endpoint` in `awg1.conf`, without the port).
+
+`EXTRA_RU_NETS` is optional. It exists for individual addresses you want routed through the Russian leg against what the list says. The typical case is a site in the `.ru` zone sitting behind a foreign CDN: by destination address it looks foreign, so it leaves through the far leg. Keep such addresses here, because adding them to the live `ru` set by hand achieves nothing - the next run of the script rebuilds the set and wipes them.
 
 ```bash
 chmod +x /root/awg/awg-routing.sh
 bash /root/awg/awg-routing.sh
 ```
-
-`EXTRA_RU_NETS` is optional. It exists for individual addresses you want routed through the Russian leg against what the list says. The typical case is a site in the `.ru` zone sitting behind a foreign CDN: by destination address it looks foreign, so it leaves through the far leg. Keep such addresses here, because adding them to the live `ru` set by hand achieves nothing - the next run of the script rebuilds the set and wipes them.
 
 What the script does, step by step:
 
@@ -331,7 +331,7 @@ What the script does, step by step:
 <a id="step5"></a>
 ## Step 5. Autostart after reboot
 
-The `awg1` tunnel (`awg-quick@awg1`) and the `awg0` server are started by the installer itself. What is left is to run the routing script after both tunnels. A single oneshot unit tied to both tunnels does this - it starts strictly after them, so no separate ordering between `awg0` and `awg1` is needed.
+The installer starts and enables the `awg0` server itself. The `awg1` tunnel (`awg-quick@awg1`) and the routing script are yours, and they are enabled here. What is left is to run the routing script after both tunnels. A single oneshot unit tied to both tunnels does this - it starts strictly after them, so no separate ordering between `awg0` and `awg1` is needed.
 
 Create `/etc/systemd/system/awg-routing.service`:
 
@@ -535,9 +535,10 @@ If you are going to remove the installer itself afterwards (`--uninstall`), do t
 - The cascade is not part of the installer and is not managed by it - it is a separate manual setup on top of two normal installs.
 - The scheme works over IPv4: the list of Russian networks holds no IPv6 entries at all. Keep IPv6 disabled on the server (the installer does so by default), otherwise the server's IPv6 traffic would bypass the split. IPv6 on the client device is a separate layer that the installer never touches. Installed with exactly the flags from [step 1](#step1) (full tunnel, no `--allow-ipv6-tunnel`) it goes into the tunnel along with everything else and never leaves outside it, whereas with split routing on the client it would go around, carrying its real address. To check from the device: `curl -6 ifconfig.co` - if your home address comes back, IPv6 is going around the tunnel. Details in [ADVANCED.en.md](ADVANCED.en.md#split-detect-adv).
 - Splitting by destination is visible from outside: a site can compare the connection's address with whatever a script on its page reports and spot the mismatch. That is a property of any split, not a defect of the cascade - see [Troubleshooting](#trouble) and the write-up in [ADVANCED.en.md](ADVANCED.en.md#split-detect-adv).
-- No separate MTU tuning is needed: the double encapsulation fits within the standard size, and large transfers go through without loss.
+- No separate MTU tuning is needed: the double encapsulation fits within the standard size, and large transfers go through without loss (measured on 2.0 servers; for 3.1 with its extra padding this holds by calculation, it has not been measured separately yet).
 - The client's DNS queries go through the foreign exit - this does not affect operation and creates no leak.
 - Reinstalling with `--force` does not break the cascade: its logic lives in `/root/awg/awg-routing.sh` and the `awg-routing` unit, not in `awg0.conf`. Step 7 does restart `awg-quick@awg0` though, and step 4 re-applies the UFW rules, so run `bash /root/awg/awg-routing.sh` once more afterwards (that is why it is idempotent) and check `ip rule`. Any UFW rules you added by hand are worth re-checking at the same time.
+- A `--force` reinstall does not change the protocol generation: that takes `--uninstall` and a new install, and the keys change along with it. If AWG1 is rebuilt that way, issue `ru_host` again ([step 2](#step2)) and replace `awg1.conf` on AWG0 ([step 3](#step3)). If AWG0 is rebuilt, also issue the profiles of all its clients again and go through steps 3-5 once more.
 
 ---
 
