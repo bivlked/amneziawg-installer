@@ -196,6 +196,9 @@ vc_warns() {
             [[ "$output" == *"rc=0"* && "$output" != *"ERR:"* ]] || { echo "$1 ${hpk:-plain} Jc=$jc: refused instead of warned: $output"; return 1; }
             [ "$(grep -c "^WARN: .*$MARK" <<< "$output")" -eq 1 ] || { echo "$1 ${hpk:-plain} Jc=$jc: no single warning: $output"; return 1; }
             [[ "$output" == *"WARN: "*"122"*"regen"* ]] || { echo "$1 ${hpk:-plain} Jc=$jc: the fix is not named: $output"; return 1; }
+            # restore validates an unpacked copy with AWG_DIR pointing at it: the
+            # command must name the installed manager, not the temporary directory.
+            [[ "$output" == *"sudo bash /root/awg/manage_amneziawg.sh regen"* && "$output" != *"$BATS_TEST_TMPDIR/manage"* ]] || { echo "$1 ${hpk:-plain} Jc=$jc: the fix names a wrong path: $output"; return 1; }
         done
     done
 }
@@ -309,6 +312,14 @@ crender() {
                  _AWG_JC_GO_WARNED=""
                  echo "--- export run"
                  generate_vpn_uri c1 || exit 1 ;;
+            # modify after the server was lowered without regen: the profile
+            # still carries its own Jc, the server params are safe.
+            diverge) render_client_config c1 10.9.9.2 CLIENTPRIV SERVERPUB 203.0.113.10 39743 >/dev/null 2>&1 || exit 1
+                 _AWG_JC_GO_WARNED=""
+                 sed -i "s/^export AWG_Jc=.*/export AWG_Jc=4/" "$CONFIG_FILE"
+                 unset AWG_Jc
+                 echo "--- export run"
+                 generate_vpn_uri c1 || exit 1 ;;
         esac
         echo RC=0
     ' _ "$lib" "${4:-two}"
@@ -331,6 +342,11 @@ cr_export() {
         [ "$(grep -c "^WARN: .*$MARK" <<< "$out")" -eq 1 ] || { echo "$1 $gen: an export on its own (modify) did not warn: $out"; return 1; }
         run crender "$1" "$gen" 126 export
         [[ "$output" == *"RC=0"* && "$output" != *"$MARK"* ]] || { echo "$1 $gen: Jc=126 export warned: $output"; return 1; }
+        # The profile's own Jc counts even when the server's is already safe.
+        run crender "$1" "$gen" 127 diverge
+        [[ "$output" == *"RC=0"* ]] || { echo "$1 $gen: export after lowering failed: $output"; return 1; }
+        out=$(exported "$output")
+        [ "$(grep -c "^WARN: Jc=127 .*$MARK" <<< "$out")" -eq 1 ] || { echo "$1 $gen: a profile with Jc=127 exported silently under a safe server: $out"; return 1; }
     done
 }
 @test "modify/export: the vpn:// export warns on its own and once together with the render, both generations, both twins" {

@@ -4268,7 +4268,7 @@ awg_jc_go_overflow() {
 # awg_jc_go_warn <Jc> <число I> : предупреждение с исправлением. Не отказ.
 awg_jc_go_warn() {
     log_warn "Jc=$1 при $2 из I1-I5: клиенты на amneziawg-go упадут на первом рукопожатии - junk-пакеты, I-пакеты и пакет рукопожатия уходят одной пачкой, а она вмещает 128 пакетов (amneziawg-go#111). Сервер на модуле ядра работает, падают клиенты."
-    log_warn "Исправить, не трогая остальные параметры: поставьте в серверном awg0.conf Jc не больше 122, примените (sudo systemctl restart awg-quick@awg0) и перевыпустите профили (sudo bash ${AWG_DIR:-/root/awg}/manage_amneziawg.sh regen)."
+    log_warn "Исправить, не трогая остальные параметры: поставьте в серверном awg0.conf Jc не больше 122, примените (sudo systemctl restart awg-quick@awg0) и перевыпустите профили (sudo bash /root/awg/manage_amneziawg.sh regen)."
     # Один раз на запуск на все пути: шаг 6 зовёт и валидатор, и рендер.
     _AWG_JC_GO_WARNED=1
 }
@@ -4295,9 +4295,20 @@ awg_conf_i_count() {
 # выдаём: клиенты на модуле ядра с ним работают, а отказ оставил бы без профиля
 # всех. Клиентские пути NO_CPS не учитывают, поэтому I считаем как есть. Одно
 # предупреждение на запуск, а не на каждого клиента regen.
+# Необязательный аргумент - .conf профиля: modify пересобирает QR и vpn:// из уже
+# лежащего файла, и его Jc/I могут разойтись с сервером (сервер снизили, regen не
+# сделали). Тогда проверяются оба набора, и предупреждает любой из них.
 _awg_jc_go_warn_once() {
     [[ -z "${_AWG_JC_GO_WARNED:-}" ]] || return 0
-    local n=0 v
+    local n=0 v jc
+    if [[ -n "${1-}" && -f "$1" ]] && n=$(awg_conf_i_count "$1"); then
+        jc=$(_awg_conf_pairs "$1" 2>/dev/null | awk -F'\t' '$1 == "interface" && $2 == "jc" {v = $3} END {print v}')
+        if awg_jc_go_overflow "$jc" "$n"; then
+            awg_jc_go_warn "$(_awg_dec_strip "$jc")" "$n"
+            return 0
+        fi
+        n=0
+    fi
     for v in "${AWG_I1:-}" "${AWG_I2:-}" "${AWG_I3:-}" "${AWG_I4:-}" "${AWG_I5:-}"; do
         [[ -n "$v" ]] && n=$((n + 1))
     done
@@ -4991,7 +5002,7 @@ generate_vpn_uri() {
 
     load_awg_params || return 1
     # modify пересобирает QR и vpn:// мимо render_client_config.
-    _awg_jc_go_warn_once
+    _awg_jc_go_warn_once "$conf_file"
 
     # AWG_PORT - единственное НЕкавыченное числовое поле inner JSON ("port":N).
     # Пустое/нечисловое значение дало бы "port":, - синтаксически битый JSON,
