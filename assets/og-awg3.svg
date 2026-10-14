@@ -24,8 +24,8 @@
   </g>
   <text x="80" y="258" font-size="58" font-weight="800" fill="#e6edf3" letter-spacing="-1">AmneziaWG 3.1 or 2.0</text>
   <text x="80" y="334" font-size="58" font-weight="800" fill="#3ddc97" letter-spacing="-1">on your server</text>
-  <text x="80" y="404" font-size="29" fill="#9aa7b4">New installs get 3.1. Where it cannot run,</text>
-  <text x="80" y="444" font-size="29" fill="#9aa7b4">the installer picks 2.0 by itself.</text>
+  <text x="80" y="404" font-size="29" fill="#9aa7b4">New installs get 3.1. On ARM and older</text>
+  <text x="80" y="444" font-size="29" fill="#9aa7b4">kernels the installer picks 2.0.</text>
   <g transform="translate(80 498)" font-size="24">
     <rect width="300" height="56" rx="12" fill="#10261c" stroke="#2bbd80"/>
     <text x="150" y="36" text-anchor="middle" fill="#3ddc97" font-weight="700">One command to check</text>

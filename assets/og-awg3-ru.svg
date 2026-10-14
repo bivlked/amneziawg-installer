@@ -24,8 +24,8 @@
   </g>
   <text x="80" y="258" font-size="58" font-weight="800" fill="#e6edf3" letter-spacing="-1">AmneziaWG 3.1 или 2.0</text>
   <text x="80" y="334" font-size="58" font-weight="800" fill="#3ddc97" letter-spacing="-1">на вашем сервере</text>
-  <text x="80" y="404" font-size="29" fill="#9aa7b4">Новая установка ставит 3.1. Где её не поднять,</text>
-  <text x="80" y="444" font-size="29" fill="#9aa7b4">установщик сам ставит 2.0.</text>
+  <text x="80" y="404" font-size="29" fill="#9aa7b4">Новая установка ставит 3.1. На ARM и старых</text>
+  <text x="80" y="444" font-size="29" fill="#9aa7b4">ядрах установщик сам ставит 2.0.</text>
   <g transform="translate(80 498)" font-size="24">
     <rect width="360" height="56" rx="12" fill="#10261c" stroke="#2bbd80"/>
     <text x="180" y="36" text-anchor="middle" fill="#3ddc97" font-weight="700">Проверка одной командой</text>
