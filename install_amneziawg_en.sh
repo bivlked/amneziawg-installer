@@ -534,7 +534,7 @@ apt_wait_for_ppa_package() {
 show_help() {
     cat << 'EOF'
 Usage: sudo bash install_amneziawg_en.sh [OPTIONS]
-Script for installation and configuration of AmneziaWG (generation 3.1 by default; 2.0 by flag or automatically where 3.1 cannot run) on Ubuntu (24.04 / 26.04) and Debian (12 / 13).
+Script for installation and configuration of AmneziaWG (generation 3.1 by default; 2.0 by flag or automatically where the installer does not set up 3.1) on Ubuntu (24.04 / 26.04) and Debian (12 / 13).
 
 Options:
   -h, --help            Show this help and exit
@@ -568,10 +568,11 @@ Options:
                         An explicit --port=N wins over port 443
   --protocol=2.0|3.1    Protocol generation for a new install or for one that
                         started but has not reached step 6 (default 3.1).
-                        Without the flag, on a machine where 3.1 cannot run
-                        (kernel older than 6.7, a non-x86_64 architecture, ARM
-                        included, a second-line kernel module or a failed module
-                        check), 2.0 is installed with an explanation; if the
+                        Without the flag, on a machine where the installer does
+                        not set up 3.1 (kernel older than 6.7, a non-x86_64
+                        architecture, ARM included, a second-line kernel module
+                        or a failed module check), 2.0 is installed with an
+                        explanation; if the
                         module does not accept the 2.0 set either, the install
                         stops. If the awg tools are older than a third-line
                         module, the install stops and asks to upgrade them.
@@ -583,6 +584,7 @@ Options:
                         ends the install: the generation of a running install
                         changes only by reinstalling and reissuing every client
                         profile.
+                        The spaced form is accepted too: --protocol 2.0
   -y, --yes             Auto-confirm (reboots, UFW, etc.)
   -f, --force           Force reinstall on top of an already-running AmneziaWG
                         (by default a run on a configured server aborts;
@@ -4755,7 +4757,7 @@ create_diagnostic_report() {
     # and the 0644 window is genuinely reachable.
     _diag_umask=$(umask); umask 077
     {
-        echo "=== AMNEZIAWG 2.0 DIAGNOSTIC REPORT ==="
+        echo "=== AMNEZIAWG DIAGNOSTIC REPORT ==="
         echo ""
         echo "!!! WARNING: PrivateKey, PresharedKey and HeaderProtectionKey values are"
         echo "!!! stripped wherever they are labelled by name or by an awg show label."

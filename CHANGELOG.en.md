@@ -18,6 +18,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **ADVANCED starts from the 3.1 profile.** The parameter table has a 3.1 column, the 3.1 config examples come first, FAQ answers and troubleshooting steps that held only for 2.0 are split by generation, and the first step is "find the server's generation". Hand edits of the parameters are described the way the scripts behave: `awg0.conf` is the source, the copy in `awgsetup_cfg.init` is used only while there is no `awg0.conf`. A header key mismatch starts with checking which key the clients have. amneziawg-go is built from third-line tags (the project ships no binaries). WireSock is marked as not working with our profiles, Keenetic and the routers that run the kernel module are described more precisely. Eleven Russian FAQ answers that showed literal asterisks and backticks now render properly.
 - **The cascade, WARP and contributor docs know about generations.** The cascade needs both servers on one generation, and the requirements and the install summary say so; a generation change is covered. The WARP guide says which generation it was tested on. The roadmap leads with 3.1, the CONTRIBUTING test matrix, the PR template and the bug report ask about the generation, and the release process notes are updated from the v6.0.0 measurements. The code of conduct gains a fallback channel for reports.
 
+### Fixed
+
+- **The `--diagnostic` report and `--help` are no longer tied to 2.0.** The report header no longer names a generation (on a 3.1 server it said "AMNEZIAWG 2.0"); the generation is in the `AWG_PROTOCOL` line from the settings file. The help says that on an old kernel, on ARM and in the other listed cases it is the installer that picks 2.0, not that 3.1 is impossible there, and mentions the spaced form `--protocol 2.0`.
+
 ## [6.0.0] - 2026-10-13
 
 **v6.0.0** - a fresh install now sets up AmneziaWG 3.1 by default: header encryption and extra padding. Where 3.1 cannot run, the installer installs 2.0 by itself; running servers stay on their generation. The project is now named AmneziaWG 3.x Installer.
