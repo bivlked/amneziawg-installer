@@ -12,8 +12,8 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 
 <a id="toc-adv"></a>
 - [✨ Features (Detailed)](#features-detailed-adv)
-- [🔐 AWG 2.0 Parameters](#awg2-params-adv)
-  - [Presets (v5.10.0+)](#presets-adv)
+- [🔐 Obfuscation Parameters (3.1 and 2.0)](#awg2-params-adv)
+  - [Presets](#presets-adv)
 - [🆕 The third AmneziaWG line for self-hosted servers](#awg3-adv)
   - [What 3.1 added](#awg3-31-adv)
   - [Which module line you get](#awg3-lines-adv)
@@ -41,7 +41,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
   - [Rotating the server key](#server-key-rotation-adv)
 - [🧹 Server Optimization](#optimization-adv)
 - [📋 Configuration Examples](#config-examples-adv)
-- [⚙️ CLI Parameters](#cli-params-adv)
+- [🖥️ CLI Parameters](#cli-params-adv)
   - [install_amneziawg.sh](#install-cli-adv)
   - [manage_amneziawg.sh](#manage-cli-adv)
 - [🧑‍💻 Full List of Management Commands](#manage-commands-adv)
@@ -62,6 +62,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 - [🚧 Host Unreachable from Russia (Hetzner): AS-based Blocking](#as-blocking-adv)
 - [🛡️ Active Probing and Obfuscation Without a Proxy](#active-probing-adv)
 - [📋 Client Compatibility](#client-compat-adv)
+  - [Which AmneziaWG generation a client speaks](#client-gen-adv)
 - [🐧 Debian Support](#debian-support-adv)
 - [🔧 Raspberry Pi and ARM64 Support](#arm-support-adv)
 - [🐧 Connecting a Linux machine as a client](#linux-client-adv)
@@ -81,7 +82,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 <a id="features-detailed-adv"></a>
 ## ✨ Features (Detailed)
 
-* **AmneziaWG 2.0:** Support for the next-generation protocol with extended obfuscation parameters (H1-H4 ranges, S3-S4, CPS I1).
+* **AmneziaWG 3.1 by default:** header encryption (`HeaderProtectionKey`, a key of its own per install) and extra padding (`ContentPaddingAddition`) on top of junk packets, `S1`-`S4` padding and the `I1` concealment packet. AmneziaWG 2.0 is installed with the `--protocol=2.0` flag (for clients without 3.1) or automatically where the installer does not issue 3.1 (ARM, kernel older than 6.7): [details](#awg3-fallback-adv).
 * **Native key generation:** Keys are generated via `awg genkey/pubkey`, configs via Bash templates, QR codes via `qrencode`. The external Python/awgcfg.py dependency has been completely removed.
 * **Automated installation:** Installs AmneziaWG, DKMS module, dependencies, configures networking, firewall, and sysctl.
 * **Resume after reboot:** Uses a state file (`/root/awg/setup_state`) to continue after required reboots.
@@ -90,7 +91,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
     * Hardware-aware swap and network buffer tuning
 * **Secure by default:**
     * `UFW`: Policy `deny incoming`, SSH rate-limiting, VPN port allowed.
-    * `IPv6`: Disabled by default via `sysctl` (optional).
+    * `IPv6`: Disabled by default via `sysctl` (the prompt defaults to yes, `--yes` disables it without asking; keep it with `--allow-ipv6`).
     * `File permissions`: Strict permissions (600/700) on all keys and configs.
     * `Sysctl`: BBR congestion control, anti-spoofing, TCP optimization.
     * `Fail2Ban`: Automatic installation and SSH protection.
@@ -99,39 +100,42 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 ---
 
 <a id="awg2-params-adv"></a>
-## 🔐 AWG 2.0 Parameters
+## 🔐 Obfuscation Parameters (3.1 and 2.0)
 
-All parameters are generated automatically during installation and saved to `/root/awg/awgsetup_cfg.init`. They are identical for the server and all clients.
+These obfuscation parameters exist in both profiles, 3.1 and 2.0; only the lower bounds of `S3`/`S4` and the form of `H1`-`H4` differ (the "3.1 profile" column). The parameters that exist only in 3.1 (`HeaderProtectionKey`, `ContentPaddingAddition`) are in [The 3.1 profile](#awg3-not-yet-adv). All values are generated at install time and handed to clients exactly as they are on the server. The source of truth for the `manage` commands and for a reinstall is the live `/etc/amnezia/amneziawg/awg0.conf`; the copy of the set in `/root/awg/awgsetup_cfg.init` is used only when `awg0.conf` is absent, which normally means the first install. The `HeaderProtectionKey` is not written to the init: it lives in `awg0.conf` and in `/root/awg/server_hpk.key`.
 
-| Parameter | Description | Range | Example |
-|-----------|-------------|-------|---------|
-| `Jc` | Number of junk packets | 3-6 | `5` |
-| `Jmin` | Min junk size (bytes) | 40-89 | `55` |
-| `Jmax` | Max junk size (bytes) | Jmin+50..Jmin+250 | `200` |
-| `S1` | Init message padding (bytes) | 15-150 | `72` |
-| `S2` | Response message padding (bytes) | 15-150, S1+56≠S2 | `56` |
-| `S3` | Cookie message padding (bytes) | 8-55 | `32` |
-| `S4` | Data message padding (bytes) | 4-27 | `16` |
-| `H1` | Init message identifier | uint32 range | `134567-245678` |
-| `H2` | Response message identifier | uint32 range | `3456789-4567890` |
-| `H3` | Cookie message identifier | uint32 range | `56789012-67890123` |
-| `H4` | Data message identifier | uint32 range | `456789012-567890123` |
-| `I1` | CPS concealment packet | Tags `<b 0xHEX>` / `<r N>` / `<rc N>` / `<rd N>` / `<t>` | A DNS-reply-shaped packet, 70-128 bytes |
-| `I2`-`I5` | Extra CPS / special-junk packets, optional (carried to clients since v5.18.0) | Tags `<r N>` / `<b 0xHEX>` / `<c>` / `<t>` | `<b 0xf1>` |
+| Parameter | Description | 2.0 profile | 3.1 profile | Example (2.0) |
+|-----------|-------------|-------|-------|---------|
+| `Jc` | Number of junk packets | 3-6 | the same | `5` |
+| `Jmin` | Min junk size (bytes) | 40-89 | the same | `55` |
+| `Jmax` | Max junk size (bytes) | Jmin+50..Jmin+250 | the same | `200` |
+| `S1` | Init message padding (bytes) | 15-150 | the same | `72` |
+| `S2` | Response message padding (bytes) | 15-150, S1+56≠S2 | the same | `56` |
+| `S3` | Cookie message padding (bytes) | 8-55 | 12-55 | `32` |
+| `S4` | Data message padding (bytes) | 4-27 | 12-27 | `16` |
+| `H1` | Init message identifier | uint32 range | `1` | `134567-245678` |
+| `H2` | Response message identifier | uint32 range | `2` | `3456789-4567890` |
+| `H3` | Cookie message identifier | uint32 range | `3` | `56789012-67890123` |
+| `H4` | Data message identifier | uint32 range | `4` | `456789012-567890123` |
+| `I1` | CPS concealment packet | Tags `<b 0xHEX>` / `<r N>` / `<rc N>` / `<rd N>` / `<t>` | the same | A DNS-reply-shaped packet, 70-128 bytes |
+| `I2`-`I5` | Extra CPS / special-junk packets, optional (carried to clients) | Tags `<b 0xHEX>` / `<r N>` / `<rc N>` / `<rd N>` / `<t>` | the same | `<b 0xf1>` |
+
+> For `I1`-`I5` use only the `<b>`, `<r>`, `<rc>`, `<rd>`, `<t>` tags: both implementations, the kernel module and amneziawg-go, understand them. The `<c>` tag exists only in the kernel module; on amneziawg-go (macOS, LXC and Docker without the module, some routers) a config with it does not come up.
 
 **Critical constraints:**
-* H1-H4 ranges **must not overlap** (guaranteed by the generation algorithm); the generator picks them at random within 5..2147483647.
+* In the 2.0 profile the H1-H4 ranges **must not overlap** (guaranteed by the generation algorithm); the generator picks them at random within 5..2147483647. In the 3.1 profile `H1`-`H4` are 1-4: header encryption hides the message type, and random ranges add nothing.
 * `S1 + 56 ≠ S2` — prevents init and response messages from having the same size.
 * `S3 ≠ S2 + 28` - keeps the response and cookie messages from having the same size.
-* `S1`-`S4` and `H1`-`H4` **must** match on the server and the clients: the receiver strips that padding and checks those headers. In 2.0, `H1`-`H4` are ranges - the same ranges on both sides.
-* `Jc`/`Jmin`/`Jmax` and `I1`-`I5` **do not** have to match: they are separate decoy packets, the other side discards them, and a node without `I1` simply never sends them.
+* `S4` is chosen to avoid the harmful length matches between data packets and handshake packets found by the 2.0 transport model: otherwise in the 2.0 profile some data packets could be taken for a handshake and lost. Harmless matches are allowed.
+* `S1`-`S4` and `H1`-`H4` **must** match on the server and the clients (in 3.1, the `HeaderProtectionKey` too): the receiver strips that padding and checks those headers. In 2.0, `H1`-`H4` are ranges - the same ranges on both sides.
+* `Jc`/`Jmin`/`Jmax` and `I1`-`I5` **do not** have to match: they are separate decoy packets, only the handshake initiator sends them and the other side discards them. Each of `I1`-`I5` is sent when it is set; the installer sets only `I1`, so `--no-cps` removes the concealment packet entirely.
 
 > `I1`-`I5` (CPS) disguise the handshake as another protocol - the basis of resistance to active probing. Details: [Active Probing and Obfuscation Without a Proxy](#active-probing-adv).
 
 <a id="presets-adv"></a>
-### Presets (v5.10.0+)
+### Presets
 
-Presets are ready-made obfuscation parameter profiles optimized for specific network conditions. Selected during installation via the `--preset` flag.
+Presets are ready-made obfuscation parameter sets optimized for specific network conditions. Selected during installation via the `--preset` flag.
 
 | Preset | Jc | Jmin | Jmax | When to use |
 |--------|-----|------|------|------------|
@@ -141,10 +145,10 @@ Presets are ready-made obfuscation parameter profiles optimized for specific net
 **Installation with a preset:**
 
 ```bash
-# Standard profile (default)
+# Standard preset (default)
 sudo bash install_amneziawg_en.sh --yes
 
-# Mobile profile — for SIM cards, LTE/5G modems, mobile routers
+# Mobile preset - for SIM cards, LTE/5G modems, mobile routers
 sudo bash install_amneziawg_en.sh --preset=mobile --yes
 ```
 
@@ -175,7 +179,11 @@ sudo bash install_amneziawg_en.sh --jc=2 --jmin=20 --jmax=60 --yes
 <a id="awg3-adv"></a>
 ## 🆕 The third AmneziaWG line for self-hosted servers
 
-In late July 2026 the Amnezia team released **AmneziaWG 3.0** and switched the PPA over to it; on 12 August **3.1** followed inside the same line (tag `v3.1.20260812`), and the PPA has carried it since that day. Since version 6.0.0 the installer issues a new install the **3.1 profile** by default: what it is made of is covered in [The 3.1 profile](#awg3-not-yet-adv), and where 2.0 is installed instead in [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv). A third-line module on x86 with kernel 6.7 or newer was installed before as well, and second-line configs keep working on it.
+**Terms.** AmneziaWG has protocol generations, also called lines: 1.x, 2.0 (the second line) and 3.x (the third line; the installer issues its 3.1 release). The installer writes one of two profiles into the server and client configs: the "3.1 profile" (the default) or the "2.0 profile". The kernel module and the `awg` tools are also second or third line, and the 3.1 profile needs a third-line module and tools.
+
+**What a new install gets.** The 3.1 profile: header encryption and extra padding on top of the second-line obfuscation; the details are in [The 3.1 profile](#awg3-not-yet-adv). To see which generation a server runs: `sudo bash /root/awg/manage_amneziawg.sh check` prints the "Installation protocol generation" line, and `check --json` returns the `protocol` field.
+
+In late July 2026 the Amnezia team released **AmneziaWG 3.0** and switched the PPA over to it; on 12 August **3.1** followed inside the same line (tag `v3.1.20260812`), and the PPA has carried it since that day. Since version 6.0.0 a new install gets the **3.1 profile** by default: what it is made of is covered in [The 3.1 profile](#awg3-not-yet-adv), and where 2.0 is installed instead in [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv). A third-line module on x86 with kernel 6.7 or newer was installed before as well, and second-line configs keep working on it.
 
 To see what you actually have:
 
@@ -264,7 +272,7 @@ All seven work through `awg-quick` as well: it hands every key it does not consu
 <a id="awg3-must-match-adv"></a>
 ### What has to match and what does not
 
-This is the part most often misread, because the kernel module's own README still describes only 1.x/2.0, and the `amneziawg-go` README splits parameters into server-side and client-side without the details.
+This is the part most often misread. The kernel module's own README describes only 1.x/2.0. The `amneziawg-go` README covers the third line too (header protection, padding, timings) and splits parameters into server-side (must match) and client-side (need not), but it does not say what happens on a mismatch or how to see it. Below is what was measured.
 
 - **`S1`-`S4` have to match.** These are not just padding: the receiver reads the message type **at the offset** given by its own `S`. Different values mean the packet is not recognised.
 - **`H1`-`H4` have to be compatible.** The sender picks a value from its range and the receiver checks that the value falls inside its own. Keeping them identical is simpler.
@@ -339,6 +347,7 @@ The installer checks the machine twice. At step 0 it checks the architecture and
 | Situation | What the installer does |
 |---|---|
 | no generation chosen, the machine does not fit | installs 2.0 by itself: the reason goes to the log as a separate block and is repeated in the final report. At step 3 it first checks the 2.0 set on a temporary interface the same way and, if the module refuses it, stops without touching the settings file |
+| second-line `awg` tools with a third-line module (`tools_old`) | such tools cannot apply the 2.0 set either (they do not set the `H1`-`H4` ranges), so the install stops and names the command to upgrade `amneziawg-tools`; the settings file is untouched. With a second-line module the 2.0 set passes the probe, and the installer installs 2.0 |
 | `--protocol=3.1`, the machine does not fit | stops and names the reason code |
 | `--protocol=2.0` | installs 2.0, no third-line checks needed |
 | the server has already issued profiles (reached step 6) | never changes the generation. If a 3.1 server stops passing the check, the installer names the reason and the repair (upgrade the tools or the module, boot a suitable kernel); it names removal only as the last resort |
@@ -559,6 +568,15 @@ The value is IP addresses separated by commas. Clients created after the edit (`
 sudo bash /root/awg/manage_amneziawg.sh modify <name> PersistentKeepalive 25
 ```
 
+**Obfuscation parameters by hand** (`Jc`/`Jmin`/`Jmax`, `S1`-`S4`, `H1`-`H4`, `I1`-`I5`). Edit them in `/etc/amnezia/amneziawg/awg0.conf`: `add`, `regen` and a `--force` reinstall all take them from there. The copy in `/root/awg/awgsetup_cfg.init` is used only when `awg0.conf` is absent, which normally means the first install. You can update it as well so the two files do not drift apart, but an edit made only there reaches neither the server nor the clients (`manage` warns about it).
+
+1. Change the value in the `[Interface]` section of `awg0.conf`. Write the key names exactly as they are in the file (`Jc`, `Jmin`, `Jmax`, `S1` and so on; `I1`-`I5` in upper case only). Optionally put the same value into `awgsetup_cfg.init` too (the `export AWG_S1='...'` line and so on).
+2. Restart the service: `sudo systemctl restart awg-quick@awg0`. Without a restart a removed parameter stays on the live interface, see [Three things that can cost you an evening](#awg3-gotchas-adv).
+3. Reissue every client profile: `sudo bash /root/awg/manage_amneziawg.sh regen`, and import them again on each device. `S1`-`S4` and `H1`-`H4` must match, so the old profiles stop connecting. `I1` alone needs no reissue: it can be changed in the client `.conf` too.
+4. On a 3.1 server leave `H1`-`H4` alone (they are 1-4) and keep `S1`-`S4` at 12 or more. Do not change the `HeaderProtectionKey` by hand: a new key cuts off every client until they are reissued, and the normal way to get one is a reinstall (`--uninstall` and a new install). If you change it anyway, change its copy `/root/awg/server_hpk.key` at the same time, otherwise `manage` refuses to issue profiles.
+
+A plain `--force` reinstall keeps the set (except `I1` when the install was made with `--no-cps`: then `I1` is removed again). The `--preset`, `--mobile`, `--jc`, `--jmin` and `--jmax` flags regenerate the whole set on a reinstall, `S`, `H` and `I1` included, and after them every client needs a `regen`.
+
 Editing the `awg_common.sh` library itself is pointless: the installer at step 5 and a script update overwrite it with their own copy.
 
 ---
@@ -718,8 +736,113 @@ With `--yes` no question is asked and the behaviour stays as before, that is the
 <a id="config-examples-adv"></a>
 ## 📋 Configuration Examples
 
+A new install gets the 3.1 profile, so its examples come first; the 2.0 profile examples follow. Keys and addresses are masked, and the parameter values are examples.
+
 <details>
-<summary><strong>awgsetup_cfg.init (installation parameters)</strong></summary>
+<summary><strong>awgsetup_cfg.init, 3.1 profile (installation parameters, shortened)</strong></summary>
+
+```bash
+# AmneziaWG installation configuration (Auto-generated)
+export AWG_PORT=39743
+export AWG_TUNNEL_SUBNET='10.9.9.1/24'
+export DISABLE_IPV6=1
+export ALLOWED_IPS_MODE=1
+export ALLOWED_IPS='0.0.0.0/0'
+export AWG_ENDPOINT=''
+export AWG_MTU=1280
+export AWG_Jc=5
+export AWG_Jmin=61
+export AWG_Jmax=190
+export AWG_S1=88
+export AWG_S2=47
+export AWG_S3=29
+export AWG_S4=17
+export AWG_H1='1'
+export AWG_H2='2'
+export AWG_H3='3'
+export AWG_H4='4'
+export AWG_I1='<r 2><b 0x858000010002000000001c><rc 28><b 0x0463646e730669636c6f756403636f6d0000010001c00c000100010000003c00043c263e6bc00c000100010000003c000475bb065f>'
+export AWG_PRESET='default'
+export AWG_PROTOCOL_SOURCE='default'
+export AWG_PROTOCOL_FALLBACK=''
+export AWG_CPA='32-128'
+export AWG_PROTOCOL='3.1'
+```
+
+Only the network and protocol lines are shown; the real file is longer (OS, client isolation, server name, install flags). The `HeaderProtectionKey` is not in the init: it lives in `awg0.conf` and in `/root/awg/server_hpk.key`.
+</details>
+
+<details>
+<summary><strong>awg0.conf, 3.1 profile (server config)</strong></summary>
+
+```ini
+[Interface]
+PrivateKey = [SERVER_PRIVATE_KEY]
+Address = 10.9.9.1/24
+MTU = 1280
+ListenPort = 39743
+PostUp = iptables -I FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+Jc = 5
+Jmin = 61
+Jmax = 190
+S1 = 88
+S2 = 47
+S3 = 29
+S4 = 17
+H1 = 1
+H2 = 2
+H3 = 3
+H4 = 4
+I1 = <r 2><b 0x858000010002000000001c><rc 28><b 0x0463646e730669636c6f756403636f6d0000010001c00c000100010000003c00043c263e6bc00c000100010000003c000475bb065f>
+HeaderProtectionKey = [HEADER_PROTECTION_KEY]
+ContentPaddingAddition = 32-128
+
+[Peer]
+#_Name = my_phone
+PublicKey = [CLIENT_PUBLIC_KEY]
+AllowedIPs = 10.9.9.2/32
+```
+
+The `PostUp` and `PostDown` lines are shortened: the real config also carries the MSS clamp and client isolation rules.
+</details>
+
+<details>
+<summary><strong>client.conf, 3.1 profile (client config)</strong></summary>
+
+```ini
+[Interface]
+PrivateKey = [CLIENT_PRIVATE_KEY]
+Address = 10.9.9.2/32
+DNS = 1.1.1.1, 1.0.0.1
+MTU = 1280
+Jc = 5
+Jmin = 61
+Jmax = 190
+S1 = 88
+S2 = 47
+S3 = 29
+S4 = 17
+H1 = 1
+H2 = 2
+H3 = 3
+H4 = 4
+I1 = <r 2><b 0x858000010002000000001c><rc 28><b 0x0463646e730669636c6f756403636f6d0000010001c00c000100010000003c00043c263e6bc00c000100010000003c000475bb065f>
+HeaderProtectionKey = [HEADER_PROTECTION_KEY]
+ContentPaddingAddition = 32-128
+
+[Peer]
+PublicKey = [SERVER_PUBLIC_KEY]
+Endpoint = 203.0.113.1:39743
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 33
+```
+
+The client's `HeaderProtectionKey` is the same as the server's: there is one key per install.
+</details>
+
+<details>
+<summary><strong>awgsetup_cfg.init, 2.0 profile (installation parameters)</strong></summary>
 
 ```bash
 # AmneziaWG installation configuration (Auto-generated)
@@ -747,7 +870,7 @@ export AWG_PROTOCOL='2.0'
 </details>
 
 <details>
-<summary><strong>awg0.conf (server config, keys masked)</strong></summary>
+<summary><strong>awg0.conf, 2.0 profile (server config, keys masked)</strong></summary>
 
 ```ini
 [Interface]
@@ -806,15 +929,17 @@ Notes for manual setups:
 
 - **S3/S4** are AWG 2.0 parameters added to the protocol later than S1/S2. Configs from the earlier AWG 1.x release may not have them - add by hand, `S3` takes `0-64` and `S4` takes `0-32`, the key point is that the keys exist at all.
 - **H1–H4** can be single-value (`H1 = 1234567`) or a range (`H1 = 100000-200000`); ranges must not overlap. Keep the upper bound at `2147483647` (`INT32_MAX`) or below, otherwise `amneziawg-windows-client` may flag the value as invalid.
-- **I1-I5** (CPS / special-junk packets) are optional. Without `I1` the AWG client falls back to AWG 1.0 mode; for full AWG 2.0 obfuscation add `I1 = <r 128>` (random 128 bytes) or `I1 = <b 0xHEX>` (binary). ⚠️ The `<r 128>` example shows the FORMAT, not a recommended value: by the September 2026 measurement a packet of random bytes is dropped on some cellular networks and the handshake never completes. If the tunnel does not come up on cellular, see [the handshake never completes on cellular](#no-hs-mobile-adv). Since v5.18.0 all five (`I1`-`I5`) are carried into client configs, not just `I1`: set `I2`-`I5` in the `[Interface]` section of `awg0.conf`, restart the service (`sudo systemctl restart awg-quick@awg0`), and distribute to clients with `sudo bash /root/awg/manage_amneziawg.sh regen <name>` - the values flow into the `.conf`, QR, and `vpn://`. Ready-made sets come from, e.g., the VoidWaifu list; tag formats: `<r N>`, `<b 0xHEX>`, `<c>`, `<t>`. These values do not have to match the server: the receiver never validates them, and a node without `I1` simply sends no concealment packets. Case does matter - uppercase only. Unset `I2`-`I5` are simply not emitted.
+- **I1-I5** (CPS / special-junk packets) are optional. Without `I1` (and with `I2`-`I5` unset as well) no concealment packets are sent, and the rest of the obfuscation (`Jc`, `S`, `H`) works as usual; to have one, add `I1 = <r 128>` (random 128 bytes) or `I1 = <b 0xHEX>` (binary). ⚠️ The `<r 128>` example shows the FORMAT, not a recommended value: by the September 2026 measurement a packet of random bytes is dropped on some cellular networks and the handshake never completes. If the tunnel does not come up on cellular, see [the handshake never completes on cellular](#no-hs-mobile-adv). Since v5.18.0 all five (`I1`-`I5`) are carried into client configs, not just `I1`: set `I2`-`I5` in the `[Interface]` section of `awg0.conf`, restart the service (`sudo systemctl restart awg-quick@awg0`), and distribute to clients with `sudo bash /root/awg/manage_amneziawg.sh regen <name>` - the values flow into the `.conf`, QR, and `vpn://`. Ready-made sets come from, e.g., the VoidWaifu list; the portable tag formats are `<b 0xHEX>`, `<r N>`, `<rc N>`, `<rd N>`, `<t>` (the `<c>` tag exists only in the kernel module, and on amneziawg-go a config with it does not come up). These values do not have to match the server: only the handshake initiator sends them, and the receiver discards them. Case does matter - uppercase only. Unset `I2`-`I5` are simply not emitted.
 - **MTU**, **PostUp/PostDown** are optional and depend on the setup (see the `amneziawg-go` LXC section on `iptables` MASQUERADE).
 
 After creating such an `awg0.conf`, `manage_amneziawg.sh` also needs a minimal `/root/awg/awgsetup_cfg.init` containing at least `AWG_PORT`, `AWG_TUNNEL_SUBNET`, `AWG_ENDPOINT`. If `/root/awg/server_public.key` is missing, `manage` derives it from the `PrivateKey` in `awg0.conf`.
 
+**A 3.1 profile by hand** needs more: in `awg0.conf` the lines `HeaderProtectionKey = <a key from awg genkey>` and `ContentPaddingAddition = 32-128`, `S1`-`S4` at 12 or more, in the init `export AWG_PROTOCOL='3.1'` and `export AWG_CPA='32-128'`, and a copy of the key as one line in `/root/awg/server_hpk.key` (mode 600). Without the `AWG_PROTOCOL='3.1'` marker the server reads as 2.0, and `manage` refuses to issue profiles once it sees a key in the config; if the key in the config and in the file differ, it refuses too.
+
 </details>
 
 <details>
-<summary><strong>client.conf (client config, keys masked)</strong></summary>
+<summary><strong>client.conf, 2.0 profile (client config, keys masked)</strong></summary>
 
 ```ini
 [Interface]
@@ -856,7 +981,9 @@ Options:
   -h, --help            Show help
   --uninstall           Uninstall AmneziaWG
   --diagnostic          Generate diagnostic report
-  --repair-module       Repair the kernel module on an installed server (kernel 7.0.0-38 and later; does not run the normal install)
+  --repair-module       Repair the kernel module on an installed server (kernel
+                        7.0.0-38 and later, packages left unconfigured by apt);
+                        combines only with --verbose and --no-color
   -v, --verbose         Verbose output (including DEBUG)
   --no-color            Disable colored output
   --port=PORT           Set UDP port (1-65535; on mobile networks with DPI, 443/udp often helps)
@@ -873,18 +1000,24 @@ Options:
   --endpoint=ADDR       External server endpoint: FQDN, IPv4 or [IPv6] (NAT)
   --server-name=NAME    Server name shown in the Amnezia app on vpn:// import (default 'AWG Server')
   --mobile              Mobile setup in one flag: preset mobile + port 443/udp (an explicit --port wins)
-  --protocol=2.0|3.1    Protocol generation for a new install, or for one that started but
-                        has not reached step 6 (default 3.1). The spaced form is accepted
-                        too: --protocol 2.0
-                        Without the flag, on a machine where 3.1 cannot run (kernel older
-                        than 6.7, an architecture other than x86_64 including ARM, old tools
-                        or module), 2.0 is installed with an explanation. --protocol=2.0 is
-                        for clients such as routers on stock firmware, Hiddify or apps that
-                        were not updated. An explicit --protocol=3.1 on an unsuitable machine
-                        stops the install and names the reason. On an already configured
-                        server a flag naming a DIFFERENT generation ends the install: the
-                        generation of a running install changes only by reinstalling and
-                        reissuing every client profile
+  --protocol=2.0|3.1    Protocol generation for a new install or for one that
+                        started but has not reached step 6 (default 3.1).
+                        Without the flag, on a machine where 3.1 cannot run
+                        (kernel older than 6.7, a non-x86_64 architecture, ARM
+                        included, a second-line kernel module or a failed module
+                        check), 2.0 is installed with an explanation; if the
+                        module does not accept the 2.0 set either, the install
+                        stops. If the awg tools are older than a third-line
+                        module, the install stops and asks to upgrade them.
+                        --protocol=2.0 is needed if the clients are routers on
+                        stock firmware, Hiddify or apps that are not updated.
+                        An explicit --protocol=3.1 on an unsuitable machine ends
+                        the install and names the reason. On an already
+                        configured server a flag naming a DIFFERENT generation
+                        ends the install: the generation of a running install
+                        changes only by reinstalling and reissuing every client
+                        profile.
+                        The spaced form is accepted too: --protocol 2.0
   --preset=TYPE         Obfuscation parameter preset: default, mobile
                         mobile: Jc=3, narrow Jmax — for mobile carriers (Tele2, Yota, Megafon)
   --jc=N                Set Jc manually (0-128, overrides preset; 0 turns junk packets off)
@@ -922,7 +1055,7 @@ Options:
   --reset-routes        (regen only) reset client AllowedIPs to the global routing mode
 ```
 
-> **`--psk`** — optional extra layer on top of AWG 2.0 obfuscation. Generates a 32-byte symmetric key via `awg genpsk` and writes it to both the server `[Peer]` and the client `[Peer]` (`PresharedKey = ...`). Compatible with any WireGuard/AmneziaWG client. In batch mode (`add c1 c2 c3 --psk`) each client gets its own PSK. Without the flag clients are created without `PresharedKey` (default — AWG 2.0 obfuscation is sufficient for most scenarios). The flag only affects the new clients created by this `add` invocation — existing clients without PSK stay untouched and keep connecting as before.
+> **`--psk`** - optional extra layer on top of the AmneziaWG obfuscation. Generates a 32-byte symmetric key via `awg genpsk` and writes it to both the server `[Peer]` and the client `[Peer]` (`PresharedKey = ...`). Compatible with any WireGuard/AmneziaWG client. In batch mode (`add c1 c2 c3 --psk`) each client gets its own PSK. Without the flag clients are created without `PresharedKey` (by default - the AmneziaWG obfuscation is enough for most scenarios). The flag only affects the new clients created by this `add` invocation - existing clients without PSK stay untouched and keep connecting as before.
 
 > **`--allowed-ips=LIST`** - the client's own routes right at creation, without a follow-up `modify` (Issue #253). A comma-separated list of IPv4/IPv6 CIDRs: `add phone --allowed-ips="10.0.0.0/8, 192.168.0.0/16"`. Validated and normalized before the first client is created (an invalid or EMPTY value aborts the command creating nothing) and applied to every name in the batch - like `--expires`. The value goes through the same rules as the global mode: a full-tunnel IPv4 list gets an IPv6 route next to it (the iOS rule): `::/0` with `0.0.0.0/0`, `2000::/3` with a service address for a list, and on dual-stack `::/0` with native server IPv6 or the tunnel ULA without it; a split list never gets `::/0`, and a list with explicit IPv6 tokens (e.g. `0.0.0.0/0, ::/0`) is written as is - and when a full tunnel spells out IPv6 without `::/0`, `add` warns right away, the way `regen` does. Without the flag - the server-wide routing mode, as before. For existing clients `modify` still changes routes, and `regen` preserves such per-client lists.
 >
@@ -953,11 +1086,11 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 * **`modify <name> <param> <value>`:** Modify a client parameter in the `.conf` file. Allowed parameters: DNS, Endpoint, AllowedIPs, PersistentKeepalive. QR code and vpn:// URI are automatically regenerated after modification; the previous copies are removed before the edit, so a file that could not be rebuilt is missing rather than stale.
 * **`backup`:** Create a backup (configs + keys + client expiry data + cron).
 * **`restore [file]`:** Restore from a backup (including expiry data and cron job).
-* **`check` / `status`:** Check server status (service, port, AWG 2.0 parameters).
+* **`check` / `status`:** Check server status (service, port, module, the installation's protocol generation 3.1 or 2.0, and the obfuscation parameters).
 * **`show`:** Run `awg show`.
 * **`restart`:** Restart the AmneziaWG service.
 * **`diagnose [--carrier=NAME]`:** Self-troubleshooting: checks the kernel module, sysctl and UFW; with `--carrier=NAME` it compares AWG parameters against a mobile carrier profile. Names: `beeline_msk`, `yota_msk`, `tele2_msk`, `tele2_krasnoyarsk`, `tattelecom`, `megafon_regions`, `tmobile_us` (the last name is historical: it is the Russian T-Mobile, Moscow and region).
-* **`repair-module`:** Rebuild/restore the amneziawg kernel module (DKMS) after a server kernel upgrade.
+* **`repair-module`** (alias `repair`): Rebuild/restore the amneziawg kernel module (DKMS) after a server kernel upgrade; for kernels 7.0.0-38 and later see [Known Limitations](#kernel-70-backport-adv).
 * **`help`:** Show help.
 * **`stats [--json]`:** Per-client traffic statistics. With `--json` — machine-readable format for integration.
 
@@ -1063,9 +1196,9 @@ graph TD
     A -->|"wget (step 5)"| C
 
     subgraph "State Machine (install)"
-        S0[Step 0: Init] --> S1[Step 1: Update]
+        S0[Step 0: Init + generation choice] --> S1[Step 1: Update]
         S1 -->|reboot| S2[Step 2: DKMS]
-        S2 -->|reboot| S3[Step 3: Module]
+        S2 -->|reboot| S3[Step 3: Module + 3.1 probe]
         S3 --> S4[Step 4: UFW]
         S4 --> S5[Step 5: Scripts]
         S5 --> S6[Step 6: Configs]
@@ -1093,7 +1226,7 @@ Automatic rebuilding of the `amneziawg` kernel module on kernel updates. Check: 
 
 **Fully native** generation:
 * **Keys:** `awg genkey` + `awg pubkey` (standard AmneziaWG utilities).
-* **Configs:** Bash templates with AWG 2.0 parameters.
+* **Configs:** Bash templates with the obfuscation parameters; the 3.1 profile adds `HeaderProtectionKey` and `ContentPaddingAddition`.
 * **QR codes:** `qrencode -t png`.
 * **Python/awgcfg.py:** Completely removed. The config deletion bug workaround is no longer needed.
 
@@ -1147,7 +1280,7 @@ done
 
 If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULLY INSTALLED" means the files were not both replaced, so run the block again. If the installed `manage` predates v5.7.0, it has no version line and the block will refuse: update such a server with the new installer and `--force`. The block only accepts a pair of files from one release that is not older than the installed one, so a tampered "latest release" pointer cannot roll the scripts back to older signed versions. It prints the verified release number: compare it with the [releases page](https://github.com/bivlked/amneziawg-installer/releases). A plain `wget -O` over the working file would leave an empty file if the download failed. How the signature works: [Verifying a release](README.en.md#verifying-a-release).
 
-> **Note:** Reinstalling `install_amneziawg.sh` is **not required** for management updates. A reinstallation is only necessary when switching protocol versions.
+> **Note:** Reinstalling `install_amneziawg.sh` is **not required** for management updates. The protocol generation (3.1 or 2.0) cannot be changed by a script update or `--force`: it takes `--uninstall`, a new install and new profiles for every client, see [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv).
 
 ---
 
@@ -1165,6 +1298,7 @@ If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULL
   <b>A:</b> Update the app: the light AmneziaWG on Google Play speaks the third line since version 3.1.4 (21 September 2026), the APK from the project's releases page since v3.1.20260814, the flagship Amnezia VPN since 5.0.1.5, WG Tunnel since 5.6.0. The full table is in <a href="#client-gen-adv">Which AmneziaWG generation a client speaks</a>.
 </details>
 
+<a id="faq-router-adv"></a>
 <details>
   <summary><strong>Q: Does my router speak third-line AmneziaWG?</strong></summary>
   <b>A:</b> Stable stock firmware has no third line as of 12 October 2026: Keenetic added it in KeeneticOS 5.2 Alpha 11 (development channel), and the official OpenWrt packages have no AmneziaWG at all. So for a router whose firmware speaks only the second line (stable KeeneticOS 5.1, for example) install the server with <code>--protocol=2.0</code>: the second-line profile is a working path for it rather than a temporary compromise. On routers the third line comes from third-party projects: AWG Manager for Keenetic (v2.19.13 of 7 October 2026), awg-openwrt for OpenWrt (only the packages for OpenWrt 25.12.5 and 24.10.8, replaced on 22 September 2026 under the same tags, give the third line; ones downloaded earlier and packages for older OpenWrt do not), and for MikroTik and RouterOS amneziawg-mikrotik-c (v1.4.3 of 8 October 2026) and AmneziaWG-MikroTik. The table is in <a href="#client-gen-adv">Which AmneziaWG generation a client speaks</a>.
@@ -1192,7 +1326,7 @@ If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULL
 
 <details>
   <summary><strong>Q: The desktop AmneziaVPN on macOS hangs on connect. What can I do?</strong></summary>
-  <b>A:</b> The desktop AmneziaVPN app on macOS does not yet support CPS (the <code>I1</code> parameter) - the newest AmneziaWG 2.0 obfuscation layer, so it hangs on connect. Mobile (iOS/Android) and CLI clients handle CPS and connect fine. Install with the <code>--no-cps</code> flag: the installer drops <code>I1</code> from the server config and all clients, and the desktop connects. Only the CPS layer is lost, the rest of the obfuscation (Jc/S1-S4/H1-H4) stays - which is exactly what worked in Russia before CPS existed. On an already-installed server it is the same via reinstall: <code>sudo bash install_amneziawg_en.sh --force --no-cps</code>, then reissue existing clients <code>sudo bash /root/awg/manage_amneziawg.sh regen</code> (without this the client config still carries <code>I1</code>, and that is exactly what the desktop app chokes on). To re-enable CPS later, reinstall with any set-regeneration flag, e.g. <code>--preset=default</code> - note that this regenerates the WHOLE obfuscation set (H1-H4/S1-S4 too), so after re-enabling you need a <code>regen</code> of all clients again. The flag drops only <code>I1</code>: if you added <code>I2</code>-<code>I5</code> manually, they stay in the configs. Issue <a href="https://github.com/bivlked/amneziawg-installer/issues/159">#159</a>.
+  <b>A:</b> According to issue #159 (July 2026), the desktop AmneziaVPN app on macOS could not handle the <code>I1</code> concealment packet (CPS) and hung on connect; this has not been rechecked on current versions of the app. Mobile (iOS/Android) and CLI clients handle CPS and connect fine. Install with the <code>--no-cps</code> flag: the installer drops <code>I1</code> from the server config and all clients, and the desktop connects. Only the CPS layer is lost, the rest of the obfuscation (Jc/S1-S4/H1-H4, and on a 3.1 server the header encryption) stays. On an already-installed server it is the same via reinstall (which does not change the protocol generation): <code>sudo bash install_amneziawg_en.sh --force --no-cps</code>, then reissue existing clients <code>sudo bash /root/awg/manage_amneziawg.sh regen</code> (without this the client config still carries <code>I1</code>, and that is exactly what the desktop app chokes on). To re-enable CPS later, reinstall with any set-regeneration flag, e.g. <code>--preset=default</code> - note that this regenerates the WHOLE obfuscation set (H1-H4/S1-S4 too), so after re-enabling you need a <code>regen</code> of all clients again. The flag drops only <code>I1</code>: if you added <code>I2</code>-<code>I5</code> manually, they stay in the configs. Issue <a href="https://github.com/bivlked/amneziawg-installer/issues/159">#159</a>.
 </details>
 
 <details>
@@ -1211,22 +1345,25 @@ If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULL
 </details>
 
 <details>
-  <summary><strong>Q: Where are the AWG 2.0 parameters stored?</strong></summary>
-  <b>A:</b> After the install, in the <code>[Interface]</code> section of the server config <code>/etc/amnezia/amneziawg/awg0.conf</code>. That file is the source of truth: <code>regen</code> reads the values for client configs from there. A copy of the parameters (AWG_Jc, AWG_S1..S4, AWG_H1..H4, AWG_I1..I5) also lives in <code>/root/awg/awgsetup_cfg.init</code>, but that file is read for them only during a first install, so editing it afterwards never reaches clients - change <code>awg0.conf</code> instead (the next question has the steps). Since v5.22.0 <code>manage</code> prints a warning when it spots such a disagreement. On a 3.1 server <code>[Interface]</code> also holds <code>HeaderProtectionKey</code> and <code>ContentPaddingAddition</code>, and the key has an extra copy in <code>/root/awg/server_hpk.key</code>.
+  <summary><strong>Q: Where are the obfuscation parameters stored?</strong></summary>
+  <b>A:</b> After the install, in the <code>[Interface]</code> section of the server config <code>/etc/amnezia/amneziawg/awg0.conf</code>. That file is the source of truth for <code>manage</code>: <code>add</code> and <code>regen</code> read the values for client configs from there. A reinstall (<code>--force</code>) takes them from there too, unless <code>--preset</code>/<code>--mobile</code>/<code>--jc</code>/<code>--jmin</code>/<code>--jmax</code> regenerate the set. A copy of the parameters (AWG_Jc, AWG_S1..S4, AWG_H1..H4, AWG_I1..I5) also lives in <code>/root/awg/awgsetup_cfg.init</code>, but it is used only when <code>awg0.conf</code> is absent, which normally means the first install: an edit made only there reaches neither the server nor the clients. <code>manage</code> warns when the init was changed after <code>awg0.conf</code> and their values disagree. The steps for a manual edit are in the next question. On a 3.1 server <code>[Interface]</code> also holds <code>HeaderProtectionKey</code> and <code>ContentPaddingAddition</code>, and the key has an extra copy in <code>/root/awg/server_hpk.key</code>.
 </details>
 
 <a id="faq-change-params-adv"></a>
 <details>
-  <summary><strong>Q: Can I change AWG 2.0 parameters after installation?</strong></summary>
-  <b>A:</b> Yes. This is useful if your ISP started fingerprinting your server by static obfuscation parameters (e.g. Russian DPI blocked specific H1-H4 ranges). Workflow as of v5.8.0:
+  <summary><strong>Q: Can I change the obfuscation parameters after installation?</strong></summary>
+  <b>A:</b> Yes. This is useful if your ISP started recognizing your server by its obfuscation parameters. Workflow:
   <ol>
-    <li>Edit parameters (Jc, S1-S4, H1-H4, I1-I5) in the <code>[Interface]</code> section of <code>/etc/amnezia/amneziawg/awg0.conf</code>.</li>
+    <li>Edit parameters (Jc, S1-S4, H1-H4, I1-I5) in the <code>[Interface]</code> section of <code>/etc/amnezia/amneziawg/awg0.conf</code>; write the key names exactly as they are in the file.</li>
     <li>Restart the service: <code>sudo systemctl restart awg-quick@awg0</code>.</li>
-    <li>Regenerate every client config: <code>sudo bash /root/awg/manage_amneziawg.sh regen &lt;name&gt;</code>. As of v5.8.0, <code>regen</code> reads live values directly from <code>awg0.conf</code> (the source of truth) instead of the cached <code>awgsetup_cfg.init</code>.</li>
+    <li>Regenerate every client config: <code>sudo bash /root/awg/manage_amneziawg.sh regen</code>. <code>regen</code> reads live values directly from <code>awg0.conf</code>.</li>
     <li>Distribute the new <code>.conf</code> / QR codes / vpn:// URIs to clients.</li>
   </ol>
-  <b>Important:</b> S1-S4 and H1-H4 must match on the server and every client, otherwise the handshake fails; Jc/Jmin/Jmax and I1-I5 do not have to match. The easiest way to get a fresh set of randomized non-overlapping H1-H4 ranges is to reinstall the server (<code>--uninstall</code> followed by a fresh install) - every install generates a unique set.
-  <b>On a 3.1 server</b> H1-H4 are set to 1-4 on purpose, and changing them is pointless: the header protection key hides the message type. S1-S4 and I1 change the same way as above, only S1-S4 not below 12. A new <code>HeaderProtectionKey</code> comes with a reinstall (<code>--uninstall</code> plus an install), and every profile is issued again.
+  <b>A 3.1 server (the default).</b> H1-H4 are set to 1-4 on purpose, and changing them is pointless: the header protection key hides the message type, and it is also what makes each install unique. S1-S4 and I1 change the same way as above, only S1-S4 not below 12. A new <code>HeaderProtectionKey</code> comes with a reinstall (<code>--uninstall</code> plus an install), and every profile is issued again.
+  <br><br>
+  <b>A 2.0 server.</b> S1-S4 and H1-H4 must match on the server and every client, otherwise the handshake fails; Jc/Jmin/Jmax and I1-I5 do not have to match. The easiest way to get a fresh random set of H1-H4 and S1-S4 is a reinstall with a set-regeneration flag (<code>--force --preset=default</code>), followed by a <code>regen</code> of every client.
+  <br><br>
+  The detailed steps are in <a href="#change-defaults-adv">Changing Default Settings</a>.
 </details>
 
 <details>
@@ -1268,8 +1405,8 @@ If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULL
 </details>
 
 <details>
-  <summary><strong>Q: "Invalid key: s3" error when importing config in the Windows client?</strong></summary>
-  <b>A:</b> You're using an outdated version of <code>amneziawg-windows-client</code> (< 2.0.0) that doesn't understand AWG 2.0 parameters. Update to <a href="https://github.com/amnezia-vpn/amneziawg-windows-client/releases"><b>version 2.0.0+</b></a>, or 3.1.0+ for a 3.1 server. Alternatively, use <a href="https://github.com/amnezia-vpn/amnezia-client/releases"><b>Amnezia VPN</b></a> >= 4.8.12.7, or >= 5.0.1.5 for 3.1.
+  <summary><strong>Q: The client says "invalid key" or "unknown key" when importing a config?</strong></summary>
+  <b>A:</b> The client does not understand the server's generation. If it trips over <code>s3</code>, <code>s4</code> or <code>I1</code>, it is older than the second line; if over <code>HeaderProtectionKey</code> or <code>ContentPaddingAddition</code>, it does not understand 3.1. Update the client: <a href="https://github.com/amnezia-vpn/amneziawg-windows-client/releases"><b>amneziawg-windows-client</b></a> 3.1.0+ for a 3.1 server (2.0.0+ for a 2.0 server) or <a href="https://github.com/amnezia-vpn/amnezia-client/releases"><b>Amnezia VPN</b></a> 5.0.1.5+ (4.8.12.7+ for 2.0). Other clients are in the table <a href="#client-gen-adv">Which AmneziaWG generation a client speaks</a>.
 </details>
 
 <details>
@@ -1307,20 +1444,20 @@ sudo modprobe amneziawg
 sudo systemctl restart awg-quick@awg0</pre>
   <b>Limitations</b>:
   <ul>
-    <li><b>ARM prebuilt</b> (Raspberry Pi, Hetzner CAX, Oracle Ampere) uses a prebuilt <code>.deb</code> rather than DKMS — auto-repair is not engaged. After a kernel upgrade either rerun the installer (it will pick a fresh prebuilt or fall back to DKMS), or run <code>manage repair-module</code>.</li>
+    <li><b>ARM prebuilt</b> (Raspberry Pi, Hetzner CAX, Oracle Ampere) uses a prebuilt <code>.deb</code> rather than DKMS - auto-repair is not engaged. After a kernel upgrade rerun the installer: it will pick a fresh prebuilt or fall back to DKMS. <code>manage repair-module</code> cannot replace a missing prebuilt module.</li>
     <li><b>Cloud kernels</b> (Azure / AWS / GCP / Oracle / Debian-cloud) — the installer detects the meta-package from the <code>uname -r</code> suffix (e.g. <code>linux-headers-azure</code>). If you have a custom kernel or an unusual flavor, <code>manage repair-module</code> does the same in reactive mode.</li>
   </ul>
 </details>
 
 <details>
   <summary><strong>Q: Detailed steps for VPN migration to another server?</strong></summary>
-  <b>A:</b> 1. On the old server: <code>sudo bash /root/awg/manage_amneziawg.sh backup</code>. 2. Copy the archive: <code>scp root@old_server:/root/awg/backups/awg_backup_*.tar.gz .</code>. 3. Install AmneziaWG on the new server. 4. Copy the backup: <code>scp awg_backup_*.tar.gz root@new_server:/root/awg/backups/</code>. 5. Restore: <code>sudo bash /root/awg/manage_amneziawg.sh restore</code> (interactive selection, or specify the full archive path). 6. Check what came over from the old server: the <code>PostUp</code>/<code>PostDown</code> lines in <code>/etc/amnezia/amneziawg/awg0.conf</code> carry the old machine's network interface name (<code>-o eth0</code> and so on). If the new server names it differently (<code>ip route get 1.1.1.1</code>), replace the name and restart the service (<code>sudo systemctl restart awg-quick@awg0</code>). <code>ListenPort</code> must match the port open in UFW. If <code>/root/awg/awgsetup_cfg.init</code> sets <code>AWG_ENDPOINT</code>, put the new address there or leave it empty for auto-detection. 7. Regenerate configs with new IP: <code>sudo bash /root/awg/manage_amneziawg.sh regen</code>. 8. Distribute new configs to clients.
+  <b>A:</b> 1. On the old server: <code>sudo bash /root/awg/manage_amneziawg.sh backup</code>. 2. Copy the archive: <code>scp root@old_server:/root/awg/backups/awg_backup_*.tar.gz .</code>. 3. Install AmneziaWG of the same generation as the old server on the new one (for a 2.0 server, with <code>--protocol=2.0</code>): <code>restore</code> brings the server back to the generation of the backup and warns about that. A backup of a 3.1 server carries the header protection key too, so after the move clients need new configs only for the new address. If you want to move from 2.0 to 3.1 along the way, do not restore the backup; hand out new profiles to your clients instead. 4. Copy the backup: <code>scp awg_backup_*.tar.gz root@new_server:/root/awg/backups/</code>. 5. Restore: <code>sudo bash /root/awg/manage_amneziawg.sh restore</code> (interactive selection, or specify the full archive path). 6. Check what came over from the old server: the <code>PostUp</code>/<code>PostDown</code> lines in <code>/etc/amnezia/amneziawg/awg0.conf</code> carry the old machine's network interface name (<code>-o eth0</code> and so on). If the new server names it differently (<code>ip route get 1.1.1.1</code>), replace the name and restart the service (<code>sudo systemctl restart awg-quick@awg0</code>). <code>ListenPort</code> must match the port open in UFW. If <code>/root/awg/awgsetup_cfg.init</code> sets <code>AWG_ENDPOINT</code>, put the new address there or leave it empty for auto-detection. 7. Regenerate configs with new IP: <code>sudo bash /root/awg/manage_amneziawg.sh regen</code>. 8. Distribute new configs to clients.
 </details>
 
 <a id="faq-mobile-iphone-adv"></a>
 <details>
   <summary><strong>Q: Smartphone doesn't connect over cellular / doesn't work on iPhone</strong></summary>
-  <b>A:</b> Add <code>MTU = 1280</code> to the <code>[Interface]</code> section of both server and client configs. Cellular networks have lower MTU than the default 1420, and iOS is strict about PMTU. See <a href="#mtu-mobile-adv">MTU and Mobile Clients</a> for details.
+  <b>A:</b> Check the <code>MTU = 1280</code> line in the <code>[Interface]</code> section of the server and client configs: the installer has set it by itself since v5.7.4, and older configs need it added (cellular networks have lower MTU than the default 1420, and iOS is strict about PMTU, see <a href="#mtu-mobile-adv">MTU and Mobile Clients</a>). If the line is there and the handshake still does not complete on cellular, it is usually <code>I1</code> or the port: see <a href="#no-hs-mobile-adv">The handshake never completes on cellular</a>, and for an unstable connection <a href="#faq-mobile-unstable-adv">the next question</a>. A client of a 3.1 server needs 3.1 support, see the <a href="#client-gen-adv">client table</a>.
 </details>
 
 <a id="faq-iphone-10s-adv"></a>
@@ -1364,7 +1501,7 @@ sudo systemctl restart awg-quick@awg0</pre>
   <tr><td>Tele2 + Megafon (Kemerovo, region 42)</td><td>random I1 (&lt;r N&gt;) stopped passing after 2+ days; works with QUIC-mimicry I1=&lt;b 0xc3...&gt; or I1=absent</td><td><code>--preset=mobile</code> + I1=&lt;b 0xc3...&gt; (QUIC) or remove <code>I1</code></td><td>✅</td></tr>
   </table>
   <br>
-  <b>"I1=absent"</b> means: in <code>/etc/amnezia/amneziawg/awg0.conf</code> and in client <code>.conf</code> files, remove the <code>I1 = ...</code> line entirely (do not leave it empty). This is the AWG 1.0 fallback — no CPS masking, but the handshake clears DPI at some regional carriers where CPS packets themselves trigger blocks (Issue <a href="https://github.com/bivlked/amneziawg-installer/issues/42">#42</a>, @alkorrnd). On the server: <code>sudo systemctl restart awg-quick@awg0</code>. On clients — <code>sudo bash /root/awg/manage_amneziawg.sh regen &lt;name&gt;</code> for each, then redistribute the configs.
+  <b>"I1=absent"</b> means: in <code>/etc/amnezia/amneziawg/awg0.conf</code> and in client <code>.conf</code> files, remove the <code>I1 = ...</code> line entirely (do not leave it empty). This is a mode without the concealment packet: the rest of the obfuscation stays, there is just no CPS (unless you set <code>I2</code>-<code>I5</code>), and the handshake clears DPI at some regional carriers where CPS packets themselves trigger blocks (Issue <a href="https://github.com/bivlked/amneziawg-installer/issues/42">#42</a>, @alkorrnd). On the server: <code>sudo systemctl restart awg-quick@awg0</code>. On clients - <code>sudo bash /root/awg/manage_amneziawg.sh regen &lt;name&gt;</code> for each, then redistribute the configs.
   <br>
   <b>Update, May 2026:</b> in the May blocking wave the <code>I1=absent</code> option stopped working on Tele2 (Krasnoyarsk), while a short <code>I1 = &lt;r 48&gt;</code> cleared DPI. The same worked on MTS (Primorsky Krai). At the time this was put down to size: a smaller value <code>&lt;r 48&gt;</code> may be less conspicuous to DPI. ⚠️ <b>The September 2026 measurement refines the cause: what decides is the SHAPE of the packet, not its size.</b> A packet of random bytes is dropped whether it is large or small (small ones just less often), while a packet of the same length that resembles a real protocol gets through. A short <code>&lt;r 48&gt;</code> helps because there is little for the filter to catch on to in a short piece of noise, and that is weaker than a meaningful shape. Details and the table: <a href="#no-hs-mobile-adv">the handshake never completes on cellular</a>. If <code>--preset=mobile</code> or <code>I1=absent</code> do not help - try <code>I1 = &lt;r 48&gt;</code>. The <code>diagnose --carrier=tele2_krasnoyarsk</code> profile still reflects the earlier <code>I1=absent</code> (Issue #42), so for the May 2026 wave set <code>I1 = &lt;r 48&gt;</code> manually (Discussion <a href="https://github.com/bivlked/amneziawg-installer/discussions/38">#38</a>, @alkorrnd + @etotent).
   <br>
@@ -1436,7 +1573,7 @@ sudo ufw reload</pre>
 
 <details>
   <summary><strong>Q: <code>regen</code> says "required AWG parameters missing" — what do I do?</strong></summary>
-  <b>A:</b> As of v5.8.0, <code>load_awg_params</code> reads AWG parameters directly from the live <code>/etc/amnezia/amneziawg/awg0.conf</code> instead of the cached <code>awgsetup_cfg.init</code>. If you edited <code>awg0.conf</code> by hand and accidentally removed or corrupted one of the required fields (Jc, Jmin, Jmax, S1-S4, H1-H4), <code>regen</code> will fail with this error <b>instead of</b> silently using stale values from the init file. This is split-brain protection between server and clients. How to fix: (1) check that all 11 fields are present with <code>grep -E "^(Jc|Jmin|Jmax|S[1-4]|H[1-4]) = " /etc/amnezia/amneziawg/awg0.conf</code>; (2) if a field was removed, restore it from <code>/root/awg/awgsetup_cfg.init</code> or from an <code>awg0.conf.bak-*</code> backup; (3) restart the service and retry <code>regen</code>.
+  <b>A:</b> As of v5.8.0, <code>load_awg_params</code> reads AWG parameters directly from the live <code>/etc/amnezia/amneziawg/awg0.conf</code> instead of the cached <code>awgsetup_cfg.init</code>. If you edited <code>awg0.conf</code> by hand and accidentally removed or corrupted one of the required fields (Jc, Jmin, Jmax, S1-S4, H1-H4), <code>regen</code> will fail with this error <b>instead of</b> silently using stale values from the init file. This is split-brain protection between server and clients. How to fix: (1) check that all 11 fields are present with <code>grep -E "^(Jc|Jmin|Jmax|S[1-4]|H[1-4]) = " /etc/amnezia/amneziawg/awg0.conf</code>; (2) if a field was removed, restore it from <code>/root/awg/awgsetup_cfg.init</code> or from an <code>awg0.conf.bak-*</code> backup; (3) restart the service and retry <code>regen</code>. On a 3.1 server <code>regen</code> then also checks the <code>HeaderProtectionKey</code> in <code>awg0.conf</code> against its copy <code>/root/awg/server_hpk.key</code>; if the error is about the key, do not create a new one (it would cut off every client). <code>awg0.conf</code> holds the key configured for the server (the running interface picks up an edit of it only after a restart), and the file holds the key the profiles were issued from. If they differ, decide which one your clients have: compare with any client <code>.conf</code>. If the key in <code>awg0.conf</code> is right, move the file aside (<code>mv /root/awg/server_hpk.key /root/awg/server_hpk.key.old</code>) and run <code>manage regen</code>: <code>manage</code> restores a missing file from the config by itself. If the key in the file is right, put it back into the <code>HeaderProtectionKey</code> line of <code>awg0.conf</code> and restart <code>awg-quick@awg0</code> (or restore the config with <code>manage restore</code>, keeping in mind the backup may predate your newest clients).
 </details>
 
 <details>
@@ -1447,7 +1584,7 @@ sudo ufw reload</pre>
 <a id="faq-which-client-adv"></a>
 <details>
   <summary><strong>Q: Which client should I use for AmneziaWG?</strong></summary>
-  <b>A:</b> On Android, <a href="https://github.com/wgtunnel/android">WG Tunnel</a> (>= 5.6.0 for 3.1) or the lightweight <a href="https://github.com/amnezia-vpn/amneziawg-android">AmneziaWG</a> (>= 3.1.4 on Google Play for 3.1). In our check on 13 October 2026 with a 3.1 profile, both imported <code>&lt;name&gt;.png</code> with their own scanner, reconnected in under a second and kept the tunnel when the phone moved from Wi-Fi to mobile data. On iPhone, Mac and Windows, the lightweight AmneziaWG for your platform (for 3.1: iOS and macOS >= 3.1.4, Windows >= 3.1.0); iPhone and Mac were not part of that check. <a href="https://github.com/amnezia-vpn/amnezia-client/releases">Amnezia VPN</a> (>= 5.0.1.5 for 3.1, >= 4.8.12.7 for 2.0) is supported too and accepts the <code>vpn://</code> link; on Android in the same check, version 5.0.3 took about 2 seconds to connect, and after Wi-Fi was switched off the tunnel did not recover, not even with the Connect button, until the app was restarted. The standard WireGuard client <b>does not</b> support AWG parameters. See <a href="#client-compat-adv">Client Compatibility</a> for the full table.
+  <b>A:</b> On Android, <a href="https://github.com/wgtunnel/android">WG Tunnel</a> (>= 5.6.0 for 3.1) or the lightweight <a href="https://github.com/amnezia-vpn/amneziawg-android">AmneziaWG</a> (>= 3.1.4 on Google Play for 3.1). In our check on 13 October 2026 with a 3.1 profile, both imported <code>&lt;name&gt;.png</code> with their own scanner, reconnected in under a second and kept the tunnel when the phone moved from Wi-Fi to mobile data. On iPhone, Mac and Windows, the lightweight AmneziaWG for your platform (for 3.1: iOS and macOS >= 3.1.4, Windows >= 3.1.0); iPhone and Mac were not part of that check. <a href="https://github.com/amnezia-vpn/amnezia-client/releases">Amnezia VPN</a> (>= 5.0.1.5 for 3.1, >= 4.8.12.7 for 2.0) is supported too and accepts the <code>vpn://</code> link; on Android in the same check, version 5.0.3 took about 2 seconds to connect, and after Wi-Fi was switched off the tunnel did not recover, not even with the Connect button, until the app was restarted. On Linux, <code>awg-quick</code> from <code>amneziawg-tools</code> with a module or amneziawg-go that understands the server's generation (for a 3.1 server, the third line; a third-line build works with 2.0 too), see <a href="#linux-client-adv">Connecting a Linux machine as a client</a>. The standard WireGuard client <b>does not</b> support AWG parameters. See <a href="#client-compat-adv">Client Compatibility</a> for the full table.
 </details>
 
 <a id="faq-first-packet-adv"></a>
@@ -1468,7 +1605,7 @@ sudo ufw reload</pre>
 <a id="diag-uninstall-adv"></a>
 ## 🩺 Diagnostics and Uninstall
 
-* **Diagnostics:** `sudo bash /path/to/install_amneziawg_en.sh --diagnostic`. The report (including AWG 2.0 parameters) is saved to `/root/awg/diag_*.txt`.
+* **Diagnostics:** `sudo bash /path/to/install_amneziawg_en.sh --diagnostic`. The report (obfuscation parameters included, `PrivateKey`, `PresharedKey` and `HeaderProtectionKey` replaced with `[HIDDEN]`) is saved to `/root/awg/diag_*.txt`.
 * **Uninstall:** `sudo bash /path/to/install_amneziawg_en.sh --uninstall`. Will ask for confirmation and offer to create a backup.
 
 <a id="diagnostic-report-adv"></a>
@@ -1506,13 +1643,15 @@ The report (`--diagnostic`) includes the following sections:
 
 The installer finished step 1, rebooted, and the machine no longer answers: no SSH, no ping. The hosting panel still shows it powered on.
 
-There is no way in over the network any more, so the first thing you need is the **hosting provider's console** (VNC, KVM or serial). It shows whether the system got as far as booting at all, which the control panel does not tell you.
+First make sure the server is unreachable from everywhere, not only from Russia: try ping or SSH from a network outside Russia, or a reachability checker with nodes in several countries. If it answers from outside Russia, the server is alive and the hosting provider's address or subnet is probably blocked, see [Hosting unreachable from Russia](#as-blocking-adv). But first make sure your own address is not the one banned: Fail2Ban and the SSH rate limit on the server ban by source address, and a successful ping does not yet mean SSH works.
+
+If it answers nowhere, there is no way in over the network any more, so the first thing you need is the **hosting provider's console** (VNC, KVM or serial). It shows whether the system got as far as booting at all, which the control panel does not tell you.
 
 What you will see there:
 
 - **a `login:` prompt** - the system booted, the network is broken. Look at `ip -br a`, `ip route`, `ss -lntp`;
 - **`You are in emergency mode`** - the boot stopped on its own, see below;
-- **a kernel panic or the bootloader menu** - it never got to the system, photograph the whole screen.
+- **a kernel panic or the bootloader menu** - it never got to the system, photograph the whole screen. Step 1 updates the system and may install a new kernel; if the boot breaks on exactly that kernel, reboot and pick the previous kernel in the GRUB menu (the "Advanced options for Ubuntu" or "Advanced options for Debian GNU/Linux" entry; if the menu does not show, hold Shift or Esc while booting). Once it boots, attach the output of `uname -r` and `journalctl -b -1 -p err` to an issue (the journal remembers the previous boot only if it is persistent, which a stock Debian 12 is not).
 
 **Emergency mode** means systemd could not mount something from `/etc/fstab` and deliberately stopped. This does not clear up by itself: while the cause is there, every boot ends in the same place.
 
@@ -1630,12 +1769,14 @@ What to do:
 
 Symptom: the client tries to connect, but the server does not process the AmneziaWG handshake - `tcpdump` shows packets arriving on the right port and the server accepting them, yet `latest handshake` in `awg show awg0` stays empty. Meanwhile plain WireGuard comes up fine on the same server. This happens outside Russia too, where DPI is not involved at all.
 
-Since vanilla WireGuard works, the network, the port and the firewall are ruled out. The only difference from AmneziaWG 2.0 is the obfuscation layer: `Jc`/`Jmin`/`Jmax`, `S1`-`S4`, `H1`-`H4`, and in version 2.0 `I1`-`I5`. Parsing an incoming packet relies on `S1`-`S4` and `H1`-`H4` alone: if any one of those does not match byte-for-byte between server and client, the server cannot parse the handshake and silently drops it - from the outside it looks like "packets arrive but are not processed".
+Since vanilla WireGuard works, the network, the port and the firewall are ruled out. The difference from AmneziaWG is the obfuscation layer: `Jc`/`Jmin`/`Jmax`, `S1`-`S4`, `H1`-`H4`, `I1`-`I5`, and in the 3.1 profile the `HeaderProtectionKey` header encryption too. Parsing an incoming packet relies on `S1`-`S4`, `H1`-`H4` and (in 3.1) the key: if any of those does not match byte-for-byte between server and client, the server cannot parse the handshake and silently drops it - from the outside it looks like "packets arrive but are not processed".
+
+**First find out the server's generation:** `sudo bash /root/awg/manage_amneziawg.sh check` prints the line "Installation protocol generation: 3.1" (or 2.0). On a 3.1 server the client has to understand 3.1 (the table [Which AmneziaWG generation a client speaks](#client-gen-adv)) and carry the same `HeaderProtectionKey` as `awg0.conf`. A client without 3.1 support often shows no error: there is simply no handshake. For the yellow profile label in the Amnezia app, see [its own question](#faq-yellow-adv).
 
 What to check:
 
-1. Compare the obfuscation parameters in the `[Interface]` section on the server and the client. `S1`-`S4` and `H1`-`H4` must match: the receiver strips that padding and checks those headers, so any mismatch here means the packet is dropped and the handshake never completes. In 2.0, `H1`-`H4` are ranges - the same ranges on both sides. `Jc`/`Jmin`/`Jmax` and `I1`-`I5` do not have to match: they are separate decoy packets, the other side discards them, and a node without `I1` simply never sends them, so there is nothing here to **mismatch**. ⚠️ That does not make `I1` irrelevant to the handshake: it requires no agreement between the sides, but its shape can stop the handshake packet from arriving, because the two travel in the same burst. That is a separate case, covered below: [the handshake never completes on cellular](#no-hs-mobile-adv). Case does matter for `I1`-`I5`: uppercase only.
-2. Compare versions on both ends: `awg --version`. A client built separately (for example `amneziawg-tools` from the AUR on Arch) is often older and does not speak AWG 2.0 - then the server expects a 2.0 envelope while the client sends the old format. See [AWG 2.0 Client Compatibility](#client-compat-adv) for the list of compatible clients.
+1. Compare the obfuscation parameters in the `[Interface]` section on the server and the client. `S1`-`S4` and `H1`-`H4` must match, and on a 3.1 server the `HeaderProtectionKey` too: the receiver strips that padding and checks those headers, so any mismatch here means the packet is dropped and the handshake never completes. In 2.0, `H1`-`H4` are ranges - the same ranges on both sides. `Jc`/`Jmin`/`Jmax` and `I1`-`I5` do not have to match: they are separate decoy packets, the handshake initiator sends them and the other side discards them, so there is nothing here to **mismatch**. ⚠️ That does not make `I1` irrelevant to the handshake: it requires no agreement between the sides, but its shape can stop the handshake packet from arriving, because the two travel in the same burst. That is a separate case, covered below: [the handshake never completes on cellular](#no-hs-mobile-adv). Case does matter for `I1`-`I5`: uppercase only.
+2. Compare versions on both ends: `awg --version`. A client built separately (for example `amneziawg-tools` from the AUR on Arch) is often older than the server's generation - then the server expects one envelope while the client sends another. See [Client Compatibility](#client-compat-adv) for the list of compatible clients.
 
 The specific case (an AWG 2.0 server with `S3`/`S4` > 0 and an old AWG 1.0 client) is a known upstream issue, covered in the [FAQ](#faq-advanced-adv).
 </details>
@@ -1656,7 +1797,7 @@ The specific case (an AWG 2.0 server with `S3`/`S4` > 0 and an old AWG 1.0 clien
 | What the server shows | Cause |
 |---|---|
 | no packets from the client at all | wrong port, firewall, address-based block |
-| packets arrive, `latest handshake` empty, `endpoint` does NOT change | `S1`-`S4` or `H1`-`H4` mismatch (see the previous entry) |
+| packets arrive, `latest handshake` empty, `endpoint` does NOT change | `S1`-`S4`, `H1`-`H4` or (on a 3.1 server) `HeaderProtectionKey` mismatch, or the client does not understand 3.1 (see the previous entry) |
 | **packets arrive, `endpoint` changes, counter grows, `latest handshake` empty** | **this case: the burst is filtered in transit** |
 
 **How to confirm.** On the server, look at the peer and take a capture:
@@ -1830,7 +1971,7 @@ sudo bash /root/awg/manage_amneziawg.sh list --json
 <a id="vpnuri-adv"></a>
 ## 📱 vpn:// URI Import
 
-When a client is created, a `.vpnuri` file is automatically generated with a `vpn://` URI and, since v5.11.3, a QR code `<name>.vpnuri.png` encoding the same URI — for quick import into the Amnezia VPN app (Android / iOS / Desktop).
+When a client is created, a `.vpnuri` file holding a `vpn://` URI is written too and, since v5.11.3, a QR code `<name>.vpnuri.png` encoding the same URI - for import into the Amnezia VPN app (Android / iOS / Desktop). Option 2, pasting the link, is the most reliable: the app's built-in scanner does not always cope with this code.
 
 **File locations:**
 
@@ -1845,7 +1986,7 @@ When a client is created, a `.vpnuri` file is automatically generated with a `vp
 
 1. Copy `/root/awg/<name>.vpnuri.png` to your computer (`scp`) or open it locally.
 2. In the Amnezia VPN app on the phone: "Add VPN" → "Scan QR code".
-3. Point the camera at `.vpnuri.png` — the client imports automatically.
+3. Point the camera at `.vpnuri.png`. If the scanner recognizes the code, the client imports automatically; if not, see the paragraph below.
 
 The code is dense: with our profile the link is about 1100 characters long. On Android, the built-in scanner of Amnezia VPN 5.0.3 did not recognize it (checked 13 October 2026), while the stock camera of our test phone (Samsung) read it at once. In that case, read the code with the phone's camera, copy the `vpn://...` text and paste it into Amnezia VPN as in option 2.
 
@@ -1920,7 +2061,7 @@ Then re-issue the client configs (`sudo bash /root/awg/manage_amneziawg.sh regen
 
 **Symptom.** A VPN server on Hetzner behaves like this: the handshake completes, the client shows a recent handshake and receives a few kilobytes, after which the flow stops. The in-tunnel ping to the server (`10.x.x.x`) goes to 100% loss, incoming traffic freezes, and new handshakes never complete. It looks like the server died, even though it is alive and reachable over SSH.
 
-**Mechanism.** It looks like this is not a per-IP block but the server address landing in an autonomous system (AS) that is not on the allowlist. According to DPI researcher 0ka ([Habr, article 997088](https://habr.com/ru/articles/997088/)), the filtering relies on an allowlist of roughly 72 ASes; it excludes, for example, Hetzner `AS24940` as well as ranges of OVH, DigitalOcean, AWS and Cloudflare, and traffic to them is degraded at the carrier (TSPU) level. The key point: ordinary junk parameters (`Jc`/`Jmin`/`Jmax`) do not help here, because they change the packet signature rather than the destination AS. In our tests, what got through was an `I1`/CPS packet disguised as a QUIC handshake to an allowlisted SNI.
+**Mechanism.** It looks like this is not a per-IP block but the server address landing in an autonomous system (AS) that is not on the allowlist. According to DPI researcher 0ka ([Habr, article 997088](https://habr.com/ru/articles/997088/), in Russian), the filtering relies on an allowlist of roughly 72 ASes; it excludes, for example, Hetzner `AS24940` as well as ranges of OVH, DigitalOcean, AWS and Cloudflare, and traffic to them is degraded at the carrier (TSPU) level. The key point: ordinary junk parameters (`Jc`/`Jmin`/`Jmax`) do not help here, because they change the packet signature rather than the destination AS. In our tests, what got through was an `I1`/CPS packet disguised as a QUIC handshake to an allowlisted SNI.
 
 ⚠️ **Refinement from the September 2026 measurement: AS-based blocking alone does not explain it.** The same effect reproduced against a server in the US that has nothing to do with Hetzner: an `I1` concealment packet made of random bytes did not get through, while a packet of the same length shaped like DNS did. So the filter reacts to the **shape of the packet itself**, not only to the destination address, and swapping `I1` helps for a reason other than dodging an AS list. The detailed measurement is in [the handshake never completes on cellular](#no-hs-mobile-adv). The SNI is chosen per hoster; for Hetzner, `7-zip.org` worked.
 
@@ -1945,7 +2086,7 @@ Control: a tunnel to a server in a different AS (US) came up and held on all thr
    ```
 4. If access is not restored, try a different SNI or a different hoster: on some ISPs (like Seven Sky in our test) the mimicry did not pass with any of the SNIs we tried.
 
-> Method discussion and SNI selection: [ntc.party #12845](https://ntc.party/t/12845). If your Hetzner server goes silent after the handshake, first check whether this is the cause: bring up a test server with a different hoster (for example, in the US), and if the tunnel there works, the cause is destination-AS blocking.
+> Method discussion and SNI selection: [ntc.party #12845](https://ntc.party/t/12845) (in Russian). If your Hetzner server goes silent after the handshake, first check whether this is the cause: bring up a test server with a different hoster (for example, in the US), and if the tunnel there works, the cause is destination-AS blocking.
 
 ---
 
@@ -1954,8 +2095,9 @@ Control: a tunnel to a server in a different AS (US) came up and held on all thr
 
 **What it is.** Deep packet inspection (DPI) does not always work passively. In active-probing mode it sends crafted or replayed packets to the server's UDP port and treats the endpoint's behavior as one signal: a real service answers as expected, while the absence of an expected cover-service response can raise suspicion (though it is not decisive on its own). DPI also passively inspects the signature of the handshake packets themselves.
 
-**What the protocol does on its own (no separate daemon).** AmneziaWG 2.0 conceals the handshake shape at the protocol level and reduces WireGuard-identifying responses for valid AWG traffic, without standing up extra services:
+**What the protocol does on its own (no separate daemon).** AmneziaWG conceals the handshake shape at the protocol level and reduces WireGuard-identifying responses for valid AWG traffic, without standing up extra services:
 
+- **Header encryption (the 3.1 profile, the default).** The message type is encrypted with the `HeaderProtectionKey`, a key of its own per install, so the header no longer carries a fixed WireGuard mark for any `H1`-`H4`. Details in [The 3.1 profile](#awg3-not-yet-adv).
 - **`I1`-`I5` (CPS concealment).** Concealment packets can make the handshake resemble allowed traffic - for example QUIC-like traffic associated with a whitelisted SNI, depending on configuration - so the observable handshake signature, and any response to a valid AWG initiation, look unlike stock WireGuard. It does not actively answer arbitrary QUIC/TLS/DNS probes as a real service. This is the mechanism used by the AS-based-blocking recipe; the concrete SNI selection is in [AS-based blocking and the I1/CPS workaround](#as-blocking-adv).
 - **A whitelisted port.** Running the VPN on port 443 or 53 (`--port=443`) places it on commonly allowed service ports, which may reduce simple port-based blocking but does not by itself defeat active probing.
 
@@ -1968,7 +2110,7 @@ Control: a tunnel to a server in a different AS (US) came up and held on all thr
 <a id="client-compat-adv"></a>
 ## 📋 Client Compatibility
 
-A client has to understand your server's generation: a new install gives the 3.1 profile by default, and with `--protocol=2.0`, on a kernel older than 6.7 (a stock Debian 12) and on ARM the 2.0 profile. The installer prints the server generation in the final report, on the "Protocol generation" line.
+A client has to understand your server's generation: a new install gives the 3.1 profile by default, and with `--protocol=2.0`, on a kernel older than 6.7 (a stock Debian 12) and on ARM the 2.0 profile. The installer prints the server generation in the final report, on the "Protocol generation" line, and later `manage check` shows it. The table below is a short list with our notes; the full table with versions and sources is in [Which AmneziaWG generation a client speaks](#client-gen-adv).
 
 | Client | Platform | AWG 3.1 | AWG 2.0 | Notes |
 |--------|----------|---------|---------|-------|
@@ -1978,7 +2120,8 @@ A client has to understand your server's generation: a new install gives the 3.1
 | [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client/releases) | Windows | ✅ (>= 3.1.0) | ✅ (>= 2.0.0) | Lightweight tunnel manager. Import via `.conf` |
 | [WG Tunnel](https://github.com/wgtunnel/android) | Android | ✅ (>= 5.6.0, better >= 5.7.5) | ✅ | Recommended for Android. FOSS client with auto-tunneling and split tunneling; Google Play, IzzyOnDroid |
 | [WG Tunnel Desktop](https://github.com/wgtunnel/desktop) | Windows, Linux, macOS | ✅ (v2 line) | ✅ | Same engine as the Android version |
-| [WireSock VPN Client](https://www.ntkernel.com) | Windows | not verified | ✅ | Commercial. Userspace WireGuard via NDISAPI |
+| `awg-quick` ([amneziawg-tools](https://github.com/amnezia-vpn/amneziawg-tools) + a module or amneziawg-go) | Linux | ✅ (third-line module and tools) | ✅ | For servers and machines without a desktop, see [Connecting a Linux machine as a client](#linux-client-adv) |
+| [WireSock VPN Client](https://www.ntkernel.com) | Windows | not claimed | ❌ (no `S3`/`S4`) | Commercial, its own engine. By the vendor's documentation (wiresock.net, October 2026) `I1`-`I5` are silently dropped and `S3`/`S4` are not supported; both our profiles set `S3`/`S4`, so do not expect it to connect |
 | Hiddify | all | ❌ | - | Its engine is below the third line: for Hiddify install the server with `--protocol=2.0` |
 | Standard WireGuard | All | ❌ | ❌ | Does not support AWG parameters |
 
@@ -2027,22 +2170,25 @@ Recorded 12 October 2026 from the release pages, the app stores and the projects
 
 | Project | Platform | Description |
 |---------|----------|-------------|
-| [AWG Manager](https://github.com/hoaxisr/awg-manager) | Keenetic (Entware) | Web interface for managing AWG tunnels on Keenetic routers |
-| [AmneziaWG for Merlin](https://github.com/r0otx/asuswrt-merlin-amneziawg) | ASUS (Asuswrt-Merlin) | AWG 2.0 addon with web UI, GeoIP/GeoSite routing |
-| [awg-proxy](https://github.com/timbrs/amneziawg-mikrotik-c) | MikroTik (RouterOS Container) | Docker container bridging MikroTik's native WireGuard to AmneziaWG |
+| [AWG Manager](https://github.com/hoaxisr/awg-manager) | Keenetic (Entware) | Web interface for managing AWG tunnels on Keenetic routers, runs on the kernel module; the third line only on KeeneticOS 5.2 Alpha 11 and later |
+| [awg-openwrt](https://github.com/Slava-Shchipunov/awg-openwrt) | OpenWrt | kmod/tools/luci packages; the third line is in the packages for OpenWrt 25.12.5 and 24.10.8 (replaced on 22 September 2026). Official OpenWrt packages have no AmneziaWG, and the patch in the `amnezia-vpn/amneziawg-openwrt` repository is, by our reading, AWG 1.0 level (no `S3`/`S4`, no `I1`-`I5`), so it does not work with our profiles |
+| [AmneziaWG for Merlin](https://github.com/r0otx/asuswrt-merlin-amneziawg) | ASUS (Asuswrt-Merlin) | AWG 2.0 addon with web UI, GeoIP/GeoSite routing; the third line was not checked by us |
+| [amneziawg-mikrotik-c](https://github.com/timbrs/amneziawg-mikrotik-c) | MikroTik (RouterOS Container) | Docker container bridging MikroTik's native WireGuard to AmneziaWG |
 
-> **Keenetic native AWG 2.0:** Firmware 4.x supports AWG 2.0 natively without extra packages. If the tunnel connects but traffic doesn't flow — the issue is the I1 format. Working options: `I1 = <r 64>` or the DNS-mimicking pattern `I1 = <r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>`. After replacing I1 in the server config: `sudo systemctl restart awg-quick@awg0` + `manage regen <client>`. [Discussion #45](https://github.com/bivlked/amneziawg-installer/discussions/45).
+> **Keenetic with stock firmware.** The stable Keenetic firmware (5.1 as of October 2026) understands only the second line, so for it the server is installed with `--protocol=2.0` (see [Does my router speak third-line AmneziaWG?](#faq-router-adv)). Older firmware (4.x, 5.0) has a built-in AmneziaWG client too, but not all of it understands `H1`-`H4` ranges: 5.0.6 on the Speedster, for example, does not, see the note below. If the tunnel connects but traffic doesn't flow - the issue is the I1 format. Working options: `I1 = <r 64>` or the DNS-mimicking pattern `I1 = <r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>`. `I1` does not have to match the server, so changing it in the router's `.conf` is enough; if you change it in the server config, follow with `sudo systemctl restart awg-quick@awg0` + `manage regen <client>`. [Discussion #45](https://github.com/bivlked/amneziawg-installer/discussions/45).
 >
 > 🔴 **The `<r 2>` prefix in this pattern is mandatory - do not copy the block without it.** Those two random bytes are the DNS transaction ID that every packet of the protocol starts with. Without them the whole payload shifts by two bytes and the packet does not parse as DNS at all: the ID field receives `0x8580`, the flags become `0x0001` - the packet declares itself a query rather than a reply - the additional-records counter grows to 1641, and the first name label claims 99 bytes with 29 remaining. And a second reason: without the random prefix all 42 bytes are constant, so the packet comes out byte-for-byte identical for everyone who copied the recipe from here. ⚠️ The prefix only makes the packets differ from one another; the constant 42-byte block inside stays and remains usable as a signature to search for.
 
-> **Keenetic Speedster (firmware 5.0.6), AmneziaWG won't connect:** older firmware does not yet parse H1-H4 as ranges (`lower-upper`) and raises an `invalid H1` error. Set H1-H4 to concrete numbers - the other obfuscation layers (Jc/Jmin/Jmax, I1, S1-S4) keep working. If the handshake clears but no traffic flows - lower the junk (`Jc=3`, `Jmin=10`, `Jmax=50`), and if needed remove the `I1` line and zero out `S3`/`S4`. A firmware-independent workaround is the userspace [AWG Manager](https://github.com/hoaxisr/awg-manager) (does not depend on the Keenetic firmware version). [Discussion #81](https://github.com/bivlked/amneziawg-installer/discussions/81).
+> **Keenetic Speedster (firmware 5.0.6), AmneziaWG won't connect:** older firmware does not yet parse H1-H4 as ranges (`lower-upper`) and raises an `invalid H1` error. Set H1-H4 to concrete numbers - the other obfuscation layers (Jc/Jmin/Jmax, I1, S1-S4) keep working. If the handshake clears but no traffic flows - lower the junk (`Jc=3`, `Jmin=10`, `Jmax=50`), and if needed remove the `I1` line and zero out `S3`/`S4`. The third-party [AWG Manager](https://github.com/hoaxisr/awg-manager) (a web interface for AmneziaWG tunnels on Keenetic, on the kernel module) works around some firmware limits; it has the third line only on KeeneticOS 5.2 Alpha 11 and later. [Discussion #81](https://github.com/bivlked/amneziawg-installer/discussions/81).
 
 ---
 
 <a id="debian-support-adv"></a>
 ## 🐧 Debian Support
 
-Starting with v5.6.0, the installer fully supports Debian 12 (bookworm) and Debian 13 (trixie). That is support from the INSTALLER side: Debian 12 itself left regular support on 2026-07-11 and now gets updates only through Debian LTS, until 2028-06-30, so prefer Debian 13 for a new server.
+**In short.** Debian 13 (trixie) on x86_64 gets AmneziaWG 3.1, like Ubuntu (the caveat about 7.0.0-38 kernels is in [Known limitations](#kernel-70-backport-adv)). On a stock Debian 12 (bookworm, kernel 6.1) the installer sets up 2.0 by itself: it issues the 3.1 profile only on kernel 6.7 or newer. For 3.1, take Debian 13 or Ubuntu 24.04/26.04, or boot Debian 12 into a 6.7+ kernel from backports (details below).
+
+The installer fully supports Debian 12 (bookworm) and Debian 13 (trixie). That is support from the INSTALLER side: Debian 12 itself left regular support on 2026-07-11 and now gets updates only through Debian LTS, until 2028-06-30, so prefer Debian 13 for a new server.
 
 **Ubuntu vs Debian differences:**
 
@@ -2078,7 +2224,7 @@ If you specifically want the third AmneziaWG line on Debian 12, the simplest rou
 <a id="arm-support-adv"></a>
 ## 🔧 Raspberry Pi and ARM64 Support
 
-Starting with v5.9.0, the installer works on ARM systems alongside x86_64.
+The installer works on ARM systems, but the protocol there is AmneziaWG 2.0: as of v6.0.0 the 3.1 profile is not issued on ARM with any module. This is a deliberate caution until a separate measurement on ARM (see [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv)). Clients of such a server need 2.0 support. An explicit `--protocol=3.1` on ARM stops the install.
 
 **Supported platforms:**
 
@@ -2097,7 +2243,7 @@ Starting with v5.9.0, the installer works on ARM systems alongside x86_64.
 3. If no prebuilt package matches, the installer falls back to DKMS compilation from source. This works on any kernel but takes longer (10-30 min depending on hardware).
 4. You can skip the prebuilt package altogether: with `--no-prebuilt` the module is built with DKMS right away. The prebuilt packages are built by this project's CI, and the installer checks them only against a SHA256 file from the same release; they are not signed. Note that this changes the module too: the prebuilt packages are built from the pinned AmneziaWG 2.0 source, while on kernels 6.7 and newer DKMS installs `amneziawg-dkms` from the PPA, the same third-line module an x86 server gets. The client profiles are second generation either way.
 
-> **Prebuilt ARM coverage:** prebuilt packages are built for Raspberry Pi (3/4/5), Ubuntu 24.04 ARM64 and Debian 12/13 ARM64. Ubuntu 26.04 ARM64 has no prebuilt yet - the module is built from source via DKMS (slower on first install, then works normally).
+> **Prebuilt ARM coverage:** prebuilt packages are built for Raspberry Pi (3/4/5), Ubuntu 24.04 ARM64 and Debian 12/13 ARM64. Ubuntu 26.04 ARM64 has no prebuilt yet - the module comes as the `amneziawg-dkms` package from the PPA and is built via DKMS (slower on first install, then works normally).
 
 **Raspberry Pi kernel detection:**
 
@@ -2125,7 +2271,7 @@ Look for <code>Prebuilt installed</code> in the install log (<code>/root/awg/ins
 <a id="linux-client-adv"></a>
 ## 🐧 Connecting a Linux machine as a client
 
-Mobile and desktop clients take the config through the app, a QR code, or a vpn:// URI. To connect an ordinary Linux box as a client (a home server, a second machine, a Linux router), you need the same userspace that understands AWG 2.0 obfuscation - plain `wireguard` will not do, it knows nothing about Jc/S/H/I. Two paths.
+Mobile and desktop clients take the config through the app, a QR code, or a vpn:// URI. To connect an ordinary Linux box as a client (a home server, a second machine, a Linux router), you need a kernel module or a userspace implementation of AmneziaWG that understands the server's generation: for a 3.1 server (the default), the third line (a third-line build works with a 2.0 server too). Plain `wireguard` will not do, it knows nothing about Jc/S/H/I or the header protection key. Two paths.
 
 ### 1. Kernel module + tools (Ubuntu / Debian)
 
@@ -2229,39 +2375,31 @@ sudo sysctl --system
 
 ### Installing amneziawg-go and amneziawg-tools
 
-**Option 1 (faster): prebuilt binary from releases.** Download the prebuilt binary, no Go toolchain needed:
+**Build from source.** The project ships no prebuilt binaries: it publishes no GitHub releases, only tags (checked on 14 October 2026). For the third line take a `v3.1.*` tag; the latest on that date is `v3.1.20260828`. It needs Go 1.25 or newer, and the system `golang-go` on Debian 12/13 and Ubuntu 24.04 is older (below 1.25), so install Go from [go.dev/dl](https://go.dev/dl/):
 
 ```bash
-# Check the latest version: https://github.com/amnezia-vpn/amneziawg-go/releases
-AWG_GO_VERSION="0.2.15"
-ARCH="amd64"  # or arm64 for ARM VPS
-sudo apt install -y iptables git make curl
-sudo curl -fsSL \
-  "https://github.com/amnezia-vpn/amneziawg-go/releases/download/v${AWG_GO_VERSION}/amneziawg-go-linux-${ARCH}" \
-  -o /usr/local/bin/amneziawg-go
-sudo chmod +x /usr/local/bin/amneziawg-go
-```
-
-**Option 2: build from source.** Requires Go 1.21+. On Debian 12 the system `golang-go` is 1.19, so either install from backports or drop in Go manually:
-
-```bash
-sudo apt install -y golang-go git make iptables
-git clone https://github.com/amnezia-vpn/amneziawg-go
+sudo apt install -y git make iptables curl
+# Go 1.25+ from https://go.dev/dl/ (the system golang-go is too old for this tag), for example:
+curl -fsSL https://go.dev/dl/go1.25.0.linux-amd64.tar.gz | sudo tar -C /usr/local -xz && export PATH=/usr/local/go/bin:$PATH
+# for ARM use linux-arm64; check the current version on go.dev/dl
+git clone --branch v3.1.20260828 https://github.com/amnezia-vpn/amneziawg-go
 cd amneziawg-go && make && sudo make install
 cd ..
 ```
 
-**amneziawg-tools** provide the `awg` and `awg-quick` CLI. The system `awg-quick` from `wireguard-tools` does not understand the obfuscation parameters (`Jc/Jmin/Jmax/S1-S4/H1-H4/I1-I5`), so this fork is required:
+The two repositories number their tags differently, which is normal: each has its own numbering.
+
+**amneziawg-tools** provide the `awg` and `awg-quick` CLI. The system `awg-quick` from `wireguard-tools` does not understand the obfuscation parameters (`Jc/Jmin/Jmax/S1-S4/H1-H4/I1-I5`), so this fork is required, third line as well:
 
 ```bash
-git clone https://github.com/amnezia-vpn/amneziawg-tools
+git clone --branch v3.1.20260812 https://github.com/amnezia-vpn/amneziawg-tools
 cd amneziawg-tools/src && make && sudo make install
 cd ../..
 ```
 
 ### Config and launch
 
-Create `/etc/amnezia/amneziawg/awg0.conf` - replace the `YOUR_*` values with your own. Generate keys with `awg genkey | tee /etc/amnezia/amneziawg/server_private.key | awg pubkey`. Of the obfuscation params, `S1`-`S4` and `H1`-`H4` must match the client; `Jc`/`Jmin`/`Jmax` and `I1` do not have to:
+Create `/etc/amnezia/amneziawg/awg0.conf` - replace the `YOUR_*` values with your own. Generate keys with `awg genkey | tee /etc/amnezia/amneziawg/server_private.key | awg pubkey`, and the header protection key with a separate `awg genkey`. The example below is the 3.1 profile. Of the obfuscation params, `S1`-`S4`, `H1`-`H4` and the `HeaderProtectionKey` must match the client; `Jc`/`Jmin`/`Jmax` and `I1` do not have to:
 
 ```conf
 [Interface]
@@ -2271,12 +2409,16 @@ PrivateKey = YOUR_SERVER_PRIVATE_KEY
 Jc = 4
 Jmin = 50
 Jmax = 150
-S1 = 0
-S2 = 0
-H1 = 1234567890
-H2 = 2345678901
-H3 = 3456789012
-H4 = 4012345678
+S1 = 64
+S2 = 37
+S3 = 21
+S4 = 15
+H1 = 1
+H2 = 2
+H3 = 3
+H4 = 4
+HeaderProtectionKey = YOUR_HEADER_PROTECTION_KEY
+ContentPaddingAddition = 32-128
 PostUp   = iptables -I INPUT   -p udp --dport 39743 -j ACCEPT
 PostUp   = iptables -I FORWARD -i eth0 -o awg0      -j ACCEPT
 PostUp   = iptables -I FORWARD -i awg0              -j ACCEPT
@@ -2291,6 +2433,8 @@ PublicKey    = YOUR_CLIENT_PUBLIC_KEY
 PresharedKey = YOUR_PRESHARED_KEY
 AllowedIPs   = 10.9.9.2/32
 ```
+
+In the 3.1 profile `S1`-`S4` are 12 or more: the first 12 bytes of the padding serve as the nonce for header encryption. For the 2.0 profile remove the `HeaderProtectionKey` and `ContentPaddingAddition` lines and set `H1`-`H4` to non-overlapping ranges below 2147483647 (for example `H1 = 134567-245678`); `S3` from 8 and `S4` from 4 are allowed there. The client has to get the same `S1`-`S4`, `H1`-`H4` and key.
 
 Swap the interface name (`awg0`) and external NIC (`eth0`) for yours. For IPv6 add symmetric `ip6tables` rules. `ListenPort` must be open at the host level (UFW or host iptables) and at the cloud-provider level.
 
@@ -2316,7 +2460,7 @@ My `manage_amneziawg.sh` targets a kernel-native setup (expects `/root/awg/awgse
 
 ### Source
 
-The minimal working recipe for Debian 13 in a privileged LXC on Proxmox was shared by [@Akh-commits](https://github.com/Akh-commits) in [issue #51](https://github.com/bivlked/amneziawg-installer/issues/51#issuecomment-4288953829) — this section builds on it with additions covering the prebuilt path, the security warning, and the Debian 12 Go nuances.
+The minimal working recipe for Debian 13 in a privileged LXC on Proxmox was shared by [@Akh-commits](https://github.com/Akh-commits) in [issue #51](https://github.com/bivlked/amneziawg-installer/issues/51#issuecomment-4288953829) - this section builds on it with additions covering the security warning and the 3.1 profile. We have not run the recipe with a third-line build in an LXC on a test server ourselves.
 
 ---
 
@@ -2360,7 +2504,7 @@ I checked it for real: a tunnel came up from a DS918+ to a server installed by t
 The handshake went through, data flowed both ways, and a ping inside the tunnel answers.
 Obfuscation was fully on the whole time - `Jc`/`Jmin`/`Jmax`, `S1`-`S4`, `H1`-`H4` and the
 `I1` concealment packet. What runs is a normal AmneziaWG 2.0 profile, not a hollowed out
-WireGuard.
+WireGuard. We have not checked the 3.1 profile on DSM.
 
 ### What it costs you
 
@@ -2481,9 +2625,11 @@ it as a target.
 
 * **Assumes a dedicated server.** The script configures UFW, Fail2Ban, sysctl and optimizes the system for VPN. On servers running other services, use `--no-tweaks` to skip hardening, or `--keep-packages` if the only problem is the package removal and you still want the firewall and the optimization.
 
-* **Single AWG protocol version per server.** All clients share the same obfuscation parameters. You cannot have some clients on AWG 1.x and others on 2.0 simultaneously.
+* **Do not install on a host running a server from the Amnezia app.** The official app deploys AmneziaWG in a Docker container on userspace `amneziawg-go`. As soon as our kernel module appears on the host, `awg-quick` inside the container switches to it and stops falling back to userspace, and the AmneziaWG container stops accepting connections ([issue #209](https://github.com/bivlked/amneziawg-installer/issues/209)). Pick one: a separate server for the installer, or remove the container through the app first. If you already installed on top, `--uninstall` plus a reboot should bring the container back to userspace. UFW has nothing to do with it: Docker's published ports go through FORWARD, not INPUT.
 
-* **Ubuntu other than `noble`, `jammy` and `focal` (for example 26.04):** the installer requests `dists/<codename>/Release` from the PPA, and if there is no answer (a 404 or the PPA is unreachable), switches the PPA codename to `noble` (since v5.13.0). Debian is always mapped to the nearest Ubuntu release: 12 -> `focal`, 13 -> `noble`. The module still comes from the PPA DKMS package and is built for your kernel, except on ARM systems with a prebuilt module.
+* **One protocol generation per server.** All clients get a profile of one generation: either all 3.1 or all 2.0. If even one device does not understand 3.1, install the server with `--protocol=2.0`; changing the generation takes `--uninstall`, a new install and new profiles for every client, see [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv). AWG 1.x clients are supported by neither profile.
+
+* **Ubuntu other than `noble`, `jammy` and `focal`:** the installer requests `dists/<codename>/Release` from the PPA, and if there is no answer (a 404 or the PPA is unreachable), switches the PPA codename to `noble`. Ubuntu 26.04 normally gets its own `resolute` suite (the PPA has published it since 14 September 2026), and if the check fails it is switched to `noble` too. Debian is always mapped to the nearest Ubuntu release: 12 -> `focal`, 13 -> `noble`. The module still comes from the PPA DKMS package and is built for your kernel, except on ARM systems with a prebuilt module.
 
 * **IPv6 Dual-Stack Tunnel - rolling back `ALLOW_IPV6_TUNNEL=0`:** Setting `ALLOW_IPV6_TUNNEL=0` in `awgsetup_cfg.init` (or re-running without `--allow-ipv6-tunnel`) does **not** remove existing dual-stack `AllowedIPs = ..., fddd::.../128` entries from `[Peer]` blocks already written to `awg0.conf`. The entries remain and the kernel keeps IPv6 routes for those peers. `manage_amneziawg.sh regen <name>` (or the full path `/root/awg/manage_amneziawg.sh regen <name>`) after disabling the flag rebuilds only the client `.conf` - it becomes IPv4-only, since `regenerate_client` reads `ALLOW_IPV6_TUNNEL`. But `regen` does **not** remove the IPv6 `AllowedIPs` from the server `[Peer]` block. To clear the server side too, use the sed cleanup across all peers: `awg-quick down awg0; sed -i 's|, fddd:[^/]*/[0-9]*||g' /etc/amnezia/amneziawg/awg0.conf; awg-quick up awg0`, or `manage_amneziawg.sh remove <name>` + `add <name>`.
 
