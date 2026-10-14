@@ -70,7 +70,7 @@ Before submitting a PR, ensure:
    - Fresh install on clean Ubuntu 24.04 LTS
    - Both protocol generations: the default (AmneziaWG 3.1) and `--protocol=2.0`; a client app with 3.1 support connects to a 3.1 server
    - The automatic 2.0 fallback where the installer does not issue 3.1 (Debian 12 with its stock 6.1 kernel, or ARM): the installer names the reason and the final report shows generation 2.0
-   - Fresh install on clean Ubuntu 26.04 (the installer probes the PPA for `resolute` and falls back to `noble` if it does not answer; on the 7.0 kernel it patches the PPA module source, see ADVANCED `kernel-70-backport-adv`)
+   - Fresh install on clean Ubuntu 26.04 (the installer probes the PPA for `resolute` and falls back to `noble` if it does not answer; on kernels 7.0.0-38 and later it patches the PPA module source, see ADVANCED `kernel-70-backport-adv`)
    - All management commands: add, remove, list, regen, check, restart
    - Reboot-resume between critical installer steps
    - Client connectivity (handshake, ping, DNS resolution)

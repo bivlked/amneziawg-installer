@@ -58,7 +58,7 @@ body:
     id: protocol
     attributes:
       label: AmneziaWG generation
-      description: "`sudo bash /root/awg/manage_amneziawg.sh check` prints it on the \"Installation protocol generation\" line (\"Поколение протокола установки\" in the Russian script), or run `grep AWG_PROTOCOL= /root/awg/awgsetup_cfg.init`."
+      description: "`sudo bash /root/awg/manage_amneziawg.sh check` prints it on the \"Installation protocol generation\" line (\"Поколение протокола установки\" in the Russian script), or run `grep AWG_PROTOCOL= /root/awg/awgsetup_cfg.init`. No such line means 2.0."
       options:
         - 3.1 (default since 6.0.0)
         - "2.0"

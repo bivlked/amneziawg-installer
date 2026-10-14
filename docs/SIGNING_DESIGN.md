@@ -116,7 +116,7 @@ User-side verification lives in README ([EN](../README.en.md#verifying-a-release
 
 ## Implementation checkpoints (history)
 
-How signing was switched on, kept as a record; all steps below are done. Activation steps, in order:
+How signing was switched on, kept as a record. Steps 1-6 are done; item 7 is an optional follow-up that has not been taken up (see "Out of scope" below). Activation steps, in order:
 
 1. **USER**: Generate offline keypair with `minisign -G` on a trusted machine. Backup the private key to encrypted offline storage. Set a strong password.
 2. **USER**: Hand over the public key file (`*.pub`) for commit to the repository as `KEYS.txt`.
@@ -136,7 +136,7 @@ bash scripts/sign-release.sh vX.Y.Z
 git add signing && git commit -m "chore: signatures for vX.Y.Z"
 ```
 
-`sign-release.sh` replaced the hand-written `minisign` loop that used to stand here: without a terminal that loop could finish having signed nothing. The full procedure, including the Windows notes, is in [RELEASE_PROCESS.md](RELEASE_PROCESS.md), section "Release signing"; keep one copy of the commands there.
+`sign-release.sh` replaced the hand-written `minisign` loop that used to stand here: it checks the tag, writes the trusted comment itself, asks for the password once, refuses to run without a terminal and ends by running `verify-signatures.sh`. The full procedure, including the Windows notes, is in [RELEASE_PROCESS.md](RELEASE_PROCESS.md), section "Release signing"; keep one copy of the commands there.
 
 Sign **after** the last change to the six scripts and **before** the tag. Signing earlier and then amending a script produces signatures that verify against nothing; `verify-signatures.sh` and `preflight-check.sh` both catch that, but only if they are run.
 
