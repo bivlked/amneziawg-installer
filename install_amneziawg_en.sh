@@ -2389,13 +2389,24 @@ validate_jc_value() {
 # live awg0.conf, which the step 6 validator warns about), an explicit --jc or
 # --preset of this run (the generator sets the values and validate_jc_value
 # checks --jc), a generation switch (J are generated anew) and a non-number.
+# --jmin/--jmax regenerate the set too, and Jc then comes from the preset, not the
+# init; but on an automatic fallback _awg_fallback_params carries the saved Jc
+# through CLI_JC, so there they do not exempt the run. State 1 (any step 6 trace,
+# or doubt) is left out on purpose: profiles may already be out, and stopping to
+# demand a new --jc would regenerate the whole set under them. There the step 6
+# validator and the profile render still warn.
 _awg_saved_jc_guard() {
     [[ "${AWG_INSTALL_STATE_AT_START:-}" == 2 ]] || return 0
     [[ -z "${CLI_JC:-}" && -z "${CLI_PRESET:-}" && "${AWG_GEN_SWITCHED:-0}" != 1 ]] || return 0
-    [[ "${AWG_Jc:-}" =~ ^[0-9]+$ ]] || return 0
-    local j="${AWG_Jc#"${AWG_Jc%%[!0]*}"}"
+    if [[ -n "${CLI_JMIN:-}${CLI_JMAX:-}" && "${AWG_AUTO_FALLBACK:-0}" != 1 ]]; then return 0; fi
+    # Spaces are stripped: an init line may carry a trailing space, the value
+    # goes into the config with it, and the validator trims it there.
+    local j="${AWG_Jc:-}"
+    j="${j//[[:space:]]/}"
+    [[ "$j" =~ ^[0-9]+$ ]] || return 0
+    j="${j#"${j%%[!0]*}"}"
     validate_jc_value "${j:-0}" && return 0
-    die "$CONFIG_FILE holds Jc=$AWG_Jc and the install is not finished yet. A Jc over 122 crashes clients on amneziawg-go on the first handshake (amneziawg-go#111). Run the installer with a safe value, for example --jc=6, or with --preset=default: there are no profiles yet, so a new set disconnects nobody."
+    die "$CONFIG_FILE holds Jc=$AWG_Jc and the install is not finished yet. The Jc ceiling is now 122: together with I1-I5 a larger Jc can overflow the batch of 128 packets, and clients on amneziawg-go crash on the first handshake (amneziawg-go#111). Run the installer with a safe value, for example --jc=6, or with --preset=default: there are no profiles yet, so a new set disconnects nobody."
 }
 
 validate_junk_size() {

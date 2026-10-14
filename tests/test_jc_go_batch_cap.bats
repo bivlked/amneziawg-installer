@@ -57,7 +57,8 @@ o_table() {
     # "Jc I rc": rc 0 = the batch overflows.
     local spec jc ni want
     for spec in "122 5 1" "123 5 0" "126 1 1" "127 1 0" "127 0 1" "128 0 0" \
-                "0 5 1" "4 1 1" "0127 1 0" "0126 1 1" "1000 0 0" "" "abc 1 1" "127 6 1" "127 x 1"; do
+                "0 5 1" "4 1 1" "0127 1 0" "0126 1 1" "1000 0 0" "99999999999999999999 0 0" \
+                "18446744073709551617 0 0" "" "abc 1 1" "127 6 1" "127 x 1"; do
         [[ -n "$spec" ]] || continue
         read -r jc ni want <<< "$spec"
         run ov "$1" "$jc" "$ni"
@@ -93,8 +94,9 @@ i_cap() {
     twins i_cap "$INST" "$INST_EN"
 }
 
-# guard <installer> <state at start> <saved Jc> [CLI_JC] [CLI_PRESET] [switched] :
-# _awg_saved_jc_guard with a stub die, prints PASS or the DIE line.
+# guard <installer> <state at start> <saved Jc> [CLI_JC] [CLI_PRESET] [switched]
+# [CLI_JMIN] [auto fallback] : _awg_saved_jc_guard with a stub die, prints PASS
+# or the DIE line.
 guard() {
     timeout 10 bash -c '
         eval "$(sed -n "/^validate_jc_value()/,/^}/p" "$1")"
@@ -103,6 +105,7 @@ guard() {
         die() { echo "DIE: $*"; exit 1; }
         CONFIG_FILE=/root/awg/awgsetup_cfg.init
         AWG_INSTALL_STATE_AT_START="$2" AWG_Jc="$3" CLI_JC="$4" CLI_PRESET="$5" AWG_GEN_SWITCHED="${6:-0}"
+        CLI_JMIN="${7:-}" AWG_AUTO_FALLBACK="${8:-0}"
         _awg_saved_jc_guard
         echo PASS
     ' _ "$@" 2>&1
@@ -110,10 +113,16 @@ guard() {
 
 g_stops() {
     local want="--jc=" v
-    for v in 123 127 128 0127; do
+    # "125 " - a trailing space in the init line; the value reaches the config
+    # with it and the validator trims it, so the guard must not call it a non-number.
+    for v in 123 127 128 0127 "125 "; do
         run guard "$1" 2 "$v"
-        [[ "$output" == "DIE: "*"Jc=$v"*"122"*"$want"* ]] || { echo "$1: unfinished install with saved Jc=$v not stopped with the fix: $output"; return 1; }
+        [[ "$output" == "DIE: "*"Jc=$v"*"122"*"$want"* ]] || { echo "$1: unfinished install with saved Jc='$v' not stopped with the fix: $output"; return 1; }
     done
+    # --jmin on an automatic fallback: _awg_fallback_params would carry the
+    # saved Jc through CLI_JC, so the run is not exempt.
+    run guard "$1" 2 127 '' '' 0 50 1
+    [[ "$output" == "DIE: "*"Jc=127"* ]] || { echo "$1: --jmin on a fallback let the saved Jc through: $output"; return 1; }
 }
 @test "installer: an unfinished first install with a saved Jc over 122 stops and names the fix, both twins" {
     twins g_stops "$INST" "$INST_EN"
@@ -123,9 +132,10 @@ g_passes() {
     # Mirrors: a safe saved value; a finished install (its live awg0.conf wins
     # and step 6 warns); a new install (nothing saved); an explicit --jc or
     # --preset of this run (the generator takes over and validates); a
-    # generation switch (J are generated anew); a value that is not a number.
+    # generation switch (J are generated anew); a value that is not a number;
+    # --jmin without a fallback (the set is generated from the preset).
     local args
-    for args in "2 122" "2 0" "2 00" "1 127" "0 ''" "2 127 6" "2 127 '' mobile" "2 127 '' '' 1" "2 abc"; do
+    for args in "2 122" "2 0" "2 00" "1 127" "0 ''" "2 127 6" "2 127 '' mobile" "2 127 '' '' 1" "2 abc" "2 127 '' '' 0 50 0"; do
         eval "run guard \"\$1\" $args"
         [[ "$output" == "PASS" ]] || { echo "$1 [$args]: stopped: $output"; return 1; }
     done
@@ -135,12 +145,19 @@ g_passes() {
 }
 
 g_wired() {
-    # The guard runs in initialize_setup before the regenerate-or-keep decision.
+    # The guard runs in initialize_setup after its inputs are known (the state
+    # at start, then the resolver that sets the generation switch and the
+    # automatic fallback) and before the regenerate-or-keep decision. Called
+    # earlier it would see empty inputs and pass everything.
     local body
     body=$(sed -n '/^initialize_setup() {$/,/^}$/p' "$1")
     [[ -n "$body" ]] || { echo "$1: initialize_setup not found"; return 1; }
-    awk '/^    _awg_saved_jc_guard$/{g=NR} /^    if \[\[ -z "\$\{AWG_Jc:-\}" \]\]/{d=NR} END{exit !(g && d && g < d)}' <<< "$body" \
-        || { echo "$1: guard not called before the decision"; return 1; }
+    awk '/^    AWG_INSTALL_STATE_AT_START="\$install_state"$/{s=NR}
+         /^    _awg31_resolve_protocol "\$install_state"$/{r=NR}
+         /^    _awg_saved_jc_guard$/{g=NR}
+         /^    if \[\[ -z "\$\{AWG_Jc:-\}" \]\]/{d=NR}
+         END{exit !(s && r && g && d && s < r && r < g && g < d)}' <<< "$body" \
+        || { echo "$1: guard not called between its inputs and the decision"; return 1; }
 }
 @test "installer: the guard is called before parameters are kept or regenerated, both twins" {
     twins g_wired "$INST" "$INST_EN"
@@ -187,16 +204,22 @@ vc_warns() {
 }
 
 vc_quiet() {
-    # Mirrors: on the line or below, an empty I value, and an I outside
-    # [Interface] are not counted.
+    # Mirrors: on the line or below, an empty I value, a repeated key (the
+    # tools keep the last value, it is one I), and the last value empty.
     local hpk spec jc extra
     for hpk in "" hpk; do
-        for spec in "126|I1 = <r 8>" "127|" "122|I1 = <r 8>\nI2 = <r 8>\nI3 = <r 8>\nI4 = <r 8>\nI5 = <r 8>" "127|I1 =" "4|I1 = <r 8>"; do
+        for spec in "126|I1 = <r 8>" "127|" "122|I1 = <r 8>\nI2 = <r 8>\nI3 = <r 8>\nI4 = <r 8>\nI5 = <r 8>" "127|I1 =" "4|I1 = <r 8>" \
+                    "126|I1 = <r 8>\nI1 = <r 8>" "127|I1 = <r 8>\nI1 ="; do
             jc="${spec%%|*}"; extra="${spec#*|}"
             run vconf "$1" "$jc" "$extra" "$hpk"
             [[ "$output" == *"rc=0"* ]] || { echo "$1 ${hpk:-plain} Jc=$jc: refused: $output"; return 1; }
             [[ "$output" != *"$MARK"* ]] || { echo "$1 ${hpk:-plain} Jc=$jc [$extra]: warned: $output"; return 1; }
         done
+        # An I under [Peer] is not the interface's: 126 + 1 + 1 stays on the
+        # line. Only the warning is judged here, the verdict on a [Peer] I1-I5
+        # belongs to other checks.
+        run vconf "$1" 126 "I1 = <r 8>\n[Peer]\nPublicKey = QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQA=\nI2 = <r 8>" "$hpk"
+        [[ "$output" == *"rc="* && "$output" != *"$MARK"* ]] || { echo "$1 ${hpk:-plain}: an I under [Peer] was counted: $output"; return 1; }
     done
 }
 @test "validate_awg_config: Jc on the line or below, and an empty I, give no warning, both key variants, both twins" {
@@ -207,6 +230,23 @@ vc_still_refuses() {
     run vconf "$1" 129 "I1 = <r 8>"
     [[ "$output" == *"rc=1"* && "$output" == *"ERR: Jc=129"* ]] || { echo "$1: Jc = 129 not refused: $output"; return 1; }
 }
+vc_tools_view() {
+    # The tools apply the last Jc, key case-insensitive. Without the header
+    # protection key the range check reads "Jc" case-sensitively, so the
+    # warning must not rely on it (found by Codex review).
+    local hpk
+    for hpk in "" hpk; do
+        run vconf "$1" 4 "jc = 127\nI1 = <r 8>" "$hpk"
+        [[ "$output" == *"rc=0"* ]] || { echo "$1 ${hpk:-plain}: refused: $output"; return 1; }
+        [ "$(grep -c "^WARN: Jc=127 .*$MARK" <<< "$output")" -eq 1 ] || { echo "$1 ${hpk:-plain}: a lower-case jc = 127 after Jc = 4 not warned: $output"; return 1; }
+        run vconf "$1" 127 "jc = 4\nI1 = <r 8>" "$hpk"
+        [[ "$output" == *"rc=0"* && "$output" != *"$MARK"* ]] || { echo "$1 ${hpk:-plain}: an overridden Jc = 127 warned: $output"; return 1; }
+    done
+}
+@test "validate_awg_config: the warning follows the Jc the tools apply (last value, any case), both key variants, both twins" {
+    twins vc_tools_view "$COMMON" "$COMMON_EN"
+}
+
 @test "validate_awg_config: Jc = 129 is still a refusal, not a warning, both twins" {
     twins vc_still_refuses "$COMMON" "$COMMON_EN"
 }
@@ -242,6 +282,8 @@ crender() {
         fi
         printf "export AWG_S1=72\nexport AWG_S2=56\nexport AWG_S3=32\nexport AWG_S4=16\n"
         printf "export AWG_Jc=%s\nexport AWG_Jmin=55\nexport AWG_Jmax=380\nexport AWG_I1='<r 64>'\n" "$jc"
+        # CR_FIVE_I=1: all five I set.
+        [[ -z "${CR_FIVE_I:-}" ]] || printf "export AWG_I2='<r 8>'\nexport AWG_I3='<r 8>'\nexport AWG_I4='<r 8>'\nexport AWG_I5='<r 8>'\n"
         printf "export AWG_APPLY_MODE='syncconf'\n"
     } > "$d/awgsetup_cfg.init"
     printf 'SRVPRIVKEYPLACEHOLDER\n' > "$d/server_private.key"
@@ -250,13 +292,49 @@ crender() {
         export CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init" SERVER_CONF_FILE="$AWG_DIR/awg0.conf"
         export KEYS_DIR="$AWG_DIR/keys" EXPIRY_DIR="$AWG_DIR/expiry"
         log() { :; }; log_warn() { echo "WARN: $*"; }; log_error() { echo "ERR: $*"; }; log_debug() { :; }
+        # CR_INHERIT=1: a set flag in the environment must not mute the warning.
+        [[ -z "${CR_INHERIT:-}" ]] || export _AWG_JC_GO_WARNED=1
         source "$1" >/dev/null 2>&1 || true
         get_main_nic() { echo eth0; }
         host_lacks_ipv4_egress() { return 1; }
-        render_client_config c1 10.9.9.2 CLIENTPRIV SERVERPUB 203.0.113.10 39743 || exit 1
-        render_client_config c2 10.9.9.3 CLIENTPRIV SERVERPUB 203.0.113.10 39743 || exit 1
+        echo SERVERPUB > "$AWG_DIR/server_public.key"
+        case "$2" in
+            two) render_client_config c1 10.9.9.2 CLIENTPRIV SERVERPUB 203.0.113.10 39743 || exit 1
+                 render_client_config c2 10.9.9.3 CLIENTPRIV SERVERPUB 203.0.113.10 39743 || exit 1 ;;
+            # add: render, then the vpn:// export, in one run.
+            addexport) render_client_config c1 10.9.9.2 CLIENTPRIV SERVERPUB 203.0.113.10 39743 || exit 1
+                 generate_vpn_uri c1 || exit 1 ;;
+            # modify: a later run that rebuilds only the export of an existing profile.
+            export) render_client_config c1 10.9.9.2 CLIENTPRIV SERVERPUB 203.0.113.10 39743 >/dev/null 2>&1 || exit 1
+                 _AWG_JC_GO_WARNED=""
+                 echo "--- export run"
+                 generate_vpn_uri c1 || exit 1 ;;
+        esac
         echo RC=0
-    ' _ "$lib"
+    ' _ "$lib" "${4:-two}"
+}
+
+# exported <output> : the part of the output after the "--- export run" mark.
+exported() { sed -n '/^--- export run/,$p' <<< "$1"; }
+
+cr_export() {
+    command -v python3 >/dev/null || skip "python3 not available"
+    perl -MCompress::Zlib -MMIME::Base64 -e 1 2>/dev/null || skip "perl Compress::Zlib not available"
+    local gen out
+    for gen in 2.0 3.1; do
+        run crender "$1" "$gen" 127 addexport
+        [[ "$output" == *"RC=0"* ]] || { echo "$1 $gen: add with export failed: $output"; return 1; }
+        [ "$(grep -c "^WARN: .*$MARK" <<< "$output")" -eq 1 ] || { echo "$1 $gen: render plus export did not give exactly one warning: $output"; return 1; }
+        run crender "$1" "$gen" 127 export
+        [[ "$output" == *"RC=0"* ]] || { echo "$1 $gen: export failed: $output"; return 1; }
+        out=$(exported "$output")
+        [ "$(grep -c "^WARN: .*$MARK" <<< "$out")" -eq 1 ] || { echo "$1 $gen: an export on its own (modify) did not warn: $out"; return 1; }
+        run crender "$1" "$gen" 126 export
+        [[ "$output" == *"RC=0"* && "$output" != *"$MARK"* ]] || { echo "$1 $gen: Jc=126 export warned: $output"; return 1; }
+    done
+}
+@test "modify/export: the vpn:// export warns on its own and once together with the render, both generations, both twins" {
+    twins cr_export "$COMMON" "$COMMON_EN"
 }
 
 cr_warns_once() {
@@ -267,6 +345,14 @@ cr_warns_once() {
         [ "$(grep -c "^WARN: .*$MARK" <<< "$output")" -eq 1 ] || { echo "$1 $gen: not exactly one warning for two profiles: $output"; return 1; }
         run crender "$1" "$gen" 126
         [[ "$output" == *"RC=0"* && "$output" != *"$MARK"* ]] || { echo "$1 $gen: Jc=126 with one I warned: $output"; return 1; }
+        # All five I are counted, not only I1.
+        CR_FIVE_I=1 run crender "$1" "$gen" 123
+        [ "$(grep -c "^WARN: .*$MARK" <<< "$output")" -eq 1 ] || { echo "$1 $gen: Jc=123 with five I not warned: $output"; return 1; }
+        CR_FIVE_I=1 run crender "$1" "$gen" 122
+        [[ "$output" == *"RC=0"* && "$output" != *"$MARK"* ]] || { echo "$1 $gen: Jc=122 with five I warned: $output"; return 1; }
+        # The flag cannot be inherited from the environment.
+        CR_INHERIT=1 run crender "$1" "$gen" 127
+        [ "$(grep -c "^WARN: .*$MARK" <<< "$output")" -eq 1 ] || { echo "$1 $gen: an inherited flag muted the warning: $output"; return 1; }
     done
 }
 @test "add/regen: a profile over the line is still issued, with one warning per run, and Jc on the line is quiet, both generations, both twins" {
@@ -326,6 +412,15 @@ mc_warns() {
     [ "$(grep '^rc=' <<< "$over")" = "$(grep '^rc=' <<< "$base")" ] || { echo "$1: the warning changed the verdict: $(grep '^rc=' <<< "$base") -> $(grep '^rc=' <<< "$over")"; return 1; }
     run mcheck "$1" 127 ''
     [[ "$output" != *"$MARK"* ]] || { echo "$1: Jc=127 without I warned: $output"; return 1; }
+    # All five i lines are counted, and a number too long for bash arithmetic is
+    # still over the line.
+    local five='  i1: <r 8>\n  i2: <r 8>\n  i3: <r 8>\n  i4: <r 8>\n  i5: <r 8>\n'
+    run mcheck "$1" 123 "$five"
+    [ "$(grep -c "^WARN: .*$MARK" <<< "$output")" -eq 1 ] || { echo "$1: Jc=123 with five I not warned: $output"; return 1; }
+    run mcheck "$1" 122 "$five"
+    [[ "$output" != *NO_FUNCTION* && "$output" != *"$MARK"* ]] || { echo "$1: Jc=122 with five I warned: $output"; return 1; }
+    run mcheck "$1" 18446744073709551617 ''
+    [ "$(grep -c "^WARN: .*$MARK" <<< "$output")" -eq 1 ] || { echo "$1: a huge Jc wrapped under the line: $output"; return 1; }
 }
 @test "manage check: an interface over the line is one warning and keeps the verdict, both twins" {
     twins mc_warns "$MANAGE" "$MANAGE_EN"
@@ -364,6 +459,10 @@ d_warns() {
     [[ "$output" != *HARNESS_ERR* && "$output" != *"$MARK"* && "$output" == *"warn=0 fail=0"* ]] || { echo "$1: Jc=126 with I1 warned: $output"; return 1; }
     run step8 "$1" 123 '  i1: <r 8>\n  i2: <r 8>\n  i3: <r 8>\n  i4: <r 8>\n  i5: <r 8>\n'
     [[ "$output" == *"[WARN] "*"$MARK"* && "$output" == *"fail=0"* ]] || { echo "$1: Jc=123 with five I not warned: $output"; return 1; }
+    run step8 "$1" 122 '  i1: <r 8>\n  i2: <r 8>\n  i3: <r 8>\n  i4: <r 8>\n  i5: <r 8>\n'
+    [[ "$output" != *HARNESS_ERR* && "$output" != *"$MARK"* ]] || { echo "$1: Jc=122 with five I warned: $output"; return 1; }
+    run step8 "$1" 18446744073709551617 ''
+    [[ "$output" != *HARNESS_ERR* && "$output" == *"[WARN] "*"$MARK"* ]] || { echo "$1: a huge Jc wrapped under the line: $output"; return 1; }
 }
 @test "diagnose: an interface over the line is a counted warning with the fix, not a failure, both twins" {
     twins d_warns "$MANAGE" "$MANAGE_EN"

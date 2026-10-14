@@ -3575,20 +3575,8 @@ render_client_config() {
 
     load_awg_params || return 1
 
-    # Jc за чертой amneziawg-go (awg_jc_go_overflow). Профиль всё равно выдаём:
-    # клиенты на модуле ядра с ним работают, а отказ оставил бы без профиля
-    # всех. Клиентские пути NO_CPS не учитывают, поэтому считаем I как есть.
-    # Одно предупреждение на запуск, а не на каждого клиента regen.
-    if [[ -z "${_AWG_JC_GO_WARNED:-}" ]]; then
-        local _jc_ni=0 _jc_iv
-        for _jc_iv in "${AWG_I1:-}" "${AWG_I2:-}" "${AWG_I3:-}" "${AWG_I4:-}" "${AWG_I5:-}"; do
-            [[ -n "$_jc_iv" ]] && _jc_ni=$((_jc_ni + 1))
-        done
-        if awg_jc_go_overflow "${AWG_Jc:-}" "$_jc_ni"; then
-            awg_jc_go_warn "$AWG_Jc" "$_jc_ni"
-            _AWG_JC_GO_WARNED=1
-        fi
-    fi
+    # Jc за чертой amneziawg-go (awg_jc_go_overflow).
+    _awg_jc_go_warn_once
 
     # DNS нового клиента: CLIENT_DNS или значение по умолчанию. Считаем ДО tmpfile,
     # чтобы невалидный CLIENT_DNS не оставил недописанного конфига. regenerate_client
@@ -4281,6 +4269,8 @@ awg_jc_go_overflow() {
 awg_jc_go_warn() {
     log_warn "Jc=$1 при $2 из I1-I5: клиенты на amneziawg-go упадут на первом рукопожатии - junk-пакеты, I-пакеты и пакет рукопожатия уходят одной пачкой, а она вмещает 128 пакетов (amneziawg-go#111). Сервер на модуле ядра работает, падают клиенты."
     log_warn "Исправить, не трогая остальные параметры: поставьте в серверном awg0.conf Jc не больше 122, примените (sudo systemctl restart awg-quick@awg0) и перевыпустите профили (sudo bash ${AWG_DIR:-/root/awg}/manage_amneziawg.sh regen)."
+    # Один раз на запуск на все пути: шаг 6 зовёт и валидатор, и рендер.
+    _AWG_JC_GO_WARNED=1
 }
 
 # awg_conf_i_count <файл> : число непустых I1-I5 в [Interface] так, как их
@@ -4298,6 +4288,21 @@ awg_conf_i_count() {
         [[ -n "${last[$k]}" ]] && n=$((n + 1))
     done
     echo "$n"
+}
+
+# _awg_jc_go_warn_once : предупреждение при выдаче профиля (add, regen, modify,
+# экспорт vpn://) по AWG_Jc и AWG_I1-I5 текущего окружения. Профиль всё равно
+# выдаём: клиенты на модуле ядра с ним работают, а отказ оставил бы без профиля
+# всех. Клиентские пути NO_CPS не учитывают, поэтому I считаем как есть. Одно
+# предупреждение на запуск, а не на каждого клиента regen.
+_awg_jc_go_warn_once() {
+    [[ -z "${_AWG_JC_GO_WARNED:-}" ]] || return 0
+    local n=0 v
+    for v in "${AWG_I1:-}" "${AWG_I2:-}" "${AWG_I3:-}" "${AWG_I4:-}" "${AWG_I5:-}"; do
+        [[ -n "$v" ]] && n=$((n + 1))
+    done
+    awg_jc_go_overflow "${AWG_Jc:-}" "$n" || return 0
+    awg_jc_go_warn "$AWG_Jc" "$n"
 }
 
 # awg_cps_refuse_unsafe : проверить AWG_I1..AWG_I5 текущего окружения.
@@ -4985,6 +4990,8 @@ generate_vpn_uri() {
     fi
 
     load_awg_params || return 1
+    # modify пересобирает QR и vpn:// мимо render_client_config.
+    _awg_jc_go_warn_once
 
     # AWG_PORT - единственное НЕкавыченное числовое поле inner JSON ("port":N).
     # Пустое/нечисловое значение дало бы "port":, - синтаксически битый JSON,
@@ -6287,7 +6294,7 @@ _validate_awg_config_body() {
     fi
 
     local ok=1
-    local param val _jc_ni
+    local param val _jc_ni _jc_refused=0
     local int_params=("Jc" "Jmin" "Jmax" "S1" "S2" "S3" "S4")
     local range_params=("H1" "H2" "H3" "H4")
 
@@ -6405,11 +6412,19 @@ _validate_awg_config_body() {
         if (( ${#jc} > 3 )) || [[ "$jc" -gt 128 ]]; then
             log_error "Jc=$jc вне допустимого диапазона (0-128)"
             ok=0
-        elif _jc_ni=$(awg_conf_i_count "$SERVER_CONF_FILE") && awg_jc_go_overflow "$jc" "$_jc_ni"; then
-            # Предупреждение, не отказ (см. awg_jc_go_overflow): restore и шаг 6
-            # установщика на нём не останавливаются.
-            awg_jc_go_warn "$jc" "$_jc_ni"
+            _jc_refused=1
         fi
+    fi
+    # Пачка amneziawg-go - по Jc так, как его применят amneziawg-tools (ключ без
+    # учёта регистра, последнее значение): без ключа защиты заголовков jc выше
+    # читается с учётом регистра, и `jc = 127` после `Jc = 4` прошёл бы мимо.
+    # Предупреждение, не отказ (см. awg_jc_go_overflow): restore и шаг 6
+    # установщика на нём не останавливаются. Значение, уже отвергнутое
+    # диапазоном, второй раз не называем.
+    if (( ! _jc_refused )) && [[ -z "${_AWG_JC_GO_WARNED:-}" ]] \
+        && _jc_ni=$(awg_conf_i_count "$SERVER_CONF_FILE") \
+        && awg_jc_go_overflow "${_if_last[jc]:-}" "$_jc_ni"; then
+        awg_jc_go_warn "$(_awg_dec_strip "${_if_last[jc]}")" "$_jc_ni"
     fi
     if [[ "$jmin" =~ ^[0-9]+$ && "$jmax" =~ ^[0-9]+$ ]]; then
         if [[ "$jmin" -gt 1280 ]]; then

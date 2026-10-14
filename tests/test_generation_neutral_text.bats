@@ -82,6 +82,15 @@ _check_text() {
     _check_text "$R/install_amneziawg_en.sh" check_kernel_version 'AmneziaWG 2.0' 'build the AmneziaWG module' 3
 }
 
+@test "both: the kernel floor check names no generation number at all" {
+    local f body
+    for f in "$R/install_amneziawg.sh" "$R/install_amneziawg_en.sh"; do
+        body=$(_func "$f" check_kernel_version)
+        [ -n "$body" ]
+        if grep -qE 'AmneziaWG [0-9]' <<<"$body"; then return 1; fi
+    done
+}
+
 @test "RU: ADVANCED quotes the --protocol paragraph of --help verbatim" {
     local src copy
     src=$(_protocol_paragraph "$R/install_amneziawg.sh")

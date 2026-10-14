@@ -3656,20 +3656,8 @@ render_client_config() {
 
     load_awg_params || return 1
 
-    # Jc over the amneziawg-go line (awg_jc_go_overflow). The profile is issued
-    # anyway: clients on the kernel module work with it, and a refusal would leave
-    # everyone without a profile. Client paths ignore NO_CPS, so I are counted as
-    # they are. One warning per run, not one per client of regen.
-    if [[ -z "${_AWG_JC_GO_WARNED:-}" ]]; then
-        local _jc_ni=0 _jc_iv
-        for _jc_iv in "${AWG_I1:-}" "${AWG_I2:-}" "${AWG_I3:-}" "${AWG_I4:-}" "${AWG_I5:-}"; do
-            [[ -n "$_jc_iv" ]] && _jc_ni=$((_jc_ni + 1))
-        done
-        if awg_jc_go_overflow "${AWG_Jc:-}" "$_jc_ni"; then
-            awg_jc_go_warn "$AWG_Jc" "$_jc_ni"
-            _AWG_JC_GO_WARNED=1
-        fi
-    fi
+    # Jc over the amneziawg-go line (awg_jc_go_overflow).
+    _awg_jc_go_warn_once
 
     # DNS of the new client: CLIENT_DNS or the default. Computed BEFORE the tmpfile,
     # so an invalid CLIENT_DNS never leaves a half-written config behind.
@@ -4373,6 +4361,8 @@ awg_jc_go_overflow() {
 awg_jc_go_warn() {
     log_warn "Jc=$1 with $2 of I1-I5: clients on amneziawg-go will crash on the first handshake - the junk packets, the I packets and the handshake packet go out in one batch, and it holds 128 packets (amneziawg-go#111). The server on the kernel module works, the clients crash."
     log_warn "To fix without touching the other parameters: set Jc to 122 or less in the server awg0.conf, apply it (sudo systemctl restart awg-quick@awg0) and reissue the profiles (sudo bash ${AWG_DIR:-/root/awg}/manage_amneziawg.sh regen)."
+    # Once per run across all paths: step 6 calls both the validator and the render.
+    _AWG_JC_GO_WARNED=1
 }
 
 # awg_conf_i_count <file> : the number of non-empty I1-I5 in [Interface] as
@@ -4390,6 +4380,21 @@ awg_conf_i_count() {
         [[ -n "${last[$k]}" ]] && n=$((n + 1))
     done
     echo "$n"
+}
+
+# _awg_jc_go_warn_once : a warning when a profile is issued (add, regen, modify,
+# vpn:// export), from AWG_Jc and AWG_I1-I5 of the current environment. The
+# profile is issued anyway: clients on the kernel module work with it, and a
+# refusal would leave everyone without a profile. Client paths ignore NO_CPS, so
+# I are counted as they are. One warning per run, not one per client of regen.
+_awg_jc_go_warn_once() {
+    [[ -z "${_AWG_JC_GO_WARNED:-}" ]] || return 0
+    local n=0 v
+    for v in "${AWG_I1:-}" "${AWG_I2:-}" "${AWG_I3:-}" "${AWG_I4:-}" "${AWG_I5:-}"; do
+        [[ -n "$v" ]] && n=$((n + 1))
+    done
+    awg_jc_go_overflow "${AWG_Jc:-}" "$n" || return 0
+    awg_jc_go_warn "$AWG_Jc" "$n"
 }
 
 # awg_cps_refuse_unsafe : check AWG_I1..AWG_I5 of the current environment.
@@ -5071,6 +5076,8 @@ generate_vpn_uri() {
     fi
 
     load_awg_params || return 1
+    # modify rebuilds the QR and vpn:// without render_client_config.
+    _awg_jc_go_warn_once
 
     # AWG_PORT is the only UNquoted numeric field of the inner JSON ("port":N).
     # An empty/non-numeric value would produce "port":, - syntactically broken
@@ -6390,7 +6397,7 @@ _validate_awg_config_body() {
     fi
 
     local ok=1
-    local param val _jc_ni
+    local param val _jc_ni _jc_refused=0
     local int_params=("Jc" "Jmin" "Jmax" "S1" "S2" "S3" "S4")
     local range_params=("H1" "H2" "H3" "H4")
 
@@ -6508,11 +6515,19 @@ _validate_awg_config_body() {
         if (( ${#jc} > 3 )) || [[ "$jc" -gt 128 ]]; then
             log_error "Jc=$jc is out of range (0-128)"
             ok=0
-        elif _jc_ni=$(awg_conf_i_count "$SERVER_CONF_FILE") && awg_jc_go_overflow "$jc" "$_jc_ni"; then
-            # A warning, not a refusal (see awg_jc_go_overflow): restore and step 6
-            # of the installer do not stop on it.
-            awg_jc_go_warn "$jc" "$_jc_ni"
+            _jc_refused=1
         fi
+    fi
+    # The amneziawg-go batch - by Jc as amneziawg-tools apply it (key
+    # case-insensitive, last value wins): without the header protection key the jc
+    # above is read case-sensitively, and `jc = 127` after `Jc = 4` would slip by.
+    # A warning, not a refusal (see awg_jc_go_overflow): restore and step 6 of the
+    # installer do not stop on it. A value the range check already refused is not
+    # named a second time.
+    if (( ! _jc_refused )) && [[ -z "${_AWG_JC_GO_WARNED:-}" ]] \
+        && _jc_ni=$(awg_conf_i_count "$SERVER_CONF_FILE") \
+        && awg_jc_go_overflow "${_if_last[jc]:-}" "$_jc_ni"; then
+        awg_jc_go_warn "$(_awg_dec_strip "${_if_last[jc]}")" "$_jc_ni"
     fi
     if [[ "$jmin" =~ ^[0-9]+$ && "$jmax" =~ ^[0-9]+$ ]]; then
         if [[ "$jmin" -gt 1280 ]]; then

@@ -172,10 +172,12 @@ g_bounds_kept() {
 g_refusal_text() {
     local inst="$1" lib="$COMMON" want
     en "$inst" && lib="$COMMON_EN"
-    run gen "$inst" "$lib" 2.0 - 129
+    # 123: refused only by the new ceiling, so the generator must really call
+    # validate_jc_value and not keep an inline 128.
+    run gen "$inst" "$lib" 2.0 - 123
     want="допустимо: 0-122"
     en "$inst" && want="allowed: 0-122"
-    [[ "$output" == *"DIE: "*"--jc=129"*"$want"* ]] || { echo "$inst: refusal does not name 0-122: $output"; return 1; }
+    [[ "$output" == *"DIE: "*"--jc=123"*"$want"* ]] || { echo "$inst: refusal does not name 0-122: $output"; return 1; }
 }
 @test "generator: an out-of-range --jc is refused with the 0-122 range in the reason, both twins" {
     twins g_refusal_text "$INST" "$INST_EN"
