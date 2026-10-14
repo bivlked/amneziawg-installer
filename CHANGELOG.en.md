@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **The `--diagnostic` report and `--help` are no longer tied to 2.0.** The report header no longer names a generation (on a 3.1 server it said "AMNEZIAWG 2.0"); the generation is in the `AWG_PROTOCOL` line from the settings file. The help says that on an old kernel, on ARM and in the other listed cases it is the installer that picks 2.0, not that 3.1 is impossible there, and mentions the spaced form `--protocol 2.0`.
+- **The `--diagnostic` report and `--help` are no longer tied to 2.0.** The report header no longer names a generation (on a 3.1 server it said "AMNEZIAWG 2.0"); the generation is in the `AWG_PROTOCOL` line from the settings file. The help and the automatic fallback warning say that it is the installer that sets up 2.0 on this machine: on a kernel older than 6.7 and on ARM this is its caution, not a protocol limit. The help also mentions the spaced form `--protocol 2.0`.
 
 ## [6.0.0] - 2026-10-13
 

@@ -106,7 +106,7 @@ CLI_PROTOCOL=""
 # our own test missed it because it passed a space, not an empty string.
 CLI_PROTOCOL_SET=0
 # Generation of a NEW install without the flag. Since v6.0.0 it is 3.1; on a
-# machine where 3.1 cannot run, the installer installs 2.0 by itself and says
+# machine where the installer does not set up 3.1, it installs 2.0 and says
 # so out loud (automatic fallback, see _awg31_resolve_protocol and
 # step3_check_module). The rule for reading the marker of an existing install
 # is separate and unchanged: no marker = 2.0.
@@ -568,11 +568,10 @@ Options:
                         An explicit --port=N wins over port 443
   --protocol=2.0|3.1    Protocol generation for a new install or for one that
                         started but has not reached step 6 (default 3.1).
-                        Without the flag, on a machine where the installer does
-                        not set up 3.1 (kernel older than 6.7, a non-x86_64
-                        architecture, ARM included, a second-line kernel module
-                        or a failed module check), 2.0 is installed with an
-                        explanation; if the
+                        Without the flag, where the installer does not set up 3.1
+                        (kernel older than 6.7, a non-x86_64 architecture, ARM
+                        included, a second-line kernel module or a failed module
+                        check), 2.0 is installed with an explanation; if the
                         module does not accept the 2.0 set either, the install
                         stops. If the awg tools are older than a third-line
                         module, the install stops and asks to upgrade them.
@@ -1572,7 +1571,7 @@ _awg31_fallback_reason() {
 # same interactively and under --yes: it reports something forced, not a choice.
 _awg31_announce_fallback() {
     log_warn "=============================================================================="
-    log_warn "A new install defaults to AmneziaWG 3.1, but 3.1 cannot run on this machine:"
+    log_warn "A new install defaults to AmneziaWG 3.1, but the installer does not set up 3.1 on this machine:"
     log_warn "  $(_awg31_fallback_reason "${1-}") (reason code: ${1-})."
     log_warn "Installing AmneziaWG 2.0: second-line clients work with it, including routers whose firmware supports AmneziaWG 2.0."
     log_warn "To choose 2.0 deliberately and not see this message, run with --protocol=2.0."
