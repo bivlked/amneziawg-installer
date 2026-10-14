@@ -60,8 +60,10 @@ representative at an online or offline event.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported privately to the maintainer through the contact channels listed on
-the [@bivlked GitHub profile](https://github.com/bivlked). Do not use public
-issues for conduct reports.
+the [@bivlked GitHub profile](https://github.com/bivlked), or, if no channel is
+listed there, privately via
+[GitHub Security Advisories](https://github.com/bivlked/amneziawg-installer/security/advisories/new).
+Do not use public issues for conduct reports.
 All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the
