@@ -111,7 +111,7 @@
       "since_date": "2026-09-13",
       "where": {"ru": "страница релизов проекта, choco, apt, AUR", "en": "project releases page, choco, apt, AUR"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/wgtunnel/desktop/blob/v2.4.0/gradle/libs.versions.toml", "ref": "gradle/libs.versions.toml at v2.4.0: core 1.9.5; core go.mod at 1.9.5: wgtunnel/amneziawg-go c434976f60d4"},
+      "evidence": {"url": "https://github.com/wgtunnel/desktop/blob/v2.4.0/gradle/libs.versions.toml", "ref": "gradle/libs.versions.toml at v2.4.0: core 1.9.5; core go.mod at 1.9.5: wgtunnel/amneziawg-go c434976f60d4; the first release 2.0.0 already pins engine b838c6a with header_protection_key, random_trailers and disable_cookies"},
       "checked_at": "2026-10-15"
     },
     {
@@ -138,7 +138,7 @@
       "since_note": {"ru": "ядро mihomo: нужна строка `version: 3` в `amnezia-wg-option`", "en": "mihomo core: needs `version: 3` in `amnezia-wg-option`"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/chen08209/FlClash", "ref": "submodule core/Clash.Meta at v0.9.0: chen08209/Clash.Meta 8380d0e7462f = mihomo v1.19.32 plus 2 commits"},
+      "evidence": {"url": "https://github.com/chen08209/FlClash", "ref": "submodule core/Clash.Meta at v0.9.0: chen08209/Clash.Meta 8380d0e7462f = mihomo v1.19.32 plus 2 commits; HeaderProtectionKey first appears in the core at v0.8.97, v0.8.96 has none"},
       "checked_at": "2026-10-15"
     },
     {
@@ -165,7 +165,7 @@
       "since_date": "2026-09-05",
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/Leadaxe/LxBox", "ref": "app/android/libbox.version at v2.25.15: sing-box-lx v1.14.3-lx.18, whose wireguard-go submodule 8a53421edf7e handles header_protection_key and content_padding_addition"},
+      "evidence": {"url": "https://github.com/Leadaxe/LxBox", "ref": "app/android/libbox.version at v2.25.15: sing-box-lx v1.14.3-lx.18, whose wireguard-go submodule 8a53421edf7e handles header_protection_key and content_padding_addition; since from the v2.23.0 release notes (AmneziaWG 3.0/3.1, HeaderProtectionKey and ContentPaddingAddition import)"},
       "checked_at": "2026-10-15"
     },
     {
@@ -186,7 +186,7 @@
       "version": "v0.9.12",
       "version_date": "2026-10-13",
       "since": "v0.9.12",
-      "since_note": {"ru": "своего движка нет: нужен модуль ядра 3.1 или утилиты awg третьей линии", "en": "no engine of its own: needs a 3.1 kernel module or third-line awg tools"},
+      "since_note": {"ru": "своего движка нет: нужен модуль ядра третьей линии, а во внешнем режиме ещё и утилиты awg третьей линии", "en": "no engine of its own: needs a third-line kernel module, and in external mode third-line awg tools as well"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/vovochka404/network-manager-amneziawg/releases/tag/v0.9.12"},

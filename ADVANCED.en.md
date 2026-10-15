@@ -2013,7 +2013,7 @@ Starting with v5.7.4, `MTU = 1280` is set automatically in both server and clien
 
 **Why:** Cellular networks (4G/LTE) often have an effective MTU below the default 1420, causing packet fragmentation or drops. iOS is strict about Path MTU Discovery and may fail to connect. 1280 is the minimum IPv6 MTU (RFC 8200), guaranteed to pass through any network. The speed impact is negligible.
 
-**Keep 1280 with the 3.1 profile.** The 3.1 profile adds `ContentPaddingAddition` padding to data packets (up to 128 bytes in ours), so the size headroom matters no less than before. Raise the MTU (say, to the WireGuard default of 1420) only after measuring the PMTU on the path to the server, and then to the same value on the server and every client: the Amnezia VPN tracker describes loss on 3.1 exactly when the server and the client had different MTUs (server 1420, client 1376 or 1200: [#3089](https://github.com/amnezia-vpn/amnezia-client/issues/3089), [#3274](https://github.com/amnezia-vpn/amnezia-client/issues/3274)), and in #3274 setting 1280 on both sides removed it. This is a recommendation, not a proven ceiling.
+**Keep 1280 with the 3.1 profile.** The 3.1 profile adds `ContentPaddingAddition` padding to data packets (up to 128 bytes in ours), so the size headroom matters no less than before. Raise the MTU (say, to the WireGuard default of 1420) only after measuring the PMTU on each client's path, and keep the server's MTU no larger than the clients': in [#3089](https://github.com/amnezia-vpn/amnezia-client/issues/3089) a server with 1420 sent packets larger than a client interface with 1376 accepted, and they were lost, and in [#3274](https://github.com/amnezia-vpn/amnezia-client/issues/3274) (server 1420, client 1200) setting 1280 on both sides cut the loss considerably. This is a recommendation, not a proven ceiling.
 
 **For installations before v5.7.4:**
 
@@ -2154,7 +2154,7 @@ Recorded 15 October 2026 from the release pages, the app stores and the projects
 | Throne (Windows, Linux, macOS, third-party) | yes | 1.3.2 (29 Sep 2026) | 1.3.0 (17 Sep 2026); in 1.3.x the padding of some packets is cut to the room left in the buffer; fixed in pre-releases 1.4.0-beta.1 and beta.2 | project releases page | project code |
 | L×Box (Android, third-party) | yes | v2.25.15 (14 Oct 2026) | v2.23.0 (5 Sep 2026) | project releases page | project code |
 | ZedSecure (Android, third-party) | yes | v3.1.6 (13 Oct 2026) | - | project releases page | project code |
-| network-manager-amneziawg (Linux, third-party) | yes | v0.9.12 (13 Oct 2026) | v0.9.12; no engine of its own: needs a 3.1 kernel module or third-line awg tools | project releases page | project pages |
+| network-manager-amneziawg (Linux, third-party) | yes | v0.9.12 (13 Oct 2026) | v0.9.12; no engine of its own: needs a third-line kernel module, and in external mode third-line awg tools as well | project releases page | project pages |
 | gluetun (Docker, third-party) | in the daily feed, no tag | latest image from master; tag v3.41.3 has no AmneziaWG | master (26 Sep 2026); a 3.0 engine: it does not read RandomTrailers and DisableCookies lines, and this installer's profile does not write them | Docker Hub, tag latest | project code |
 | Hiddify | no | 4.1.1 (5 Mar 2026) | - | - | project code |
 | KeeneticOS (stock firmware) | development channel only | 5.2 Beta 0 (2 Oct 2026) | 5.2 Alpha 11 (25 Sep 2026); not in stable 5.1 | Keenetic development channel | project pages |
