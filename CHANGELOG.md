@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [6.0.1] - 2026-10-15
+
+**v6.0.1** - безопасный диапазон `--jc` для клиентов на amneziawg-go, сообщения установщика без привязки к 2.0 и таблица клиентов по срезу 15 октября 2026.
+
 ### Изменено
 
 - **Документация ведёт к AmneziaWG 3.1.** README и INSTALL_VPS начинают с того, что получает новая установка: какой сервер нужен для 3.1 (x86_64 с ядром 6.7 и новее, полноценная виртуальная машина, а не контейнер), какое приложение ставить на какое устройство и как проверить, что всё работает и какое поколение стоит на сервере. Где установщик сам ставит 2.0 (ARM, штатный Debian 12) или останавливается, сказано прямо. Добавлены перевод работающего сервера на 3.1 (резервную копию надо забрать с сервера: `--uninstall` стирает `/root/awg/`) и вопросы FAQ «почему у меня 2.0» и «как подключить Linux». Исправлены устаревшие места: Ubuntu 26.04 берёт из PPA свой набор `resolute`, на ARM `--uninstall` удаляет и пакет готового модуля, а обращения сервера наружу при установке и работе перечислены полностью.
@@ -2123,7 +2127,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.1...HEAD
+[6.0.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.0...v6.0.1
 [6.0.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.1...v6.0.0
 [5.37.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.0...v5.37.1
 [5.37.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.2...v5.37.0

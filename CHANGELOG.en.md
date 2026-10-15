@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.0.1] - 2026-10-15
+
+**v6.0.1** - a safe `--jc` range for amneziawg-go clients, installer messages no longer tied to 2.0, and the client table from the 15 October 2026 snapshot.
+
 ### Changed
 
 - **The documentation leads to AmneziaWG 3.1.** README and INSTALL_VPS start from what a new install gets: which server 3.1 needs (x86_64 with kernel 6.7 or newer, a full virtual machine rather than a container), which app to put on which device, and how to check that everything works and which generation the server runs. Where the installer sets up 2.0 by itself (ARM, a stock Debian 12) or stops, they say so plainly. New: moving a running server to 3.1 (copy the backup off the server first: `--uninstall` deletes `/root/awg/`) and FAQ entries "why did I get 2.0" and "how to connect Linux". Out-of-date places fixed: Ubuntu 26.04 takes its own `resolute` suite from the PPA, `--uninstall` on ARM also removes the prebuilt module package, and the server's outbound connections during install and operation are listed in full.
@@ -2123,7 +2127,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.1...HEAD
+[6.0.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.0...v6.0.1
 [6.0.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.1...v6.0.0
 [5.37.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.0...v5.37.1
 [5.37.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.36.2...v5.37.0
