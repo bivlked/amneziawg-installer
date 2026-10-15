@@ -216,8 +216,7 @@ There are a few other ways to get AmneziaWG running. Each picks a different trad
 |---|---|---|
 | **This installer** | SSH + one bash command | Headless VPS, single-purpose box, no Docker or panel, ARM prebuilts |
 | **[wiresock/amneziawg-install](https://github.com/wiresock/amneziawg-install)** | SSH + bash, optional native web panel and obfuscation proxy (Rust) | Want a browser panel without Docker, or traffic masking via a separate service |
-| **[wg-easy](https://github.com/wg-easy/wg-easy)** | Docker + web UI | Home-lab boxes that already run Docker; want a browser panel for peers |
-| **[spcfox/amnezia-wg-easy](https://github.com/spcfox/amnezia-wg-easy)** | Docker fork of wg-easy | Existing wg-easy users who specifically want AmneziaWG instead of plain WireGuard |
+| **[wg-easy](https://github.com/wg-easy/wg-easy)** | Docker + web UI | Home-lab boxes that already run Docker; want a browser panel for peers. AmneziaWG there is experimental (`EXPERIMENTAL_AWG=true` plus the kernel module on the host); the third line is only on the master branch since 9 September 2026, release v15.4.0 does not have it |
 | **[Amnezia VPN app](https://amnezia.org/)** | Desktop/mobile GUI, deploys the server side in Docker over SSH | Click-through setup with no terminal; want a graphical client |
 
 **Quick pick:**

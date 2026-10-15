@@ -217,8 +217,7 @@ cat /sys/module/amneziawg/version    # версия загруженного м�
 |---|---|---|
 | **Этот установщик** | SSH + одна bash-команда | Headless VPS, single-purpose сервер, без Docker и панели, ARM-prebuilt'ы |
 | **[wiresock/amneziawg-install](https://github.com/wiresock/amneziawg-install)** | SSH + bash, опц. нативная веб-панель и обфускация-прокси (Rust) | Нужна веб-панель без Docker или маскировка трафика отдельным сервисом |
-| **[wg-easy](https://github.com/wg-easy/wg-easy)** | Docker + веб-интерфейс | Домашние боксы, на которых уже крутится Docker; нужна панель для клиентов |
-| **[spcfox/amnezia-wg-easy](https://github.com/spcfox/amnezia-wg-easy)** | Docker-форк wg-easy | Те, кто уже на wg-easy и хочет именно AmneziaWG вместо обычного WireGuard |
+| **[wg-easy](https://github.com/wg-easy/wg-easy)** | Docker + веб-интерфейс | Домашние боксы, на которых уже крутится Docker; нужна панель для клиентов. AmneziaWG там экспериментальный (`EXPERIMENTAL_AWG=true` и модуль ядра на хосте); третья линия есть только в ветке master с 9 сентября 2026, в выпуске v15.4.0 её нет |
 | **[Amnezia VPN](https://amnezia.org/)** | Десктоп/моб GUI, разворачивает сервер в Docker по SSH | Установка кликами без терминала; нужен графический клиент |
 
 **Быстрый выбор:**
