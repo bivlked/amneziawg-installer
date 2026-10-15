@@ -236,7 +236,7 @@ vc_still_refuses() {
 vc_tools_view() {
     # The tools apply the last Jc, key case-insensitive. Without the header
     # protection key the range check reads "Jc" case-sensitively, so the
-    # warning must not rely on it (found by Codex review).
+    # warning must not rely on it.
     local hpk
     for hpk in "" hpk; do
         run vconf "$1" 4 "jc = 127\nI1 = <r 8>" "$hpk"
