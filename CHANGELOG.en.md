@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [6.0.1] - 2026-10-15
+## [6.0.1] - 2026-10-18
 
 **v6.0.1** - a safe `--jc` range for amneziawg-go clients, installer messages no longer tied to 2.0, documentation that starts from the 3.1 path, and the client table from the 15 October 2026 snapshot.
 

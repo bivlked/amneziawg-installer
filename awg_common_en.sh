@@ -4,7 +4,7 @@
 # Shared function library for AmneziaWG 3.x and 2.0
 # Author: @bivlked
 # Version: 6.0.1
-# Date: 2026-10-15
+# Date: 2026-10-18
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
