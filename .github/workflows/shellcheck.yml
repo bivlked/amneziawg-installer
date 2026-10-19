@@ -22,7 +22,10 @@ concurrency:
 jobs:
   shellcheck:
     name: Lint and syntax check
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: that label moves to Ubuntu 26.04 from 19 Oct 2026,
+    # whose apt ships ShellCheck 0.11 and bats 1.13. The gate is tuned to 24.04
+    # (ShellCheck 0.9.0, bats 1.10.0); move to 26.04 as a deliberate change.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     steps:

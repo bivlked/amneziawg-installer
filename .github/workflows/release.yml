@@ -17,7 +17,10 @@ jobs:
   # network, so a tag with stale pins would yield a broken install straight
   # from the release. This job blocks that.
   preflight:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: that label moves to Ubuntu 26.04 from 19 Oct 2026,
+    # whose apt ships ShellCheck 0.11 and bats 1.13. The gate is tuned to 24.04
+    # (ShellCheck 0.9.0, bats 1.10.0); move to 26.04 as a deliberate change.
+    runs-on: ubuntu-24.04
     # Forty, the same budget as test.yml: the preflight runs the whole bats
     # suite serially, which took 13-18.5 min. At fifteen the v5.37.1 tag was
     # cancelled at 15m17s and published nothing.
@@ -55,7 +58,7 @@ jobs:
 
   release:
     needs: preflight
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

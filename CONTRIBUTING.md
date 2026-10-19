@@ -45,7 +45,7 @@ Before submitting a PR, ensure:
    done
    ```
 
-2. **ShellCheck** (version from Ubuntu repositories, typically >= 0.9.0) passes with **zero warnings**:
+2. **ShellCheck** passes with **zero warnings**. CI runs ShellCheck 0.9.0 from the Ubuntu 24.04 repositories; a newer version may report more, so check with 0.9.0 when the two disagree:
    ```bash
    for f in install_amneziawg.sh install_amneziawg_en.sh manage_amneziawg.sh manage_amneziawg_en.sh awg_common.sh awg_common_en.sh; do
      shellcheck -s bash -S warning "$f"

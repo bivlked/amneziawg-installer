@@ -16,7 +16,10 @@ concurrency:
 
 jobs:
   unit-tests:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: that label moves to Ubuntu 26.04 from 19 Oct 2026,
+    # whose apt ships ShellCheck 0.11 and bats 1.13. The gate is tuned to 24.04
+    # (ShellCheck 0.9.0, bats 1.10.0); move to 26.04 as a deliberate change.
+    runs-on: ubuntu-24.04
     # 🔴 Twenty, because ten had no headroom left and ran out. Measured on this
     # workflow: 7m41s before the module probe landed, 9m48s on its pull request
     # (green by twelve seconds), 10m18s on the push to main - which hits the cap
