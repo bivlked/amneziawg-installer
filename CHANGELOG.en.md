@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.0] - 2026-10-21
+
+**v6.1.0** - a `--i1` flag that sets the I1 concealment packet to your own value, the client table as of 21 October 2026, and a "how to install AmneziaWG 3.1" FAQ entry.
+
 ### Added
 
 - **`--i1` flag: your own I1 concealment packet instead of a generated one** ([#196](https://github.com/bivlked/amneziawg-installer/issues/196)). For example `--i1='<b 0x...><r 16>'`. The value is checked right away, before any work: only the tags both the kernel module and amneziawg-go understand are accepted (`<b 0xHEX>`, `<r N>`, `<rc N>`, `<rd N>`, `<t>`, lengths 1 to 1000, the whole packet at most 1024 bytes), and `<c>` is refused with an explanation, because such a profile would not load on a phone. The value is pinned in `awgsetup_cfg.init`: a reinstall and the fallback to 2.0 keep it, `--no-cps` or an explicit `--preset`, `--mobile`, `--jc`, `--jmin`, `--jmax` drop it, and the installer says so. On a running server `--force --i1=...` changes only `I1` and leaves the rest of the set as it is; issued profiles get the new value after `regen`.
@@ -2137,7 +2141,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.0...HEAD
+[6.1.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.1...v6.1.0
 [6.0.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.0...v6.0.1
 [6.0.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.1...v6.0.0
 [5.37.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.0...v5.37.1

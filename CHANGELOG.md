@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [6.1.0] - 2026-10-21
+
+**v6.1.0** - флаг `--i1`, которым маскирующий пакет I1 задаётся своим значением, таблица клиентов по срезу 21 октября 2026 и вопрос FAQ «как установить AmneziaWG 3.1».
+
 ### Добавлено
 
 - **Флаг `--i1`: свой маскирующий пакет I1 вместо сгенерированного** ([#196](https://github.com/bivlked/amneziawg-installer/issues/196)). Например `--i1='<b 0x...><r 16>'`. Значение проверяется сразу, до любой работы: допустимы только теги, которые понимают и модуль ядра, и amneziawg-go (`<b 0xHEX>`, `<r N>`, `<rc N>`, `<rd N>`, `<t>`, длины от 1 до 1000, весь пакет не больше 1024 байт), а `<c>` отклоняется с объяснением, потому что на телефоне такой профиль не заведётся. Значение закрепляется в `awgsetup_cfg.init`: его сохраняют переустановка и автооткат на 2.0, а снимают `--no-cps` или явные `--preset`, `--mobile`, `--jc`, `--jmin`, `--jmax`, и об этом установщик предупреждает. На работающем сервере `--force --i1=...` меняет только `I1`, остальной набор остаётся прежним; выданные профили получают новое значение после `regen`.
@@ -2137,7 +2141,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.0...HEAD
+[6.1.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.1...v6.1.0
 [6.0.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.0...v6.0.1
 [6.0.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.1...v6.0.0
 [5.37.1]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.0...v5.37.1
