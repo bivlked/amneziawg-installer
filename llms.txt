@@ -12,7 +12,7 @@ sudo bash ./install_amneziawg_en.sh
 ```
 
 - The Russian-language script is `install_amneziawg.sh` at the same address. Use the `releases/latest/download` address: release assets carry minisign signatures, and the public key is `KEYS.txt` next to them.
-- About 20 minutes and two reboots. After each reboot, run the same script again and it continues from the step where it stopped.
+- About 20 minutes and two reboots: the script asks before each one (answer y), and after each reboot you run it again; it continues from the step where it stopped.
 - Meant for a clean VPS dedicated to the VPN, not a home router, shared hosting or a server that does other work: the installer hardens and tunes the whole machine (UFW, Fail2Ban, sysctl).
 - Systems: for a new server Ubuntu 24.04 or Debian 13; Ubuntu 26.04 is also supported; Debian 12 still works but is kept for existing servers, not new ones; Ubuntu 25.10 is not supported since version 6.0.0. Architectures: x86_64, ARM64, ARMv7. The machine-readable source of truth is `docs/support-matrix.json` (linked below).
 - It creates two clients and saves their configs and QR codes (PNG, including a QR of the `vpn://` link for Amnezia VPN) in `/root/awg/` on the server; at the end the script prints where the files are and how to copy them with `scp`. Clients are managed afterwards with `manage_amneziawg.sh` (`add`, `remove`, `list`, `regen`); time-limited access is `add <name> --expires=7d`.
