@@ -277,3 +277,22 @@ render_fixture() {
     [ "$status" -eq 0 ]
     grep -qxF 'I1 = <b 0x0102><r 8>' "$SERVER_CONF_FILE"
 }
+
+# ------------------------------------------------------------- wiring
+
+@test "i1 flag: initialize_setup resolves the pin before generating and applies it after, both twins" {
+    local s body res gen app nocps
+    for s in "${INSTALLERS[@]}"; do
+        body=$(sed -n '/^initialize_setup() {/,/^}/p' "$BATS_TEST_DIRNAME/../$s")
+        res=$(grep -n '^[[:space:]]*_awg_resolve_i1_pin$' <<< "$body" | head -1 | cut -d: -f1)
+        gen=$(grep -n '^[[:space:]]*generate_awg_params$' <<< "$body" | head -1 | cut -d: -f1)
+        app=$(grep -n '^[[:space:]]*AWG_I1="\$AWG_I1_PIN"$' <<< "$body" | head -1 | cut -d: -f1)
+        nocps=$(grep -n '^[[:space:]]*if \[\[ "\${NO_CPS:-0}" -eq 1 \]\]; then$' <<< "$body" | head -1 | cut -d: -f1)
+        [ -n "$res" ] && [ -n "$gen" ] && [ -n "$app" ] && [ -n "$nocps" ] || { echo "$s: anchors not found ($res/$gen/$app/$nocps)"; return 1; }
+        [ "$res" -lt "$gen" ] || { echo "$s: pin resolved at $res, after generation at $gen"; return 1; }
+        [ "$gen" -lt "$app" ] && [ "$app" -lt "$nocps" ] || { echo "$s: pin applied at $app, not between generation $gen and --no-cps $nocps"; return 1; }
+        # --i1 turns CPS back on and sends an unfinished install back to step 4.
+        grep -qF 'elif [[ "${CLI_I1_SET:-0}" -eq 1 || -n "${CLI_PRESET:-}"' <<< "$body" || { echo "$s: --i1 does not reset NO_CPS"; return 1; }
+        grep -qF '|| [[ "${CLI_I1_SET:-0}" -eq 1 ]] \' <<< "$body" || { echo "$s: --i1 does not return an unfinished install to step 4"; return 1; }
+    done
+}
