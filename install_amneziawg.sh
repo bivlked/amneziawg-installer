@@ -65,7 +65,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="76e9c4fcc32725ca5bd50fb8ecf75ae3e5d207496e4aad4267cc1af1dc150d02"
+COMMON_SCRIPT_SHA256="5a38f1e88b9257b9c0f720cace9b746a080b5b96c1f4afc590e29f786bf50381"
 MANAGE_SCRIPT_SHA256="1ad049ffc3e53cc1ea2f31fb44aa76ff44b049e07a205002851c1c38b988b057"
 
 # AmneziaWG 2.0 пин (H0, 31 jul 2026). Upstream влил AmneziaWG 3.0 в default-ветку
@@ -416,8 +416,9 @@ _awg_i1_cli_check() {
 }
 
 # --i1 проверяется сразу, до любой работы: ошибка в значении иначе всплыла бы
-# только на шаге 6, после обновления системы и перезагрузок.
-if [[ "$CLI_I1_SET" -eq 1 ]]; then
+# только на шаге 6, после обновления системы и перезагрузок. С --help проверка
+# не нужна: справка всё равно завершает запуск, и плохое значение её не заслоняет.
+if [[ "$CLI_I1_SET" -eq 1 && "$HELP" -ne 1 ]]; then
     if [[ "$CLI_NO_CPS" -eq 1 ]]; then
         printf '%s\n' "--i1 и --no-cps противоречат друг другу: --i1 задаёт I1, а --no-cps его убирает. Оставьте один из флагов." >&2
         exit 2
@@ -667,7 +668,7 @@ show_help() {
                         <b 0xHEX>, <r N>, <rc N>, <rd N>, <t> (N от 1 до 1000,
                         весь пакет не больше 1024 байт).
                         Значение закрепляется: переустановка его сохраняет,
-                        снимают --no-cps или явный --preset/--jc/--jmin/--jmax
+                        снимают --no-cps или явный --preset/--mobile/--jc/--jmin/--jmax
   --no-prebuilt        На ARM не ставить готовый пакет модуля из релиза
                         arm-packages, а собрать модуль через DKMS
 

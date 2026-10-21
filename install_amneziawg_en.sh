@@ -67,7 +67,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="f1b0e76f3a00b738da2cc07e68e6ed740878b3de623b0e38b7806a81d85c47a7"
+COMMON_SCRIPT_SHA256="cd5149e9a12d034d4d22fdd66a1d3f702becbdde22413fc62b49f2df139be9ac"
 MANAGE_SCRIPT_SHA256="50e5a8b9d1d3dba57f8c8f2e0b7b55074b109687d7501ffef142de0a1362a7e1"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
@@ -431,8 +431,9 @@ _awg_i1_cli_check() {
 }
 
 # --i1 is checked right away, before any work: otherwise a bad value would only
-# surface at step 6, after the system update and the reboots.
-if [[ "$CLI_I1_SET" -eq 1 ]]; then
+# surface at step 6, after the system update and the reboots. With --help there is
+# nothing to check: help ends the run anyway, and a bad value must not hide it.
+if [[ "$CLI_I1_SET" -eq 1 && "$HELP" -ne 1 ]]; then
     if [[ "$CLI_NO_CPS" -eq 1 ]]; then
         printf '%s\n' "--i1 and --no-cps contradict each other: --i1 sets I1 and --no-cps removes it. Keep one of them." >&2
         exit 2
@@ -686,7 +687,7 @@ Options:
                         <b 0xHEX>, <r N>, <rc N>, <rd N>, <t> (N from 1 to 1000,
                         the whole packet at most 1024 bytes).
                         The value is pinned: a reinstall keeps it, --no-cps or an
-                        explicit --preset/--jc/--jmin/--jmax drops it
+                        explicit --preset/--mobile/--jc/--jmin/--jmax drops it
   --no-prebuilt        On ARM, do not install the prebuilt module package from
                         the arm-packages release; build the module with DKMS
 

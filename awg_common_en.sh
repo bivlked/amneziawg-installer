@@ -3263,10 +3263,12 @@ render_server_config() {
 
     # --i1 (issue #196): an I1 pinned in the init file (AWG_I1_PIN) wins over
     # the live awg0.conf, otherwise a reinstall with --i1 would silently keep the
-    # old I1. A hand edit of I1 is overwritten while a pin is set - say so.
+    # old I1. The swap is said out loud: that shows both a hand edit of I1 that the
+    # pin overwrote and a run resumed after a reboot. When --i1 was passed in this
+    # same run, the installer already warned at step 0, so it is not repeated.
     if [[ -n "${AWG_I1_PIN:-}" ]]; then
-        if [[ -n "${AWG_I1:-}" && "$AWG_I1" != "$AWG_I1_PIN" ]]; then
-            log_warn "I1 from $SERVER_CONF_FILE (${AWG_I1}) replaced with the value pinned by --i1 (${AWG_I1_PIN}). To drop the pin: reinstall with --no-cps or with an explicit --preset."
+        if [[ -n "${AWG_I1:-}" && "$AWG_I1" != "$AWG_I1_PIN" && "${CLI_I1_SET:-0}" != 1 ]]; then
+            log_warn "I1 from $SERVER_CONF_FILE (${AWG_I1}) replaced with the value pinned by --i1 (${AWG_I1_PIN}). To drop the pin: reinstall with --no-cps or with an explicit --preset, --mobile, --jc, --jmin or --jmax."
         fi
         AWG_I1="$AWG_I1_PIN"
     fi

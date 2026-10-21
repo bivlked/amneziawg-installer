@@ -296,3 +296,35 @@ render_fixture() {
         grep -qF '|| [[ "${CLI_I1_SET:-0}" -eq 1 ]] \' <<< "$body" || { echo "$s: --i1 does not return an unfinished install to step 4"; return 1; }
     done
 }
+
+@test "i1 flag: --help wins over a bad --i1, exit 0 (RU + EN)" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        run bash "$BATS_TEST_DIRNAME/../$f" --help '--i1=<c>'
+        [ "$status" -eq 0 ] || { echo "$f: rc=$status"; false; }
+        [[ "$output" == *'--i1='* ]]
+    done
+}
+
+@test "i1 flag: render stays quiet about the swap when this run passed --i1 (it already warned)" {
+    render_fixture
+    echo "export AWG_I1_PIN='<b 0x0102><r 8>'" >> "$CONFIG_FILE"
+    export CLI_I1_SET=1   # read by render_server_config
+    run render_server_config
+    [ "$status" -eq 0 ]
+    grep -qxF 'I1 = <b 0x0102><r 8>' "$SERVER_CONF_FILE"
+    [ "$(printf '%s\n' "$output" | grep -c '<r 155>')" -eq 0 ]
+}
+
+@test "i1 flag: every list of pin-dropping flags names --mobile (help, ADVANCED, render hint)" {
+    local f
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        sed -n '/^  --i1=/,/^  --no-prebuilt/p' "$BATS_TEST_DIRNAME/../$f" | grep -q -- '--mobile' || { echo "$f help"; false; }
+    done
+    for f in ADVANCED.md ADVANCED.en.md; do
+        grep -E "^  --i1='" "$BATS_TEST_DIRNAME/../$f" | grep -q -- '--mobile' || { echo "$f flag list"; false; }
+    done
+    for f in awg_common.sh awg_common_en.sh; do
+        sed -n '/^render_server_config() {/,/^}$/p' "$BATS_TEST_DIRNAME/../$f" | grep 'AWG_I1_PIN' | grep -q -- '--mobile' || { echo "$f render hint"; false; }
+    done
+}
