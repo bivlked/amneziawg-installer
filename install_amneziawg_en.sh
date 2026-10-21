@@ -379,7 +379,7 @@ fi
 # otherwise. The patterns sit in variables: in a [[ =~ ]] regex \< would mean a
 # word boundary, not an angle bracket.
 _awg_i1_cli_check() {
-    local v="${1-}" rest tag n
+    local v="${1-}" rest tag n total=0
     local re_b='^<b 0x([0-9a-fA-F]*)>(.*)$'
     local re_r='^<(r|rc|rd) ([0-9]+)>(.*)$'
     local re_t='^<t>(.*)$'
@@ -396,14 +396,17 @@ _awg_i1_cli_check() {
                 printf 'the tag <b 0x%s> needs an even number of hex digits, at least two' "$n"
                 return 1
             fi
+            total=$(( total + ${#n} / 2 ))
         elif [[ "$rest" =~ $re_r ]]; then
             tag="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"; rest="${BASH_REMATCH[3]}"
             if ! [[ "$n" =~ ^[1-9][0-9]{0,3}$ ]] || (( n > 1000 )); then
                 printf 'the length in <%s %s> must be 1 to 1000, without leading zeros' "$tag" "$n"
                 return 1
             fi
+            total=$(( total + n ))
         elif [[ "$rest" =~ $re_t ]]; then
             rest="${BASH_REMATCH[1]}"
+            total=$(( total + 4 ))
         elif [[ "$rest" =~ $re_bad ]]; then
             tag="${BASH_REMATCH[1]}"
             if [[ "$tag" == c ]]; then
@@ -417,6 +420,13 @@ _awg_i1_cli_check() {
             return 1
         fi
     done
+    # The same ceiling as the CPS check in manage diagnose: oversized I1-I5 hang
+    # reading the interface (upstream #228), and our generator emits at most 128
+    # bytes, so a kilobyte is already clearly too much.
+    if (( total > 1024 )); then
+        printf 'the packet comes to %s bytes, and more than 1024 is not allowed: an oversized I1 hangs reading the interface state, and on a router that brings the device down' "$total"
+        return 1
+    fi
     return 0
 }
 
@@ -673,7 +683,8 @@ Options:
   --no-cps              Disable CPS (the I1 parameter) - needed if the desktop
                         AmneziaVPN on macOS hangs on connect (issue #159)
   --i1='<b 0x...>'      Set I1 (the concealment packet) to your own value. Tags:
-                        <b 0xHEX>, <r N>, <rc N>, <rd N>, <t> (N from 1 to 1000).
+                        <b 0xHEX>, <r N>, <rc N>, <rd N>, <t> (N from 1 to 1000,
+                        the whole packet at most 1024 bytes).
                         The value is pinned: a reinstall keeps it, --no-cps or an
                         explicit --preset/--jc/--jmin/--jmax drops it
   --no-prebuilt        On ARM, do not install the prebuilt module package from
@@ -1872,6 +1883,9 @@ _awg_resolve_i1_pin() {
         AWG_I1_PIN="${CLI_I1-}"
     elif [[ "${CLI_NO_CPS:-0}" -eq 1 || -n "${CLI_PRESET:-}" || -n "${CLI_JC:-}" \
             || -n "${CLI_JMIN:-}" || -n "${CLI_JMAX:-}" ]]; then
+        if [[ -n "${AWG_I1_PIN:-}" ]]; then
+            log_warn "The I1 pinned by --i1 (${AWG_I1_PIN}) is dropped: --no-cps, --preset, --mobile, --jc, --jmin and --jmax reset it. To keep it, add --i1 to this command."
+        fi
         AWG_I1_PIN=''
     fi
 }

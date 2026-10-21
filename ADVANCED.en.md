@@ -1026,7 +1026,7 @@ Options:
   --jmin=N              Set Jmin manually (0-1280, overrides preset)
   --jmax=N              Set Jmax manually (0-1280, overrides preset, must be >= Jmin)
   --no-cps              Disable CPS (the I1 parameter) - for desktop clients that do not support it (e.g. macOS)
-  --i1='<b 0x...>'      Set I1 to your own value: tags <b 0xHEX>, <r N>, <rc N>, <rd N>, <t> (N from 1 to 1000). The value is pinned, a reinstall keeps it
+  --i1='<b 0x...>'      Set I1 to your own value: tags <b 0xHEX>, <r N>, <rc N>, <rd N>, <t> (N from 1 to 1000, the whole packet at most 1024 bytes). The value is pinned, a reinstall keeps it
   --no-prebuilt         On ARM, do not install the prebuilt module package from the arm-packages release; build the module with DKMS
   -y, --yes             Non-interactive mode (all confirmations auto-yes)
   -f, --force           Reinstall over a working AWG (ENV: AWG_FORCE_REINSTALL=1)

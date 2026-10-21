@@ -52,6 +52,37 @@ check() {  # check <installer> <value> : runs _awg_i1_cli_check, prints reason
     done
 }
 
+@test "i1 flag: the decoded size is capped at 1024 bytes, like the diagnose warning (RU + EN)" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        # 1000 + 20 + 4 = 1024: exactly at the cap passes.
+        run check "$f" '<r 1000><rc 20><t>'
+        [ "$status" -eq 0 ] || { echo "$f rejected 1024 bytes: $output"; false; }
+        # 1000 + 24 + 1 (one <b> byte) = 1025: one over fails and says the size.
+        run check "$f" '<r 1000><rd 24><b 0x01>'
+        [ "$status" -eq 1 ]
+        [[ "$output" == *1025* ]] || { echo "$f: no size in reason: $output"; false; }
+        # Many small tags add up too: each tag is fine alone.
+        run check "$f" '<r 1000><r 1000><r 1000><r 1000>'
+        [ "$status" -eq 1 ]
+        # <t> counts as 4 bytes: 1000 + 21 + 4 = 1025.
+        run check "$f" '<r 1000><rc 21><t>'
+        [ "$status" -eq 1 ]
+    done
+}
+
+@test "i1 flag: dropping a saved pin is said out loud, keeping or setting it is quiet (RU + EN)" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        run env -i PATH="$PATH" CLI_JC=4 'AWG_I1_PIN=<t>' bash -c 'log_warn() { echo "WARN: $*"; }'$'\n'"$(lift "$f" _awg_resolve_i1_pin)"$'\n''_awg_resolve_i1_pin'
+        [[ "$output" == WARN:*'<t>'* ]] || { echo "$f: no warning on drop: $output"; false; }
+        run env -i PATH="$PATH" CLI_JC=4 bash -c 'log_warn() { echo "WARN: $*"; }'$'\n'"$(lift "$f" _awg_resolve_i1_pin)"$'\n''_awg_resolve_i1_pin'
+        [ -z "$output" ] || { echo "$f: warned with no pin to drop: $output"; false; }
+        run env -i PATH="$PATH" CLI_I1_SET=1 'CLI_I1=<t>' 'AWG_I1_PIN=<b 0x01>' bash -c 'log_warn() { echo "WARN: $*"; }'$'\n'"$(lift "$f" _awg_resolve_i1_pin)"$'\n''_awg_resolve_i1_pin'
+        [ -z "$output" ] || { echo "$f: warned on a new --i1: $output"; false; }
+    done
+}
+
 @test "i1 flag: rejects the kernel-only counter tag and names the phone failure (RU + EN)" {
     local f
     for f in "${INSTALLERS[@]}"; do
@@ -107,7 +138,7 @@ check() {  # check <installer> <value> : runs _awg_i1_cli_check, prints reason
 
 resolve() {  # resolve <installer> <env assignments...> : prints the pin
     local f="$1"; shift
-    env -i PATH="$PATH" "$@" bash -c "$(lift "$f" _awg_resolve_i1_pin)"$'\n''_awg_resolve_i1_pin; printf "[%s]" "${AWG_I1_PIN-}"'
+    env -i PATH="$PATH" "$@" bash -c "log_warn() { :; }"$'\n'"$(lift "$f" _awg_resolve_i1_pin)"$'\n''_awg_resolve_i1_pin; printf "[%s]" "${AWG_I1_PIN-}"'
 }
 
 @test "i1 flag: --i1 sets the pin, even with an explicit preset (RU + EN)" {

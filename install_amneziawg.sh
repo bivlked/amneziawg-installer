@@ -364,7 +364,7 @@ fi
 # Шаблоны лежат в переменных: в регулярке [[ =~ ]] запись \< означала бы
 # границу слова, а не угловую скобку.
 _awg_i1_cli_check() {
-    local v="${1-}" rest tag n
+    local v="${1-}" rest tag n total=0
     local re_b='^<b 0x([0-9a-fA-F]*)>(.*)$'
     local re_r='^<(r|rc|rd) ([0-9]+)>(.*)$'
     local re_t='^<t>(.*)$'
@@ -381,14 +381,17 @@ _awg_i1_cli_check() {
                 printf 'в теге <b 0x%s> нужно чётное число hex-символов, не меньше двух' "$n"
                 return 1
             fi
+            total=$(( total + ${#n} / 2 ))
         elif [[ "$rest" =~ $re_r ]]; then
             tag="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"; rest="${BASH_REMATCH[3]}"
             if ! [[ "$n" =~ ^[1-9][0-9]{0,3}$ ]] || (( n > 1000 )); then
                 printf 'длина в теге <%s %s> должна быть от 1 до 1000 без ведущих нулей' "$tag" "$n"
                 return 1
             fi
+            total=$(( total + n ))
         elif [[ "$rest" =~ $re_t ]]; then
             rest="${BASH_REMATCH[1]}"
+            total=$(( total + 4 ))
         elif [[ "$rest" =~ $re_bad ]]; then
             tag="${BASH_REMATCH[1]}"
             if [[ "$tag" == c ]]; then
@@ -402,6 +405,13 @@ _awg_i1_cli_check() {
             return 1
         fi
     done
+    # Тот же потолок, что у проверки CPS в manage diagnose: слишком большие I1-I5
+    # подвешивают чтение интерфейса (upstream #228), а наш генератор даёт не
+    # больше 128 байт, так что килобайт - уже явный перебор.
+    if (( total > 1024 )); then
+        printf 'пакет выходит %s байт, а больше 1024 нельзя: слишком большой I1 подвешивает чтение состояния интерфейса, на роутере это роняет устройство' "$total"
+        return 1
+    fi
     return 0
 }
 
@@ -654,7 +664,8 @@ show_help() {
   --no-cps              Отключить CPS (параметр I1) - нужно, если десктопный
                         AmneziaVPN на macOS виснет при подключении (issue #159)
   --i1='<b 0x...>'      Задать I1 (маскирующий пакет) своим значением. Теги:
-                        <b 0xHEX>, <r N>, <rc N>, <rd N>, <t> (N от 1 до 1000).
+                        <b 0xHEX>, <r N>, <rc N>, <rd N>, <t> (N от 1 до 1000,
+                        весь пакет не больше 1024 байт).
                         Значение закрепляется: переустановка его сохраняет,
                         снимают --no-cps или явный --preset/--jc/--jmin/--jmax
   --no-prebuilt        На ARM не ставить готовый пакет модуля из релиза
@@ -1812,6 +1823,9 @@ _awg_resolve_i1_pin() {
         AWG_I1_PIN="${CLI_I1-}"
     elif [[ "${CLI_NO_CPS:-0}" -eq 1 || -n "${CLI_PRESET:-}" || -n "${CLI_JC:-}" \
             || -n "${CLI_JMIN:-}" || -n "${CLI_JMAX:-}" ]]; then
+        if [[ -n "${AWG_I1_PIN:-}" ]]; then
+            log_warn "Закреплённый через --i1 I1 (${AWG_I1_PIN}) снят: --no-cps, --preset, --mobile, --jc, --jmin и --jmax его сбрасывают. Вернуть - добавить --i1 к этой команде."
+        fi
         AWG_I1_PIN=''
     fi
 }
