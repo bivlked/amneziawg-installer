@@ -57,13 +57,15 @@
     {
       "id": "defaultvpn",
       "name": {"ru": "DefaultVPN (iOS, от авторов Amnezia)", "en": "DefaultVPN (iOS, by the Amnezia authors)"},
-      "support": "unknown",
+      "support": "yes",
       "version": "2.0.2",
       "version_date": "2026-09-21",
+      "since": "2.0.1",
+      "since_date": "2026-08-24",
       "where": {"ru": "App Store, в том числе российский", "en": "App Store, the Russian one included"},
-      "basis": "unknown",
+      "basis": "vendor-docs",
       "evidence": {"url": "https://apps.apple.com/ru/app/defaultvpn/id6744725017"},
-      "checked_at": "2026-10-15"
+      "checked_at": "2026-10-21"
     },
     {
       "id": "amneziawg-windows",
@@ -93,26 +95,26 @@
       "id": "wg-tunnel-android",
       "name": {"ru": "WG Tunnel (Android, сторонний)", "en": "WG Tunnel (Android, third-party)"},
       "support": "yes",
-      "version": "5.8.1",
-      "version_date": "2026-10-12",
+      "version": "5.8.2",
+      "version_date": "2026-10-19",
       "since": "5.6.0",
       "where": "Google Play, IzzyOnDroid, APK",
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/wgtunnel/core/blob/1.9.6/backend/native/backend/go.mod", "ref": "gradle/libs.versions.toml at 5.8.1: core 1.9.6; core go.mod at 1.9.6: amneziawg-go/v3 => wgtunnel/amneziawg-go c434976f60d4"},
-      "checked_at": "2026-10-15"
+      "evidence": {"url": "https://github.com/wgtunnel/core/blob/1.9.9/backend/native/backend/go.mod", "ref": "gradle/libs.versions.toml at 5.8.2: core 1.9.9; core go.mod at 1.9.9: amneziawg-go/v3 => wgtunnel/amneziawg-go c434976f60d4"},
+      "checked_at": "2026-10-21"
     },
     {
       "id": "wg-tunnel-desktop",
       "name": {"ru": "WG Tunnel Desktop (сторонний)", "en": "WG Tunnel Desktop (third-party)"},
       "support": "yes",
-      "version": "v2.4.0",
-      "version_date": "2026-10-11",
+      "version": "v2.4.1",
+      "version_date": "2026-10-17",
       "since": "2.0.0",
       "since_date": "2026-09-13",
       "where": {"ru": "страница релизов проекта, choco, apt, AUR", "en": "project releases page, choco, apt, AUR"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/wgtunnel/desktop/blob/v2.4.0/gradle/libs.versions.toml", "ref": "gradle/libs.versions.toml at v2.4.0: core 1.9.5; core go.mod at 1.9.5: wgtunnel/amneziawg-go c434976f60d4; the first release 2.0.0 already pins engine b838c6a with header_protection_key, random_trailers and disable_cookies"},
-      "checked_at": "2026-10-15"
+      "evidence": {"url": "https://github.com/wgtunnel/desktop/blob/v2.4.1/gradle/libs.versions.toml", "ref": "gradle/libs.versions.toml at v2.4.1: core 1.9.9; core go.mod at 1.9.9: wgtunnel/amneziawg-go c434976f60d4; the first release 2.0.0 already pins engine b838c6a with header_protection_key, random_trailers and disable_cookies"},
+      "checked_at": "2026-10-21"
     },
     {
       "id": "mihomo",
@@ -131,15 +133,15 @@
       "id": "flclash",
       "name": {"ru": "FlClash (Android, Windows, macOS, Linux, сторонний)", "en": "FlClash (Android, Windows, macOS, Linux, third-party)"},
       "support": "yes",
-      "version": "v0.9.0",
-      "version_date": "2026-10-14",
+      "version": "v0.9.1",
+      "version_date": "2026-10-17",
       "since": "v0.8.97",
       "since_date": "2026-09-10",
       "since_note": {"ru": "ядро mihomo: нужна строка `version: 3` в `amnezia-wg-option`", "en": "mihomo core: needs `version: 3` in `amnezia-wg-option`"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/chen08209/FlClash", "ref": "submodule core/Clash.Meta at v0.9.0: chen08209/Clash.Meta 8380d0e7462f = mihomo v1.19.32 plus 2 commits; HeaderProtectionKey first appears in the core at v0.8.97, v0.8.96 has none"},
-      "checked_at": "2026-10-15"
+      "evidence": {"url": "https://github.com/chen08209/FlClash", "ref": "submodule core/Clash.Meta at v0.9.1: chen08209/Clash.Meta 8380d0e7462f, the same as at v0.9.0 = mihomo v1.19.32 plus 2 commits, go.mod: metacubex/amneziawg-go 0c1c6f40ecd7; HeaderProtectionKey first appears in the core at v0.8.97, v0.8.96 has none"},
+      "checked_at": "2026-10-21"
     },
     {
       "id": "throne",
@@ -149,24 +151,24 @@
       "version_date": "2026-09-29",
       "since": "1.3.0",
       "since_date": "2026-09-17",
-      "since_note": {"ru": "в 1.3.x паддинг части пакетов урезается до свободного места в буфере; исправлено в пре-релизах 1.4.0-beta.1 и beta.2", "en": "in 1.3.x the padding of some packets is cut to the room left in the buffer; fixed in pre-releases 1.4.0-beta.1 and beta.2"},
+      "since_note": {"ru": "в 1.3.x паддинг части пакетов урезается до свободного места в буфере; исправлено в пре-релизах 1.4.0-beta.1 - beta.3", "en": "in 1.3.x the padding of some packets is cut to the room left in the buffer; fixed in pre-releases 1.4.0-beta.1 to beta.3"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/throneproj/Throne", "ref": "core/go.mod at 1.3.2: throneproj/wireguard-go f60e4eda0d08; 1.4.0-beta.1 and beta.2 pin 3517ea9271e4 with padding fix ca68c0e"},
-      "checked_at": "2026-10-15"
+      "evidence": {"url": "https://github.com/throneproj/Throne", "ref": "core/go.mod at 1.3.2: throneproj/wireguard-go f60e4eda0d08; 1.4.0-beta.1 and beta.2 pin 3517ea9271e4 with padding fix ca68c0e; 1.4.0-beta.3 pins 98b1170bc9f0, which contains ca68c0e"},
+      "checked_at": "2026-10-21"
     },
     {
       "id": "lxbox",
       "name": {"ru": "L×Box (Android, сторонний)", "en": "L×Box (Android, third-party)"},
       "support": "yes",
-      "version": "v2.25.15",
-      "version_date": "2026-10-14",
+      "version": "v2.25.16",
+      "version_date": "2026-10-19",
       "since": "v2.23.0",
       "since_date": "2026-09-05",
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/Leadaxe/LxBox", "ref": "app/android/libbox.version at v2.25.15: sing-box-lx v1.14.3-lx.18, whose wireguard-go submodule 8a53421edf7e handles header_protection_key and content_padding_addition; since from the v2.23.0 release notes (AmneziaWG 3.0/3.1, HeaderProtectionKey and ContentPaddingAddition import)"},
-      "checked_at": "2026-10-15"
+      "evidence": {"url": "https://github.com/Leadaxe/LxBox", "ref": "app/android/libbox.version at v2.25.16: sing-box-lx v1.14.3-lx.21, whose wireguard-go submodule 8a53421edf7e (the same as in lx.18) handles header_protection_key and content_padding_addition; since from the v2.23.0 release notes (AmneziaWG 3.0/3.1, HeaderProtectionKey and ContentPaddingAddition import)"},
+      "checked_at": "2026-10-21"
     },
     {
       "id": "zedsecure",
@@ -219,27 +221,27 @@
       "id": "keeneticos",
       "name": {"ru": "KeeneticOS (штатная прошивка)", "en": "KeeneticOS (stock firmware)"},
       "support": "dev-channel",
-      "version": "5.2 Beta 0",
-      "version_date": "2026-10-02",
+      "version": "5.2 Beta 1",
+      "version_date": "2026-10-19",
       "since": "5.2 Alpha 11",
       "since_date": "2026-09-25",
       "since_note": {"ru": "в стабильной 5.1 нет", "en": "not in stable 5.1"},
       "where": {"ru": "канал разработки Keenetic", "en": "Keenetic development channel"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://forum.keenetic.com/topic/26598-changelog-52/"},
-      "checked_at": "2026-10-15"
+      "checked_at": "2026-10-21"
     },
     {
       "id": "awg-manager",
       "name": {"ru": "AWG Manager (Keenetic, сторонний)", "en": "AWG Manager (Keenetic, third-party)"},
       "support": "yes",
-      "version": "v2.19.16",
-      "version_date": "2026-10-14",
+      "version": "v2.19.19",
+      "version_date": "2026-10-20",
       "since": {"ru": "штатным модулем на KeeneticOS 5.2 Alpha 11 и новее; на других прошивках - своим модулем ядра или встроенным sing-box (нужны Entware и компонент WireGuard)", "en": "with the stock module on KeeneticOS 5.2 Alpha 11 and newer; on other firmware with its own kernel module or its bundled sing-box (needs Entware and the WireGuard component)"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/hoaxisr/awg-manager/blob/v2.19.16/CHANGELOG.md", "ref": "internal/singbox/installer/embedded.go at v2.19.16: sing-box 1.15.0-alpha.12-awgm.33 (hoaxisr/amnezia-box), whose go.mod replaces amneziawg-go/v3 with hoaxisr/amneziawg-go v3.1.0-awgm.3; CHANGELOG 2.19.10: 3.0/3.1 on KeeneticOS 5.2 Alpha 11+; 2.18.0: own module 3.1.20260906"},
-      "checked_at": "2026-10-15"
+      "evidence": {"url": "https://github.com/hoaxisr/awg-manager/blob/v2.19.19/CHANGELOG.md", "ref": "internal/singbox/installer/embedded.go at v2.19.19: sing-box 1.15.0-alpha.12-awgm.33 (hoaxisr/amnezia-box), whose go.mod replaces amneziawg-go/v3 with hoaxisr/amneziawg-go v3.1.0-awgm.3; CHANGELOG 2.19.10: 3.0/3.1 on KeeneticOS 5.2 Alpha 11+; 2.18.0: own module 3.1.20260906"},
+      "checked_at": "2026-10-21"
     },
     {
       "id": "openwrt",
@@ -254,14 +256,14 @@
       "id": "awg-openwrt",
       "name": {"ru": "awg-openwrt (OpenWrt, сторонний)", "en": "awg-openwrt (OpenWrt, third-party)"},
       "support": "yes",
-      "version": "v25.12.5, v24.10.8",
+      "version": "v25.12.6, v24.10.8",
       "since": "v25.12.5, v24.10.8",
       "since_date": "2026-09-22",
       "since_note": {"ru": "пакеты этих релизов заменены под прежними тегами; скачанные раньше и пакеты для более старых OpenWrt - без 3.1", "en": "the packages of these releases were replaced under the same tags; ones downloaded earlier and packages for older OpenWrt have no 3.1"},
       "where": {"ru": "страница релизов проекта, фид проекта", "en": "project releases page, project feed"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/Slava-Shchipunov/awg-openwrt/releases", "ref": "x86_64 packages of v24.10.8 and v25.12.5: kmod-amneziawg 3.1.20260906-r1 (6.6.144.3.1.20260906-r1 for 24.10), amneziawg-tools 3.1.20260812-r1"},
-      "checked_at": "2026-10-15"
+      "evidence": {"url": "https://github.com/Slava-Shchipunov/awg-openwrt/releases", "ref": "x86_64 packages of v25.12.6: kmod-amneziawg 6.12.112.3.1.20260906-r1, amneziawg-tools 3.1.20260812-r1; of v24.10.8: kmod-amneziawg 6.6.144.3.1.20260906-r1, amneziawg-tools 3.1.20260812-r1"},
+      "checked_at": "2026-10-21"
     },
     {
       "id": "glinet",
