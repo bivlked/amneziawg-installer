@@ -1,4 +1,4 @@
-# Install AmneziaWG VPN server on Ubuntu / Debian VPS
+# Install AmneziaWG 3.1 VPN server on Ubuntu / Debian VPS
 
 A step-by-step guide for deploying an AmneziaWG VPN server (3.1 by default, 2.0 for older clients) on a clean Ubuntu or Debian VPS over SSH. Single bash command, no Docker, no web panel. Aimed at headless setups where you want a working DPI-resistant VPN with the lowest possible footprint on a cheap VPS.
 

@@ -54,7 +54,7 @@ chmod +x install_amneziawg_en.sh
 sudo bash ./install_amneziawg_en.sh
 ```
 
-> What you get (on x86_64 with Ubuntu 24.04 / 26.04 or Debian 13): an AmneziaWG 3.1 server tuned for VPN (forwarding, kernel tuning) and hardened (the UFW firewall, if you agree), and two ready clients, `my_phone` and `my_laptop`: their configs, QR codes and `vpn://` links are in `/root/awg/`. 3 commands, 2 reboots along the way (after each one, run the last command again), about 20 minutes. For a clean Ubuntu/Debian VPS, not a home router or shared hosting. [Details →](#installation)
+> What you get (on x86_64 with Ubuntu 24.04 / 26.04 or Debian 13): an AmneziaWG 3.1 server tuned for VPN (forwarding, kernel tuning) and hardened (the UFW firewall, if you agree), and two ready clients, `my_phone` and `my_laptop`: their configs, QR codes and `vpn://` links are in `/root/awg/`. 3 commands, 2 reboots along the way (answer `y` each time it asks to reboot, and after each one run the last command again), about 20 minutes. For a clean Ubuntu/Debian VPS, not a home router or shared hosting. [Details →](#installation)
 >
 > **Connect a device.** You need a client with 3.1 support: on Android, WG Tunnel or AmneziaWG; on iPhone, AmneziaWG (scan the `my_phone.png` QR code); on Mac, AmneziaWG (import the `.conf`); on Windows, AmneziaWG (import `my_laptop.conf`); on any platform, Amnezia VPN (the `vpn://` link); on Linux, [with awg-quick](ADVANCED.en.md#linux-client-adv). How to get the files off the server is in [After installation](#after-installation); another device later is a single `add` command.
 >
@@ -78,7 +78,7 @@ The script runs as root. Below are the main changes it makes to the system.
 - **Swap.** When swap is below 1 GB (up to 2 GB of RAM) or below 512 MB (more RAM), it creates `/swapfile` and adds a line to `/etc/fstab`.
 - **Firewall.** UFW: incoming denied, SSH rate-limited on the detected port (or `--ssh-port`), the VPN UDP port open, and a forwarding rule from `awg0` to the external interface. If UFW is not on yet, the installer asks whether to enable it (with `--yes` it is enabled without asking). Fail2Ban protects SSH, with its settings in `/etc/fail2ban/jail.d/amneziawg.conf`. **The SSH server configuration is not touched.**
 - **VPN.** The server config `/etc/amnezia/amneziawg/awg0.conf` with `iptables` rules in `PostUp`, the `awg-quick@awg0` service, the `/root/awg/` directory (keys, client configs, log, management scripts) with 700/600 permissions, and the cron job `/etc/cron.d/awg-expiry` for clients with an expiry date.
-- **Reboots.** There are two: after the system update and after the module install. After each one, run the same command again.
+- **Reboots.** There are two: after the system update and after the module install (the installer asks, answer `y`). After each one, run the same command again.
 - **Rollback**: `--uninstall` removes its own module, configs, sysctl files, cron jobs, the VPN-port UFW allow rule and the `awg0` UFW route rule. It disables UFW and purges Fail2Ban only if it enabled/installed them itself; if UFW was already active before install, the SSH rate-limit rule it added stays. It does not restore swap settings or removed packages, and the dependency packages it added (dkms, the compiler, kernel headers) stay. By default, `--yes` included, it first creates the archive `/root/awg_uninstall_backup_*.tar.gz` with the configs and private keys; it stays on the server, so delete it yourself once you no longer need it.
 
 `--no-tweaks` leaves packages, swap, sysctl hardening, UFW and Fail2Ban alone. Forwarding is enabled anyway, in `/etc/sysctl.d/99-amneziawg-forwarding.conf`, and the same file turns host IPv6 off unless you pass `--allow-ipv6`; the system update runs as usual. What stays after an uninstall is in [INSTALL_VPS.md](INSTALL_VPS.md#uninstall), the threat model in [docs/SIGNING_DESIGN.md](docs/SIGNING_DESIGN.md#threat-model), signature verification in [Verifying a release](#verifying-a-release).
@@ -600,6 +600,11 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 ## ❓ FAQ
 
 > **In this section:** install and updates, connecting clients, mobile networks, choosing a host and migrating, security and parameters. Expand the relevant question below.
+
+<details>
+  <summary><strong>Q: How do I install AmneziaWG 3.1 on my own server?</strong></summary>
+  <b>A:</b> On a clean x86_64 VPS with Ubuntu 24.04, 26.04 or Debian 13, with the three commands from the <a href="#quickstart">Quick Start</a>: download <code>install_amneziawg_en.sh</code> from the latest release and run it with <code>sudo bash</code>. The 3.1 profile is the default and runs as a kernel module, without Docker; on ARM and on stock Debian 12 the installer picks 2.0 by itself, and the <a href="#awg3">3.1 section</a> lists the other cases. Expect two reboots: answer <code>y</code> each time it asks "Reboot now?", and after each reboot log in again and repeat the last command. The other route is the official Amnezia VPN app, which deploys the server in Docker; the <a href="#similar-tools">comparison</a> shows how the two differ.
+</details>
 
 <details>
   <summary><strong>Q: Will it survive a kernel update?</strong></summary>
