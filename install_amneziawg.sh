@@ -90,6 +90,9 @@ _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""; CLI_SSH_PORT_SET=0
 CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PREBUILT=0; CLI_CLIENT_IPV6_DIRECT=0; CLI_KEEP_PACKAGES=0
 CLI_ALLOW_IPV6_TUNNEL=0
+CLI_I1=""; CLI_I1_SET=0
+# Закреплённый I1 приходит только из init, не из окружения вызвавшей оболочки.
+AWG_I1_PIN=""
 CLI_ISOLATION="default"
 CLI_SERVER_NAME=""
 CLI_MOBILE=0
@@ -329,6 +332,7 @@ while [[ $# -gt 0 ]]; do
         --jc=*)          CLI_JC="${1#*=}" ;;
         --jmin=*)        CLI_JMIN="${1#*=}" ;;
         --jmax=*)        CLI_JMAX="${1#*=}" ;;
+        --i1=*)          CLI_I1="${1#*=}"; CLI_I1_SET=1 ;;
         *) echo "Неизвестный аргумент: $1" >&2; HELP=1; HELP_EXIT_RC=1 ;;
     esac
     shift
@@ -346,6 +350,73 @@ if [[ "$REPAIR_MODULE" -eq 1 ]]; then
         esac
     done
     unset _a
+fi
+
+# _awg_i1_cli_check <значение> : годится ли значение --i1 (issue #196).
+# 0 - да; 1 - нет, причина в stdout.
+# Пускаем только теги, которые разбирают ОБЕ реализации: <b 0xHEX>, <r N>,
+# <rc N>, <rd N>, <t>. <c> понимает только модуль ядра, а amneziawg-go - движок
+# Android, iOS, macOS и Windows - на нём падает с "failed to parse I1": такой
+# I1 ушёл бы во все клиентские профили и не завёлся бы на телефоне. <d>, <ds>,
+# <dz> наоборот отвергает модуль. Потолок 1000 у <r>, <rc>, <rd> взят из
+# документации вендора. Теги идут вплотную, без пробелов: строгая форма проще
+# проверки «как разберёт каждая реализация», а записать значение иначе незачем.
+# Шаблоны лежат в переменных: в регулярке [[ =~ ]] запись \< означала бы
+# границу слова, а не угловую скобку.
+_awg_i1_cli_check() {
+    local v="${1-}" rest tag n
+    local re_b='^<b 0x([0-9a-fA-F]*)>(.*)$'
+    local re_r='^<(r|rc|rd) ([0-9]+)>(.*)$'
+    local re_t='^<t>(.*)$'
+    local re_bad='^<(c|d|ds|dz)[ >]'
+    if [[ -z "$v" ]]; then
+        printf 'пустое значение (убрать I1 совсем - это --no-cps)'
+        return 1
+    fi
+    rest="$v"
+    while [[ -n "$rest" ]]; do
+        if [[ "$rest" =~ $re_b ]]; then
+            n="${BASH_REMATCH[1]}"; rest="${BASH_REMATCH[2]}"
+            if [[ -z "$n" ]] || (( ${#n} % 2 != 0 )); then
+                printf 'в теге <b 0x%s> нужно чётное число hex-символов, не меньше двух' "$n"
+                return 1
+            fi
+        elif [[ "$rest" =~ $re_r ]]; then
+            tag="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"; rest="${BASH_REMATCH[3]}"
+            if ! [[ "$n" =~ ^[1-9][0-9]{0,3}$ ]] || (( n > 1000 )); then
+                printf 'длина в теге <%s %s> должна быть от 1 до 1000 без ведущих нулей' "$tag" "$n"
+                return 1
+            fi
+        elif [[ "$rest" =~ $re_t ]]; then
+            rest="${BASH_REMATCH[1]}"
+        elif [[ "$rest" =~ $re_bad ]]; then
+            tag="${BASH_REMATCH[1]}"
+            if [[ "$tag" == c ]]; then
+                printf 'тег <c> понимает только модуль ядра: amneziawg-go (Android, iOS, macOS, Windows) на нём падает с "failed to parse I1", и профиль не заведётся на телефоне'
+            else
+                printf 'тег <%s> модуль ядра не принимает (Invalid argument)' "$tag"
+            fi
+            return 1
+        else
+            printf 'не разобрано, начиная с "%s": допустимы только теги <b 0xHEX>, <r N>, <rc N>, <rd N> и <t>, вплотную друг к другу' "$rest"
+            return 1
+        fi
+    done
+    return 0
+}
+
+# --i1 проверяется сразу, до любой работы: ошибка в значении иначе всплыла бы
+# только на шаге 6, после обновления системы и перезагрузок.
+if [[ "$CLI_I1_SET" -eq 1 ]]; then
+    if [[ "$CLI_NO_CPS" -eq 1 ]]; then
+        printf '%s\n' "--i1 и --no-cps противоречат друг другу: --i1 задаёт I1, а --no-cps его убирает. Оставьте один из флагов." >&2
+        exit 2
+    fi
+    if ! _i1_why=$(_awg_i1_cli_check "$CLI_I1"); then
+        printf '%s\n' "Невалидный --i1='$CLI_I1': ${_i1_why}." >&2
+        exit 2
+    fi
+    unset _i1_why
 fi
 
 # ==============================================================================
@@ -582,7 +653,11 @@ show_help() {
   --jmax=N             Задать Jmax вручную (0-1280, поверх preset, должно быть >= Jmin)
   --no-cps              Отключить CPS (параметр I1) - нужно, если десктопный
                         AmneziaVPN на macOS виснет при подключении (issue #159)
-  --no-prebuilt         На ARM не ставить готовый пакет модуля из релиза
+  --i1='<b 0x...>'      Задать I1 (маскирующий пакет) своим значением. Теги:
+                        <b 0xHEX>, <r N>, <rc N>, <rd N>, <t> (N от 1 до 1000).
+                        Значение закрепляется: переустановка его сохраняет,
+                        снимают --no-cps или явный --preset/--jc/--jmin/--jmax
+  --no-prebuilt        На ARM не ставить готовый пакет модуля из релиза
                         arm-packages, а собрать модуль через DKMS
 
 Примеры:
@@ -1726,6 +1801,21 @@ _awg_switch_params() {
     CLI_PRESET="${CLI_PRESET:-${AWG_PRESET:-default}}" generate_awg_params
 }
 
+# _awg_resolve_i1_pin : решить, какой I1 закреплён (AWG_I1_PIN, issue #196).
+# --i1 ставит закрепление. --no-cps и явные --preset/--jc/--jmin/--jmax без --i1
+# его снимают: так же они уже обходятся с NO_CPS, и так обещано в #196 (они
+# перегенерируют весь набор вместе с I1). Без этих флагов держится закрепление,
+# прочитанное из init. Зовётся до генерации набора, чтобы generate_awg_params
+# увидел уже итоговое значение.
+_awg_resolve_i1_pin() {
+    if [[ "${CLI_I1_SET:-0}" -eq 1 ]]; then
+        AWG_I1_PIN="${CLI_I1-}"
+    elif [[ "${CLI_NO_CPS:-0}" -eq 1 || -n "${CLI_PRESET:-}" || -n "${CLI_JC:-}" \
+            || -n "${CLI_JMIN:-}" || -n "${CLI_JMAX:-}" ]]; then
+        AWG_I1_PIN=''
+    fi
+}
+
 # _awg31_resolve_protocol : разрешить итоговое поколение установки и, если
 # запрошена третья линия, пропустить окружение через гейт (стадия pre).
 # Arg $1: состояние установки из _awg_install_state: 0 - новая, 1 - существующая
@@ -2190,7 +2280,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PREBUILT|KEEP_PACKAGES|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PREBUILT|KEEP_PACKAGES|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT|\
                 AWG_PROTOCOL_SOURCE|AWG_PROTOCOL_FALLBACK)
                     export "$key=$value"
@@ -3178,8 +3268,14 @@ generate_awg_params() {
         AWG_H4="${_h_lines[3]}"
     fi
 
-    # I1: CPS concealment
-    AWG_I1=$(generate_cps_i1) || die "Не удалось собрать маскирующий пакет I1 - генератор вернул некорректное значение"
+    # I1: CPS concealment. Значение из --i1 (закреплено в init как AWG_I1_PIN)
+    # важнее генератора: иначе автооткат шага 3, который зовёт эту функцию в
+    # другом процессе, молча заменил бы его случайным.
+    if [[ -n "${AWG_I1_PIN:-}" ]]; then
+        AWG_I1="$AWG_I1_PIN"
+    else
+        AWG_I1=$(generate_cps_i1) || die "Не удалось собрать маскирующий пакет I1 - генератор вернул некорректное значение"
+    fi
 
     # I2-I5 здесь НЕ генерируются (admin задаёт их вручную в awg0.conf, issue #71).
     # Свежая генерация набора (первая установка или --preset/--jc/--jmin/--jmax)
@@ -5298,6 +5394,8 @@ export AWG_H2='${AWG_H2}'
 export AWG_H3='${AWG_H3}'
 export AWG_H4='${AWG_H4}'
 export AWG_I1='${AWG_I1}'
+# I1, закреплённый флагом --i1. Пусто - I1 выбирает установщик.
+export AWG_I1_PIN='${AWG_I1_PIN:-}'
 export AWG_I2='${AWG_I2:-}'
 export AWG_I3='${AWG_I3:-}'
 export AWG_I4='${AWG_I4:-}'
@@ -5692,6 +5790,7 @@ initialize_setup() {
     fi
 
     _awg_saved_jc_guard
+    _awg_resolve_i1_pin
 
     # Генерация AWG 2.0 параметров
     # Перегенерация если: первый запуск, смена поколения незавершённой установки
@@ -5724,10 +5823,21 @@ initialize_setup() {
         # Перегенерировать его здесь молча НЕЛЬЗЯ: это сменило бы параметры
         # работающей установки без спроса. Поэтому просто называем вслух, и
         # только тем, кого это касается.
-        if [[ "${AWG_I1:-}" =~ ^\<r\ [0-9]+\>$ ]]; then
+        if [[ -z "${AWG_I1_PIN:-}" && "${AWG_I1:-}" =~ ^\<r\ [0-9]+\>$ ]]; then
             log_warn "I1 здесь - случайные байты (${AWG_I1}): так делали версии до сентября 2026."
             log_warn "Если туннель не поднимается на сотовой сети, см. ADVANCED.md, раздел «Рукопожатие не собирается на мобильном интернете»."
         fi
+    fi
+
+    # --i1 (issue #196): закреплённый I1 ставится и тогда, когда набор не
+    # перегенерировался, то есть при переустановке с одним --i1. Серверный конфиг
+    # возьмёт его на шаге 6 (render_server_config), а у выданных клиентов I1
+    # прежний, их надо перевыпустить.
+    if [[ -n "${AWG_I1_PIN:-}" ]]; then
+        if [[ "${CLI_I1_SET:-0}" -eq 1 && "$config_exists" -eq 1 && "${AWG_GEN_SWITCHED:-0}" -ne 1 && "${AWG_AUTO_FALLBACK:-0}" -ne 1 ]]; then
+            log_warn "I1 будет заменён значением из --i1. У существующих клиентов прежний I1 - перевыпустите их после установки и переимпортируйте на устройствах: sudo bash $MANAGE_SCRIPT_PATH regen"
+        fi
+        AWG_I1="$AWG_I1_PIN"
     fi
 
     # CPS (I1) toggle (issue #159): --no-cps убирает параметр I1, из-за которого
@@ -5737,7 +5847,7 @@ initialize_setup() {
     # (свежая генерация набора включает I1). Иначе держим состояние из init.
     if [[ "${CLI_NO_CPS:-0}" -eq 1 ]]; then
         NO_CPS=1
-    elif [[ -n "${CLI_PRESET:-}" || -n "${CLI_JC:-}" || -n "${CLI_JMIN:-}" || -n "${CLI_JMAX:-}" ]]; then
+    elif [[ "${CLI_I1_SET:-0}" -eq 1 || -n "${CLI_PRESET:-}" || -n "${CLI_JC:-}" || -n "${CLI_JMIN:-}" || -n "${CLI_JMAX:-}" ]]; then
         NO_CPS=0
     fi
     if [[ "${NO_CPS:-0}" -eq 1 ]]; then
@@ -5842,7 +5952,8 @@ initialize_setup() {
         || [[ "${CLI_ALLOW_IPV6_TUNNEL:-0}" -eq 1 ]] || [[ -n "${CLI_PRESET:-}" ]] \
         || [[ -n "${CLI_JC:-}" ]] || [[ -n "${CLI_JMIN:-}" ]] || [[ -n "${CLI_JMAX:-}" ]] \
         || [[ "${CLI_ISOLATION:-default}" != "default" ]] \
-        || [[ "${CLI_NO_CPS:-0}" -eq 1 ]] || [[ "${CLI_CLIENT_IPV6_DIRECT:-0}" -eq 1 ]]; }; then
+        || [[ "${CLI_NO_CPS:-0}" -eq 1 ]] || [[ "${CLI_I1_SET:-0}" -eq 1 ]] \
+        || [[ "${CLI_CLIENT_IPV6_DIRECT:-0}" -eq 1 ]]; }; then
         log_warn "Незавершённая установка (шаг $current_step) + CLI-параметры конфигурации: возврат к шагу 4, чтобы firewall и конфиги были перегенерированы с новыми значениями."
         current_step=4
         update_state 4

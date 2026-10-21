@@ -93,6 +93,9 @@ _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""; CLI_SSH_PORT_SET=0
 CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PREBUILT=0; CLI_CLIENT_IPV6_DIRECT=0; CLI_KEEP_PACKAGES=0
 CLI_ALLOW_IPV6_TUNNEL=0
+CLI_I1=""; CLI_I1_SET=0
+# A pinned I1 comes only from the init file, not from the calling shell.
+AWG_I1_PIN=""
 CLI_ISOLATION="default"
 CLI_SERVER_NAME=""
 CLI_MOBILE=0
@@ -342,6 +345,7 @@ while [[ $# -gt 0 ]]; do
         --jc=*)          CLI_JC="${1#*=}" ;;
         --jmin=*)        CLI_JMIN="${1#*=}" ;;
         --jmax=*)        CLI_JMAX="${1#*=}" ;;
+        --i1=*)          CLI_I1="${1#*=}"; CLI_I1_SET=1 ;;
         *) echo "Unknown argument: $1" >&2; HELP=1; HELP_EXIT_RC=1 ;;
     esac
     shift
@@ -360,6 +364,74 @@ if [[ "$REPAIR_MODULE" -eq 1 ]]; then
         esac
     done
     unset _a
+fi
+
+# _awg_i1_cli_check <value> : whether a --i1 value is acceptable (issue #196).
+# 0 - yes; 1 - no, the reason on stdout.
+# Only the tags BOTH implementations parse get through: <b 0xHEX>, <r N>,
+# <rc N>, <rd N>, <t>. <c> is understood by the kernel module only, and
+# amneziawg-go - the engine of Android, iOS, macOS and Windows - fails on it with
+# "failed to parse I1": such an I1 would reach every client profile and not load
+# on a phone. <d>, <ds>, <dz> are the other way round, the module rejects them.
+# The ceiling of 1000 for <r>, <rc>, <rd> comes from the vendor docs. Tags go
+# back to back, without spaces: a strict form is simpler than checking how each
+# implementation would read a looser one, and there is no reason to write it
+# otherwise. The patterns sit in variables: in a [[ =~ ]] regex \< would mean a
+# word boundary, not an angle bracket.
+_awg_i1_cli_check() {
+    local v="${1-}" rest tag n
+    local re_b='^<b 0x([0-9a-fA-F]*)>(.*)$'
+    local re_r='^<(r|rc|rd) ([0-9]+)>(.*)$'
+    local re_t='^<t>(.*)$'
+    local re_bad='^<(c|d|ds|dz)[ >]'
+    if [[ -z "$v" ]]; then
+        printf 'empty value (to drop I1 altogether use --no-cps)'
+        return 1
+    fi
+    rest="$v"
+    while [[ -n "$rest" ]]; do
+        if [[ "$rest" =~ $re_b ]]; then
+            n="${BASH_REMATCH[1]}"; rest="${BASH_REMATCH[2]}"
+            if [[ -z "$n" ]] || (( ${#n} % 2 != 0 )); then
+                printf 'the tag <b 0x%s> needs an even number of hex digits, at least two' "$n"
+                return 1
+            fi
+        elif [[ "$rest" =~ $re_r ]]; then
+            tag="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"; rest="${BASH_REMATCH[3]}"
+            if ! [[ "$n" =~ ^[1-9][0-9]{0,3}$ ]] || (( n > 1000 )); then
+                printf 'the length in <%s %s> must be 1 to 1000, without leading zeros' "$tag" "$n"
+                return 1
+            fi
+        elif [[ "$rest" =~ $re_t ]]; then
+            rest="${BASH_REMATCH[1]}"
+        elif [[ "$rest" =~ $re_bad ]]; then
+            tag="${BASH_REMATCH[1]}"
+            if [[ "$tag" == c ]]; then
+                printf 'the <c> tag is kernel module only: amneziawg-go (Android, iOS, macOS, Windows) fails on it with "failed to parse I1", and the profile will not load on a phone'
+            else
+                printf 'the kernel module does not accept the <%s> tag (Invalid argument)' "$tag"
+            fi
+            return 1
+        else
+            printf 'cannot parse from "%s" on: only <b 0xHEX>, <r N>, <rc N>, <rd N> and <t> are allowed, back to back' "$rest"
+            return 1
+        fi
+    done
+    return 0
+}
+
+# --i1 is checked right away, before any work: otherwise a bad value would only
+# surface at step 6, after the system update and the reboots.
+if [[ "$CLI_I1_SET" -eq 1 ]]; then
+    if [[ "$CLI_NO_CPS" -eq 1 ]]; then
+        printf '%s\n' "--i1 and --no-cps contradict each other: --i1 sets I1 and --no-cps removes it. Keep one of them." >&2
+        exit 2
+    fi
+    if ! _i1_why=$(_awg_i1_cli_check "$CLI_I1"); then
+        printf '%s\n' "Invalid --i1='$CLI_I1': ${_i1_why}." >&2
+        exit 2
+    fi
+    unset _i1_why
 fi
 
 # ==============================================================================
@@ -600,7 +672,11 @@ Options:
   --jmax=N             Set Jmax manually (0-1280, overrides preset, must be >= Jmin)
   --no-cps              Disable CPS (the I1 parameter) - needed if the desktop
                         AmneziaVPN on macOS hangs on connect (issue #159)
-  --no-prebuilt         On ARM, do not install the prebuilt module package from
+  --i1='<b 0x...>'      Set I1 (the concealment packet) to your own value. Tags:
+                        <b 0xHEX>, <r N>, <rc N>, <rd N>, <t> (N from 1 to 1000).
+                        The value is pinned: a reinstall keeps it, --no-cps or an
+                        explicit --preset/--jc/--jmin/--jmax drops it
+  --no-prebuilt        On ARM, do not install the prebuilt module package from
                         the arm-packages release; build the module with DKMS
 
 Examples:
@@ -1785,6 +1861,21 @@ _awg_switch_params() {
     CLI_PRESET="${CLI_PRESET:-${AWG_PRESET:-default}}" generate_awg_params
 }
 
+# _awg_resolve_i1_pin : decide which I1 is pinned (AWG_I1_PIN, issue #196).
+# --i1 sets the pin. --no-cps and an explicit --preset/--jc/--jmin/--jmax without
+# --i1 drop it: that is how they already treat NO_CPS, and what #196 was told
+# (they regenerate the whole set, I1 included). Without those flags the pin read
+# from init stays. Called before the set is generated, so that
+# generate_awg_params sees the final value.
+_awg_resolve_i1_pin() {
+    if [[ "${CLI_I1_SET:-0}" -eq 1 ]]; then
+        AWG_I1_PIN="${CLI_I1-}"
+    elif [[ "${CLI_NO_CPS:-0}" -eq 1 || -n "${CLI_PRESET:-}" || -n "${CLI_JC:-}" \
+            || -n "${CLI_JMIN:-}" || -n "${CLI_JMAX:-}" ]]; then
+        AWG_I1_PIN=''
+    fi
+}
+
 # _awg31_resolve_protocol : settle the installation generation and, when the
 # third line is requested, run the environment through the gate (stage pre).
 # Arg $1: the installation state from _awg_install_state: 0 - new, 1 - existing
@@ -2259,7 +2350,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PREBUILT|KEEP_PACKAGES|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PREBUILT|KEEP_PACKAGES|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT|\
                 AWG_PROTOCOL_SOURCE|AWG_PROTOCOL_FALLBACK)
                     export "$key=$value"
@@ -3263,8 +3354,14 @@ generate_awg_params() {
         AWG_H4="${_h_lines[3]}"
     fi
 
-    # I1: CPS concealment
-    AWG_I1=$(generate_cps_i1) || die "Could not build the I1 concealment packet - the generator returned an invalid value"
+    # I1: CPS concealment. A value from --i1 (pinned in init as AWG_I1_PIN)
+    # wins over the generator: otherwise the step 3 fallback, which calls this
+    # function in another process, would silently swap it for a generated one.
+    if [[ -n "${AWG_I1_PIN:-}" ]]; then
+        AWG_I1="$AWG_I1_PIN"
+    else
+        AWG_I1=$(generate_cps_i1) || die "Could not build the I1 concealment packet - the generator returned an invalid value"
+    fi
 
     # I2-I5 are NOT generated here (the admin sets them manually in awg0.conf, issue #71).
     # A fresh param set (first install or --preset/--jc/--jmin/--jmax) clears any stale
@@ -5406,6 +5503,8 @@ export AWG_H2='${AWG_H2}'
 export AWG_H3='${AWG_H3}'
 export AWG_H4='${AWG_H4}'
 export AWG_I1='${AWG_I1}'
+# I1 pinned by the --i1 flag. Empty - the installer picks I1.
+export AWG_I1_PIN='${AWG_I1_PIN:-}'
 export AWG_I2='${AWG_I2:-}'
 export AWG_I3='${AWG_I3:-}'
 export AWG_I4='${AWG_I4:-}'
@@ -5808,6 +5907,7 @@ initialize_setup() {
     fi
 
     _awg_saved_jc_guard
+    _awg_resolve_i1_pin
 
     # AWG 2.0 parameter generation
     # Regenerate if: first run, a generation change of an unfinished install
@@ -5840,10 +5940,21 @@ initialize_setup() {
         # shows the peer. Regenerating it here silently is NOT an option: that
         # would change the parameters of a working installation without asking.
         # So it is simply said out loud, and only to those it concerns.
-        if [[ "${AWG_I1:-}" =~ ^\<r\ [0-9]+\>$ ]]; then
+        if [[ -z "${AWG_I1_PIN:-}" && "${AWG_I1:-}" =~ ^\<r\ [0-9]+\>$ ]]; then
             log_warn "I1 here is random bytes (${AWG_I1}): that is what versions before September 2026 wrote."
             log_warn "If the tunnel does not come up on a cellular network, see ADVANCED.en.md, section \"The handshake never completes on cellular\"."
         fi
+    fi
+
+    # --i1 (issue #196): a pinned I1 is set even when the set was not
+    # regenerated, i.e. on a reinstall with --i1 alone. The server config takes it
+    # at step 6 (render_server_config); issued clients keep the old I1 and have to
+    # be reissued.
+    if [[ -n "${AWG_I1_PIN:-}" ]]; then
+        if [[ "${CLI_I1_SET:-0}" -eq 1 && "$config_exists" -eq 1 && "${AWG_GEN_SWITCHED:-0}" -ne 1 && "${AWG_AUTO_FALLBACK:-0}" -ne 1 ]]; then
+            log_warn "I1 will be replaced with the value from --i1. Existing clients keep the old I1 - reissue them after the install and re-import on the devices: sudo bash $MANAGE_SCRIPT_PATH regen"
+        fi
+        AWG_I1="$AWG_I1_PIN"
     fi
 
     # CPS (I1) toggle (issue #159): --no-cps drops the I1 parameter that makes the
@@ -5853,7 +5964,7 @@ initialize_setup() {
     # re-enable CPS (a fresh set includes I1). Otherwise keep the state from init.
     if [[ "${CLI_NO_CPS:-0}" -eq 1 ]]; then
         NO_CPS=1
-    elif [[ -n "${CLI_PRESET:-}" || -n "${CLI_JC:-}" || -n "${CLI_JMIN:-}" || -n "${CLI_JMAX:-}" ]]; then
+    elif [[ "${CLI_I1_SET:-0}" -eq 1 || -n "${CLI_PRESET:-}" || -n "${CLI_JC:-}" || -n "${CLI_JMIN:-}" || -n "${CLI_JMAX:-}" ]]; then
         NO_CPS=0
     fi
     if [[ "${NO_CPS:-0}" -eq 1 ]]; then
@@ -5959,7 +6070,8 @@ initialize_setup() {
         || [[ "${CLI_ALLOW_IPV6_TUNNEL:-0}" -eq 1 ]] || [[ -n "${CLI_PRESET:-}" ]] \
         || [[ -n "${CLI_JC:-}" ]] || [[ -n "${CLI_JMIN:-}" ]] || [[ -n "${CLI_JMAX:-}" ]] \
         || [[ "${CLI_ISOLATION:-default}" != "default" ]] \
-        || [[ "${CLI_NO_CPS:-0}" -eq 1 ]] || [[ "${CLI_CLIENT_IPV6_DIRECT:-0}" -eq 1 ]]; }; then
+        || [[ "${CLI_NO_CPS:-0}" -eq 1 ]] || [[ "${CLI_I1_SET:-0}" -eq 1 ]] \
+        || [[ "${CLI_CLIENT_IPV6_DIRECT:-0}" -eq 1 ]]; }; then
         log_warn "Unfinished install (step $current_step) + configuration CLI flags: rolling back to step 4 so the firewall and configs are regenerated with the new values."
         current_step=4
         update_state 4

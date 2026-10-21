@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`--i1` flag: your own I1 concealment packet instead of a generated one** ([#196](https://github.com/bivlked/amneziawg-installer/issues/196)). For example `--i1='<b 0x...><r 16>'`. The value is checked right away, before any work: only the tags both the kernel module and amneziawg-go understand are accepted (`<b 0xHEX>`, `<r N>`, `<rc N>`, `<rd N>`, `<t>`, lengths 1 to 1000), and `<c>` is refused with an explanation, because such a profile would not load on a phone. The value is pinned in `awgsetup_cfg.init`: a reinstall and the fallback to 2.0 keep it, `--no-cps` or an explicit `--preset`, `--mobile`, `--jc`, `--jmin`, `--jmax` drop it. On a running server `--force --i1=...` changes only `I1` and leaves the rest of the set as it is; issued profiles get the new value after `regen`.
+
 ## [6.0.1] - 2026-10-18
 
 **v6.0.1** - a safe `--jc` range for amneziawg-go clients, installer messages no longer tied to 2.0, documentation that starts from the 3.1 path, and the client table from the 15 October 2026 snapshot.

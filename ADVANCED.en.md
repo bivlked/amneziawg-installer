@@ -577,7 +577,7 @@ sudo bash /root/awg/manage_amneziawg.sh modify <name> PersistentKeepalive 25
 3. Reissue every client profile: `sudo bash /root/awg/manage_amneziawg.sh regen`, and import them again on each device. `S1`-`S4` and `H1`-`H4` must match, so the old profiles stop connecting. `I1` alone needs no reissue: it can be changed in the client `.conf` too.
 4. On a 3.1 server leave `H1`-`H4` alone (they are 1-4) and keep `S1`-`S4` at 12 or more. Do not change the `HeaderProtectionKey` by hand: a new key cuts off every client until they are reissued, and the normal way to get one is a reinstall (`--uninstall` and a new install). If you change it anyway, change its copy `/root/awg/server_hpk.key` at the same time, otherwise `manage` refuses to issue profiles.
 
-A plain `--force` reinstall keeps the set (except `I1` when the install was made with `--no-cps`: then `I1` is removed again). The `--preset`, `--mobile`, `--jc`, `--jmin` and `--jmax` flags regenerate the whole set on a reinstall, `S`, `H` and `I1` included, and after them every client needs a `regen`.
+A plain `--force` reinstall keeps the set (except `I1` when the install was made with `--no-cps`: then `I1` is removed again). The `--preset`, `--mobile`, `--jc`, `--jmin` and `--jmax` flags regenerate the whole set on a reinstall, `S`, `H` and `I1` included, and after them every client needs a `regen`. The `--i1` flag changes only `I1` and pins it: later reinstalls keep the value, and `--no-cps` or the same `--preset`, `--mobile`, `--jc`, `--jmin` and `--jmax` drop the pin. After `--i1` a `regen` is needed too, or the clients keep the old `I1`.
 
 Editing the `awg_common.sh` library itself is pointless: the installer at step 5 and a script update overwrite it with their own copy.
 
@@ -1026,6 +1026,7 @@ Options:
   --jmin=N              Set Jmin manually (0-1280, overrides preset)
   --jmax=N              Set Jmax manually (0-1280, overrides preset, must be >= Jmin)
   --no-cps              Disable CPS (the I1 parameter) - for desktop clients that do not support it (e.g. macOS)
+  --i1='<b 0x...>'      Set I1 to your own value: tags <b 0xHEX>, <r N>, <rc N>, <rd N>, <t> (N from 1 to 1000). The value is pinned, a reinstall keeps it
   --no-prebuilt         On ARM, do not install the prebuilt module package from the arm-packages release; build the module with DKMS
   -y, --yes             Non-interactive mode (all confirmations auto-yes)
   -f, --force           Reinstall over a working AWG (ENV: AWG_FORCE_REINSTALL=1)
@@ -1813,7 +1814,7 @@ If the capture shows packets from the client and replies from the server, yet `l
 
 **Cause and what to do.** Installations made before September 2026 carry the concealment packet as `I1 = <r N>`, that is N random bytes, and some cellular networks drop such a packet. Since September 2026 the installer writes a DNS-reply-shaped packet instead, and on the measured route a fresh install no longer reproduces the problem; what needs fixing is what was deployed earlier. ⚠️ This is not a promise for every network: for the carriers that the table above wants `I1` absent for, a fresh install keeps the problem. Ways out, best first:
 
-1. **Replace `I1` with a packet that has a meaningful shape.** A string like `<r 2><b 0x8580...>` imitates a DNS response: two random bytes are the transaction id, then the header and a record. A ready-made QUIC string comes from the generator in [AS-based blocking and the I1/CPS workaround](#as-blocking-adv); it fits here too, because what decides is the packet's shape, not its size. A string of this kind - DNS-shaped rather than QUIC-shaped - is what the installer itself emits from September 2026 onwards, so you can take one from a fresh install. `I1` does not have to match between the peers, and concealment packets are sent by the handshake initiator - so for a single client an edit in its own `.conf` is enough and the server can be left alone.
+1. **Replace `I1` with a packet that has a meaningful shape.** A string like `<r 2><b 0x8580...>` imitates a DNS response: two random bytes are the transaction id, then the header and a record. A ready-made QUIC string comes from the generator in [AS-based blocking and the I1/CPS workaround](#as-blocking-adv); it fits here too, because what decides is the packet's shape, not its size. A string of this kind - DNS-shaped rather than QUIC-shaped - is what the installer itself emits from September 2026 onwards, so you can take one from a fresh install. `I1` does not have to match between the peers, and concealment packets are sent by the handshake initiator - so for a single client an edit in its own `.conf` is enough and the server can be left alone. For every client at once, reinstall with `--i1='<string>'`, then run `regen` and re-import the profiles on the devices.
 2. **Drop `I1` entirely** by reinstalling with `--no-cps`. Blunter: the handshake loses its disguise along with the problem.
 3. Lowering `Jc`, `Jmin`, `Jmax` **does not help** - see the measurement below.
 

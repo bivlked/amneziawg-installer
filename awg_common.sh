@@ -1560,7 +1560,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT)
                     export "$key=$value"
                     ;;
@@ -3186,6 +3186,16 @@ render_server_config() {
     case $- in *x*) _awg_xtrace_guard render_server_config "$@"; return ;; esac
     local peers_source="${1:-}"
     load_awg_params || return 1
+
+    # --i1 (issue #196): I1, закреплённый в init (AWG_I1_PIN), важнее живого
+    # awg0.conf, иначе переустановка с --i1 молча оставила бы прежний I1. Правку
+    # I1 руками при закреплении переустановка перезаписывает - называем это вслух.
+    if [[ -n "${AWG_I1_PIN:-}" ]]; then
+        if [[ -n "${AWG_I1:-}" && "$AWG_I1" != "$AWG_I1_PIN" ]]; then
+            log_warn "I1 из $SERVER_CONF_FILE (${AWG_I1}) заменён значением, закреплённым через --i1 (${AWG_I1_PIN}). Снять закрепление: переустановка с --no-cps или с явным --preset."
+        fi
+        AWG_I1="$AWG_I1_PIN"
+    fi
 
     # --no-cps (issue #159): load_awg_params перечитывает I1 из живого awg0.conf
     # при переустановке. При NO_CPS=1 намеренно обнуляем I1, иначе серверный
