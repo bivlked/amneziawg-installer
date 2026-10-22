@@ -626,7 +626,7 @@ _ppa_dns_verdict() {
     [[ -n "${http_proxy:-}${https_proxy:-}${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]] && return 0
     dump="$(apt-config dump 2>/dev/null)"
     awk '{ l = tolower($0) }
-         l ~ /^acquire::https?::proxy(-auto-detect)?(::[^ ]+)? "/ && l !~ / "(direct|false)?";$/ { f = 1 }
+         l ~ /^acquire::https?::proxy(-?auto-?detect)?(::[^ ]+)? "/ && l !~ / "(direct|false)?";$/ { f = 1 }
          END { exit !f }' <<<"$dump" && return 0
     # A verdict only on exit 2 (name not found, also when no DNS server
     # answers). 124 is a slow but possibly working DNS; other codes mean the
@@ -6456,9 +6456,11 @@ _install_pinned_awg2_module() {
     log "Cloning the pinned AmneziaWG 2.0 source ($AWG2_PIN_TAG)..."
     # GIT_TERMINAL_PROMPT=0: a public repository needs no password, and a login
     # prompt on /dev/tty on a server nobody watches hangs the install (D#255).
-    # The git output is kept: git names the cause of the failure itself.
+    # GIT_ASKPASS=/bin/true closes an external prompt program too (GIT_ASKPASS,
+    # core.askPass): any prompt gets an empty answer at once. The git output is
+    # kept: git names the cause of the failure itself.
     local _gout _gl _grc=0
-    _gout="$(GIT_TERMINAL_PROMPT=0 git clone --depth=1 --branch "$AWG2_PIN_TAG" "$repo" "$work/src" 2>&1 </dev/null)" || _grc=$?
+    _gout="$(GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/true git clone --depth=1 --branch "$AWG2_PIN_TAG" "$repo" "$work/src" 2>&1 </dev/null)" || _grc=$?
     if [[ "$_grc" -ne 0 ]]; then
         log_error "Failed to clone $repo (tag $AWG2_PIN_TAG), git exited with ${_grc}. git said:"
         [[ -n "${_gout//[[:space:]]/}" ]] || log_error "  git: no output"

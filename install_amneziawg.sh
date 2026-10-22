@@ -608,7 +608,7 @@ _ppa_dns_verdict() {
     [[ -n "${http_proxy:-}${https_proxy:-}${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]] && return 0
     dump="$(apt-config dump 2>/dev/null)"
     awk '{ l = tolower($0) }
-         l ~ /^acquire::https?::proxy(-auto-detect)?(::[^ ]+)? "/ && l !~ / "(direct|false)?";$/ { f = 1 }
+         l ~ /^acquire::https?::proxy(-?auto-?detect)?(::[^ ]+)? "/ && l !~ / "(direct|false)?";$/ { f = 1 }
          END { exit !f }' <<<"$dump" && return 0
     # Вердикт только при коде 2 (имя не найдено, в том числе когда DNS не
     # отвечает). 124 - медленный, но, может быть, рабочий DNS; прочие коды -
@@ -6325,9 +6325,11 @@ _install_pinned_awg2_module() {
     log "Клонирование пинового исходника AmneziaWG 2.0 ($AWG2_PIN_TAG)..."
     # GIT_TERMINAL_PROMPT=0: публичному репозиторию пароль не нужен, а запрос
     # логина на /dev/tty на сервере без зрителя - это зависание установки
-    # (D#255). Ответ git сохраняется: причину отказа он называет сам.
+    # (D#255). GIT_ASKPASS=/bin/true закрывает и внешнюю программу запроса
+    # (GIT_ASKPASS, core.askPass): на любой запрос сразу пустой ответ. Ответ
+    # git сохраняется: причину отказа он называет сам.
     local _gout _gl _grc=0
-    _gout="$(GIT_TERMINAL_PROMPT=0 git clone --depth=1 --branch "$AWG2_PIN_TAG" "$repo" "$work/src" 2>&1 </dev/null)" || _grc=$?
+    _gout="$(GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/true git clone --depth=1 --branch "$AWG2_PIN_TAG" "$repo" "$work/src" 2>&1 </dev/null)" || _grc=$?
     if [[ "$_grc" -ne 0 ]]; then
         log_error "Не удалось клонировать $repo (тег $AWG2_PIN_TAG), git вернул код ${_grc}. Ответ git:"
         [[ -n "${_gout//[[:space:]]/}" ]] || log_error "  git: вывода нет"

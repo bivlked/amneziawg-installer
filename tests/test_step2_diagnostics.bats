@@ -218,6 +218,9 @@ _verdict() {
         echo 'Acquire::http::Proxy-Auto-Detect "/usr/local/bin/find-proxy";' > "$T/aptconf"
         run _verdict "$f" ubuntu
         [ -z "$output" ] || { echo "$f auto-detect: '$output'"; return 1; }
+        echo 'Acquire::http::ProxyAutoDetect "/usr/local/bin/find-proxy";' > "$T/aptconf"
+        run _verdict "$f" ubuntu
+        [ -z "$output" ] || { echo "$f legacy auto-detect: '$output'"; return 1; }
         rm -f "$T/aptconf"
     done
 }
@@ -335,12 +338,13 @@ _clone_driver() {
     local f last
     _stub uname 'echo 6.1.0-test'
     _stub git 'echo "GIT_TERMINAL_PROMPT=${GIT_TERMINAL_PROMPT:-unset}" >> "$T/git.env"
+echo "GIT_ASKPASS=${GIT_ASKPASS:-unset}" >> "$T/git.env"
 if read -r -t 1 _x; then echo "stdin had data" >> "$T/git.env"; fi
 echo "Cloning into ..." >&2
 echo "fatal: unable to access '"'"'https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git/'"'"': Could not resolve host: github.com" >&2
 exit 128'
     # A caller environment that allows prompts must not leak into the clone.
-    export GIT_TERMINAL_PROMPT=1
+    export GIT_TERMINAL_PROMPT=1 GIT_ASKPASS=/usr/bin/ssh-askpass
     for f in "${INSTALLERS[@]}"; do
         rm -f "$T/git.env"
         _clone_driver "$f"
@@ -350,6 +354,7 @@ exit 128'
         if _ru "$f"; then last='ERR: Проверьте доступ к github.com.'; else last='ERR: Check access to github.com.'; fi
         [ "$(tail -n 1 <<<"$output")" = "$last" ] || { echo "$f: last line: $(tail -n 1 <<<"$output")"; return 1; }
         grep -qx 'GIT_TERMINAL_PROMPT=0' "$T/git.env" || { echo "$f: $(cat "$T/git.env")"; return 1; }
+        grep -qx 'GIT_ASKPASS=/bin/true' "$T/git.env" || { echo "$f: $(cat "$T/git.env")"; return 1; }
         ! grep -q 'stdin had data' "$T/git.env" || { echo "$f: git inherited stdin"; return 1; }
         if _ru "$f"; then
             grep -qxF "ERR: Не удалось клонировать https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git (тег v1.0.test), git вернул код 128. Ответ git:" <<<"$output"
