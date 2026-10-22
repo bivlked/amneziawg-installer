@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [6.1.1] - 2026-10-22
+
+**v6.1.1** - на шаге 2 причина остановки теперь видна: вывод apt в журнале установки, проверка DNS сервера перед версией о недоступности Launchpad и ответ git при сборке модуля 2.0.
+
 ### Исправлено
 
 - **Причина отказа `apt install` на шаге 2 теперь есть в журнале установки** ([#368](https://github.com/bivlked/amneziawg-installer/issues/368)). Если пакеты не встали, последние 40 строк вывода apt вместе с кодом возврата записываются в `install_amneziawg.log`, а не остаются только на экране. Приложенного журнала теперь хватает, чтобы понять, что случилось.
@@ -2147,7 +2151,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.1...HEAD
+[6.1.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.0...v6.1.1
 [6.1.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.1...v6.1.0
 [6.0.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.0...v6.0.1
 [6.0.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.1...v6.0.0

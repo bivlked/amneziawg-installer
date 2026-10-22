@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.1] - 2026-10-22
+
+**v6.1.1** - step 2 now shows why it stopped: apt output in the install log, a server DNS check before blaming Launchpad, and git's own error when building the 2.0 module.
+
 ### Fixed
 
 - **The reason an `apt install` failed in step 2 is now in the install log** ([#368](https://github.com/bivlked/amneziawg-installer/issues/368)). When the packages do not install, the last 40 lines of apt output and its exit code go to `install_amneziawg.log` instead of staying on screen only, so an attached log is enough to see what happened.
@@ -2147,7 +2151,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.1...HEAD
+[6.1.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.0...v6.1.1
 [6.1.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.1...v6.1.0
 [6.0.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.0...v6.0.1
 [6.0.0]: https://github.com/bivlked/amneziawg-installer/compare/v5.37.1...v6.0.0
