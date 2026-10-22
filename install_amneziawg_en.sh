@@ -614,16 +614,31 @@ apt_wait_for_ppa_package() {
 # Launchpad, check whether the server resolves names at all: with broken DNS apt
 # reaches no source, not just the PPA (I#299). Prints "dns-all <mirror>" (neither
 # the PPA name nor the main mirror resolves), "dns-ppa <mirror>" (only the PPA
-# name fails) or nothing (names resolve, a Launchpad outage remains the guess).
+# name fails) or nothing: names resolve or the answer would be unreliable (an
+# apt proxy, a slow DNS, a failed check), and a Launchpad outage remains the guess.
 _ppa_dns_verdict() {
-    local mirror=archive.ubuntu.com
+    local mirror=archive.ubuntu.com rc dump
     [[ "${OS_ID:-ubuntu}" == debian ]] && mirror=deb.debian.org
-    timeout 10 getent hosts ppa.launchpadcontent.net >/dev/null 2>&1 && return 0
-    if timeout 10 getent hosts "$mirror" >/dev/null 2>&1; then
-        echo "dns-ppa $mirror"
-    else
-        echo "dns-all $mirror"
-    fi
+    # Through a proxy apt does without the server's own DNS, so a DNS verdict
+    # would explain nothing. DIRECT and false set no proxy. The apt-config
+    # output goes through one awk, not a grep pipeline: under pipefail an early
+    # grep -q exit could flip the result via SIGPIPE.
+    [[ -n "${http_proxy:-}${https_proxy:-}${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]] && return 0
+    dump="$(apt-config dump 2>/dev/null)"
+    awk '{ l = tolower($0) }
+         l ~ /^acquire::https?::proxy(-auto-detect)?(::[^ ]+)? "/ && l !~ / "(direct|false)?";$/ { f = 1 }
+         END { exit !f }' <<<"$dump" && return 0
+    # A verdict only on exit 2 (name not found, also when no DNS server
+    # answers). 124 is a slow but possibly working DNS; other codes mean the
+    # check itself failed. In those cases the old explanation stays.
+    timeout 10 getent hosts ppa.launchpadcontent.net >/dev/null 2>&1; rc=$?
+    [[ "$rc" -eq 2 ]] || return 0
+    timeout 10 getent hosts "$mirror" >/dev/null 2>&1; rc=$?
+    case "$rc" in
+        0) echo "dns-ppa $mirror" ;;
+        2) echo "dns-all $mirror" ;;
+    esac
+    return 0
 }
 
 # ==============================================================================
@@ -6442,9 +6457,11 @@ _install_pinned_awg2_module() {
     # GIT_TERMINAL_PROMPT=0: a public repository needs no password, and a login
     # prompt on /dev/tty on a server nobody watches hangs the install (D#255).
     # The git output is kept: git names the cause of the failure itself.
-    local _gout _gl
-    if ! _gout="$(GIT_TERMINAL_PROMPT=0 git clone --depth=1 --branch "$AWG2_PIN_TAG" "$repo" "$work/src" 2>&1 </dev/null)"; then
-        log_error "Failed to clone $repo (tag $AWG2_PIN_TAG). git said:"
+    local _gout _gl _grc=0
+    _gout="$(GIT_TERMINAL_PROMPT=0 git clone --depth=1 --branch "$AWG2_PIN_TAG" "$repo" "$work/src" 2>&1 </dev/null)" || _grc=$?
+    if [[ "$_grc" -ne 0 ]]; then
+        log_error "Failed to clone $repo (tag $AWG2_PIN_TAG), git exited with ${_grc}. git said:"
+        [[ -n "${_gout//[[:space:]]/}" ]] || log_error "  git: no output"
         while IFS= read -r _gl; do
             [[ -n "$_gl" ]] && log_error "  git: $_gl"
         done < <(printf '%s\n' "$_gout" | tail -n 10)

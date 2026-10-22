@@ -145,14 +145,23 @@ _apt_header() { if _ru "$1"; then echo "--- apt install (код $2), после�
 
 # ---------- DNS check before the Launchpad outage message ----------
 
-# getent stub: a name listed in $T/resolves resolves, anything else fails.
-_getent_stub() { _stub getent '[[ "$1" == hosts ]] || exit 2
+# getent stub: $T/rc.<name> forces an exit code (124 = timed out, 1 = tool
+# trouble); otherwise a name listed in $T/resolves resolves and anything else
+# is "not found" (exit 2). apt-config stub prints $T/aptconf (no proxy by default).
+_getent_stub() {
+    _stub getent '[[ "$1" == hosts ]] || exit 1
+[[ -f "$T/rc.$2" ]] && exit "$(cat "$T/rc.$2")"
 grep -qx "$2" "$T/resolves" 2>/dev/null && { echo "192.0.2.1 $2"; exit 0; }
-exit 2'; }
+exit 2'
+    _stub apt-config 'cat "$T/aptconf" 2>/dev/null; exit 0'
+}
 
+# The verdict function of installer $1 on OS $2, with no proxy in the
+# environment unless the test sets one through $3 ("name=value").
 _verdict() {
     local f=$1 os=$2
-    bash -c "OS_ID=$os; $(_fn "$f" _ppa_dns_verdict); _ppa_dns_verdict"
+    env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY ${3:+"$3"} \
+        bash -c "OS_ID=$os; $(_fn "$f" _ppa_dns_verdict); _ppa_dns_verdict"
 }
 
 @test "_ppa_dns_verdict: the PPA name resolves -> nothing printed (outage remains the guess)" {
@@ -190,6 +199,56 @@ _verdict() {
         [ "$output" = "dns-ppa archive.ubuntu.com" ] || { echo "$f: '$output'"; return 1; }
         run _verdict "$f" debian
         [ "$output" = "dns-ppa deb.debian.org" ] || { echo "$f: '$output'"; return 1; }
+    done
+}
+
+@test "_ppa_dns_verdict: an apt proxy (environment or apt config) gives no verdict" {
+    local f
+    _getent_stub
+    : > "$T/resolves"
+    for f in "${INSTALLERS[@]}"; do
+        run _verdict "$f" ubuntu "https_proxy=http://10.0.0.1:3128"
+        [ "$status" -eq 0 ]; [ -z "$output" ] || { echo "$f env: '$output'"; return 1; }
+        echo 'Acquire::http::Proxy "http://10.0.0.1:3128";' > "$T/aptconf"
+        run _verdict "$f" ubuntu
+        [ -z "$output" ] || { echo "$f apt-config: '$output'"; return 1; }
+        echo 'Acquire::https::Proxy::ppa.launchpadcontent.net "http://10.0.0.1:3128";' > "$T/aptconf"
+        run _verdict "$f" ubuntu
+        [ -z "$output" ] || { echo "$f per-host: '$output'"; return 1; }
+        echo 'Acquire::http::Proxy-Auto-Detect "/usr/local/bin/find-proxy";' > "$T/aptconf"
+        run _verdict "$f" ubuntu
+        [ -z "$output" ] || { echo "$f auto-detect: '$output'"; return 1; }
+        rm -f "$T/aptconf"
+    done
+}
+
+@test "_ppa_dns_verdict: DIRECT, false or an empty proxy value still gives a verdict" {
+    local f
+    _getent_stub
+    : > "$T/resolves"
+    printf '%s\n' 'Acquire::http::Proxy::archive.ubuntu.com "DIRECT";' 'Acquire::https::Proxy "false";' 'Acquire::http::Proxy "";' 'APT::Architecture "amd64";' > "$T/aptconf"
+    for f in "${INSTALLERS[@]}"; do
+        run _verdict "$f" ubuntu
+        [ "$output" = "dns-all archive.ubuntu.com" ] || { echo "$f: '$output'"; return 1; }
+    done
+}
+
+@test "_ppa_dns_verdict: a timed-out or failed lookup gives no verdict" {
+    local f
+    _getent_stub
+    : > "$T/resolves"
+    for f in "${INSTALLERS[@]}"; do
+        echo 124 > "$T/rc.ppa.launchpadcontent.net"
+        run _verdict "$f" ubuntu
+        [ -z "$output" ] || { echo "$f ppa 124: '$output'"; return 1; }
+        echo 1 > "$T/rc.ppa.launchpadcontent.net"
+        run _verdict "$f" ubuntu
+        [ -z "$output" ] || { echo "$f ppa 1: '$output'"; return 1; }
+        rm -f "$T/rc.ppa.launchpadcontent.net"
+        echo 124 > "$T/rc.archive.ubuntu.com"
+        run _verdict "$f" ubuntu
+        [ -z "$output" ] || { echo "$f mirror 124: '$output'"; return 1; }
+        rm -f "$T/rc.archive.ubuntu.com"
     done
 }
 
@@ -292,5 +351,28 @@ exit 128'
         [ "$(tail -n 1 <<<"$output")" = "$last" ] || { echo "$f: last line: $(tail -n 1 <<<"$output")"; return 1; }
         grep -qx 'GIT_TERMINAL_PROMPT=0' "$T/git.env" || { echo "$f: $(cat "$T/git.env")"; return 1; }
         ! grep -q 'stdin had data' "$T/git.env" || { echo "$f: git inherited stdin"; return 1; }
+        if _ru "$f"; then
+            grep -qxF "ERR: Не удалось клонировать https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git (тег v1.0.test), git вернул код 128. Ответ git:" <<<"$output"
+        else
+            grep -qxF "ERR: Failed to clone https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git (tag v1.0.test), git exited with 128. git said:" <<<"$output"
+        fi
+    done
+}
+
+@test "pinned module clone: git killed without output still says so, with its exit code" {
+    local f
+    _stub uname 'echo 6.1.0-test'
+    _stub git 'exit 137'
+    for f in "${INSTALLERS[@]}"; do
+        _clone_driver "$f"
+        run bash "$T/drv.sh"
+        [ "$status" -eq 1 ] || { echo "$f: $output"; return 1; }
+        if _ru "$f"; then
+            grep -qF 'git вернул код 137' <<<"$output" || { echo "$f: $output"; return 1; }
+            grep -qxF 'ERR:   git: вывода нет' <<<"$output" || { echo "$f: $output"; return 1; }
+        else
+            grep -qF 'git exited with 137' <<<"$output" || { echo "$f: $output"; return 1; }
+            grep -qxF 'ERR:   git: no output' <<<"$output" || { echo "$f: $output"; return 1; }
+        fi
     done
 }

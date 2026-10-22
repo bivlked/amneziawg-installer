@@ -596,16 +596,31 @@ apt_wait_for_ppa_package() {
 # проверяем, разрешает ли сервер имена: при сломанном DNS apt не достаёт ни одного
 # источника, а не только PPA (I#299). Печатает "dns-all <зеркало>" (не разрешается
 # ни имя PPA, ни основное зеркало), "dns-ppa <зеркало>" (не разрешается только имя
-# PPA) или ничего (имена разрешаются, остаётся версия о недоступности Launchpad).
+# PPA) или ничего: имена разрешаются либо вывод был бы ненадёжен (прокси apt,
+# медленный DNS, сбой проверки), и остаётся версия о недоступности Launchpad.
 _ppa_dns_verdict() {
-    local mirror=archive.ubuntu.com
+    local mirror=archive.ubuntu.com rc dump
     [[ "${OS_ID:-ubuntu}" == debian ]] && mirror=deb.debian.org
-    timeout 10 getent hosts ppa.launchpadcontent.net >/dev/null 2>&1 && return 0
-    if timeout 10 getent hosts "$mirror" >/dev/null 2>&1; then
-        echo "dns-ppa $mirror"
-    else
-        echo "dns-all $mirror"
-    fi
+    # Через прокси apt обходится без DNS самого сервера: вердикт про DNS тогда
+    # ничего не объясняет. Значения DIRECT и false прокси не задают. Вывод
+    # apt-config разбирается одним awk, а не конвейером grep: под pipefail
+    # ранний выход grep -q мог бы перевернуть результат через SIGPIPE.
+    [[ -n "${http_proxy:-}${https_proxy:-}${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]] && return 0
+    dump="$(apt-config dump 2>/dev/null)"
+    awk '{ l = tolower($0) }
+         l ~ /^acquire::https?::proxy(-auto-detect)?(::[^ ]+)? "/ && l !~ / "(direct|false)?";$/ { f = 1 }
+         END { exit !f }' <<<"$dump" && return 0
+    # Вердикт только при коде 2 (имя не найдено, в том числе когда DNS не
+    # отвечает). 124 - медленный, но, может быть, рабочий DNS; прочие коды -
+    # сбой самой проверки. В этих случаях остаётся прежняя версия.
+    timeout 10 getent hosts ppa.launchpadcontent.net >/dev/null 2>&1; rc=$?
+    [[ "$rc" -eq 2 ]] || return 0
+    timeout 10 getent hosts "$mirror" >/dev/null 2>&1; rc=$?
+    case "$rc" in
+        0) echo "dns-ppa $mirror" ;;
+        2) echo "dns-all $mirror" ;;
+    esac
+    return 0
 }
 
 # ==============================================================================
@@ -6311,9 +6326,11 @@ _install_pinned_awg2_module() {
     # GIT_TERMINAL_PROMPT=0: публичному репозиторию пароль не нужен, а запрос
     # логина на /dev/tty на сервере без зрителя - это зависание установки
     # (D#255). Ответ git сохраняется: причину отказа он называет сам.
-    local _gout _gl
-    if ! _gout="$(GIT_TERMINAL_PROMPT=0 git clone --depth=1 --branch "$AWG2_PIN_TAG" "$repo" "$work/src" 2>&1 </dev/null)"; then
-        log_error "Не удалось клонировать $repo (тег $AWG2_PIN_TAG). Ответ git:"
+    local _gout _gl _grc=0
+    _gout="$(GIT_TERMINAL_PROMPT=0 git clone --depth=1 --branch "$AWG2_PIN_TAG" "$repo" "$work/src" 2>&1 </dev/null)" || _grc=$?
+    if [[ "$_grc" -ne 0 ]]; then
+        log_error "Не удалось клонировать $repo (тег $AWG2_PIN_TAG), git вернул код ${_grc}. Ответ git:"
+        [[ -n "${_gout//[[:space:]]/}" ]] || log_error "  git: вывода нет"
         while IFS= read -r _gl; do
             [[ -n "$_gl" ]] && log_error "  git: $_gl"
         done < <(printf '%s\n' "$_gout" | tail -n 10)
