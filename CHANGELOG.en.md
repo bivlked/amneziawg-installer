@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **The PPA unavailability message checks the server's DNS first.** When `amneziawg-dkms` does not show up in the package list, the installer first checks whether `ppa.launchpadcontent.net` and the distribution's main mirror resolve. If nothing resolves, it says plainly that DNS on the server itself is broken and suggests commands to check it; if only the PPA name fails, it says that too. The temporary Launchpad outage explanation is kept for the case where names do resolve ([#299](https://github.com/bivlked/amneziawg-installer/issues/299)).
 - **Building the 2.0 module from source shows git's answer and never waits for a password** ([D#255](https://github.com/bivlked/amneziawg-installer/discussions/255)). When cloning the module source fails, git's error lines reach the log and the screen, not just advice to check access to github.com. The login prompt is disabled: a public repository does not need it, and on a server nobody watches such a prompt would hang the install.
 
+## [6.1.0] - 2026-10-21
 
 **v6.1.0** - a `--i1` flag that sets the I1 concealment packet to your own value, the client table as of 21 October 2026, and a "how to install AmneziaWG 3.1" FAQ entry.
 

@@ -2095,14 +2095,16 @@ install_packages() {
     fi
     # Вывод apt копируется во временный файл: при отказе его хвост уходит в
     # журнал установки, иначе там остаётся одно «Ошибка установки пакетов», а
-    # причина (сеть, зависимости, dpkg) только на экране (I#368).
+    # причина (сеть, зависимости, dpkg) только на экране (I#368). Когда вывод
+    # идёт не в терминал, apt пишет WARNING про нестабильный CLI: опция
+    # Disable-Script-Warning его убирает, иначе он был бы на каждой установке.
     local _aout _arc
     if _aout="$(mktemp 2>/dev/null)"; then
         _install_temp_files+=("$_aout")
     else
         _aout=/dev/null
     fi
-    DEBIAN_FRONTEND=noninteractive apt install -y "${to_install[@]}" 2>&1 | tee "$_aout"
+    DEBIAN_FRONTEND=noninteractive apt -o Apt::Cmd::Disable-Script-Warning=true install -y "${to_install[@]}" 2>&1 | tee "$_aout"
     _arc=${PIPESTATUS[0]}
     if [[ "$_arc" -ne 0 ]]; then
         if [[ "$_aout" != /dev/null ]]; then

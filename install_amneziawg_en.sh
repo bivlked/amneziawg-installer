@@ -2160,14 +2160,16 @@ install_packages() {
     fi
     # apt output is copied to a temp file: on failure its tail goes to the
     # install log, otherwise the log holds only "Package installation error"
-    # and the cause (network, dependencies, dpkg) stays on screen (I#368).
+    # and the cause (network, dependencies, dpkg) stays on screen (I#368). With
+    # output not going to a terminal apt prints a WARNING about its unstable
+    # CLI: Disable-Script-Warning drops it, otherwise every install shows it.
     local _aout _arc
     if _aout="$(mktemp 2>/dev/null)"; then
         _install_temp_files+=("$_aout")
     else
         _aout=/dev/null
     fi
-    DEBIAN_FRONTEND=noninteractive apt install -y "${to_install[@]}" 2>&1 | tee "$_aout"
+    DEBIAN_FRONTEND=noninteractive apt -o Apt::Cmd::Disable-Script-Warning=true install -y "${to_install[@]}" 2>&1 | tee "$_aout"
     _arc=${PIPESTATUS[0]}
     if [[ "$_arc" -ne 0 ]]; then
         if [[ "$_aout" != /dev/null ]]; then

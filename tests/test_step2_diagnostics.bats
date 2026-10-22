@@ -14,10 +14,13 @@ INSTALLERS=(install_amneziawg.sh install_amneziawg_en.sh)
 
 _fn() { sed -n "/^$2() {\$/,/^}\$/p" "$BATS_TEST_DIRNAME/../$1"; }
 _stub() { printf '#!/bin/bash\n%s\n' "$2" > "$T/bin/$1"; chmod +x "$T/bin/$1"; }
+_ru() { [[ "$1" == install_amneziawg.sh ]]; }
 
 setup() {
     T=$(mktemp -d); export T
     mkdir -p "$T/bin"
+    # Temp files made by the code under test land here and go with teardown.
+    export TMPDIR="$T"
     # dpkg-query: nothing installed, so every requested package goes to apt.
     _stub dpkg-query 'echo "dpkg-query: no packages found matching ${*: -1}" >&2; exit 1'
     export PATH="$T/bin:$PATH"
@@ -27,41 +30,57 @@ teardown() { rm -rf "$T"; }
 
 # ---------- apt install output in the log ----------
 
-# A driver that runs install_packages from installer $1 outside the PPA/DKMS
-# fallback (_AWG_KMOD_T1=0), so a failed apt goes straight to die.
+# apt stub: without the script-warning option it complains the way apt does
+# when its output is not a terminal; then it prints $T/apt.out and exits
+# with $T/apt.rc.
+_apt_stub() { _stub apt 'case " $* " in *" Apt::Cmd::Disable-Script-Warning=true "*) ;; *) echo "WARNING: apt does not have a stable CLI interface. Use with caution in scripts." >&2 ;; esac
+cat "$T/apt.out" 2>/dev/null
+[[ -f "$T/apt.err" ]] && cat "$T/apt.err" >&2
+exit "$(cat "$T/apt.rc" 2>/dev/null || echo 0)"'; }
+
+# A driver that runs install_packages from installer $1 with the T1 flag $2
+# (default 0: a failed apt goes straight to die).
 _pkg_driver() {
     {
         echo 'log() { echo "LOG: $*"; }; log_warn() { echo "WARN: $*"; }; die() { echo "DIE: $*"; exit 1; }'
         echo 'apt_update_tolerant() { :; }; _install_temp_files=(); _APT_UPDATED=1'
-        echo "_AWG_KMOD_T1=0; LOG_FILE=$T/log"
+        echo "_AWG_KMOD_T1=${2:-0}; LOG_FILE=$T/log; AWG_ENSURE_HELPER=$T/bin/helper"
+        echo '_pkg_present() { return 0; }; _pkgs_installed_ok() { return 0; }'
         _fn "$1" install_packages
         echo 'install_packages "$@"'
     } > "$T/drv.sh"
 }
 
+_apt_header() { if _ru "$1"; then echo "--- apt install (код $2), последние 40 строк вывода ---"; else echo "--- apt install (exit $2), last 40 lines of output ---"; fi; }
+
 @test "apt install failure: the tail of apt output lands in the install log" {
     local f
+    _apt_stub
+    echo "Reading package lists..." > "$T/apt.out"
+    echo "E: Failed to fetch http://ppa.example/pool/x.deb  Connection timed out" > "$T/apt.err"
+    echo 100 > "$T/apt.rc"
     for f in "${INSTALLERS[@]}"; do
         rm -f "$T/log"
-        _stub apt 'echo "Reading package lists..."; echo "E: Failed to fetch http://ppa.example/pool/x.deb  Connection timed out" >&2; exit 100'
         _pkg_driver "$f"
         run bash "$T/drv.sh" amneziawg-dkms qrencode
         [ "$status" -eq 1 ] || { echo "$f: $output"; return 1; }
         [[ "$output" == *DIE:* ]] || { echo "$f: $output"; return 1; }
         # Still on screen as before.
-        [[ "$output" == *"E: Failed to fetch http://ppa.example/pool/x.deb  Connection timed out"* ]] || { echo "$f: not on screen: $output"; return 1; }
+        grep -qxF 'E: Failed to fetch http://ppa.example/pool/x.deb  Connection timed out' <<<"$output" || { echo "$f: not on screen: $output"; return 1; }
         # And now in the log, stdout and stderr both, under a header with the exit code.
-        grep -qF 'E: Failed to fetch http://ppa.example/pool/x.deb  Connection timed out' "$T/log" || { echo "$f: apt error not in the log"; cat "$T/log"; return 1; }
-        grep -qF 'Reading package lists...' "$T/log" || { echo "$f: apt stdout not in the log"; return 1; }
-        grep -qE '^--- apt install \((код|exit) 100\)' "$T/log" || { echo "$f: no header with the exit code"; cat "$T/log"; return 1; }
+        grep -qxF -- "$(_apt_header "$f" 100)" "$T/log" || { echo "$f: no header"; cat "$T/log"; return 1; }
+        grep -qxF 'E: Failed to fetch http://ppa.example/pool/x.deb  Connection timed out' "$T/log" || { echo "$f: apt stderr not in the log"; cat "$T/log"; return 1; }
+        grep -qxF 'Reading package lists...' "$T/log" || { echo "$f: apt stdout not in the log"; return 1; }
     done
 }
 
 @test "apt install failure: only the last 40 lines go to the log" {
     local f
+    _apt_stub
+    seq -f 'apt line %g' 1 100 > "$T/apt.out"
+    echo 100 > "$T/apt.rc"
     for f in "${INSTALLERS[@]}"; do
         rm -f "$T/log"
-        _stub apt 'for i in $(seq 1 100); do echo "apt line $i"; done; exit 100'
         _pkg_driver "$f"
         run bash "$T/drv.sh" qrencode
         [ "$status" -eq 1 ]
@@ -71,16 +90,56 @@ _pkg_driver() {
     done
 }
 
-@test "apt install success: nothing from apt is copied to the log" {
+@test "apt install: no script WARNING from apt, and nothing copied to the log on success" {
     local f
+    _apt_stub
+    echo "Setting up qrencode ..." > "$T/apt.out"
+    echo 0 > "$T/apt.rc"
     for f in "${INSTALLERS[@]}"; do
-        rm -f "$T/log"
-        _stub apt 'echo "Setting up qrencode ..."; exit 0'
+        rm -f "$T/log"; : > "$T/log"
         _pkg_driver "$f"
         run bash "$T/drv.sh" qrencode
         [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
-        [[ "$output" == *"Setting up qrencode ..."* ]]
-        ! grep -q 'apt install' "$T/log" 2>/dev/null || { echo "$f: apt output copied on success"; return 1; }
+        grep -qxF 'Setting up qrencode ...' <<<"$output" || { echo "$f: $output"; return 1; }
+        [[ "$output" != *"does not have a stable CLI interface"* ]] || { echo "$f: apt script warning shown"; return 1; }
+        ! grep -qF 'Setting up qrencode ...' "$T/log" || { echo "$f: apt output copied on success"; return 1; }
+    done
+}
+
+@test "apt install failure on the module fallback path: apt tail is logged before the helper output" {
+    local f a h
+    _apt_stub
+    echo "E: Sub-process /usr/bin/dpkg returned an error code (1)" > "$T/apt.err"
+    echo 100 > "$T/apt.rc"
+    _stub helper 'echo "helper $1 ok"; exit 0'
+    for f in "${INSTALLERS[@]}"; do
+        rm -f "$T/log"
+        _pkg_driver "$f" 1
+        run bash "$T/drv.sh" amneziawg-dkms
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
+        a=$(grep -nxF -- "$(_apt_header "$f" 100)" "$T/log" | cut -d: -f1)
+        h=$(grep -nxF -- '--- amneziawg-ensure-module ---' "$T/log" | cut -d: -f1)
+        [ -n "$a" ] && [ -n "$h" ] && [ "$a" -lt "$h" ] || { echo "$f: a=$a h=$h"; cat "$T/log"; return 1; }
+        grep -qxF 'E: Sub-process /usr/bin/dpkg returned an error code (1)' "$T/log"
+    done
+}
+
+@test "apt install failure without a temp file: a warning, apt output still on screen, then die" {
+    local f w
+    _apt_stub
+    echo "E: Unable to locate package qrencode" > "$T/apt.err"
+    echo 100 > "$T/apt.rc"
+    _stub mktemp 'exit 1'
+    for f in "${INSTALLERS[@]}"; do
+        rm -f "$T/log"
+        _pkg_driver "$f"
+        run bash "$T/drv.sh" qrencode
+        [ "$status" -eq 1 ]; [[ "$output" == *DIE:* ]]
+        grep -qxF 'E: Unable to locate package qrencode' <<<"$output" || { echo "$f: $output"; return 1; }
+        if _ru "$f"; then w='WARN: Не удалось создать временный файл: вывод apt в журнал не попал, он только на экране выше.'
+        else w='WARN: Could not create a temp file: the apt output did not reach the log, it is only on screen above.'; fi
+        grep -qxF "$w" <<<"$output" || { echo "$f: $output"; return 1; }
+        ! grep -q -- '--- apt install' "$T/log" 2>/dev/null
     done
 }
 
@@ -96,11 +155,15 @@ _verdict() {
     bash -c "OS_ID=$os; $(_fn "$f" _ppa_dns_verdict); _ppa_dns_verdict"
 }
 
-@test "_ppa_dns_verdict: names resolve -> nothing printed (outage remains the guess)" {
+@test "_ppa_dns_verdict: the PPA name resolves -> nothing printed (outage remains the guess)" {
     local f
     _getent_stub
-    printf '%s\n' ppa.launchpadcontent.net archive.ubuntu.com > "$T/resolves"
     for f in "${INSTALLERS[@]}"; do
+        printf '%s\n' ppa.launchpadcontent.net archive.ubuntu.com > "$T/resolves"
+        run _verdict "$f" ubuntu
+        [ "$status" -eq 0 ]; [ -z "$output" ] || { echo "$f: '$output'"; return 1; }
+        # Only the PPA name is asked when it resolves.
+        echo ppa.launchpadcontent.net > "$T/resolves"
         run _verdict "$f" ubuntu
         [ "$status" -eq 0 ]; [ -z "$output" ] || { echo "$f: '$output'"; return 1; }
     done
@@ -118,17 +181,75 @@ _verdict() {
     done
 }
 
-@test "_ppa_dns_verdict: only the PPA name fails -> dns-ppa" {
+@test "_ppa_dns_verdict: only the PPA name fails -> dns-ppa with the distro mirror" {
     local f
     _getent_stub
     printf '%s\n' archive.ubuntu.com deb.debian.org > "$T/resolves"
     for f in "${INSTALLERS[@]}"; do
         run _verdict "$f" ubuntu
         [ "$output" = "dns-ppa archive.ubuntu.com" ] || { echo "$f: '$output'"; return 1; }
+        run _verdict "$f" debian
+        [ "$output" = "dns-ppa deb.debian.org" ] || { echo "$f: '$output'"; return 1; }
     done
 }
 
-@test "step 2: the DNS verdict is checked after the PPA wait and before the outage text, each branch dies" {
+# Runs the step 2 block that reads the verdict, with a stubbed verdict $2.
+_dns_block() {
+    local f=$1 v=$2
+    {
+        echo 'log_error() { echo "ERR: $*"; }; die() { echo "DIE: $*"; exit 1; }'
+        echo "_ppa_dns_verdict() { echo '$v'; }"
+        echo 'blk() {'
+        awk '/^        local _dns_v _dns_m$/{on=1} on{print} on && /^        esac$/{exit}' "$BATS_TEST_DIRNAME/../$f"
+        echo 'echo AFTER; }; blk'
+    } > "$T/blk.sh"
+    bash "$T/blk.sh"
+}
+
+@test "step 2 DNS verdict: dns-all names the server DNS and the mirror from the verdict, then dies" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        run _dns_block "$f" "dns-all deb.debian.org"
+        [ "$status" -eq 1 ] || { echo "$f: $output"; return 1; }
+        if _ru "$f"; then
+            grep -qxF 'ERR: Сервер не может разрешить ни ppa.launchpadcontent.net, ни deb.debian.org: не работает DNS на самом сервере, Launchpad тут ни при чём.' <<<"$output"
+            grep -qxF 'ERR: Проверьте: cat /etc/resolv.conf и getent hosts deb.debian.org. Когда имена начнут разрешаться, запустите скрипт снова той же командой.' <<<"$output"
+            grep -qxF 'DIE: DNS на сервере не работает.' <<<"$output"
+        else
+            grep -qxF 'ERR: The server cannot resolve either ppa.launchpadcontent.net or deb.debian.org: DNS on the server itself is broken, Launchpad is not the cause.' <<<"$output"
+            grep -qxF 'ERR: Check: cat /etc/resolv.conf and getent hosts deb.debian.org. Once names resolve, re-run the script with the same command.' <<<"$output"
+            grep -qxF 'DIE: DNS on the server does not work.' <<<"$output"
+        fi
+        [[ "$output" != *AFTER* ]]
+    done
+}
+
+@test "step 2 DNS verdict: dns-ppa names the PPA and the mirror from the verdict, then dies" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        run _dns_block "$f" "dns-ppa archive.ubuntu.com"
+        [ "$status" -eq 1 ] || { echo "$f: $output"; return 1; }
+        if _ru "$f"; then
+            grep -qxF 'ERR: Имя ppa.launchpadcontent.net не разрешается, хотя archive.ubuntu.com разрешается: DNS-сервер, который указан у сервера, не отдаёт адрес PPA.' <<<"$output"
+            grep -qxF 'DIE: Имя PPA Amnezia не разрешается.' <<<"$output"
+        else
+            grep -qxF 'ERR: ppa.launchpadcontent.net does not resolve although archive.ubuntu.com does: the DNS server configured on this server does not return the PPA address.' <<<"$output"
+            grep -qxF 'DIE: The Amnezia PPA name does not resolve.' <<<"$output"
+        fi
+        [[ "$output" != *AFTER* ]]
+    done
+}
+
+@test "step 2 DNS verdict: an empty verdict falls through to the outage text" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        run _dns_block "$f" ""
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
+        [ "$output" = "AFTER" ] || { echo "$f: '$output'"; return 1; }
+    done
+}
+
+@test "step 2: the DNS verdict is read after the PPA wait and before the outage text" {
     local f s w v o
     for f in "${INSTALLERS[@]}"; do
         s=$(cat "$BATS_TEST_DIRNAME/../$f")
@@ -137,8 +258,6 @@ _verdict() {
         o=$(grep -n -m1 -E 'log_error "(Похоже, ppa\.launchpadcontent\.net|ppa\.launchpadcontent\.net appears)' <<<"$s" | cut -d: -f1)
         [ -n "$w" ] && [ -n "$v" ] && [ -n "$o" ] || { echo "$f: w=$w v=$v o=$o"; return 1; }
         [ "$w" -lt "$v" ] && [ "$v" -lt "$o" ] || { echo "$f: order w=$w v=$v o=$o"; return 1; }
-        # Both verdict branches end in die before the outage text.
-        [ "$(sed -n "${v},${o}p" <<<"$s" | grep -c '^ *die "')" -eq 2 ] || { echo "$f: expected two die between verdict and outage text"; return 1; }
     done
 }
 
@@ -154,20 +273,23 @@ _clone_driver() {
 }
 
 @test "pinned module clone: git error text is shown and no login prompt is allowed" {
-    local f
+    local f last
     _stub uname 'echo 6.1.0-test'
     _stub git 'echo "GIT_TERMINAL_PROMPT=${GIT_TERMINAL_PROMPT:-unset}" >> "$T/git.env"
 if read -r -t 1 _x; then echo "stdin had data" >> "$T/git.env"; fi
 echo "Cloning into ..." >&2
 echo "fatal: unable to access '"'"'https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git/'"'"': Could not resolve host: github.com" >&2
 exit 128'
+    # A caller environment that allows prompts must not leak into the clone.
+    export GIT_TERMINAL_PROMPT=1
     for f in "${INSTALLERS[@]}"; do
         rm -f "$T/git.env"
         _clone_driver "$f"
         run bash "$T/drv.sh" <<<"typed-password"
         [ "$status" -eq 1 ] || { echo "$f: $output"; return 1; }
-        [[ "$output" == *"ERR:   git: fatal: unable to access"*"Could not resolve host: github.com"* ]] || { echo "$f: git error not shown: $output"; return 1; }
-        [[ "$output" == *"ERR: "*"github.com"* ]]
+        grep -qxF "ERR:   git: fatal: unable to access 'https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git/': Could not resolve host: github.com" <<<"$output" || { echo "$f: git error not shown: $output"; return 1; }
+        if _ru "$f"; then last='ERR: Проверьте доступ к github.com.'; else last='ERR: Check access to github.com.'; fi
+        [ "$(tail -n 1 <<<"$output")" = "$last" ] || { echo "$f: last line: $(tail -n 1 <<<"$output")"; return 1; }
         grep -qx 'GIT_TERMINAL_PROMPT=0' "$T/git.env" || { echo "$f: $(cat "$T/git.env")"; return 1; }
         ! grep -q 'stdin had data' "$T/git.env" || { echo "$f: git inherited stdin"; return 1; }
     done
