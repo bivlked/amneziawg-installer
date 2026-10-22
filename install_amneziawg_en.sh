@@ -610,6 +610,22 @@ apt_wait_for_ppa_package() {
     return 1
 }
 
+# _ppa_dns_verdict : why the PPA package is not visible. Before blaming
+# Launchpad, check whether the server resolves names at all: with broken DNS apt
+# reaches no source, not just the PPA (I#299). Prints "dns-all <mirror>" (neither
+# the PPA name nor the main mirror resolves), "dns-ppa <mirror>" (only the PPA
+# name fails) or nothing (names resolve, a Launchpad outage remains the guess).
+_ppa_dns_verdict() {
+    local mirror=archive.ubuntu.com
+    [[ "${OS_ID:-ubuntu}" == debian ]] && mirror=deb.debian.org
+    timeout 10 getent hosts ppa.launchpadcontent.net >/dev/null 2>&1 && return 0
+    if timeout 10 getent hosts "$mirror" >/dev/null 2>&1; then
+        echo "dns-ppa $mirror"
+    else
+        echo "dns-all $mirror"
+    fi
+}
+
 # ==============================================================================
 # Help
 # ==============================================================================
@@ -2142,7 +2158,23 @@ install_packages() {
         apt_update_tolerant || die "apt update error."
         _APT_UPDATED=1
     fi
-    if ! DEBIAN_FRONTEND=noninteractive apt install -y "${to_install[@]}"; then
+    # apt output is copied to a temp file: on failure its tail goes to the
+    # install log, otherwise the log holds only "Package installation error"
+    # and the cause (network, dependencies, dpkg) stays on screen (I#368).
+    local _aout _arc
+    if _aout="$(mktemp 2>/dev/null)"; then
+        _install_temp_files+=("$_aout")
+    else
+        _aout=/dev/null
+    fi
+    DEBIAN_FRONTEND=noninteractive apt install -y "${to_install[@]}" 2>&1 | tee "$_aout"
+    _arc=${PIPESTATUS[0]}
+    if [[ "$_arc" -ne 0 ]]; then
+        if [[ "$_aout" != /dev/null ]]; then
+            { echo "--- apt install (exit $_arc), last 40 lines of output ---"; tail -n 40 "$_aout"; } >> "$LOG_FILE" 2>/dev/null || true
+        else
+            log_warn "Could not create a temp file: the apt output did not reach the log, it is only on screen above."
+        fi
         # Fallback (only on the PPA/DKMS path of step 2, flag _AWG_KMOD_T1).
         # Enabled by FACT: the amneziawg-dkms package is in dpkg (unpacked or
         # half-configured), not "it was in the requested list" - configuring
@@ -6405,8 +6437,16 @@ _install_pinned_awg2_module() {
     work="$(mktemp -d /tmp/awg2-pin-XXXXXX)" || { log_error "mktemp -d failed."; return 1; }
 
     log "Cloning the pinned AmneziaWG 2.0 source ($AWG2_PIN_TAG)..."
-    if ! git clone --depth=1 --branch "$AWG2_PIN_TAG" "$repo" "$work/src" >/dev/null 2>&1; then
-        log_error "Failed to clone $repo (tag $AWG2_PIN_TAG). Check access to github.com."
+    # GIT_TERMINAL_PROMPT=0: a public repository needs no password, and a login
+    # prompt on /dev/tty on a server nobody watches hangs the install (D#255).
+    # The git output is kept: git names the cause of the failure itself.
+    local _gout _gl
+    if ! _gout="$(GIT_TERMINAL_PROMPT=0 git clone --depth=1 --branch "$AWG2_PIN_TAG" "$repo" "$work/src" 2>&1 </dev/null)"; then
+        log_error "Failed to clone $repo (tag $AWG2_PIN_TAG). git said:"
+        while IFS= read -r _gl; do
+            [[ -n "$_gl" ]] && log_error "  git: $_gl"
+        done < <(printf '%s\n' "$_gout" | tail -n 10)
+        log_error "Check access to github.com."
         rm -rf "$work"; return 1
     fi
 
@@ -6733,6 +6773,20 @@ PPASRC
     # the install.
     if ! apt_wait_for_ppa_package amneziawg-dkms 3 30; then
         log_error "Package amneziawg-dkms did not appear in apt-cache after 3 attempts."
+        local _dns_v _dns_m
+        read -r _dns_v _dns_m <<<"$(_ppa_dns_verdict)"
+        case "$_dns_v" in
+            dns-all)
+                log_error "The server cannot resolve either ppa.launchpadcontent.net or ${_dns_m}: DNS on the server itself is broken, Launchpad is not the cause."
+                log_error "Check: cat /etc/resolv.conf and getent hosts ${_dns_m}. Once names resolve, re-run the script with the same command."
+                die "DNS on the server does not work."
+                ;;
+            dns-ppa)
+                log_error "ppa.launchpadcontent.net does not resolve although ${_dns_m} does: the DNS server configured on this server does not return the PPA address."
+                log_error "Check: getent hosts ppa.launchpadcontent.net and cat /etc/resolv.conf; another DNS server usually helps. Then re-run the script with the same command."
+                die "The Amnezia PPA name does not resolve."
+                ;;
+        esac
         log_error "ppa.launchpadcontent.net appears to be down — this is a"
         log_error "Launchpad infrastructure outage, not a script bug."
         log_error "Wait 10–15 minutes and re-run the script with the same args."

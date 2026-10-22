@@ -592,6 +592,22 @@ apt_wait_for_ppa_package() {
     return 1
 }
 
+# _ppa_dns_verdict : почему пакет из PPA не виден. Прежде чем винить Launchpad,
+# проверяем, разрешает ли сервер имена: при сломанном DNS apt не достаёт ни одного
+# источника, а не только PPA (I#299). Печатает "dns-all <зеркало>" (не разрешается
+# ни имя PPA, ни основное зеркало), "dns-ppa <зеркало>" (не разрешается только имя
+# PPA) или ничего (имена разрешаются, остаётся версия о недоступности Launchpad).
+_ppa_dns_verdict() {
+    local mirror=archive.ubuntu.com
+    [[ "${OS_ID:-ubuntu}" == debian ]] && mirror=deb.debian.org
+    timeout 10 getent hosts ppa.launchpadcontent.net >/dev/null 2>&1 && return 0
+    if timeout 10 getent hosts "$mirror" >/dev/null 2>&1; then
+        echo "dns-ppa $mirror"
+    else
+        echo "dns-all $mirror"
+    fi
+}
+
 # ==============================================================================
 # Справка
 # ==============================================================================
@@ -2077,7 +2093,23 @@ install_packages() {
         apt_update_tolerant || die "Ошибка apt update."
         _APT_UPDATED=1
     fi
-    if ! DEBIAN_FRONTEND=noninteractive apt install -y "${to_install[@]}"; then
+    # Вывод apt копируется во временный файл: при отказе его хвост уходит в
+    # журнал установки, иначе там остаётся одно «Ошибка установки пакетов», а
+    # причина (сеть, зависимости, dpkg) только на экране (I#368).
+    local _aout _arc
+    if _aout="$(mktemp 2>/dev/null)"; then
+        _install_temp_files+=("$_aout")
+    else
+        _aout=/dev/null
+    fi
+    DEBIAN_FRONTEND=noninteractive apt install -y "${to_install[@]}" 2>&1 | tee "$_aout"
+    _arc=${PIPESTATUS[0]}
+    if [[ "$_arc" -ne 0 ]]; then
+        if [[ "$_aout" != /dev/null ]]; then
+            { echo "--- apt install (код $_arc), последние 40 строк вывода ---"; tail -n 40 "$_aout"; } >> "$LOG_FILE" 2>/dev/null || true
+        else
+            log_warn "Не удалось создать временный файл: вывод apt в журнал не попал, он только на экране выше."
+        fi
         # Запасной путь (только на пути PPA/DKMS шага 2, флаг _AWG_KMOD_T1).
         # Включается по ФАКТУ: пакет amneziawg-dkms в dpkg есть (распакован или
         # недонастроен), а не «был в списке запрошенных» - донастройка может
@@ -6274,8 +6306,16 @@ _install_pinned_awg2_module() {
     work="$(mktemp -d /tmp/awg2-pin-XXXXXX)" || { log_error "mktemp -d не удался."; return 1; }
 
     log "Клонирование пинового исходника AmneziaWG 2.0 ($AWG2_PIN_TAG)..."
-    if ! git clone --depth=1 --branch "$AWG2_PIN_TAG" "$repo" "$work/src" >/dev/null 2>&1; then
-        log_error "Не удалось клонировать $repo (тег $AWG2_PIN_TAG). Проверьте доступ к github.com."
+    # GIT_TERMINAL_PROMPT=0: публичному репозиторию пароль не нужен, а запрос
+    # логина на /dev/tty на сервере без зрителя - это зависание установки
+    # (D#255). Ответ git сохраняется: причину отказа он называет сам.
+    local _gout _gl
+    if ! _gout="$(GIT_TERMINAL_PROMPT=0 git clone --depth=1 --branch "$AWG2_PIN_TAG" "$repo" "$work/src" 2>&1 </dev/null)"; then
+        log_error "Не удалось клонировать $repo (тег $AWG2_PIN_TAG). Ответ git:"
+        while IFS= read -r _gl; do
+            [[ -n "$_gl" ]] && log_error "  git: $_gl"
+        done < <(printf '%s\n' "$_gout" | tail -n 10)
+        log_error "Проверьте доступ к github.com."
         rm -rf "$work"; return 1
     fi
 
@@ -6598,6 +6638,20 @@ PPASRC
     # валить установку.
     if ! apt_wait_for_ppa_package amneziawg-dkms 3 30; then
         log_error "Пакет amneziawg-dkms не появился в apt-cache после 3 попыток."
+        local _dns_v _dns_m
+        read -r _dns_v _dns_m <<<"$(_ppa_dns_verdict)"
+        case "$_dns_v" in
+            dns-all)
+                log_error "Сервер не может разрешить ни ppa.launchpadcontent.net, ни ${_dns_m}: не работает DNS на самом сервере, Launchpad тут ни при чём."
+                log_error "Проверьте: cat /etc/resolv.conf и getent hosts ${_dns_m}. Когда имена начнут разрешаться, запустите скрипт снова той же командой."
+                die "DNS на сервере не работает."
+                ;;
+            dns-ppa)
+                log_error "Имя ppa.launchpadcontent.net не разрешается, хотя ${_dns_m} разрешается: DNS-сервер, который указан у сервера, не отдаёт адрес PPA."
+                log_error "Проверьте: getent hosts ppa.launchpadcontent.net и cat /etc/resolv.conf; помогает другой DNS-сервер. Затем запустите скрипт снова той же командой."
+                die "Имя PPA Amnezia не разрешается."
+                ;;
+        esac
         log_error "Похоже, ppa.launchpadcontent.net сейчас недоступен — это outage"
         log_error "инфраструктуры Launchpad, не баг скрипта."
         log_error "Подождите 10–15 минут и запустите скрипт снова той же командой."
