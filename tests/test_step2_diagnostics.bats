@@ -149,7 +149,7 @@ _apt_header() { if _ru "$1"; then echo "--- apt install (код $2), после�
 # trouble); otherwise a name listed in $T/resolves resolves and anything else
 # is "not found" (exit 2). apt-config stub prints $T/aptconf (no proxy by default).
 _getent_stub() {
-    _stub getent '[[ "$1" == hosts ]] || exit 1
+    _stub getent '[[ "$1" == ahosts ]] || exit 1
 [[ -f "$T/rc.$2" ]] && exit "$(cat "$T/rc.$2")"
 grep -qx "$2" "$T/resolves" 2>/dev/null && { echo "192.0.2.1 $2"; exit 0; }
 exit 2'
@@ -255,11 +255,25 @@ _verdict() {
     done
 }
 
+@test "_ppa_dns_verdict: lookups wait long enough for a silent DNS (ahosts, at least 25 s)" {
+    # Measured on Ubuntu 24.04: a silent DNS makes ahosts fail after 10-20 s
+    # (hosts after 20-40 s); a shorter timeout turns that into "no verdict".
+    local f body t
+    for f in "${INSTALLERS[@]}"; do
+        body=$(_fn "$f" _ppa_dns_verdict)
+        [ "$(grep -c 'getent ahosts' <<<"$body")" -eq 2 ] || { echo "$f: expected two getent ahosts"; return 1; }
+        ! grep -q 'getent hosts' <<<"$body" || { echo "$f: getent hosts is back"; return 1; }
+        while read -r t; do
+            [ "$t" -ge 25 ] || { echo "$f: timeout $t s is too short"; return 1; }
+        done < <(sed -n 's/.*timeout \([0-9]*\) getent ahosts.*/\1/p' <<<"$body")
+    done
+}
+
 # Runs the step 2 block that reads the verdict, with a stubbed verdict $2.
 _dns_block() {
     local f=$1 v=$2
     {
-        echo 'log_error() { echo "ERR: $*"; }; die() { echo "DIE: $*"; exit 1; }'
+        echo 'log() { :; }; log_error() { echo "ERR: $*"; }; die() { echo "DIE: $*"; exit 1; }'
         echo "_ppa_dns_verdict() { echo '$v'; }"
         echo 'blk() {'
         awk '/^        local _dns_v _dns_m$/{on=1} on{print} on && /^        esac$/{exit}' "$BATS_TEST_DIRNAME/../$f"

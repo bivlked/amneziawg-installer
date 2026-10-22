@@ -611,11 +611,15 @@ _ppa_dns_verdict() {
          l ~ /^acquire::https?::proxy(-?auto-?detect)?(::[^ ]+)? "/ && l !~ / "(direct|false)?";$/ { f = 1 }
          END { exit !f }' <<<"$dump" && return 0
     # Вердикт только при коде 2 (имя не найдено, в том числе когда DNS не
-    # отвечает). 124 - медленный, но, может быть, рабочий DNS; прочие коды -
-    # сбой самой проверки. В этих случаях остаётся прежняя версия.
-    timeout 10 getent hosts ppa.launchpadcontent.net >/dev/null 2>&1; rc=$?
+    # отвечает). 124 - DNS не ответил и за 30 с; прочие коды - сбой самой
+    # проверки. В этих случаях остаётся прежняя версия. ahosts, а не hosts:
+    # hosts спрашивает IPv6 и IPv4 по очереди и на молчащем DNS ждёт вдвое
+    # дольше. Замер на Ubuntu 24.04 (22 oct 2026): один молчащий сервер в
+    # resolv.conf - ahosts 10 с, hosts 20 с; два или молчащий сервер за
+    # systemd-resolved - 20 с и 40 с; отказ в соединении - миллисекунды.
+    timeout 30 getent ahosts ppa.launchpadcontent.net >/dev/null 2>&1; rc=$?
     [[ "$rc" -eq 2 ]] || return 0
-    timeout 10 getent hosts "$mirror" >/dev/null 2>&1; rc=$?
+    timeout 30 getent ahosts "$mirror" >/dev/null 2>&1; rc=$?
     case "$rc" in
         0) echo "dns-ppa $mirror" ;;
         2) echo "dns-all $mirror" ;;
@@ -6660,6 +6664,7 @@ PPASRC
     if ! apt_wait_for_ppa_package amneziawg-dkms 3 30; then
         log_error "Пакет amneziawg-dkms не появился в apt-cache после 3 попыток."
         local _dns_v _dns_m
+        log "Проверяю, разрешает ли сервер имена (до минуты)..."
         read -r _dns_v _dns_m <<<"$(_ppa_dns_verdict)"
         case "$_dns_v" in
             dns-all)
