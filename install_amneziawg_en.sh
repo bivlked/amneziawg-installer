@@ -617,7 +617,7 @@ apt_wait_for_ppa_package() {
 # name fails) or nothing: names resolve or the answer would be unreliable (an
 # apt proxy, a slow DNS, a failed check), and a Launchpad outage remains the guess.
 _ppa_dns_verdict() {
-    local mirror=archive.ubuntu.com rc dump
+    local mirror=archive.ubuntu.com dump
     [[ "${OS_ID:-ubuntu}" == debian ]] && mirror=deb.debian.org
     # Through a proxy apt does without the server's own DNS, so a DNS verdict
     # would explain nothing. DIRECT and false set no proxy. The apt-config
@@ -629,16 +629,22 @@ _ppa_dns_verdict() {
          l ~ /^acquire::https?::proxy(-?auto-?detect)?(::[^ ]+)? "/ && l !~ / "(direct|false)?";$/ { f = 1 }
          END { exit !f }' <<<"$dump" && return 0
     # A verdict only on exit 2 (name not found, also when no DNS server
-    # answers). 124 means DNS gave no answer even in 30 s; other codes mean
-    # the check itself failed. In those cases the old explanation stays.
-    # ahosts, not hosts: hosts asks IPv6 and IPv4 in turn and waits twice as
-    # long on a silent DNS. Measured on Ubuntu 24.04 (22 oct 2026): one silent
-    # server in resolv.conf - ahosts 10 s, hosts 20 s; two, or a silent one
-    # behind systemd-resolved - 20 s and 40 s; connection refused - milliseconds.
-    timeout 30 getent ahosts ppa.launchpadcontent.net >/dev/null 2>&1; rc=$?
-    [[ "$rc" -eq 2 ]] || return 0
-    timeout 30 getent ahosts "$mirror" >/dev/null 2>&1; rc=$?
-    case "$rc" in
+    # answers). 124 means DNS gave no answer even in 60 s; other codes mean
+    # the check itself failed. In those cases the old explanation stays. Both
+    # names are asked at once, so the check takes a minute at most. ahosts, not
+    # hosts: hosts asks IPv6 and IPv4 in turn and waits twice as long. No
+    # trailing dot on the name: with it /etc/hosts is not read, while apt reads it.
+    # Measured with ahosts on Ubuntu 24.04 (22 oct 2026), silent servers in
+    # resolv.conf: 1 - 10 s, 2 - 20 s, 3 - 28 s; a search line doubles that
+    # (3 + search - 56 s); a silent upstream behind systemd-resolved - 20 s;
+    # connection refused - milliseconds.
+    local p_pid m_pid p_rc m_rc
+    timeout 60 getent ahosts ppa.launchpadcontent.net >/dev/null 2>&1 & p_pid=$!
+    timeout 60 getent ahosts "$mirror" >/dev/null 2>&1 & m_pid=$!
+    wait "$p_pid"; p_rc=$?
+    wait "$m_pid"; m_rc=$?
+    [[ "$p_rc" -eq 2 ]] || return 0
+    case "$m_rc" in
         0) echo "dns-ppa $mirror" ;;
         2) echo "dns-all $mirror" ;;
     esac

@@ -599,7 +599,7 @@ apt_wait_for_ppa_package() {
 # PPA) или ничего: имена разрешаются либо вывод был бы ненадёжен (прокси apt,
 # медленный DNS, сбой проверки), и остаётся версия о недоступности Launchpad.
 _ppa_dns_verdict() {
-    local mirror=archive.ubuntu.com rc dump
+    local mirror=archive.ubuntu.com dump
     [[ "${OS_ID:-ubuntu}" == debian ]] && mirror=deb.debian.org
     # Через прокси apt обходится без DNS самого сервера: вердикт про DNS тогда
     # ничего не объясняет. Значения DIRECT и false прокси не задают. Вывод
@@ -611,16 +611,21 @@ _ppa_dns_verdict() {
          l ~ /^acquire::https?::proxy(-?auto-?detect)?(::[^ ]+)? "/ && l !~ / "(direct|false)?";$/ { f = 1 }
          END { exit !f }' <<<"$dump" && return 0
     # Вердикт только при коде 2 (имя не найдено, в том числе когда DNS не
-    # отвечает). 124 - DNS не ответил и за 30 с; прочие коды - сбой самой
-    # проверки. В этих случаях остаётся прежняя версия. ahosts, а не hosts:
-    # hosts спрашивает IPv6 и IPv4 по очереди и на молчащем DNS ждёт вдвое
-    # дольше. Замер на Ubuntu 24.04 (22 oct 2026): один молчащий сервер в
-    # resolv.conf - ahosts 10 с, hosts 20 с; два или молчащий сервер за
-    # systemd-resolved - 20 с и 40 с; отказ в соединении - миллисекунды.
-    timeout 30 getent ahosts ppa.launchpadcontent.net >/dev/null 2>&1; rc=$?
-    [[ "$rc" -eq 2 ]] || return 0
-    timeout 30 getent ahosts "$mirror" >/dev/null 2>&1; rc=$?
-    case "$rc" in
+    # отвечает). 124 - DNS не ответил и за 60 с; прочие коды - сбой самой
+    # проверки. В этих случаях остаётся прежняя версия. Оба имени спрашиваются
+    # одновременно, поэтому проверка занимает не больше минуты. ahosts, а не
+    # hosts: hosts спрашивает IPv6 и IPv4 по очереди и ждёт вдвое дольше. Имя
+    # без точки на конце: с точкой не читается /etc/hosts, а apt его читает.
+    # Замер ahosts на Ubuntu 24.04 (22 oct 2026), молчащие серверы в resolv.conf:
+    # 1 - 10 с, 2 - 20 с, 3 - 28 с; строка search удваивает (3 + search - 56 с);
+    # молчащий вышестоящий за systemd-resolved - 20 с; отказ в соединении - мс.
+    local p_pid m_pid p_rc m_rc
+    timeout 60 getent ahosts ppa.launchpadcontent.net >/dev/null 2>&1 & p_pid=$!
+    timeout 60 getent ahosts "$mirror" >/dev/null 2>&1 & m_pid=$!
+    wait "$p_pid"; p_rc=$?
+    wait "$m_pid"; m_rc=$?
+    [[ "$p_rc" -eq 2 ]] || return 0
+    case "$m_rc" in
         0) echo "dns-ppa $mirror" ;;
         2) echo "dns-all $mirror" ;;
     esac

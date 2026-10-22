@@ -255,17 +255,36 @@ _verdict() {
     done
 }
 
-@test "_ppa_dns_verdict: lookups wait long enough for a silent DNS (ahosts, at least 25 s)" {
-    # Measured on Ubuntu 24.04: a silent DNS makes ahosts fail after 10-20 s
-    # (hosts after 20-40 s); a shorter timeout turns that into "no verdict".
-    local f body t
+@test "_ppa_dns_verdict: lookups wait long enough for a silent DNS (ahosts, at least 57 s, no trailing dot)" {
+    # Measured on Ubuntu 24.04: three silent servers plus a search line make
+    # ahosts fail after 56 s; a shorter timeout turns that into "no verdict".
+    # A trailing dot would skip /etc/hosts, which apt itself reads.
+    local f body t n
     for f in "${INSTALLERS[@]}"; do
         body=$(_fn "$f" _ppa_dns_verdict)
         [ "$(grep -c 'getent ahosts' <<<"$body")" -eq 2 ] || { echo "$f: expected two getent ahosts"; return 1; }
         ! grep -q 'getent hosts' <<<"$body" || { echo "$f: getent hosts is back"; return 1; }
+        ! grep -q 'getent ahosts [^ ]*\. ' <<<"$body" || { echo "$f: trailing dot on a name"; return 1; }
+        n=0
         while read -r t; do
-            [ "$t" -ge 25 ] || { echo "$f: timeout $t s is too short"; return 1; }
+            n=$((n + 1))
+            [ "$t" -ge 57 ] || { echo "$f: timeout $t s is too short"; return 1; }
         done < <(sed -n 's/.*timeout \([0-9]*\) getent ahosts.*/\1/p' <<<"$body")
+        [ "$n" -eq 2 ] || { echo "$f: expected two plain-second timeouts, got $n"; return 1; }
+    done
+}
+
+@test "_ppa_dns_verdict: both names are asked at once, not one after the other" {
+    local f s e
+    _getent_stub
+    # Each lookup takes 2 s and fails; in turn that would be 4 s.
+    _stub getent '[[ "$1" == ahosts ]] || exit 1; sleep 2; exit 2'
+    for f in "${INSTALLERS[@]}"; do
+        s=$(date +%s%N)
+        run _verdict "$f" ubuntu
+        e=$(date +%s%N)
+        [ "$output" = "dns-all archive.ubuntu.com" ] || { echo "$f: '$output'"; return 1; }
+        [ $(( (e - s) / 1000000 )) -lt 3500 ] || { echo "$f: took $(( (e - s) / 1000000 )) ms"; return 1; }
     done
 }
 
