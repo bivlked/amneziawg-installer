@@ -12,6 +12,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.2] - 2026-11-03
+
+**v6.1.2** - protection against the kernel vulnerability CVE-2026-98432, the client's QR code right in the terminal (`manage qr`), and first steps in ADVANCED for when there is no connection at all.
+
+### Added
+
+- **Protection against the kernel vulnerability CVE-2026-98432.** It is a Linux kernel bug in parsing a TCP SYN with IP options (critical, 9.8), and the server always has an open TCP port: SSH. Until the kernel is updated to a fixed version, a firewall rule covers it, and the installer now sets that rule itself. The rule drops incoming TCP packets with IP options already in the `raw` table, before the kernel parses them. Such TCP practically does not occur on the regular internet. After a reboot the unit `amneziawg-ipopts-guard.service` puts the rule back; it does not depend on UFW. On a server that already runs, a separate mode `sudo bash install_amneziawg.sh --ipopts-guard` adds the protection: it sets only the rule and the unit and leaves the VPN and the other settings alone. `manage check` shows whether the protection is in place. `--uninstall` removes it.
+- **The client's QR code right in the terminal: `manage qr <name>`** ([#375](https://github.com/bivlked/amneziawg-installer/issues/375)). The command prints the config QR code for the AmneziaWG app, and with `--vpn` the `vpn://` link QR for Amnezia VPN. No more copying the picture off the server with `scp`. If the code does not fit in the terminal window, the command says so up front: a phone cannot read a code it does not see whole. A 3.1 config QR is about 90-110 characters wide, a `vpn://` link QR about 120. The idea came from @DimiDr0l.
+
+### Documentation
+
+- **ADVANCED: "No connection: where to start".** A short ladder at the top of troubleshooting, by what the server sees. The first step is whether anything from Russia reaches the server at all: if not even SSH answers from Russia while it does from abroad, the address itself is blocked, and changing configs will not help. Since late October 2026 both single addresses and whole hosting subnets get closed this way. Then `tcpdump` on the VPN port and the existing tables for the handshake.
+
+### Compatibility
+
+- **Ubuntu kernels 7.0.0-42 and 7.0.0-43** (26.04 and the 24.04 HWE kernel). The PPA module does not build on them without a fix, and the fix embedded in the installer since v5.37.1 applies here too: the build is checked on kernels 7.0.0-34, -38, -39, -42 and -43, and an install and a kernel update to 7.0.0-42 on a live Ubuntu 24.04 server. No installer update is needed for this.
+
 ## [6.1.1] - 2026-10-22
 
 **v6.1.1** - step 2 now shows why it stopped: apt output in the install log, a server DNS check before blaming Launchpad, and git's own error when building the 2.0 module.
@@ -2151,7 +2168,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.2...HEAD
+[6.1.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.1...v6.1.2
 [6.1.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.0...v6.1.1
 [6.1.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.1...v6.1.0
 [6.0.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.0...v6.0.1

@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # Скрипт для управления пользователями (пирами) AmneziaWG 3.x и 2.0
 # Автор: @bivlked
-# Версия: 6.1.1
-# Дата: 2026-10-22
+# Версия: 6.1.2
+# Дата: 2026-11-03
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="6.1.1"
+SCRIPT_VERSION="6.1.2"
 set -o pipefail
 # awg show раскрашивает подписи, если в окружении WG_COLOR_MODE=always, даже при
 # выводе в канал. Тогда фильтр секретов не узнаёт «header protection key» и
@@ -50,6 +50,8 @@ LOG_FILE="$AWG_DIR/manage_amneziawg.log"
 AWG_ENSURE_HELPER=/usr/local/sbin/amneziawg-ensure-module
 KMOD_MODULES_DIR=/lib/modules
 KMOD_SYS_DIR=/sys/module
+# Помощник защиты от CVE-2026-98432 (ставит установщик); тесты подменяют путь.
+AWG_IPOPTS_HELPER=/usr/local/sbin/amneziawg-ipopts-guard
 NO_COLOR=0
 VERBOSE_LIST=0
 JSON_OUTPUT=0
@@ -238,6 +240,7 @@ while [[ $# -gt 0 ]]; do
         --reset-routes)    CLI_RESET_ROUTES=1; shift ;;
         --yes)             CLI_YES=1; shift ;;
         --carrier=*)       CLI_CARRIER="${1#*=}"; shift ;;
+        --vpn)             CLI_QR_VPN=1; shift ;;
         --*)               echo "Неизвестная опция: $1" >&2; for _rest in "$@"; do [[ "$_rest" == "--json" ]] && JSON_OUTPUT=1; done; COMMAND="help"; HELP_EXIT_RC=1; break ;;
         *)
             if [[ -z "$COMMAND" ]]; then
@@ -259,6 +262,13 @@ case "$COMMAND" in
     status) COMMAND="check" ;;
     repair) COMMAND="repair-module" ;;
 esac
+
+# --vpn нужен только qr: с другой командой он молча ничего бы не значил.
+if [[ "${CLI_QR_VPN:-0}" == "1" && "$COMMAND" != "qr" && "$COMMAND" != "help" ]]; then
+    _JSON_ERR="--vpn работает только с командой qr"
+    echo "$_JSON_ERR" >&2
+    exit 1
+fi
 
 # Валидация --apply-mode после разбора ВСЕХ опций (--json уже известен).
 # Опечатка (--apply-mode=restrat) молча работала бы как syncconf - пользователь,
@@ -1655,6 +1665,30 @@ _conf_jc() {
     _awg_dec_strip "$jc"
 }
 
+# Защита от CVE-2026-98432 (правило против TCP-пакетов с IP-опциями, ставит
+# установщик): только сообщение, вердикт check не меняет - туннель работает и
+# без неё. Отказ самого запроса называется отдельно, а не выдаётся за
+# «правила нет».
+_ipopts_guard_report() {
+    local _rc=0 _how="запустите установщик последней версии с флагом --ipopts-guard (ADVANCED, раздел про CVE-2026-98432)"
+    log "Защита от CVE-2026-98432:"
+    if [[ ! -x "$AWG_IPOPTS_HELPER" ]]; then
+        log_warn " - Защита установщика не стоит (нет $AWG_IPOPTS_HELPER). Поставить: $_how"
+        return 0
+    fi
+    timeout 10 "$AWG_IPOPTS_HELPER" status >/dev/null 2>&1 || _rc=$?
+    if [[ "$_rc" -eq 1 ]]; then
+        log_warn " - Правила нет, хотя помощник стоит. Вернуть: sudo systemctl restart amneziawg-ipopts-guard.service, либо $_how"
+    elif [[ "$_rc" -ne 0 ]]; then
+        log_warn " - Проверить правило не удалось (amneziawg-ipopts-guard status, код $_rc). Причина: sudo $AWG_IPOPTS_HELPER status"
+    elif ! systemctl is-enabled --quiet amneziawg-ipopts-guard.service 2>/dev/null; then
+        log_warn " - Правило стоит, но юнит amneziawg-ipopts-guard.service не включён: после перезагрузки правила не будет. Включить: sudo systemctl enable amneziawg-ipopts-guard.service"
+    else
+        log " - Стоит: TCP-пакеты с IP-опциями отбрасываются (amneziawg-ipopts-guard.service)."
+    fi
+    return 0
+}
+
 check_server() {
     case $- in *x*) _awg_xtrace_guard check_server; return ;; esac
     log "Проверка состояния сервера AmneziaWG..."
@@ -1882,6 +1916,7 @@ check_server() {
     else
         log_warn " - Проверка доступа к модулю ядра без root пропущена: awg_common.sh старше manage. Обновите обе половины под одну версию."
     fi
+    _ipopts_guard_report
 
     if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
         local _c_clients _jok=false
@@ -3139,6 +3174,82 @@ stats_clients() {
 # Справка
 # ==============================================================================
 
+# Размер окна терминала "строки столбцы"; пусто, если терминала нет (вывод в
+# файл, cron). Отдельная функция, чтобы тесты могли подставить размер.
+_qr_term_size() {
+    # Скобки: ошибку открытия /dev/tty перенаправление 2> справа от < не глушит.
+    { stty size </dev/tty; } 2>/dev/null || true
+}
+
+# qr <имя> [--vpn] (#375): QR-код конфига клиента (или ссылки vpn://) прямо в
+# терминал, без копирования картинки с сервера. Сам код печатается напрямую,
+# не через логгер. Ширина кода в символах равна числу модулей, высота - вдвое
+# меньше (ansiutf8 рисует две строки модулей в одной строке терминала); код,
+# который не влезает в окно, телефон не прочитает, поэтому команда о нём
+# предупреждает, но печатает всё равно. Флаги qrencode как у PNG: -8 только
+# для vpn://.
+show_client_qr() {
+    # Под bash -x трасса несла бы QR целиком, то есть приватный ключ клиента.
+    case $- in *x*) _awg_xtrace_guard show_client_qr "$@"; return ;; esac
+    local name="$1" vpn="${2:-0}" file what qr ascii modules need_rows size rows cols
+    local -a flags=()
+    if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
+        _JSON_ERR="qr печатает QR-код в терминал, --json не поддерживается"
+        log_error "$_JSON_ERR."
+        return 1
+    fi
+    if [[ -z "$name" ]]; then
+        _JSON_ERR="не указано имя клиента"
+        log_error "Не указано имя клиента: sudo bash $0 qr <имя> [--vpn]"
+        return 1
+    fi
+    validate_client_name "$name" || { _JSON_ERR="невалидное имя клиента"; return 1; }
+    if ! grep -qxF "#_Name = ${name}" "$SERVER_CONF_FILE"; then
+        _JSON_ERR="клиент не найден"
+        log_error "Клиент '$name' не найден."
+        return 1
+    fi
+    if [[ "$vpn" -eq 1 ]]; then
+        file="$AWG_DIR/${name}.vpnuri"; flags=(-8); what="ссылки vpn:// (приложение Amnezia VPN)"
+    else
+        file="$AWG_DIR/${name}.conf"; what="конфига (приложение AmneziaWG)"
+    fi
+    if [[ ! -s "$file" ]]; then
+        _JSON_ERR="нет файла клиента"
+        log_error "Нет файла $file. Пересоздать файлы клиента: sudo bash $0 regen $name"
+        return 1
+    fi
+    if ! command -v qrencode >/dev/null 2>&1; then
+        _JSON_ERR="qrencode не установлен"
+        log_error "qrencode не установлен: sudo apt install qrencode"
+        return 1
+    fi
+    # Сначала строим код целиком: при отказе на экран не попадёт половина.
+    if ! qr=$(qrencode -t ansiutf8 "${flags[@]}" -r "$file"); then
+        _JSON_ERR="qrencode не построил QR-код"
+        log_error "qrencode не смог построить QR-код из $file."
+        return 1
+    fi
+    # Число модулей - по ASCII-виду (два символа на модуль, от локали не зависит).
+    if ascii=$(qrencode -t ASCII "${flags[@]}" -r "$file" 2>/dev/null); then
+        ascii="${ascii%%$'\n'*}"
+        modules=$(( ${#ascii} / 2 ))
+        need_rows=$(( (modules + 1) / 2 ))
+        size=$(_qr_term_size)
+        if [[ "$size" =~ ^([0-9]+)\ ([0-9]+)$ ]]; then
+            rows="${BASH_REMATCH[1]}"; cols="${BASH_REMATCH[2]}"
+            # «0 0» отдают консоли хостеров (VNC, последовательная): размер неизвестен.
+            if (( rows > 0 && cols > 0 )) && (( modules > cols || need_rows > rows )); then
+                log_warn "QR-код занимает ${modules} символов в ширину и ${need_rows} строк, а окно терминала ${cols} на ${rows}. Увеличьте окно или уменьшите шрифт: код, который не виден целиком, телефон не прочитает."
+            fi
+        fi
+    fi
+    log_warn "В QR-коде приватный ключ клиента. Выводите его, когда экран никто не видит, а после сканирования очистите терминал командой clear."
+    log "QR-код ${what} клиента '${name}':"
+    printf '%s\n' "$qr"
+    return 0
+}
+
 usage() {
     # C1: явный help (rc=0) -> stdout + exit 0; ошибка использования (rc!=0,
     # дефолт) -> stderr + exit 1. Явные help-вызовы передают 0, error-вызовы
@@ -3190,6 +3301,8 @@ usage() {
     echo "  check | status        Проверить состояние сервера"
     echo "  diagnose [--carrier=N] Self-troubleshooting: kernel/sysctl/UFW + сравнение с оператором"
     echo "  show                  Показать статус \`awg show\`"
+    echo "  qr <имя> [--vpn]      QR-код конфига клиента прямо в терминале (для AmneziaWG);"
+    echo "                        с --vpn - QR ссылки vpn:// (для Amnezia VPN)"
     echo "  restart               Перезапустить сервис AmneziaWG"
     echo "  repair-module         Восстановить модуль ядра после kernel upgrade (alias: repair)"
     echo "                        (dkms autoinstall + modprobe + запуск awg-quick)"
@@ -3675,6 +3788,16 @@ case $COMMAND in
 
     show)
         show_awg_status || _cmd_rc=1
+        ;;
+
+    qr)
+        if [[ ${#ARGS[@]} -gt 1 ]]; then
+            _JSON_ERR="qr принимает одно имя клиента"
+            log_error "$_JSON_ERR."
+            _cmd_rc=1
+        else
+            show_client_qr "$CLIENT_NAME" "${CLI_QR_VPN:-0}" || _cmd_rc=1
+        fi
         ;;
 
     restart)

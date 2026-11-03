@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on ARM) installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 6.1.1
-# Date: 2026-10-22
+# Version: 6.1.2
+# Date: 2026-11-03
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -40,7 +40,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.1.1"
+SCRIPT_VERSION="6.1.2"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -67,8 +67,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="8fdbabf728bb962585996dbae72fafa5a0acec6e0ac2bc9f628db075f3f8235c"
-MANAGE_SCRIPT_SHA256="d952e30767e05ee861588d60f3dd1f45b216a26b2cd0f0f2ddbb006c3b49c197"
+COMMON_SCRIPT_SHA256="77d7b77b0261b580c7af61c6c221a1c2b4465340cc1c3dd9effe4414c60449e8"
+MANAGE_SCRIPT_SHA256="c86b474196c8c6f55e91ea0685db07d51c319ba99c4c4a5a0ae2017a9f70118f"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back
@@ -86,6 +86,7 @@ AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
 UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 REPAIR_MODULE=0
+IPOPTS_GUARD=0
 _AWG_KMOD_T1=0
 # The kernel module helper; tests point it elsewhere.
 AWG_ENSURE_HELPER=/usr/local/sbin/amneziawg-ensure-module
@@ -341,6 +342,7 @@ while [[ $# -gt 0 ]]; do
         --keep-packages) KEEP_PACKAGES=1; CLI_KEEP_PACKAGES=1 ;;
         --force|-f)      FORCE_REINSTALL=1 ;;
         --repair-module) REPAIR_MODULE=1 ;;
+        --ipopts-guard)  IPOPTS_GUARD=1 ;;
         --preset=*)      CLI_PRESET="${1#*=}" ;;
         --jc=*)          CLI_JC="${1#*=}" ;;
         --jmin=*)        CLI_JMIN="${1#*=}" ;;
@@ -360,6 +362,17 @@ if [[ "$REPAIR_MODULE" -eq 1 ]]; then
         case "$_a" in
             --repair-module|--verbose|-v|--no-color) ;;
             *) printf '%s\n' "--repair-module does not combine with $_a: run it on its own (only --verbose and --no-color are allowed)." >&2
+               exit 2 ;;
+        esac
+    done
+    unset _a
+fi
+# --ipopts-guard also runs on its own, for the same reason.
+if [[ "$IPOPTS_GUARD" -eq 1 ]]; then
+    for _a in "${_AWG_ARGV[@]}"; do
+        case "$_a" in
+            --ipopts-guard|--verbose|-v|--no-color) ;;
+            *) printf '%s\n' "--ipopts-guard does not combine with $_a: run it on its own (only --verbose and --no-color are allowed)." >&2
                exit 2 ;;
         esac
     done
@@ -666,6 +679,10 @@ Options:
   --diagnostic          Generate diagnostic report and exit
   --repair-module       Repair the kernel module on an installed server (kernel
                         7.0.0-38 and later, packages left unconfigured by apt);
+                        combines only with --verbose and --no-color
+  --ipopts-guard        Protection against CVE-2026-98432 on an installed server:
+                        a rule that drops TCP packets with IP options and a unit
+                        that sets it at boot. Leaves the VPN alone;
                         combines only with --verbose and --no-color
   -v, --verbose         Verbose output for debugging (including DEBUG)
   --no-color            Disable colored terminal output
@@ -5170,6 +5187,25 @@ step_uninstall() {
         2>/dev/null || true
     rm -f /var/log/amneziawg-ensure-module.log* 2>/dev/null || true
     rm -rf /var/lib/amneziawg /run/amneziawg 2>/dev/null || true
+    # The CVE-2026-98432 guard: unit, rule and helper. stop runs apart from the
+    # unit in case the unit is already off while the rule stayed.
+    log "Removing the CVE-2026-98432 guard (amneziawg-ipopts-guard)..."
+    systemctl disable --now amneziawg-ipopts-guard.service 2>/dev/null || true
+    if [[ -x /usr/local/sbin/amneziawg-ipopts-guard ]]; then
+        /usr/local/sbin/amneziawg-ipopts-guard stop 2>/dev/null || true
+        # The helper goes next, and nothing would remember the rule then.
+        local _gst=0
+        /usr/local/sbin/amneziawg-ipopts-guard status || _gst=$?
+        if [[ "$_gst" -eq 0 ]]; then
+            log_warn "The CVE-2026-98432 rule could not be removed, it goes away at the next reboot. To remove it now: iptables -t raw -D PREROUTING -p tcp -m u32 --u32 \"0>>24&0xF=6:15\" -m comment --comment amneziawg-ipopts-guard -j DROP"
+        elif [[ "$_gst" -ne 1 ]]; then
+            log_warn "The removal of the CVE-2026-98432 rule is not confirmed (the rule check failed, code $_gst). Check: iptables -t raw -S PREROUTING; remove: iptables -t raw -D PREROUTING -p tcp -m u32 --u32 \"0>>24&0xF=6:15\" -m comment --comment amneziawg-ipopts-guard -j DROP"
+        fi
+    fi
+    rm -f /etc/systemd/system/amneziawg-ipopts-guard.service \
+        /etc/systemd/system/.amneziawg-ipopts-guard.service.new \
+        /usr/local/sbin/amneziawg-ipopts-guard \
+        /usr/local/sbin/.amneziawg-ipopts-guard.new 2>/dev/null || true
     systemctl daemon-reload 2>/dev/null || true
     if [[ "$saved_no_tweaks" -eq 0 ]]; then
         log "Cleaning up AmneziaWG UFW rules..."
@@ -8473,6 +8509,153 @@ AWG_SYSTEMD_UNIT_EOF
     return "$_rc"
 }
 
+# _awg_deploy_ipopts_guard : protection against CVE-2026-98432 (a kernel
+# use-after-free when parsing a TCP SYN with IP options; sshd always listens on
+# the server). A rule in the raw table drops incoming IPv4 TCP packets that
+# carry IP options (header longer than 5 words) - the same rule the Amnezia app
+# sets. Legitimate TCP with IP options practically does not occur on the
+# internet. UFW never flushes the raw table (neither reload nor disable), so the
+# rule lives apart from it, and the unit amneziawg-ipopts-guard.service puts it
+# back after a reboot. Deployed by step 4 and by --ipopts-guard. 0 - the rule
+# is in place and the unit enabled, 1 - not (the reason is in the warning).
+_awg_deploy_ipopts_guard() {
+    local _h=/usr/local/sbin/amneziawg-ipopts-guard
+    local _u=/etc/systemd/system/amneziawg-ipopts-guard.service
+    local _sh=/usr/local/sbin/.amneziawg-ipopts-guard.new
+    local _su=/etc/systemd/system/.amneziawg-ipopts-guard.service.new
+    if ! command -v iptables >/dev/null 2>&1; then
+        log_warn "The CVE-2026-98432 guard is not set: iptables is missing. Install the iptables package and run the installer with --ipopts-guard."
+        return 1
+    fi
+    if ! mkdir -p /usr/local/sbin /etc/systemd/system; then
+        log_warn "The CVE-2026-98432 guard is not set: could not create the directories for amneziawg-ipopts-guard."
+        return 1
+    fi
+    if ! cat > "$_sh" <<'AWG_IPOPTS_HELPER_EOF'
+#!/bin/sh
+# amneziawg-ipopts-guard: drop incoming IPv4 TCP packets that carry IP options
+# (CVE-2026-98432, use-after-free in the kernel TCP SYN path). Legitimate TCP
+# with IP options practically does not occur on the internet.
+# Generated by install_amneziawg.sh - do not edit; refresh with --ipopts-guard.
+rule() {
+    iptables -w 10 -t raw "$1" PREROUTING -p tcp -m u32 --u32 '0>>24&0xF=6:15' \
+        -m comment --comment amneziawg-ipopts-guard -j DROP
+}
+# 0 - the rule is in place, 1 - it is not, 3 - iptables could not tell (its
+# message goes to stderr). iptables exits 1 both for "no such rule" and for
+# other problems, so the two are told apart by its message.
+present() {
+    err=$(rule -C 2>&1) && return 0
+    case "$err" in *"does a matching rule exist"*) return 1 ;; esac
+    printf '%s\n' "$err" >&2
+    return 3
+}
+case "${1:-}" in
+    start)
+        present; rc=$?
+        [ "$rc" -eq 0 ] && exit 0
+        [ "$rc" -eq 1 ] || exit 3
+        rule -I ;;
+    stop)
+        n=0
+        while [ "$n" -lt 100 ] && rule -D 2>/dev/null; do
+            n=$((n + 1))
+        done
+        present; rc=$?
+        [ "$rc" -eq 1 ] && exit 0
+        [ "$rc" -eq 0 ] && echo "amneziawg-ipopts-guard: the rule is still in place" >&2 && exit 1
+        exit 3 ;;
+    status)
+        present ;;
+    --version)
+        echo "amneziawg-ipopts-guard 1" ;;
+    *)
+        echo "usage: amneziawg-ipopts-guard start|stop|status" >&2
+        exit 2 ;;
+esac
+AWG_IPOPTS_HELPER_EOF
+    then
+        rm -f "$_sh"; log_warn "The CVE-2026-98432 guard is not set: could not write $_h."; return 1
+    fi
+    if ! sh -n "$_sh" || ! chmod 0755 "$_sh" || ! mv -f "$_sh" "$_h"; then
+        rm -f "$_sh"; log_warn "The CVE-2026-98432 guard is not set: could not deploy $_h."; return 1
+    fi
+    if ! cat > "$_su" <<'AWG_IPOPTS_UNIT_EOF'
+[Unit]
+Description=Drop TCP packets with IPv4 options (CVE-2026-98432)
+Documentation=https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.md#ipopts-guard-adv
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target shutdown.target
+After=systemd-modules-load.service local-fs.target nftables.service
+Conflicts=shutdown.target
+ConditionPathExists=/usr/local/sbin/amneziawg-ipopts-guard
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=60
+ExecStart=/usr/local/sbin/amneziawg-ipopts-guard start
+ExecStop=/usr/local/sbin/amneziawg-ipopts-guard stop
+
+[Install]
+WantedBy=multi-user.target
+AWG_IPOPTS_UNIT_EOF
+    then
+        rm -f "$_su"; log_warn "The CVE-2026-98432 guard is not set: could not write $_u."; return 1
+    fi
+    if ! chmod 0644 "$_su" || ! mv -f "$_su" "$_u"; then
+        rm -f "$_su"; log_warn "The CVE-2026-98432 guard is not set: could not deploy $_u."; return 1
+    fi
+    if ! systemctl daemon-reload || ! systemctl enable amneziawg-ipopts-guard.service; then
+        log_warn "The CVE-2026-98432 guard is not set or not updated: systemd did not accept the unit amneziawg-ipopts-guard.service (daemon-reload or enable)."
+        return 1
+    fi
+    # Not restart: it would remove the rule (ExecStop) before inserting it
+    # again, and the server would go unprotected meanwhile. A running unit only
+    # needs the fresh helper's start, which changes nothing if the rule is there.
+    if systemctl is-active --quiet amneziawg-ipopts-guard.service; then
+        "$_h" start || true
+    else
+        systemctl start amneziawg-ipopts-guard.service || true
+    fi
+    local _st=0
+    "$_h" status || _st=$?
+    if [[ "$_st" -eq 1 ]]; then
+        # An enabled unit that cannot set the rule would fail at every boot and
+        # keep the system in the degraded state.
+        if systemctl disable amneziawg-ipopts-guard.service >/dev/null 2>&1; then
+            systemctl reset-failed amneziawg-ipopts-guard.service >/dev/null 2>&1 || true
+            log_warn "CVE-2026-98432 guard: the rule is not in place (amneziawg-ipopts-guard status), the unit is disabled. Reason: journalctl -u amneziawg-ipopts-guard.service"
+        else
+            log_warn "CVE-2026-98432 guard: the rule is not in place, and the unit could not be disabled: sudo systemctl disable amneziawg-ipopts-guard.service. Reason: journalctl -u amneziawg-ipopts-guard.service"
+        fi
+        return 1
+    elif [[ "$_st" -ne 0 ]]; then
+        # "Unknown" is no reason to disable the unit: the rule may be in place,
+        # and disabling would drop it after a reboot.
+        log_warn "CVE-2026-98432 guard: the rule could not be checked (code $_st, the iptables message is above), the unit is left as it is. Run again: sudo bash $0 --ipopts-guard"
+        return 1
+    fi
+    log "The CVE-2026-98432 guard is in place: TCP packets with IP options are dropped (unit amneziawg-ipopts-guard.service)."
+    return 0
+}
+
+# --ipopts-guard: protection against CVE-2026-98432 on an installed server
+# without a reinstall. Deploys the helper, the unit and the rule and exits: the
+# state machine, apt, UFW and the tunnel are left alone. Works without an
+# AmneziaWG install too.
+ipopts_guard_cmd() {
+    if [[ "$(id -u)" -ne 0 ]]; then log_error "Run as root: sudo bash $0 --ipopts-guard"; exit 1; fi
+    log "### Protection against CVE-2026-98432 (--ipopts-guard) ###"
+    if _awg_deploy_ipopts_guard; then
+        log "Done. The VPN and the other server settings were not changed. Check: sudo bash $MANAGE_SCRIPT_PATH check (or sudo /usr/local/sbin/amneziawg-ipopts-guard status, code 0 - the rule is in place)"
+        exit 0
+    fi
+    log_error "The guard could not be set, the reason is in the lines above."
+    exit 1
+}
+
 # ==============================================================================
 # STEP 3: Kernel module check
 # ==============================================================================
@@ -8606,9 +8789,13 @@ step4_setup_firewall() {
         log "### STEP 4: UFW firewall configuration ###"
         install_packages ufw
         setup_improved_firewall || die "UFW configuration error."
+        # The CVE-2026-98432 guard does not stop the install: the VPN works
+        # without it, and it can be added later on its own.
+        _awg_deploy_ipopts_guard || log_warn "The install goes on without the CVE-2026-98432 guard. Add it later: sudo bash $0 --ipopts-guard"
         log "Step 4 completed."
     else
         log "### STEP 4: Skipping UFW configuration (--no-tweaks) ###"
+        log_warn "With --no-tweaks the CVE-2026-98432 guard (a rule against TCP packets with IP options) is not set. Add it on its own: sudo bash $0 --ipopts-guard"
     fi
     update_state 5
 }
@@ -9033,6 +9220,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then step_uninstall; fi
 if [[ "$DIAGNOSTIC" -eq 1 ]]; then create_diagnostic_report; exit 0; fi
 if [[ "$VERBOSE" -eq 1 ]]; then set -x; fi
 if [[ "$REPAIR_MODULE" -eq 1 ]]; then repair_module_cmd; fi
+if [[ "$IPOPTS_GUARD" -eq 1 ]]; then ipopts_guard_cmd; fi
 
 # v5.13.0: idempotency guard — if AmneziaWG is already installed and
 # running, a re-run wastes ~20 minutes (Step 1 re-tunes sysctl/swap/BBR,

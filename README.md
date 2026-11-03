@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/Architecture-x86__64_|_ARM64_|_ARMv7-green" alt="x86_64 | ARM64 | ARMv7">
   <img src="https://img.shields.io/badge/AmneziaWG-3.1_&#124;_2.0-blueviolet" alt="AmneziaWG 3.1 and 2.0">
   <a href="https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
-  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-6.1.1-blue" alt="Version"></a>
+  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-6.1.2-blue" alt="Version"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/stargazers"><img src="https://img.shields.io/github/stars/bivlked/amneziawg-installer?style=flat" alt="Stars"></a>
   <img src="https://img.shields.io/github/last-commit/bivlked/amneziawg-installer" alt="Last commit">
@@ -34,7 +34,7 @@
 <!-- facts:begin -->
 <!-- Собирается scripts/update-facts-block.sh из данных репозитория.
      Руками не править: check-docs-consistency.sh сверит блок с источниками. -->
-**Факты на 2026-10-22.** Установщик 6.1.1. Сроки поддержки ОС проверены по данным вендоров на 2026-08-29.
+**Факты на 2026-11-03.** Установщик 6.1.2. Сроки поддержки ОС проверены по данным вендоров на 2026-08-29.
 
 | | |
 |---|---|
@@ -77,10 +77,10 @@ sudo bash ./install_amneziawg.sh
 - **Модуль ядра.** `amneziawg` собирается через DKMS и загружается при старте (`/etc/modules-load.d/amneziawg.conf`). После обновления ядра модуль пересобирается сам: за это отвечают `/usr/local/sbin/amneziawg-ensure-module`, apt-хук `/etc/apt/apt.conf.d/99-amneziawg-post-kernel` и юнит `amneziawg-ensure-module.service`, журнал - `/var/log/amneziawg-ensure-module.log`. На ARM с готовым пакетом этой обвязки нет: после смены ядра установщик нужно запустить ещё раз.
 - **sysctl**, файл `/etc/sysctl.d/99-amneziawg-security.conf`: форвардинг, выключение IPv6 на хосте (оставить - флаг `--allow-ipv6`), BBR, буферы по объёму памяти, `rp_filter = 2`, запрет redirect, SYN cookies, `vm.swappiness = 10`, `net.netfilter.nf_conntrack_max = 65536`, `kernel.sysrq = 0`, `kernel.printk = 3 4 1 3`.
 - **Swap.** Если swap меньше 1 ГБ (при памяти до 2 ГБ) или меньше 512 МБ (при большем объёме), создаётся `/swapfile` со строкой в `/etc/fstab`.
-- **Фаервол.** UFW: входящие запрещены, SSH с ограничением частоты на найденном порту (порт можно задать флагом `--ssh-port`), открыт UDP-порт VPN, правило пересылки `awg0` -> внешний интерфейс. Если UFW ещё не включён, установщик спрашивает, включать ли его (с `--yes` включает сам). Fail2Ban защищает SSH, его настройки в `/etc/fail2ban/jail.d/amneziawg.conf`. **Настройки SSH-сервера установщик не меняет.**
+- **Фаервол.** UFW: входящие запрещены, SSH с ограничением частоты на найденном порту (порт можно задать флагом `--ssh-port`), открыт UDP-порт VPN, правило пересылки `awg0` -> внешний интерфейс. Если UFW ещё не включён, установщик спрашивает, включать ли его (с `--yes` включает сам). Fail2Ban защищает SSH, его настройки в `/etc/fail2ban/jail.d/amneziawg.conf`. Отдельное правило в таблице `raw` отбрасывает входящие TCP-пакеты с IP-опциями ([защита от CVE-2026-98432](ADVANCED.md#ipopts-guard-adv)): его держат `/usr/local/sbin/amneziawg-ipopts-guard` и юнит `amneziawg-ipopts-guard.service`, с `--no-tweaks` оно не ставится. **Настройки SSH-сервера установщик не меняет.**
 - **VPN.** Серверный конфиг `/etc/amnezia/amneziawg/awg0.conf` с правилами `iptables` в `PostUp`, сервис `awg-quick@awg0`, каталог `/root/awg/` (ключи, конфиги клиентов, журнал, скрипты управления) с правами 700/600, cron `/etc/cron.d/awg-expiry` для клиентов со сроком действия.
 - **Перезагрузки.** Их две: после обновления системы и после установки модуля (установщик спрашивает, ответьте `y`). После каждой запустите ту же команду снова.
-- **Откат**: `--uninstall` убирает своё - модуль, конфиги, sysctl-файлы, кроны, UFW-правило VPN-порта и UFW-правило маршрутизации `awg0`. UFW отключает и Fail2Ban удаляет только если сам их включал/ставил; если UFW был активен до установки, добавленное правило SSH rate-limit остаётся. Не возвращает: swap и удалённые пакеты; пакеты-зависимости, которые он ставил (dkms, компилятор, заголовки ядра), остаются. По умолчанию, в том числе с `--yes`, перед удалением создаётся архив `/root/awg_uninstall_backup_*.tar.gz` с конфигами и приватными ключами; он остаётся на сервере, удалите его сами, когда он станет не нужен.
+- **Откат**: `--uninstall` убирает своё - модуль, конфиги, sysctl-файлы, кроны, UFW-правило VPN-порта и UFW-правило маршрутизации `awg0`, правило против CVE-2026-98432 с его юнитом. UFW отключает и Fail2Ban удаляет только если сам их включал/ставил; если UFW был активен до установки, добавленное правило SSH rate-limit остаётся. Не возвращает: swap и удалённые пакеты; пакеты-зависимости, которые он ставил (dkms, компилятор, заголовки ядра), остаются. По умолчанию, в том числе с `--yes`, перед удалением создаётся архив `/root/awg_uninstall_backup_*.tar.gz` с конфигами и приватными ключами; он остаётся на сервере, удалите его сами, когда он станет не нужен.
 
 Флаг `--no-tweaks` оставляет пакеты, swap, sysctl-hardening, UFW и Fail2Ban как есть. Форвардинг включается всё равно, в файле `/etc/sysctl.d/99-amneziawg-forwarding.conf`, и там же выключается IPv6 на хосте, если не передать `--allow-ipv6`; обновление системы идёт как обычно. Что остаётся после удаления - в [INSTALL_VPS.ru.md](INSTALL_VPS.ru.md#uninstall), модель угроз - в [docs/SIGNING_DESIGN.md](docs/SIGNING_DESIGN.md#threat-model), проверка подписи - в разделе [Проверка подписи](#proverka-podpisi).
 </details>
@@ -530,6 +530,7 @@ sudo bash /root/awg/manage_amneziawg.sh <команда> [аргументы]
 | `list`    | `[-v] [--json]`        | Список клиентов (`-v` детали, `--json` машиночитаемый с `client_ipv6` и `expires_at`) |       Нет     |
 | `show`    |                        | Статус `awg show`            |       Нет     |
 | `stats`   | `[--json]`             | Статистика трафика по клиентам |       Нет     |
+| `qr`      | `<имя> [--vpn]`        | QR-код клиента прямо в терминале (`--vpn` - QR ссылки `vpn://`) |       Нет     |
 
 **Обслуживание и восстановление:**
 
