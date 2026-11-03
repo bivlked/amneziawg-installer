@@ -224,6 +224,18 @@ _size_driver() { # manage, "rows cols" or empty (no terminal)
     done
 }
 
+@test "_qr_term_size without a controlling terminal: empty answer, nothing on stderr" {
+    local m
+    command -v setsid >/dev/null || skip "setsid not available"
+    for m in "${MANAGERS[@]}"; do
+        # setsid drops the controlling terminal, so opening /dev/tty fails (as
+        # from cron or a pipe on the server). The real function, not a stub.
+        run --separate-stderr setsid bash -c "$(_fn "$m" _qr_term_size); _qr_term_size; echo RC=\$?"
+        [ "$output" = "RC=0" ] || { echo "$m: [$output]"; return 1; }
+        [ -z "$stderr" ] || { echo "$m: stderr [$stderr]"; return 1; }
+    done
+}
+
 @test "qr: one row or one column short of the code is a warning" {
     local m s
     for m in "${MANAGERS[@]}"; do

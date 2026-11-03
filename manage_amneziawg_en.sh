@@ -3219,7 +3219,8 @@ stats_clients() {
 # Terminal window size as "rows cols"; empty without a terminal (output to a
 # file, cron). A function of its own so tests can supply the size.
 _qr_term_size() {
-    stty size </dev/tty 2>/dev/null || true
+    # Braces: a 2> to the right of < does not silence the failure to open /dev/tty.
+    { stty size </dev/tty; } 2>/dev/null || true
 }
 
 # qr <name> [--vpn] (#375): the client's config QR code (or the vpn:// link)
