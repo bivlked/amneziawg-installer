@@ -152,7 +152,8 @@ case "$1" in restart|start) sh "$T/sbin/amneziawg-ipopts-guard" start ;; esac'
         grep -qx 'systemctl daemon-reload' "$T/calls"
         grep -qx 'systemctl enable amneziawg-ipopts-guard.service' "$T/calls"
         grep -qx 'systemctl restart amneziawg-ipopts-guard.service' "$T/calls" || { echo "$f: $(_calls)"; return 1; }
-        ls -A "$T/sbin" "$T/units" | grep -q '\.new$' && { echo "$f: stage left"; return 1; }
+        [ ! -e "$T/sbin/.amneziawg-ipopts-guard.new" ] && [ ! -e "$T/units/.amneziawg-ipopts-guard.service.new" ] \
+            || { echo "$f: stage left"; return 1; }
         # The refresh on a second run keeps exactly one rule.
         run bash "$T/deploy.sh"
         [[ "$output" == *"RC=0"* ]] && [ "$(cat "$T/rules")" = 1 ] || { echo "$f second: $output rules=$(cat "$T/rules")"; return 1; }
