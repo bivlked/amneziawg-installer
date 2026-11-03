@@ -672,7 +672,15 @@ You can verify the signature of the downloaded file as described in [Verifying a
 
 **Check.** `sudo bash /root/awg/manage_amneziawg.sh check` prints a "CVE-2026-98432 guard" line (this needs `manage` v6.1.2; update it as described in [How to update the scripts](#update-scripts-adv)). Without `manage`: `sudo /usr/local/sbin/amneziawg-ipopts-guard status && echo set`.
 
-**Remove.** `--uninstall` removes the guard along with everything else. On its own: `sudo systemctl disable --now amneziawg-ipopts-guard.service`. Once the kernel is updated to a fixed version you can keep the rule: it breaks nothing.
+**Remove.** `--uninstall` removes the guard along with everything else. On its own, leaving the VPN alone:
+
+```bash
+sudo systemctl disable --now amneziawg-ipopts-guard.service
+sudo rm /etc/systemd/system/amneziawg-ipopts-guard.service /usr/local/sbin/amneziawg-ipopts-guard
+sudo systemctl daemon-reload
+```
+
+Once the kernel is updated to a fixed version you can keep the rule: it breaks nothing.
 
 <a id="fail2ban-adv"></a>
 ### Fail2Ban (Automatic Setup)
@@ -1131,7 +1139,7 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 * **`restore [file]`:** Restore from a backup (including expiry data and cron job).
 * **`check` / `status`:** Check server status (service, port, module, the installation's protocol generation 3.1 or 2.0, and the obfuscation parameters).
 * **`show`:** Run `awg show`.
-* **`qr <name> [--vpn]`:** Print the client's QR code right in the terminal, to scan it with a phone without copying a picture off the server. Without the flag - the config QR for the AmneziaWG app, with `--vpn` - the `vpn://` link QR for Amnezia VPN. A 3.1 code takes about 100-120 characters in width and 50-60 lines; if the window is smaller, the command warns up front, and then make the terminal font smaller. The code holds the client's private key: show it when nobody can see the screen, and run `clear` after scanning. `--json` is not supported.
+* **`qr <name> [--vpn]`:** Print the client's QR code right in the terminal, to scan it with a phone without copying a picture off the server. Without the flag - the config QR for the AmneziaWG app, with `--vpn` - the `vpn://` link QR for Amnezia VPN. A 3.1 config QR takes about 100-120 characters in width and 50-60 lines, a `vpn://` link QR about 120 by 60; if the window is smaller, the command warns up front, and then make the terminal font smaller. The code holds the client's private key: show it when nobody can see the screen, and run `clear` after scanning. `--json` is not supported.
 * **`restart`:** Restart the AmneziaWG service.
 * **`diagnose [--carrier=NAME]`:** Self-troubleshooting: checks the kernel module, sysctl and UFW; with `--carrier=NAME` it compares AWG parameters against a mobile carrier profile. Names: `beeline_msk`, `yota_msk`, `tele2_msk`, `tele2_krasnoyarsk`, `tattelecom`, `megafon_regions`, `tmobile_us` (the last name is historical: it is the Russian T-Mobile, Moscow and region).
 * **`repair-module`** (alias `repair`): Rebuild/restore the amneziawg kernel module (DKMS) after a server kernel upgrade; for kernels 7.0.0-38 and later see [Known Limitations](#kernel-70-backport-adv).
@@ -1699,7 +1707,7 @@ The client does not connect, and it is unclear what is to blame: the network, th
 sudo tcpdump -ni any udp port <VPN port>
 ```
 
-- Nothing - packets are cut on the way to the server, usually by a mobile carrier and a non-standard UDP port. Compare with Wi-Fi and see [Carrier blocks the port](#mtu-mobile-adv): port `443/udp` often helps, and it can be changed on a running server too.
+- Nothing - packets are cut on the way to the server, usually by a mobile carrier and a non-standard UDP port. Compare with Wi-Fi and see [Carrier blocks the port](#carrier-port-adv): port `443/udp` often helps, and it can be changed on a running server too.
 - Packets arrive - next, look at `sudo awg show awg0` for this peer and compare with the table in [The handshake never completes on cellular](#no-hs-mobile-adv): an empty `latest handshake` with an `endpoint` that does not change means the profile parameters do not match, and with one that changes, the handshake burst is cut on the way.
 
 **3. The handshake happens, but traffic does not flow or dies after a few seconds.** These are the blocks "Handshake succeeds but traffic doesn't flow" and "AmneziaWG handshake completes but traffic then dies" below: in the first case it is usually MTU or routing on the server, in the second, filtering by the host's address on the path.
@@ -2101,6 +2109,7 @@ The rule is applied automatically on install and reinstall (`--force`) for v5.17
 
 > The MSS clamp only affects TCP. Video and QUIC/HTTP3 (UDP) are untouched: if that is the traffic that stalls, the cause is elsewhere - see the obfuscation parameters and carrier presets.
 
+<a id="carrier-port-adv"></a>
 ### Carrier blocks the port (no connection)
 
 If the tunnel does not come up at all on cellular (the handshake never completes) while it works fine on Wi-Fi, there are TWO known causes, and one look at the server tells them apart.

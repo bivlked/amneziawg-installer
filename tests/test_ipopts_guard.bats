@@ -12,6 +12,7 @@ load test_helper
 INSTALLERS=(install_amneziawg.sh install_amneziawg_en.sh)
 MANAGERS=(manage_amneziawg.sh manage_amneziawg_en.sh)
 RULE='PREROUTING -p tcp -m u32 --u32 0>>24&0xF=6:15 -m comment --comment amneziawg-ipopts-guard -j DROP'
+IPT='iptables -w 10 -t raw'
 
 _fn() { sed -n "/^$2() {\$/,/^}\$/p" "$BATS_TEST_DIRNAME/../$1"; }
 _stub() { printf '#!/bin/bash\n%s\n' "$2" > "$T/bin/$1"; chmod +x "$T/bin/$1"; }
@@ -20,15 +21,22 @@ _calls() { cat "$T/calls" 2>/dev/null || true; }
 setup() {
     T=$(mktemp -d); export T
     mkdir -p "$T/bin"
-    # iptables stub: the rule count lives in $T/rules; ipt.fail makes every
-    # call an error (exit 2, as with a missing match extension).
+    # iptables stub: the rule count lives in $T/rules. ipt.fail makes every
+    # call an error (exit 2, as with a missing match extension); ipt.other
+    # exits 1 with a message that is not "no such rule" (iptables uses 1 for
+    # other problems too); ipt.stuck makes -D succeed without removing;
+    # ipt.nodel makes -D fail as "no such rule" while the rule stays.
     _stub iptables 'echo "iptables $*" >> "$T/calls"
 [[ -e "$T/ipt.fail" ]] && { echo "iptables: Couldn'"'"'t load match u32" >&2; exit 2; }
+[[ -e "$T/ipt.other" ]] && { echo "iptables: table raw is incompatible, use nft tool" >&2; exit 1; }
+nomatch() { echo "iptables: Bad rule (does a matching rule exist in that chain?)." >&2; exit 1; }
 n=$(cat "$T/rules" 2>/dev/null || echo 0)
-case "$4" in
-  -C) [[ "$n" -gt 0 ]] ;;
+case "$5" in
+  -C) [[ "$n" -gt 0 ]] || nomatch ;;
   -I) echo $((n + 1)) > "$T/rules" ;;
-  -D) [[ "$n" -gt 0 ]] || { echo "iptables: Bad rule" >&2; exit 1; }; echo $((n - 1)) > "$T/rules" ;;
+  -D) [[ -e "$T/ipt.stuck" ]] && exit 0
+      [[ -e "$T/ipt.nodel" ]] && nomatch
+      [[ "$n" -gt 0 ]] || nomatch; echo $((n - 1)) > "$T/rules" ;;
   *) exit 3 ;;
 esac'
     export PATH="$T/bin:$PATH"
@@ -52,7 +60,8 @@ _helper() {
         run sh "$T/guard" start
         [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
         [ "$(cat "$T/rules")" = 1 ]
-        grep -qxF "iptables -w -t raw -I $RULE" "$T/calls" || { echo "$f: $(_calls)"; return 1; }
+        grep -qxF "$IPT -C $RULE" "$T/calls" || { echo "$f: $(_calls)"; return 1; }
+        grep -qxF "$IPT -I $RULE" "$T/calls" || { echo "$f: $(_calls)"; return 1; }
         # A second start finds it and adds nothing.
         run sh "$T/guard" start
         [ "$status" -eq 0 ]
@@ -63,23 +72,63 @@ _helper() {
 @test "helper: stop removes every copy and succeeds when there is none" {
     local f
     for f in "${INSTALLERS[@]}"; do
-        _helper "$f"; echo 3 > "$T/rules"
+        _helper "$f"; echo 3 > "$T/rules"; rm -f "$T/calls"
         run sh "$T/guard" stop
         [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
         [ "$(cat "$T/rules")" = 0 ]
+        grep -qxF "$IPT -D $RULE" "$T/calls" || { echo "$f: $(_calls)"; return 1; }
         run sh "$T/guard" stop
         [ "$status" -eq 0 ]
     done
 }
 
-@test "helper: status is 0 with the rule, 1 without it, and the iptables code on an error" {
+@test "helper: stop that leaves the rule in place fails and says so" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _helper "$f"; echo 1 > "$T/rules"; touch "$T/ipt.nodel"
+        run sh "$T/guard" stop
+        [ "$status" -eq 1 ] || { echo "$f: $status $output"; return 1; }
+        [[ "$output" == *"still in place"* ]] || { echo "$f: $output"; return 1; }
+        rm -f "$T/ipt.nodel"
+    done
+}
+
+@test "helper: stop gives up after 100 removals that remove nothing, it does not spin" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _helper "$f"; echo 1 > "$T/rules"; touch "$T/ipt.stuck"; rm -f "$T/calls"
+        run timeout 20 sh "$T/guard" stop
+        [ "$status" -eq 1 ] || { echo "$f: $status"; return 1; }
+        [ "$(grep -c -- ' -D ' "$T/calls")" -eq 100 ] || { echo "$f: $(grep -c -- ' -D ' "$T/calls") removals"; return 1; }
+        rm -f "$T/ipt.stuck"
+    done
+}
+
+@test "helper: stop with exactly 100 copies removes them all and succeeds" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _helper "$f"; echo 100 > "$T/rules"
+        run sh "$T/guard" stop
+        [ "$status" -eq 0 ] && [ "$(cat "$T/rules")" = 0 ] || { echo "$f: $status rules=$(cat "$T/rules") $output"; return 1; }
+    done
+}
+
+@test "helper: status is 0 with the rule, 1 without it, 3 when iptables cannot tell" {
     local f
     for f in "${INSTALLERS[@]}"; do
         _helper "$f"
         echo 1 > "$T/rules"; run sh "$T/guard" status; [ "$status" -eq 0 ] || { echo "$f present: $status"; return 1; }
         echo 0 > "$T/rules"; run sh "$T/guard" status; [ "$status" -eq 1 ] || { echo "$f absent: $status"; return 1; }
-        touch "$T/ipt.fail";  run sh "$T/guard" status; [ "$status" -eq 2 ] || { echo "$f error: $status"; return 1; }
+        [ -z "$output" ] || { echo "$f absent printed: $output"; return 1; }
+        touch "$T/ipt.fail"; run sh "$T/guard" status
+        [ "$status" -eq 3 ] && [[ "$output" == *"load match u32"* ]] || { echo "$f error: $status $output"; return 1; }
         rm -f "$T/ipt.fail"
+        # iptables exits 1 for other problems too: that is not "no rule"
+        touch "$T/ipt.other"; run sh "$T/guard" status
+        [ "$status" -eq 3 ] && [[ "$output" == *"incompatible"* ]] || { echo "$f other: $status $output"; return 1; }
+        run sh "$T/guard" start
+        [ "$status" -eq 3 ] || { echo "$f other start: $status"; return 1; }
+        rm -f "$T/ipt.other"
     done
 }
 
@@ -131,18 +180,23 @@ _deploy_driver() {
     } > "$T/deploy.sh"
     grep -q '^AWG_IPOPTS_UNIT_EOF$' "$T/deploy.sh" || { echo "$1: function not cut"; return 1; }
 }
-# systemctl stub: records the call; start/restart runs the unit's ExecStart
-# (the helper, from $T/sbin), as systemd would.
+# systemctl stub: records the call; start runs the unit's ExecStart (the
+# helper, from $T/sbin) and marks the unit active, stop runs ExecStop, as
+# systemd would; is-active answers by that mark.
 _systemctl_stub() {
     _stub systemctl 'echo "systemctl $*" >> "$T/calls"
 [[ -e "$T/sc.fail.$1" ]] && exit 1
-case "$1" in restart|start) sh "$T/sbin/amneziawg-ipopts-guard" start ;; esac'
+case "$1" in
+  start) sh "$T/sbin/amneziawg-ipopts-guard" start && touch "$T/active" ;;
+  restart) sh "$T/sbin/amneziawg-ipopts-guard" stop; sh "$T/sbin/amneziawg-ipopts-guard" start ;;
+  is-active) [[ -e "$T/active" ]] ;;
+esac'
 }
 
-@test "deploy: writes an executable helper and the unit, enables and restarts it, rule in place: 0" {
+@test "deploy: writes an executable helper and the unit, enables and starts it, rule in place: 0" {
     local f
     for f in "${INSTALLERS[@]}"; do
-        rm -rf "${T:?}/sbin" "$T/units" "$T/calls" "$T/rules"
+        rm -rf "${T:?}/sbin" "$T/units" "$T/calls" "$T/rules" "$T/active"
         _deploy_driver "$f"; _systemctl_stub
         run bash "$T/deploy.sh"
         [[ "$output" == *"RC=0"* ]] || { echo "$f: $output"; return 1; }
@@ -151,23 +205,39 @@ case "$1" in restart|start) sh "$T/sbin/amneziawg-ipopts-guard" start ;; esac'
         [ "$(cat "$T/rules")" = 1 ]
         grep -qx 'systemctl daemon-reload' "$T/calls"
         grep -qx 'systemctl enable amneziawg-ipopts-guard.service' "$T/calls"
-        grep -qx 'systemctl restart amneziawg-ipopts-guard.service' "$T/calls" || { echo "$f: $(_calls)"; return 1; }
+        grep -qx 'systemctl start amneziawg-ipopts-guard.service' "$T/calls" || { echo "$f: $(_calls)"; return 1; }
         [ ! -e "$T/sbin/.amneziawg-ipopts-guard.new" ] && [ ! -e "$T/units/.amneziawg-ipopts-guard.service.new" ] \
             || { echo "$f: stage left"; return 1; }
-        # The refresh on a second run keeps exactly one rule.
+    done
+}
+
+@test "deploy: a repeated run on an active unit never removes the rule, and keeps exactly one" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        rm -rf "${T:?}/sbin" "$T/units" "$T/calls" "$T/rules" "$T/active"
+        _deploy_driver "$f"; _systemctl_stub
+        run bash "$T/deploy.sh"
+        [[ "$output" == *"RC=0"* ]] || { echo "$f first: $output"; return 1; }
+        rm -f "$T/calls"
         run bash "$T/deploy.sh"
         [[ "$output" == *"RC=0"* ]] && [ "$(cat "$T/rules")" = 1 ] || { echo "$f second: $output rules=$(cat "$T/rules")"; return 1; }
+        # no stop and no restart: there is no window without the rule
+        ! grep -q -- ' -D ' "$T/calls" || { echo "$f: the rule was removed: $(_calls)"; return 1; }
+        ! grep -qE 'systemctl (restart|stop|start) ' "$T/calls" || { echo "$f: $(_calls)"; return 1; }
     done
 }
 
 @test "deploy: a rule that is not in place after the start is a failure, not a success" {
     local f
     for f in "${INSTALLERS[@]}"; do
-        rm -rf "${T:?}/sbin" "$T/units" "$T/calls" "$T/rules"
+        rm -rf "${T:?}/sbin" "$T/units" "$T/calls" "$T/rules" "$T/active"
         _deploy_driver "$f"; _systemctl_stub; touch "$T/ipt.fail"
         run bash "$T/deploy.sh"
         [[ "$output" == *"RC=1"* ]] || { echo "$f: $output"; return 1; }
-        [[ "$output" == *"WARN: "*"amneziawg-ipopts-guard"* ]] || { echo "$f: $output"; return 1; }
+        # the refusal comes from the final status check, after enable and start
+        [[ "$output" == *"WARN: "*"amneziawg-ipopts-guard status"* ]] || { echo "$f: $output"; return 1; }
+        grep -qx 'systemctl enable amneziawg-ipopts-guard.service' "$T/calls"
+        grep -qx 'systemctl start amneziawg-ipopts-guard.service' "$T/calls"
         rm -f "$T/ipt.fail"
     done
 }
@@ -176,10 +246,12 @@ case "$1" in restart|start) sh "$T/sbin/amneziawg-ipopts-guard" start ;; esac'
     local f s
     for f in "${INSTALLERS[@]}"; do
         for s in enable daemon-reload; do
-            rm -rf "${T:?}/sbin" "$T/units" "$T/calls" "$T/rules" "$T"/sc.fail.*
+            rm -rf "${T:?}/sbin" "$T/units" "$T/calls" "$T/rules" "$T"/sc.fail.* "$T/active"
             _deploy_driver "$f"; _systemctl_stub; touch "$T/sc.fail.$s"
             run bash "$T/deploy.sh"
             [[ "$output" == *"RC=1"* ]] || { echo "$f $s: $output"; return 1; }
+            ! grep -qE 'systemctl (re)?start' "$T/calls" || { echo "$f $s: started anyway"; return 1; }
+            [[ "$s" != daemon-reload ]] || ! grep -q 'systemctl enable' "$T/calls" || { echo "$f: enable after a failed reload"; return 1; }
         done
     done
 }
@@ -286,7 +358,7 @@ _cmd_driver() {
 _step4_driver() {
     {
         echo 'log() { echo "LOG: $*"; }; log_warn() { echo "WARN: $*"; }; die() { echo "DIE: $*"; exit 1; }'
-        echo 'update_state() { :; }; install_packages() { :; }'
+        echo 'update_state() { echo "state $1" >> "$T/calls"; }; install_packages() { :; }'
         echo 'setup_improved_firewall() { echo ufw >> "$T/calls"; }'
         echo '_awg_deploy_ipopts_guard() { echo guard >> "$T/calls"; [[ ! -e "$T/deploy.fail" ]]; }'
         echo "NO_TWEAKS=\${NT:-0}"
@@ -300,11 +372,13 @@ _step4_driver() {
     for f in "${INSTALLERS[@]}"; do
         rm -f "$T/calls" "$T/deploy.fail"; _step4_driver "$f"
         run bash "$T/s4.sh"
-        [[ "$output" == *"RC=0"* ]] && [ "$(_calls | tr '\n' ' ')" = "ufw guard " ] || { echo "$f: $output | $(_calls)"; return 1; }
+        [[ "$output" == *"RC=0"* ]] && [ "$(_calls | tr '\n' ' ')" = "state 4 ufw guard state 5 " ] || { echo "$f: $output | $(_calls)"; return 1; }
         rm -f "$T/calls"; touch "$T/deploy.fail"
         run bash "$T/s4.sh"
         [[ "$output" == *"RC=0"* ]] || { echo "$f fail: $output"; return 1; }
         [[ "$output" == *"WARN: "*"--ipopts-guard"* ]] || { echo "$f fail: $output"; return 1; }
+        # the step still moves on
+        [ "$(_calls | tr '\n' ' ')" = "state 4 ufw guard state 5 " ] || { echo "$f fail: $(_calls)"; return 1; }
     done
 }
 
@@ -314,19 +388,62 @@ _step4_driver() {
         rm -f "$T/calls"; _step4_driver "$f"
         NT=1 run bash "$T/s4.sh"
         [[ "$output" == *"RC=0"* ]] || { echo "$f: $output"; return 1; }
-        [ -z "$(_calls)" ] || { echo "$f: $(_calls)"; return 1; }
+        [ "$(_calls | tr '\n' ' ')" = "state 4 state 5 " ] || { echo "$f: $(_calls)"; return 1; }
         [[ "$output" == *"WARN: "*"--ipopts-guard"* ]] || { echo "$f: $output"; return 1; }
     done
 }
 
-@test "uninstall stops the guard and removes its unit and helper" {
-    local f body
+# The guard block of step_uninstall of installer $1, run on its own with the
+# paths moved into $T: from its log line through the removal of the stage files.
+_uninstall_driver() {
+    {
+        echo 'log() { echo "LOG: $*"; }; log_warn() { echo "WARN: $*"; }'
+        _fn "$1" step_uninstall \
+            | awk '/^    log "(Удаление защиты от|Removing the) CVE-2026-98432/{f=1} f{print} f&&/amneziawg-ipopts-guard\.new 2>\/dev\/null \|\| true$/{exit}' \
+            | sed "s#/usr/local/sbin#$T/sbin#g; s#/etc/systemd/system#$T/units#g"
+        echo 'echo "RC=$?"'
+    } > "$T/un.sh"
+    grep -q 'ipopts-guard.new 2>/dev/null || true' "$T/un.sh" || { echo "$1: uninstall block not cut"; return 1; }
+}
+_installed() { # helper and unit in $T, as a deploy leaves them, rule count $1
+    mkdir -p "$T/sbin" "$T/units"
+    _helper "$2"; cp "$T/guard" "$T/sbin/amneziawg-ipopts-guard"
+    : > "$T/units/amneziawg-ipopts-guard.service"
+    : > "$T/units/.amneziawg-ipopts-guard.service.new"; : > "$T/sbin/.amneziawg-ipopts-guard.new"
+    echo "$1" > "$T/rules"
+}
+
+@test "uninstall: disables the unit, removes the rule, the helper, the unit and the stage files" {
+    local f
     for f in "${INSTALLERS[@]}"; do
-        body=$(_fn "$f" step_uninstall)
-        grep -qF 'systemctl disable --now amneziawg-ipopts-guard.service' <<<"$body" || { echo "$f: no disable"; return 1; }
-        grep -qF '/usr/local/sbin/amneziawg-ipopts-guard stop' <<<"$body" || { echo "$f: no stop"; return 1; }
-        grep -qF '/etc/systemd/system/amneziawg-ipopts-guard.service' <<<"$body" || { echo "$f: unit not removed"; return 1; }
-        grep -qE '^[[:space:]]+/usr/local/sbin/amneziawg-ipopts-guard \\$' <<<"$body" || { echo "$f: helper not removed"; return 1; }
+        rm -rf "${T:?}/sbin" "$T/units" "$T/calls"; _installed 1 "$f"; _systemctl_stub; _uninstall_driver "$f"
+        run bash "$T/un.sh"
+        [[ "$output" == *"RC=0"* ]] || { echo "$f: $output"; return 1; }
+        grep -qx 'systemctl disable --now amneziawg-ipopts-guard.service' "$T/calls" || { echo "$f: $(_calls)"; return 1; }
+        [ "$(cat "$T/rules")" = 0 ] || { echo "$f: rule left"; return 1; }
+        [[ "$output" != *"WARN: "* ]] || { echo "$f: $output"; return 1; }
+        [ -z "$(find "$T/sbin" "$T/units" -mindepth 1)" ] || { echo "$f: left $(find "$T/sbin" "$T/units" -mindepth 1)"; return 1; }
+    done
+}
+
+@test "uninstall: a rule that would not go is said with the command to remove it" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        rm -rf "${T:?}/sbin" "$T/units" "$T/calls"; _installed 1 "$f"; _systemctl_stub; touch "$T/ipt.nodel"
+        _uninstall_driver "$f"
+        run bash "$T/un.sh"
+        [[ "$output" == *"WARN: "*"iptables -t raw -D PREROUTING"* ]] || { echo "$f: $output"; return 1; }
+        [ ! -e "$T/sbin/amneziawg-ipopts-guard" ]
+        rm -f "$T/ipt.nodel"
+    done
+}
+
+@test "uninstall: without the guard installed it passes quietly" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        rm -rf "${T:?}/sbin" "$T/units" "$T/calls"; mkdir -p "$T/sbin" "$T/units"; _systemctl_stub; _uninstall_driver "$f"
+        run bash "$T/un.sh"
+        [[ "$output" == *"RC=0"* && "$output" != *"WARN: "* ]] || { echo "$f: $output"; return 1; }
     done
 }
 
@@ -361,6 +478,9 @@ _report_env() {
         _report_env; echo 0 > "$T/st.rc"; touch "$T/en"; _report_driver "$m"
         run bash "$T/rep.sh"
         [[ "$output" == *"LOG: "*"CVE-2026-98432"* ]] || { echo "$m: $output"; return 1; }
+        grep -qxF -e 'LOG:  - Стоит: TCP-пакеты с IP-опциями отбрасываются (amneziawg-ipopts-guard.service).' \
+            -e 'LOG:  - Set: TCP packets with IP options are dropped (amneziawg-ipopts-guard.service).' <<<"$output" \
+            || { echo "$m: $output"; return 1; }
         [[ "$output" != *"WARN: "* ]] || { echo "$m: $output"; return 1; }
         [[ "$output" == *"RC=0"* ]]
     done
@@ -388,6 +508,20 @@ _report_env() {
         [[ "$output" == *"WARN: "* ]] && [[ "$output" == *"RC=0"* ]] || { echo "$m error: $output"; return 1; }
         local q; q=$(bash "$T/rep.sh" 2>&1); echo 1 > "$T/st.rc"
         [ "$q" != "$(bash "$T/rep.sh" 2>&1)" ] || { echo "$m: a failed query reads like a missing rule"; return 1; }
+    done
+}
+
+@test "check: the status query is bounded by timeout 10, and a timeout is said as a failed query" {
+    local m
+    for m in "${MANAGERS[@]}"; do
+        _report_env; echo 0 > "$T/st.rc"; touch "$T/en"; rm -f "$T/calls"
+        _stub timeout 'echo "timeout $*" >> "$T/calls"; exit 124'
+        _report_driver "$m"
+        run bash "$T/rep.sh"
+        grep -qxF "timeout 10 $T/sbin/amneziawg-ipopts-guard status" "$T/calls" || { echo "$m: $(cat "$T/calls" 2>/dev/null)"; return 1; }
+        [[ "$output" == *"WARN: "*"124"* && "$output" == *"RC=0"* ]] || { echo "$m: $output"; return 1; }
+        [[ "$output" != *"amneziawg-ipopts-guard.service"*"restart"* ]] || { echo "$m: said as a missing rule"; return 1; }
+        rm -f "$T/bin/timeout"
     done
 }
 

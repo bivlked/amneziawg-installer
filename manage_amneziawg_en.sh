@@ -267,6 +267,13 @@ case "$COMMAND" in
     repair) COMMAND="repair-module" ;;
 esac
 
+# --vpn is for qr only: with another command it would silently mean nothing.
+if [[ "${CLI_QR_VPN:-0}" == "1" && "$COMMAND" != "qr" ]]; then
+    _JSON_ERR="--vpn works only with the qr command"
+    echo "$_JSON_ERR" >&2
+    exit 1
+fi
+
 # Validate --apply-mode after ALL options are parsed (--json is known now).
 # A typo (--apply-mode=restrat) would silently act as syncconf - a user
 # working around an issue with restart mode would never learn the mode
@@ -1698,7 +1705,7 @@ _ipopts_guard_report() {
     local _rc=0 _how="run the latest installer with --ipopts-guard (ADVANCED, the CVE-2026-98432 section)"
     log "CVE-2026-98432 guard:"
     if [[ ! -x "$AWG_IPOPTS_HELPER" ]]; then
-        log_warn " - Not set: TCP packets with IP options reach the kernel. To set it: $_how"
+        log_warn " - The installer's guard is not set (no $AWG_IPOPTS_HELPER). To set it: $_how"
         return 0
     fi
     timeout 10 "$AWG_IPOPTS_HELPER" status >/dev/null 2>&1 || _rc=$?
@@ -3223,6 +3230,8 @@ _qr_term_size() {
 # read by a phone, so the command warns about it but prints it anyway. qrencode flags as
 # for the PNG: -8 only for vpn://.
 show_client_qr() {
+    # Under bash -x the trace would carry the whole QR, that is the client's private key.
+    case $- in *x*) _awg_xtrace_guard show_client_qr "$@"; return ;; esac
     local name="$1" vpn="${2:-0}" file what qr ascii modules need_rows size rows cols
     local -a flags=()
     if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
@@ -3270,7 +3279,8 @@ show_client_qr() {
         size=$(_qr_term_size)
         if [[ "$size" =~ ^([0-9]+)\ ([0-9]+)$ ]]; then
             rows="${BASH_REMATCH[1]}"; cols="${BASH_REMATCH[2]}"
-            if (( modules > cols || need_rows > rows )); then
+            # Hosting consoles (VNC, serial) answer "0 0": the size is unknown.
+            if (( rows > 0 && cols > 0 )) && (( modules > cols || need_rows > rows )); then
                 log_warn "The QR code takes ${modules} characters in width and ${need_rows} lines, while the terminal window is ${cols} by ${rows}. Enlarge the window or make the font smaller: a phone cannot read a code it does not see whole."
             fi
         fi

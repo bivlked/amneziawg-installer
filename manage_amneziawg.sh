@@ -263,6 +263,13 @@ case "$COMMAND" in
     repair) COMMAND="repair-module" ;;
 esac
 
+# --vpn нужен только qr: с другой командой он молча ничего бы не значил.
+if [[ "${CLI_QR_VPN:-0}" == "1" && "$COMMAND" != "qr" ]]; then
+    _JSON_ERR="--vpn работает только с командой qr"
+    echo "$_JSON_ERR" >&2
+    exit 1
+fi
+
 # Валидация --apply-mode после разбора ВСЕХ опций (--json уже известен).
 # Опечатка (--apply-mode=restrat) молча работала бы как syncconf - пользователь,
 # обходящий проблему режимом restart, не узнал бы, что режим не применился.
@@ -1666,7 +1673,7 @@ _ipopts_guard_report() {
     local _rc=0 _how="запустите установщик последней версии с флагом --ipopts-guard (ADVANCED, раздел про CVE-2026-98432)"
     log "Защита от CVE-2026-98432:"
     if [[ ! -x "$AWG_IPOPTS_HELPER" ]]; then
-        log_warn " - Не стоит: TCP-пакеты с IP-опциями доходят до ядра. Поставить: $_how"
+        log_warn " - Защита установщика не стоит (нет $AWG_IPOPTS_HELPER). Поставить: $_how"
         return 0
     fi
     timeout 10 "$AWG_IPOPTS_HELPER" status >/dev/null 2>&1 || _rc=$?
@@ -3177,10 +3184,12 @@ _qr_term_size() {
 # терминал, без копирования картинки с сервера. Сам код печатается напрямую,
 # не через логгер. Ширина кода в символах равна числу модулей, высота - вдвое
 # меньше (ansiutf8 рисует две строки модулей в одной строке терминала); код,
-# который не влезает в окно, телефон не прочитает, поэтому о нём
-# предупреждаем, но печатаем всё равно. Флаги qrencode как у PNG: -8 только
+# который не влезает в окно, телефон не прочитает, поэтому команда о нём
+# предупреждает, но печатает всё равно. Флаги qrencode как у PNG: -8 только
 # для vpn://.
 show_client_qr() {
+    # Под bash -x трасса несла бы QR целиком, то есть приватный ключ клиента.
+    case $- in *x*) _awg_xtrace_guard show_client_qr "$@"; return ;; esac
     local name="$1" vpn="${2:-0}" file what qr ascii modules need_rows size rows cols
     local -a flags=()
     if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
@@ -3228,7 +3237,8 @@ show_client_qr() {
         size=$(_qr_term_size)
         if [[ "$size" =~ ^([0-9]+)\ ([0-9]+)$ ]]; then
             rows="${BASH_REMATCH[1]}"; cols="${BASH_REMATCH[2]}"
-            if (( modules > cols || need_rows > rows )); then
+            # «0 0» отдают консоли хостеров (VNC, последовательная): размер неизвестен.
+            if (( rows > 0 && cols > 0 )) && (( modules > cols || need_rows > rows )); then
                 log_warn "QR-код занимает ${modules} символов в ширину и ${need_rows} строк, а окно терминала ${cols} на ${rows}. Увеличьте окно или уменьшите шрифт: код, который не виден целиком, телефон не прочитает."
             fi
         fi
