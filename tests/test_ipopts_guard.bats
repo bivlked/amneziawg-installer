@@ -238,6 +238,8 @@ esac'
         [[ "$output" == *"WARN: "*"amneziawg-ipopts-guard status"* ]] || { echo "$f: $output"; return 1; }
         grep -qx 'systemctl enable amneziawg-ipopts-guard.service' "$T/calls"
         grep -qx 'systemctl start amneziawg-ipopts-guard.service' "$T/calls"
+        # and the unit that cannot set the rule is not left enabled for every boot
+        grep -qx 'systemctl disable amneziawg-ipopts-guard.service' "$T/calls" || { echo "$f: $(_calls)"; return 1; }
         rm -f "$T/ipt.fail"
     done
 }

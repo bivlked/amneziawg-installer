@@ -8590,6 +8590,7 @@ ConditionPathExists=/usr/local/sbin/amneziawg-ipopts-guard
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+TimeoutStartSec=60
 ExecStart=/usr/local/sbin/amneziawg-ipopts-guard start
 ExecStop=/usr/local/sbin/amneziawg-ipopts-guard stop
 
@@ -8615,7 +8616,10 @@ AWG_IPOPTS_UNIT_EOF
         systemctl start amneziawg-ipopts-guard.service || true
     fi
     if ! "$_h" status; then
-        log_warn "CVE-2026-98432 guard: the rule is not in place (amneziawg-ipopts-guard status). Reason: journalctl -u amneziawg-ipopts-guard.service"
+        # An enabled unit that cannot set the rule would fail at every boot and
+        # keep the system in the degraded state.
+        systemctl disable amneziawg-ipopts-guard.service >/dev/null 2>&1 || true
+        log_warn "CVE-2026-98432 guard: the rule is not in place (amneziawg-ipopts-guard status), the unit is disabled. Reason: journalctl -u amneziawg-ipopts-guard.service"
         return 1
     fi
     log "The CVE-2026-98432 guard is in place: TCP packets with IP options are dropped (unit amneziawg-ipopts-guard.service)."

@@ -8444,6 +8444,7 @@ ConditionPathExists=/usr/local/sbin/amneziawg-ipopts-guard
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+TimeoutStartSec=60
 ExecStart=/usr/local/sbin/amneziawg-ipopts-guard start
 ExecStop=/usr/local/sbin/amneziawg-ipopts-guard stop
 
@@ -8469,7 +8470,10 @@ AWG_IPOPTS_UNIT_EOF
         systemctl start amneziawg-ipopts-guard.service || true
     fi
     if ! "$_h" status; then
-        log_warn "Защита от CVE-2026-98432: правило не встало (amneziawg-ipopts-guard status). Причина: journalctl -u amneziawg-ipopts-guard.service"
+        # Включённый юнит, который не может поставить правило, падал бы на
+        # каждой загрузке и держал бы систему в состоянии degraded.
+        systemctl disable amneziawg-ipopts-guard.service >/dev/null 2>&1 || true
+        log_warn "Защита от CVE-2026-98432: правило не встало (amneziawg-ipopts-guard status), юнит выключен. Причина: journalctl -u amneziawg-ipopts-guard.service"
         return 1
     fi
     log "Защита от CVE-2026-98432 стоит: TCP-пакеты с IP-опциями отбрасываются (юнит amneziawg-ipopts-guard.service)."
