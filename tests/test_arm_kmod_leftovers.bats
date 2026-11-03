@@ -248,9 +248,11 @@ _run_arm_stop() { # installer start-line-regex
 # stop kind: start line of the block and the helper it must ask
 #   here - the fallback stop (#343): _awg_prebuilt_for_running_kernel
 #   all  - the --no-prebuilt refusal: _awg_installed_kmod_pkgs
+#   here31 - the generation 3.1 stop (v6.2.0): _awg_prebuilt_for_running_kernel
 _stop_start() { # kind
     case "$1" in
         here) echo '^            local _kmod_here _kmod_rc=0$' ;;
+        here31) echo '^            local _kmod31 _kmod31_rc=0$' ;;
         all)  echo '^            local _kmod _kmod_rc=0$' ;;
     esac
 }
@@ -258,7 +260,7 @@ _stop_start() { # kind
 # stop that asks the wrong helper names the decoy (or nothing) instead.
 _stop_env() { # kind pkg rc
     export LEFT_HERE=amneziawg-kmod-decoy LRC_HERE=0 LEFT_ALL=amneziawg-kmod-decoy LRC_ALL=0
-    if [ "$1" = here ]; then export LEFT_HERE="$2" LRC_HERE="$3"
+    if [ "$1" = here ] || [ "$1" = here31 ]; then export LEFT_HERE="$2" LRC_HERE="$3"
     else export LEFT_ALL="$2" LRC_ALL="$3"; fi
 }
 HOLD_LINE='APT-MARK hold amneziawg-dkms amneziawg'
@@ -266,7 +268,7 @@ HOLD_LINE='APT-MARK hold amneziawg-dkms amneziawg'
 @test "ARM stops in step 2 put the hold back before stopping (RU + EN)" {
     local f k
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
-        for k in here all; do
+        for k in here all here31; do
             _stop_env "$k" "amneziawg-kmod-$k" 0; export HELD=1
             run _run_arm_stop "$ROOT/$f" "$(_stop_start "$k")"
             [ "$status" -ne 0 ] && [[ "$output" == *"DIE:"*"apt-get purge -y amneziawg-kmod-$k"* ]] \
@@ -281,7 +283,7 @@ HOLD_LINE='APT-MARK hold amneziawg-dkms amneziawg'
 @test "ARM stops in step 2: a hold that did not take is said out loud, with apt's answer and the command (RU + EN)" {
     local f k
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
-        for k in here all; do
+        for k in here all here31; do
             _stop_env "$k" "amneziawg-kmod-$k" 0; export HELD=0
             run _run_arm_stop "$ROOT/$f" "$(_stop_start "$k")"
             [[ "$output" == *"REFUSAL: apt-mark said: lock busy"* ]] \
@@ -295,10 +297,10 @@ HOLD_LINE='APT-MARK hold amneziawg-dkms amneziawg'
 @test "ARM stops in step 2: dpkg could not be asked -> hold back and stop, without the purge advice (RU + EN)" {
     local f k
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
-        for k in here all; do
+        for k in here all here31; do
             _stop_env "$k" "" 2; export HELD=1
             # the helper that is not asked says "nothing": asking it would go on
-            if [ "$k" = here ]; then export LEFT_ALL=""; else export LEFT_HERE=""; fi
+            if [ "$k" = all ]; then export LEFT_HERE=""; else export LEFT_ALL=""; fi
             run _run_arm_stop "$ROOT/$f" "$(_stop_start "$k")"
             [ "$status" -ne 0 ] && [[ "$output" == *"DIE:"*"dpkg -l 'amneziawg-kmod-*'"* ]] \
                 && [[ "$output" != *"apt-get purge"* && "$output" != *CONTINUED* ]] \
@@ -312,11 +314,61 @@ HOLD_LINE='APT-MARK hold amneziawg-dkms amneziawg'
 @test "ARM step 2: nothing installed -> no hold, no stop, the DKMS path goes on (RU + EN)" {
     local f k
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
-        for k in here all; do
+        for k in here all here31; do
             export LEFT_HERE="" LRC_HERE=0 LEFT_ALL="" LRC_ALL=0 HELD=1
             run _run_arm_stop "$ROOT/$f" "$(_stop_start "$k")"
             [ "$status" -eq 0 ] && [[ "$output" == *CONTINUED* ]] && [[ "$output" != *APT-MARK* ]] \
                 || { echo "$f [$k]: $output"; false; }
         done
+    done
+}
+
+# The ARM block of step2_install_amnezia as a whole: which way it goes. Since
+# v6.2.0 generation 3.1 must not even try the prebuilt (it is second line) and
+# must go on to the PPA/DKMS path; 2.0 keeps trying the prebuilt first. Cut from
+# `arch="$(uname -m)"` to the block's closing `    fi`; everything it calls is
+# stubbed and recorded.
+_run_arm_route() { # installer
+    local blk
+    blk=$(sed -n '/^step2_install_amnezia() {$/,/^}$/p' "$1" \
+        | sed -n '/^    arch="\$(uname -m)"$/,/^    fi$/p')
+    [ -n "$blk" ] || return 99
+    EV=$(mktemp)
+    EV="$EV" bash -c '
+        die() { echo "DIE: $*" >>"$EV"; cat "$EV"; exit 1; }
+        log() { echo "LOG: $*" >>"$EV"; }
+        log_warn() { echo "WARN: $*" >>"$EV"; }
+        uname() { echo "${UNAME_M:-aarch64}"; }
+        _try_install_prebuilt_arm() { echo "PREBUILT-TRIED" >>"$EV"; return 1; }
+        _awg_prebuilt_for_running_kernel() { echo "ASKED-HERE" >>"$EV"; printf ""; }
+        _awg_installed_kmod_pkgs() { echo "ASKED-ALL" >>"$EV"; printf ""; }
+        _awg_rehold_for_prebuilt() { echo "REHOLD" >>"$EV"; }
+        g() { local arch; eval "$1"; echo CONTINUED >>"$EV"; cat "$EV"; }; g "$1"
+    ' _ "$blk"
+    local rc=$?
+    rm -f "$EV"
+    return $rc
+}
+
+@test "ARM step 2: generation 3.1 skips the prebuilt and goes on to DKMS, 2.0 still tries it (RU + EN)" {
+    local f
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        export NO_PREBUILT=0 UNAME_M=aarch64
+        AWG_PROTOCOL=3.1 run _run_arm_route "$ROOT/$f"
+        [ "$status" -eq 0 ] && [[ "$output" == *CONTINUED* ]] \
+            && [[ "$output" != *PREBUILT-TRIED* ]] && [[ "$output" == *ASKED-HERE* ]] \
+            && [[ "$output" == *"LOG: "*"DKMS"* ]] \
+            || { echo "$f [3.1]: $output"; false; }
+        AWG_PROTOCOL=2.0 run _run_arm_route "$ROOT/$f"
+        [ "$status" -eq 0 ] && [[ "$output" == *PREBUILT-TRIED* ]] && [[ "$output" == *CONTINUED* ]] \
+            || { echo "$f [2.0]: $output"; false; }
+        # --no-prebuilt keeps its own way and wins over the generation
+        NO_PREBUILT=1 AWG_PROTOCOL=3.1 run _run_arm_route "$ROOT/$f"
+        [ "$status" -eq 0 ] && [[ "$output" == *ASKED-ALL* ]] && [[ "$output" != *PREBUILT-TRIED* ]] \
+            || { echo "$f [no-prebuilt]: $output"; false; }
+        # x86_64 never enters the block
+        UNAME_M=x86_64 AWG_PROTOCOL=3.1 run _run_arm_route "$ROOT/$f"
+        [ "$status" -eq 0 ] && [[ "$output" == CONTINUED ]] \
+            || { echo "$f [x86_64]: $output"; false; }
     done
 }

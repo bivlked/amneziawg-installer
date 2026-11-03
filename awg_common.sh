@@ -2149,7 +2149,10 @@ _awg31_module_probe() (
 # Коды и порядок проверок - те же, что у стадии post awg31_environment_blocker
 # установщика, но без not_implemented_yet: restore возвращает уже существующую
 # установку 3.1, а не выдаёт новую. Неизвестность (архитектура, проба) - отказ,
-# а не разрешение.
+# а не разрешение. 64-битный ARM (arm64, aarch64) с v6.2.0 проходит, как в
+# гейте установщика: дальше решают ядро и проба модуля; код arm остаётся у
+# 32-битного ARM и aarch64_be. Тело функции в RU и EN обязано совпадать
+# побайтно (test_awg31_restore_environment.bats), поэтому пояснения - здесь.
 awg31_restore_blocker() {
     local arch kver
     arch=$(_awg31_host_arch)
@@ -2157,7 +2160,7 @@ awg31_restore_blocker() {
     kver=$(uname -r)
     [[ -n "$arch" ]] || { printf 'arch_unknown'; return 0; }
     case "$arch" in
-        amd64|x86_64) : ;;
+        amd64|x86_64|arm64|aarch64) : ;;
         arm*|aarch64*) printf 'arm'; return 0 ;;
         *) printf 'arch_unsupported'; return 0 ;;
     esac
@@ -2177,7 +2180,7 @@ awg31_restore_blocker() {
 _awg31_restore_blocker_reason() {
     case "${1-}" in
         arch_unknown)        printf '%s' "архитектура машины не определилась, а не знать её - не то же самое, что знать, что она подходит" ;;
-        arm)                 printf '%s' "на ARM третья линия пока не выдаётся: архитектура под неё не мерена" ;;
+        arm)                 printf '%s' "на архитектуре '$(_awg31_host_arch)' третья линия не выдаётся: из ARM она проверена только на 64-битном (arm64)" ;;
         arch_unsupported)    printf '%s' "архитектура '$(_awg31_host_arch)' под третью линию не мерена, профиль 3.1 требует x86_64" ;;
         kernel)              printf '%s' "ядро $(uname -r) старее 6.7, на нём ставится модуль второй линии" ;;
         tools_old)           printf '%s' "инструменты awg не найдены или не понимают параметры третьей линии (нужны команды awg и timeout); лечится так: apt-get update && apt-get install amneziawg-tools, затем apt-get install --only-upgrade amneziawg-tools" ;;

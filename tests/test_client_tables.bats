@@ -138,7 +138,7 @@ _drift_clients() { _sub "$1" '<!-- clients:end -->' $'| лишняя | стро�
 }
 
 @test "a hand edit inside the hosts table fails the check and --check writes nothing" {
-    _sub ADVANCED.en.md '| System | Stock kernel | x86_64 | ARM |' '| System | Kernel | x86_64 | ARM |'
+    _sub ADVANCED.en.md '| System | Stock kernel | x86_64 and ARM64 | ARM 32-bit |' '| System | Kernel | x86_64 and ARM64 | ARM 32-bit |'
     _snap
     run _check
     [ "$status" -eq 1 ]
@@ -148,7 +148,7 @@ _drift_clients() { _sub "$1" '<!-- clients:end -->' $'| лишняя | стро�
 
 @test "--write restores both tables and keeps everything outside the markers byte for byte" {
     _drift_clients ADVANCED.md
-    _sub ADVANCED.en.md '| System | Stock kernel | x86_64 | ARM |' '| System | Kernel | x86_64 | ARM |'
+    _sub ADVANCED.en.md '| System | Stock kernel | x86_64 and ARM64 | ARM 32-bit |' '| System | Kernel | x86_64 and ARM64 | ARM 32-bit |'
     run _write
     [ "$status" -eq 0 ]
     cmp "$TMP/ADVANCED.md" "$ROOT/ADVANCED.md"
@@ -637,11 +637,14 @@ EOF
 }
 
 @test "a removed x86_64 branch is caught: x86_64 no longer gets 3.1 even above the threshold" {
-    _sub install_amneziawg.sh 'amd64|x86_64)' 'amd64x|x86_64x)'
-    _sub install_amneziawg_en.sh 'amd64|x86_64)' 'amd64x|x86_64x)'
+    # Since v6.2.0 arm64 shares the branch and the column, so the first check to
+    # notice x86_64 falling out is the per-row one: arm64 still gets 3.1, x86_64
+    # does not. The threshold message is pinned by the reversed-comparison case.
+    _sub install_amneziawg.sh 'amd64|x86_64|arm64|aarch64)' 'amd64x|x86_64x|arm64|aarch64)'
+    _sub install_amneziawg_en.sh 'amd64|x86_64|arm64|aarch64)' 'amd64x|x86_64x|arm64|aarch64)'
     run _check
     [ "$status" -eq 2 ]
-    [[ "$output" == *"не совпадает с поведением проверки"* ]]
+    [[ "$output" == *"arm64 и x86_64"* && "$output" == *"arch_unsupported"* ]]
 }
 
 @test "a step 3 code named in the footnote must exist in the gate" {
@@ -666,12 +669,27 @@ EOF
     [[ "$output" == *"RU и EN установщиках отвечает по-разному"* ]]
 }
 
-@test "arm64 and armhf getting different answers is refused: one ARM column cannot show it" {
-    _sub install_amneziawg.sh 'arm*|aarch64*)' 'arm64|aarch64*)'
-    _sub install_amneziawg_en.sh 'arm*|aarch64*)' 'arm64|aarch64*)'
+@test "arm64 dropped from the allow list is refused: it shares the x86_64 column (v6.2.0)" {
+    _sub install_amneziawg.sh 'amd64|x86_64|arm64|aarch64)' 'amd64|x86_64)'
+    _sub install_amneziawg_en.sh 'amd64|x86_64|arm64|aarch64)' 'amd64|x86_64)'
     run _check
     [ "$status" -eq 2 ]
-    [[ "$output" == *"arm64 и armhf"* ]]
+    [[ "$output" == *"arm64 и x86_64"* ]]
+}
+
+@test "armhf and armel getting different answers is refused: one 32-bit ARM column cannot show it" {
+    _sub install_amneziawg.sh 'arm*|aarch64*)' 'armhf|aarch64*)'
+    _sub install_amneziawg_en.sh 'arm*|aarch64*)' 'armhf|aarch64*)'
+    run _check
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"armhf и armel"* ]]
+}
+
+@test "the host table header names both ARM columns, in both languages" {
+    run _write
+    [ "$status" -eq 0 ]
+    grep -qF '| Система | Штатное ядро | x86_64 и ARM64 | ARM 32-bit |' "$TMP/ADVANCED.md"
+    grep -qF '| System | Stock kernel | x86_64 and ARM64 | ARM 32-bit |' "$TMP/ADVANCED.en.md"
 }
 
 @test "a gate that writes to stderr (a missing helper) is code 2, not its stdout read as an answer" {

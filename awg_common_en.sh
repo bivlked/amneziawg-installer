@@ -2205,7 +2205,11 @@ _awg31_module_probe() (
 # The codes and the order of checks are those of the post stage of the
 # installer's awg31_environment_blocker, but without not_implemented_yet:
 # restore brings back an existing 3.1 installation, it does not issue a new one.
-# Not knowing (architecture, probe) is a refusal, not a pass.
+# Not knowing (architecture, probe) is a refusal, not a pass. 64-bit ARM
+# (arm64, aarch64) passes since v6.2.0, as in the installer gate: the kernel
+# and the module probe decide; the arm code stays with 32-bit ARM and
+# aarch64_be. The function body must match the RU twin byte for byte
+# (test_awg31_restore_environment.bats), so the notes live here.
 awg31_restore_blocker() {
     local arch kver
     arch=$(_awg31_host_arch)
@@ -2213,7 +2217,7 @@ awg31_restore_blocker() {
     kver=$(uname -r)
     [[ -n "$arch" ]] || { printf 'arch_unknown'; return 0; }
     case "$arch" in
-        amd64|x86_64) : ;;
+        amd64|x86_64|arm64|aarch64) : ;;
         arm*|aarch64*) printf 'arm'; return 0 ;;
         *) printf 'arch_unsupported'; return 0 ;;
     esac
@@ -2233,7 +2237,7 @@ awg31_restore_blocker() {
 _awg31_restore_blocker_reason() {
     case "${1-}" in
         arch_unknown)        printf '%s' "the machine architecture could not be determined, and not knowing it is not the same as knowing it fits" ;;
-        arm)                 printf '%s' "the third line is not issued on ARM yet: the architecture has not been measured for it" ;;
+        arm)                 printf '%s' "the third line is not issued on the '$(_awg31_host_arch)' architecture: of ARM, it has been checked only on 64-bit (arm64)" ;;
         arch_unsupported)    printf '%s' "architecture '$(_awg31_host_arch)' has not been measured for the third line, the 3.1 profile needs x86_64" ;;
         kernel)              printf '%s' "kernel $(uname -r) is older than 6.7, a second-line module is installed on it" ;;
         tools_old)           printf '%s' "the awg tools are missing or do not understand the third-line parameters (the awg and timeout commands are needed); the fix: apt-get update && apt-get install amneziawg-tools, then apt-get install --only-upgrade amneziawg-tools" ;;

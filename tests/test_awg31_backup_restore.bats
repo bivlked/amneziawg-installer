@@ -794,11 +794,24 @@ _r_env_refused() {
 _r_env_tools_old()    { _r_env_refused "$1" tools_old    x amneziawg-tools; }
 _r_env_module_line2() { _r_env_refused "$1" module_line2 x amneziawg-dkms; }
 _r_env_kernel()       { _r_env_refused "$1" kver 6.1.0-25-amd64 6.7; }
-_r_env_arm()          { _r_env_refused "$1" arch arm64 ARM; }
+_r_env_arm()          { _r_env_refused "$1" arch armhf ARM; }
+# v6.2.0: 64-bit ARM passes the environment check like x86_64, so a 3.1 backup
+# comes back there. The same roundtrip as _r_31_roundtrip, on an arm64 host.
+_r_env_arm64_ok() {
+    local s="$1" b
+    _make_31 "$K1"
+    b=$(_backup "$s")
+    _make_31 "$K2"
+    printf 'arm64\n' > "$TEST_DIR/arch"
+    _m "$s" restore "$b"
+    _ok
+    grep -qxF "HeaderProtectionKey = $K1" "$SC"
+}
 @test "restore of a 3.1 backup is refused before stop when the tools do not know the third line" { _both _r_env_tools_old; }
 @test "restore of a 3.1 backup is refused before stop on a second-line module" { _both _r_env_module_line2; }
 @test "restore of a 3.1 backup is refused before stop on a kernel older than 6.7" { _both _r_env_kernel; }
-@test "restore of a 3.1 backup is refused before stop on ARM" { _both _r_env_arm; }
+@test "restore of a 3.1 backup is refused before stop on 32-bit ARM" { _both _r_env_arm; }
+@test "restore of a 3.1 backup goes through on 64-bit ARM (v6.2.0)" { _both _r_env_arm64_ok; }
 
 _r_env_probe_clean() {
     local s="$1" b

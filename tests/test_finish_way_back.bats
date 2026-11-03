@@ -38,7 +38,7 @@ finish_output() {
         log_warn() { echo "WARN: $*"; }
         log_error() { echo "ERROR: $*"; }
         cleanup_apt() { :; }
-        _awg31_host_arch() { echo aarch64; }
+        _awg31_host_arch() { echo armhf; }
         AWG_PROTOCOL="$gen"
         AWG_PROTOCOL_SOURCE=default
         AWG_PROTOCOL_FALLBACK="$fb"

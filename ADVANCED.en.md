@@ -370,14 +370,14 @@ Reason codes: `kernel`, `arm`, `arch_unsupported`, `arch_unknown` (checked at st
      the answers of the installer step 0 check. Do not edit by hand. -->
 The generation a new install gets without `--protocol`, by system, on the stock kernel:
 
-| System | Stock kernel | x86_64 | ARM |
+| System | Stock kernel | x86_64 and ARM64 | ARM 32-bit |
 |---|---|---|---|
 | Ubuntu 24.04 | 6.8 | 3.1 | 2.0, code `arm` |
 | Ubuntu 26.04 | 7.0 | 3.1 | 2.0, code `arm` |
 | Debian 13 | 6.12 | 3.1 | 2.0, code `arm` |
 | Debian 12 | 6.1 | 2.0, code `kernel` | 2.0, code `arm` |
 
-The installer looks at the running kernel, not the stock one: a system on x86_64 booted with kernel 6.7 or newer (from backports, for example) gets 3.1; on ARM the generation is 2.0 with any kernel. That is the step 0 check. At step 3 the installer can also switch to 2.0 on a suitable system when the `awg` tools or the module do not understand the third line or the module check itself fails (codes `tools_old`, `module_line2`, `module_probe_failed`).
+The installer looks at the running kernel, not the stock one: a system on x86_64 or 64-bit ARM booted with kernel 6.7 or newer (from backports, for example) gets 3.1; on 32-bit ARM the generation is 2.0 with any kernel. That is the step 0 check. At step 3 the installer can also switch to 2.0 on a suitable system when the `awg` tools or the module do not understand the third line or the module check itself fails (codes `tools_old`, `module_line2`, `module_probe_failed`).
 <!-- hosts:end -->
 
 The generation and how it was chosen are recorded in `/root/awg/awgsetup_cfg.init`: `AWG_PROTOCOL` (`2.0` or `3.1`), `AWG_PROTOCOL_SOURCE` (`default` if the generation came from the default, `explicit` if from the flag) and `AWG_PROTOCOL_FALLBACK` (the reason code if the installer switched to 2.0 by itself). A server installed before version 6.0.0 has no `AWG_PROTOCOL_SOURCE`, and its `AWG_PROTOCOL` marker is `2.0` (since v5.32.0) or absent (earlier); either way it reads as 2.0.
