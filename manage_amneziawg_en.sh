@@ -51,6 +51,8 @@ LOG_FILE="$AWG_DIR/manage_amneziawg.log"
 AWG_ENSURE_HELPER=/usr/local/sbin/amneziawg-ensure-module
 KMOD_MODULES_DIR=/lib/modules
 KMOD_SYS_DIR=/sys/module
+# Helper of the CVE-2026-98432 guard (set by the installer); tests replace the path.
+AWG_IPOPTS_HELPER=/usr/local/sbin/amneziawg-ipopts-guard
 NO_COLOR=0
 VERBOSE_LIST=0
 JSON_OUTPUT=0
@@ -1688,6 +1690,29 @@ _conf_jc() {
     _awg_dec_strip "$jc"
 }
 
+# The CVE-2026-98432 guard (a rule against TCP packets with IP options, set by
+# the installer): a message only, the check verdict stays as it is - the tunnel
+# works without it. A failed query is said as such, not passed off as "no rule".
+_ipopts_guard_report() {
+    local _rc=0 _how="run the latest installer with --ipopts-guard (ADVANCED, the CVE-2026-98432 section)"
+    log "CVE-2026-98432 guard:"
+    if [[ ! -x "$AWG_IPOPTS_HELPER" ]]; then
+        log_warn " - Not set: TCP packets with IP options reach the kernel. To set it: $_how"
+        return 0
+    fi
+    timeout 10 "$AWG_IPOPTS_HELPER" status >/dev/null 2>&1 || _rc=$?
+    if [[ "$_rc" -eq 1 ]]; then
+        log_warn " - The rule is missing although the helper is installed. To restore: sudo systemctl restart amneziawg-ipopts-guard.service, or $_how"
+    elif [[ "$_rc" -ne 0 ]]; then
+        log_warn " - Could not check the rule (amneziawg-ipopts-guard status, code $_rc). Reason: sudo $AWG_IPOPTS_HELPER status"
+    elif ! systemctl is-enabled --quiet amneziawg-ipopts-guard.service 2>/dev/null; then
+        log_warn " - The rule is in place, but the unit amneziawg-ipopts-guard.service is not enabled: the rule will be gone after a reboot. Enable: sudo systemctl enable amneziawg-ipopts-guard.service"
+    else
+        log " - Set: TCP packets with IP options are dropped (amneziawg-ipopts-guard.service)."
+    fi
+    return 0
+}
+
 check_server() {
     case $- in *x*) _awg_xtrace_guard check_server; return ;; esac
     log "Checking AmneziaWG server status..."
@@ -1917,6 +1942,7 @@ check_server() {
     else
         log_warn " - The check for kernel module access without root was skipped: awg_common.sh is older than manage. Update both halves to the same version."
     fi
+    _ipopts_guard_report
 
     if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
         local _c_clients _jok=false

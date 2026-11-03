@@ -50,6 +50,8 @@ LOG_FILE="$AWG_DIR/manage_amneziawg.log"
 AWG_ENSURE_HELPER=/usr/local/sbin/amneziawg-ensure-module
 KMOD_MODULES_DIR=/lib/modules
 KMOD_SYS_DIR=/sys/module
+# Помощник защиты от CVE-2026-98432 (ставит установщик); тесты подменяют путь.
+AWG_IPOPTS_HELPER=/usr/local/sbin/amneziawg-ipopts-guard
 NO_COLOR=0
 VERBOSE_LIST=0
 JSON_OUTPUT=0
@@ -1655,6 +1657,30 @@ _conf_jc() {
     _awg_dec_strip "$jc"
 }
 
+# Защита от CVE-2026-98432 (правило против TCP-пакетов с IP-опциями, ставит
+# установщик): только сообщение, вердикт check не меняет - туннель работает и
+# без неё. Отказ самого запроса называется отдельно, а не выдаётся за
+# «правила нет».
+_ipopts_guard_report() {
+    local _rc=0 _how="запустите установщик последней версии с флагом --ipopts-guard (ADVANCED, раздел про CVE-2026-98432)"
+    log "Защита от CVE-2026-98432:"
+    if [[ ! -x "$AWG_IPOPTS_HELPER" ]]; then
+        log_warn " - Не стоит: TCP-пакеты с IP-опциями доходят до ядра. Поставить: $_how"
+        return 0
+    fi
+    timeout 10 "$AWG_IPOPTS_HELPER" status >/dev/null 2>&1 || _rc=$?
+    if [[ "$_rc" -eq 1 ]]; then
+        log_warn " - Правила нет, хотя помощник стоит. Вернуть: sudo systemctl restart amneziawg-ipopts-guard.service, либо $_how"
+    elif [[ "$_rc" -ne 0 ]]; then
+        log_warn " - Проверить правило не удалось (amneziawg-ipopts-guard status, код $_rc). Причина: sudo $AWG_IPOPTS_HELPER status"
+    elif ! systemctl is-enabled --quiet amneziawg-ipopts-guard.service 2>/dev/null; then
+        log_warn " - Правило стоит, но юнит amneziawg-ipopts-guard.service не включён: после перезагрузки правила не будет. Включить: sudo systemctl enable amneziawg-ipopts-guard.service"
+    else
+        log " - Стоит: TCP-пакеты с IP-опциями отбрасываются (amneziawg-ipopts-guard.service)."
+    fi
+    return 0
+}
+
 check_server() {
     case $- in *x*) _awg_xtrace_guard check_server; return ;; esac
     log "Проверка состояния сервера AmneziaWG..."
@@ -1882,6 +1908,7 @@ check_server() {
     else
         log_warn " - Проверка доступа к модулю ядра без root пропущена: awg_common.sh старше manage. Обновите обе половины под одну версию."
     fi
+    _ipopts_guard_report
 
     if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
         local _c_clients _jok=false

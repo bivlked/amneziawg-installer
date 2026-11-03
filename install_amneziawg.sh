@@ -83,6 +83,7 @@ AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
 UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 REPAIR_MODULE=0
+IPOPTS_GUARD=0
 _AWG_KMOD_T1=0
 # Помощник модуля ядра; тесты подменяют путь.
 AWG_ENSURE_HELPER=/usr/local/sbin/amneziawg-ensure-module
@@ -328,6 +329,7 @@ while [[ $# -gt 0 ]]; do
         --keep-packages) KEEP_PACKAGES=1; CLI_KEEP_PACKAGES=1 ;;
         --force|-f)      FORCE_REINSTALL=1 ;;
         --repair-module) REPAIR_MODULE=1 ;;
+        --ipopts-guard)  IPOPTS_GUARD=1 ;;
         --preset=*)      CLI_PRESET="${1#*=}" ;;
         --jc=*)          CLI_JC="${1#*=}" ;;
         --jmin=*)        CLI_JMIN="${1#*=}" ;;
@@ -346,6 +348,17 @@ if [[ "$REPAIR_MODULE" -eq 1 ]]; then
         case "$_a" in
             --repair-module|--verbose|-v|--no-color) ;;
             *) printf '%s\n' "--repair-module не сочетается с $_a: запустите его отдельно (допустимы только --verbose и --no-color)." >&2
+               exit 2 ;;
+        esac
+    done
+    unset _a
+fi
+# --ipopts-guard тоже работает только сам по себе, по той же причине.
+if [[ "$IPOPTS_GUARD" -eq 1 ]]; then
+    for _a in "${_AWG_ARGV[@]}"; do
+        case "$_a" in
+            --ipopts-guard|--verbose|-v|--no-color) ;;
+            *) printf '%s\n' "--ipopts-guard не сочетается с $_a: запустите его отдельно (допустимы только --verbose и --no-color)." >&2
                exit 2 ;;
         esac
     done
@@ -648,7 +661,11 @@ show_help() {
   --repair-module       Починить модуль ядра на уже установленном сервере (ядро
                         7.0.0-38 и новее, недонастроенные пакеты после apt);
                         сочетается только с --verbose и --no-color
-  -v, --verbose         Расширенный вывод для отладки (включая DEBUG)
+  --ipopts-guard        Защита от CVE-2026-98432 на уже установленном сервере:
+                        правило, отбрасывающее TCP-пакеты с IP-опциями, и юнит,
+                        который ставит его при загрузке. VPN не трогает;
+                        сочетается только с --verbose и --no-color
+  -v, --verbose        Расширенный вывод для отладки (включая DEBUG)
   --no-color            Отключить цветной вывод в терминале
   --port=НОМЕР          Установить UDP порт (1-65535) неинтерактивно
   --ssh-port=ПОРТ       SSH-порт для правила UFW (по умолчанию определяется
@@ -5061,6 +5078,17 @@ step_uninstall() {
         2>/dev/null || true
     rm -f /var/log/amneziawg-ensure-module.log* 2>/dev/null || true
     rm -rf /var/lib/amneziawg /run/amneziawg 2>/dev/null || true
+    # Защита от CVE-2026-98432: юнит, правило и помощник. stop отдельно от
+    # юнита - на случай, если юнит уже выключен, а правило осталось.
+    log "Удаление защиты от CVE-2026-98432 (amneziawg-ipopts-guard)..."
+    systemctl disable --now amneziawg-ipopts-guard.service 2>/dev/null || true
+    if [[ -x /usr/local/sbin/amneziawg-ipopts-guard ]]; then
+        /usr/local/sbin/amneziawg-ipopts-guard stop 2>/dev/null || true
+    fi
+    rm -f /etc/systemd/system/amneziawg-ipopts-guard.service \
+        /etc/systemd/system/.amneziawg-ipopts-guard.service.new \
+        /usr/local/sbin/amneziawg-ipopts-guard \
+        /usr/local/sbin/.amneziawg-ipopts-guard.new 2>/dev/null || true
     systemctl daemon-reload 2>/dev/null || true
     if [[ "$saved_no_tweaks" -eq 0 ]]; then
         log "Очистка правил UFW для AmneziaWG..."
@@ -8327,6 +8355,117 @@ AWG_SYSTEMD_UNIT_EOF
     return "$_rc"
 }
 
+# _awg_deploy_ipopts_guard : защита от CVE-2026-98432 (use-after-free в ядре при
+# разборе TCP SYN с IP-опциями; на сервере всегда слушает sshd). Правило в
+# таблице raw отбрасывает входящие IPv4 TCP-пакеты с IP-опциями (длина
+# заголовка больше 5 слов) - то же правило, что ставит приложение Amnezia.
+# Легитимного TCP с IP-опциями в интернете практически нет. Таблицу raw UFW не
+# сбрасывает (ни reload, ни disable), поэтому правило живёт отдельно от него, а
+# после перезагрузки его возвращает юнит amneziawg-ipopts-guard.service. Ставит
+# шаг 4 и режим --ipopts-guard. 0 - правило стоит и юнит включён, 1 - нет
+# (причина в предупреждении).
+_awg_deploy_ipopts_guard() {
+    local _h=/usr/local/sbin/amneziawg-ipopts-guard
+    local _u=/etc/systemd/system/amneziawg-ipopts-guard.service
+    local _sh=/usr/local/sbin/.amneziawg-ipopts-guard.new
+    local _su=/etc/systemd/system/.amneziawg-ipopts-guard.service.new
+    if ! command -v iptables >/dev/null 2>&1; then
+        log_warn "Защита от CVE-2026-98432 не поставлена: нет iptables. Поставьте пакет iptables и запустите установщик с --ipopts-guard."
+        return 1
+    fi
+    if ! mkdir -p /usr/local/sbin /etc/systemd/system; then
+        log_warn "Защита от CVE-2026-98432 не поставлена: не удалось создать каталоги для amneziawg-ipopts-guard."
+        return 1
+    fi
+    if ! cat > "$_sh" <<'AWG_IPOPTS_HELPER_EOF'
+#!/bin/sh
+# amneziawg-ipopts-guard: drop incoming IPv4 TCP packets that carry IP options
+# (CVE-2026-98432, use-after-free in the kernel TCP SYN path). Legitimate TCP
+# with IP options practically does not occur on the internet.
+# Generated by install_amneziawg.sh - do not edit; refresh with --ipopts-guard.
+rule() {
+    iptables -w -t raw "$1" PREROUTING -p tcp -m u32 --u32 '0>>24&0xF=6:15' \
+        -m comment --comment amneziawg-ipopts-guard -j DROP
+}
+case "${1:-}" in
+    start)
+        rule -C 2>/dev/null && exit 0
+        rule -I ;;
+    stop)
+        n=0
+        while rule -D 2>/dev/null; do
+            n=$((n + 1)); [ "$n" -lt 100 ] || exit 1
+        done
+        exit 0 ;;
+    status)
+        rule -C 2>/dev/null ;;
+    --version)
+        echo "amneziawg-ipopts-guard 1" ;;
+    *)
+        echo "usage: amneziawg-ipopts-guard start|stop|status" >&2
+        exit 2 ;;
+esac
+AWG_IPOPTS_HELPER_EOF
+    then
+        rm -f "$_sh"; log_warn "Защита от CVE-2026-98432 не поставлена: не удалось записать $_h."; return 1
+    fi
+    if ! sh -n "$_sh" || ! chmod 0755 "$_sh" || ! mv -f "$_sh" "$_h"; then
+        rm -f "$_sh"; log_warn "Защита от CVE-2026-98432 не поставлена: не удалось развернуть $_h."; return 1
+    fi
+    if ! cat > "$_su" <<'AWG_IPOPTS_UNIT_EOF'
+[Unit]
+Description=Drop TCP packets with IPv4 options (CVE-2026-98432)
+Documentation=https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.md#ipopts-guard-adv
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target shutdown.target
+After=systemd-modules-load.service local-fs.target
+Conflicts=shutdown.target
+ConditionPathExists=/usr/local/sbin/amneziawg-ipopts-guard
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/amneziawg-ipopts-guard start
+ExecStop=/usr/local/sbin/amneziawg-ipopts-guard stop
+
+[Install]
+WantedBy=multi-user.target
+AWG_IPOPTS_UNIT_EOF
+    then
+        rm -f "$_su"; log_warn "Защита от CVE-2026-98432 не поставлена: не удалось записать $_u."; return 1
+    fi
+    if ! chmod 0644 "$_su" || ! mv -f "$_su" "$_u"; then
+        rm -f "$_su"; log_warn "Защита от CVE-2026-98432 не поставлена: не удалось развернуть $_u."; return 1
+    fi
+    if ! systemctl daemon-reload || ! systemctl enable amneziawg-ipopts-guard.service; then
+        log_warn "Защита от CVE-2026-98432: юнит amneziawg-ipopts-guard.service не включился, после перезагрузки правила не будет."
+        return 1
+    fi
+    # restart, а не start: при повторном запуске применяется свежий помощник.
+    systemctl restart amneziawg-ipopts-guard.service || true
+    if ! "$_h" status; then
+        log_warn "Защита от CVE-2026-98432: правило не встало (amneziawg-ipopts-guard status). Причина: journalctl -u amneziawg-ipopts-guard.service"
+        return 1
+    fi
+    log "Защита от CVE-2026-98432 стоит: TCP-пакеты с IP-опциями отбрасываются (юнит amneziawg-ipopts-guard.service)."
+    return 0
+}
+
+# --ipopts-guard: защита от CVE-2026-98432 на уже установленном сервере без
+# повторной установки. Ставит помощник, юнит и правило и выходит: машину
+# состояний, apt, UFW и туннель не трогает. Работает и без установки AmneziaWG.
+ipopts_guard_cmd() {
+    if [[ "$(id -u)" -ne 0 ]]; then log_error "Запустите от root: sudo bash $0 --ipopts-guard"; exit 1; fi
+    log "### Защита от CVE-2026-98432 (--ipopts-guard) ###"
+    if _awg_deploy_ipopts_guard; then
+        log "Готово. VPN и остальные настройки сервера не менялись. Проверка: sudo bash $MANAGE_SCRIPT_PATH check"
+        exit 0
+    fi
+    log_error "Защиту поставить не удалось, причина в строках выше."
+    exit 1
+}
+
 # ==============================================================================
 # ШАГ 3: Проверка модуля ядра
 # ==============================================================================
@@ -8458,9 +8597,13 @@ step4_setup_firewall() {
         log "### ШАГ 4: Настройка фаервола UFW ###"
         install_packages ufw
         setup_improved_firewall || die "Ошибка настройки UFW."
+        # Защита от CVE-2026-98432 установку не останавливает: VPN работает и
+        # без неё, а поставить её позже можно отдельно.
+        _awg_deploy_ipopts_guard || log_warn "Установка продолжается без защиты от CVE-2026-98432. Поставить её позже: sudo bash $0 --ipopts-guard"
         log "Шаг 4 завершен."
     else
         log "### ШАГ 4: Пропуск настройки UFW (--no-tweaks) ###"
+        log_warn "С --no-tweaks защита от CVE-2026-98432 (правило против TCP-пакетов с IP-опциями) не ставится. Поставить её отдельно: sudo bash $0 --ipopts-guard"
     fi
     update_state 5
 }
@@ -8880,6 +9023,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then step_uninstall; fi
 if [[ "$DIAGNOSTIC" -eq 1 ]]; then create_diagnostic_report; exit 0; fi
 if [[ "$VERBOSE" -eq 1 ]]; then set -x; fi
 if [[ "$REPAIR_MODULE" -eq 1 ]]; then repair_module_cmd; fi
+if [[ "$IPOPTS_GUARD" -eq 1 ]]; then ipopts_guard_cmd; fi
 
 # v5.13.0: idempotency-страж — если AmneziaWG уже установлен и работает,
 # повторный запуск даром тратит ~20 минут (Step 1 ещё раз настраивает sysctl/swap/BBR,

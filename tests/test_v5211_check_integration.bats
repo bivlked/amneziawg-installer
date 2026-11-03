@@ -115,6 +115,9 @@ _run_check() {
         '"$(awk '/^_json_utf8_sanitize\(\) \{/,/^\}/' "$src")"'
         '"$(awk '/^json_escape\(\) \{/,/^\}/' "$src")"'
         '"$(awk '/^json_out\(\) \{/,/^\}/' "$src")"'
+        # The real CVE-2026-98432 guard report (no helper here, so it takes its
+        # warning branch): proves it adds nothing to the JSON on stdout.
+        '"$(awk '/^_ipopts_guard_report\(\) \{/,/^\}/' "$src")"'
         '"$(awk '/^check_server\(\) \{/,/^\}/' "$src")"'
         check_server
     '
@@ -184,6 +187,7 @@ _run_check() {
             '"$(awk '/^_json_utf8_sanitize\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             '"$(awk '/^json_escape\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             '"$(awk '/^json_out\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
+            '"$(awk '/^_ipopts_guard_report\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             '"$(awk '/^check_server\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             check_server
         '
