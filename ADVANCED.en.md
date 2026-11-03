@@ -37,6 +37,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
   - [UFW Firewall](#ufw-adv)
   - [Kernel Parameters (Sysctl)](#sysctl-adv)
   - [The kernel module and user namespaces](#userns-module-adv)
+  - [CVE-2026-98432: TCP packets with IP options](#ipopts-guard-adv)
   - [Fail2Ban (Automatic Setup)](#fail2ban-adv)
   - [Rotating the server key](#server-key-rotation-adv)
 - [🧹 Server Optimization](#optimization-adv)
@@ -55,6 +56,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 - [🩺 Diagnostics and Uninstall](#diag-uninstall-adv)
   - [Diagnostic Report Contents](#diagnostic-report-adv)
 - [🔧 Troubleshooting (Detailed)](#troubleshooting-adv)
+  - [No connection: where to start](#no-connection-adv)
 - [📊 Traffic Statistics (stats)](#stats-adv)
 - [⏳ Temporary Clients (--expires)](#expires-adv)
 - [📱 vpn:// URI Import](#vpnuri-adv)
@@ -646,6 +648,32 @@ To undo: `sudo rm /etc/sysctl.d/99-userns.conf`, then, if you set `kernel.unpriv
 
 **If you edit `I1`-`I5` by hand.** Lengths in `<r>`, `<rc>` and `<rd>` must be non-negative whole numbers, at most 1000 per the vendor's documentation; our check does not enforce that limit, it refuses negative lengths, overlong numbers and a total above 65535 bytes. `manage restart`, a service restart, the start at boot and the other paths that apply an existing `awg0.conf` do it without our check, so they will not stop a mistake in a hand edit.
 
+<a id="ipopts-guard-adv"></a>
+### CVE-2026-98432: TCP packets with IP options
+
+CVE-2026-98432 is a Linux kernel bug (use-after-free, score 9.8): the kernel mishandles an incoming TCP SYN whose IPv4 header carries IP options. The packet has to reach an open TCP port, and the server always has one: SSH. The fix comes with your distribution's kernel update. Whether it is out for yours, see the security tracker: [Ubuntu](https://ubuntu.com/security/CVE-2026-98432), [Debian](https://security-tracker.debian.org/tracker/CVE-2026-98432).
+
+**What the script sets.** Until the kernel is updated, one rule in the `raw` table covers it: incoming IPv4 TCP packets with IP options are dropped before the kernel parses them. Such TCP packets practically do not occur on the regular internet, so the rule leaves SSH, websites and the VPN alone.
+
+```bash
+iptables -t raw -I PREROUTING -p tcp -m u32 --u32 "0>>24&0xF=6:15" -m comment --comment amneziawg-ipopts-guard -j DROP
+```
+
+The helper `/usr/local/sbin/amneziawg-ipopts-guard` (commands `start`, `stop`, `status`) keeps the rule, and the unit `amneziawg-ipopts-guard.service` puts it back after a reboot. It does not depend on UFW: UFW never flushes the `raw` table, neither on `ufw reload` nor on `ufw disable`. Starting with v6.1.2 a fresh install sets it in step 4; with `--no-tweaks` it does not, and says how to set it on its own.
+
+**The server is already installed.** No reinstall is needed: download the fresh installer and run it with a single flag. It sets only the helper, the unit and the rule, and leaves the VPN, UFW and the other settings alone.
+
+```bash
+wget -O install_amneziawg_en.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/install_amneziawg_en.sh
+sudo bash install_amneziawg_en.sh --ipopts-guard
+```
+
+You can verify the signature of the downloaded file as described in [Verifying a release](README.en.md#verifying-a-release).
+
+**Check.** `sudo bash /root/awg/manage_amneziawg.sh check` prints a "CVE-2026-98432 guard" line (this needs `manage` v6.1.2; update it as described in [How to update the scripts](#update-scripts-adv)). Without `manage`: `sudo /usr/local/sbin/amneziawg-ipopts-guard status && echo set`.
+
+**Remove.** `--uninstall` removes the guard along with everything else. On its own: `sudo systemctl disable --now amneziawg-ipopts-guard.service`. Once the kernel is updated to a fixed version you can keep the rule: it breaks nothing.
+
 <a id="fail2ban-adv"></a>
 ### Fail2Ban (Automatic Setup)
 
@@ -993,6 +1021,10 @@ Options:
   --repair-module       Repair the kernel module on an installed server (kernel
                         7.0.0-38 and later, packages left unconfigured by apt);
                         combines only with --verbose and --no-color
+  --ipopts-guard        Protection against CVE-2026-98432 on an installed server:
+                        a rule that drops TCP packets with IP options and a unit
+                        that sets it at boot. Leaves the VPN alone;
+                        combines only with --verbose and --no-color
   -v, --verbose         Verbose output (including DEBUG)
   --no-color            Disable colored output
   --port=PORT           Set UDP port (1-65535; on mobile networks with DPI, 443/udp often helps)
@@ -1063,6 +1095,7 @@ Options:
   --yes                 Do not prompt for confirmation (ENV: AWG_YES=1)
   --carrier=NAME        (diagnose only) compare parameters against a carrier profile
   --reset-routes        (regen only) reset client AllowedIPs to the global routing mode
+  --vpn                 (qr only) the vpn:// link QR code instead of the config QR code
 ```
 
 > **`--psk`** - optional extra layer on top of the AmneziaWG obfuscation. Generates a 32-byte symmetric key via `awg genpsk` and writes it to both the server `[Peer]` and the client `[Peer]` (`PresharedKey = ...`). Compatible with any WireGuard/AmneziaWG client. In batch mode (`add c1 c2 c3 --psk`) each client gets its own PSK. Without the flag clients are created without `PresharedKey` (by default - the AmneziaWG obfuscation is enough for most scenarios). The flag only affects the new clients created by this `add` invocation - existing clients without PSK stay untouched and keep connecting as before.
@@ -1098,6 +1131,7 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 * **`restore [file]`:** Restore from a backup (including expiry data and cron job).
 * **`check` / `status`:** Check server status (service, port, module, the installation's protocol generation 3.1 or 2.0, and the obfuscation parameters).
 * **`show`:** Run `awg show`.
+* **`qr <name> [--vpn]`:** Print the client's QR code right in the terminal, to scan it with a phone without copying a picture off the server. Without the flag - the config QR for the AmneziaWG app, with `--vpn` - the `vpn://` link QR for Amnezia VPN. A 3.1 code takes about 100-120 characters in width and 50-60 lines; if the window is smaller, the command warns up front, and then make the terminal font smaller. The code holds the client's private key: show it when nobody can see the screen, and run `clear` after scanning. `--json` is not supported.
 * **`restart`:** Restart the AmneziaWG service.
 * **`diagnose [--carrier=NAME]`:** Self-troubleshooting: checks the kernel module, sysctl and UFW; with `--carrier=NAME` it compares AWG parameters against a mobile carrier profile. Names: `beeline_msk`, `yota_msk`, `tele2_msk`, `tele2_krasnoyarsk`, `tattelecom`, `megafon_regions`, `tmobile_us` (the last name is historical: it is the Russian T-Mobile, Moscow and region).
 * **`repair-module`** (alias `repair`): Rebuild/restore the amneziawg kernel module (DKMS) after a server kernel upgrade; for kernels 7.0.0-38 and later see [Known Limitations](#kernel-70-backport-adv).
@@ -1647,6 +1681,30 @@ The report (`--diagnostic`) includes the following sections:
 
 <a id="troubleshooting-adv"></a>
 ## 🔧 Troubleshooting (Detailed)
+
+<a id="no-connection-adv"></a>
+### No connection: where to start
+
+The client does not connect, and it is unclear what is to blame: the network, the server's address or the AmneziaWG settings. What the server sees decides it, so go through the steps from the top and stop at the first one that matches. Each check takes a minute.
+
+**1. Does anything from Russia reach the server at all?** From the same internet connection where the VPN fails, and with the VPN off, try `ping <server address>` and SSH. Then check the same address from another country: from your second server or with an availability checker that has nodes in several countries.
+
+- From Russia not even SSH answers, while from abroad it does - **the server's address itself is blocked**. AmneziaWG and its parameters have nothing to do with it, and changing configs will not help. Since late October 2026 both single addresses and whole hosting subnets get closed this way. Only a new address helps: ask the host to change the IP, and if the whole subnet is closed, move to another host or another country.
+- To make a new address last longer, do not open Russian websites through it. According to what [ntc.party](https://ntc.party/) members observe, the address that requests to Russian resources come from is blocked first. Russian addresses can bypass the foreign server: [a cascade with a Russian entry and traffic splitting](CASCADE.en.md).
+- Nothing answers from anywhere - the server is off or its network is broken, you need the host's console (see the next block).
+
+**2. SSH works, the VPN does not.** Check whether packets reach the VPN port while the client tries to connect:
+
+```bash
+sudo tcpdump -ni any udp port <VPN port>
+```
+
+- Nothing - packets are cut on the way to the server, usually by a mobile carrier and a non-standard UDP port. Compare with Wi-Fi and see [Carrier blocks the port](#mtu-mobile-adv): port `443/udp` often helps, and it can be changed on a running server too.
+- Packets arrive - next, look at `sudo awg show awg0` for this peer and compare with the table in [The handshake never completes on cellular](#no-hs-mobile-adv): an empty `latest handshake` with an `endpoint` that does not change means the profile parameters do not match, and with one that changes, the handshake burst is cut on the way.
+
+**3. The handshake happens, but traffic does not flow or dies after a few seconds.** These are the blocks "Handshake succeeds but traffic doesn't flow" and "AmneziaWG handshake completes but traffic then dies" below: in the first case it is usually MTU or routing on the server, in the second, filtering by the host's address on the path.
+
+For an issue, the output of the step where you stopped helps: the ping and SSH answers, the `tcpdump` lines and the output of `sudo bash /root/awg/manage_amneziawg.sh show`. Use that rather than plain `awg show`: on a 3.1 server the latter prints the header protection key in clear text, while `manage show` hides it.
 
 <details>
 <summary><strong>The server does not answer after the reboot in step 1</strong></summary>

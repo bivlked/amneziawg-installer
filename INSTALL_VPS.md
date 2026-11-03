@@ -152,6 +152,7 @@ On Android, WG Tunnel and AmneziaWG are what we recommend: in our check on 13 Oc
 ## What next
 
 - Add or remove people: `add <name>`, `remove <name>`, `list`, `stats`.
+- Scan a client's config with a phone straight from the terminal: `qr <name>` (`qr <name> --vpn` for the `vpn://` link).
 - Time-limited access: `add guest --expires=7d`.
 - Reissue a lost config: `regen <name>` (the keys stay the same). If a config leaked, revoke it instead: `remove <name>`, then `add <name>` and hand out the new file.
 - Back up before experiments: `backup`, and `restore` to go back.

@@ -4,6 +4,8 @@
 # with --vpn, for the vpn:// link (Amnezia VPN app) - no picture to copy off
 # the server. Every scenario runs against both manage twins.
 
+# shellcheck disable=SC2154  # $stderr is set by bats `run --separate-stderr`
+
 bats_require_minimum_version 1.5.0
 
 load test_helper
