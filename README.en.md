@@ -41,8 +41,8 @@
 | **Also supported** | Ubuntu 26.04 |
 | **Not for new servers** | Debian 12 - no longer under standard vendor support |
 | **Architectures** | x86_64, ARM64, ARMv7 |
-| **Kernel module** | DKMS from the Amnezia PPA; on kernels older than 6.7 (a stock Debian 12) a pinned 2.0 module built from source; prebuilt packages for some ARM targets |
-| **Config profile** | AmneziaWG 3.1 for a new install; 2.0 with `--protocol=2.0`, or automatically where the installer does not issue 3.1 (kernel older than 6.7, ARM); a running server keeps its generation |
+| **Kernel module** | DKMS from the Amnezia PPA; on kernels older than 6.7 (a stock Debian 12) a pinned 2.0 module built from source; on ARM, prebuilt packages for generation 2.0 |
+| **Config profile** | AmneziaWG 3.1 for a new install, ARM64 included; 2.0 with `--protocol=2.0`, or automatically where the installer does not issue 3.1 (kernel older than 6.7, 32-bit ARM); a running server keeps its generation |
 <!-- facts:end -->
 
 <a id="quickstart"></a>
@@ -58,7 +58,7 @@ sudo bash ./install_amneziawg_en.sh
 >
 > **Connect a device.** You need a client with 3.1 support: on Android, WG Tunnel or AmneziaWG; on iPhone, AmneziaWG (scan the `my_phone.png` QR code); on Mac, AmneziaWG (import the `.conf`); on Windows, AmneziaWG (import `my_laptop.conf`); on any platform, Amnezia VPN (the `vpn://` link); on Linux, [with awg-quick](ADVANCED.en.md#linux-client-adv). How to get the files off the server is in [After installation](#after-installation); another device later is a single `add` command.
 >
-> Have a router on stock firmware, Hiddify, or apps that have not been updated for a long time? Add `--protocol=2.0` to the last command, [here is why](#awg3). On ARM and on a stock Debian 12 the installer picks 2.0 by itself.
+> Have a router on stock firmware, Hiddify, or apps that have not been updated for a long time? Add `--protocol=2.0` to the last command, [here is why](#awg3). On 32-bit ARM and on a stock Debian 12 the installer picks 2.0 by itself.
 
 > 📘 Full deployment guide: [Install AmneziaWG VPN server on Ubuntu/Debian VPS](INSTALL_VPS.md) - covers VPS choice, ARM, troubleshooting, and uninstall.
 
@@ -100,7 +100,7 @@ All parameters are accepted automatically. Details: [ADVANCED.en.md#cli-params-a
 |---|---|
 | Plain cheap VPS, you just need a VPN | Nothing - the command above already does it |
 | Mobile data, DPI cuts the link (TSPU, Iran, school or office) | During install, add `--mobile` - the obfuscation preset plus port 443/udp in one go ([tested carriers](#carriers)) |
-| ARM: Raspberry Pi, Oracle Ampere, Hetzner CAX | Same command: ready-made ARM kernel modules are selected automatically, and the protocol is AmneziaWG 2.0 (3.1 is x86_64 only for now), so clients need 2.0 support ([here is why](#awg3)) |
+| ARM: Raspberry Pi, Oracle Ampere, Hetzner CAX | Same command. On 64-bit ARM (ARM64) AmneziaWG 3.1 is installed since v6.2.0, with the module built through DKMS; 32-bit Raspberry Pi OS stays on AmneziaWG 2.0 with ready-made kernel modules, and clients there need 2.0 support ([here is why](#awg3)) |
 | Time-limited access for a friend or guest | After install: `sudo bash /root/awg/manage_amneziawg.sh add guest --expires=7d` |
 
 ---
@@ -153,7 +153,7 @@ sudo bash ./install_amneziawg_en.sh --protocol=2.0
 
 Still without 3.1 support: routers on stock firmware (stable KeeneticOS, OpenWrt with an old amneziawg package), Hiddify, and apps that have not been updated for a long time. Which clients understand 3.1 and from which version is in the [client table](ADVANCED.en.md#client-gen-adv). Better decide before installing: the generation of a running server changes only through a reinstall, and then every client profile is issued again.
 
-**Where the installer picks 2.0 by itself.** On kernels older than 6.7 (a stock Debian 12 with kernel 6.1) and on ARM the installer deliberately does not issue 3.1: these platforms have not been measured yet. If you did not choose a generation, it installs 2.0 by itself, explains the reason in the log and repeats it in the final report. Where the installed `awg` tools or the kernel module do not understand 3.1 parameters, it switches to 2.0 if the module accepts the 2.0 set, and otherwise stops and says what to fix (for old tools, the package to upgrade). An explicit `--protocol=3.1` on an unsuitable machine stops the install and names the reason.
+**Where the installer picks 2.0 by itself.** On kernels older than 6.7 (a stock Debian 12 with kernel 6.1) and on 32-bit ARM the installer deliberately does not issue 3.1: these platforms have not been measured. If you did not choose a generation, it installs 2.0 by itself, explains the reason in the log and repeats it in the final report. Where the installed `awg` tools or the kernel module do not understand 3.1 parameters, it switches to 2.0 if the module accepts the 2.0 set, and otherwise stops and says what to fix (for old tools, the package to upgrade). An explicit `--protocol=3.1` on an unsuitable machine stops the install and names the reason.
 
 **Servers that already run** keep their generation: updating the scripts and `manage` do not change it. Moving from 2.0 to 3.1 means removing the install (`--uninstall`) and installing again, and every client profile is issued again. Back from 3.1 to 2.0 works the same way: `--uninstall` (it removes the server and its 3.1 profiles, keeping a backup copy by default), then an install with `--protocol=2.0` and new profiles for every client.
 
@@ -256,7 +256,7 @@ Detailed comparison: [amneziawg-installer vs the official Amnezia app](https://b
 * **Secure by default** - UFW, Fail2Ban, sysctl hardening, strict file permissions (600/700)
 * **Easy management** - add/remove clients, temporary clients with auto-removal, traffic stats, backups
 * **Broad OS support** - Ubuntu 24.04, 26.04 and Debian 13; Debian 12 for moving an existing server across
-* **x86_64 and ARM** - cloud VPS, Raspberry Pi 3/4/5, ARM64 servers (AWS Graviton, Oracle Ampere, Hetzner); ARM gets AmneziaWG 2.0
+* **x86_64 and ARM** - cloud VPS, Raspberry Pi 3/4/5, ARM64 servers (AWS Graviton, Oracle Ampere, Hetzner); ARM64 gets AmneziaWG 3.1, 32-bit ARM gets 2.0
 * **Mobile network optimization** - `--preset=mobile` for Tele2, Yota, Megafon and other carriers with DPI blocking. Fine-tune with `--jc`, `--jmin`, `--jmax` ([details](ADVANCED.en.md#presets-adv))
 * **Optional dual-stack IPv6** - the `--allow-ipv6-tunnel` flag adds IPv6 inside the tunnel next to IPv4 (off by default, [details](ADVANCED.en.md#ipv6-tunnel-adv))
 
@@ -319,10 +319,10 @@ Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work - o
 | Architecture | Status | Protocol | Platforms |
 |---|---|---|---|
 | x86_64 (amd64) | ✅ Fully supported | AmneziaWG 3.1 (on kernel 6.7+, otherwise 2.0) | All cloud VPS |
-| ARM64 (aarch64) | ✅ Supported | AmneziaWG 2.0 | Raspberry Pi 3/4/5, AWS Graviton, Oracle Ampere, Hetzner |
+| ARM64 (aarch64) | ✅ Supported | AmneziaWG 3.1 (since v6.2.0) | Raspberry Pi 3/4/5, AWS Graviton, Oracle Ampere, Hetzner |
 | ARMv7 (armhf) | ✅ Supported | AmneziaWG 2.0 | Raspberry Pi 3/4 (32-bit) |
 
-> On ARM, the installer downloads prebuilt kernel modules when available and falls back to DKMS compilation automatically. The 3.1 profile is not issued on ARM yet: the installer sets up 2.0 by itself, and clients need 2.0 support.
+> On ARM64 the 3.1 profile runs on the module from the PPA, built through DKMS and rebuilt when the kernel changes. On 32-bit ARM the installer sets up 2.0 by itself (clients need 2.0 support) and downloads prebuilt kernel modules when available, falling back to DKMS compilation otherwise. An ARM64 server installed before v6.2.0 stays on 2.0 until it is reinstalled.
 
 > ⚠️ **Non-standard SSH port:** The installer usually detects the SSH port automatically. If SSH runs on a non-standard port or autodetection is unavailable, run with `--ssh-port=YOUR_PORT` (comma-separated for several ports). As an extra conservative safeguard you can run `sudo ufw allow YOUR_PORT/tcp` **before** starting the installer.
 
@@ -604,7 +604,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: How do I install AmneziaWG 3.1 on my own server?</strong></summary>
-  <b>A:</b> On a clean x86_64 VPS with Ubuntu 24.04, 26.04 or Debian 13, with the three commands from the <a href="#quickstart">Quick Start</a>: download <code>install_amneziawg_en.sh</code> from the latest release and run it with <code>sudo bash</code>. The 3.1 profile is the default and runs as a kernel module, without Docker; on ARM and on stock Debian 12 the installer picks 2.0 by itself, and the <a href="#awg3">3.1 section</a> lists the other cases. Expect two reboots: answer <code>y</code> each time it asks "Reboot now?", and after each reboot log in again and repeat the last command. The other route is the official Amnezia VPN app, which deploys the server in Docker; the <a href="#similar-tools">comparison</a> shows how the two differ.
+  <b>A:</b> On a clean x86_64 or ARM64 VPS with Ubuntu 24.04, 26.04 or Debian 13, with the three commands from the <a href="#quickstart">Quick Start</a>: download <code>install_amneziawg_en.sh</code> from the latest release and run it with <code>sudo bash</code>. The 3.1 profile is the default and runs as a kernel module, without Docker; on ARM and on stock Debian 12 the installer picks 2.0 by itself, and the <a href="#awg3">3.1 section</a> lists the other cases. Expect two reboots: answer <code>y</code> each time it asks "Reboot now?", and after each reboot log in again and repeat the last command. The other route is the official Amnezia VPN app, which deploys the server in Docker; the <a href="#similar-tools">comparison</a> shows how the two differ.
 </details>
 
 <details>
@@ -624,7 +624,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: Why did I get AmneziaWG 2.0 instead of 3.1?</strong></summary>
-  <b>A:</b> The installer issues the 3.1 profile only on x86_64 with kernel 6.7 or newer, a deliberately cautious choice for platforms that have not been measured yet. So on ARM (Raspberry Pi, Oracle Ampere, Hetzner CAX) and on a stock Debian 12 (kernel 6.1) it sets up 2.0 by itself. It also switches to 2.0 when the installed <code>awg</code> tools or kernel module do not understand 3.1 parameters (or stops and says what to fix). It names the reason in the final report. For 3.1 you need an x86_64 server with Ubuntu 24.04 / 26.04 or Debian 13. A server installed before version 6.0.0 stays on 2.0 after an update too: the move is <code>--uninstall</code> and a fresh install with new profiles for every client. Copy a backup off the server first: <code>--uninstall</code> deletes <code>/root/awg/</code>. Details in <a href="ADVANCED.en.md#awg3-fallback-adv">ADVANCED.en.md</a>.
+  <b>A:</b> The installer issues the 3.1 profile on x86_64 and, since v6.2.0, on 64-bit ARM (ARM64) with kernel 6.7 or newer; a deliberately cautious choice for platforms that have not been measured. So on 32-bit ARM (32-bit Raspberry Pi OS) and on a stock Debian 12 (kernel 6.1) it sets up 2.0 by itself, and an ARM64 server installed before v6.2.0 stays on 2.0 too. It also switches to 2.0 when the installed <code>awg</code> tools or kernel module do not understand 3.1 parameters (or stops and says what to fix). It names the reason in the final report. For 3.1 you need an x86_64 or ARM64 server with Ubuntu 24.04 / 26.04 or Debian 13. A server installed before version 6.0.0 stays on 2.0 after an update too: the move is <code>--uninstall</code> and a fresh install with new profiles for every client. Copy a backup off the server first: <code>--uninstall</code> deletes <code>/root/awg/</code>. Details in <a href="ADVANCED.en.md#awg3-fallback-adv">ADVANCED.en.md</a>.
 </details>
 
 <details>

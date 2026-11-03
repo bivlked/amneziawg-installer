@@ -84,7 +84,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 <a id="features-detailed-adv"></a>
 ## ✨ Features (Detailed)
 
-* **AmneziaWG 3.1 by default:** header encryption (`HeaderProtectionKey`, a key of its own per install) and extra padding (`ContentPaddingAddition`) on top of junk packets, `S1`-`S4` padding and the `I1` concealment packet. AmneziaWG 2.0 is installed with the `--protocol=2.0` flag (for clients without 3.1) or automatically where the installer does not issue 3.1 (ARM, kernel older than 6.7): [details](#awg3-fallback-adv).
+* **AmneziaWG 3.1 by default:** header encryption (`HeaderProtectionKey`, a key of its own per install) and extra padding (`ContentPaddingAddition`) on top of junk packets, `S1`-`S4` padding and the `I1` concealment packet. AmneziaWG 2.0 is installed with the `--protocol=2.0` flag (for clients without 3.1) or automatically where the installer does not issue 3.1 (32-bit ARM, kernel older than 6.7): [details](#awg3-fallback-adv).
 * **Native key generation:** Keys are generated via `awg genkey/pubkey`, configs via Bash templates, QR codes via `qrencode`. The external Python/awgcfg.py dependency has been completely removed.
 * **Automated installation:** Installs AmneziaWG, DKMS module, dependencies, configures networking, firewall, and sysctl.
 * **Resume after reboot:** Uses a state file (`/root/awg/setup_state`) to continue after required reboots.
@@ -217,24 +217,24 @@ The kernel interface contract is unaffected: `WG_GENL_VERSION` is unchanged, so 
 
 | Condition | What gets installed | Module line | Profile without `--protocol` |
 |---|---|---|---|
-| x86_64, kernel >= 6.7 | `amneziawg-dkms` from `ppa:amnezia/ppa` | **3.x** | **3.1** |
+| x86_64 or ARM64, kernel >= 6.7, generation 3.1 | `amneziawg-dkms` from `ppa:amnezia/ppa` | **3.x** | **3.1** |
 | any arch, kernel older than 6.7 (Debian 12 on 6.1) | pinned module built from source | 2.0 | 2.0, automatically |
-| ARM64 / armhf with a prebuilt for your kernel | our prebuilt package | 2.0 | 2.0, automatically |
-| ARM64 / armhf with no prebuilt, kernel >= 6.7 | `amneziawg-dkms` from the PPA | **3.x** | 2.0, automatically: ARM has not been measured for the third line |
+| ARM64 with `--protocol=2.0` or 32-bit ARM, with a prebuilt for your kernel | our prebuilt package | 2.0 | 2.0 (automatically on 32-bit ARM) |
+| the same with no prebuilt, kernel >= 6.7 | `amneziawg-dkms` from the PPA | **3.x** | 2.0 (automatically on 32-bit ARM: it has not been measured for the third line) |
 
 A third-line module is necessary but not sufficient for the 3.1 profile: at step 3 the installer also checks the tools and the loaded module, see [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv).
 
-That last row is not hypothetical: prebuilt ARM packages are built for Raspberry Pi 3/4/5, Ubuntu 24.04 ARM64, and Debian 12/13 ARM64. Ubuntu 26.04 ARM64 is not on that list yet, and on such a host the installer finds no match, falls through to the normal DKMS path and installs the PPA module, which is the third version.
+That last row is not hypothetical: prebuilt ARM packages (a second-line module) are built for Raspberry Pi 3/4/5 on Raspberry Pi OS bookworm, Ubuntu 24.04 ARM64, and Debian 12/13 ARM64. There are none for Ubuntu 26.04 ARM64 or for the Raspberry Pi OS trixie kernels, and on such a host the installer finds no match, falls through to the normal DKMS path and installs the PPA module, which is the third version.
 
 On older kernels we pick 2.0 **on purpose**, not because 3.0 fails to build there. For the first day after the release it genuinely did fail on kernel 6.1; upstream fixed that on 31 July and it builds now. But old kernels are exactly where the 3.0 line has had the least mileage, while the pinned 2.0 is verified against an immutable commit. The threshold will be lifted after a separate validation, not because the build passes again.
 
-On ARM the installer tries the prebuilt package first, and if it finds one matching your kernel it never reaches the PPA at all. The prebuilt packages are pinned to 2.0. With no match, the same rule as on x86 takes over: a kernel older than 6.7 gets the pinned 2.0 from source, a newer one gets the PPA module.
+On ARM64 with generation 3.1 (the default since v6.2.0) the prebuilt package is not tried at all: it is second line, so the module is built from the PPA through DKMS right away, as on x86_64, together with the automatic rebuild on a kernel change. On 32-bit ARM and on ARM64 with `--protocol=2.0` the installer tries the prebuilt package first, and if it finds one matching your kernel it never reaches the PPA at all. The prebuilt packages are pinned to 2.0. With no match, the same rule as on x86 takes over: a kernel older than 6.7 gets the pinned 2.0 from source, a newer one gets the PPA module.
 
 > ⚠️ **The pinned 2.0 line does not receive updates, and that is a deliberate decision rather than an oversight.** The module on the pinned path is built from the immutable tag `v1.0.20260725`, and upstream has frozen the `1.0.x` line - there will be no new releases in it. The same applies to the prebuilt ARM packages.
 >
-> What that means in practice. On Debian 12 with its stock 6.1 kernel, and on ARM with a matching prebuilt package, you get a proven but frozen module. There is no "upgrade to the third version with a plain `apt upgrade`" path for such hosts: the installer keeps `amneziawg-dkms` on `apt-mark hold` precisely so the PPA module does not land next to it as a second tree with the same name. Nothing breaks and nothing stops working - updates simply do not arrive.
+> What that means in practice. On Debian 12 with its stock 6.1 kernel, and on ARM with a matching prebuilt package (32-bit ARM, or ARM64 with `--protocol=2.0`), you get a proven but frozen module. There is no "upgrade to the third version with a plain `apt upgrade`" path for such hosts: the installer keeps `amneziawg-dkms` on `apt-mark hold` precisely so the PPA module does not land next to it as a second tree with the same name. Nothing breaks and nothing stops working - updates simply do not arrive.
 >
-> If you specifically need the third version on such a host, there is one supported route: get a kernel 6.7 or newer (on Debian 12 that means the backports kernel) and reinstall. On x86 the normal PPA path takes over from there, and a new install gets the 3.1 profile. ⚠️ On ARM, mind the order: the prebuilt package is tried first, so if a prebuilt exists for your new kernel you will get the pinned 2.0 again - the third version arrives only when no match is found. And the 3.1 profile is not issued on ARM at all for now, whichever module lands.
+> If you specifically need the third version on such a host, there is one supported route: get a kernel 6.7 or newer (on Debian 12 that means the backports kernel) and reinstall. On x86_64 and ARM64 the normal PPA path takes over from there, and a new install gets the 3.1 profile. On 32-bit ARM the 3.1 profile is not issued, whichever module lands.
 
 **The PPA module is updated together with the system, and it has no rollback.** On the main path (x86_64, kernel 6.7 or newer) `amneziawg-dkms` comes from the PPA and changes with a plain `sudo apt upgrade`, and also when the installer is run again, since step 1 updates the system. `unattended-upgrades` in its stock configuration does not install packages from the PPA (and if package cleanup ran during the install, it is gone; cleanup is skipped with `--keep-packages`, `--no-tweaks` or a refusal at the installer's prompt; check with `dpkg -s unattended-upgrades`), so the build changes when you update the system. The loaded module stays the same until a reboot. The PPA keeps only the current build: a superseded one disappears from the archive about a day later, so apt cannot take you back to it. To decide yourself when the build changes, hold the package: `sudo apt-mark hold amneziawg-dkms` (release with `sudo apt-mark unhold amneziawg-dkms`); the price is that fixes stop arriving along with new builds. Running the installer again (on a working server this needs `--force`) releases this hold at step 2, after the reboot, and the build itself changes at the next `apt upgrade`, so set the hold again once the installation has finished. The module version string does not tell builds apart; the running one is shown by `cat /sys/module/amneziawg/srcversion`.
 
@@ -353,7 +353,7 @@ The configs carry no `RandomTrailers` or `DisableCookies` line at all, not even 
 <a id="awg3-fallback-adv"></a>
 ### Where 2.0 is installed instead of 3.1
 
-The installer checks the machine twice. At step 0 it checks the architecture and the kernel: the 3.1 profile is issued only on x86_64 with kernel 6.7 or newer. At step 3, once the packages are in and the reboots are behind, it checks the `awg` tools and the loaded module: the module is checked with a probe, that is, the profile is applied to a temporary interface and read back.
+The installer checks the machine twice. At step 0 it checks the architecture and the kernel: the 3.1 profile is issued only on x86_64 and, since v6.2.0, on 64-bit ARM (ARM64), with kernel 6.7 or newer. At step 3, once the packages are in and the reboots are behind, it checks the `awg` tools and the loaded module: the module is checked with a probe, that is, the profile is applied to a temporary interface and read back.
 
 | Situation | What the installer does |
 |---|---|
@@ -363,7 +363,7 @@ The installer checks the machine twice. At step 0 it checks the architecture and
 | `--protocol=2.0` | installs 2.0, no third-line checks needed |
 | the server has already issued profiles (reached step 6) | never changes the generation. If a 3.1 server stops passing the check, the installer names the reason and the repair (upgrade the tools or the module, boot a suitable kernel); it names removal only as the last resort |
 
-Reason codes: `kernel`, `arm`, `arch_unsupported`, `arch_unknown` (checked at step 0 and again at step 3); `tools_old`, `module_line2`, `module_probe_failed` (step 3).
+Reason codes: `kernel`, `arm` (32-bit ARM; before v6.2.0, any ARM), `arch_unsupported`, `arch_unknown` (checked at step 0 and again at step 3); `tools_old`, `module_line2`, `module_probe_failed` (step 3).
 
 <!-- hosts:begin -->
 <!-- Generated by scripts/update-client-tables.sh from docs/support-matrix.json and
@@ -1342,7 +1342,7 @@ If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULL
 <a id="faq-yellow-adv"></a>
 <details>
   <summary><strong>Q: Why is my config highlighted yellow in the Amnezia app?</strong></summary>
-  <b>A:</b> The yellow mark reports the profile generation, not an error: that is how the Amnezia app marks second-line AmneziaWG configurations. On its own the mark does not say anything is wrong with the connection, and nothing needs redoing because of it. Since version 6.0.0 a new install gets the 3.1 profile by default. A 2.0 profile - on servers installed earlier, installed with <code>--protocol=2.0</code>, or where the installer picked 2.0 by itself (a stock Debian 12 with kernel 6.1, ARM) - gets the mark as expected. Removing it takes a 3.1 server, that is, a reinstall with every profile reissued, and all your clients have to understand 3.1.
+  <b>A:</b> The yellow mark reports the profile generation, not an error: that is how the Amnezia app marks second-line AmneziaWG configurations. On its own the mark does not say anything is wrong with the connection, and nothing needs redoing because of it. Since version 6.0.0 a new install gets the 3.1 profile by default. A 2.0 profile - on servers installed earlier, installed with <code>--protocol=2.0</code>, or where the installer picked 2.0 by itself (a stock Debian 12 with kernel 6.1, 32-bit ARM, ARM64 before v6.2.0) - gets the mark as expected. Removing it takes a 3.1 server, that is, a reinstall with every profile reissued, and all your clients have to understand 3.1.
 </details>
 
 <details>
@@ -2189,7 +2189,7 @@ Control: a tunnel to a server in a different AS (US) came up and held on all thr
 <a id="client-compat-adv"></a>
 ## 📋 Client Compatibility
 
-A client has to understand your server's generation: a new install gives the 3.1 profile by default, and with `--protocol=2.0`, on a kernel older than 6.7 (a stock Debian 12) and on ARM the 2.0 profile. The installer prints the server generation in the final report, on the "Protocol generation" line, and later `manage check` shows it. The table below is a short list with our notes; the full table with versions and sources is in [Which AmneziaWG generation a client speaks](#client-gen-adv).
+A client has to understand your server's generation: a new install gives the 3.1 profile by default, and with `--protocol=2.0`, on a kernel older than 6.7 (a stock Debian 12) and on 32-bit ARM the 2.0 profile. The installer prints the server generation in the final report, on the "Protocol generation" line, and later `manage check` shows it. The table below is a short list with our notes; the full table with versions and sources is in [Which AmneziaWG generation a client speaks](#client-gen-adv).
 
 | Client | Platform | AWG 3.1 | AWG 2.0 | Notes |
 |--------|----------|---------|---------|-------|
@@ -2312,7 +2312,9 @@ If you specifically want the third AmneziaWG line on Debian 12, the simplest rou
 <a id="arm-support-adv"></a>
 ## 🔧 Raspberry Pi and ARM64 Support
 
-The installer works on ARM systems, but the protocol there is AmneziaWG 2.0: as of v6.0.0 the 3.1 profile is not issued on ARM with any module. This is a deliberate caution until a separate measurement on ARM (see [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv)). Clients of such a server need 2.0 support. An explicit `--protocol=3.1` on ARM stops the install.
+Since v6.2.0 64-bit ARM (ARM64, aarch64) gets AmneziaWG 3.1, like x86_64: the third-line module is built from the PPA through DKMS, and the automatic rebuild on a kernel change comes with it. Checked on @@ARM_MEASURED_EN@@. 32-bit ARM (armhf) stays on AmneziaWG 2.0: there is nothing to measure the third line on, and the decision is deliberate (see [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv)). Clients of such a server need 2.0 support, and an explicit `--protocol=3.1` stops the install there.
+
+An ARM64 server installed before v6.2.0 stays on 2.0: the installer does not change the generation of a running server. Moving it to 3.1 takes a reinstall with every profile reissued, the same way as on x86_64: [INSTALL_VPS, section "Update flow", paragraph "Moving an existing server to 3.1"](INSTALL_VPS.md#update-flow).
 
 **Supported platforms:**
 
@@ -2326,12 +2328,12 @@ The installer works on ARM systems, but the protocol there is AmneziaWG 2.0: as 
 
 **How it works:**
 
-1. The installer detects the kernel version and architecture automatically.
-2. If a prebuilt `amneziawg.ko` package matching your kernel exists in the [arm-packages release](https://github.com/bivlked/amneziawg-installer/releases/tag/arm-packages), it is downloaded and installed via `dpkg`. This takes 2-3 minutes.
+1. The installer detects the kernel version and architecture automatically. On ARM64 with generation 3.1 (the default) steps 2 and 3 do not apply: the module is built through DKMS from the PPA right away, which takes a few minutes on a cloud ARM server and longer on a Raspberry Pi.
+2. On 32-bit ARM and on ARM64 with `--protocol=2.0`: if a prebuilt `amneziawg.ko` package matching your kernel exists in the [arm-packages release](https://github.com/bivlked/amneziawg-installer/releases/tag/arm-packages), it is downloaded and installed via `dpkg`. This takes 2-3 minutes.
 3. If no prebuilt package matches, the installer falls back to DKMS compilation from source. This works on any kernel but takes longer (10-30 min depending on hardware).
-4. You can skip the prebuilt package altogether: with `--no-prebuilt` the module is built with DKMS right away. The prebuilt packages are built by this project's CI, and the installer checks them only against a SHA256 file from the same release; they are not signed. Note that this changes the module too: the prebuilt packages are built from the pinned AmneziaWG 2.0 source, while on kernels 6.7 and newer DKMS installs `amneziawg-dkms` from the PPA, the same third-line module an x86 server gets. The client profiles are second generation either way.
+4. You can skip the prebuilt package altogether: with `--no-prebuilt` the module is built with DKMS right away. The prebuilt packages are built by this project's CI, and the installer checks them only against a SHA256 file from the same release; they are not signed. Note that this changes the module too: the prebuilt packages are built from the pinned AmneziaWG 2.0 source, while on kernels 6.7 and newer DKMS installs `amneziawg-dkms` from the PPA, the same third-line module an x86 server gets. The flag does not change the profile generation: on 32-bit ARM and with `--protocol=2.0` it is second generation either way.
 
-> **Prebuilt ARM coverage:** prebuilt packages are built for Raspberry Pi (3/4/5), Ubuntu 24.04 ARM64 and Debian 12/13 ARM64. Ubuntu 26.04 ARM64 has no prebuilt yet - the module comes as the `amneziawg-dkms` package from the PPA and is built via DKMS (slower on first install, then works normally).
+> **Prebuilt ARM coverage:** prebuilt packages (a second-line module) are built for Raspberry Pi (3/4/5) on Raspberry Pi OS bookworm, Ubuntu 24.04 ARM64 and Debian 12/13 ARM64. Ubuntu 26.04 ARM64 and Raspberry Pi OS trixie have none - the module comes as the `amneziawg-dkms` package from the PPA and is built via DKMS (slower on first install, then works normally).
 
 **Raspberry Pi kernel detection:**
 
@@ -2342,6 +2344,14 @@ Raspberry Pi Foundation kernels have a `+rpt` suffix in their version string (e.
 <details>
 <summary><strong>Q: Module load fails on Raspberry Pi</strong></summary>
 Check that kernel headers match your running kernel: <code>uname -r</code> vs <code>ls /lib/modules/</code>. If they differ, update your kernel: <code>sudo apt update && sudo apt upgrade</code>, reboot, and re-run the installer.
+</details>
+
+<details>
+<summary><strong>Q: I updated the kernel on a server with a prebuilt ARM module, and the VPN does not come up</strong></summary>
+A prebuilt module is built for one kernel version, and this path installs no DKMS, so no module appears for the new kernel by itself: <code>awg-quick@awg0</code> goes to <code>failed</code>, there is no <code>awg0</code> interface. <code>repair-module</code> does not help here; since v6.2.0 it and <code>check</code> name the recipe outright. The recipe is to run the installer again after the reboot into the new kernel:
+<pre><code>wget -O install_amneziawg_en.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/install_amneziawg_en.sh
+sudo bash install_amneziawg_en.sh</code></pre>
+It asks for a reboot twice; after each one run the same command until it reports a successful finish. The server keys and the client profiles are kept. Checked on 3 November 2026 on Ubuntu 24.04 ARM64: there was no prebuilt for the new kernel yet, the installer built the module through DKMS and set up the automatic rebuild, so the server survives the next kernel change by itself. While the VPN still runs (before the reboot), the installer answers that everything is already installed and does nothing.
 </details>
 
 <details>

@@ -18,7 +18,7 @@
 - [ ] `scripts/check-docs-consistency.sh` passes (if docs or metadata changed)
 - [ ] Tested on clean Ubuntu 24.04 LTS VPS (if script changes)
 - [ ] Checked on both generations, the default 3.1 and `--protocol=2.0` (if install, config or profile logic changes)
-- [ ] Fallback to 2.0 checked on Debian 12 or ARM (if the generation choice at step 0 or step 3 changes)
+- [ ] Fallback to 2.0 checked on Debian 12 or 32-bit ARM (if the generation choice at step 0 or step 3 changes)
 - [ ] Tested on Ubuntu 26.04 (if PPA/install logic changes)
 - [ ] Tested on Debian 12/13 (if OS-specific changes)
 - [ ] CHANGELOG.md **and** CHANGELOG.en.md updated (including `[Unreleased]` comparator link), or not applicable (internal/test-only change)

@@ -13,7 +13,9 @@ tracked in issues and discussions, not here:
 - [Discussions](https://github.com/bivlked/amneziawg-installer/discussions) - proposals, carrier reports, Q&A
 - [CHANGELOG.en.md](../CHANGELOG.en.md) - what already shipped
 
-## Recently shipped
+
+
+
 
 - AmneziaWG 3.1 by default for new installs (v6.0.0): encrypted headers (`HeaderProtectionKey`) and content padding (`ContentPaddingAddition`), with an automatic fallback to 2.0 where the installer does not issue 3.1 (ARM, kernels older than 6.7) and `--protocol=2.0` for clients without 3.1.
 - AmneziaWG 2.0 support (H1-H4 ranges, S3/S4, I1-I5 CPS concealment).
@@ -37,7 +39,7 @@ tracked in issues and discussions, not here:
 These are directions, not commitments. Priority and timing are decided in
 issue #79 and the discussions.
 
-- **AmneziaWG 3.1 on more servers:** issue 3.1 on ARM once it has been measured there, and on kernels older than 6.7 once the module supports them.
+- **AmneziaWG 3.1 on more servers:** issue 3.1 on 32-bit ARM once it can be measured there, and on kernels older than 6.7 once the module supports them.
 - **Client support for 3.1:** keep the client compatibility table current as apps and router firmware gain 3.1 (source: `docs/clients-matrix.json`).
 - **Release integrity, next steps:** sign the ARM prebuilt packages; publish
   the public key outside GitHub.
@@ -71,6 +73,7 @@ Carrier reports (operator, region, working parameters) are especially useful.
 
 ## Уже сделано
 
+- AmneziaWG 3.1 на 64-битном ARM (v6.2.0): серверы ARM64 получают профиль 3.1, как x86_64, модуль собирается из PPA через DKMS и пересобирается при смене ядра; 32-битный ARM остаётся на 2.0.
 - AmneziaWG 3.1 по умолчанию для новых установок (v6.0.0): шифрование заголовков (`HeaderProtectionKey`) и добавочный паддинг (`ContentPaddingAddition`); там, где установщик 3.1 не выдаёт (ARM, ядра старее 6.7), автоматически ставится 2.0, а для клиентов без 3.1 есть `--protocol=2.0`.
 - Поддержка AmneziaWG 2.0 (диапазоны H1-H4, S3/S4, маскировка I1-I5 CPS).
 - Dual-stack IPv6 внутри туннеля (`--allow-ipv6-tunnel`), с учётом split-tunnel.
@@ -93,7 +96,7 @@ Carrier reports (operator, region, working parameters) are especially useful.
 Это направления, а не обязательства. Приоритет и сроки определяются в issue #79
 и обсуждениях.
 
-- **AmneziaWG 3.1 на большем числе серверов:** выдавать 3.1 на ARM после отдельного замера там и на ядрах старее 6.7, когда их поддержит модуль.
+- **AmneziaWG 3.1 на большем числе серверов:** выдавать 3.1 на 32-битном ARM, когда его будет на чём замерить, и на ядрах старее 6.7, когда их поддержит модуль.
 - **Поддержка 3.1 в клиентах:** держать таблицу совместимости клиентов актуальной по мере того, как приложения и прошивки роутеров получают 3.1 (источник: `docs/clients-matrix.json`).
 - **Целостность релизов, дальше:** подписывать готовые ARM-пакеты; опубликовать
   публичный ключ вне GitHub.

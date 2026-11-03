@@ -12,6 +12,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **AmneziaWG 3.1 on 64-bit ARM.** ARM64 servers (Hetzner CAX, Oracle Ampere, AWS Graviton, a Raspberry Pi on a 64-bit system) now get the 3.1 profile by default, like x86_64. The third-line module comes from the PPA through DKMS instead of the second-line prebuilt package, and with it comes the automatic rebuild on a kernel change, which the prebuilt path never had. @@ARM_MEASURED_CL_EN@@ 32-bit ARM (armhf) stays on 2.0: there is nothing to measure the third line on. An ARM64 server installed earlier keeps its generation; moving it to 3.1 is a reinstall with every profile reissued. With `--protocol=2.0` on ARM64 nothing changes: the prebuilt package first, DKMS when there is none.
+
+### Fixed
+
+- **A prebuilt ARM module after a kernel update: a recipe instead of a dead end.** On a server whose module came as an ARM prebuilt package, a new kernel is left without a module and the VPN does not come up after the reboot: this path installs no DKMS. Before, `manage check` called this normal for userspace mode, `manage repair-module` printed a recipe through `dkms`, which such a server does not have, and `install --repair-module` simply refused. Now all three name what works: running the installer again after the reboot. It brings the module back and keeps the server keys and the client profiles (checked on 3 November 2026 on Ubuntu 24.04 ARM64).
+
+### Documentation
+
+- In ADVANCED the "Generation of a new install" table shows x86_64 and ARM64 as one column and 32-bit ARM as another; both are checked against the installer's behaviour. The ARM, module line and 2.0 fallback sections, README, INSTALL_VPS, CASCADE and ROADMAP are updated for ARM64 on 3.1. INSTALL_VPS and ADVANCED describe how to bring a prebuilt ARM module back after a kernel change.
+
 ## [6.1.2] - 2026-11-03
 
 **v6.1.2** - protection against the kernel vulnerability CVE-2026-98432, the client's QR code right in the terminal (`manage qr`), and first steps in ADVANCED for when there is no connection at all.
