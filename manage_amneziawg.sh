@@ -1815,7 +1815,14 @@ check_server() {
     else
         # WARN, не ok=0: на userspace-инсталляциях (amneziawg-go, LXC) модуля
         # нет и не будет, а сломанный kernel-путь и так валит сервис/интерфейс.
-        log_warn " - Модуль amneziawg не загружен (для userspace-режима это норма)."
+        # Готовый ARM-пакет без модуля под текущее ядро - не userspace, а смена
+        # ядра: там «это норма» уводила бы в сторону (замер 3 nov 2026).
+        if awg_prebuilt_needs_rerun; then
+            log_warn " - Модуль amneziawg не загружен."
+            awg_prebuilt_rerun_hint log_warn
+        else
+            log_warn " - Модуль amneziawg не загружен (для userspace-режима это норма)."
+        fi
     fi
 
     log "Правила UFW:"

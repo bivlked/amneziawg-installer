@@ -5482,7 +5482,12 @@ repair_module_cmd() {
     local _q _e _prc=0
     _awg_kmod_prebuilt_present || _prc=$?
     if [[ "$_prc" -eq 0 ]]; then
-        log_error "A prebuilt module package (ARM) is installed; this path does not repair it."; exit 1
+        log_error "A prebuilt module package (ARM) is installed; this path does not repair it."
+        # Measured 3 nov 2026: after a kernel change the module on such a server
+        # comes back with a plain second run of the installer, keys and profiles kept.
+        log_error "A module for the new kernel is installed by a plain run of the installer, without --repair-module: sudo bash $0"
+        log_error "Run it after the reboot, when the VPN did not come up; the installer asks for a reboot twice, run the same command after each one. The keys and the client profiles are kept."
+        exit 1
     elif [[ "$_prc" -ne 1 ]]; then
         log_error "Could not ask dpkg about prebuilt module packages. Nothing changed."; exit 1
     fi

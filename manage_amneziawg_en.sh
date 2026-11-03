@@ -1848,7 +1848,15 @@ check_server() {
     else
         # WARN, not ok=0: userspace installs (amneziawg-go, LXC) never have
         # the module, and a broken kernel path already fails service/interface.
-        log_warn " - amneziawg module is not loaded (normal for userspace mode)."
+        # An ARM prebuilt package with no module for the current kernel is not
+        # userspace but a kernel change: "normal" would lead astray there
+        # (measured 3 nov 2026).
+        if awg_prebuilt_needs_rerun; then
+            log_warn " - amneziawg module is not loaded."
+            awg_prebuilt_rerun_hint log_warn
+        else
+            log_warn " - amneziawg module is not loaded (normal for userspace mode)."
+        fi
     fi
 
     log "UFW rules:"

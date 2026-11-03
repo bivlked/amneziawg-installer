@@ -1414,6 +1414,37 @@ _ensure_awg_quick_running() {
     return 1
 }
 
+# awg_prebuilt_needs_rerun [kernel] : 0 when the module on this server came as
+# an ARM prebuilt package (amneziawg-kmod-*), dkms is absent and there is no
+# module for the kernel on disk - that is, only running the installer again
+# will put a module there for this kernel; otherwise 1. "Could not ask dpkg" is
+# 1 too: the usual texts stay, rather than a confident prebuilt advice.
+# AWG_MODULES_DIR replaces /lib/modules in tests.
+# Basis - a measurement on 3 nov 2026 (Ubuntu 24.04 arm64, kernel 147 -> 149):
+# after the kernel change the VPN does not come up, the dkms recipe cannot run,
+# and a plain second run of the installer brings the module back while keeping
+# the keys and the client profiles.
+awg_prebuilt_needs_rerun() {
+    local k="${1:-$(uname -r)}" q
+    command -v dkms >/dev/null 2>&1 && return 1
+    q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null) || return 1
+    awk '$NF != "not-installed" && $NF != "config-files" {f=1} END {exit !f}' <<<"$q" || return 1
+    find "${AWG_MODULES_DIR:-/lib/modules}/${k}" -name 'amneziawg.ko*' -print -quit 2>/dev/null | grep -q . && return 1
+    return 0
+}
+
+# awg_prebuilt_rerun_hint <log function> : the checked recipe for a server on an
+# ARM prebuilt package after a kernel change. Prints through the given function
+# (log_warn in check, log_error when the repair fails).
+awg_prebuilt_rerun_hint() {
+    local say="${1:-log_warn}"
+    "$say" "The module came as an ARM prebuilt package, and there is none for kernel $(uname -r): this happens after a kernel update. This path installs no DKMS, so the module will not rebuild itself."
+    "$say" "Running the installer again fixes it; the keys and the client profiles are kept:"
+    "$say" "  wget -O install_amneziawg_en.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/install_amneziawg_en.sh"
+    "$say" "  sudo bash install_amneziawg_en.sh"
+    "$say" "The installer asks for a reboot twice; after each one run the same command until it reports a successful finish."
+}
+
 # Master: ensure that the amneziawg kernel module is built and loaded for the running kernel.
 # Idempotent: fast-path returns 0 if the module is already loaded.
 #
@@ -1533,6 +1564,12 @@ ensure_amneziawg_kernel_module() {
     if ! modprobe amneziawg 2>/dev/null; then
         log_error "amneziawg kernel module could not be loaded for kernel ${kernel_ver}."
         log_error "The module is not present in /lib/modules/${kernel_ver}/."
+        # An ARM prebuilt package without dkms: the dkms recipe below cannot run
+        # here (measured 3 nov 2026); the working way is to run the installer again.
+        if awg_prebuilt_needs_rerun "$kernel_ver"; then
+            awg_prebuilt_rerun_hint log_error
+            return 1
+        fi
         log_error "Manual recovery:"
         log_error "  1. apt install -y \"linux-headers-${kernel_ver}\""
         log_error "  2. dkms autoinstall -k \"${kernel_ver}\" && depmod -a"
