@@ -33,7 +33,8 @@ nomatch() { echo "iptables: Bad rule (does a matching rule exist in that chain?)
 n=$(cat "$T/rules" 2>/dev/null || echo 0)
 case "$5" in
   -C) [[ "$n" -gt 0 ]] || nomatch ;;
-  -I) echo $((n + 1)) > "$T/rules" ;;
+  -I) [[ -e "$T/ipt.noinsert" ]] && { echo "iptables: No chain/target/match by that name." >&2; exit 1; }
+      echo $((n + 1)) > "$T/rules" ;;
   -D) [[ -e "$T/ipt.stuck" ]] && exit 0
       [[ -e "$T/ipt.nodel" ]] && nomatch
       [[ "$n" -gt 0 ]] || nomatch; echo $((n - 1)) > "$T/rules" ;;
@@ -231,7 +232,8 @@ esac'
     local f
     for f in "${INSTALLERS[@]}"; do
         rm -rf "${T:?}/sbin" "$T/units" "$T/calls" "$T/rules" "$T/active"
-        _deploy_driver "$f"; _systemctl_stub; touch "$T/ipt.fail"
+        # the check answers "no rule", but the insert fails
+        _deploy_driver "$f"; _systemctl_stub; touch "$T/ipt.noinsert"
         run bash "$T/deploy.sh"
         [[ "$output" == *"RC=1"* ]] || { echo "$f: $output"; return 1; }
         # the refusal comes from the final status check, after enable and start
@@ -240,7 +242,35 @@ esac'
         grep -qx 'systemctl start amneziawg-ipopts-guard.service' "$T/calls"
         # and the unit that cannot set the rule is not left enabled for every boot
         grep -qx 'systemctl disable amneziawg-ipopts-guard.service' "$T/calls" || { echo "$f: $(_calls)"; return 1; }
+        grep -qx 'systemctl reset-failed amneziawg-ipopts-guard.service' "$T/calls" || { echo "$f: $(_calls)"; return 1; }
+        rm -f "$T/ipt.noinsert"
+    done
+}
+
+@test "deploy: a check that cannot tell (code 3) is a failure that leaves the unit enabled" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        rm -rf "${T:?}/sbin" "$T/units" "$T/calls" "$T/rules" "$T/active"
+        _deploy_driver "$f"; _systemctl_stub; touch "$T/ipt.fail"
+        run bash "$T/deploy.sh"
+        [[ "$output" == *"RC=1"* ]] || { echo "$f: $output"; return 1; }
+        [[ "$output" == *"WARN: "*"код 3,"* || "$output" == *"WARN: "*"code 3,"* ]] || { echo "$f: $output"; return 1; }
+        ! grep -q 'systemctl disable' "$T/calls" || { echo "$f: disabled on an unknown answer: $(_calls)"; return 1; }
         rm -f "$T/ipt.fail"
+    done
+}
+
+@test "deploy: an active unit whose rule was lost gets it back without a restart" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        rm -rf "${T:?}/sbin" "$T/units" "$T/calls" "$T/rules" "$T/active"
+        _deploy_driver "$f"; _systemctl_stub
+        run bash "$T/deploy.sh"
+        [[ "$output" == *"RC=0"* ]] || { echo "$f first: $output"; return 1; }
+        echo 0 > "$T/rules"; rm -f "$T/calls"   # the unit stays active, the rule is gone
+        run bash "$T/deploy.sh"
+        [[ "$output" == *"RC=0"* ]] && [ "$(cat "$T/rules")" = 1 ] || { echo "$f: $output rules=$(cat "$T/rules")"; return 1; }
+        ! grep -qE 'systemctl (restart|stop|start|disable) ' "$T/calls" || { echo "$f: $(_calls)"; return 1; }
     done
 }
 
@@ -451,7 +481,10 @@ _installed() { # helper and unit in $T, as a deploy leaves them, rule count $1
         rm -rf "${T:?}/sbin" "$T/units" "$T/calls"; _installed 1 "$f"; _systemctl_stub; touch "$T/ipt.fail"
         _uninstall_driver "$f"
         run bash "$T/un.sh"
-        [[ "$output" == *"WARN: "*"3"*"iptables -t raw -S PREROUTING"* ]] || { echo "$f: $output"; return 1; }
+        [[ "$output" == *"WARN: "*"код 3)"*"iptables -t raw -S PREROUTING"* || "$output" == *"WARN: "*"code 3)"*"iptables -t raw -S PREROUTING"* ]] \
+            || { echo "$f: $output"; return 1; }
+        # the reason from iptables is shown, not swallowed
+        [[ "$output" == *"load match u32"* ]] || { echo "$f: no reason: $output"; return 1; }
         rm -f "$T/ipt.fail"
     done
 }

@@ -113,6 +113,9 @@ _m() { # _m <manage> <args...>
         [ "$status" -eq 0 ] && [[ "$output" == *"vpn://URI-OF-MY-PHONE"* ]] || { echo "$m: $status $output"; return 1; }
         run --separate-stderr _m "$m" list --vpn
         [ "$status" -eq 1 ] && [[ "$stderr" == *"--vpn"*"qr"* ]] || { echo "$m list: $status $stderr"; return 1; }
+        # an explicit help request still gets the help
+        run --separate-stderr _m "$m" --vpn -h
+        [ "$status" -eq 0 ] && [[ "$output" == *"qr <"* ]] || { echo "$m help: $status $output $stderr"; return 1; }
     done
 }
 
@@ -122,7 +125,8 @@ _m() { # _m <manage> <args...>
         [[ "$m" == *_en.sh ]] && cp "$BATS_TEST_DIRNAME/../awg_common_en.sh" "$A/awg_common.sh"
         run --separate-stderr bash -x "$BATS_TEST_DIRNAME/../$m" qr my_phone --conf-dir="$A" --server-conf="$A/awg0.conf"
         [ "$status" -eq 0 ] && [[ "$output" == *CONF-OF-MY-PHONE* ]] || { echo "$m: $status $output"; return 1; }
-        [[ "$stderr" == *"+ "* ]] || { echo "$m: no trace at all, the check proves nothing"; return 1; }
+        # the trace reached the function itself, so the check proves something
+        [[ "$stderr" == *"_awg_xtrace_guard show_client_qr"* ]] || { echo "$m: the trace never reached show_client_qr"; return 1; }
         [[ "$stderr" != *CONF-OF-MY-PHONE* ]] || { echo "$m: the QR is in the trace"; return 1; }
     done
 }
@@ -215,7 +219,7 @@ _size_driver() { # manage, "rows cols" or empty (no terminal)
     local m s
     for m in "${MANAGERS[@]}"; do
         # "49 97" is exactly the size of a 97-module code; "0 0" is a hosting console
-        for s in "60 120" "49 97" "" "0 0"; do
+        for s in "60 120" "49 97" "" "0 0" "0 80" "40 0"; do
             _size_driver "$m" "$s"
             QR_MODULES=97 run --separate-stderr bash "$T/size.sh"
             [ "$status" -eq 0 ] && [[ "$stderr" != *"97"* ]] || { echo "$m [$s]: $stderr"; return 1; }
@@ -230,7 +234,7 @@ _size_driver() { # manage, "rows cols" or empty (no terminal)
     for m in "${MANAGERS[@]}"; do
         # setsid drops the controlling terminal, so opening /dev/tty fails (as
         # from cron or a pipe on the server). The real function, not a stub.
-        run --separate-stderr setsid bash -c "$(_fn "$m" _qr_term_size); _qr_term_size; echo RC=\$?"
+        run --separate-stderr setsid -w bash -c "$(_fn "$m" _qr_term_size); _qr_term_size; echo RC=\$?"
         [ "$output" = "RC=0" ] || { echo "$m: [$output]"; return 1; }
         [ -z "$stderr" ] || { echo "$m: stderr [$stderr]"; return 1; }
     done

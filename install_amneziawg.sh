@@ -5086,11 +5086,11 @@ step_uninstall() {
         /usr/local/sbin/amneziawg-ipopts-guard stop 2>/dev/null || true
         # Помощник удаляется следом, и помнить о правиле станет некому.
         local _gst=0
-        /usr/local/sbin/amneziawg-ipopts-guard status 2>/dev/null || _gst=$?
+        /usr/local/sbin/amneziawg-ipopts-guard status || _gst=$?
         if [[ "$_gst" -eq 0 ]]; then
             log_warn "Правило против CVE-2026-98432 снять не удалось, оно уйдёт после перезагрузки. Снять сейчас: iptables -t raw -D PREROUTING -p tcp -m u32 --u32 \"0>>24&0xF=6:15\" -m comment --comment amneziawg-ipopts-guard -j DROP"
         elif [[ "$_gst" -ne 1 ]]; then
-            log_warn "Снятие правила против CVE-2026-98432 не подтверждено (iptables не ответил, код $_gst). Проверить: iptables -t raw -S PREROUTING; снять: iptables -t raw -D PREROUTING -p tcp -m u32 --u32 \"0>>24&0xF=6:15\" -m comment --comment amneziawg-ipopts-guard -j DROP"
+            log_warn "Снятие правила против CVE-2026-98432 не подтверждено (проверка правила не удалась, код $_gst). Проверить: iptables -t raw -S PREROUTING; снять: iptables -t raw -D PREROUTING -p tcp -m u32 --u32 \"0>>24&0xF=6:15\" -m comment --comment amneziawg-ipopts-guard -j DROP"
         fi
     fi
     rm -f /etc/systemd/system/amneziawg-ipopts-guard.service \
@@ -8462,7 +8462,7 @@ AWG_IPOPTS_UNIT_EOF
         rm -f "$_su"; log_warn "Защита от CVE-2026-98432 не поставлена: не удалось развернуть $_u."; return 1
     fi
     if ! systemctl daemon-reload || ! systemctl enable amneziawg-ipopts-guard.service; then
-        log_warn "Защита от CVE-2026-98432 не поставлена: systemd не принял юнит amneziawg-ipopts-guard.service (daemon-reload или enable)."
+        log_warn "Защита от CVE-2026-98432 не поставлена или не обновлена: systemd не принял юнит amneziawg-ipopts-guard.service (daemon-reload или enable)."
         return 1
     fi
     # Не restart: он снял бы правило (ExecStop) до новой вставки, и на это
@@ -8473,11 +8473,22 @@ AWG_IPOPTS_UNIT_EOF
     else
         systemctl start amneziawg-ipopts-guard.service || true
     fi
-    if ! "$_h" status; then
+    local _st=0
+    "$_h" status || _st=$?
+    if [[ "$_st" -eq 1 ]]; then
         # Включённый юнит, который не может поставить правило, падал бы на
         # каждой загрузке и держал бы систему в состоянии degraded.
-        systemctl disable amneziawg-ipopts-guard.service >/dev/null 2>&1 || true
-        log_warn "Защита от CVE-2026-98432: правило не встало (amneziawg-ipopts-guard status), юнит выключен. Причина: journalctl -u amneziawg-ipopts-guard.service"
+        if systemctl disable amneziawg-ipopts-guard.service >/dev/null 2>&1; then
+            systemctl reset-failed amneziawg-ipopts-guard.service >/dev/null 2>&1 || true
+            log_warn "Защита от CVE-2026-98432: правило не встало (amneziawg-ipopts-guard status), юнит выключен. Причина: journalctl -u amneziawg-ipopts-guard.service"
+        else
+            log_warn "Защита от CVE-2026-98432: правило не встало, а выключить юнит не удалось: sudo systemctl disable amneziawg-ipopts-guard.service. Причина: journalctl -u amneziawg-ipopts-guard.service"
+        fi
+        return 1
+    elif [[ "$_st" -ne 0 ]]; then
+        # «Не знаю» - не повод выключать юнит: правило может стоять, и
+        # выключение сняло бы его после перезагрузки.
+        log_warn "Защита от CVE-2026-98432: проверить правило не удалось (код $_st, сообщение iptables выше), юнит оставлен как есть. Повторите: sudo bash $0 --ipopts-guard"
         return 1
     fi
     log "Защита от CVE-2026-98432 стоит: TCP-пакеты с IP-опциями отбрасываются (юнит amneziawg-ipopts-guard.service)."

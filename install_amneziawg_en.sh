@@ -5195,11 +5195,11 @@ step_uninstall() {
         /usr/local/sbin/amneziawg-ipopts-guard stop 2>/dev/null || true
         # The helper goes next, and nothing would remember the rule then.
         local _gst=0
-        /usr/local/sbin/amneziawg-ipopts-guard status 2>/dev/null || _gst=$?
+        /usr/local/sbin/amneziawg-ipopts-guard status || _gst=$?
         if [[ "$_gst" -eq 0 ]]; then
             log_warn "The CVE-2026-98432 rule could not be removed, it goes away at the next reboot. To remove it now: iptables -t raw -D PREROUTING -p tcp -m u32 --u32 \"0>>24&0xF=6:15\" -m comment --comment amneziawg-ipopts-guard -j DROP"
         elif [[ "$_gst" -ne 1 ]]; then
-            log_warn "The removal of the CVE-2026-98432 rule is not confirmed (iptables did not answer, code $_gst). Check: iptables -t raw -S PREROUTING; remove: iptables -t raw -D PREROUTING -p tcp -m u32 --u32 \"0>>24&0xF=6:15\" -m comment --comment amneziawg-ipopts-guard -j DROP"
+            log_warn "The removal of the CVE-2026-98432 rule is not confirmed (the rule check failed, code $_gst). Check: iptables -t raw -S PREROUTING; remove: iptables -t raw -D PREROUTING -p tcp -m u32 --u32 \"0>>24&0xF=6:15\" -m comment --comment amneziawg-ipopts-guard -j DROP"
         fi
     fi
     rm -f /etc/systemd/system/amneziawg-ipopts-guard.service \
@@ -8608,7 +8608,7 @@ AWG_IPOPTS_UNIT_EOF
         rm -f "$_su"; log_warn "The CVE-2026-98432 guard is not set: could not deploy $_u."; return 1
     fi
     if ! systemctl daemon-reload || ! systemctl enable amneziawg-ipopts-guard.service; then
-        log_warn "The CVE-2026-98432 guard is not set: systemd did not accept the unit amneziawg-ipopts-guard.service (daemon-reload or enable)."
+        log_warn "The CVE-2026-98432 guard is not set or not updated: systemd did not accept the unit amneziawg-ipopts-guard.service (daemon-reload or enable)."
         return 1
     fi
     # Not restart: it would remove the rule (ExecStop) before inserting it
@@ -8619,11 +8619,22 @@ AWG_IPOPTS_UNIT_EOF
     else
         systemctl start amneziawg-ipopts-guard.service || true
     fi
-    if ! "$_h" status; then
+    local _st=0
+    "$_h" status || _st=$?
+    if [[ "$_st" -eq 1 ]]; then
         # An enabled unit that cannot set the rule would fail at every boot and
         # keep the system in the degraded state.
-        systemctl disable amneziawg-ipopts-guard.service >/dev/null 2>&1 || true
-        log_warn "CVE-2026-98432 guard: the rule is not in place (amneziawg-ipopts-guard status), the unit is disabled. Reason: journalctl -u amneziawg-ipopts-guard.service"
+        if systemctl disable amneziawg-ipopts-guard.service >/dev/null 2>&1; then
+            systemctl reset-failed amneziawg-ipopts-guard.service >/dev/null 2>&1 || true
+            log_warn "CVE-2026-98432 guard: the rule is not in place (amneziawg-ipopts-guard status), the unit is disabled. Reason: journalctl -u amneziawg-ipopts-guard.service"
+        else
+            log_warn "CVE-2026-98432 guard: the rule is not in place, and the unit could not be disabled: sudo systemctl disable amneziawg-ipopts-guard.service. Reason: journalctl -u amneziawg-ipopts-guard.service"
+        fi
+        return 1
+    elif [[ "$_st" -ne 0 ]]; then
+        # "Unknown" is no reason to disable the unit: the rule may be in place,
+        # and disabling would drop it after a reboot.
+        log_warn "CVE-2026-98432 guard: the rule could not be checked (code $_st, the iptables message is above), the unit is left as it is. Run again: sudo bash $0 --ipopts-guard"
         return 1
     fi
     log "The CVE-2026-98432 guard is in place: TCP packets with IP options are dropped (unit amneziawg-ipopts-guard.service)."

@@ -268,7 +268,7 @@ case "$COMMAND" in
 esac
 
 # --vpn is for qr only: with another command it would silently mean nothing.
-if [[ "${CLI_QR_VPN:-0}" == "1" && "$COMMAND" != "qr" ]]; then
+if [[ "${CLI_QR_VPN:-0}" == "1" && "$COMMAND" != "qr" && "$COMMAND" != "help" ]]; then
     _JSON_ERR="--vpn works only with the qr command"
     echo "$_JSON_ERR" >&2
     exit 1
