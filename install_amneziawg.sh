@@ -5085,8 +5085,12 @@ step_uninstall() {
     if [[ -x /usr/local/sbin/amneziawg-ipopts-guard ]]; then
         /usr/local/sbin/amneziawg-ipopts-guard stop 2>/dev/null || true
         # Помощник удаляется следом, и помнить о правиле станет некому.
-        if /usr/local/sbin/amneziawg-ipopts-guard status 2>/dev/null; then
+        local _gst=0
+        /usr/local/sbin/amneziawg-ipopts-guard status 2>/dev/null || _gst=$?
+        if [[ "$_gst" -eq 0 ]]; then
             log_warn "Правило против CVE-2026-98432 снять не удалось, оно уйдёт после перезагрузки. Снять сейчас: iptables -t raw -D PREROUTING -p tcp -m u32 --u32 \"0>>24&0xF=6:15\" -m comment --comment amneziawg-ipopts-guard -j DROP"
+        elif [[ "$_gst" -ne 1 ]]; then
+            log_warn "Снятие правила против CVE-2026-98432 не подтверждено (iptables не ответил, код $_gst). Проверить: iptables -t raw -S PREROUTING; снять: iptables -t raw -D PREROUTING -p tcp -m u32 --u32 \"0>>24&0xF=6:15\" -m comment --comment amneziawg-ipopts-guard -j DROP"
         fi
     fi
     rm -f /etc/systemd/system/amneziawg-ipopts-guard.service \

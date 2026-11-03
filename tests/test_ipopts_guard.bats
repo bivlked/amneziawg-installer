@@ -400,10 +400,13 @@ _step4_driver() {
 _uninstall_driver() {
     {
         echo 'log() { echo "LOG: $*"; }; log_warn() { echo "WARN: $*"; }'
+        # inside a function, as in step_uninstall (the block uses local)
+        echo '_ub() {'
         _fn "$1" step_uninstall \
             | awk '/^    log "(Удаление защиты от|Removing the) CVE-2026-98432/{f=1} f{print} f&&/amneziawg-ipopts-guard\.new 2>\/dev\/null \|\| true$/{exit}' \
             | sed "s#/usr/local/sbin#$T/sbin#g; s#/etc/systemd/system#$T/units#g"
-        echo 'echo "RC=$?"'
+        echo '}'
+        echo '_ub; echo "RC=$?"'
     } > "$T/un.sh"
     grep -q 'ipopts-guard.new 2>/dev/null || true' "$T/un.sh" || { echo "$1: uninstall block not cut"; return 1; }
 }
@@ -435,8 +438,21 @@ _installed() { # helper and unit in $T, as a deploy leaves them, rule count $1
         _uninstall_driver "$f"
         run bash "$T/un.sh"
         [[ "$output" == *"WARN: "*"iptables -t raw -D PREROUTING"* ]] || { echo "$f: $output"; return 1; }
+        # said as a rule that stayed, not as an unknown outcome
+        [[ "$output" == *"уйдёт после перезагрузки"* || "$output" == *"goes away at the next reboot"* ]] || { echo "$f: $output"; return 1; }
         [ ! -e "$T/sbin/amneziawg-ipopts-guard" ]
         rm -f "$T/ipt.nodel"
+    done
+}
+
+@test "uninstall: when iptables cannot tell whether the rule went, that is said too" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        rm -rf "${T:?}/sbin" "$T/units" "$T/calls"; _installed 1 "$f"; _systemctl_stub; touch "$T/ipt.fail"
+        _uninstall_driver "$f"
+        run bash "$T/un.sh"
+        [[ "$output" == *"WARN: "*"3"*"iptables -t raw -S PREROUTING"* ]] || { echo "$f: $output"; return 1; }
+        rm -f "$T/ipt.fail"
     done
 }
 

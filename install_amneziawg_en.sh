@@ -5194,8 +5194,12 @@ step_uninstall() {
     if [[ -x /usr/local/sbin/amneziawg-ipopts-guard ]]; then
         /usr/local/sbin/amneziawg-ipopts-guard stop 2>/dev/null || true
         # The helper goes next, and nothing would remember the rule then.
-        if /usr/local/sbin/amneziawg-ipopts-guard status 2>/dev/null; then
+        local _gst=0
+        /usr/local/sbin/amneziawg-ipopts-guard status 2>/dev/null || _gst=$?
+        if [[ "$_gst" -eq 0 ]]; then
             log_warn "The CVE-2026-98432 rule could not be removed, it goes away at the next reboot. To remove it now: iptables -t raw -D PREROUTING -p tcp -m u32 --u32 \"0>>24&0xF=6:15\" -m comment --comment amneziawg-ipopts-guard -j DROP"
+        elif [[ "$_gst" -ne 1 ]]; then
+            log_warn "The removal of the CVE-2026-98432 rule is not confirmed (iptables did not answer, code $_gst). Check: iptables -t raw -S PREROUTING; remove: iptables -t raw -D PREROUTING -p tcp -m u32 --u32 \"0>>24&0xF=6:15\" -m comment --comment amneziawg-ipopts-guard -j DROP"
         fi
     fi
     rm -f /etc/systemd/system/amneziawg-ipopts-guard.service \
