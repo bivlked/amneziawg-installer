@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **Protection against the kernel vulnerability CVE-2026-98432.** The Linux kernel bug in parsing a TCP SYN with IP options (critical, 9.8) is fixed in Debian, while the fixed Ubuntu kernels for 24.04 and 26.04 are not out yet. The installer now sets a rule that drops incoming TCP packets with IP options already in the `raw` table, before the kernel parses them. Such TCP practically does not occur on the regular internet. After a reboot the unit `amneziawg-ipopts-guard.service` puts the rule back; it does not depend on UFW. On a server that already runs, a separate mode `sudo bash install_amneziawg.sh --ipopts-guard` adds the protection: it sets only the rule and the unit and leaves the VPN and the other settings alone. `manage check` shows whether the protection is in place. `--uninstall` removes it.
+- **The client's QR code right in the terminal: `manage qr <name>`** ([#375](https://github.com/bivlked/amneziawg-installer/issues/375)). The command prints the config QR code for the AmneziaWG app, and with `--vpn` the `vpn://` link QR for Amnezia VPN. No more copying the picture off the server with `scp`. If the code does not fit in the terminal window, the command says so up front: a phone cannot read a code it does not see whole. A 3.1 config gives a code about 100-120 characters wide. The idea came from @DimiDr0l.
 
 ## [6.1.1] - 2026-10-22
 

@@ -240,6 +240,7 @@ while [[ $# -gt 0 ]]; do
         --reset-routes)    CLI_RESET_ROUTES=1; shift ;;
         --yes)             CLI_YES=1; shift ;;
         --carrier=*)       CLI_CARRIER="${1#*=}"; shift ;;
+        --vpn)             CLI_QR_VPN=1; shift ;;
         --*)               echo "Неизвестная опция: $1" >&2; for _rest in "$@"; do [[ "$_rest" == "--json" ]] && JSON_OUTPUT=1; done; COMMAND="help"; HELP_EXIT_RC=1; break ;;
         *)
             if [[ -z "$COMMAND" ]]; then
@@ -3166,6 +3167,78 @@ stats_clients() {
 # Справка
 # ==============================================================================
 
+# Размер окна терминала "строки столбцы"; пусто, если терминала нет (вывод в
+# файл, cron). Отдельная функция, чтобы тесты могли подставить размер.
+_qr_term_size() {
+    stty size </dev/tty 2>/dev/null || true
+}
+
+# qr <имя> [--vpn] (#375): QR-код конфига клиента (или ссылки vpn://) прямо в
+# терминал, без копирования картинки с сервера. Сам код печатается напрямую,
+# не через логгер. Ширина кода в символах равна числу модулей, высота - вдвое
+# меньше (ansiutf8 рисует две строки модулей в одной строке терминала); код,
+# который не влезает в окно, телефон не прочитает, поэтому о нём
+# предупреждаем, но печатаем всё равно. Флаги qrencode как у PNG: -8 только
+# для vpn://.
+show_client_qr() {
+    local name="$1" vpn="${2:-0}" file what qr ascii modules need_rows size rows cols
+    local -a flags=()
+    if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
+        _JSON_ERR="qr печатает QR-код в терминал, --json не поддерживается"
+        log_error "$_JSON_ERR."
+        return 1
+    fi
+    if [[ -z "$name" ]]; then
+        _JSON_ERR="не указано имя клиента"
+        log_error "Не указано имя клиента: sudo bash $0 qr <имя> [--vpn]"
+        return 1
+    fi
+    validate_client_name "$name" || { _JSON_ERR="невалидное имя клиента"; return 1; }
+    if ! grep -qxF "#_Name = ${name}" "$SERVER_CONF_FILE"; then
+        _JSON_ERR="клиент не найден"
+        log_error "Клиент '$name' не найден."
+        return 1
+    fi
+    if [[ "$vpn" -eq 1 ]]; then
+        file="$AWG_DIR/${name}.vpnuri"; flags=(-8); what="ссылки vpn:// (приложение Amnezia VPN)"
+    else
+        file="$AWG_DIR/${name}.conf"; what="конфига (приложение AmneziaWG)"
+    fi
+    if [[ ! -s "$file" ]]; then
+        _JSON_ERR="нет файла клиента"
+        log_error "Нет файла $file. Пересоздать файлы клиента: sudo bash $0 regen $name"
+        return 1
+    fi
+    if ! command -v qrencode >/dev/null 2>&1; then
+        _JSON_ERR="qrencode не установлен"
+        log_error "qrencode не установлен: sudo apt install qrencode"
+        return 1
+    fi
+    # Сначала строим код целиком: при отказе на экран не попадёт половина.
+    if ! qr=$(qrencode -t ansiutf8 "${flags[@]}" -r "$file"); then
+        _JSON_ERR="qrencode не построил QR-код"
+        log_error "qrencode не смог построить QR-код из $file."
+        return 1
+    fi
+    # Число модулей - по ASCII-виду (два символа на модуль, от локали не зависит).
+    if ascii=$(qrencode -t ASCII "${flags[@]}" -r "$file" 2>/dev/null); then
+        ascii="${ascii%%$'\n'*}"
+        modules=$(( ${#ascii} / 2 ))
+        need_rows=$(( (modules + 1) / 2 ))
+        size=$(_qr_term_size)
+        if [[ "$size" =~ ^([0-9]+)\ ([0-9]+)$ ]]; then
+            rows="${BASH_REMATCH[1]}"; cols="${BASH_REMATCH[2]}"
+            if (( modules > cols || need_rows > rows )); then
+                log_warn "QR-код занимает ${modules} символов в ширину и ${need_rows} строк, а окно терминала ${cols} на ${rows}. Увеличьте окно или уменьшите шрифт: код, который не виден целиком, телефон не прочитает."
+            fi
+        fi
+    fi
+    log_warn "В QR-коде приватный ключ клиента. Выводите его, когда экран никто не видит, а после сканирования очистите терминал командой clear."
+    log "QR-код ${what} клиента '${name}':"
+    printf '%s\n' "$qr"
+    return 0
+}
+
 usage() {
     # C1: явный help (rc=0) -> stdout + exit 0; ошибка использования (rc!=0,
     # дефолт) -> stderr + exit 1. Явные help-вызовы передают 0, error-вызовы
@@ -3217,6 +3290,8 @@ usage() {
     echo "  check | status        Проверить состояние сервера"
     echo "  diagnose [--carrier=N] Self-troubleshooting: kernel/sysctl/UFW + сравнение с оператором"
     echo "  show                  Показать статус \`awg show\`"
+    echo "  qr <имя> [--vpn]      QR-код конфига клиента прямо в терминале (для AmneziaWG);"
+    echo "                        с --vpn - QR ссылки vpn:// (для Amnezia VPN)"
     echo "  restart               Перезапустить сервис AmneziaWG"
     echo "  repair-module         Восстановить модуль ядра после kernel upgrade (alias: repair)"
     echo "                        (dkms autoinstall + modprobe + запуск awg-quick)"
@@ -3702,6 +3777,16 @@ case $COMMAND in
 
     show)
         show_awg_status || _cmd_rc=1
+        ;;
+
+    qr)
+        if [[ ${#ARGS[@]} -gt 1 ]]; then
+            _JSON_ERR="qr принимает одно имя клиента"
+            log_error "$_JSON_ERR."
+            _cmd_rc=1
+        else
+            show_client_qr "$CLIENT_NAME" "${CLI_QR_VPN:-0}" || _cmd_rc=1
+        fi
         ;;
 
     restart)

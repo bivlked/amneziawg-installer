@@ -244,6 +244,7 @@ while [[ $# -gt 0 ]]; do
         --reset-routes)    CLI_RESET_ROUTES=1; shift ;;
         --yes)             CLI_YES=1; shift ;;
         --carrier=*)       CLI_CARRIER="${1#*=}"; shift ;;
+        --vpn)             CLI_QR_VPN=1; shift ;;
         --*)               echo "Unknown option: $1" >&2; for _rest in "$@"; do [[ "$_rest" == "--json" ]] && JSON_OUTPUT=1; done; COMMAND="help"; HELP_EXIT_RC=1; break ;;
         *)
             if [[ -z "$COMMAND" ]]; then
@@ -3208,6 +3209,78 @@ stats_clients() {
 # Help
 # ==============================================================================
 
+# Terminal window size as "rows cols"; empty without a terminal (output to a
+# file, cron). A function of its own so tests can supply the size.
+_qr_term_size() {
+    stty size </dev/tty 2>/dev/null || true
+}
+
+# qr <name> [--vpn] (#375): the client's config QR code (or the vpn:// link)
+# straight into the terminal, with no picture to copy off the server. The code
+# itself is printed directly, not through the logger. Its width in characters
+# equals the module count, its height is half that (ansiutf8 draws two module
+# rows per terminal line); a code that does not fit in the window cannot be
+# read by a phone, so the command warns about it but prints it anyway. qrencode flags as
+# for the PNG: -8 only for vpn://.
+show_client_qr() {
+    local name="$1" vpn="${2:-0}" file what qr ascii modules need_rows size rows cols
+    local -a flags=()
+    if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
+        _JSON_ERR="qr prints the QR code to the terminal, --json is not supported"
+        log_error "$_JSON_ERR."
+        return 1
+    fi
+    if [[ -z "$name" ]]; then
+        _JSON_ERR="no client name given"
+        log_error "No client name given: sudo bash $0 qr <name> [--vpn]"
+        return 1
+    fi
+    validate_client_name "$name" || { _JSON_ERR="invalid client name"; return 1; }
+    if ! grep -qxF "#_Name = ${name}" "$SERVER_CONF_FILE"; then
+        _JSON_ERR="client not found"
+        log_error "Client '$name' not found."
+        return 1
+    fi
+    if [[ "$vpn" -eq 1 ]]; then
+        file="$AWG_DIR/${name}.vpnuri"; flags=(-8); what="vpn:// link (Amnezia VPN app)"
+    else
+        file="$AWG_DIR/${name}.conf"; what="config (AmneziaWG app)"
+    fi
+    if [[ ! -s "$file" ]]; then
+        _JSON_ERR="client file missing"
+        log_error "No file $file. Rebuild the client's files: sudo bash $0 regen $name"
+        return 1
+    fi
+    if ! command -v qrencode >/dev/null 2>&1; then
+        _JSON_ERR="qrencode is not installed"
+        log_error "qrencode is not installed: sudo apt install qrencode"
+        return 1
+    fi
+    # Build the whole code first: on a failure nothing half printed reaches the screen.
+    if ! qr=$(qrencode -t ansiutf8 "${flags[@]}" -r "$file"); then
+        _JSON_ERR="qrencode could not build the QR code"
+        log_error "qrencode could not build the QR code from $file."
+        return 1
+    fi
+    # The module count from the ASCII form (two characters per module, locale-independent).
+    if ascii=$(qrencode -t ASCII "${flags[@]}" -r "$file" 2>/dev/null); then
+        ascii="${ascii%%$'\n'*}"
+        modules=$(( ${#ascii} / 2 ))
+        need_rows=$(( (modules + 1) / 2 ))
+        size=$(_qr_term_size)
+        if [[ "$size" =~ ^([0-9]+)\ ([0-9]+)$ ]]; then
+            rows="${BASH_REMATCH[1]}"; cols="${BASH_REMATCH[2]}"
+            if (( modules > cols || need_rows > rows )); then
+                log_warn "The QR code takes ${modules} characters in width and ${need_rows} lines, while the terminal window is ${cols} by ${rows}. Enlarge the window or make the font smaller: a phone cannot read a code it does not see whole."
+            fi
+        fi
+    fi
+    log_warn "The QR code holds the client's private key. Show it when nobody can see the screen, and clear the terminal with the clear command after scanning."
+    log "QR code of the ${what} for client '${name}':"
+    printf '%s\n' "$qr"
+    return 0
+}
+
 usage() {
     # C1: explicit help (rc=0) -> stdout + exit 0; usage error (rc!=0, default)
     # -> stderr + exit 1. Explicit-help callers pass 0, error callers omit the
@@ -3260,6 +3333,8 @@ usage() {
     echo "  check | status        Check server status"
     echo "  diagnose [--carrier=N] Self-troubleshooting: kernel/sysctl/UFW + carrier comparison"
     echo "  show                  Show \`awg show\` status"
+    echo "  qr <name> [--vpn]     The client's config QR code right in the terminal (for AmneziaWG);"
+    echo "                        with --vpn - the vpn:// link QR (for Amnezia VPN)"
     echo "  restart               Restart AmneziaWG service"
     echo "  repair-module         Repair the kernel module after a kernel upgrade (alias: repair)"
     echo "                        (dkms autoinstall + modprobe + start awg-quick)"
@@ -3749,6 +3824,16 @@ case $COMMAND in
 
     show)
         show_awg_status || _cmd_rc=1
+        ;;
+
+    qr)
+        if [[ ${#ARGS[@]} -gt 1 ]]; then
+            _JSON_ERR="qr takes one client name"
+            log_error "$_JSON_ERR."
+            _cmd_rc=1
+        else
+            show_client_qr "$CLIENT_NAME" "${CLI_QR_VPN:-0}" || _cmd_rc=1
+        fi
         ;;
 
     restart)
