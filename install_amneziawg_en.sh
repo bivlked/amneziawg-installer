@@ -1658,7 +1658,7 @@ _awg31_blocker_message() {
             printf '%s' "An AmneziaWG 3.1 profile is not issued on the '$(_awg31_host_arch)' architecture: of ARM, the third line has been checked only on arm64 (little-endian aarch64), this architecture has not been measured for it, and the decision is deliberate until a separate measurement. Upgrading packages changes nothing. Way out: --protocol=2.0."
             ;;
         arch_unsupported)
-            printf '%s' "The AmneziaWG 3.1 profile requires x86_64 or arm64, and this machine is '$(_awg31_host_arch)'. We have not measured it and will not emit the third line there. Way out: --protocol=2.0."
+            printf '%s' "The AmneziaWG 3.1 profile requires x86_64 or arm64, and this machine is '$(_awg31_host_arch)'. I have not measured it and will not emit the third line there. Way out: --protocol=2.0."
             ;;
         arch_unknown)
             printf '%s' "The machine architecture could not be determined, and not knowing it is not the same as knowing it fits. Way out: --protocol=2.0. If you believe this is wrong, send the output of 'dpkg --print-architecture' and 'uname -m'."

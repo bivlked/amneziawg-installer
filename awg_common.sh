@@ -1401,8 +1401,14 @@ awg_prebuilt_needs_rerun() {
     # поставить чужие DKMS-модули, а рецепт через dkms без регистрации ничего не
     # соберёт (ревью v6.2.0).
     [[ -d "${AWG_DKMS_STATE_DIR:-/var/lib/dkms}/amneziawg" ]] && return 1
-    q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null) \
-        || { log_debug "awg_prebuilt_needs_rerun: dpkg-query не ответил, совет про готовый пакет не даю"; return 1; }
+    if ! q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null); then
+        # «Пакетов нет» dpkg тоже отдаёт кодом 1: его не выдавать за отказ.
+        local e
+        e=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>&1 >/dev/null || true)
+        [[ "$e" == *"no packages found matching"* ]] \
+            || log_debug "awg_prebuilt_needs_rerun: dpkg-query не ответил, совет про готовый пакет не даю"
+        return 1
+    fi
     awk '$NF != "not-installed" && $NF != "config-files" {f=1} END {exit !f}' <<<"$q" || return 1
     find "${AWG_MODULES_DIR:-/lib/modules}/${k}" -name 'amneziawg.ko*' -print -quit 2>/dev/null | grep -q . && return 1
     return 0

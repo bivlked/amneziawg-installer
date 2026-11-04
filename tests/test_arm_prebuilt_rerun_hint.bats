@@ -223,3 +223,24 @@ _reason() { # file function code
     done
     [ "$n" -eq 6 ]
 }
+@test "needs rerun: 'no packages' is not logged as a dpkg failure, a real failure is (RU + EN)" {
+    local l
+    for l in "${LIBS[@]}"; do
+        for case in none fail; do
+            run env CASE="$case" AWG_MODULES_DIR="$T/modules" AWG_DKMS_STATE_DIR="$T/nodkms" bash -c '
+                log() { :; }; log_warn() { :; }; log_error() { :; }; log_debug() { echo "DEBUG: $*"; }
+                source "$1" >/dev/null 2>&1 || true
+                dpkg-query() {
+                    if [ "$CASE" = none ]; then echo "dpkg-query: no packages found matching amneziawg-kmod-*" >&2; return 1; fi
+                    echo "dpkg-query: error: parsing file /var/lib/dpkg/status" >&2; return 2
+                }
+                awg_prebuilt_needs_rerun 6.8.0-149-generic; echo "rc=$?"' _ "$ROOT/$l"
+            [[ "$output" == *"rc=1"* ]] || { echo "$l $case: $output"; return 1; }
+            if [ "$case" = none ]; then
+                [[ "$output" != *"DEBUG:"* ]] || { echo "$l none: logged as a failure: $output"; return 1; }
+            else
+                [[ "$output" == *"DEBUG: awg_prebuilt_needs_rerun: dpkg-query"* ]] || { echo "$l fail: not logged: $output"; return 1; }
+            fi
+        done
+    done
+}
