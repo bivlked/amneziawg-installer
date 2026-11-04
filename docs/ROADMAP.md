@@ -13,10 +13,9 @@ tracked in issues and discussions, not here:
 - [Discussions](https://github.com/bivlked/amneziawg-installer/discussions) - proposals, carrier reports, Q&A
 - [CHANGELOG.en.md](../CHANGELOG.en.md) - what already shipped
 
+## Recently shipped
 
-
-
-
+- AmneziaWG 3.1 on 64-bit ARM (v6.2.0): ARM64 servers get the 3.1 profile like x86_64, the module is built from the PPA through DKMS and rebuilt on a kernel change; 32-bit ARM stays on 2.0.
 - AmneziaWG 3.1 by default for new installs (v6.0.0): encrypted headers (`HeaderProtectionKey`) and content padding (`ContentPaddingAddition`), with an automatic fallback to 2.0 where the installer does not issue 3.1 (ARM, kernels older than 6.7) and `--protocol=2.0` for clients without 3.1.
 - AmneziaWG 2.0 support (H1-H4 ranges, S3/S4, I1-I5 CPS concealment).
 - Dual-stack IPv6 inside the tunnel (`--allow-ipv6-tunnel`), split-tunnel aware.

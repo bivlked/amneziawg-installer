@@ -215,7 +215,7 @@ The kernel interface contract is unaffected: `WG_GENL_VERSION` is unchanged, so 
 <a id="awg3-lines-adv"></a>
 ### Which module line you get
 
-| Condition | What gets installed | Module line | Profile without `--protocol` |
+| Condition | What gets installed | Module line | Profile |
 |---|---|---|---|
 | x86_64 or ARM64, kernel >= 6.7, generation 3.1 | `amneziawg-dkms` from `ppa:amnezia/ppa` | **3.x** | **3.1** |
 | any arch, kernel older than 6.7 (Debian 12 on 6.1) | pinned module built from source | 2.0 | 2.0, automatically |
@@ -236,7 +236,7 @@ On ARM64 with generation 3.1 (the default since v6.2.0) the prebuilt package is 
 >
 > If you specifically need the third version on such a host, there is one supported route: get a kernel 6.7 or newer (on Debian 12 that means the backports kernel) and reinstall. On x86_64 and ARM64 the normal PPA path takes over from there, and a new install gets the 3.1 profile. On 32-bit ARM the 3.1 profile is not issued, whichever module lands.
 
-**The PPA module is updated together with the system, and it has no rollback.** On the main path (x86_64, kernel 6.7 or newer) `amneziawg-dkms` comes from the PPA and changes with a plain `sudo apt upgrade`, and also when the installer is run again, since step 1 updates the system. `unattended-upgrades` in its stock configuration does not install packages from the PPA (and if package cleanup ran during the install, it is gone; cleanup is skipped with `--keep-packages`, `--no-tweaks` or a refusal at the installer's prompt; check with `dpkg -s unattended-upgrades`), so the build changes when you update the system. The loaded module stays the same until a reboot. The PPA keeps only the current build: a superseded one disappears from the archive about a day later, so apt cannot take you back to it. To decide yourself when the build changes, hold the package: `sudo apt-mark hold amneziawg-dkms` (release with `sudo apt-mark unhold amneziawg-dkms`); the price is that fixes stop arriving along with new builds. Running the installer again (on a working server this needs `--force`) releases this hold at step 2, after the reboot, and the build itself changes at the next `apt upgrade`, so set the hold again once the installation has finished. The module version string does not tell builds apart; the running one is shown by `cat /sys/module/amneziawg/srcversion`.
+**The PPA module is updated together with the system, and it has no rollback.** On the main path (x86_64 or ARM64 with generation 3.1, kernel 6.7 or newer) `amneziawg-dkms` comes from the PPA and changes with a plain `sudo apt upgrade`, and also when the installer is run again, since step 1 updates the system. `unattended-upgrades` in its stock configuration does not install packages from the PPA (and if package cleanup ran during the install, it is gone; cleanup is skipped with `--keep-packages`, `--no-tweaks` or a refusal at the installer's prompt; check with `dpkg -s unattended-upgrades`), so the build changes when you update the system. The loaded module stays the same until a reboot. The PPA keeps only the current build: a superseded one disappears from the archive about a day later, so apt cannot take you back to it. To decide yourself when the build changes, hold the package: `sudo apt-mark hold amneziawg-dkms` (release with `sudo apt-mark unhold amneziawg-dkms`); the price is that fixes stop arriving along with new builds. Running the installer again (on a working server this needs `--force`) releases this hold at step 2, after the reboot, and the build itself changes at the next `apt upgrade`, so set the hold again once the installation has finished. The module version string does not tell builds apart; the running one is shown by `cat /sys/module/amneziawg/srcversion`.
 
 <a id="awg3-wire-adv"></a>
 ### What 3.0 changes on the wire, and what it does not
@@ -1052,9 +1052,9 @@ Options:
   --protocol=2.0|3.1    Protocol generation for a new install or for one that
                         started but has not reached step 6 (default 3.1).
                         Without the flag, where the installer does not set up 3.1
-                        (kernel older than 6.7, a non-x86_64 architecture, ARM
-                        included, a second-line kernel module or a failed module
-                        check), 2.0 is installed with an explanation; if the
+                        (kernel older than 6.7, an architecture other than x86_64
+                        and arm64, 32-bit ARM included, a second-line kernel module
+                        or a failed module check), 2.0 is installed with an explanation; if the
                         module does not accept the 2.0 set either, the install
                         stops. If the awg tools are older than a third-line
                         module, the install stops and asks to upgrade them.
@@ -1496,7 +1496,7 @@ sudo modprobe amneziawg
 sudo systemctl restart awg-quick@awg0</pre>
   <b>Limitations</b>:
   <ul>
-    <li><b>ARM prebuilt</b> (Raspberry Pi, Hetzner CAX, Oracle Ampere) uses a prebuilt <code>.deb</code> rather than DKMS - auto-repair is not engaged. After a kernel upgrade rerun the installer: it will pick a fresh prebuilt or fall back to DKMS. <code>manage repair-module</code> cannot replace a missing prebuilt module.</li>
+    <li><b>ARM prebuilt</b> (32-bit Raspberry Pi; ARM64 servers installed before v6.2.0 or with <code>--protocol=2.0</code>) uses a prebuilt <code>.deb</code> rather than DKMS - auto-repair is not engaged. After a kernel upgrade rerun the installer: it will pick a fresh prebuilt or fall back to DKMS. <code>manage repair-module</code> cannot replace a missing prebuilt module.</li>
     <li><b>Cloud kernels</b> (Azure / AWS / GCP / Oracle / Debian-cloud) — the installer detects the meta-package from the <code>uname -r</code> suffix (e.g. <code>linux-headers-azure</code>). If you have a custom kernel or an unusual flavor, <code>manage repair-module</code> does the same in reactive mode.</li>
   </ul>
 </details>
@@ -2189,7 +2189,7 @@ Control: a tunnel to a server in a different AS (US) came up and held on all thr
 <a id="client-compat-adv"></a>
 ## 📋 Client Compatibility
 
-A client has to understand your server's generation: a new install gives the 3.1 profile by default, and with `--protocol=2.0`, on a kernel older than 6.7 (a stock Debian 12) and on 32-bit ARM the 2.0 profile. The installer prints the server generation in the final report, on the "Protocol generation" line, and later `manage check` shows it. The table below is a short list with our notes; the full table with versions and sources is in [Which AmneziaWG generation a client speaks](#client-gen-adv).
+A client has to understand your server's generation: a new install gives the 3.1 profile by default, and with `--protocol=2.0`, on a kernel older than 6.7 (a stock Debian 12) and on 32-bit ARM the 2.0 profile. The installer prints the server generation in the final report, on the "Protocol generation" line, and later `manage check` shows it. The table below is a short list with my notes; the full table with versions and sources is in [Which AmneziaWG generation a client speaks](#client-gen-adv).
 
 | Client | Platform | AWG 3.1 | AWG 2.0 | Notes |
 |--------|----------|---------|---------|-------|
@@ -2715,7 +2715,7 @@ it as a target.
 
   4. Finish configuring the packages: `dpkg --configure -a`. If dependency errors remain, run `apt-get -f install` and then `dpkg --configure -a` again. If `apt` offers to remove anything, read the list first: the running kernel must stay.
   5. Before rebooting, check: `dpkg --configure -a` finished without errors (it is what updates the initramfs and the bootloader), `dpkg --audit` prints nothing, `dkms status amneziawg` shows `installed` for the new kernel. As a cross-check, `/boot/initrd.img-7.0.0-38-generic` exists and `/boot/grub/grub.cfg` has an entry for this kernel (`grep -c 7.0.0-38-generic /boot/grub/grub.cfg` is above zero). If Secure Boot is on (`mokutil --sb-state`), the module has to be signed with a key the system trusts; we have not tested this under Secure Boot, and there is no need to turn it off. If anything is off, do not reboot and do not remove the old kernel.
-  6. Reboot into the new kernel when you have the provider's console at hand. `installed` in DKMS does not yet mean the module will load: after the reboot check `lsmod | grep amneziawg` and `systemctl status awg-quick@awg0`. We have not tested this fix on ARM.
+  6. Reboot into the new kernel when you have the provider's console at hand. `installed` in DKMS does not yet mean the module will load: after the reboot check `lsmod | grep amneziawg` and `systemctl status awg-quick@awg0`. I have not tested the manual procedure on ARM; the installer's automatic fix is checked on Ubuntu 26.04 ARM64 with kernel 7.0.0-42 (4 November 2026).
 
   The fix stays in `/usr/src/amneziawg-1.0.0` until the next `amneziawg-dkms` package update. If the new PPA version already contains the fix, there is nothing to repeat; if it does not, the build for the next kernel fails again and the steps need repeating. If you see the same error but the hash in step 2 does not match, open an [issue](https://github.com/bivlked/amneziawg-installer/issues) with the output of `dkms status` and `uname -r`.
 

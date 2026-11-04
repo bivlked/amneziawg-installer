@@ -100,7 +100,7 @@ All parameters are accepted automatically. Details: [ADVANCED.en.md#cli-params-a
 |---|---|
 | Plain cheap VPS, you just need a VPN | Nothing - the command above already does it |
 | Mobile data, DPI cuts the link (TSPU, Iran, school or office) | During install, add `--mobile` - the obfuscation preset plus port 443/udp in one go ([tested carriers](#carriers)) |
-| ARM: Raspberry Pi, Oracle Ampere, Hetzner CAX | Same command. On 64-bit ARM (ARM64) AmneziaWG 3.1 is installed since v6.2.0, with the module built through DKMS; 32-bit Raspberry Pi OS stays on AmneziaWG 2.0 with ready-made kernel modules, and clients there need 2.0 support ([here is why](#awg3)) |
+| ARM: Raspberry Pi, Oracle Ampere, Hetzner CAX | Same command. On 64-bit ARM (ARM64) AmneziaWG 3.1 is installed since v6.2.0, with the module built through DKMS; 32-bit ARM stays on AmneziaWG 2.0 (with ready-made kernel modules on Raspberry Pi OS), and clients there need 2.0 support ([here is why](#awg3)) |
 | Time-limited access for a friend or guest | After install: `sudo bash /root/awg/manage_amneziawg.sh add guest --expires=7d` |
 
 ---
@@ -222,7 +222,7 @@ There are a few other ways to get AmneziaWG running. Each picks a different trad
 **Quick pick:**
 
 * Frequently add and rotate peers and prefer a browser GUI - a web panel: **wiresock** (native, no Docker) or **wg-easy** (Docker). Note: a panel is an extra always-on service, an open port and ongoing resource use; for a set-and-forget box it is needless overhead.
-* Cheap or low-spec VPS, ARM (Raspberry Pi, Oracle Ampere) - **this installer**, with ready-made prebuilts and no module-build wait.
+* Cheap or low-spec VPS, ARM (Raspberry Pi, Oracle Ampere) - **this installer**: the 3.1 profile on ARM64, ready-made modules with no build wait on 32-bit Raspberry Pi.
 * One-tap phone import (QR or `vpn://`), time-limited clients (`--expires`), mobile-carrier presets - **this installer**.
 * Point-and-click setup with no terminal - the **Amnezia VPN** desktop client.
 
@@ -604,12 +604,12 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: How do I install AmneziaWG 3.1 on my own server?</strong></summary>
-  <b>A:</b> On a clean x86_64 or ARM64 VPS with Ubuntu 24.04, 26.04 or Debian 13, with the three commands from the <a href="#quickstart">Quick Start</a>: download <code>install_amneziawg_en.sh</code> from the latest release and run it with <code>sudo bash</code>. The 3.1 profile is the default and runs as a kernel module, without Docker; on ARM and on stock Debian 12 the installer picks 2.0 by itself, and the <a href="#awg3">3.1 section</a> lists the other cases. Expect two reboots: answer <code>y</code> each time it asks "Reboot now?", and after each reboot log in again and repeat the last command. The other route is the official Amnezia VPN app, which deploys the server in Docker; the <a href="#similar-tools">comparison</a> shows how the two differ.
+  <b>A:</b> On a clean x86_64 or ARM64 VPS with Ubuntu 24.04, 26.04 or Debian 13, with the three commands from the <a href="#quickstart">Quick Start</a>: download <code>install_amneziawg_en.sh</code> from the latest release and run it with <code>sudo bash</code>. The 3.1 profile is the default and runs as a kernel module, without Docker; on 32-bit ARM and on stock Debian 12 the installer picks 2.0 by itself, and the <a href="#awg3">3.1 section</a> lists the other cases. Expect two reboots: answer <code>y</code> each time it asks "Reboot now?", and after each reboot log in again and repeat the last command. The other route is the official Amnezia VPN app, which deploys the server in Docker; the <a href="#similar-tools">comparison</a> shows how the two differ.
 </details>
 
 <details>
   <summary><strong>Q: Will it survive a kernel update?</strong></summary>
-  <b>A:</b> On a regular DKMS install, yes: the module is rebuilt at the next boot; check with <code>dkms status</code>. On ARM with a prebuilt module, no: after a kernel change the tunnel will not come up by itself. The standard fix is to run the installer again (<code>sudo bash ./install_amneziawg_en.sh --force</code>), which installs the module for the new kernel; it is a full run with two reboots.
+  <b>A:</b> On a regular DKMS install, yes: the module is rebuilt at the next boot; check with <code>dkms status</code>. On ARM with a prebuilt module, no: after a kernel change the tunnel will not come up by itself. The standard fix is to run the installer again after the reboot into the new kernel (<code>sudo bash ./install_amneziawg_en.sh</code>), which installs the module for the new kernel; it is a full run with two reboots, and the keys and client profiles are kept (checked on 3 November 2026 on Ubuntu 24.04 ARM64). An ARM64 server installed on 3.1 since v6.2.0 does not need this: its module comes from the PPA and rebuilds itself.
 </details>
 
 <details>
