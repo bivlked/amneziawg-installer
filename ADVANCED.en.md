@@ -219,7 +219,7 @@ The kernel interface contract is unaffected: `WG_GENL_VERSION` is unchanged, so 
 |---|---|---|---|
 | x86_64 or ARM64, kernel >= 6.7, generation 3.1 | `amneziawg-dkms` from `ppa:amnezia/ppa` | **3.x** | **3.1** |
 | any arch, kernel older than 6.7 (Debian 12 on 6.1) | pinned module built from source | 2.0 | 2.0, automatically |
-| ARM64 with `--protocol=2.0` or 32-bit ARM, with a prebuilt for your kernel | our prebuilt package | 2.0 | 2.0 (automatically on 32-bit ARM) |
+| ARM64 with `--protocol=2.0` or 32-bit ARM, with a prebuilt for your kernel | the prebuilt package from arm-packages | 2.0 | 2.0 (automatically on 32-bit ARM) |
 | the same with no prebuilt, kernel >= 6.7 | `amneziawg-dkms` from the PPA | **3.x** | 2.0 (automatically on 32-bit ARM: it has not been measured for the third line) |
 
 A third-line module is necessary but not sufficient for the 3.1 profile: at step 3 the installer also checks the tools and the loaded module, see [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv).
@@ -2312,7 +2312,7 @@ If you specifically want the third AmneziaWG line on Debian 12, the simplest rou
 <a id="arm-support-adv"></a>
 ## 🔧 Raspberry Pi and ARM64 Support
 
-Since v6.2.0 64-bit ARM (ARM64, aarch64) gets AmneziaWG 3.1, like x86_64: the third-line module is built from the PPA through DKMS, and the automatic rebuild on a kernel change comes with it. Checked on @@ARM_MEASURED_EN@@. 32-bit ARM (armhf) stays on AmneziaWG 2.0: there is nothing to measure the third line on, and the decision is deliberate (see [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv)). Clients of such a server need 2.0 support, and an explicit `--protocol=3.1` stops the install there.
+Since v6.2.0 64-bit ARM (ARM64, aarch64) gets AmneziaWG 3.1, like x86_64: the third-line module is built from the PPA through DKMS, and the automatic rebuild on a kernel change comes with it. Checked on a Hetzner CAX11 (Ampere) on 3-4 November 2026: clean installs of Ubuntu 24.04, Debian 13 and Ubuntu 26.04 (kernel 7.0.0-42), handshake and data through the tunnel, a kernel change with the module rebuilt automatically. The module builds against the Raspberry Pi OS kernels (bookworm 6.12, trixie 6.18), but I have not checked it running on a Raspberry Pi itself. 32-bit ARM (armhf) stays on AmneziaWG 2.0: there is nothing to measure the third line on, and the decision is deliberate (see [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv)). Clients of such a server need 2.0 support, and an explicit `--protocol=3.1` stops the install there.
 
 An ARM64 server installed before v6.2.0 stays on 2.0: the installer does not change the generation of a running server. Moving it to 3.1 takes a reinstall with every profile reissued, the same way as on x86_64: [INSTALL_VPS, section "Update flow", paragraph "Moving an existing server to 3.1"](INSTALL_VPS.md#update-flow).
 
