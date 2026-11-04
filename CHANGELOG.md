@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [6.2.0] - 2026-11-04
+
+**v6.2.0** - AmneziaWG 3.1 на 64-битном ARM: серверы ARM64 получают профиль 3.1, как x86_64, и модуль, который сам пересобирается при смене ядра. Плюс рабочий рецепт для серверов на готовом ARM-модуле после обновления ядра.
+
 ### Добавлено
 
 - **AmneziaWG 3.1 на 64-битном ARM.** Серверы ARM64 (Hetzner CAX, Oracle Ampere, AWS Graviton, Raspberry Pi с 64-битной системой) теперь получают профиль 3.1 по умолчанию, как x86_64. Модуль третьей линии ставится из PPA через DKMS, а не готовым пакетом второй линии, и вместе с ним приезжает автопересборка при смене ядра, которой на пути готового пакета не было. Проверено на Hetzner CAX11 с Ubuntu 24.04, Debian 13 и Ubuntu 26.04 (ядро 7.0.0-42): установка, данные через туннель, смена ядра; при 120-128 Мбит/с через туннель процессор сервера загружен примерно на 20%, как и с 2.0. Сборка модуля под ядра Raspberry Pi OS (bookworm, trixie) проверена, работа на самом Raspberry Pi - нет. 32-битный ARM (armhf) остаётся на 2.0: мерить третью линию на нём не на чем. Сервер ARM64, поставленный раньше, остаётся на своём поколении; переход на 3.1 - переустановка с перевыпуском всех профилей. С `--protocol=2.0` на ARM64 всё как прежде: сначала готовый пакет, при его отсутствии DKMS.
@@ -2180,7 +2184,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.2...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.0...HEAD
+[6.2.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.2...v6.2.0
 [6.1.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.1...v6.1.2
 [6.1.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.0...v6.1.1
 [6.1.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.0.1...v6.1.0
