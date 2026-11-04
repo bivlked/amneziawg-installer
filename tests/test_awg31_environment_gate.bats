@@ -183,21 +183,50 @@ break_arch_detection() {
 
 # ---------------------------------------------------- architecture and kernel
 
-@test "ARM is blocked whatever the architecture is called" {
+@test "32-bit and big-endian ARM are blocked whatever the architecture is called" {
     load_gate
-    for arch in arm64 armhf armel aarch64 armv7l aarch64_be; do
+    local n=0
+    for arch in armhf armel armv7l aarch64_be armv6l; do
         run awg31_environment_blocker pre "$arch" "6.14.0-generic"
         [ "$status" -eq 0 ]
-        [ "$output" = "arm" ]
+        [ "$output" = "arm" ] || { echo "$arch: '$output'"; return 1; }
+        n=$((n + 1))
     done
+    [ "$n" -ge 1 ]
 }
 
-@test "ARM wins over an old kernel - the reason given is the permanent one" {
-    # A modern kernel on ARM passes the kernel check, so without the arm branch
-    # the answer would be empty - that is, 3.1 would ship on ARM. And on an old kernel the arm code must still
-    # win, because upgrading the kernel would not make ARM shippable.
+@test "64-bit ARM passes pre on a 6.7+ kernel under both of its names (v6.2.0)" {
+    # Since v6.2.0 arm64 is on the allow list: step 2 builds the third-line
+    # module from the PPA there. Both spellings matter: dpkg says arm64, the
+    # uname -m fallback says aarch64, and a gate that knew only one would send
+    # the other to the arm pattern below it.
+    load_gate
+    local arch n=0
+    for arch in arm64 aarch64; do
+        run awg31_environment_blocker pre "$arch" "6.14.0-generic"
+        [ "$status" -eq 0 ]
+        [ "$output" = "" ] || { echo "$arch: '$output'"; return 1; }
+        n=$((n + 1))
+    done
+    [ "$n" -eq 2 ]
+}
+
+@test "64-bit ARM on an old kernel hears kernel, like x86_64" {
+    # arm64 is now judged by the kernel like amd64: a stock Debian 12 arm64
+    # (6.1) gets the kernel code and its fallback to 2.0, not the arm code.
     load_gate
     run awg31_environment_blocker pre "arm64" "6.1.0-18-arm64"
+    [ "$status" -eq 0 ]
+    [ "$output" = "kernel" ]
+    run awg31_environment_blocker pre "arm64" "6.7.0-arm64"
+    [ "$output" = "" ]
+}
+
+@test "32-bit ARM wins over an old kernel - the reason given is the permanent one" {
+    # On an old kernel the arm code must still win for 32-bit ARM, because
+    # upgrading the kernel would not make it shippable.
+    load_gate
+    run awg31_environment_blocker pre "armhf" "6.1.0-18-armmp"
     [ "$output" = "arm" ]
 }
 
@@ -237,18 +266,26 @@ break_arch_detection() {
     # Every real call passes no architecture at all, so without this the whole
     # detection branch is untested and only its failure mode is pinned.
     load_gate
-    fake_arch_detection "arm64"
+    fake_arch_detection "armhf"
     run awg31_environment_blocker pre "" "6.14.0-generic"
     [ "$output" = "arm" ]
+    fake_arch_detection "arm64"
+    run awg31_environment_blocker pre "" "6.14.0-generic"
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
 }
 
-@test "surrounding whitespace does not smuggle an ARM box through" {
-    # Without the strip, " arm64 " misses the arm pattern, misses the allow list
+@test "surrounding whitespace does not smuggle a 32-bit ARM box through" {
+    # Without the strip, " armhf " misses the arm pattern, misses the allow list
     # and lands on arch_unsupported - safe today, but the strip is what makes the
-    # answer correct rather than accidentally safe.
+    # answer correct rather than accidentally safe. And " arm64 " without the
+    # strip would be refused on a host the allow list accepts.
     load_gate
-    run awg31_environment_blocker pre " arm64 " "6.14.0-generic"
+    run awg31_environment_blocker pre " armhf " "6.14.0-generic"
     [ "$output" = "arm" ]
+    run awg31_environment_blocker pre " arm64 " "6.14.0-generic"
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
     run awg31_environment_blocker pre "   " "6.14.0-generic"
     [ "$output" = "arch_unknown" ]
 }
@@ -265,14 +302,26 @@ break_arch_detection() {
 
 # --------------------------------------------------- stage ordering and scope
 
-@test "post contains pre: ARM stays blocked, and hears arm rather than tools_old" {
+@test "post contains pre: 32-bit ARM stays blocked, and hears arm rather than tools_old" {
     # Both halves matter. The old tools make the tools probe fail, so a gate that
     # probed first would answer tools_old and send the operator after an upgrade
     # that cannot help.
     load_gate
     make_awg_stub 20
-    run awg31_environment_blocker post "arm64" "6.14.0-generic"
+    run awg31_environment_blocker post "armhf" "6.14.0-generic"
     [ "$output" = "arm" ]
+}
+
+@test "post on 64-bit ARM runs the tools probe: old tools give tools_old there" {
+    # arm64 passed pre, so post must go on to the tools and the module. If the
+    # arm64 branch were dropped from post (or post skipped the probes on ARM),
+    # old tools would not be noticed and a 3.1 profile would meet tools that
+    # cannot set it.
+    load_gate
+    make_awg_stub 20
+    run awg31_environment_blocker post "arm64" "6.14.0-generic"
+    [ "$status" -eq 0 ]
+    [ "$output" = "tools_old" ]
 }
 
 @test "post contains pre: an old kernel stays blocked, and hears kernel" {
@@ -541,7 +590,7 @@ gate_case() {
             for n in _kernel_supports_awg3 _awg31_host_arch awg31_tools_support awg31_environment_blocker; do
                 eval "$(fn $n)"
             done
-            awg31_environment_blocker pre arm64 6.14.0-generic
+            awg31_environment_blocker pre armhf 6.14.0-generic
             printf "|"
             awg31_environment_blocker post "" 6.14.0-generic' _ "$f"
         # arm from the explicit call; then the detection path resolves the real
@@ -556,8 +605,13 @@ gate_case() {
 @test "both language versions answer identically on every branch" {
     for script in "$INSTALL_RU" "$INSTALL_EN"; do
         load_gate "$script"
-        run awg31_environment_blocker pre "arm64" "6.14.0-generic"
+        run awg31_environment_blocker pre "armhf" "6.14.0-generic"
         [ "$output" = "arm" ]
+        run awg31_environment_blocker pre "arm64" "6.14.0-generic"
+        [ "$status" -eq 0 ]
+        [ "$output" = "" ]
+        run awg31_environment_blocker pre "arm64" "6.1.0-18-arm64"
+        [ "$output" = "kernel" ]
         run awg31_environment_blocker pre "amd64" "6.1.0-18-amd64"
         [ "$output" = "kernel" ]
         run awg31_environment_blocker pre "riscv64" "6.14.0-generic"

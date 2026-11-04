@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x and 2.0 peer management script
 # Author: @bivlked
-# Version: 6.1.2
-# Date: 2026-11-03
+# Version: 6.2.0
+# Date: 2026-11-04
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="6.1.2"
+SCRIPT_VERSION="6.2.0"
 set -o pipefail
 # awg show colours its labels when WG_COLOR_MODE=always is in the environment,
 # even into a pipe. The secrets filter then does not recognise "header
@@ -1848,7 +1848,15 @@ check_server() {
     else
         # WARN, not ok=0: userspace installs (amneziawg-go, LXC) never have
         # the module, and a broken kernel path already fails service/interface.
-        log_warn " - amneziawg module is not loaded (normal for userspace mode)."
+        # An ARM prebuilt package with no module for the current kernel is not
+        # userspace but a kernel change: "normal" would lead astray there
+        # (measured 3 nov 2026).
+        if awg_prebuilt_needs_rerun; then
+            log_warn " - amneziawg module is not loaded."
+            awg_prebuilt_rerun_hint log_warn
+        else
+            log_warn " - amneziawg module is not loaded (normal for userspace mode)."
+        fi
     fi
 
     log "UFW rules:"

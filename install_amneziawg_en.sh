@@ -6,10 +6,10 @@ if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
 fi
 
 # ==============================================================================
-# AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on ARM) installation and configuration script for Ubuntu/Debian servers
+# AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on 32-bit ARM) installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 6.1.2
-# Date: 2026-11-03
+# Version: 6.2.0
+# Date: 2026-11-04
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -40,7 +40,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.1.2"
+SCRIPT_VERSION="6.2.0"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -67,8 +67,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="77d7b77b0261b580c7af61c6c221a1c2b4465340cc1c3dd9effe4414c60449e8"
-MANAGE_SCRIPT_SHA256="c86b474196c8c6f55e91ea0685db07d51c319ba99c4c4a5a0ae2017a9f70118f"
+COMMON_SCRIPT_SHA256="f3ab583e83212f81ecc7653a281a6b7175dade9bfaa8af43599aa089ef5ac9ab"
+MANAGE_SCRIPT_SHA256="86b6a8e7f49981838dd794a67f5df011bf53c135a3d9509adf52d1c500de91c2"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back
@@ -710,9 +710,9 @@ Options:
   --protocol=2.0|3.1    Protocol generation for a new install or for one that
                         started but has not reached step 6 (default 3.1).
                         Without the flag, where the installer does not set up 3.1
-                        (kernel older than 6.7, a non-x86_64 architecture, ARM
-                        included, a second-line kernel module or a failed module
-                        check), 2.0 is installed with an explanation; if the
+                        (kernel older than 6.7, an architecture other than x86_64
+                        and arm64, 32-bit ARM included, a second-line kernel module
+                        or a failed module check), 2.0 is installed with an explanation; if the
                         module does not accept the 2.0 set either, the install
                         stops. If the awg tools are older than a third-line
                         module, the install stops and asks to upgrade them.
@@ -1578,14 +1578,16 @@ awg31_environment_blocker() {
     # index on 7 sep 2026), and with a deny list such a machine would be handed a
     # 3.1 profile on a platform nobody measured.
     #
-    # The arm code covers ANY ARM, not only a matched prebuilt. Telling "the
-    # prebuilt matched" from "we went the DKMS way" is impossible here: in the
-    # second case the module would be third line, the gate would formally pass,
-    # and we would ship the profile on a platform we decided not to ship on until
-    # a separate measurement. The pattern covers both dpkg names (arm64, armhf,
-    # armel) and uname -m ones (armv7l, aarch64, aarch64_be).
+    # 64-bit ARM (arm64, aarch64) is on the allow list since v6.2.0: at step 2,
+    # for generation 3.1, it gets the module from the PPA through DKMS rather
+    # than the pinned 2.0 prebuilt. The module probe at step 3 stays as the
+    # safety net: if a second-line module gets loaded, the post stage sees it.
+    # The arm code now means all OTHER ARM: there is nothing to measure 32-bit
+    # ARM (armhf, armel, armv7l) on, and the PPA does not build aarch64_be
+    # (big-endian). The branch order matters: the exact 64-bit ARM names come
+    # before the general arm*|aarch64* pattern, or the pattern would catch them.
     case "$arch" in
-        amd64|x86_64)
+        amd64|x86_64|arm64|aarch64)
             :
             ;;
         arm*|aarch64*)
@@ -1647,17 +1649,16 @@ _awg31_blocker_message() {
         arm)
             # 🔴 The text makes NO claim about which module gets installed here,
             # and that is a correction of fact, not of style. The earlier wording
-            # said "here the installer pins the second-line module" - untrue for an
-            # ARM64 box on a recent kernel with no matching prebuilt:
-            # _try_install_prebuilt_arm picks a target from a closed list, returns 1
-            # on a miss, the flow falls back to DKMS, and on kernel 6.7+ an UNPINNED
-            # module arrives from the PPA. A refusal must explain the REASON FOR THE
-            # REFUSAL, not describe someone else's machine from memory. The precise
-            # wording about prebuilts lives in the README.
-            printf '%s' "An AmneziaWG 3.1 profile is not issued on ARM: this architecture has not been measured for the third line, and the decision is deliberate until a separate measurement. Upgrading packages changes nothing. Way out: --protocol=2.0."
+            # said "here the installer pins the second-line module" - untrue: on
+            # 32-bit ARM with no matching prebuilt _try_install_prebuilt_arm returns 1,
+            # the flow falls back to DKMS, and on kernel 6.7+ an UNPINNED module
+            # arrives from the PPA. A refusal must explain the REASON FOR THE REFUSAL,
+            # not describe someone else's machine from memory. 64-bit ARM (arm64)
+            # does not land here since v6.2.0.
+            printf '%s' "An AmneziaWG 3.1 profile is not issued on the '$(_awg31_host_arch)' architecture: of ARM, the third line has been checked only on arm64 (little-endian aarch64), this architecture has not been measured for it, and the decision is deliberate until a separate measurement. Upgrading packages changes nothing. Way out: --protocol=2.0."
             ;;
         arch_unsupported)
-            printf '%s' "The AmneziaWG 3.1 profile requires x86_64, and this machine is '$(_awg31_host_arch)'. We have not measured it and will not emit the third line there. Way out: --protocol=2.0."
+            printf '%s' "The AmneziaWG 3.1 profile requires x86_64 or arm64, and this machine is '$(_awg31_host_arch)'. I have not measured it and will not emit the third line there. Way out: --protocol=2.0."
             ;;
         arch_unknown)
             printf '%s' "The machine architecture could not be determined, and not knowing it is not the same as knowing it fits. Way out: --protocol=2.0. If you believe this is wrong, send the output of 'dpkg --print-architecture' and 'uname -m'."
@@ -1703,8 +1704,8 @@ _awg31_code_in() {
 _awg31_fallback_reason() {
     case "${1-}" in
         kernel)              printf '%s' "kernel $(uname -r) is older than 6.7" ;;
-        arm)                 printf '%s' "the ARM architecture has not been measured for the third line" ;;
-        arch_unsupported)    printf '%s' "architecture '$(_awg31_host_arch)' is not x86_64" ;;
+        arm)                 printf '%s' "the '$(_awg31_host_arch)' architecture has not been measured for the third line (of ARM, it has been checked only on arm64, little-endian aarch64)" ;;
+        arch_unsupported)    printf '%s' "architecture '$(_awg31_host_arch)' is neither x86_64 nor arm64" ;;
         arch_unknown)        printf '%s' "the machine architecture could not be determined" ;;
         tools_old)           printf '%s' "the installed awg tools do not understand third-line parameters" ;;
         module_line2)        printf '%s' "the loaded amneziawg kernel module is second line" ;;
@@ -5480,7 +5481,12 @@ repair_module_cmd() {
     local _q _e _prc=0
     _awg_kmod_prebuilt_present || _prc=$?
     if [[ "$_prc" -eq 0 ]]; then
-        log_error "A prebuilt module package (ARM) is installed; this path does not repair it."; exit 1
+        log_error "A prebuilt module package (ARM) is installed; this path does not repair it."
+        # Measured 3 nov 2026: after a kernel change the module on such a server
+        # comes back with a plain second run of the installer, keys and profiles kept.
+        log_error "A module for the new kernel is installed by a plain run of the installer, without --repair-module: sudo bash $0"
+        log_error "Run it after the reboot, when the VPN did not come up; the installer asks for a reboot twice, run the same command after each one. The keys and the client profiles are kept."
+        exit 1
     elif [[ "$_prc" -ne 1 ]]; then
         log_error "Could not ask dpkg about prebuilt module packages. Nothing changed."; exit 1
     fi
@@ -6910,7 +6916,9 @@ PPASRC
         apt-mark unhold amneziawg-dkms amneziawg >/dev/null 2>&1 || true
     fi
 
-    # On ARM: try prebuilt .deb first (no build tools or headers required).
+    # On ARM with generation 2.0 (32-bit ARM, ARM64 with --protocol=2.0 or a kernel
+    # older than 6.7): try prebuilt .deb first (no build tools or headers required).
+    # With generation 3.1 the prebuilt is not installed at all, see the AWG_PROTOCOL branch below.
     # Falls back to DKMS if no matching prebuilt is available or download fails.
     # ⚠️ On a kernel < 6.7 (use_pinned_awg2=1) using the prebuilt .deb is SAFE: our ARM
     # prebuilts are built from scripts/arm-module-version.txt, pinned to the same 2.0
@@ -6940,6 +6948,31 @@ PPASRC
             elif [[ -n "$_kmod" ]]; then
                 _awg_rehold_for_prebuilt
                 die "A prebuilt module package is already installed: $_kmod. With --no-prebuilt a second module would be built next to it. Remove the prebuilt one: sudo apt-get purge -y $_kmod, then run the installer again."
+            fi
+        elif [[ "${AWG_PROTOCOL:-}" == "3.1" ]]; then
+            # v6.2.0: the arm-packages prebuilts are built from the pinned
+            # second-line source, and a 3.1 profile cannot come up on such a
+            # module (the step 3 probe would fall a new install back to 2.0).
+            # So for 3.1 the module comes from the PPA through DKMS, as on
+            # x86_64, and with it the ensure-module helper and the apt hook get
+            # installed: the module is rebuilt when the kernel changes, which
+            # the prebuilt path does not do.
+            log "Generation 3.1: not installing the prebuilt module package (it is second line), the module will be built from the PPA through DKMS."
+            # A prebuilt package from an earlier run gets in the way for ANY
+            # kernel, as with --no-prebuilt (hence _awg_installed_kmod_pkgs, not
+            # a check of the running kernel only): for this kernel it would give a
+            # second amneziawg module tree next to DKMS, and for another one it
+            # would mislead repair and diagnostics (--repair-module, the helper's
+            # --status, manage repair-module and diagnose take the server for a
+            # prebuilt one by it). Found by the v6.2.0 branch review.
+            local _kmod31 _kmod31_rc=0
+            _kmod31=$(_awg_installed_kmod_pkgs) || _kmod31_rc=$?
+            if (( _kmod31_rc != 0 )); then
+                _awg_rehold_for_prebuilt
+                die "Could not ask dpkg about prebuilt module packages (amneziawg-kmod-*), and without the answer there is no telling whether a DKMS build would land next to a prebuilt module. Check: dpkg -l 'amneziawg-kmod-*', then run the installer again."
+            elif [[ -n "$_kmod31" ]]; then
+                _awg_rehold_for_prebuilt
+                die "A second-line prebuilt module package is already installed: $_kmod31. For generation 3.1 the module is built through DKMS, and a prebuilt package next to it would give a second module or mislead repair and diagnostics. Remove the prebuilt one: sudo apt-get purge -y $_kmod31, then run the installer again."
             fi
         elif _try_install_prebuilt_arm; then
             log "Prebuilt kernel module installed. Installing userspace tools from PPA..."

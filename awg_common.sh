@@ -3,8 +3,8 @@
 # ==============================================================================
 # Общая библиотека функций для AmneziaWG 3.x и 2.0
 # Автор: @bivlked
-# Версия: 6.1.2
-# Дата: 2026-11-03
+# Версия: 6.2.0
+# Дата: 2026-11-04
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -24,7 +24,7 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # (обновили один файл, забыли второй) - иначе рассинхрон всплывает как
 # "command not found" в случайном месте. Бампается вместе с остальными версиями.
 # shellcheck disable=SC2034  # используется в manage-скрипте после source
-AWG_COMMON_VERSION="6.1.2"
+AWG_COMMON_VERSION="6.2.0"
 
 # --- Автоочистка временных файлов ---
 # ВАЖНО: trap НЕ устанавливается здесь, чтобы не перезаписать trap вызывающего скрипта.
@@ -1386,6 +1386,46 @@ _ensure_awg_quick_running() {
     return 1
 }
 
+# awg_prebuilt_needs_rerun [ядро] : 0, если модуль на этом сервере ставился
+# готовым ARM-пакетом (amneziawg-kmod-*), amneziawg не зарегистрирован в DKMS и модуля под ядро на диске
+# нет - то есть модуль под это ядро поставит только повторный запуск
+# установщика; иначе 1. «Не смог спросить dpkg» - тоже 1: тогда остаются
+# прежние тексты, а не уверенный совет про готовый пакет. AWG_MODULES_DIR и AWG_DKMS_STATE_DIR
+# подменяют /lib/modules и /var/lib/dkms в тестах.
+# Основание - замер 3 nov 2026 (Ubuntu 24.04 arm64, ядро 6.8.0-147-generic -> 6.8.0-149-generic): после
+# смены ядра VPN не поднимается, рецепт через dkms неисполним, а обычный
+# повторный запуск установщика возвращает модуль, сохраняя ключи и профили.
+awg_prebuilt_needs_rerun() {
+    local k="${1:-$(uname -r)}" q
+    # Решает регистрация amneziawg в DKMS, а не наличие команды dkms: её могут
+    # поставить чужие DKMS-модули, а рецепт через dkms без регистрации ничего не
+    # соберёт (ревью v6.2.0).
+    [[ -d "${AWG_DKMS_STATE_DIR:-/var/lib/dkms}/amneziawg" ]] && return 1
+    if ! q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null); then
+        # «Пакетов нет» dpkg тоже отдаёт кодом 1: его не выдавать за отказ.
+        local e
+        e=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>&1 >/dev/null || true)
+        [[ "$e" == *"no packages found matching"* ]] \
+            || log_debug "awg_prebuilt_needs_rerun: dpkg-query не ответил, совет про готовый пакет не даю"
+        return 1
+    fi
+    awk '$NF != "not-installed" && $NF != "config-files" {f=1} END {exit !f}' <<<"$q" || return 1
+    find "${AWG_MODULES_DIR:-/lib/modules}/${k}" -name 'amneziawg.ko*' -print -quit 2>/dev/null | grep -q . && return 1
+    return 0
+}
+
+# awg_prebuilt_rerun_hint <log-функция> : проверенный рецепт для сервера на
+# готовом ARM-пакете после смены ядра. Печатает через переданную функцию
+# (log_warn в check, log_error при отказе восстановления).
+awg_prebuilt_rerun_hint() {
+    local say="${1:-log_warn}"
+    "$say" "Модуль стоит готовым пакетом для ARM, а под ядро $(uname -r) его нет: так бывает после обновления ядра. DKMS на этом пути не ставится, сам модуль не пересоберётся."
+    "$say" "Чинит обычный повторный запуск установщика, ключи и профили клиентов сохраняются:"
+    "$say" "  wget -O install_amneziawg.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/install_amneziawg.sh"
+    "$say" "  sudo bash install_amneziawg.sh"
+    "$say" "Установщик дважды попросит перезагрузку; после каждой запускайте ту же команду, пока он не сообщит об успешном завершении."
+}
+
 # Master: гарантирует что модуль ядра amneziawg собран и загружен для running kernel.
 # Idempotent: fast-path возвращает 0 если модуль уже loaded.
 #
@@ -1504,6 +1544,12 @@ ensure_amneziawg_kernel_module() {
     if ! modprobe amneziawg 2>/dev/null; then
         log_error "Модуль ядра amneziawg не удалось загрузить для ядра ${kernel_ver}."
         log_error "Модуль отсутствует в /lib/modules/${kernel_ver}/."
+        # Готовый ARM-пакет без dkms: рецепт через dkms ниже здесь неисполним
+        # (замер 3 nov 2026), рабочий путь - повторный запуск установщика.
+        if awg_prebuilt_needs_rerun "$kernel_ver"; then
+            awg_prebuilt_rerun_hint log_error
+            return 1
+        fi
         log_error "Ручное восстановление:"
         log_error "  1. apt install -y \"linux-headers-${kernel_ver}\""
         log_error "  2. dkms autoinstall -k \"${kernel_ver}\" && depmod -a"
@@ -2149,7 +2195,10 @@ _awg31_module_probe() (
 # Коды и порядок проверок - те же, что у стадии post awg31_environment_blocker
 # установщика, но без not_implemented_yet: restore возвращает уже существующую
 # установку 3.1, а не выдаёт новую. Неизвестность (архитектура, проба) - отказ,
-# а не разрешение.
+# а не разрешение. 64-битный ARM (arm64, aarch64) с v6.2.0 проходит, как в
+# гейте установщика: дальше решают ядро и проба модуля; код arm остаётся у
+# 32-битного ARM и aarch64_be. Тело функции в RU и EN обязано совпадать
+# побайтно (test_awg31_restore_environment.bats), поэтому пояснения - здесь.
 awg31_restore_blocker() {
     local arch kver
     arch=$(_awg31_host_arch)
@@ -2157,7 +2206,7 @@ awg31_restore_blocker() {
     kver=$(uname -r)
     [[ -n "$arch" ]] || { printf 'arch_unknown'; return 0; }
     case "$arch" in
-        amd64|x86_64) : ;;
+        amd64|x86_64|arm64|aarch64) : ;;
         arm*|aarch64*) printf 'arm'; return 0 ;;
         *) printf 'arch_unsupported'; return 0 ;;
     esac
@@ -2177,8 +2226,8 @@ awg31_restore_blocker() {
 _awg31_restore_blocker_reason() {
     case "${1-}" in
         arch_unknown)        printf '%s' "архитектура машины не определилась, а не знать её - не то же самое, что знать, что она подходит" ;;
-        arm)                 printf '%s' "на ARM третья линия пока не выдаётся: архитектура под неё не мерена" ;;
-        arch_unsupported)    printf '%s' "архитектура '$(_awg31_host_arch)' под третью линию не мерена, профиль 3.1 требует x86_64" ;;
+        arm)                 printf '%s' "на архитектуре '$(_awg31_host_arch)' третья линия не выдаётся: из ARM она проверена только на arm64 (aarch64 little-endian)" ;;
+        arch_unsupported)    printf '%s' "архитектура '$(_awg31_host_arch)' под третью линию не мерена, профиль 3.1 требует x86_64 или arm64" ;;
         kernel)              printf '%s' "ядро $(uname -r) старее 6.7, на нём ставится модуль второй линии" ;;
         tools_old)           printf '%s' "инструменты awg не найдены или не понимают параметры третьей линии (нужны команды awg и timeout); лечится так: apt-get update && apt-get install amneziawg-tools, затем apt-get install --only-upgrade amneziawg-tools" ;;
         module_line2)        printf '%s' "загруженный модуль ядра не понимает параметры третьей линии; лечится так: apt-get update && apt-get install --only-upgrade amneziawg-dkms, затем перезагрузка" ;;

@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # Скрипт для управления пользователями (пирами) AmneziaWG 3.x и 2.0
 # Автор: @bivlked
-# Версия: 6.1.2
-# Дата: 2026-11-03
+# Версия: 6.2.0
+# Дата: 2026-11-04
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="6.1.2"
+SCRIPT_VERSION="6.2.0"
 set -o pipefail
 # awg show раскрашивает подписи, если в окружении WG_COLOR_MODE=always, даже при
 # выводе в канал. Тогда фильтр секретов не узнаёт «header protection key» и
@@ -1815,7 +1815,14 @@ check_server() {
     else
         # WARN, не ok=0: на userspace-инсталляциях (amneziawg-go, LXC) модуля
         # нет и не будет, а сломанный kernel-путь и так валит сервис/интерфейс.
-        log_warn " - Модуль amneziawg не загружен (для userspace-режима это норма)."
+        # Готовый ARM-пакет без модуля под текущее ядро - не userspace, а смена
+        # ядра: там «это норма» уводила бы в сторону (замер 3 nov 2026).
+        if awg_prebuilt_needs_rerun; then
+            log_warn " - Модуль amneziawg не загружен."
+            awg_prebuilt_rerun_hint log_warn
+        else
+            log_warn " - Модуль amneziawg не загружен (для userspace-режима это норма)."
+        fi
     fi
 
     log "Правила UFW:"

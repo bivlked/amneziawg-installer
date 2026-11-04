@@ -658,6 +658,13 @@ EOF
             run bash "$T/drv.sh"
             [ "$status" -eq 1 ] || { echo "$f $why: status $status"; return 1; }
             [ -z "$(_calls)" ] || { echo "$f $why: $(_calls)"; return 1; }
+            # The ARM prebuilt refusal names the way that works (measured on
+            # 3 nov 2026): a plain run of the installer, keys kept.
+            if [[ "$why" == prebuilt ]]; then
+                [[ "$output" == *"--repair-module: sudo bash "* ]] || { echo "$f prebuilt: no command: $output"; return 1; }
+                [[ "$output" == *"Ключи и профили клиентов сохраняются"* || "$output" == *"keys and the client profiles are kept"* ]] \
+                    || { echo "$f prebuilt: keys not promised: $output"; return 1; }
+            fi
             # A failed query is named as such, not as "not installed".
             if [[ "$why" == dkmsfail ]]; then
                 [[ "$output" == *"спросить dpkg о пакете amneziawg-dkms"* || "$output" == *"ask dpkg about the amneziawg-dkms"* ]] || { echo "$f dkmsfail: $output"; return 1; }

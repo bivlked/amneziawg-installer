@@ -64,12 +64,20 @@ _blocker() {
         [ "$(_blocker "$lib" amd64 6.8.0)" = pass ]
         [ "$(_blocker "$lib" x86_64 6.8.0)" = pass ]
         [ "$(_blocker "$lib" "" 6.8.0)" = arch_unknown ]
-        [ "$(_blocker "$lib" arm64 6.8.0)" = arm ]
-        [ "$(_blocker "$lib" aarch64 6.8.0)" = arm ]
+        # 64-bit ARM is judged like x86_64 since v6.2.0; 32-bit ARM and
+        # big-endian aarch64 keep the arm code
+        [ "$(_blocker "$lib" arm64 6.8.0)" = pass ]
+        [ "$(_blocker "$lib" aarch64 6.8.0)" = pass ]
+        [ "$(_blocker "$lib" arm64 6.1.0-25-arm64)" = kernel ]
+        [ "$(_blocker "$lib" arm64 6.8.0 0 1)" = module_line2 ]
+        [ "$(_blocker "$lib" armhf 6.8.0)" = arm ]
+        [ "$(_blocker "$lib" armv7l 6.8.0)" = arm ]
+        [ "$(_blocker "$lib" aarch64_be 6.8.0)" = arm ]
         [ "$(_blocker "$lib" riscv64 6.8.0)" = arch_unsupported ]
         [ "$(_blocker "$lib" amd64 6.1.0-25-amd64)" = kernel ]
-        # architecture and kernel come BEFORE the tools: ARM with old tools is arm
-        [ "$(_blocker "$lib" arm64 6.8.0 1)" = arm ]
+        # architecture and kernel come BEFORE the tools: 32-bit ARM with old tools is arm
+        [ "$(_blocker "$lib" armhf 6.8.0 1)" = arm ]
+        [ "$(_blocker "$lib" arm64 6.8.0 1)" = tools_old ]
         [ "$(_blocker "$lib" amd64 6.1.0 1)" = kernel ]
         [ "$(_blocker "$lib" amd64 6.8.0 1)" = tools_old ]
         # tools BEFORE the module: the probe runs with those tools

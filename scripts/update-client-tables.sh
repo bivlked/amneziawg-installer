@@ -24,8 +24,10 @@
 #
 # 🔴 ТАБЛИЦА ХОСТОВ СТРОИТСЯ ИЗ ПОВЕДЕНИЯ, А НЕ ИЗ ТЕКСТА. Из обоих установщиков
 # вырезаются функции awg31_environment_blocker и _kernel_supports_awg3, и
-# стадия pre вызывается на штатном ядре каждой системы для x86_64 (amd64) и
-# ARM (arm64, armhf). Ячейка - это её ответ: пусто = 3.1, иначе 2.0 с кодом.
+# стадия pre вызывается на штатном ядре каждой системы для x86_64 (amd64),
+# 64-битного ARM (arm64, aarch64; с v6.2.0 обязан отвечать как x86_64 и делит с
+# ним столбец) и 32-битного ARM (armhf, armel). Ячейка - это её ответ: пусто =
+# 3.1, иначе 2.0 с кодом.
 # Сверка по регуляркам пропускала бы перевёрнутое сравнение и ветку ARM, которая
 # перестала возвращаться (ревью 11 oct). Шаг 3 (утилиты и модуль) этим не
 # проверяется: он зависит от того, что приедет на машину, и описан в сноске
@@ -426,11 +428,20 @@ for name in INSTALLERS:
     rows_h = []
     for label, kv in stock:
         k = kv + '.0'
-        arm = {gate(src, name, a, k) for a in ('arm64', 'armhf')}
+        # С v6.2.0 64-битный ARM делит столбец с x86_64: это утверждение
+        # проверяется на каждой строке, а не берётся на веру. 32-битный ARM
+        # (armhf и armel) - свой столбец, и оба его имени обязаны отвечать
+        # одинаково.
+        x86 = gate(src, name, 'amd64', k)
+        a64 = {gate(src, name, a, k) for a in ('arm64', 'aarch64')}
+        if a64 != {x86}:
+            unverified('%s: arm64 и x86_64 на ядре %s получают разное: %s и %r - общий '
+                       'столбец это не выражает' % (name, kv, sorted(a64), x86))
+        arm = {gate(src, name, a, k) for a in ('armhf', 'armel')}
         if len(arm) != 1:
-            unverified('%s: arm64 и armhf на ядре %s получают разное: %s - столбец ARM '
+            unverified('%s: armhf и armel на ядре %s получают разное: %s - столбец ARM 32-bit '
                        'это не выражает' % (name, kv, sorted(arm)))
-        rows_h.append((label, kv, gate(src, name, 'amd64', k), arm.pop()))
+        rows_h.append((label, kv, x86, arm.pop()))
     answers[name] = rows_h
     # Порог для сноски - литерал из функции, подтверждённый поведением: на нём
     # x86_64 получает 3.1, на версии чуть ниже (минорная минус один, при
@@ -446,12 +457,19 @@ for name in INSTALLERS:
     if threshold not in (None, (maj, mnr)):
         unverified('порог ядра в установщиках разный: %s и %s' % (threshold, (maj, mnr)))
     threshold = (maj, mnr)
-    # Сноска утверждает «на ARM 2.0 при любом ядре» и называет коды шага 3:
-    # оба утверждения сверяются с поведением установщика, а не берутся на веру.
+    # Сноска утверждает «на 32-битном ARM 2.0 при любом ядре», «64-битный ARM
+    # с порога получает 3.1» и называет коды шага 3: все три утверждения
+    # сверяются с поведением установщика, а не берутся на веру.
     for kv in ('%d.%d.0' % threshold, '99.0.0'):
-        if {gate(src, name, a, kv) for a in ('arm64', 'armhf')} != {'arm'}:
-            unverified('%s: на ARM с ядром %s ответ не arm, а сноска обещает 2.0 при любом ядре'
+        if {gate(src, name, a, kv) for a in ('armhf', 'armel', 'armv7l')} != {'arm'}:
+            unverified('%s: на 32-битном ARM с ядром %s ответ не arm, а сноска обещает 2.0 при '
+                       'любом ядре' % (name, kv))
+        if {gate(src, name, a, kv) for a in ('arm64', 'aarch64')} != {''}:
+            unverified('%s: на 64-битном ARM с ядром %s ответ не 3.1, а сноска его обещает'
                        % (name, kv))
+    if gate(src, name, 'arm64', below) != 'kernel':
+        unverified('%s: на 64-битном ARM с ядром %s ответ не kernel, а сноска обещает порог, '
+                   'как у x86_64' % (name, below))
     # Переход на 2.0 по кодам шага 3 решает _awg31_post_fallback_allowed: она
     # вызывается на каждом коде сноски (состояние заглушено как новая установка
     # без следов шага 6), и каждый обязан дать «можно». Контроль: internal_error
@@ -528,11 +546,11 @@ T = {
         'hnote': '<!-- Собирается scripts/update-client-tables.sh из docs/support-matrix.json и\n'
                  '     ответов проверки шага 0 в установщике. Руками не править. -->',
         'hintro': 'Поколение новой установки без `--protocol` по системам, на штатном ядре:',
-        'hhead': '| Система | Штатное ядро | x86_64 | ARM |',
+        'hhead': '| Система | Штатное ядро | x86_64 и ARM64 | ARM 32-bit |',
         'ok': '3.1', 'code': '2.0, код `{c}`',
-        'hfoot': 'Установщик смотрит на работающее ядро, а не на штатное: система на x86_64, '
-                 'загруженная с ядром {k} или новее (например, из backports), получает 3.1; на ARM '
-                 'поколение 2.0 при любом ядре. Это проверка шага 0. На шаге 3 установщик может '
+        'hfoot': 'Установщик смотрит на работающее ядро, а не на штатное: система на x86_64 или '
+                 '64-битном ARM, загруженная с ядром {k} или новее (например, из backports), '
+                 'получает 3.1; на 32-битном ARM поколение 2.0 при любом ядре. Это проверка шага 0. На шаге 3 установщик может '
                  'перейти на 2.0 и на подходящей системе, если утилиты `awg` или модуль не понимают '
                  'третью линию или проверить модуль не удалось (коды {codes}).',
     },
@@ -553,11 +571,11 @@ T = {
         'hnote': '<!-- Generated by scripts/update-client-tables.sh from docs/support-matrix.json and\n'
                  '     the answers of the installer step 0 check. Do not edit by hand. -->',
         'hintro': 'The generation a new install gets without `--protocol`, by system, on the stock kernel:',
-        'hhead': '| System | Stock kernel | x86_64 | ARM |',
+        'hhead': '| System | Stock kernel | x86_64 and ARM64 | ARM 32-bit |',
         'ok': '3.1', 'code': '2.0, code `{c}`',
         'hfoot': 'The installer looks at the running kernel, not the stock one: a system on x86_64 '
-                 'booted with kernel {k} or newer (from backports, for example) gets 3.1; on ARM the '
-                 'generation is 2.0 with any kernel. That is the step 0 check. At step 3 the installer '
+                 'or 64-bit ARM booted with kernel {k} or newer (from backports, for example) gets '
+                 '3.1; on 32-bit ARM the generation is 2.0 with any kernel. That is the step 0 check. At step 3 the installer '
                  'can also switch to 2.0 on a suitable system when the `awg` tools or the module do '
                  'not understand the third line or the module check itself fails (codes {codes}).',
     },

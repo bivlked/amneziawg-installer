@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 3.x and 2.0
 # Author: @bivlked
-# Version: 6.1.2
-# Date: 2026-11-03
+# Version: 6.2.0
+# Date: 2026-11-04
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -24,7 +24,7 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # drifted apart (one file updated, the other not) - otherwise the mismatch shows
 # up as a "command not found" somewhere random. Bumped with the other versions.
 # shellcheck disable=SC2034  # used by the manage script after sourcing
-AWG_COMMON_VERSION="6.1.2"
+AWG_COMMON_VERSION="6.2.0"
 
 # --- Auto-cleanup of temporary files ---
 # NOTE: trap is NOT set here to avoid overwriting the caller's trap handler.
@@ -1414,6 +1414,47 @@ _ensure_awg_quick_running() {
     return 1
 }
 
+# awg_prebuilt_needs_rerun [kernel] : 0 when the module on this server came as
+# an ARM prebuilt package (amneziawg-kmod-*), amneziawg is not registered in DKMS and there is no
+# module for the kernel on disk - that is, only running the installer again
+# will put a module there for this kernel; otherwise 1. "Could not ask dpkg" is
+# 1 too: the usual texts stay, rather than a confident prebuilt advice.
+# AWG_MODULES_DIR and AWG_DKMS_STATE_DIR replace /lib/modules and /var/lib/dkms in tests.
+# Basis - a measurement on 3 nov 2026 (Ubuntu 24.04 arm64, kernel 6.8.0-147-generic -> 6.8.0-149-generic):
+# after the kernel change the VPN does not come up, the dkms recipe cannot run,
+# and a plain second run of the installer brings the module back while keeping
+# the keys and the client profiles.
+awg_prebuilt_needs_rerun() {
+    local k="${1:-$(uname -r)}" q
+    # What decides is the amneziawg registration in DKMS, not the dkms command:
+    # other DKMS modules can bring it, and the dkms recipe builds nothing without
+    # the registration (v6.2.0 review).
+    [[ -d "${AWG_DKMS_STATE_DIR:-/var/lib/dkms}/amneziawg" ]] && return 1
+    if ! q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null); then
+        # dpkg answers "no packages" with code 1 too: do not report it as a failure.
+        local e
+        e=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>&1 >/dev/null || true)
+        [[ "$e" == *"no packages found matching"* ]] \
+            || log_debug "awg_prebuilt_needs_rerun: dpkg-query did not answer, no prebuilt advice given"
+        return 1
+    fi
+    awk '$NF != "not-installed" && $NF != "config-files" {f=1} END {exit !f}' <<<"$q" || return 1
+    find "${AWG_MODULES_DIR:-/lib/modules}/${k}" -name 'amneziawg.ko*' -print -quit 2>/dev/null | grep -q . && return 1
+    return 0
+}
+
+# awg_prebuilt_rerun_hint <log function> : the checked recipe for a server on an
+# ARM prebuilt package after a kernel change. Prints through the given function
+# (log_warn in check, log_error when the repair fails).
+awg_prebuilt_rerun_hint() {
+    local say="${1:-log_warn}"
+    "$say" "The module came as an ARM prebuilt package, and there is none for kernel $(uname -r): this happens after a kernel update. This path installs no DKMS, so the module will not rebuild itself."
+    "$say" "Running the installer again fixes it; the keys and the client profiles are kept:"
+    "$say" "  wget -O install_amneziawg_en.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/install_amneziawg_en.sh"
+    "$say" "  sudo bash install_amneziawg_en.sh"
+    "$say" "The installer asks for a reboot twice; after each one run the same command until it reports a successful finish."
+}
+
 # Master: ensure that the amneziawg kernel module is built and loaded for the running kernel.
 # Idempotent: fast-path returns 0 if the module is already loaded.
 #
@@ -1533,6 +1574,12 @@ ensure_amneziawg_kernel_module() {
     if ! modprobe amneziawg 2>/dev/null; then
         log_error "amneziawg kernel module could not be loaded for kernel ${kernel_ver}."
         log_error "The module is not present in /lib/modules/${kernel_ver}/."
+        # An ARM prebuilt package without dkms: the dkms recipe below cannot run
+        # here (measured 3 nov 2026); the working way is to run the installer again.
+        if awg_prebuilt_needs_rerun "$kernel_ver"; then
+            awg_prebuilt_rerun_hint log_error
+            return 1
+        fi
         log_error "Manual recovery:"
         log_error "  1. apt install -y \"linux-headers-${kernel_ver}\""
         log_error "  2. dkms autoinstall -k \"${kernel_ver}\" && depmod -a"
@@ -2205,7 +2252,11 @@ _awg31_module_probe() (
 # The codes and the order of checks are those of the post stage of the
 # installer's awg31_environment_blocker, but without not_implemented_yet:
 # restore brings back an existing 3.1 installation, it does not issue a new one.
-# Not knowing (architecture, probe) is a refusal, not a pass.
+# Not knowing (architecture, probe) is a refusal, not a pass. 64-bit ARM
+# (arm64, aarch64) passes since v6.2.0, as in the installer gate: the kernel
+# and the module probe decide; the arm code stays with 32-bit ARM and
+# aarch64_be. The function body must match the RU twin byte for byte
+# (test_awg31_restore_environment.bats), so the notes live here.
 awg31_restore_blocker() {
     local arch kver
     arch=$(_awg31_host_arch)
@@ -2213,7 +2264,7 @@ awg31_restore_blocker() {
     kver=$(uname -r)
     [[ -n "$arch" ]] || { printf 'arch_unknown'; return 0; }
     case "$arch" in
-        amd64|x86_64) : ;;
+        amd64|x86_64|arm64|aarch64) : ;;
         arm*|aarch64*) printf 'arm'; return 0 ;;
         *) printf 'arch_unsupported'; return 0 ;;
     esac
@@ -2233,8 +2284,8 @@ awg31_restore_blocker() {
 _awg31_restore_blocker_reason() {
     case "${1-}" in
         arch_unknown)        printf '%s' "the machine architecture could not be determined, and not knowing it is not the same as knowing it fits" ;;
-        arm)                 printf '%s' "the third line is not issued on ARM yet: the architecture has not been measured for it" ;;
-        arch_unsupported)    printf '%s' "architecture '$(_awg31_host_arch)' has not been measured for the third line, the 3.1 profile needs x86_64" ;;
+        arm)                 printf '%s' "the third line is not issued on the '$(_awg31_host_arch)' architecture: of ARM, it has been checked only on arm64 (little-endian aarch64)" ;;
+        arch_unsupported)    printf '%s' "architecture '$(_awg31_host_arch)' has not been measured for the third line, the 3.1 profile needs x86_64 or arm64" ;;
         kernel)              printf '%s' "kernel $(uname -r) is older than 6.7, a second-line module is installed on it" ;;
         tools_old)           printf '%s' "the awg tools are missing or do not understand the third-line parameters (the awg and timeout commands are needed); the fix: apt-get update && apt-get install amneziawg-tools, then apt-get install --only-upgrade amneziawg-tools" ;;
         module_line2)        printf '%s' "the loaded kernel module does not understand the third-line parameters; the fix: apt-get update && apt-get install --only-upgrade amneziawg-dkms, then a reboot" ;;
