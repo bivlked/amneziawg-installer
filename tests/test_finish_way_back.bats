@@ -103,8 +103,9 @@ assert_way_back() {
         [[ "$output" != *--uninstall* ]]
         run finish_output "$f" 2.0 arm
         [ "$status" -eq 0 ]
-        # and the fallback branch this run exists for
+        # and the fallback branch this run exists for, naming the architecture
         [[ "$output" == *"WARN: "* ]]
+        [[ "$output" == *"'armhf'"* ]]
         [[ "$output" != *--uninstall* ]]
     done
 }

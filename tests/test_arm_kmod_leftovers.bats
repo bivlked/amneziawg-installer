@@ -248,7 +248,7 @@ _run_arm_stop() { # installer start-line-regex
 # stop kind: start line of the block and the helper it must ask
 #   here - the fallback stop (#343): _awg_prebuilt_for_running_kernel
 #   all  - the --no-prebuilt refusal: _awg_installed_kmod_pkgs
-#   here31 - the generation 3.1 stop (v6.2.0): _awg_prebuilt_for_running_kernel
+#   here31 - the generation 3.1 stop (v6.2.0): _awg_installed_kmod_pkgs (any kernel)
 _stop_start() { # kind
     case "$1" in
         here) echo '^            local _kmod_here _kmod_rc=0$' ;;
@@ -260,7 +260,7 @@ _stop_start() { # kind
 # stop that asks the wrong helper names the decoy (or nothing) instead.
 _stop_env() { # kind pkg rc
     export LEFT_HERE=amneziawg-kmod-decoy LRC_HERE=0 LEFT_ALL=amneziawg-kmod-decoy LRC_ALL=0
-    if [ "$1" = here ] || [ "$1" = here31 ]; then export LEFT_HERE="$2" LRC_HERE="$3"
+    if [ "$1" = here ]; then export LEFT_HERE="$2" LRC_HERE="$3"
     else export LEFT_ALL="$2" LRC_ALL="$3"; fi
 }
 HOLD_LINE='APT-MARK hold amneziawg-dkms amneziawg'
@@ -300,7 +300,7 @@ HOLD_LINE='APT-MARK hold amneziawg-dkms amneziawg'
         for k in here all here31; do
             _stop_env "$k" "" 2; export HELD=1
             # the helper that is not asked says "nothing": asking it would go on
-            if [ "$k" = all ]; then export LEFT_HERE=""; else export LEFT_ALL=""; fi
+            if [ "$k" = here ]; then export LEFT_ALL=""; else export LEFT_HERE=""; fi
             run _run_arm_stop "$ROOT/$f" "$(_stop_start "$k")"
             [ "$status" -ne 0 ] && [[ "$output" == *"DIE:"*"dpkg -l 'amneziawg-kmod-*'"* ]] \
                 && [[ "$output" != *"apt-get purge"* && "$output" != *CONTINUED* ]] \
@@ -356,7 +356,8 @@ _run_arm_route() { # installer
         export NO_PREBUILT=0 UNAME_M=aarch64
         AWG_PROTOCOL=3.1 run _run_arm_route "$ROOT/$f"
         [ "$status" -eq 0 ] && [[ "$output" == *CONTINUED* ]] \
-            && [[ "$output" != *PREBUILT-TRIED* ]] && [[ "$output" == *ASKED-HERE* ]] \
+            && [[ "$output" != *PREBUILT-TRIED* ]] && [[ "$output" == *ASKED-ALL* ]] \
+            && [[ "$output" != *ASKED-HERE* ]] && [[ "$output" != *REHOLD* ]] \
             && [[ "$output" == *"LOG: "*"DKMS"* ]] \
             || { echo "$f [3.1]: $output"; false; }
         AWG_PROTOCOL=2.0 run _run_arm_route "$ROOT/$f"

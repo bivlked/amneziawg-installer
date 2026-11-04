@@ -15,16 +15,19 @@ setup() {
 
 # _need <library> : run awg_prebuilt_needs_rerun for kernel 6.8.0-149-generic
 # with dpkg-query answering from $KMOD ("name status" lines; KMOD_FAIL=1 = dpkg
-# could not be asked) and dkms present only when DKMS=1. Prints rc=N.
+# could not be asked: it still prints the package line, then fails, so the
+# rc check is what has to stop it), the dkms command present when DKMS=1 and
+# amneziawg registered in DKMS when DKMS_REG=1. Prints rc=N.
 _need() {
     local lib="$1" k="${2:-6.8.0-149-generic}"
-    rm -f "$T/bin/dkms"
+    rm -rf "$T/bin/dkms" "$T/dkmsstate"; mkdir -p "$T/dkmsstate"
     if [ "${DKMS:-0}" = 1 ]; then printf '#!/bin/sh\nexit 0\n' > "$T/bin/dkms"; chmod +x "$T/bin/dkms"; fi
-    KMOD="${KMOD:-}" KMOD_FAIL="${KMOD_FAIL:-0}" AWG_MODULES_DIR="$T/modules" PATH="$T/bin:/usr/bin:/bin" bash -c '
+    if [ "${DKMS_REG:-0}" = 1 ]; then mkdir -p "$T/dkmsstate/amneziawg/1.0.0"; fi
+    KMOD="${KMOD:-}" KMOD_FAIL="${KMOD_FAIL:-0}" AWG_MODULES_DIR="$T/modules" AWG_DKMS_STATE_DIR="$T/dkmsstate" PATH="$T/bin:/usr/bin:/bin" bash -c '
         log() { :; }; log_warn() { :; }; log_error() { :; }; log_debug() { :; }
         source "$1" >/dev/null 2>&1 || true
         dpkg-query() {
-            [ "$KMOD_FAIL" = 1 ] && { echo "dpkg-query: error" >&2; return 2; }
+            [ "$KMOD_FAIL" = 1 ] && { printf "%s\n" "$KMOD"; echo "dpkg-query: error" >&2; return 2; }
             [ -z "$KMOD" ] && { echo "dpkg-query: no packages found matching amneziawg-kmod-*" >&2; return 1; }
             printf "%s\n" "$KMOD"
         }
@@ -46,9 +49,12 @@ PKG="amneziawg-kmod-ubuntu-2404-arm64 install ok installed"
 @test "needs rerun: any of the three conditions missing -> 1 (RU + EN)" {
     local l
     for l in "${LIBS[@]}"; do
-        # dkms present: the dkms way is real there, keep the usual texts
-        DKMS=1 KMOD="$PKG" run _need "$ROOT/$l"
+        # amneziawg registered in DKMS: the dkms way is real there, keep the usual texts
+        DKMS=1 DKMS_REG=1 KMOD="$PKG" run _need "$ROOT/$l"
         [ "$output" = "rc=1" ] || { echo "$l dkms: $output"; return 1; }
+        # purged packages (dpkg lists them as not-installed) do not count
+        KMOD="amneziawg-kmod-x purge ok not-installed" run _need "$ROOT/$l"
+        [ "$output" = "rc=1" ] || { echo "$l purged: $output"; return 1; }
         # no prebuilt package (or only removed ones)
         KMOD="" run _need "$ROOT/$l"
         [ "$output" = "rc=1" ] || { echo "$l nopkg: $output"; return 1; }
@@ -57,6 +63,22 @@ PKG="amneziawg-kmod-ubuntu-2404-arm64 install ok installed"
         # the module for this kernel is on disk: nothing to rerun for
         KMOD="$PKG" run _need "$ROOT/$l" 6.8.0-147-generic
         [ "$output" = "rc=1" ] || { echo "$l module present: $output"; return 1; }
+    done
+}
+
+@test "needs rerun: the dkms command alone (another DKMS module) does not hide the advice (RU + EN)" {
+    local l
+    for l in "${LIBS[@]}"; do
+        DKMS=1 KMOD="$PKG" run _need "$ROOT/$l"
+        [ "$output" = "rc=0" ] || { echo "$l: $output"; return 1; }
+    done
+}
+
+@test "needs rerun: several packages, one of them installed, counts as installed (RU + EN)" {
+    local l
+    for l in "${LIBS[@]}"; do
+        KMOD="$PKG"$'\n'"amneziawg-kmod-old deinstall ok config-files" run _need "$ROOT/$l"
+        [ "$output" = "rc=0" ] || { echo "$l: $output"; return 1; }
     done
 }
 
@@ -89,9 +111,10 @@ PKG="amneziawg-kmod-ubuntu-2404-arm64 install ok installed"
 # replaces the dkms recipe; elsewhere the dkms recipe stays.
 _ensure_fail() {
     local lib="$1"
-    rm -f "$T/bin/dkms"
-    if [ "${DKMS:-0}" = 1 ]; then printf '#!/bin/sh\nexit 1\n' > "$T/bin/dkms"; chmod +x "$T/bin/dkms"; fi
-    KMOD="${KMOD:-}" AWG_MODULES_DIR="$T/modules" PATH="$T/bin:/usr/bin:/bin" bash -c '
+    rm -rf "$T/bin/dkms" "$T/dkmsstate"; mkdir -p "$T/dkmsstate"
+    # DKMS=1: a real DKMS server - the command AND the amneziawg registration
+    if [ "${DKMS:-0}" = 1 ]; then printf '#!/bin/sh\nexit 1\n' > "$T/bin/dkms"; chmod +x "$T/bin/dkms"; mkdir -p "$T/dkmsstate/amneziawg/1.0.0"; fi
+    KMOD="${KMOD:-}" AWG_MODULES_DIR="$T/modules" AWG_DKMS_STATE_DIR="$T/dkmsstate" PATH="$T/bin:/usr/bin:/bin" bash -c '
         log() { echo "LOG: $*"; }; log_warn() { echo "WARN: $*"; }; log_error() { echo "ERR: $*"; }; log_debug() { :; }
         source "$1" >/dev/null 2>&1 || true
         dpkg-query() { [ -z "$KMOD" ] && return 1; printf "%s\n" "$KMOD"; }
@@ -139,7 +162,7 @@ _check_text() {
     printf '#!/usr/bin/env bash\n[ "$1" = -r ] && { echo 6.8.0-149-generic; exit 0; }\nexec /bin/uname "$@"\n' > "$bin/uname"
     chmod +x "$bin"/*
     printf '[Interface]\n[Peer]\n' > "$T/awg/awg0.conf"
-    KMOD="${KMOD:-}" AWG_MODULES_DIR="$T/modules" PATH="$bin:/usr/bin:/bin" \
+    KMOD="${KMOD:-}" AWG_MODULES_DIR="$T/modules" AWG_DKMS_STATE_DIR="$T/nodkms" PATH="$bin:/usr/bin:/bin" \
     AWG_DIR="$T/awg" CONFIG_FILE="$T/awg/awgsetup_cfg.init" SERVER_CONF_FILE="$T/awg/awg0.conf" \
     bash -c '
         log() { echo "LOG: $*"; }; log_warn() { echo "WARN: $*"; }; log_error() { echo "ERR: $*"; }; log_debug() { :; }
@@ -168,4 +191,35 @@ _check_text() {
         [[ "$output" == *"userspace"* ]] || { echo "$m control: $output"; return 1; }
         [[ "$output" != *"sudo bash install_amneziawg"* ]] || { echo "$m control: recipe printed: $output"; return 1; }
     done
+}
+# The arm reason texts name the real architecture (since v6.2.0 the arm code is
+# 32-bit ARM and aarch64_be only, so the text must say which one it saw), and
+# arch_unsupported names both allowed architectures.
+_reason() { # file function code
+    bash -c '
+        _awg31_host_arch() { echo armhf; }
+        uname() { [ "$1" = -r ] && { echo 6.12.0; return 0; }; command uname "$@"; }
+        eval "$(awk -v n="$2" "\$0 == n \"() {\" {on=1} on {print} on && /^}\$/ {exit}" "$1")"
+        "$2" "$3"' _ "$1" "$2" "$3"
+}
+
+@test "arm reason texts name the architecture, arch_unsupported names x86_64 and arm64 (RU + EN)" {
+    local f fn n=0
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        for fn in _awg31_blocker_message _awg31_fallback_reason; do
+            run _reason "$ROOT/$f" "$fn" arm
+            [[ "$output" == *"'armhf'"* ]] || { echo "$f $fn arm: $output"; return 1; }
+            run _reason "$ROOT/$f" "$fn" arch_unsupported
+            [[ "$output" == *"x86_64"*"arm64"* ]] || { echo "$f $fn arch_unsupported: $output"; return 1; }
+            n=$((n + 1))
+        done
+    done
+    for f in awg_common.sh awg_common_en.sh; do
+        run _reason "$ROOT/$f" _awg31_restore_blocker_reason arm
+        [[ "$output" == *"'armhf'"* ]] || { echo "$f restore arm: $output"; return 1; }
+        run _reason "$ROOT/$f" _awg31_restore_blocker_reason arch_unsupported
+        [[ "$output" == *"x86_64"*"arm64"* ]] || { echo "$f restore arch_unsupported: $output"; return 1; }
+        n=$((n + 1))
+    done
+    [ "$n" -eq 6 ]
 }

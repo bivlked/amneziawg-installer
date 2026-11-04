@@ -931,3 +931,20 @@ _baseline() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"PASS: таблицы клиентов и хостов в ADVANCED собраны из данных"* ]]
 }
+
+# The two footnote checks for 64-bit ARM need their own cases: on realistic gate
+# mutations the per-row check fires first, so these would stay unexercised.
+# Each mutation makes arm64 differ from x86_64 only at a kernel no stock row has.
+@test "the footnote check '64-bit ARM gets 3.1 from the threshold up' catches a deviation at 99.x" {
+    _sub install_amneziawg.sh '    arch="${arch//[[:space:]]/}"' $'    arch="${arch//[[:space:]]/}"\n    [[ "$arch" == arm64 && "$kver" == 99.* ]] && { printf \'kernel\'; return 0; }'
+    run _check
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"на 64-битном ARM с ядром 99.0.0 ответ не 3.1"* ]]
+}
+
+@test "the footnote check '64-bit ARM below the threshold hears kernel' catches a deviation there" {
+    _sub install_amneziawg.sh '    arch="${arch//[[:space:]]/}"' $'    arch="${arch//[[:space:]]/}"\n    [[ "$arch" == arm64 && "$kver" == 6.6.* ]] && return 0'
+    run _check
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"на 64-битном ARM с ядром 6.6.0 ответ не kernel"* ]]
+}
