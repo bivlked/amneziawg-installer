@@ -121,10 +121,52 @@ CONF() { echo "$TMPD/apt.conf.d/99zz-amneziawg-installer-noretries"; }
     stub_apt_config "R='0'"
     for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
         rm -f "$(CONF)"
-        run_guard "$f" '_apt_noretry_enable; _apt_noretry_disable; echo "set=$_apt_noretry_set"'
+        run_guard "$f" '_apt_noretry_enable; [ -f "$APT_NORETRY_CONF" ] && echo created; _apt_noretry_disable; echo "set=$_apt_noretry_set"'
         [ "$status" -eq 0 ]
-        [ "$output" = "set=0" ]
+        [ "$output" = "$(printf 'created\nset=0')" ]
         [ ! -e "$(CONF)" ]
+    done
+}
+
+@test "apt-noretry: enable sweeps a temporary file left by a killed run" {
+    stub_apt_config "R='0'"
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        rm -f "$TMPD/apt.conf.d/"*
+        printf 'x\n' > "$(CONF).tmp.99999"
+        run_guard "$f" '_apt_noretry_enable'
+        [ "$status" -eq 0 ]
+        [ -f "$(CONF)" ]
+        [ ! -e "$(CONF).tmp.99999" ]
+    done
+}
+
+@test "apt-noretry: enable warns when apt-config is missing" {
+    # PATH without apt-config: only the stub dir and the bare tools bash needs.
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        rm -f "$(CONF)" "$WARNED"
+        mkdir -p "$TMPD/nobin"
+        for t in rm mv printf awk; do
+            p=$(command -v "$t") && [ -x "$p" ] && ln -sf "$p" "$TMPD/nobin/$t"
+        done
+        run bash -c '
+            PATH="'"$TMPD"'/nobin"
+            log_warn() { printf "%s\n" "$*" >> "'"$WARNED"'"; }
+            die() { echo died; exit 1; }
+            APT_NORETRY_CONF="'"$TMPD"'/apt.conf.d/99zz-amneziawg-installer-noretries"
+            _apt_noretry_set=0
+            eval "$(awk -v f=_apt_noretry_enable '\''$0 ~ "^" f "\\(\\) \\{" {p=1} p {print} p && /^\}$/ {exit}'\'' "'"$f"'")"
+            _apt_noretry_enable
+        '
+        [ "$status" -eq 0 ]
+        [ -f "$(CONF)" ]
+        grep -q 'apt-config' "$WARNED"
+    done
+}
+
+@test "apt-noretry: the warning advice itself downloads without retries" {
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        extract_func "$f" _apt_noretry_enable \
+            | grep -qF 'apt-get -o Acquire::Retries=0 update && apt-get -o Acquire::Retries=0 install --only-upgrade apt'
     done
 }
 
@@ -137,7 +179,7 @@ CONF() { echo "$TMPD/apt.conf.d/99zz-amneziawg-installer-noretries"; }
     done
 }
 
-@test "apt-noretry: the path sorts after other apt.conf.d files" {
+@test "apt-noretry: the path is the fixed 99zz name, read after the others" {
     for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
         grep -qx 'APT_NORETRY_CONF="/etc/apt/apt.conf.d/99zz-amneziawg-installer-noretries"' "$f"
     done
@@ -154,14 +196,32 @@ CONF() { echo "$TMPD/apt.conf.d/99zz-amneziawg-installer-noretries"; }
     done
 }
 
-@test "apt-noretry: the exit cleanup removes it" {
+@test "apt-noretry: the real exit cleanup removes the file" {
+    stub_apt_config "R='0'"
     for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
-        extract_func "$f" _install_cleanup | grep -q '_apt_noretry_disable'
+        rm -f "$(CONF)"
+        run bash -c '
+            PATH="'"$STUBS"':$PATH"
+            TMPDIR="'"$TMPD"'"
+            log() { :; }; log_warn() { :; }; die() { echo died; exit 1; }
+            APT_NORETRY_CONF="'"$TMPD"'/apt.conf.d/99zz-amneziawg-installer-noretries"
+            _apt_noretry_set=0; _install_cleaned=0; _install_temp_files=()
+            for fn in _apt_noretry_enable _apt_noretry_disable _install_cleanup; do
+                eval "$(awk -v f="$fn" '\''$0 ~ "^" f "\\(\\) \\{" {p=1} p {print} p && /^\}$/ {exit}'\'' "'"$f"'")"
+            done
+            _apt_noretry_enable
+            [ -f "$APT_NORETRY_CONF" ] && echo created
+            _install_cleanup
+        '
+        [ "$status" -eq 0 ]
+        [ "$output" = "created" ]
+        [ ! -e "$(CONF)" ]
     done
 }
 
 @test "apt-noretry: uninstall removes a copy left by a killed run" {
     for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
-        extract_func "$f" step_uninstall | grep -q '"\$APT_NORETRY_CONF"'
+        extract_func "$f" step_uninstall \
+            | grep -qxF '    rm -f "$APT_NORETRY_CONF" "$APT_NORETRY_CONF".tmp.* 2>/dev/null || true'
     done
 }

@@ -515,11 +515,16 @@ die()       { log_error "CRITICAL ERROR: $1"; log_error "Installation aborted. L
 # upgrade and, on a run resumed after a reboot, steps 2-4. So for the length of
 # EVERY run retries are switched off by a file in apt.conf.d, and the file is
 # removed on exit (_install_cleanup). The price: apt will not retry a download
-# by itself on a network glitch; the step 1 upgrade has its own retry. If a run
-# is killed (SIGKILL, a reboot mid-run), the file stays until the next run or
-# --uninstall and does nothing but forbid retries.
+# by itself on a network glitch: the installer retries the step 1 upgrade, the
+# rest stops the install, and running it again resumes at the same step. If a
+# run is killed (SIGKILL, a power loss), the file stays until the next run that
+# reaches the steps, or --uninstall, and does nothing but forbid retries.
 _apt_noretry_enable() {
     local tmp="${APT_NORETRY_CONF}.tmp.$$" eff=""
+    # A killed run's temporary file: apt would complain about it on every
+    # command. A second installer instance never gets here - the flock in
+    # initialize_setup stops it.
+    rm -f "$APT_NORETRY_CONF".tmp.* 2>/dev/null || true
     if ! printf '%s\n' \
             '// amneziawg-installer: temporary, for the length of the install (CVE-2026-109518).' \
             '// The installer removes this file on exit.' \
@@ -534,8 +539,10 @@ _apt_noretry_enable() {
     if command -v apt-config >/dev/null 2>&1; then
         eff=$(apt-config shell R Acquire::Retries 2>/dev/null) || eff=""
         if [[ "$eff" != "R='0'" ]]; then
-            log_warn "apt still retries downloads (Acquire::Retries: ${eff:-not read}): another apt setting overrides $APT_NORETRY_CONF. The CVE-2026-109518 protection is not in effect; upgrade apt (apt-get install --only-upgrade apt) or remove that setting."
+            log_warn "apt still retries downloads (Acquire::Retries: ${eff:-not read}): another apt setting overrides $APT_NORETRY_CONF. The CVE-2026-109518 protection is not in effect; remove that setting or first upgrade apt without retries: apt-get -o Acquire::Retries=0 update && apt-get -o Acquire::Retries=0 install --only-upgrade apt"
         fi
+    else
+        log_warn "apt-config not found: cannot confirm that the apt retry ban (CVE-2026-109518) is in effect."
     fi
 }
 
