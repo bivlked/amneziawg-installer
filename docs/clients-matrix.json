@@ -22,13 +22,13 @@
       "id": "amnezia-vpn",
       "name": {"ru": "Amnezia VPN (флагман, все платформы)", "en": "Amnezia VPN (flagship, all platforms)"},
       "support": "yes",
-      "version": "5.0.3.0 (GitHub), 5.0.3.1 (Google Play)",
+      "version": "5.1.0.6 (GitHub, Google Play), 5.1.0 (App Store)",
       "since": "5.0.1.5",
       "since_date": "2026-08-21",
       "where": {"ru": "GitHub, магазины; в российском App Store нет; Windows - по прямой ссылке со страницы релизов", "en": "GitHub, app stores; not in the Russian App Store; on Windows use the direct link from the releases page"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/amnezia-vpn/amnezia-client/releases"},
-      "checked_at": "2026-10-15"
+      "checked_at": "2026-11-05"
     },
     {
       "id": "amneziawg-android",
@@ -40,7 +40,7 @@
       "where": {"ru": "Google Play, страница релизов", "en": "Google Play, releases page"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/amnezia-vpn/amneziawg-android"},
-      "checked_at": "2026-10-15"
+      "checked_at": "2026-11-05"
     },
     {
       "id": "amneziawg-apple",
@@ -52,7 +52,7 @@
       "where": {"ru": "App Store, в том числе российский", "en": "App Store, the Russian one included"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://apps.apple.com/app/amneziawg/id6478942365"},
-      "checked_at": "2026-10-15"
+      "checked_at": "2026-11-05"
     },
     {
       "id": "defaultvpn",
@@ -65,7 +65,7 @@
       "where": {"ru": "App Store, в том числе российский", "en": "App Store, the Russian one included"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://apps.apple.com/ru/app/defaultvpn/id6744725017"},
-      "checked_at": "2026-10-21"
+      "checked_at": "2026-11-05"
     },
     {
       "id": "amneziawg-windows",
@@ -77,7 +77,7 @@
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/amnezia-vpn/amneziawg-windows-client/releases"},
-      "checked_at": "2026-10-15"
+      "checked_at": "2026-11-05"
     },
     {
       "id": "amneziawg-windows-romikb",
@@ -89,7 +89,7 @@
       "where": {"ru": "страница релизов проекта, файлы с windows7 в имени", "en": "project releases page, files with windows7 in the name"},
       "basis": "build-pin",
       "evidence": {"url": "https://github.com/RomikB/amneziawg-windows-client", "ref": "go.mod at v3.1.1: amnezia-vpn/amneziawg-go/v3 v3.1.20260814"},
-      "checked_at": "2026-10-15"
+      "checked_at": "2026-11-05"
     },
     {
       "id": "wg-tunnel-android",
@@ -101,7 +101,7 @@
       "where": "Google Play, IzzyOnDroid, APK",
       "basis": "build-pin",
       "evidence": {"url": "https://github.com/wgtunnel/core/blob/1.9.9/backend/native/backend/go.mod", "ref": "gradle/libs.versions.toml at 5.8.2: core 1.9.9; core go.mod at 1.9.9: amneziawg-go/v3 => wgtunnel/amneziawg-go c434976f60d4"},
-      "checked_at": "2026-10-21"
+      "checked_at": "2026-11-05"
     },
     {
       "id": "wg-tunnel-desktop",
@@ -114,34 +114,34 @@
       "where": {"ru": "страница релизов проекта, choco, apt, AUR", "en": "project releases page, choco, apt, AUR"},
       "basis": "build-pin",
       "evidence": {"url": "https://github.com/wgtunnel/desktop/blob/v2.4.1/gradle/libs.versions.toml", "ref": "gradle/libs.versions.toml at v2.4.1: core 1.9.9; core go.mod at 1.9.9: wgtunnel/amneziawg-go c434976f60d4; the first release 2.0.0 already pins engine b838c6a with header_protection_key, random_trailers and disable_cookies"},
-      "checked_at": "2026-10-21"
+      "checked_at": "2026-11-05"
     },
     {
       "id": "mihomo",
       "name": {"ru": "mihomo (ядро для Clash Verge Rev и других)", "en": "mihomo (core for Clash Verge Rev and others)"},
       "support": "yes",
-      "version": "v1.19.32",
-      "version_date": "2026-09-30",
+      "version": "v1.19.33",
+      "version_date": "2026-10-21",
       "since": "v1.19.30",
       "since_note": {"ru": "3.1 включается только строкой `version: 3` в `amnezia-wg-option`", "en": "3.1 is on only with `version: 3` in `amnezia-wg-option`"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/MetaCubeX/mihomo/blob/v1.19.32/adapter/outbound/wireguard.go", "ref": "adapter/outbound/wireguard.go at v1.19.32: Version == 3 selects the v3 device; go.mod: metacubex/amneziawg-go 0c1c6f40ecd7"},
-      "checked_at": "2026-10-15"
+      "evidence": {"url": "https://github.com/MetaCubeX/mihomo/blob/v1.19.33/adapter/outbound/wireguard.go", "ref": "adapter/outbound/wireguard.go at v1.19.33: Version == 3 selects the v3 device, header-protection-key is decoded from base64 to hex, content-padding-addition is passed on; go.mod: metacubex/amneziawg-go 0c1c6f40ecd7"},
+      "checked_at": "2026-11-05"
     },
     {
       "id": "flclash",
       "name": {"ru": "FlClash (Android, Windows, macOS, Linux, сторонний)", "en": "FlClash (Android, Windows, macOS, Linux, third-party)"},
       "support": "yes",
-      "version": "v0.9.1",
-      "version_date": "2026-10-17",
+      "version": "v0.9.3",
+      "version_date": "2026-11-04",
       "since": "v0.8.97",
       "since_date": "2026-09-10",
       "since_note": {"ru": "ядро mihomo: нужна строка `version: 3` в `amnezia-wg-option`", "en": "mihomo core: needs `version: 3` in `amnezia-wg-option`"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/chen08209/FlClash", "ref": "submodule core/Clash.Meta at v0.9.1: chen08209/Clash.Meta 8380d0e7462f, the same as at v0.9.0 = mihomo v1.19.32 plus 2 commits, go.mod: metacubex/amneziawg-go 0c1c6f40ecd7; HeaderProtectionKey first appears in the core at v0.8.97, v0.8.96 has none"},
-      "checked_at": "2026-10-21"
+      "evidence": {"url": "https://github.com/chen08209/FlClash", "ref": "submodule core/Clash.Meta at v0.9.3: chen08209/Clash.Meta 024245dc72bc = mihomo v1.19.33 plus 9 commits, go.mod: metacubex/amneziawg-go 0c1c6f40ecd7, adapter/outbound/wireguard.go decodes a base64 header-protection-key to hex; HeaderProtectionKey first appears in the core at v0.8.97, v0.8.96 has none"},
+      "checked_at": "2026-11-05"
     },
     {
       "id": "throne",
@@ -151,35 +151,38 @@
       "version_date": "2026-09-29",
       "since": "1.3.0",
       "since_date": "2026-09-17",
-      "since_note": {"ru": "в 1.3.x паддинг части пакетов урезается до свободного места в буфере; исправлено в пре-релизах 1.4.0-beta.1 - beta.3", "en": "in 1.3.x the padding of some packets is cut to the room left in the buffer; fixed in pre-releases 1.4.0-beta.1 to beta.3"},
+      "since_note": {"ru": "в 1.3.x паддинг части пакетов урезается до свободного места в буфере; исправлено в пре-релизах 1.4.0 (beta.1 - beta.6)", "en": "in 1.3.x the padding of some packets is cut to the room left in the buffer; fixed in the 1.4.0 pre-releases (beta.1 to beta.6)"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/throneproj/Throne", "ref": "core/go.mod at 1.3.2: throneproj/wireguard-go f60e4eda0d08; 1.4.0-beta.1 and beta.2 pin 3517ea9271e4 with padding fix ca68c0e; 1.4.0-beta.3 pins 98b1170bc9f0, which contains ca68c0e"},
-      "checked_at": "2026-10-21"
+      "evidence": {"url": "https://github.com/throneproj/Throne", "ref": "core/go.mod at 1.3.2: throneproj/wireguard-go f60e4eda0d08; 1.4.0-beta.1 and beta.2 pin 3517ea9271e4 with padding fix ca68c0e; beta.3 pins 98b1170bc9f0 and beta.4 de3e4a28dbfe, both contain ca68c0e; beta.5 and beta.6 pin e11787583013, a rebased line with the same fix as 8da5ee3"},
+      "checked_at": "2026-11-05"
     },
     {
       "id": "lxbox",
       "name": {"ru": "L×Box (Android, сторонний)", "en": "L×Box (Android, third-party)"},
       "support": "yes",
-      "version": "v2.25.16",
-      "version_date": "2026-10-19",
+      "version": "v2.25.19",
+      "version_date": "2026-11-04",
       "since": "v2.23.0",
       "since_date": "2026-09-05",
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/Leadaxe/LxBox", "ref": "app/android/libbox.version at v2.25.16: sing-box-lx v1.14.3-lx.21, whose wireguard-go submodule 8a53421edf7e (the same as in lx.18) handles header_protection_key and content_padding_addition; since from the v2.23.0 release notes (AmneziaWG 3.0/3.1, HeaderProtectionKey and ContentPaddingAddition import)"},
-      "checked_at": "2026-10-21"
+      "evidence": {"url": "https://github.com/Leadaxe/LxBox", "ref": "app/android/libbox.version at v2.25.19: sing-box-lx v1.14.4-lx.31, whose wireguard-go submodule 9115d9022cd0 (8a53421edf7e plus 5 commits) handles header_protection_key and content_padding_addition; since from the v2.23.0 release notes (AmneziaWG 3.0/3.1, HeaderProtectionKey and ContentPaddingAddition import)"},
+      "checked_at": "2026-11-05"
     },
     {
       "id": "zedsecure",
       "name": {"ru": "ZedSecure (Android, сторонний)", "en": "ZedSecure (Android, third-party)"},
       "support": "yes",
-      "version": "v3.1.6",
-      "version_date": "2026-10-13",
+      "version": "v3.1.8",
+      "version_date": "2026-11-02",
+      "since": "v3.1.8",
+      "since_date": "2026-11-02",
+      "since_note": {"ru": "в более ранних версиях профили 3.1 не подключались: ключ HeaderProtectionKey из base64 в hex переводится только с v3.1.8", "en": "earlier versions did not connect 3.1 profiles: a base64 HeaderProtectionKey is converted to hex only since v3.1.8"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/CluvexStudio/ZedSecure", "ref": "tools/cores.txt at v3.1.6: zedcore-r2, which pins amnezia-vpn/amneziawg-go b5928efb6ca1 (v3.1.20260828)"},
-      "checked_at": "2026-10-15"
+      "evidence": {"url": "https://github.com/CluvexStudio/ZedSecure/releases/tag/v3.1.8", "ref": "tools/cores.txt at v3.1.8: zedcore-r6 and xray-r5, both built from ZedSecure-Cores c2c5581, whose pins.txt pins CluvexStudio/Xray-core 7b4c3ceb (contains b1831b2, proxy/wireguard/awg.go converts a base64 header_protection_key to hex) and amnezia-vpn/amneziawg-go b5928efb6ca1 (v3.1.20260828); v3.1.6 used zedcore-r2 and xray-r2 (Xray-core dfc848c5, without b1831b2)"},
+      "checked_at": "2026-11-05"
     },
     {
       "id": "nm-amneziawg",
@@ -192,7 +195,7 @@
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/vovochka404/network-manager-amneziawg/releases/tag/v0.9.12"},
-      "checked_at": "2026-10-15"
+      "checked_at": "2026-11-05"
     },
     {
       "id": "gluetun",
@@ -201,47 +204,47 @@
       "version": {"ru": "образ latest из master; в теге v3.41.3 AmneziaWG нет", "en": "latest image from master; tag v3.41.3 has no AmneziaWG"},
       "since": {"ru": "master", "en": "master"},
       "since_date": "2026-09-26",
-      "since_note": {"ru": "движок 3.0: строк RandomTrailers и DisableCookies не читает, а профиль этого установщика их и не пишет", "en": "a 3.0 engine: it does not read RandomTrailers and DisableCookies lines, and this installer's profile does not write them"},
+      "since_note": {"ru": "движок 3.0: строк RandomTrailers и DisableCookies не читает, а профиль этого установщика их и не пишет; ключ HeaderProtectionKey ждёт в hex (64 символа), а профиль этого установщика пишет base64: ключ нужно перевести", "en": "a 3.0 engine: it does not read RandomTrailers and DisableCookies lines, and this installer's profile does not write them; it expects HeaderProtectionKey as 64 hex characters, while this installer's profile writes base64: the key has to be converted"},
       "where": {"ru": "Docker Hub, тег latest", "en": "Docker Hub, tag latest"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/qdm12/gluetun", "ref": "go.mod at master ded7fd059ca0: amnezia-vpn/amneziawg-go/v3 v3.0.3"},
-      "checked_at": "2026-10-15"
+      "evidence": {"url": "https://github.com/qdm12/gluetun/blob/151fb7ad3689/internal/configuration/settings/amneziawg.go", "ref": "go.mod at master 151fb7ad3689: amnezia-vpn/amneziawg-go/v3 v3.0.3; internal/configuration/settings/amneziawg.go at 151fb7ad3689: validateHeaderProtectionKey decodes the key with hex.DecodeString and wants 32 bytes; image latest (ed7af79) confirmed working with this installer's .conf after the key was converted to hex, discussion #380 of this repository, 2026-11-05"},
+      "checked_at": "2026-11-05"
     },
     {
       "id": "hiddify",
       "name": "Hiddify",
       "support": "no",
-      "version": "4.1.1",
-      "version_date": "2026-03-05",
+      "version": {"ru": "v5.5.5; AmneziaWG появился, но импорт .conf и ссылок не читает HeaderProtectionKey и ContentPaddingAddition", "en": "v5.5.5; AmneziaWG is in, but the .conf and link import does not read HeaderProtectionKey and ContentPaddingAddition"},
+      "version_date": "2026-11-04",
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/hiddify/hiddify-app", "ref": "dependencies.properties at v4.1.1: core 4.1.0, which pins amnezia-vpn/amneziawg-go v0.2.16; hiddify-core v5.0.0 pins hiddifydeveloper/amneziawg-go 70b344f2f78b, no header_protection_key in its uapi.go"},
-      "checked_at": "2026-10-15"
+      "evidence": {"url": "https://github.com/hiddify/ray2sing/blob/ed1a4b12297992de89adf2a7a91ce5ec397d4819/ray2sing/awg.go", "ref": "submodule hiddify-core at v5.5.5: hiddify-core v5.5.5 ad83d7570c06, which takes ray2sing from submodule ed1a4b122979: ray2sing/awg.go AWGSingboxTxt ([Interface] .conf) and AWGSingbox (awg://, wg://, wireguard://) read Jc to I5 only; hiddify-sing-box 1614c5edb52d protocol/awg/endpoint.go passes header_protection_key to the engine as is, option/awg.go documents it as 64 hex digits; engine hiddify/amneziawg-go a529f73d0905 parses header_protection_key with FromHex and knows content_padding_addition"},
+      "checked_at": "2026-11-05"
     },
     {
       "id": "keeneticos",
       "name": {"ru": "KeeneticOS (штатная прошивка)", "en": "KeeneticOS (stock firmware)"},
       "support": "dev-channel",
-      "version": "5.2 Beta 1",
-      "version_date": "2026-10-19",
+      "version": "5.2 Beta 2",
+      "version_date": "2026-10-27",
       "since": "5.2 Alpha 11",
       "since_date": "2026-09-25",
       "since_note": {"ru": "в стабильной 5.1 нет", "en": "not in stable 5.1"},
       "where": {"ru": "канал разработки Keenetic", "en": "Keenetic development channel"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://forum.keenetic.com/topic/26598-changelog-52/"},
-      "checked_at": "2026-10-21"
+      "checked_at": "2026-11-05"
     },
     {
       "id": "awg-manager",
       "name": {"ru": "AWG Manager (Keenetic, сторонний)", "en": "AWG Manager (Keenetic, third-party)"},
       "support": "yes",
-      "version": "v2.19.19",
-      "version_date": "2026-10-20",
+      "version": "v2.19.24",
+      "version_date": "2026-11-04",
       "since": {"ru": "штатным модулем на KeeneticOS 5.2 Alpha 11 и новее; на других прошивках - своим модулем ядра или встроенным sing-box (нужны Entware и компонент WireGuard)", "en": "with the stock module on KeeneticOS 5.2 Alpha 11 and newer; on other firmware with its own kernel module or its bundled sing-box (needs Entware and the WireGuard component)"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/hoaxisr/awg-manager/blob/v2.19.19/CHANGELOG.md", "ref": "internal/singbox/installer/embedded.go at v2.19.19: sing-box 1.15.0-alpha.12-awgm.33 (hoaxisr/amnezia-box), whose go.mod replaces amneziawg-go/v3 with hoaxisr/amneziawg-go v3.1.0-awgm.3; CHANGELOG 2.19.10: 3.0/3.1 on KeeneticOS 5.2 Alpha 11+; 2.18.0: own module 3.1.20260906"},
-      "checked_at": "2026-10-21"
+      "evidence": {"url": "https://github.com/hoaxisr/awg-manager/blob/v2.19.24/CHANGELOG.md", "ref": "internal/singbox/installer/embedded.go at v2.19.24: sing-box 1.15.0-alpha.13-awgm.35 (hoaxisr/amnezia-box, release target ab29892ee951), whose go.mod replaces amneziawg-go/v3 with hoaxisr/amneziawg-go v3.1.0-awgm.3; CHANGELOG 2.19.10: 3.0/3.1 on KeeneticOS 5.2 Alpha 11+; 2.18.0: own module 3.1.20260906"},
+      "checked_at": "2026-11-05"
     },
     {
       "id": "openwrt",
@@ -250,7 +253,7 @@
       "version": {"ru": "пакета нет; PR openwrt/packages #30492 и #30493 открыты, одобрения мейнтейнеров нет", "en": "no package; openwrt/packages PRs #30492 and #30493 are open, without maintainer approval"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/openwrt/packages/pull/30492"},
-      "checked_at": "2026-10-15"
+      "checked_at": "2026-11-05"
     },
     {
       "id": "awg-openwrt",
@@ -263,7 +266,7 @@
       "where": {"ru": "страница релизов проекта, фид проекта", "en": "project releases page, project feed"},
       "basis": "build-pin",
       "evidence": {"url": "https://github.com/Slava-Shchipunov/awg-openwrt/releases", "ref": "x86_64 packages of v25.12.6: kmod-amneziawg 6.12.112.3.1.20260906-r1, amneziawg-tools 3.1.20260812-r1; of v24.10.8: kmod-amneziawg 6.6.144.3.1.20260906-r1, amneziawg-tools 3.1.20260812-r1"},
-      "checked_at": "2026-10-21"
+      "checked_at": "2026-11-05"
     },
     {
       "id": "glinet",
@@ -272,18 +275,18 @@
       "version": {"ru": "AmneziaWG 2.0 с прошивки 4.9; сроков 3.x нет", "en": "AmneziaWG 2.0 since firmware 4.9; no date for 3.x"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://forum.gl-inet.com/t/amneziawg-3-0-protocol-support/70770"},
-      "checked_at": "2026-10-15"
+      "checked_at": "2026-11-05"
     },
     {
       "id": "amneziawg-mikrotik-c",
       "name": {"ru": "amneziawg-mikrotik-c (MikroTik, сторонний)", "en": "amneziawg-mikrotik-c (MikroTik, third-party)"},
       "support": "yes",
-      "version": "v1.4.3",
-      "version_date": "2026-10-08",
+      "version": "v1.4.5",
+      "version_date": "2026-10-30",
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/timbrs/amneziawg-mikrotik-c"},
-      "checked_at": "2026-10-15"
+      "checked_at": "2026-11-05"
     },
     {
       "id": "amneziawg-mikrotik",
@@ -295,7 +298,7 @@
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/catesin/AmneziaWG-MikroTik"},
-      "checked_at": "2026-10-15"
+      "checked_at": "2026-11-05"
     }
   ]
 }
