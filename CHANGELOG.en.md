@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- **Protection against the apt vulnerability CVE-2026-109518 for the length of the install.** The bug lets anyone who can tamper with the HTTP traffic between the server and the package mirror (a malicious mirror or proxy included) slip in an unsigned package and run it as root. It only works when apt retries a package download, and by default apt retries up to three times. A fixed apt is already out, but provider images will carry the old one for a long while, and that is the apt that downloads packages during the install. So for the length of every run, a resume after a reboot included, the installer switches download retries off with the file `/etc/apt/apt.conf.d/99zz-amneziawg-installer-noretries` and deletes it on exit. If retries are still on because of another apt setting, the installer warns about it. The one cost: on a network glitch apt will not retry a download by itself; the system upgrade is retried by the installer instead. A file left behind by an interrupted run is removed by the next run or by `--uninstall`. On a server that is already installed, upgrading apt with a regular `apt-get upgrade` is enough.
+
 ## [6.2.0] - 2026-11-04
 
 **v6.2.0** - AmneziaWG 3.1 on 64-bit ARM: ARM64 servers get the 3.1 profile like x86_64, with a module that rebuilds itself on a kernel change. Plus a working recipe for servers on a prebuilt ARM module after a kernel update.

@@ -46,6 +46,10 @@ AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
 BOOT_CRITICAL_SNAPSHOT_FILE="$AWG_DIR/boot-critical.pkgs"
+# Temporary ban on apt download retries while the installer runs
+# (CVE-2026-109518, see _apt_noretry_enable). 99zz so that it is read last.
+APT_NORETRY_CONF="/etc/apt/apt.conf.d/99zz-amneziawg-installer-noretries"
+_apt_noretry_set=0
 LOG_FILE="$AWG_DIR/install_amneziawg.log"
 KEYS_DIR="$AWG_DIR/keys"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -279,6 +283,8 @@ _install_cleanup() {
     fi
     # Clean up temporary files from awg_common.sh (if already sourced)
     type _awg_cleanup &>/dev/null && _awg_cleanup
+    # The apt retry ban lives only while the installer runs.
+    declare -F _apt_noretry_disable >/dev/null && _apt_noretry_disable
 }
 # On INT/TERM the cleanup used to run but the script did NOT exit - execution
 # continued past the interrupted command (dangerous mid apt/dpkg/config edits)
@@ -500,6 +506,44 @@ log_warn()  { log_msg "WARN" "$1"; }
 log_error() { log_msg "ERROR" "$1"; }
 log_debug() { if [[ "$VERBOSE" -eq 1 ]]; then log_msg "DEBUG" "$1"; fi; }
 die()       { log_error "CRITICAL ERROR: $1"; log_error "Installation aborted. Log: $LOG_FILE"; exit 1; }
+
+# CVE-2026-109518 (apt, 4 nov 2026): an attacker on the HTTP path between apt
+# and the mirror can get an unsigned package installed as root, but only when
+# apt RETRIES a package download (Acquire::Retries above 0, 3 by default).
+# A fixed apt is out, yet provider images keep the old one for a long time, and
+# that is the apt that downloads our packages: cleanup_system, the step 1
+# upgrade and, on a run resumed after a reboot, steps 2-4. So for the length of
+# EVERY run retries are switched off by a file in apt.conf.d, and the file is
+# removed on exit (_install_cleanup). The price: apt will not retry a download
+# by itself on a network glitch; the step 1 upgrade has its own retry. If a run
+# is killed (SIGKILL, a reboot mid-run), the file stays until the next run or
+# --uninstall and does nothing but forbid retries.
+_apt_noretry_enable() {
+    local tmp="${APT_NORETRY_CONF}.tmp.$$" eff=""
+    if ! printf '%s\n' \
+            '// amneziawg-installer: temporary, for the length of the install (CVE-2026-109518).' \
+            '// The installer removes this file on exit.' \
+            'Acquire::Retries "0";' > "$tmp" 2>/dev/null \
+        || ! mv -f "$tmp" "$APT_NORETRY_CONF" 2>/dev/null; then
+        rm -f "$tmp" 2>/dev/null
+        die "Could not write $APT_NORETRY_CONF (the apt retry ban against CVE-2026-109518). Check that /etc/apt/apt.conf.d is writable."
+    fi
+    _apt_noretry_set=1
+    # Someone else's setting read later (APT_CONFIG, a file named after ours)
+    # can bring retries back: say so, but do not stop.
+    if command -v apt-config >/dev/null 2>&1; then
+        eff=$(apt-config shell R Acquire::Retries 2>/dev/null) || eff=""
+        if [[ "$eff" != "R='0'" ]]; then
+            log_warn "apt still retries downloads (Acquire::Retries: ${eff:-not read}): another apt setting overrides $APT_NORETRY_CONF. The CVE-2026-109518 protection is not in effect; upgrade apt (apt-get install --only-upgrade apt) or remove that setting."
+        fi
+    fi
+}
+
+_apt_noretry_disable() {
+    [[ "$_apt_noretry_set" -eq 1 ]] || return 0
+    rm -f "$APT_NORETRY_CONF" 2>/dev/null || true
+    _apt_noretry_set=0
+}
 
 # ==============================================================================
 # apt-get update wrapper that tolerates 404s only for source packages (deb-src).
@@ -5188,6 +5232,8 @@ step_uninstall() {
         2>/dev/null || true
     rm -f /var/log/amneziawg-ensure-module.log* 2>/dev/null || true
     rm -rf /var/lib/amneziawg /run/amneziawg 2>/dev/null || true
+    # The apt retry ban (CVE-2026-109518) left behind by a killed run.
+    rm -f "$APT_NORETRY_CONF" "$APT_NORETRY_CONF".tmp.* 2>/dev/null || true
     # The CVE-2026-98432 guard: unit, rule and helper. stop runs apart from the
     # unit in case the unit is already off while the rule stayed.
     log "Removing the CVE-2026-98432 guard (amneziawg-ipopts-guard)..."
@@ -9305,6 +9351,9 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
 fi
 
 initialize_setup
+# Before the first package download of this run (cleanup_system in step 1 and,
+# on a resumed run, steps 2-4): CVE-2026-109518.
+_apt_noretry_enable
 
 while (( current_step < 99 )); do
     log "Executing step $current_step..."

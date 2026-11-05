@@ -44,6 +44,10 @@ AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
 BOOT_CRITICAL_SNAPSHOT_FILE="$AWG_DIR/boot-critical.pkgs"
+# Временный запрет повторов скачивания apt на время работы установщика
+# (CVE-2026-109518, см. _apt_noretry_enable). 99zz - чтобы читаться последним.
+APT_NORETRY_CONF="/etc/apt/apt.conf.d/99zz-amneziawg-installer-noretries"
+_apt_noretry_set=0
 LOG_FILE="$AWG_DIR/install_amneziawg.log"
 KEYS_DIR="$AWG_DIR/keys"
 SERVER_CONF_FILE="/etc/amnezia/amneziawg/awg0.conf"
@@ -268,6 +272,8 @@ _install_cleanup() {
     fi
     # Очистка временных файлов из awg_common.sh (если уже подключён через source)
     type _awg_cleanup &>/dev/null && _awg_cleanup
+    # Запрет повторов apt живёт только пока работает установщик.
+    declare -F _apt_noretry_disable >/dev/null && _apt_noretry_disable
 }
 # На INT/TERM раньше cleanup срабатывал, но скрипт НЕ завершался - выполнение
 # продолжалось после прерванной команды (опасно посреди apt/dpkg/правки конфигов),
@@ -485,6 +491,44 @@ log_warn()  { log_msg "WARN" "$1"; }
 log_error() { log_msg "ERROR" "$1"; }
 log_debug() { if [[ "$VERBOSE" -eq 1 ]]; then log_msg "DEBUG" "$1"; fi; }
 die()       { log_error "КРИТИЧЕСКАЯ ОШИБКА: $1"; log_error "Установка прервана. Лог: $LOG_FILE"; exit 1; }
+
+# CVE-2026-109518 (apt, 4 nov 2026): атакующий на HTTP-пути между apt и
+# зеркалом может поставить неподписанный пакет с правами root, но только когда
+# apt ПОВТОРЯЕТ скачивание пакета (Acquire::Retries больше 0, по умолчанию 3).
+# Исправленный apt уже вышел, а образы хостеров ещё долго несут старый, и
+# пакеты качает именно он: cleanup_system, обновление шага 1, а при
+# возобновлении после перезагрузки - шаги 2-4. Поэтому на время КАЖДОГО запуска
+# повторы выключены файлом в apt.conf.d, при выходе файл снимается
+# (_install_cleanup). Цена - apt сам не повторит скачивание при сбое сети;
+# повтор обновления шага 1 у нас свой. Если запуск убит (SIGKILL, перезагрузка
+# посреди работы), файл остаётся до следующего запуска или --uninstall и
+# только запрещает повторы.
+_apt_noretry_enable() {
+    local tmp="${APT_NORETRY_CONF}.tmp.$$" eff=""
+    if ! printf '%s\n' \
+            '// amneziawg-installer: временно, на время установки (CVE-2026-109518).' \
+            '// Установщик удаляет этот файл при выходе.' \
+            'Acquire::Retries "0";' > "$tmp" 2>/dev/null \
+        || ! mv -f "$tmp" "$APT_NORETRY_CONF" 2>/dev/null; then
+        rm -f "$tmp" 2>/dev/null
+        die "Не удалось записать $APT_NORETRY_CONF (запрет повторов apt против CVE-2026-109518). Проверьте, что /etc/apt/apt.conf.d доступен на запись."
+    fi
+    _apt_noretry_set=1
+    # Чужая настройка, прочитанная позже (APT_CONFIG, файл с именем после
+    # нашего), может вернуть повторы: сказать об этом, но не останавливаться.
+    if command -v apt-config >/dev/null 2>&1; then
+        eff=$(apt-config shell R Acquire::Retries 2>/dev/null) || eff=""
+        if [[ "$eff" != "R='0'" ]]; then
+            log_warn "apt всё равно повторяет скачивание (Acquire::Retries: ${eff:-не прочитано}): другая настройка apt перекрывает $APT_NORETRY_CONF. Защита от CVE-2026-109518 не действует; обновите apt (apt-get install --only-upgrade apt) или уберите эту настройку."
+        fi
+    fi
+}
+
+_apt_noretry_disable() {
+    [[ "$_apt_noretry_set" -eq 1 ]] || return 0
+    rm -f "$APT_NORETRY_CONF" 2>/dev/null || true
+    _apt_noretry_set=0
+}
 
 # ==============================================================================
 # apt-get update wrapper, игнорирующий 404 только на source packages (deb-src).
@@ -5079,6 +5123,8 @@ step_uninstall() {
         2>/dev/null || true
     rm -f /var/log/amneziawg-ensure-module.log* 2>/dev/null || true
     rm -rf /var/lib/amneziawg /run/amneziawg 2>/dev/null || true
+    # Запрет повторов apt (CVE-2026-109518), оставленный убитым запуском.
+    rm -f "$APT_NORETRY_CONF" "$APT_NORETRY_CONF".tmp.* 2>/dev/null || true
     # Защита от CVE-2026-98432: юнит, правило и помощник. stop отдельно от
     # юнита - на случай, если юнит уже выключен, а правило осталось.
     log "Удаление защиты от CVE-2026-98432 (amneziawg-ipopts-guard)..."
@@ -9150,6 +9196,9 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
 fi
 
 initialize_setup
+# До первого скачивания пакетов этого запуска (cleanup_system в шаге 1, а при
+# возобновлении - шаги 2-4): CVE-2026-109518.
+_apt_noretry_enable
 
 while (( current_step < 99 )); do
     log "Выполнение шага $current_step..."

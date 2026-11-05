@@ -653,12 +653,15 @@ _inst_run() {
     sed -e "s|^AWG_DIR=\"/root/awg\"\$|AWG_DIR=\"$A\"|" \
         -e "s|^SERVER_CONF_FILE=\"/etc/amnezia/amneziawg/awg0.conf\"\$|SERVER_CONF_FILE=\"$SC\"|" \
         -e "s|^SYS_NET_DIR=\"/sys/class/net\"\$|SYS_NET_DIR=\"$TEST_DIR/sysnet\"|" \
+        -e "s|^APT_NORETRY_CONF=\"/etc/apt/apt.conf.d/99zz-amneziawg-installer-noretries\"\$|APT_NORETRY_CONF=\"$TEST_DIR/apt-noretry.conf\"|" \
         -e "s|/etc/amnezia|$TEST_DIR/etc-amnezia|g" \
         -e '/^while (( current_step < 99 )); do$/,$d' "$inst" > "$copy"
     # every substitution must have happened, or the run would touch the host
-    # (secure_files in step 6 chmods /etc/amnezia by literal path)
-    n=$(grep -cxF -e "AWG_DIR=\"$A\"" -e "SERVER_CONF_FILE=\"$SC\"" -e "SYS_NET_DIR=\"$TEST_DIR/sysnet\"" "$copy")
-    [ "$n" -eq 3 ] || { echo "path substitution failed ($n of 3)" >&2; return 1; }
+    # (secure_files in step 6 chmods /etc/amnezia by literal path; the apt
+    # retry ban before the main loop writes into /etc/apt/apt.conf.d)
+    n=$(grep -cxF -e "AWG_DIR=\"$A\"" -e "SERVER_CONF_FILE=\"$SC\"" -e "SYS_NET_DIR=\"$TEST_DIR/sysnet\"" \
+        -e "APT_NORETRY_CONF=\"$TEST_DIR/apt-noretry.conf\"" "$copy")
+    [ "$n" -eq 4 ] || { echo "path substitution failed ($n of 4)" >&2; return 1; }
     if grep -q '/etc/amnezia' "$copy"; then echo "/etc/amnezia left in the copy" >&2; return 1; fi
     if grep -q '^while (( current_step < 99 ))' "$copy"; then echo "main loop not cut" >&2; return 1; fi
     cat >> "$copy" << 'TAIL'
