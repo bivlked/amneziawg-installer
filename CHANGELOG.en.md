@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.1] - 2026-11-05
+
+**v6.2.1** - the install is protected from the apt vulnerability CVE-2026-109518, and the client table is re-checked as of 5 November, with a key recipe for gluetun.
+
 ### Security
 
 - **Protection against the apt vulnerability CVE-2026-109518 for the length of the install.** The bug lets anyone who can tamper with the HTTP traffic between the server and the package mirror (a malicious mirror or proxy included) slip in an unsigned package and run it as root. It only works when apt retries a package download, and by default apt retries up to three times. A fixed apt is already out, but provider images will carry the old one for a long while, and that is the apt that downloads packages during the install. So for the length of every run, a resume after a reboot included, the installer switches download retries off with the file `/etc/apt/apt.conf.d/99zz-amneziawg-installer-noretries` and deletes it on exit. If retries are still on because of another apt setting, the installer warns about it. The one cost: on a network glitch apt will not retry a download by itself. The installer retries the system upgrade itself; if a required package fails to download, the install stops with an error, and running it again resumes at the same step. If a run was cut short (a power loss, for example), the file is removed by the next run that gets to the install, or by `--uninstall`; while it is there, it does nothing but forbid retries. On a server that is already installed, upgrade apt without retries too: `apt-get -o Acquire::Retries=0 update && apt-get -o Acquire::Retries=0 install --only-upgrade apt`.
@@ -2194,7 +2198,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...HEAD
+[6.2.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.0...v6.2.1
 [6.2.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.2...v6.2.0
 [6.1.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.1...v6.1.2
 [6.1.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.0...v6.1.1
