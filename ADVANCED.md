@@ -2247,7 +2247,7 @@ sudo systemctl restart awg-quick@awg0
 - **gluetun** ждёт `HeaderProtectionKey` в hex (64 символа), а профиль 3.1 этого установщика пишет ключ в base64 (44 символа на `=`), как его читает `awg-quick`. С ключом в base64 gluetun останавливается с ошибкой `header protection key: encoding/hex: invalid byte`. Переведите ключ один раз и подставьте результат в переменную `AMNEZIAWG_HEADER_PROTECTION_KEY` или в строку `HeaderProtectionKey` файла `/gluetun/amneziawg/awg0.conf`:
 
   ```bash
-  echo 'КЛЮЧ_В_BASE64' | base64 -d | od -An -tx1 | tr -d ' \n'; echo
+  echo 'КЛЮЧ_В_BASE64' | base64 -d | od -v -An -tx1 | tr -d ' \n'; echo
   ```
 
   Так образ `latest` подключился к серверу 3.1 этого установщика у пользователя ([D#380](https://github.com/bivlked/amneziawg-installer/discussions/380), 5 ноября 2026).

@@ -2250,7 +2250,7 @@ Recorded 5 November 2026 from the release pages, the app stores and the projects
 - **gluetun** wants `HeaderProtectionKey` as hex (64 characters), while this installer's 3.1 profile writes the key in base64 (44 characters ending in `=`), the form `awg-quick` reads. Given the base64 key, gluetun stops with a `header protection key: encoding/hex: invalid byte` error. Convert the key once and put the result into the `AMNEZIAWG_HEADER_PROTECTION_KEY` variable or into the `HeaderProtectionKey` line of `/gluetun/amneziawg/awg0.conf`:
 
   ```bash
-  echo 'YOUR_BASE64_KEY' | base64 -d | od -An -tx1 | tr -d ' \n'; echo
+  echo 'YOUR_BASE64_KEY' | base64 -d | od -v -An -tx1 | tr -d ' \n'; echo
   ```
 
   That is how the `latest` image connected to a 3.1 server from this installer for a user ([D#380](https://github.com/bivlked/amneziawg-installer/discussions/380), 5 November 2026).
