@@ -103,7 +103,7 @@ CONF() { echo "$TMPD/apt.conf.d/99zz-amneziawg-installer-noretries"; }
     done
 }
 
-@test "apt-noretry: enable dies when the file cannot be written" {
+@test "apt-noretry: enable dies when the file cannot be written, naming the cause" {
     [ "$(id -u)" -ne 0 ] || skip "root ignores directory permissions"
     stub_apt_config "R='0'"
     chmod a-w "$TMPD/apt.conf.d"
@@ -113,7 +113,48 @@ CONF() { echo "$TMPD/apt.conf.d/99zz-amneziawg-installer-noretries"; }
         [ "$status" -eq 1 ]
         [[ "$output" != *reached* ]]
         [ -s "$DIED" ]
+        # the shell's own error text reaches the message, not a placeholder
+        grep -q 'apt-noretry\|noretries.tmp' "$DIED"
+        ! grep -q 'причина не сообщена\|no reason given' "$DIED"
         [ "$(ls -A "$TMPD/apt.conf.d" | wc -l)" = "0" ]
+    done
+}
+
+@test "apt-noretry: disable warns and keeps the flag when the file cannot be removed" {
+    [ "$(id -u)" -ne 0 ] || skip "root ignores directory permissions"
+    stub_apt_config "R='0'"
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        chmod u+w "$TMPD/apt.conf.d"; rm -f "$TMPD/apt.conf.d/"* "$WARNED"
+        run_guard "$f" '_apt_noretry_enable; chmod a-w "$(dirname "$APT_NORETRY_CONF")"; _apt_noretry_disable; echo "set=$_apt_noretry_set"'
+        [ "$status" -eq 0 ]
+        [ "$output" = "set=1" ]
+        [ -f "$(CONF)" ]
+        grep -q "rm -f $(CONF)" "$WARNED"
+    done
+    chmod u+w "$TMPD/apt.conf.d"
+}
+
+@test "apt-noretry: a failing apt-config is reported as unreadable, not as an override" {
+    printf '#!/bin/bash\necho "E: Syntax error /etc/apt/apt.conf.d/50broken:3" >&2\nexit 100\n' > "$STUBS/apt-config"
+    chmod +x "$STUBS/apt-config"
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        rm -f "$(CONF)" "$WARNED"
+        run_guard "$f" '_apt_noretry_enable'
+        [ "$status" -eq 0 ]
+        grep -q '100' "$WARNED"
+        grep -q 'Syntax error' "$WARNED"
+        ! grep -q 'перекрывает\|overrides' "$WARNED"
+    done
+}
+
+@test "apt-noretry: apt notices on stderr do not count as another value" {
+    printf '#!/bin/bash\necho "N: Ignoring file x.dpkg-old in directory /etc/apt/apt.conf.d/" >&2\necho "R='"'"'0'"'"'"\n' > "$STUBS/apt-config"
+    chmod +x "$STUBS/apt-config"
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        rm -f "$(CONF)" "$WARNED"
+        run_guard "$f" '_apt_noretry_enable'
+        [ "$status" -eq 0 ]
+        [ ! -e "$WARNED" ]
     done
 }
 

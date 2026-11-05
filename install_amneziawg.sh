@@ -45,7 +45,7 @@ CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
 BOOT_CRITICAL_SNAPSHOT_FILE="$AWG_DIR/boot-critical.pkgs"
 # Временный запрет повторов скачивания apt на время работы установщика
-# (CVE-2026-109518, см. _apt_noretry_enable). 99zz - чтобы читаться последним.
+# (CVE-2026-109518, см. _apt_noretry_enable). 99zz - последним среди apt.conf.d.
 APT_NORETRY_CONF="/etc/apt/apt.conf.d/99zz-amneziawg-installer-noretries"
 _apt_noretry_set=0
 LOG_FILE="$AWG_DIR/install_amneziawg.log"
@@ -497,34 +497,41 @@ die()       { log_error "КРИТИЧЕСКАЯ ОШИБКА: $1"; log_error "У
 # apt ПОВТОРЯЕТ скачивание пакета (Acquire::Retries больше 0, по умолчанию 3).
 # Исправленный apt уже вышел, а образы хостеров ещё долго несут старый, и
 # пакеты качает именно он: cleanup_system, обновление шага 1, а при
-# возобновлении после перезагрузки - шаги 2-4. Поэтому на время КАЖДОГО запуска
-# повторы выключены файлом в apt.conf.d, при выходе файл снимается
-# (_install_cleanup). Цена - apt сам не повторит скачивание при сбое сети:
-# обновление шага 1 повторяет установщик, остальное останавливает установку, и
-# повторный запуск продолжает с того же шага. Если запуск убит (SIGKILL,
-# пропало питание), файл остаётся до следующего запуска, который дойдёт до
-# шагов, или до --uninstall и только запрещает повторы.
+# возобновлении после перезагрузки - шаги 2-7 (модуль, UFW, fail2ban). Поэтому
+# на время КАЖДОГО запуска повторы выключены файлом в apt.conf.d, при выходе
+# файл снимается (_install_cleanup). Цена - apt сам не повторит скачивание при
+# сбое сети: обновление шага 1 повторяет установщик, обязательный пакет
+# останавливает установку, и повторный запуск продолжает с того же шага. Если
+# запуск убит (SIGKILL, пропало питание), файл остаётся до следующего запуска,
+# который дойдёт до шагов, или до --uninstall и только запрещает повторы; запуск,
+# остановленный защитой «уже установлен», о нём предупреждает.
 _apt_noretry_enable() {
-    local tmp="${APT_NORETRY_CONF}.tmp.$$" eff=""
+    local tmp="${APT_NORETRY_CONF}.tmp.$$" eff="" err="" rc=0
     # Временный файл убитого запуска: apt ругался бы на него в каждой команде.
     # Второй экземпляр установщика сюда не доходит - его отсекает flock в
     # initialize_setup.
     rm -f "$APT_NORETRY_CONF".tmp.* 2>/dev/null || true
-    if ! printf '%s\n' \
+    # Флаг до mv: сигнал между mv и флагом иначе оставил бы файл навсегда.
+    _apt_noretry_set=1
+    if ! err=$( { printf '%s\n' \
             '// amneziawg-installer: временно, на время установки (CVE-2026-109518).' \
             '// Установщик удаляет этот файл при выходе.' \
-            'Acquire::Retries "0";' > "$tmp" 2>/dev/null \
-        || ! mv -f "$tmp" "$APT_NORETRY_CONF" 2>/dev/null; then
+            'Acquire::Retries "0";' > "$tmp" \
+            && mv -f "$tmp" "$APT_NORETRY_CONF"; } 2>&1 ); then
         rm -f "$tmp" 2>/dev/null
-        die "Не удалось записать $APT_NORETRY_CONF (запрет повторов apt против CVE-2026-109518). Проверьте, что /etc/apt/apt.conf.d доступен на запись."
+        die "Не удалось записать $APT_NORETRY_CONF (запрет повторов apt против CVE-2026-109518): ${err:-причина не сообщена}"
     fi
-    _apt_noretry_set=1
-    # Чужая настройка, прочитанная позже (APT_CONFIG, файл с именем после
-    # нашего), может вернуть повторы: сказать об этом, но не останавливаться.
+    # Повторы может вернуть /etc/apt/apt.conf (apt читает его после apt.conf.d),
+    # файл с именем после нашего или APT_CONFIG со своим каталогом настроек.
+    # Сказать об этом, но не останавливаться.
     if command -v apt-config >/dev/null 2>&1; then
-        eff=$(apt-config shell R Acquire::Retries 2>/dev/null) || eff=""
-        if [[ "$eff" != "R='0'" ]]; then
-            log_warn "apt всё равно повторяет скачивание (Acquire::Retries: ${eff:-не прочитано}): другая настройка apt перекрывает $APT_NORETRY_CONF. Защита от CVE-2026-109518 не действует; уберите эту настройку или сначала обновите apt без повторов: apt-get -o Acquire::Retries=0 update && apt-get -o Acquire::Retries=0 install --only-upgrade apt"
+        # stderr отдельно: заметки apt (N: Ignoring file ...) не должны попасть в значение.
+        eff=$(apt-config shell R Acquire::Retries 2>/dev/null) || rc=$?
+        if [[ "$rc" -ne 0 ]]; then
+            err=$(apt-config shell R Acquire::Retries 2>&1 >/dev/null | tail -n 3)
+            log_warn "Не удалось прочитать настройку apt (apt-config, код $rc): ${err:-нет вывода}. Действует ли запрет повторов (CVE-2026-109518), неизвестно."
+        elif [[ "$eff" != "R='0'" ]]; then
+            log_warn "apt всё равно повторяет скачивание (Acquire::Retries: ${eff:-не задано}): другая настройка apt перекрывает $APT_NORETRY_CONF. Защита от CVE-2026-109518 не действует; уберите эту настройку или сначала обновите apt без повторов: apt-get -o Acquire::Retries=0 update && apt-get -o Acquire::Retries=0 install --only-upgrade apt"
         fi
     else
         log_warn "apt-config не найден: не проверить, что запрет повторов apt (CVE-2026-109518) действует."
@@ -534,6 +541,10 @@ _apt_noretry_enable() {
 _apt_noretry_disable() {
     [[ "$_apt_noretry_set" -eq 1 ]] || return 0
     rm -f "$APT_NORETRY_CONF" 2>/dev/null || true
+    if [[ -e "$APT_NORETRY_CONF" ]]; then
+        log_warn "Не удалось удалить $APT_NORETRY_CONF: apt останется без повторов скачивания. Удалите вручную: rm -f $APT_NORETRY_CONF"
+        return 0
+    fi
     _apt_noretry_set=0
 }
 
@@ -5132,6 +5143,7 @@ step_uninstall() {
     rm -rf /var/lib/amneziawg /run/amneziawg 2>/dev/null || true
     # Запрет повторов apt (CVE-2026-109518), оставленный убитым запуском.
     rm -f "$APT_NORETRY_CONF" "$APT_NORETRY_CONF".tmp.* 2>/dev/null || true
+    [[ -e "$APT_NORETRY_CONF" ]] && log_warn "Не удалось удалить $APT_NORETRY_CONF: apt останется без повторов скачивания. Удалите вручную: rm -f $APT_NORETRY_CONF"
     # Защита от CVE-2026-98432: юнит, правило и помощник. stop отдельно от
     # юнита - на случай, если юнит уже выключен, а правило осталось.
     log "Удаление защиты от CVE-2026-98432 (amneziawg-ipopts-guard)..."
@@ -7107,7 +7119,7 @@ PPASRC
         log_warn "Не удалось установить $meta — пробуем следующий вариант."
     done
     if [[ ${#meta_candidates[@]} -gt 0 && $meta_installed -eq 0 ]]; then
-        log_warn "Ни один meta-пакет kernel-headers не установлен — auto-rebuild при kernel upgrade может не работать."
+        log_warn "Ни один meta-пакет kernel-headers не установлен - auto-rebuild при kernel upgrade может не работать. Частая причина - разовый сбой сети (apt в установщике не повторяет скачивание). После установки поставьте его вручную: apt-get install ${meta_candidates[0]}"
     fi
 
     _awg_deploy_ensure_units || true
@@ -9199,12 +9211,16 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
     log_error "выданные клиентские конфиги придётся перевыпустить через regen); --no-cps убирает I1."
     log_error "Для управления клиентами:  sudo bash $MANAGE_SCRIPT_PATH help"
     log_error "Для полного удаления:      sudo bash $0 --uninstall"
+    # Запрет повторов apt от оборванного запуска сюда не доходит до снятия.
+    if [[ -e "$APT_NORETRY_CONF" ]]; then
+        log_warn "Остался $APT_NORETRY_CONF от оборванного запуска: apt на этой машине не повторяет скачивание. Если установщик сейчас не работает, удалите его: rm -f $APT_NORETRY_CONF"
+    fi
     exit 0
 fi
 
 initialize_setup
 # До первого скачивания пакетов этого запуска (cleanup_system в шаге 1, а при
-# возобновлении - шаги 2-4): CVE-2026-109518.
+# возобновлении - шаги 2-7): CVE-2026-109518.
 _apt_noretry_enable
 
 while (( current_step < 99 )); do

@@ -47,7 +47,7 @@ CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
 BOOT_CRITICAL_SNAPSHOT_FILE="$AWG_DIR/boot-critical.pkgs"
 # Temporary ban on apt download retries while the installer runs
-# (CVE-2026-109518, see _apt_noretry_enable). 99zz so that it is read last.
+# (CVE-2026-109518, see _apt_noretry_enable). 99zz: last within apt.conf.d.
 APT_NORETRY_CONF="/etc/apt/apt.conf.d/99zz-amneziawg-installer-noretries"
 _apt_noretry_set=0
 LOG_FILE="$AWG_DIR/install_amneziawg.log"
@@ -511,35 +511,44 @@ die()       { log_error "CRITICAL ERROR: $1"; log_error "Installation aborted. L
 # and the mirror can get an unsigned package installed as root, but only when
 # apt RETRIES a package download (Acquire::Retries above 0, 3 by default).
 # A fixed apt is out, yet provider images keep the old one for a long time, and
-# that is the apt that downloads our packages: cleanup_system, the step 1
-# upgrade and, on a run resumed after a reboot, steps 2-4. So for the length of
-# EVERY run retries are switched off by a file in apt.conf.d, and the file is
-# removed on exit (_install_cleanup). The price: apt will not retry a download
-# by itself on a network glitch: the installer retries the step 1 upgrade, the
-# rest stops the install, and running it again resumes at the same step. If a
-# run is killed (SIGKILL, a power loss), the file stays until the next run that
-# reaches the steps, or --uninstall, and does nothing but forbid retries.
+# that is the apt that downloads the packages: cleanup_system, the step 1
+# upgrade and, on a run resumed after a reboot, steps 2-7 (module, UFW,
+# fail2ban). So for the length of EVERY run retries are switched off by a file
+# in apt.conf.d, and the file is removed on exit (_install_cleanup). The price:
+# apt will not retry a download by itself on a network glitch: the installer
+# retries the step 1 upgrade, a required package stops the install, and running
+# it again resumes at the same step. If a run is killed (SIGKILL, a power loss),
+# the file stays until the next run that reaches the steps, or --uninstall, and
+# does nothing but forbid retries; a run stopped by the "already installed"
+# guard warns about it.
 _apt_noretry_enable() {
-    local tmp="${APT_NORETRY_CONF}.tmp.$$" eff=""
+    local tmp="${APT_NORETRY_CONF}.tmp.$$" eff="" err="" rc=0
     # A killed run's temporary file: apt would complain about it on every
     # command. A second installer instance never gets here - the flock in
     # initialize_setup stops it.
     rm -f "$APT_NORETRY_CONF".tmp.* 2>/dev/null || true
-    if ! printf '%s\n' \
+    # The flag goes before mv: a signal between mv and the flag would otherwise
+    # leave the file behind for good.
+    _apt_noretry_set=1
+    if ! err=$( { printf '%s\n' \
             '// amneziawg-installer: temporary, for the length of the install (CVE-2026-109518).' \
             '// The installer removes this file on exit.' \
-            'Acquire::Retries "0";' > "$tmp" 2>/dev/null \
-        || ! mv -f "$tmp" "$APT_NORETRY_CONF" 2>/dev/null; then
+            'Acquire::Retries "0";' > "$tmp" \
+            && mv -f "$tmp" "$APT_NORETRY_CONF"; } 2>&1 ); then
         rm -f "$tmp" 2>/dev/null
-        die "Could not write $APT_NORETRY_CONF (the apt retry ban against CVE-2026-109518). Check that /etc/apt/apt.conf.d is writable."
+        die "Could not write $APT_NORETRY_CONF (the apt retry ban against CVE-2026-109518): ${err:-no reason given}"
     fi
-    _apt_noretry_set=1
-    # Someone else's setting read later (APT_CONFIG, a file named after ours)
-    # can bring retries back: say so, but do not stop.
+    # Retries can come back from /etc/apt/apt.conf (apt reads it after
+    # apt.conf.d), a file named after this one, or APT_CONFIG with its own
+    # parts directory. Say so, but do not stop.
     if command -v apt-config >/dev/null 2>&1; then
-        eff=$(apt-config shell R Acquire::Retries 2>/dev/null) || eff=""
-        if [[ "$eff" != "R='0'" ]]; then
-            log_warn "apt still retries downloads (Acquire::Retries: ${eff:-not read}): another apt setting overrides $APT_NORETRY_CONF. The CVE-2026-109518 protection is not in effect; remove that setting or first upgrade apt without retries: apt-get -o Acquire::Retries=0 update && apt-get -o Acquire::Retries=0 install --only-upgrade apt"
+        # stderr apart: apt notices (N: Ignoring file ...) must not land in the value.
+        eff=$(apt-config shell R Acquire::Retries 2>/dev/null) || rc=$?
+        if [[ "$rc" -ne 0 ]]; then
+            err=$(apt-config shell R Acquire::Retries 2>&1 >/dev/null | tail -n 3)
+            log_warn "Could not read the apt configuration (apt-config, code $rc): ${err:-no output}. Whether the retry ban (CVE-2026-109518) is in effect is unknown."
+        elif [[ "$eff" != "R='0'" ]]; then
+            log_warn "apt still retries downloads (Acquire::Retries: ${eff:-not set}): another apt setting overrides $APT_NORETRY_CONF. The CVE-2026-109518 protection is not in effect; remove that setting or first upgrade apt without retries: apt-get -o Acquire::Retries=0 update && apt-get -o Acquire::Retries=0 install --only-upgrade apt"
         fi
     else
         log_warn "apt-config not found: cannot confirm that the apt retry ban (CVE-2026-109518) is in effect."
@@ -549,6 +558,10 @@ _apt_noretry_enable() {
 _apt_noretry_disable() {
     [[ "$_apt_noretry_set" -eq 1 ]] || return 0
     rm -f "$APT_NORETRY_CONF" 2>/dev/null || true
+    if [[ -e "$APT_NORETRY_CONF" ]]; then
+        log_warn "Could not delete $APT_NORETRY_CONF: apt stays without download retries. Delete it by hand: rm -f $APT_NORETRY_CONF"
+        return 0
+    fi
     _apt_noretry_set=0
 }
 
@@ -5241,6 +5254,7 @@ step_uninstall() {
     rm -rf /var/lib/amneziawg /run/amneziawg 2>/dev/null || true
     # The apt retry ban (CVE-2026-109518) left behind by a killed run.
     rm -f "$APT_NORETRY_CONF" "$APT_NORETRY_CONF".tmp.* 2>/dev/null || true
+    [[ -e "$APT_NORETRY_CONF" ]] && log_warn "Could not delete $APT_NORETRY_CONF: apt stays without download retries. Delete it by hand: rm -f $APT_NORETRY_CONF"
     # The CVE-2026-98432 guard: unit, rule and helper. stop runs apart from the
     # unit in case the unit is already off while the rule stayed.
     log "Removing the CVE-2026-98432 guard (amneziawg-ipopts-guard)..."
@@ -7253,7 +7267,7 @@ PPASRC
         log_warn "Failed to install $meta — trying next candidate."
     done
     if [[ ${#meta_candidates[@]} -gt 0 && $meta_installed -eq 0 ]]; then
-        log_warn "No kernel-headers meta-package installed — auto-rebuild on kernel upgrade may not work."
+        log_warn "No kernel-headers meta-package installed - auto-rebuild on kernel upgrade may not work. A common cause is a one-off network glitch (apt does not retry downloads during the install). After the install, add it by hand: apt-get install ${meta_candidates[0]}"
     fi
 
     _awg_deploy_ensure_units || true
@@ -9354,12 +9368,16 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
     log_error "issued client config would have to be reissued via regen); --no-cps removes I1."
     log_error "To manage clients:  sudo bash $MANAGE_SCRIPT_PATH help"
     log_error "To fully uninstall: sudo bash $0 --uninstall"
+    # An apt retry ban left by a cut-short run is never removed on this path.
+    if [[ -e "$APT_NORETRY_CONF" ]]; then
+        log_warn "$APT_NORETRY_CONF was left by a cut-short run: apt on this machine does not retry downloads. If the installer is not running now, delete it: rm -f $APT_NORETRY_CONF"
+    fi
     exit 0
 fi
 
 initialize_setup
 # Before the first package download of this run (cleanup_system in step 1 and,
-# on a resumed run, steps 2-4): CVE-2026-109518.
+# on a resumed run, steps 2-7): CVE-2026-109518.
 _apt_noretry_enable
 
 while (( current_step < 99 )); do
