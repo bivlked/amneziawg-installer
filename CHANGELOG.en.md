@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [6.2.1] - 2026-11-05
+## [6.2.1] - 2026-11-06
 
 **v6.2.1** - the install is protected from the apt vulnerability CVE-2026-109518, and the client table is re-checked as of 5 November, with a key recipe for gluetun.
 
