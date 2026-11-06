@@ -653,16 +653,20 @@ _inst_run() {
     sed -e "s|^AWG_DIR=\"/root/awg\"\$|AWG_DIR=\"$A\"|" \
         -e "s|^SERVER_CONF_FILE=\"/etc/amnezia/amneziawg/awg0.conf\"\$|SERVER_CONF_FILE=\"$SC\"|" \
         -e "s|^SYS_NET_DIR=\"/sys/class/net\"\$|SYS_NET_DIR=\"$TEST_DIR/sysnet\"|" \
+        -e "s|^APT_NORETRY_CONF=\"/etc/apt/apt.conf.d/99zz-amneziawg-installer-noretries\"\$|APT_NORETRY_CONF=\"$TEST_DIR/apt-noretry.conf\"|" \
         -e "s|/etc/amnezia|$TEST_DIR/etc-amnezia|g" \
         -e '/^while (( current_step < 99 )); do$/,$d' "$inst" > "$copy"
     # every substitution must have happened, or the run would touch the host
-    # (secure_files in step 6 chmods /etc/amnezia by literal path)
-    n=$(grep -cxF -e "AWG_DIR=\"$A\"" -e "SERVER_CONF_FILE=\"$SC\"" -e "SYS_NET_DIR=\"$TEST_DIR/sysnet\"" "$copy")
-    [ "$n" -eq 3 ] || { echo "path substitution failed ($n of 3)" >&2; return 1; }
+    # (secure_files in step 6 chmods /etc/amnezia by literal path; the apt
+    # retry ban before the main loop writes into /etc/apt/apt.conf.d)
+    n=$(grep -cxF -e "AWG_DIR=\"$A\"" -e "SERVER_CONF_FILE=\"$SC\"" -e "SYS_NET_DIR=\"$TEST_DIR/sysnet\"" \
+        -e "APT_NORETRY_CONF=\"$TEST_DIR/apt-noretry.conf\"" "$copy")
+    [ "$n" -eq 4 ] || { echo "path substitution failed ($n of 4)" >&2; return 1; }
     if grep -q '/etc/amnezia' "$copy"; then echo "/etc/amnezia left in the copy" >&2; return 1; fi
     if grep -q '^while (( current_step < 99 ))' "$copy"; then echo "main loop not cut" >&2; return 1; fi
     cat >> "$copy" << 'TAIL'
 echo "STEP0_DONE step=$current_step"
+[[ -f "$APT_NORETRY_CONF" ]] && echo "NORETRY_ON"
 if [[ -n "${AWG_TEST_STEP3:-}" ]]; then step3_check_module || { echo "STEP3_RC=$?"; exit 1; }; echo "STEP3_DONE"; fi
 if [[ -n "${AWG_TEST_STEP6:-}" ]]; then step6_generate_configs || { echo "STEP6_RC=$?"; exit 1; }; echo "STEP6_DONE"; fi
 exit 0
@@ -686,6 +690,10 @@ STUB
     # the test host may be a container (WSL, a CI runner); the install target is not
     printf '#!/bin/bash\necho none\n' > "$TEST_DIR/bin/systemd-detect-virt"
     printf '#!/bin/bash\nexit 0\n' > "$TEST_DIR/bin/chown"
+    # apt-config of the host cannot see the sandboxed retry-ban file: answer as
+    # apt would with it in place, and with nothing when it is missing
+    printf '#!/bin/bash\n[[ -f "%s/apt-noretry.conf" ]] && echo "R='"'"'0'"'"'"\nexit 0\n' "$TEST_DIR" > "$TEST_DIR/bin/apt-config"
+    chmod +x "$TEST_DIR/bin/apt-config"
     chmod +x "$TEST_DIR/bin/id" "$TEST_DIR/bin/systemctl" "$TEST_DIR/bin/ss" "$TEST_DIR/bin/chown" "$TEST_DIR/bin/systemd-detect-virt" "$TEST_DIR/bin/lsmod" "$TEST_DIR/bin/modinfo" "$TEST_DIR/bin/modprobe"
 }
 
@@ -710,10 +718,14 @@ _e6_force() {
     _finished "$inst" "$gen"
     _print "$base"
     # without --force the live install is left alone: the guard exits 0 and
-    # names --force
+    # names --force; an apt retry ban left by a killed run is named, not touched
+    printf 'Acquire::Retries "0";\n' > "$TEST_DIR/apt-noretry.conf"
     _inst_run "$inst" --yes --ssh-port=22
     [ "$status" -eq 0 ]
     [[ "$output" != *STEP0_DONE* && "$output$stderr" == *--force* ]]
+    [[ "$output$stderr" == *"rm -f $TEST_DIR/apt-noretry.conf"* ]]
+    [ -f "$TEST_DIR/apt-noretry.conf" ]
+    rm -f "$TEST_DIR/apt-noretry.conf"
     _same "$base"
     AWG_TEST_STEP6=1 _inst_run "$inst" --force --yes --ssh-port=22
     _run_ok
@@ -766,10 +778,15 @@ _e9_two_resumes() {
     # first run: an install with a 3.1 or 2.0 init, up to the end of step 0
     _inst_run "$inst" --yes --ssh-port=22 --protocol="$gen"
     _run_ok
+    # the apt retry ban is up before the steps and gone after the run's exit
+    [[ "$output" == *NORETRY_ON* ]]
+    [ ! -e "$TEST_DIR/apt-noretry.conf" ]
     printf '3\n' > "$A/setup_state"
     init_before=$(grep -v '^#' "$A/awgsetup_cfg.init")
     # two resumes after reboot, no flags: the init is read back and written again
     _inst_run "$inst" --yes --ssh-port=22; _run_ok
+    [[ "$output" == *NORETRY_ON* ]]
+    [ ! -e "$TEST_DIR/apt-noretry.conf" ]
     [[ "$output" == *"STEP0_DONE step=3"* ]]
     _inst_run "$inst" --yes --ssh-port=22; _run_ok
     [[ "$output" == *"STEP0_DONE step=3"* ]]

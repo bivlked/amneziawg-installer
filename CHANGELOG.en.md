@@ -12,6 +12,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.1] - 2026-11-06
+
+**v6.2.1** - the install is protected from the apt vulnerability CVE-2026-109518, and the client table is re-checked as of 5 November, with a key recipe for gluetun.
+
+### Security
+
+- **Protection against the apt vulnerability CVE-2026-109518 for the length of the install.** The bug lets anyone who can tamper with the HTTP traffic between the server and the package mirror (a malicious mirror or proxy included) slip in an unsigned package and run it as root. It only works when apt retries a package download, and by default apt retries up to three times. A fixed apt is already out, but provider images will carry the old one for a long while, and that is the apt that downloads packages during the install. So for the length of every run, a resume after a reboot included, the installer switches download retries off with the file `/etc/apt/apt.conf.d/99zz-amneziawg-installer-noretries` and deletes it on exit. If retries are still on because of another apt setting, the installer warns about it. The one cost: on a network glitch apt will not retry a download by itself. The installer retries the system upgrade itself; if a required package fails to download, the install stops with an error, and running it again resumes at the same step. If a run was cut short (a power loss, for example), the file is removed by the next run that gets to the install, or by `--uninstall`; while it is there, it does nothing but forbid retries. On a server that is already installed, upgrade apt without retries too: `apt-get -o Acquire::Retries=0 update && apt-get -o Acquire::Retries=0 install --only-upgrade apt`.
+
+### Documentation
+
+- The client table in ADVANCED was re-checked in full as of 5 November 2026: Amnezia VPN 5.1.0.6, mihomo v1.19.33, FlClash v0.9.3, L×Box v2.25.19, AWG Manager v2.19.24, KeeneticOS 5.2 Beta 2, amneziawg-mikrotik-c v1.4.5. ZedSecure connects this installer's 3.1 profile from v3.1.8: before that it did not convert the `HeaderProtectionKey` from base64. Hiddify 5.5.5 gained AmneziaWG, but its config import drops `HeaderProtectionKey`, so Hiddify still needs a `--protocol=2.0` server.
+- **gluetun:** below the client table there is now a recipe for converting `HeaderProtectionKey` from base64 to the hex that gluetun expects. With the converted key the `latest` image connected to a 3.1 server from this installer ([D#380](https://github.com/bivlked/amneziawg-installer/discussions/380), thanks to @ementat for testing).
+- A note on a single report about Amnezia VPN 5.1.0 on iOS: with a 3.1 profile over LTE the handshake is there but no traffic ([amnezia-client#3401](https://github.com/amnezia-vpn/amnezia-client/issues/3401)); the light AmneziaWG on the same phone works.
+
 ## [6.2.0] - 2026-11-04
 
 **v6.2.0** - AmneziaWG 3.1 on 64-bit ARM: ARM64 servers get the 3.1 profile like x86_64, with a module that rebuilds itself on a kernel change. Plus a working recipe for servers on a prebuilt ARM module after a kernel update.
@@ -2184,7 +2198,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...HEAD
+[6.2.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.0...v6.2.1
 [6.2.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.2...v6.2.0
 [6.1.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.1...v6.1.2
 [6.1.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.0...v6.1.1
