@@ -93,7 +93,7 @@ _AWG_KMOD_T1=0
 AWG_ENSURE_HELPER=/usr/local/sbin/amneziawg-ensure-module
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""; CLI_SSH_PORT_SET=0
-CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PSK=0; CLI_NO_PREBUILT=0; CLI_CLIENT_IPV6_DIRECT=0; CLI_KEEP_PACKAGES=0
+CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PSK=0; CLI_EXIT_IP=""; CLI_EXIT_IP_SET=0; CLI_NO_PREBUILT=0; CLI_CLIENT_IPV6_DIRECT=0; CLI_KEEP_PACKAGES=0
 CLI_ALLOW_IPV6_TUNNEL=0
 CLI_I1=""; CLI_I1_SET=0
 # Закреплённый I1 приходит только из init, не из окружения вызвавшей оболочки.
@@ -307,6 +307,7 @@ while [[ $# -gt 0 ]]; do
         --route-custom=*) CLI_ROUTING_MODE=3; CLI_CUSTOM_ROUTES="${1#*=}" ;;
         --isolation=*)   CLI_ISOLATION="${1#*=}" ;;
         --endpoint=*)    CLI_ENDPOINT="${1#*=}" ;;
+        --exit-ip=*)     CLI_EXIT_IP="${1#*=}"; CLI_EXIT_IP_SET=1 ;;
         --server-name=*) CLI_SERVER_NAME="${1#*=}" ;;
         --mobile)        CLI_MOBILE=1 ;;
         --protocol=*)    CLI_PROTOCOL="${1#*=}"; CLI_PROTOCOL_SET=1 ;;
@@ -755,6 +756,9 @@ show_help() {
   --isolation=on|off    Изоляция клиентов VPN друг от друга (по умолчанию on).
                         off: подсеть туннеля добавляется в AllowedIPs клиентов
   --endpoint=АДРЕС      Внешний endpoint сервера: FQDN, IPv4 или [IPv6] (для NAT)
+  --exit-ip=IPv4        Второй адрес сервера, с которого трафик клиентов уходит в
+                        интернет (подключаются они по-прежнему к --endpoint);
+                        адрес должен быть на интерфейсе, off снимает
   --server-name=ИМЯ     Имя сервера в приложении Amnezia при импорте vpn://
                         (по умолчанию 'AWG Server'; без кавычек и управляющих символов)
   --mobile              Мобильный сетап одним флагом: --preset=mobile + порт 443/udp
@@ -2446,7 +2450,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PSK|NO_PREBUILT|KEEP_PACKAGES|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PSK|AWG_EXIT_IP|NO_PREBUILT|KEEP_PACKAGES|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT|\
                 AWG_PROTOCOL_SOURCE|AWG_PROTOCOL_FALLBACK)
                     export "$key=$value"
@@ -3125,6 +3129,29 @@ _awg_default_port() {
         log_warn "Не удалось выбрать случайный свободный порт, беру 39743."
         printf '39743\n'
     fi
+}
+
+# --exit-ip (I#384): адрес выхода обязан быть IPv4 на интерфейсе этого сервера и
+# не сочетается с IPv6-туннелем клиентов: SNAT меняет только IPv4, а IPv6
+# клиентов уходил бы мимо адреса выхода. Текст причины - в stdout, код 1.
+_awg_exit_ip_check() {
+    local ip="$1" o
+    if ! [[ "$ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+        printf '%s\n' "адрес выхода '$ip' не похож на IPv4"
+        return 1
+    fi
+    for o in "${BASH_REMATCH[@]:1}"; do
+        if (( 10#$o > 255 )); then printf '%s\n' "адрес выхода '$ip' не похож на IPv4"; return 1; fi
+    done
+    if [[ "${ALLOW_IPV6_TUNNEL:-0}" == "1" ]]; then
+        printf '%s\n' "адрес выхода не сочетается с IPv6-туннелем клиентов (--allow-ipv6-tunnel): SNAT меняет только IPv4, IPv6 клиентов уходил бы мимо адреса выхода"
+        return 1
+    fi
+    if ! ip -4 -o addr show 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="inet"){split($(i+1),a,"/"); print a[1]}}' | grep -qxF -- "$ip"; then
+        printf '%s\n' "адреса $ip нет ни на одном интерфейсе сервера; пропишите его постоянно (например, в netplan) и повторите"
+        return 1
+    fi
+    return 0
 }
 
 # _awg_size_collisions <S1> <S2> <S3> <S4> : может ли приёмник принять пакет
@@ -5702,6 +5729,8 @@ export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
 export NO_CPS=${NO_CPS}
 # 1 - новые клиенты без PresharedKey (--no-psk); manage add --psk включает его для отдельного клиента.
 export NO_PSK=${NO_PSK:-0}
+# Адрес выхода клиентов (--exit-ip). Пусто - выход с того же адреса, что и вход.
+export AWG_EXIT_IP='${AWG_EXIT_IP:-}'
 export NO_PREBUILT=${NO_PREBUILT:-0}
 # IPv6 устройств клиентов напрямую, мимо туннеля (только режим 2). 0 - через туннель.
 export CLIENT_IPV6_DIRECT=${CLIENT_IPV6_DIRECT:-0}
@@ -5780,6 +5809,7 @@ initialize_setup() {
     ALLOWED_IPS_MODE="default"
     ALLOWED_IPS=""
     AWG_ENDPOINT=""
+    AWG_EXIT_IP=""
     CLIENT_ISOLATION=""
     # Жёсткий сброс (не ${VAR:-}): внутренний ownership-маркер не должен
     # наследоваться из окружения - экспортированная снаружи переменная иначе
@@ -6191,6 +6221,17 @@ initialize_setup() {
             || die "CLIENT_DNS в $CONFIG_FILE невалиден ('$CLIENT_DNS'): нужны IP-адреса через запятую, без пустых элементов."
     fi
 
+    # Адрес выхода клиентов (I#384): флаг задаёт, сохранённый держится, off снимает.
+    if [[ "${CLI_EXIT_IP_SET:-0}" -eq 1 ]]; then
+        [[ -n "$CLI_EXIT_IP" ]] || die "Пустой --exit-ip=: укажите IPv4-адрес выхода или off."
+        if [[ "$CLI_EXIT_IP" == off ]]; then AWG_EXIT_IP=""; else AWG_EXIT_IP="$CLI_EXIT_IP"; fi
+    fi
+    if [[ -n "${AWG_EXIT_IP:-}" ]]; then
+        local _exit_why
+        _exit_why=$(_awg_exit_ip_check "$AWG_EXIT_IP") || die "--exit-ip: ${_exit_why}."
+        log "Адрес выхода клиентов: $AWG_EXIT_IP (подключаются клиенты по-прежнему к адресу входа)."
+    fi
+
     # Сохранение конфигурации
     _awg_save_init
     export AWG_PORT AWG_TUNNEL_SUBNET DISABLE_IPV6 ALLOWED_IPS_MODE ALLOWED_IPS AWG_ENDPOINT AWG_PROTOCOL
@@ -6257,7 +6298,7 @@ initialize_setup() {
     if (( current_step > 4 )) && { [[ -n "$CLI_PORT" ]] || [[ -n "$CLI_SUBNET" ]] \
         || [[ -n "$CLI_SSH_PORT" ]] || [[ "$CLI_ROUTING_MODE" != "default" ]] \
         || [[ -n "$_cfg_allowed_ips_mode" && "$_cfg_allowed_ips_mode" != "$ALLOWED_IPS_MODE" ]] \
-        || [[ -n "$CLI_ENDPOINT" ]] || [[ "$CLI_DISABLE_IPV6" != "default" ]] \
+        || [[ -n "$CLI_ENDPOINT" ]] || [[ "${CLI_EXIT_IP_SET:-0}" -eq 1 ]] || [[ "$CLI_DISABLE_IPV6" != "default" ]] \
         || [[ "${CLI_ALLOW_IPV6_TUNNEL:-0}" -eq 1 ]] || [[ -n "${CLI_PRESET:-}" ]] \
         || [[ -n "${CLI_JC:-}" ]] || [[ -n "${CLI_JMIN:-}" ]] || [[ -n "${CLI_JMAX:-}" ]] \
         || [[ "${CLI_ISOLATION:-default}" != "default" ]] \

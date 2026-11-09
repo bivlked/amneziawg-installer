@@ -62,6 +62,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 - [📱 vpn:// URI Import](#vpnuri-adv)
 - [📱 MTU and Mobile Clients](#mtu-mobile-adv)
 - [🚧 Host Unreachable from Russia (Hetzner): AS-based Blocking](#as-blocking-adv)
+- [🔀 A Separate Exit Address: Entry and Exit on Different IPs](#exit-ip-adv)
 - [🛡️ Active Probing and Obfuscation Without a Proxy](#active-probing-adv)
 - [📋 Client Compatibility](#client-compat-adv)
   - [Which AmneziaWG generation a client speaks](#client-gen-adv)
@@ -1142,6 +1143,7 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 * **`show`:** Run `awg show`.
 * **`qr <name> [--vpn]`:** Print the client's QR code right in the terminal, to scan it with a phone without copying a picture off the server. Without the flag - the config QR for the AmneziaWG app, with `--vpn` - the `vpn://` link QR for Amnezia VPN. A 3.1 config QR takes about 90-110 characters in width and 45-55 lines, a `vpn://` link QR about 120 by 60; if the window is smaller, the command warns up front, and then make the terminal font smaller. The code holds the client's private key: show it when nobody can see the screen, and run `clear` after scanning. `--json` is not supported.
 * **`port <number>`:** Change the UDP port of a running server: the new port goes into `ListenPort` of `awg0.conf` and `AWG_PORT` of `awgsetup_cfg.init`, UFW opens it before the restart and closes the old one after, then every client is regenerated (the port is part of the `Endpoint`). If the server does not come up on the new port, the command puts the old port and both files back. The clients need the new configs or QR codes. A busy, invalid or unchanged port changes nothing.
+* **`exit-ip <IPv4|off>`:** Set the address client traffic leaves to the internet from, or remove it (`off`). Clients do not change, the service restarts. Details - [A separate exit address](#exit-ip-adv).
 * **`restart`:** Restart the AmneziaWG service.
 * **`diagnose [--carrier=NAME]`:** Self-troubleshooting: checks the kernel module, sysctl and UFW; with `--carrier=NAME` it compares AWG parameters against a mobile carrier profile. Names: `beeline_msk`, `yota_msk`, `tele2_msk`, `tele2_krasnoyarsk`, `tattelecom`, `megafon_regions`, `tmobile_us` (the last name is historical: it is the Russian T-Mobile, Moscow and region).
 * **`repair-module`** (alias `repair`): Rebuild/restore the amneziawg kernel module (DKMS) after a server kernel upgrade; for kernels 7.0.0-38 and later see [Known Limitations](#kernel-70-backport-adv).
@@ -2171,6 +2173,39 @@ Control: a tunnel to a server in a different AS (US) came up and held on all thr
 
 ---
 
+<a id="exit-ip-adv"></a>
+## 🔀 A Separate Exit Address: Entry and Exit on Different IPs
+
+If the server has two public IPv4 addresses, clients can connect to one while their traffic leaves to the internet from the other. Sites and apps see only the exit address. According to [reports](https://github.com/net4people/bbs/issues/671), with two addresses it is the exit that gets blocked while the entry keeps working, and then it is enough to change the exit address without reissuing clients. The request came in [#384](https://github.com/bivlked/amneziawg-installer/issues/384).
+
+**What you need.** The second address has to be on an interface of the server permanently. The host assigns it, but sometimes you have to configure it yourself, for example with netplan (take the interface name from `ip -br addr`):
+
+```yaml
+# /etc/netplan/60-exit-ip.yaml
+network:
+  version: 2
+  ethernets:
+    ens3:
+      addresses: [203.0.113.7/32]
+```
+
+Then `sudo netplan apply`. Before the install, check that the address works: `curl -s --interface 203.0.113.7 https://api.ipify.org` should return `203.0.113.7`. On my test server the address started working only after a restart of the server from the host's panel. After the install this check no longer works: the installer's general MASQUERADE rule rewrites the server's own traffic to the main address too.
+
+**At install time** the entry address is set with `--endpoint` (clients get it) and the exit address with `--exit-ip`:
+
+```bash
+sudo bash install_amneziawg_en.sh --endpoint=198.51.100.2 --exit-ip=203.0.113.7
+```
+
+Better to give `--endpoint` explicitly here: with two addresses the installer may detect either of them.
+
+**On a running server:** `sudo bash /root/awg/manage_amneziawg.sh exit-ip 203.0.113.7`, to remove it `exit-ip off`. Client configs do not change, the service restarts, and clients lose the connection for a few seconds. To check from a client: `curl -s ifconfig.me` returns the exit address.
+
+**How it works.** A `SNAT --to-source <exit address>` rule for the client subnet goes into the server's `PostUp`, above the usual MASQUERADE; the server's own traffic (updates, DNS) still leaves from the main address. If the exit address disappears from the interface, the rule still sets it as the source, no replies come back, and client traffic stops instead of leaving through the entry address.
+
+**Limits.** IPv4 only: an exit address does not combine with the IPv6 tunnel for clients (`--allow-ipv6-tunnel`), the installer and `manage` refuse it. A second address from the same host is often in the same subnet: while single addresses get blocked, that is enough, but if the subnet is closed, both go. For setups with several servers, see the [cascade](CASCADE.en.md).
+
+---
 <a id="active-probing-adv"></a>
 ## 🛡️ Active Probing and Obfuscation Without a Proxy
 

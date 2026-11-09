@@ -3375,6 +3375,99 @@ change_server_port() {
     (( fail == 0 ))
 }
 
+# manage exit-ip <IPv4|off>: адрес, с которого трафик клиентов уходит в интернет
+# (I#384). Меняется правило SNAT в PostUp/PostDown живого awg0.conf и AWG_EXIT_IP
+# в init; клиентов не трогает: подключаются они к прежнему адресу входа. Сервис
+# останавливается ДО правки файла, чтобы PostDown снял старое правило, и
+# запускается после. Не поднялся - оба файла возвращаются и сервис стартует
+# на старых.
+_exit_strip_snat() {
+    sed -E 's/; iptables -t nat -[ID] POSTROUTING -s [^ ]+ -o [^ ]+ -j SNAT --to-source [0-9.]+//g'
+}
+change_exit_ip() {
+    local want="$1" cur nic subnet v6 bak_conf bak_init="" tmp lock_fd rc=0 line
+    if [[ "$want" != off ]] && ! _valid_ipv4 "$want"; then
+        _JSON_ERR="invalid exit address"
+        log_error "Некорректный адрес выхода '${want}': нужен IPv4 или off."
+        return 1
+    fi
+    v6=$(ALLOW_IPV6_TUNNEL=""; safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${ALLOW_IPV6_TUNNEL:-0}")
+    if [[ "$want" != off && "$v6" == "1" ]]; then
+        _JSON_ERR="exit address with IPv6 tunnel"
+        log_error "Адрес выхода не сочетается с IPv6-туннелем клиентов (ALLOW_IPV6_TUNNEL=1): SNAT меняет только IPv4, IPv6 клиентов уходил бы мимо адреса выхода."
+        return 1
+    fi
+    if [[ "$want" != off ]] && ! ip -4 -o addr show 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="inet"){split($(i+1),a,"/"); print a[1]}}' | grep -qxF -- "$want"; then
+        _JSON_ERR="exit address not on an interface"
+        log_error "Адреса $want нет ни на одном интерфейсе сервера. Пропишите его постоянно (например, в netplan) и повторите."
+        return 1
+    fi
+    nic=$(grep -E '^PostUp[[:space:]]*=' "$SERVER_CONF_FILE" | grep -oE 'iptables -t nat -A POSTROUTING -o [A-Za-z0-9._-]+ -j MASQUERADE' | head -1 | awk '{print $7}')
+    subnet=$(awk -F= '/^[[:space:]]*Address[[:space:]]*=/{gsub(/[[:space:]\r]/,"",$2); split($2,a,","); print a[1]; exit}' "$SERVER_CONF_FILE")
+    if [[ -z "$nic" || ! "$subnet" =~ ^[0-9.]+/[0-9]+$ ]]; then
+        _JSON_ERR="cannot read nic or subnet from server config"
+        log_error "В $SERVER_CONF_FILE не найдены MASQUERADE в PostUp или IPv4 в Address: правило выхода не к чему привязать."
+        return 1
+    fi
+    cur=$(grep -E '^PostUp[[:space:]]*=' "$SERVER_CONF_FILE" | grep -oE 'SNAT --to-source [0-9.]+' | head -1 | awk '{print $3}')
+    if [[ "$want" == "${cur:-off}" ]]; then
+        log "Адрес выхода уже ${want}, менять нечего."
+        json_out "{\"command\":\"exit-ip\",\"ok\":true,\"exit_ip\":\"${cur}\",\"changed\":false}"
+        return 0
+    fi
+    log_warn "Сервис перезапустится, подключённые клиенты на несколько секунд потеряют связь. Конфиги клиентов не меняются."
+    confirm_action "сменить адрес выхода" "на ${want}" || return 1
+    bak_conf="${SERVER_CONF_FILE}.exit-bak"
+    cp -p "$SERVER_CONF_FILE" "$bak_conf" || { log_error "Не удалось сделать копию $SERVER_CONF_FILE."; return 1; }
+    if [[ -f "$CONFIG_FILE" ]]; then
+        bak_init="${CONFIG_FILE}.exit-bak"
+        cp -p "$CONFIG_FILE" "$bak_init" || { rm -f "$bak_conf"; log_error "Не удалось сделать копию $CONFIG_FILE."; return 1; }
+    fi
+    systemctl stop awg-quick@awg0 || log_warn "Сервис не остановился штатно, продолжаю."
+    exec {lock_fd}>"${AWG_DIR}/.awg_config.lock" && flock -w 10 "$lock_fd" || rc=1
+    if (( rc == 0 )); then
+        tmp=$(mktemp "${SERVER_CONF_FILE}.exit.XXXXXX") || rc=1
+    fi
+    if (( rc == 0 )); then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$line" =~ ^PostUp[[:space:]]*= ]]; then
+                line=$(printf '%s' "$line" | _exit_strip_snat)
+                [[ "$want" != off ]] && line="${line}; iptables -t nat -I POSTROUTING -s ${subnet} -o ${nic} -j SNAT --to-source ${want}"
+            elif [[ "$line" =~ ^PostDown[[:space:]]*= ]]; then
+                line=$(printf '%s' "$line" | _exit_strip_snat)
+                [[ "$want" != off ]] && line="${line}; iptables -t nat -D POSTROUTING -s ${subnet} -o ${nic} -j SNAT --to-source ${want}"
+            fi
+            printf '%s\n' "$line"
+        done < "$SERVER_CONF_FILE" > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$SERVER_CONF_FILE" || { rm -f "$tmp"; rc=1; }
+    fi
+    if (( rc == 0 )) && [[ -f "$CONFIG_FILE" ]]; then
+        local v=""; [[ "$want" != off ]] && v="$want"
+        tmp=$(mktemp "${CONFIG_FILE}.exit.XXXXXX") || rc=1
+        if (( rc == 0 )); then
+            { grep -vE '^(export[[:space:]]+)?AWG_EXIT_IP=' "$CONFIG_FILE"; echo "export AWG_EXIT_IP='${v}'"; } > "$tmp" \
+                && chmod 600 "$tmp" && mv -f "$tmp" "$CONFIG_FILE" || { rm -f "$tmp"; rc=1; }
+        fi
+    fi
+    [[ -n "${lock_fd:-}" ]] && exec {lock_fd}>&-
+    if (( rc != 0 )) || ! systemctl start awg-quick@awg0; then
+        log_error "Не удалось применить адрес выхода ${want}, возвращаю прежние настройки."
+        cp -p "$bak_conf" "$SERVER_CONF_FILE"
+        [[ -n "$bak_init" ]] && cp -p "$bak_init" "$CONFIG_FILE"
+        systemctl start awg-quick@awg0 || log_error "Сервер не поднялся и на прежних настройках: systemctl status awg-quick@awg0"
+        rm -f "$bak_conf" "$bak_init"
+        _JSON_ERR="start with the new exit address failed, rolled back"
+        return 1
+    fi
+    awg_record_device_params 2>/dev/null || true
+    rm -f "$bak_conf" "$bak_init"
+    if [[ "$want" == off ]]; then
+        log "Адрес выхода снят: трафик клиентов уходит с того же адреса, к которому они подключаются."
+    else
+        log "Адрес выхода: ${want}. Проверить с клиента: curl -s ifconfig.me должен вернуть ${want}."
+    fi
+    json_out "{\"command\":\"exit-ip\",\"ok\":true,\"exit_ip\":\"$([[ $want == off ]] || printf '%s' "$want")\",\"changed\":true}"
+}
+
 usage() {
     # C1: явный help (rc=0) -> stdout + exit 0; ошибка использования (rc!=0,
     # дефолт) -> stderr + exit 1. Явные help-вызовы передают 0, error-вызовы
@@ -3423,6 +3516,7 @@ usage() {
     echo "  stats [--json]        Статистика трафика по клиентам"
     echo "  regen [имя ...] [--reset-routes]  Перегенерировать файлы клиента(ов), можно несколько имён"
     echo "  port <номер>                Сменить UDP-порт сервера (UFW, init, перевыпуск всех клиентов)"
+    echo "  exit-ip <IPv4|off>          Адрес, с которого трафик клиентов уходит в интернет (клиенты не меняются)"
     echo "  modify <имя> <пар> <зн> Изменить параметр клиента"
     echo "  backup                Создать бэкап"
     echo "  restore [файл]        Восстановить из бэкапа"
@@ -3938,6 +4032,9 @@ case $COMMAND in
         fi
         ;;
 
+    exit-ip)
+        change_exit_ip "$CLIENT_NAME" || exit 1
+        ;;
     port)
         change_server_port "$CLIENT_NAME" || exit 1
         ;;

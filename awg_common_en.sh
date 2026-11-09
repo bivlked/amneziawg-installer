@@ -1636,7 +1636,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PSK|KEEP_PACKAGES|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PSK|AWG_EXIT_IP|KEEP_PACKAGES|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT)
                     export "$key=$value"
                     ;;
@@ -3398,6 +3398,22 @@ render_server_config() {
     # PostUp/PostDown rules for routing
     local postup="iptables -I FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${nic} -j MASQUERADE"
     local postdown="iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o ${nic} -j MASQUERADE"
+    # Exit address (I#384): client traffic leaves to the internet from
+    # AWG_EXIT_IP instead of the entry address. The SNAT is inserted (-I) ABOVE
+    # the MASQUERADE and only for the client subnet: the server's own traffic is
+    # unchanged. If the address disappears from the interface, SNAT still sets it
+    # as the source, no replies come back, and client traffic stops instead of
+    # leaving through the entry. The value goes into PostUp, so it is checked
+    # here again.
+    local exit_ip="${AWG_EXIT_IP:-}"
+    if [[ -n "$exit_ip" ]]; then
+        if ! _valid_ipv4 "$exit_ip"; then
+            log_error "Invalid exit address AWG_EXIT_IP='$exit_ip': an IPv4 address is needed."
+            return 1
+        fi
+        postup="${postup}; iptables -t nat -I POSTROUTING -s ${AWG_TUNNEL_SUBNET} -o ${nic} -j SNAT --to-source ${exit_ip}"
+        postdown="${postdown}; iptables -t nat -D POSTROUTING -s ${AWG_TUNNEL_SUBNET} -o ${nic} -j SNAT --to-source ${exit_ip}"
+    fi
 
     # MSS/PMTU clamp: pin the TCP MSS to the tunnel MTU so large segments do not
     # stall against the 1280 tunnel when ICMP "frag needed" is filtered (PMTU

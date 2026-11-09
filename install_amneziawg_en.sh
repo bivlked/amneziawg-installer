@@ -96,7 +96,7 @@ _AWG_KMOD_T1=0
 AWG_ENSURE_HELPER=/usr/local/sbin/amneziawg-ensure-module
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""; CLI_SSH_PORT_SET=0
-CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PSK=0; CLI_NO_PREBUILT=0; CLI_CLIENT_IPV6_DIRECT=0; CLI_KEEP_PACKAGES=0
+CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PSK=0; CLI_EXIT_IP=""; CLI_EXIT_IP_SET=0; CLI_NO_PREBUILT=0; CLI_CLIENT_IPV6_DIRECT=0; CLI_KEEP_PACKAGES=0
 CLI_ALLOW_IPV6_TUNNEL=0
 CLI_I1=""; CLI_I1_SET=0
 # A pinned I1 comes only from the init file, not from the calling shell.
@@ -318,6 +318,7 @@ while [[ $# -gt 0 ]]; do
         --route-custom=*) CLI_ROUTING_MODE=3; CLI_CUSTOM_ROUTES="${1#*=}" ;;
         --isolation=*)   CLI_ISOLATION="${1#*=}" ;;
         --endpoint=*)    CLI_ENDPOINT="${1#*=}" ;;
+        --exit-ip=*)     CLI_EXIT_IP="${1#*=}"; CLI_EXIT_IP_SET=1 ;;
         --server-name=*) CLI_SERVER_NAME="${1#*=}" ;;
         --mobile)        CLI_MOBILE=1 ;;
         --protocol=*)    CLI_PROTOCOL="${1#*=}"; CLI_PROTOCOL_SET=1 ;;
@@ -777,6 +778,9 @@ Options:
   --isolation=on|off    Isolate VPN clients from each other (default on).
                         off: the tunnel subnet is added to client AllowedIPs
   --endpoint=ADDR       External server endpoint: FQDN, IPv4 or [IPv6] (NAT)
+  --exit-ip=IPv4        A second server address that client traffic leaves to the
+                        internet from (clients still connect to --endpoint);
+                        the address has to be on an interface, off removes it
   --server-name=NAME    Server name shown in the Amnezia app on vpn:// import
                         (default 'AWG Server'; no quotes or control characters)
   --mobile              Mobile setup in one flag: --preset=mobile + port 443/udp
@@ -2520,7 +2524,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PSK|NO_PREBUILT|KEEP_PACKAGES|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PSK|AWG_EXIT_IP|NO_PREBUILT|KEEP_PACKAGES|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT|\
                 AWG_PROTOCOL_SOURCE|AWG_PROTOCOL_FALLBACK)
                     export "$key=$value"
@@ -3211,6 +3215,30 @@ _awg_default_port() {
         log_warn "Could not pick a random free port, using 39743."
         printf '39743\n'
     fi
+}
+
+# --exit-ip (I#384): the exit address has to be an IPv4 on an interface of this
+# server and does not combine with the IPv6 tunnel for clients: SNAT changes
+# IPv4 only, and client IPv6 would bypass the exit address. The reason goes to
+# stdout, code 1.
+_awg_exit_ip_check() {
+    local ip="$1" o
+    if ! [[ "$ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+        printf '%s\n' "exit address '$ip' does not look like IPv4"
+        return 1
+    fi
+    for o in "${BASH_REMATCH[@]:1}"; do
+        if (( 10#$o > 255 )); then printf '%s\n' "exit address '$ip' does not look like IPv4"; return 1; fi
+    done
+    if [[ "${ALLOW_IPV6_TUNNEL:-0}" == "1" ]]; then
+        printf '%s\n' "an exit address does not combine with the IPv6 tunnel for clients (--allow-ipv6-tunnel): SNAT changes IPv4 only, client IPv6 would bypass the exit address"
+        return 1
+    fi
+    if ! ip -4 -o addr show 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="inet"){split($(i+1),a,"/"); print a[1]}}' | grep -qxF -- "$ip"; then
+        printf '%s\n' "address $ip is not on any interface of the server; configure it permanently (in netplan, for example) and try again"
+        return 1
+    fi
+    return 0
 }
 
 # _awg_size_collisions <S1> <S2> <S3> <S4> : whether the receiver can take a DATA
@@ -5816,6 +5844,8 @@ export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
 export NO_CPS=${NO_CPS}
 # 1 - new clients without a PresharedKey (--no-psk); manage add --psk turns it on for one client.
 export NO_PSK=${NO_PSK:-0}
+# Client exit address (--exit-ip). Empty - traffic leaves from the entry address.
+export AWG_EXIT_IP='${AWG_EXIT_IP:-}'
 export NO_PREBUILT=${NO_PREBUILT:-0}
 # Client devices' IPv6 directly, around the tunnel (mode 2 only). 0 - through the tunnel.
 export CLIENT_IPV6_DIRECT=${CLIENT_IPV6_DIRECT:-0}
@@ -5895,6 +5925,7 @@ initialize_setup() {
     ALLOWED_IPS_MODE="default"
     ALLOWED_IPS=""
     AWG_ENDPOINT=""
+    AWG_EXIT_IP=""
     CLIENT_ISOLATION=""
     # Hard reset (not ${VAR:-}): the internal ownership marker must not be
     # inherited from the environment - an externally exported variable would
@@ -6314,6 +6345,17 @@ initialize_setup() {
             || die "CLIENT_DNS in $CONFIG_FILE is invalid ('$CLIENT_DNS'): IP addresses separated by commas are needed, with no empty items."
     fi
 
+    # Client exit address (I#384): the flag sets it, a saved one stays, off removes it.
+    if [[ "${CLI_EXIT_IP_SET:-0}" -eq 1 ]]; then
+        [[ -n "$CLI_EXIT_IP" ]] || die "Empty --exit-ip=: give an IPv4 exit address or off."
+        if [[ "$CLI_EXIT_IP" == off ]]; then AWG_EXIT_IP=""; else AWG_EXIT_IP="$CLI_EXIT_IP"; fi
+    fi
+    if [[ -n "${AWG_EXIT_IP:-}" ]]; then
+        local _exit_why
+        _exit_why=$(_awg_exit_ip_check "$AWG_EXIT_IP") || die "--exit-ip: ${_exit_why}."
+        log "Client exit address: $AWG_EXIT_IP (clients still connect to the entry address)."
+    fi
+
     # Save configuration
     _awg_save_init
     export AWG_PORT AWG_TUNNEL_SUBNET DISABLE_IPV6 ALLOWED_IPS_MODE ALLOWED_IPS AWG_ENDPOINT AWG_PROTOCOL
@@ -6380,7 +6422,7 @@ initialize_setup() {
     if (( current_step > 4 )) && { [[ -n "$CLI_PORT" ]] || [[ -n "$CLI_SUBNET" ]] \
         || [[ -n "$CLI_SSH_PORT" ]] || [[ "$CLI_ROUTING_MODE" != "default" ]] \
         || [[ -n "$_cfg_allowed_ips_mode" && "$_cfg_allowed_ips_mode" != "$ALLOWED_IPS_MODE" ]] \
-        || [[ -n "$CLI_ENDPOINT" ]] || [[ "$CLI_DISABLE_IPV6" != "default" ]] \
+        || [[ -n "$CLI_ENDPOINT" ]] || [[ "${CLI_EXIT_IP_SET:-0}" -eq 1 ]] || [[ "$CLI_DISABLE_IPV6" != "default" ]] \
         || [[ "${CLI_ALLOW_IPV6_TUNNEL:-0}" -eq 1 ]] || [[ -n "${CLI_PRESET:-}" ]] \
         || [[ -n "${CLI_JC:-}" ]] || [[ -n "${CLI_JMIN:-}" ]] || [[ -n "${CLI_JMAX:-}" ]] \
         || [[ "${CLI_ISOLATION:-default}" != "default" ]] \

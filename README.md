@@ -563,6 +563,7 @@ sudo bash ./install_amneziawg_en.sh       # Запуск (+ 2 перезагру
 # Управление клиентами
 sudo bash /root/awg/manage_amneziawg.sh add my_phone       # Добавить
 sudo bash /root/awg/manage_amneziawg.sh add my_tv --no-psk     # Без PresharedKey (по умолчанию он у каждого)
+sudo bash /root/awg/manage_amneziawg.sh exit-ip 203.0.113.7    # Выход клиентов со второго IP сервера
 sudo bash /root/awg/manage_amneziawg.sh remove my_phone    # Удалить
 sudo bash /root/awg/manage_amneziawg.sh list                # Список
 sudo bash /root/awg/manage_amneziawg.sh list --json         # Список в JSON (для скриптов)

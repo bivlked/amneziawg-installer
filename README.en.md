@@ -562,6 +562,7 @@ sudo bash ./install_amneziawg.sh          # Run (+ 2 reboots)
 # Client management
 sudo bash /root/awg/manage_amneziawg.sh add my_phone       # Add
 sudo bash /root/awg/manage_amneziawg.sh add my_tv --no-psk     # Without a PresharedKey (every client has one by default)
+sudo bash /root/awg/manage_amneziawg.sh exit-ip 203.0.113.7    # Client traffic leaves from the server's second IP
 sudo bash /root/awg/manage_amneziawg.sh remove my_phone    # Remove
 sudo bash /root/awg/manage_amneziawg.sh list                # List
 sudo bash /root/awg/manage_amneziawg.sh list --json         # List as JSON (for scripts)

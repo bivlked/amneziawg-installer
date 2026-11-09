@@ -1606,7 +1606,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PSK|KEEP_PACKAGES|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PSK|AWG_EXIT_IP|KEEP_PACKAGES|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT)
                     export "$key=$value"
                     ;;
@@ -3322,6 +3322,21 @@ render_server_config() {
     # PostUp/PostDown правила для маршрутизации
     local postup="iptables -I FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${nic} -j MASQUERADE"
     local postdown="iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o ${nic} -j MASQUERADE"
+    # Адрес выхода (I#384): трафик клиентов уходит в интернет с AWG_EXIT_IP, а
+    # не с адреса входа. SNAT вставляется (-I) ВЫШЕ MASQUERADE и только для
+    # подсети клиентов: свой трафик сервера идёт как раньше. Пропал адрес с
+    # интерфейса - SNAT всё равно ставит его источником, ответы не приходят, и
+    # трафик клиентов стоит, а не уходит через вход. Значение идёт в PostUp,
+    # поэтому проверяется здесь ещё раз.
+    local exit_ip="${AWG_EXIT_IP:-}"
+    if [[ -n "$exit_ip" ]]; then
+        if ! _valid_ipv4 "$exit_ip"; then
+            log_error "Некорректный адрес выхода AWG_EXIT_IP='$exit_ip': нужен IPv4."
+            return 1
+        fi
+        postup="${postup}; iptables -t nat -I POSTROUTING -s ${AWG_TUNNEL_SUBNET} -o ${nic} -j SNAT --to-source ${exit_ip}"
+        postdown="${postdown}; iptables -t nat -D POSTROUTING -s ${AWG_TUNNEL_SUBNET} -o ${nic} -j SNAT --to-source ${exit_ip}"
+    fi
 
     # MSS/PMTU-clamp: фиксируем TCP MSS под туннельный MTU, чтобы крупные сегменты
     # не упирались в 1280-туннель при фильтрованном ICMP "frag needed" (PMTUD-блэкхол:
