@@ -21,6 +21,7 @@ This guide turns two `amneziawg-installer` setups into a cascade: a client conne
 - [Step 5. Autostart after reboot](#step5)
 - [Verification](#verify)
 - [Updating the list of Russian networks](#update)
+- [Three servers: entry, middle and exit](#three-hop)
 - [Troubleshooting](#trouble)
 - [Security](#security)
 - [Removing the cascade](#uninstall)
@@ -471,6 +472,70 @@ If you enabled only the timer and never added the service to autostart, add it f
 `RandomizedDelaySec` spreads the requests out in time, so that everyone who followed this guide does not hit the list source in the same second.
 
 One thing to expect: with `RemainAfterExit=no`, `systemctl status awg-routing` shows `inactive (dead)` between runs. That is normal, a oneshot unit that has finished does not stay active, and the routes are in place. Look at the last-run line in the same output, or at `systemctl list-timers`.
+
+<a id="three-hop"></a>
+## Three servers: entry, middle and exit
+
+In the two-server setup, a site or app that reports visitor addresses "to the right people" sees the address of the AWG1 exit, and that address can end up on a blocklist. Put one more foreign server between the entry and the exit, and the entry only ever talks to the middle, while the outside world sees only the exit. If the exit lands on a list, replace it and the tunnel config on the middle; the entry and the clients are not affected.
+
+It is easier to name the servers by their place in the chain: `awg-in` (the entry, AWG0 from the steps above), `awg-mid` (the middle) and `awg-out` (the exit, AWG1). Set the name on each server with its own command, for example `hostnamectl set-hostname awg-mid`; after you log in again it shows right in the shell prompt.
+
+```mermaid
+flowchart LR
+    C["Client (AmneziaWG)"] --> IN["awg-in - RU, entry"]
+    IN -->|"to Russian networks - direct"| RU["Russian sites\nsee awg-in IP"]
+    IN -->|"everything else - awg1 tunnel"| MID["awg-mid - middle"]
+    MID -->|"everything - awg1 tunnel"| OUT["awg-out - exit"]
+    OUT --> WORLD["Foreign sites\nsee awg-out IP"]
+```
+
+The middle does not split anything: whatever arrives from awg-in, it sends into the tunnel to awg-out. The split between Russian and foreign traffic stays on awg-in, as before. All three servers use different subnets. It is easiest to build from the exit back to the entry:
+
+1. **awg-out.** Install it as AWG1 in [step 1](#step1) and issue a client for the middle on it:
+
+   ```bash
+   bash /root/awg/manage_amneziawg.sh add mid_host
+   ```
+
+2. **awg-mid.** Install it the same way as in step 1, with its own subnet, for example `--subnet=172.16.62.1/24`. Put `mid_host.conf` from awg-out on it as `/etc/amnezia/amneziawg/awg1.conf`, exactly as in [step 3](#step3): with `Table = off` and without the `DNS` line. Add two more lines to the `[Interface]` section:
+
+   ```ini
+   PostUp = ip rule add iif awg0 lookup 100 priority 10000; ip route replace default dev awg1 table 100; iptables -t nat -A POSTROUTING -o awg1 -j MASQUERADE
+   PostDown = ip rule del iif awg0 lookup 100 priority 10000; ip route flush table 100; iptables -t nat -D POSTROUTING -o awg1 -j MASQUERADE
+   ```
+
+   Then bring the tunnel up:
+
+   ```bash
+   chmod 600 /etc/amnezia/amneziawg/awg1.conf
+   systemctl enable --now awg-quick@awg1
+   awg show awg1
+   ```
+
+   The `awg show awg1` output should show a `latest handshake` line.
+
+3. **awg-in.** On awg-mid issue a client for the entry (`bash /root/awg/manage_amneziawg.sh add ru_host`), and set up awg-in by steps 1-5 with no changes. There is one difference: `awg1.conf` and `AWG1_ENDPOINT` in the routing script now come from awg-mid, not from awg-out.
+
+The `iif awg0` rule sends into `awg1` only the traffic that reached awg-mid from its clients, that is from awg-in. awg-mid's own traffic, including the packets of the tunnel to awg-out itself, follows the main table, so there is no loop.
+
+Check on awg-mid:
+
+```bash
+ip rule | grep 'iif awg0'
+# 10000:  from all iif awg0 lookup 100
+ip route show table 100
+# default dev awg1 scope link
+```
+
+From a client, `curl -s ifconfig.me` should return the address of awg-out. If the chain does not come up, post the output of `ip rule`, `ip route show table 100` and `awg show awg1` from awg-mid in [#120](https://github.com/bivlked/amneziawg-installer/discussions/120).
+
+**An important caveat.** The rule for the middle is set by the `PostUp` of the `awg1` tunnel. While `awg-quick@awg1` runs, traffic from the entry goes only toward the exit: if awg-out is unreachable, the packets go into the tunnel and are lost. But if `awg-quick@awg1` itself is stopped or failed to come up after a reboot, the rule is not there, and traffic from the entry goes out to the internet from the address of awg-mid, the very address this setup hides. The same happens in the first seconds after boot, before `awg1` is up. After a reboot and after any work on the middle, check `systemctl is-active awg-quick@awg1` (it should say `active`) and `ip rule | grep 'iif awg0'`.
+
+Two more downsides. The protocol generation (2.0 or 3.1) has to match on all three servers. And the latency gains the leg between the two foreign servers, so pick them close to each other.
+
+To remove the middle: on awg-mid run `systemctl disable --now awg-quick@awg1` and `rm /etc/amnezia/amneziawg/awg1.conf` (`PostDown` removes the rule and the NAT by itself), and on awg-out `bash /root/awg/manage_amneziawg.sh remove mid_host`. The entry is taken apart as in [Removing the cascade](#uninstall).
+
+The three-server setup was checked by [@stromnov](https://github.com/stromnov) in [#120](https://github.com/bivlked/amneziawg-installer/discussions/120): three VPS on Ubuntu 24.04 and 26.04 with the 3.1 profile, and the chain came up on the first try. I have not built it on my own servers: it is the two-server recipe plus one routing rule on the middle.
 
 <a id="trouble"></a>
 ## Troubleshooting

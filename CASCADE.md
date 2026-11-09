@@ -21,6 +21,7 @@
 - [Шаг 5. Автозапуск после перезагрузки](#step5)
 - [Проверка](#verify)
 - [Обновление списка российских сетей](#update)
+- [Три сервера: вход, середина и выход](#three-hop)
 - [Диагностика](#trouble)
 - [Безопасность](#security)
 - [Как убрать каскад](#uninstall)
@@ -469,6 +470,70 @@ systemctl list-timers awg-routing.timer
 `RandomizedDelaySec` разбрасывает обращения во времени, чтобы все, кто настроился по этому гайду, не приходили за списком в одну и ту же секунду.
 
 И имейте в виду: с `RemainAfterExit=no` команда `systemctl status awg-routing` между запусками показывает `inactive (dead)`. Это нормально, отработавший oneshot-юнит активным не остаётся, а маршруты при этом на месте. Смотрите на строку последнего запуска в том же выводе или на `systemctl list-timers`.
+
+<a id="three-hop"></a>
+## Три сервера: вход, середина и выход
+
+В схеме из двух серверов сайт или приложение, которое передаёт адреса посетителей «куда следует», видит адрес выхода AWG1, и этот адрес может попасть в чёрный список. Если поставить между входом и выходом ещё один зарубежный сервер, вход связан только с серединой, а наружу виден только выход. Попадёт выход в список - замените его и конфиг туннеля на середине, вход и клиентов это не коснётся.
+
+Серверы удобнее называть по месту в цепочке: `awg-in` (вход, это AWG0 из шагов выше), `awg-mid` (середина) и `awg-out` (выход, это AWG1). Имя задаётся на каждом сервере своей командой, например `hostnamectl set-hostname awg-mid`, и после повторного входа видно прямо в приглашении консоли.
+
+```mermaid
+flowchart LR
+    C["Клиент (AmneziaWG)"] --> IN["awg-in - РФ, вход"]
+    IN -->|"к российским сетям - напрямую"| RU["Российские сайты\nвидят IP awg-in"]
+    IN -->|"остальное - туннель awg1"| MID["awg-mid - середина"]
+    MID -->|"всё - туннель awg1"| OUT["awg-out - выход"]
+    OUT --> WORLD["Зарубежные сайты\nвидят IP awg-out"]
+```
+
+Середина ничего не делит: всё, что пришло от awg-in, она отправляет в туннель к awg-out. Деление на российский и зарубежный трафик остаётся на awg-in, как и было. Подсети у всех трёх серверов разные. Собирать удобнее от выхода к входу:
+
+1. **awg-out.** Поставьте его как AWG1 в [шаге 1](#step1) и выпустите на нём клиента для середины:
+
+   ```bash
+   bash /root/awg/manage_amneziawg.sh add mid_host
+   ```
+
+2. **awg-mid.** Поставьте так же, как в шаге 1, но со своей подсетью, например `--subnet=172.16.62.1/24`. Файл `mid_host.conf` с awg-out положите на него как `/etc/amnezia/amneziawg/awg1.conf`, точно как в [шаге 3](#step3): с `Table = off` и без строки `DNS`. В секцию `[Interface]` добавьте ещё две строки:
+
+   ```ini
+   PostUp = ip rule add iif awg0 lookup 100 priority 10000; ip route replace default dev awg1 table 100; iptables -t nat -A POSTROUTING -o awg1 -j MASQUERADE
+   PostDown = ip rule del iif awg0 lookup 100 priority 10000; ip route flush table 100; iptables -t nat -D POSTROUTING -o awg1 -j MASQUERADE
+   ```
+
+   Затем включите туннель:
+
+   ```bash
+   chmod 600 /etc/amnezia/amneziawg/awg1.conf
+   systemctl enable --now awg-quick@awg1
+   awg show awg1
+   ```
+
+   В выводе `awg show awg1` должна появиться строка `latest handshake`.
+
+3. **awg-in.** На awg-mid выпустите клиента для входа (`bash /root/awg/manage_amneziawg.sh add ru_host`), а awg-in настройте по шагам 1-5 без изменений. Отличие одно: `awg1.conf` и `AWG1_ENDPOINT` в скрипте маршрутизации теперь берутся от awg-mid, а не от awg-out.
+
+Правило `iif awg0` заворачивает в `awg1` только трафик, пришедший на awg-mid от его клиентов, то есть от awg-in. Собственный трафик awg-mid, включая пакеты самого туннеля к awg-out, идёт по основной таблице, поэтому петли нет.
+
+Проверка на awg-mid:
+
+```bash
+ip rule | grep 'iif awg0'
+# 10000:  from all iif awg0 lookup 100
+ip route show table 100
+# default dev awg1 scope link
+```
+
+С клиента `curl -s ifconfig.me` должен вернуть адрес awg-out. Если цепочка не поднимается, пришлите в [#120](https://github.com/bivlked/amneziawg-installer/discussions/120) вывод `ip rule`, `ip route show table 100` и `awg show awg1` с awg-mid.
+
+**Важная оговорка.** Правило для середины ставит `PostUp` туннеля `awg1`. Пока `awg-quick@awg1` работает, трафик со входа идёт только в сторону выхода: если awg-out недоступен, пакеты уходят в туннель и теряются. Но если сам `awg-quick@awg1` остановлен или не поднялся после перезагрузки, правила нет, и трафик со входа уходит в интернет с адреса awg-mid, то есть с того адреса, который эта схема прячет. То же бывает в первые секунды после загрузки, пока `awg1` ещё не поднялся. После перезагрузки и любых работ на середине проверяйте `systemctl is-active awg-quick@awg1` (должно быть `active`) и `ip rule | grep 'iif awg0'`.
+
+Ещё два минуса. Поколение протокола (2.0 или 3.1) должно совпадать на всех трёх серверах. К задержке добавляется плечо между двумя зарубежными серверами, поэтому их лучше брать недалеко друг от друга.
+
+Убрать середину: на awg-mid `systemctl disable --now awg-quick@awg1` и `rm /etc/amnezia/amneziawg/awg1.conf` (`PostDown` сам снимет правило и NAT), на awg-out `bash /root/awg/manage_amneziawg.sh remove mid_host`. Вход разбирается по разделу [Как убрать каскад](#uninstall).
+
+Трёхзвенную схему проверил [@stromnov](https://github.com/stromnov) в [#120](https://github.com/bivlked/amneziawg-installer/discussions/120): три VPS на Ubuntu 24.04 и 26.04 с профилем 3.1, цепочка поднялась с первой попытки. Сам я её на своих серверах не собирал: это двухзвенный рецепт плюс одно правило маршрутизации на середине.
 
 <a id="trouble"></a>
 ## Диагностика

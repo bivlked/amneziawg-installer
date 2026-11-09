@@ -2542,6 +2542,8 @@ AllowedIPs   = 10.9.9.2/32
 
 In the 3.1 profile `S1`-`S4` are 12 or more: the first 12 bytes of the padding serve as the nonce for header encryption. For the 2.0 profile remove the `HeaderProtectionKey` and `ContentPaddingAddition` lines and set `H1`-`H4` to non-overlapping ranges below 2147483647 (for example `H1 = 134567-245678`); `S3` from 8 and `S4` from 4 are allowed there. The client has to get the same `S1`-`S4`, `H1`-`H4` and key.
 
+Do not copy the `S1`-`S4` numbers from this example (64, 37, 21, 15) as they are. Everyone who takes them from here ends up with the same packet sizes, and that is a shared trait of all such servers. Pick your own values within the ranges and limits from the [parameter table](#awg2-params-adv) (in the 3.1 profile each one is 12 or more) and set them the same on the server and on every client.
+
 Swap the interface name (`awg0`) and external NIC (`eth0`) for yours. For IPv6 add symmetric `ip6tables` rules. `ListenPort` must be open at the host level (UFW or host iptables) and at the cloud-provider level.
 
 Smoke test:

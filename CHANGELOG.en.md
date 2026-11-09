@@ -12,6 +12,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **A three-server cascade in CASCADE.en.md.** A new section on the `awg-in`, `awg-mid` and `awg-out` chain: one more foreign server sits between the entry and the exit, and the entry only talks to it. The middle does not split anything, it sends all traffic from the entry into the tunnel to the exit with one routing rule. @stromnov checked the setup on three VPS with Ubuntu 24.04 and 26.04 and the 3.1 profile (#120). The section also has a caveat: if the `awg1` tunnel on the middle is not up, traffic from the entry leaves from the middle's address.
+- **Your own `S1`-`S4` in the LXC example.** ADVANCED now says next to the amneziawg-go config example not to copy 64, 37, 21, 15 as they are, otherwise everyone who took them has the same packet sizes (#383).
+
 ## [6.2.2] - 2026-11-09
 
 **v6.2.2** - ready-made modules for Raspberry Pi OS trixie, a VPN that works right after the install on Oracle Cloud, and the client table re-checked as of 9 November.
