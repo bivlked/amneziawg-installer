@@ -6525,11 +6525,18 @@ _try_install_prebuilt_arm() {
     kernel="$(uname -r)"
     arch="$(dpkg --print-architecture)"
 
-    # Map kernel string to a build target ID
-    if [[ "$kernel" == *+rpt-rpi-2712* ]]; then
+    # Map kernel string to a build target ID. Raspberry Pi OS is built per
+    # release: trixie (13) has its own targets, anything else keeps bookworm.
+    if [[ "$kernel" == *+rpt-rpi-2712* && "${OS_VERSION:-}" == "13" ]]; then
+        target_id="rpi5-trixie-arm64"
+    elif [[ "$kernel" == *+rpt-rpi-2712* ]]; then
         target_id="rpi5-bookworm-arm64"
+    elif [[ "$kernel" == *+rpt* && "$arch" == "arm64" && "${OS_VERSION:-}" == "13" ]]; then
+        target_id="rpi-trixie-arm64"
     elif [[ "$kernel" == *+rpt* && "$arch" == "arm64" ]]; then
         target_id="rpi-bookworm-arm64"
+    elif [[ "$kernel" == *+rpt* && "$arch" == "armhf" && "${OS_VERSION:-}" == "13" ]]; then
+        target_id="rpi-trixie-armhf"
     elif [[ "$kernel" == *+rpt* && "$arch" == "armhf" ]]; then
         target_id="rpi-bookworm-armhf"
     elif [[ "$kernel" == *-generic* && "${OS_VERSION:-}" == "24.04" ]]; then

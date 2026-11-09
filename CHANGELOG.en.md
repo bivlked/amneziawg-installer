@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Ready-made modules for Raspberry Pi OS trixie.** The current Raspberry Pi OS image is on Debian trixie with kernel 6.18, while the ready-made second-line modules were built for bookworm only, so on trixie a 2.0 install (a 32-bit Pi or `--protocol=2.0`) installed the PPA module and built it through DKMS on the Pi itself. The build now ships trixie packages too: Pi 3/4 (64-bit), Pi 5 and the 32-bit `rpi-v7` kernel, and the installer picks the target by the system version (13 is trixie, anything else bookworm). The module build for kernel 6.18.60+rpt is checked on all three targets; these packages have not been run on a real Raspberry Pi.
+
 ### Security
 
 - The apt download retry ban (the CVE-2026-109518 protection from v6.2.1) now covers `--uninstall` too: packages are removed with the ban on, and the ban file is deleted on exit, the same as after an install. Before, `--uninstall` only removed a file left by a cut-short run. In practice removing the installer's packages downloads nothing, so this closes a mostly theoretical case.

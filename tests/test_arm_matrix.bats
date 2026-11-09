@@ -138,3 +138,75 @@ setup() {
          grep -oE 'target_id="[^"]+"' | sort -u)
     [ "$ru" = "$en" ]
 }
+
+# -------------------------------------------------------------------------
+# Raspberry Pi OS trixie (13) gets its own targets; bookworm (12) keeps the
+# old ones. Behaviour, not text: the function runs with a fake uname, dpkg
+# and curl, and the asset name it asks for is checked whole.
+# -------------------------------------------------------------------------
+
+_asset_for() { # $1 installer, $2 uname -r, $3 dpkg arch, $4 OS_VERSION
+    local script="$1"
+    run bash -c '
+        eval "$(awk '\''/^_try_install_prebuilt_arm\(\) \{$/,/^}$/'\'' "'"$script"'")"
+        log() { :; }; log_warn() { :; }
+        uname() { echo "'"$2"'"; }
+        dpkg() { echo "'"$3"'"; }
+        curl() {
+            local a; for a in "$@"; do
+                case "$a" in https://*) echo "URL $a" ;; esac
+            done
+            return 22
+        }
+        OS_ID=debian OS_VERSION="'"$4"'"
+        _try_install_prebuilt_arm
+        echo "rc=$?"
+    '
+}
+
+_assert_asset() { # $1 expected asset file name
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"URL https://github.com/bivlked/amneziawg-installer/releases/download/arm-packages/$1.sha256"* ]]
+    [[ "$output" == *"rc=1"* ]]
+}
+
+@test "RU/EN: RPi OS trixie Pi 4 arm64 -> rpi-trixie-arm64" {
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _asset_for "$s" "6.18.60+rpt-rpi-v8" arm64 13
+        _assert_asset "amneziawg-kmod-rpi-trixie-arm64_6.18.60+rpt-rpi-v8_arm64.deb"
+    done
+}
+
+@test "RU/EN: RPi OS trixie Pi 5 -> rpi5-trixie-arm64" {
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _asset_for "$s" "6.18.60+rpt-rpi-2712" arm64 13
+        _assert_asset "amneziawg-kmod-rpi5-trixie-arm64_6.18.60+rpt-rpi-2712_arm64.deb"
+    done
+}
+
+@test "RU/EN: RPi OS trixie 32-bit -> rpi-trixie-armhf" {
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _asset_for "$s" "6.18.60+rpt-rpi-v7" armhf 13
+        _assert_asset "amneziawg-kmod-rpi-trixie-armhf_6.18.60+rpt-rpi-v7_armhf.deb"
+    done
+}
+
+@test "RU/EN: RPi OS bookworm keeps the bookworm targets" {
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _asset_for "$s" "6.12.115+rpt-rpi-v8" arm64 12
+        _assert_asset "amneziawg-kmod-rpi-bookworm-arm64_6.12.115+rpt-rpi-v8_arm64.deb"
+        _asset_for "$s" "6.12.115+rpt-rpi-2712" arm64 12
+        _assert_asset "amneziawg-kmod-rpi5-bookworm-arm64_6.12.115+rpt-rpi-2712_arm64.deb"
+        _asset_for "$s" "6.12.115+rpt-rpi-v7l" armhf 12
+        _assert_asset "amneziawg-kmod-rpi-bookworm-armhf_6.12.115+rpt-rpi-v7l_armhf.deb"
+    done
+}
+
+@test "arm-build.yml has the 3 Raspberry Pi trixie entries on debian:trixie with suite trixie" {
+    local id
+    for id in rpi-trixie-arm64 rpi5-trixie-arm64 rpi-trixie-armhf; do
+        awk -v id="$id" '$0 ~ "- id: " id "$" {p=1; next} p && /- id:/ {exit} p' "$WF" > "$BATS_TEST_TMPDIR/entry"
+        grep -qxF '            image: debian:trixie' "$BATS_TEST_TMPDIR/entry"
+        grep -qxF '            rpi_suite: trixie' "$BATS_TEST_TMPDIR/entry"
+    done
+}

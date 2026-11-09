@@ -224,7 +224,7 @@ The kernel interface contract is unaffected: `WG_GENL_VERSION` is unchanged, so 
 
 A third-line module is necessary but not sufficient for the 3.1 profile: at step 3 the installer also checks the tools and the loaded module, see [Where 2.0 is installed instead of 3.1](#awg3-fallback-adv).
 
-That last row is not hypothetical: prebuilt ARM packages (a second-line module) are built for Raspberry Pi 3/4/5 on Raspberry Pi OS bookworm, Ubuntu 24.04 ARM64, and Debian 12/13 ARM64. There are none for Ubuntu 26.04 ARM64 or for the Raspberry Pi OS trixie kernels, and on such a host the installer finds no match, falls through to the normal DKMS path and installs the PPA module, which is the third version.
+That last row is not hypothetical: prebuilt ARM packages (a second-line module) are built for Raspberry Pi 3/4/5 on Raspberry Pi OS bookworm and trixie, Ubuntu 24.04 ARM64, and Debian 12/13 ARM64. There are none for Ubuntu 26.04 ARM64, and on such a host the installer finds no match, falls through to the normal DKMS path and installs the PPA module, which is the third version.
 
 On older kernels we pick 2.0 **on purpose**, not because 3.0 fails to build there. For the first day after the release it genuinely did fail on kernel 6.1; upstream fixed that on 31 July and it builds now. But old kernels are exactly where the 3.0 line has had the least mileage, while the pinned 2.0 is verified against an immutable commit. The threshold will be lifted after a separate validation, not because the build passes again.
 
@@ -2341,7 +2341,7 @@ An ARM64 server installed before v6.2.0 stays on 2.0: the installer does not cha
 3. If no prebuilt package matches, the installer falls back to DKMS compilation from source. This works on any kernel but takes longer (10-30 min depending on hardware).
 4. You can skip the prebuilt package altogether: with `--no-prebuilt` the module is built with DKMS right away. The prebuilt packages are built by this project's CI, and the installer checks them only against a SHA256 file from the same release; they are not signed. Note that this changes the module too: the prebuilt packages are built from the pinned AmneziaWG 2.0 source, while on kernels 6.7 and newer DKMS installs `amneziawg-dkms` from the PPA, the same third-line module an x86 server gets. The flag does not change the profile generation: on 32-bit ARM and with `--protocol=2.0` it is second generation either way.
 
-> **Prebuilt ARM coverage:** prebuilt packages (a second-line module) are built for Raspberry Pi (3/4/5) on Raspberry Pi OS bookworm, Ubuntu 24.04 ARM64 and Debian 12/13 ARM64. Ubuntu 26.04 ARM64 and Raspberry Pi OS trixie have none - the module comes as the `amneziawg-dkms` package from the PPA and is built via DKMS (slower on first install, then works normally).
+> **Prebuilt ARM coverage:** prebuilt packages (a second-line module) are built for Raspberry Pi (3/4/5) on Raspberry Pi OS bookworm and trixie, Ubuntu 24.04 ARM64 and Debian 12/13 ARM64. On trixie the 32-bit package exists only for the `rpi-v7` kernel: the trixie archive has no `v7l` flavor. Ubuntu 26.04 ARM64 has none - the module comes as the `amneziawg-dkms` package from the PPA and is built via DKMS (slower on first install, then works normally).
 
 **Raspberry Pi kernel detection:**
 
