@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Documentation
 
 - Oracle Cloud: INSTALL_VPS now gives the Always Free size of Ampere A1 as 2 OCPU and 12 GB (Oracle's docs on 9 November 2026), and the `--endpoint` note says the installer finds the outside address by itself, so the flag is only needed when that lookup gives the wrong address. The ARM table in ADVANCED now names the headers package for Ubuntu ARM64 by kernel flavor (`linux-headers-oracle` on Oracle, `linux-headers-aws` on AWS), which is how the installer picks it.
+- Client table in ADVANCED: Throne 1.4.1 (the padding fix landed in the stable 1.4.0), L×Box v2.25.20, AWG Manager v2.19.25 and KeeneticOS 5.2 Beta 3 re-checked as of 9 November 2026. The T-Mobile row no longer compares the profile with the Amnezia app as is: since version 5.1.0.6 the app sets up its new servers without `I1`.
 
 ## [6.2.1] - 2026-11-06
 

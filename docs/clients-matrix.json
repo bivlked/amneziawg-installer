@@ -147,28 +147,28 @@
       "id": "throne",
       "name": {"ru": "Throne (Windows, Linux, macOS, сторонний)", "en": "Throne (Windows, Linux, macOS, third-party)"},
       "support": "yes",
-      "version": "1.3.2",
-      "version_date": "2026-09-29",
+      "version": "1.4.1",
+      "version_date": "2026-11-06",
       "since": "1.3.0",
       "since_date": "2026-09-17",
-      "since_note": {"ru": "в 1.3.x паддинг части пакетов урезается до свободного места в буфере; исправлено в пре-релизах 1.4.0 (beta.1 - beta.6)", "en": "in 1.3.x the padding of some packets is cut to the room left in the buffer; fixed in the 1.4.0 pre-releases (beta.1 to beta.6)"},
+      "since_note": {"ru": "в 1.3.x паддинг части пакетов урезается до свободного места в буфере; исправлено в 1.4.0", "en": "in 1.3.x the padding of some packets is cut to the room left in the buffer; fixed in 1.4.0"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/throneproj/Throne", "ref": "core/go.mod at 1.3.2: throneproj/wireguard-go f60e4eda0d08; 1.4.0-beta.1 and beta.2 pin 3517ea9271e4 with padding fix ca68c0e; beta.3 pins 98b1170bc9f0 and beta.4 de3e4a28dbfe, both contain ca68c0e; beta.5 and beta.6 pin e11787583013, a rebased line with the same fix as 8da5ee3"},
-      "checked_at": "2026-11-05"
+      "evidence": {"url": "https://github.com/throneproj/Throne", "ref": "core/go.mod at 1.4.0 and 1.4.1: throneproj/wireguard-go e11787583013, the line pinned since 1.4.0-beta.5 with padding fix 8da5ee3 (the rebased ca68c0e of beta.1 to beta.4); 1.3.2 pinned f60e4eda0d08, without the fix"},
+      "checked_at": "2026-11-09"
     },
     {
       "id": "lxbox",
       "name": {"ru": "L×Box (Android, сторонний)", "en": "L×Box (Android, third-party)"},
       "support": "yes",
-      "version": "v2.25.19",
-      "version_date": "2026-11-04",
+      "version": "v2.25.20",
+      "version_date": "2026-11-05",
       "since": "v2.23.0",
       "since_date": "2026-09-05",
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/Leadaxe/LxBox", "ref": "app/android/libbox.version at v2.25.19: sing-box-lx v1.14.4-lx.31, whose wireguard-go submodule 9115d9022cd0 (8a53421edf7e plus 5 commits) handles header_protection_key and content_padding_addition; since from the v2.23.0 release notes (AmneziaWG 3.0/3.1, HeaderProtectionKey and ContentPaddingAddition import)"},
-      "checked_at": "2026-11-05"
+      "evidence": {"url": "https://github.com/Leadaxe/LxBox", "ref": "app/android/libbox.version at v2.25.20: sing-box-lx v1.14.4-lx.32, whose wireguard-go submodule 9115d9022cd0 (the same as in lx.31 of v2.25.19) (8a53421edf7e plus 5 commits) handles header_protection_key and content_padding_addition; since from the v2.23.0 release notes (AmneziaWG 3.0/3.1, HeaderProtectionKey and ContentPaddingAddition import)"},
+      "checked_at": "2026-11-09"
     },
     {
       "id": "zedsecure",
@@ -224,27 +224,27 @@
       "id": "keeneticos",
       "name": {"ru": "KeeneticOS (штатная прошивка)", "en": "KeeneticOS (stock firmware)"},
       "support": "dev-channel",
-      "version": "5.2 Beta 2",
-      "version_date": "2026-10-27",
+      "version": "5.2 Beta 3",
+      "version_date": "2026-11-05",
       "since": "5.2 Alpha 11",
       "since_date": "2026-09-25",
       "since_note": {"ru": "в стабильной 5.1 нет", "en": "not in stable 5.1"},
       "where": {"ru": "канал разработки Keenetic", "en": "Keenetic development channel"},
       "basis": "vendor-docs",
-      "evidence": {"url": "https://forum.keenetic.com/topic/26598-changelog-52/"},
-      "checked_at": "2026-11-05"
+      "evidence": {"url": "https://support.keenetic.com/hero/kn-1012/en/35833-latest-preview-release.html"},
+      "checked_at": "2026-11-09"
     },
     {
       "id": "awg-manager",
       "name": {"ru": "AWG Manager (Keenetic, сторонний)", "en": "AWG Manager (Keenetic, third-party)"},
       "support": "yes",
-      "version": "v2.19.24",
-      "version_date": "2026-11-04",
+      "version": "v2.19.25",
+      "version_date": "2026-11-05",
       "since": {"ru": "штатным модулем на KeeneticOS 5.2 Alpha 11 и новее; на других прошивках - своим модулем ядра или встроенным sing-box (нужны Entware и компонент WireGuard)", "en": "with the stock module on KeeneticOS 5.2 Alpha 11 and newer; on other firmware with its own kernel module or its bundled sing-box (needs Entware and the WireGuard component)"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/hoaxisr/awg-manager/blob/v2.19.24/CHANGELOG.md", "ref": "internal/singbox/installer/embedded.go at v2.19.24: sing-box 1.15.0-alpha.13-awgm.35 (hoaxisr/amnezia-box, release target ab29892ee951), whose go.mod replaces amneziawg-go/v3 with hoaxisr/amneziawg-go v3.1.0-awgm.3; CHANGELOG 2.19.10: 3.0/3.1 on KeeneticOS 5.2 Alpha 11+; 2.18.0: own module 3.1.20260906"},
-      "checked_at": "2026-11-05"
+      "evidence": {"url": "https://github.com/hoaxisr/awg-manager/blob/v2.19.25/CHANGELOG.md", "ref": "internal/singbox/installer/embedded.go at v2.19.25: sing-box 1.15.0-alpha.13-awgm.36 (hoaxisr/amnezia-box, release target 0a65d49308ff), whose go.mod replaces amneziawg-go/v3 with hoaxisr/amneziawg-go v3.1.0-awgm.3; CHANGELOG 2.19.10: 3.0/3.1 on KeeneticOS 5.2 Alpha 11+; 2.18.0: own module 3.1.20260906"},
+      "checked_at": "2026-11-09"
     },
     {
       "id": "openwrt",
