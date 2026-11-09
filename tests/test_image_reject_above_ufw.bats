@@ -364,6 +364,8 @@ _t_list_fails() {
     [ "$output" = "2" ]
     grep -qF 'iptables -S INPUT' "$LOG_FILE"
     grep -qF 'iptables -S FORWARD' "$LOG_FILE"
+    # The exit code of iptables itself (the fake one exits 4), in either language.
+    [ "$(grep -cE '(code|код) 4\)' "$LOG_FILE")" -eq 2 ]
 }
 
 _t_noop_delete() {
@@ -375,8 +377,10 @@ _t_noop_delete() {
     f="$(declare -f remove_image_reject_above_ufw log log_warn)"
     run timeout 20 env LOG_FILE="$LOG_FILE" bash -c "$f; remove_image_reject_above_ufw"
     [ "$status" -eq 0 ]
-    # The bound: at most 5 passes per chain, then it gives up.
-    [ "$(grep -c '^INFO' "$LOG_FILE")" -le 10 ]
+    # The bound: exactly 5 passes per chain (each "removal" claims success),
+    # then it gives up; 2 chains, 10 INFO lines.
+    run grep -c '^INFO' "$LOG_FILE"
+    [ "$output" = "10" ]
 }
 
 @test "RU: REJECT above and below UFW - only the one above is removed" {
