@@ -10,7 +10,7 @@ A step-by-step guide for deploying an AmneziaWG VPN server (3.1 by default, 2.0 
 - One command, MIT-licensed, fully self-hosted: no third-party service carries your traffic or holds your keys. During install and updates the server downloads packages (your distribution's mirrors, the Amnezia PPA on Launchpad) and the installer's own scripts from GitHub, plus ARM prebuilt modules or the pinned 2.0 module source where they are needed. When a client config is made without `--endpoint`, it asks a public-IP lookup service (api.ipify.org and fallbacks) for its address.
 - 3.1 out of the box on x86_64 with Ubuntu 24.04 LTS, Ubuntu 26.04 LTS or Debian 13 (trixie). A stock Debian 12 (bookworm, kernel 6.1) works too, on 2.0, but it is past regular support; Ubuntu 25.10 is not supported since v6.0.0. Details below.
 - Built for cheap VPS budgets: $3 to $5 a month, 1 vCPU, 512 MB RAM minimum (1 GB recommended), 2 GB disk minimum (3+ GB recommended). It needs a full virtual machine (KVM or similar) or bare metal: in a container (OpenVZ, LXC, Docker) the installer stops.
-- ARM64 (aarch64) gets AmneziaWG 3.1 since v6.2.0, with the module built from the PPA through DKMS (checked on a Hetzner CAX11 with Ubuntu 24.04, Debian 13 and Ubuntu 26.04; Oracle Ampere A1 and AWS Graviton run the same stock kernels). 32-bit ARM stays on AmneziaWG 2.0. Prebuilt 2.0 kernel modules (used on 32-bit ARM and with `--protocol=2.0`) exist for Raspberry Pi, Ubuntu 24.04 ARM64 and Debian 12/13 ARM64; Ubuntu 26.04 ARM64 builds the module from source via DKMS either way.
+- ARM64 (aarch64) gets AmneziaWG 3.1 since v6.2.0, with the module built from the PPA through DKMS (checked on a Hetzner CAX11 with Ubuntu 24.04, Debian 13 and Ubuntu 26.04; Oracle Ampere A1 and AWS Graviton run Ubuntu's own cloud kernels, and DKMS builds the module for them the same way; the build for the current Oracle kernel of Ubuntu 24.04, 7.0.0-1013, was checked on 9 Nov 2026). 32-bit ARM stays on AmneziaWG 2.0. Prebuilt 2.0 kernel modules (used on 32-bit ARM and with `--protocol=2.0`) exist for Raspberry Pi, Ubuntu 24.04 ARM64 and Debian 12/13 ARM64; Ubuntu 26.04 ARM64 builds the module from source via DKMS either way.
 - DPI bypass for Russia (ТСПУ), Iran, China, school and corporate firewalls. No guarantees: the result depends on the network and the parameters.
 - Survives kernel upgrades: with DKMS the module is rebuilt at the next boot. On ARM with a prebuilt module there is no DKMS: after a kernel change, run the installer again ([details](#update-flow)).
 
@@ -19,7 +19,7 @@ A step-by-step guide for deploying an AmneziaWG VPN server (3.1 by default, 2.0 
 A VPN server is mostly idle CPU and steady network. What to look for:
 
 - **A full virtual machine (KVM or similar) on x86_64 (amd64)** with 1 GB RAM and root SSH access: this is what gets AmneziaWG 3.1. Any budget provider will do (Vultr, RackNerd, your local host), as long as its addresses are not on a known-bad subnet for your audience. Containers (OpenVZ, LXC, Docker) cannot load a kernel module, and the installer stops in them; for a container there is the userspace route in [ADVANCED](ADVANCED.en.md#lxc-userspace-adv).
-- **ARM hosts** work fine and get AmneziaWG 3.1 on ARM64 since v6.2.0. Two common ones: Hetzner CAX11 / CAX21 (about €4 a month for 2 vCPU and 4 GB RAM, EU) and Oracle Cloud Always Free (Ampere A1, 4 vCPU and 24 GB RAM, capacity released in waves).
+- **ARM hosts** work fine and get AmneziaWG 3.1 on ARM64 since v6.2.0. Two common ones: Hetzner CAX11 / CAX21 (about €4 a month for 2 vCPU and 4 GB RAM, EU) and Oracle Cloud Always Free (Ampere A1, 2 OCPU and 12 GB RAM per Oracle's docs on 9 Nov 2026, capacity released in waves).
 - **Hetzner and Russian carriers.** Hetzner subnets are widely blacklisted by Russian carriers (TSPU, Rostelecom, MTS), so do not use Hetzner if you are routing Russian mobile traffic into the tunnel. Pick a host that is not blacklisted for that case.
 
 Country matters mostly for latency and jurisdiction. For a personal VPN, ARM versus amd64 makes no real speed difference; it decides the protocol generation, as above.
@@ -97,7 +97,7 @@ Common flags:
 - `--allow-ipv6-tunnel` - dual-stack IPv6 inside the tunnel;
 - `--mobile` - the mobile obfuscation preset plus port 443/udp in one flag; an explicit `--port` wins;
 - `--isolation=on|off` - client-to-client isolation, on by default;
-- `--endpoint=<public-IP>` - required when the server's public IP differs from its interface IP, typical on Oracle Cloud, GCP, or any NAT'd cloud setup.
+- `--endpoint=<IP or DNS name>` - the address clients connect to. Usually not needed: the installer asks public services for the server's outside address, and the interface address (10.x on Oracle Cloud, GCP and other NAT'd clouds) is only a fallback when none of them answers. Pass it when that lookup gives the wrong address, for example when the server goes out through a NAT gateway with another IP, or when clients should use a DNS name.
 
 Full CLI: `--help` or [ADVANCED.en.md](ADVANCED.en.md#install-cli-adv).
 

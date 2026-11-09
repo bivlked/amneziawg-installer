@@ -63,6 +63,19 @@ io.open(path, 'w', encoding='utf-8', newline='\n').write(t.replace(old, new, 1))
 PY
 }
 
+# The same, every occurrence: a label that several matrix entries share
+# (arch: armhf is on both Raspberry Pi bookworm and trixie) stays in the file
+# after a first-only replacement, and the mutation would change nothing.
+_sub_all() {
+    python3 - "$TMP/$1" "$2" "$3" <<'PY'
+import io, sys
+path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+t = io.open(path, encoding='utf-8').read()
+if old not in t:
+    sys.exit('мутация не применилась: в %s нет %r' % (path, old))
+io.open(path, 'w', encoding='utf-8', newline='\n').write(t.replace(old, new))
+PY
+}
 # Правка матрицы как данных, а не как текста - домашний стиль соседней сюиты
 # tests/test_support_matrix_guard.bats.
 _json() {
@@ -197,7 +210,7 @@ PY
     # Мутация на ИЗВЕСТНУЮ метку: armhf -> arm64 убирает ARMv7 из блока.
     # Прежняя редакция меняла armhf на riscv64 и падала в валидацию ДО рендера,
     # то есть литеральная строка архитектур прошла бы тот кейс точно так же.
-    _sub .github/workflows/arm-build.yml "arch: armhf" "arch: arm64"
+    _sub_all .github/workflows/arm-build.yml "arch: armhf" "arch: arm64"
     run _check
     [ "$status" -eq 1 ]
     [[ "$output" == *"x86_64, ARM64"* ]]

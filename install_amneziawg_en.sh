@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on 32-bit ARM) installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 6.2.1
-# Date: 2026-11-06
+# Version: 6.2.2
+# Date: 2026-11-09
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -40,7 +40,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.2.1"
+SCRIPT_VERSION="6.2.2"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -71,8 +71,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="279385be6bb9a11500961a37224c46f87efb52a12c347dcb57648fce3260f9cd"
-MANAGE_SCRIPT_SHA256="35bdc9db51bc5807ce6ea6f987a2a81b94a0dac04ac450eed8d5101cfecccf0d"
+COMMON_SCRIPT_SHA256="053a80d7863dceb8f7ad0b6e06ca8f997875e20bc301d1429a25ea0f8f230836"
+MANAGE_SCRIPT_SHA256="7b13ce5e525424bcd5fb72e152b15d145909a90fb95009617fc1363c8616fdab"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back
@@ -521,8 +521,13 @@ die()       { log_error "CRITICAL ERROR: $1"; log_error "Installation aborted. L
 # the file stays until the next run that reaches the steps, or --uninstall, and
 # does nothing but forbid retries; a run stopped by the "already installed"
 # guard warns about it.
+# --soft (for --uninstall): when the file cannot be written, warn and return 1
+# instead of die, and skip the apt-config check: removing packages downloads
+# nothing, and cutting the uninstall short halfway is worse than removing
+# without the ban.
 _apt_noretry_enable() {
-    local tmp="${APT_NORETRY_CONF}.tmp.$$" eff="" err="" rc=0
+    local tmp="${APT_NORETRY_CONF}.tmp.$$" eff="" err="" rc=0 soft=0
+    [[ "${1:-}" == "--soft" ]] && soft=1
     # A killed run's temporary file: apt would complain about it on every
     # command. A second installer instance never gets here - the flock in
     # initialize_setup stops it.
@@ -536,8 +541,13 @@ _apt_noretry_enable() {
             'Acquire::Retries "0";' > "$tmp" \
             && mv -f "$tmp" "$APT_NORETRY_CONF"; } 2>&1 ); then
         rm -f "$tmp" 2>/dev/null
+        if [[ "$soft" -eq 1 ]]; then
+            log_warn "Could not write $APT_NORETRY_CONF (the apt retry ban against CVE-2026-109518): ${err:-no reason given}. The uninstall goes on without it."
+            return 1
+        fi
         die "Could not write $APT_NORETRY_CONF (the apt retry ban against CVE-2026-109518): ${err:-no reason given}"
     fi
+    [[ "$soft" -eq 1 ]] && return 0
     # Retries can come back from /etc/apt/apt.conf (apt reads it after
     # apt.conf.d), a file named after this one, or APT_CONFIG with its own
     # parts directory. Say so, but do not stop.
@@ -4626,6 +4636,58 @@ detect_ssh_ports() {
     printf '%s' "$valid"
 }
 
+# Oracle Cloud Ubuntu images load their own iptables rules at boot
+# (/etc/iptables/rules.v4 via netfilter-persistent), ending in
+# `-j REJECT --reject-with icmp-host-prohibited` in INPUT and FORWARD.
+# Installing ufw removes netfilter-persistent, but the loaded rules stay in the
+# kernel until the next boot, and UFW appends its jumps below them: the VPN
+# port and the replies to clients are rejected until one more reboot. Delete
+# exactly that REJECT when it sits above the chain's first UFW jump AND the
+# same line is in the image's saved rules file, that is, it was loaded at boot
+# and would be gone after the next reboot anyway. A REJECT above UFW that is
+# not in the file may be the administrator's own: it stays, with a warning.
+# Any other rule, or the same REJECT below UFW, is left alone. Never fails
+# the step. IMAGE_RULES_V4 overrides the file path (tests).
+remove_image_reject_above_ufw() {
+    command -v iptables >/dev/null 2>&1 || return 0
+    local chain rules line pos ufw_pos reject_pos _pass
+    local saved="${IMAGE_RULES_V4:-/etc/iptables/rules.v4}"
+    for chain in INPUT FORWARD; do
+        # One deletion per pass; the bound keeps a misbehaving iptables from
+        # looping forever.
+        for _pass in 1 2 3 4 5; do
+            rules=$(iptables -w 5 -S "$chain" 2>/dev/null) || {
+                log_warn "Could not list the iptables rules in $chain (code $?). If the image left a REJECT above UFW (Oracle Cloud), VPN traffic stays blocked until a reboot. Check: iptables -S $chain"
+                break
+            }
+            pos=0; ufw_pos=0; reject_pos=0
+            while IFS= read -r line; do
+                [[ "$line" == "-A $chain "* ]] || continue
+                pos=$((pos + 1))
+                if [[ "$ufw_pos" -eq 0 && "$line" == "-A $chain -j ufw-"* ]]; then
+                    ufw_pos=$pos
+                fi
+                if [[ "$reject_pos" -eq 0 \
+                      && "$line" == "-A $chain -j REJECT --reject-with icmp-host-prohibited" ]]; then
+                    reject_pos=$pos
+                fi
+            done <<< "$rules"
+            [[ "$reject_pos" -gt 0 && "$reject_pos" -lt "$ufw_pos" ]] || break
+            if ! grep -qE "^-A $chain -j REJECT --reject-with icmp-host-prohibited[[:space:]]*\$" "$saved" 2>/dev/null; then
+                log_warn "A REJECT above UFW in $chain blocks VPN traffic. It is not in $saved, so it may be your own rule and the installer leaves it alone. If you did not put it there, remove it: iptables -D $chain -j REJECT --reject-with icmp-host-prohibited"
+                break
+            fi
+            if iptables -w 5 -D "$chain" -j REJECT --reject-with icmp-host-prohibited 2>/dev/null; then
+                log "Removed the image's rule above UFW: -A $chain -j REJECT --reject-with icmp-host-prohibited (Oracle Cloud images ship it; it would block VPN traffic until the next reboot)."
+            else
+                log_warn "Could not remove the image's rule above UFW in $chain. VPN traffic may be blocked until a reboot. Remove it by hand: iptables -D $chain -j REJECT --reject-with icmp-host-prohibited"
+                break
+            fi
+        done
+    done
+    return 0
+}
+
 setup_improved_firewall() {
     log "Configuring UFW..."
     if ! command -v ufw &>/dev/null; then install_packages ufw; fi
@@ -4726,6 +4788,7 @@ setup_improved_firewall() {
         ufw reload || log_warn "UFW reload error."
         log "Rules updated."
     fi
+    remove_image_reject_above_ufw
     log "UFW configured."
     log "$(ufw status verbose 2>&1)"
     return 0
@@ -5252,9 +5315,11 @@ step_uninstall() {
         2>/dev/null || true
     rm -f /var/log/amneziawg-ensure-module.log* 2>/dev/null || true
     rm -rf /var/lib/amneziawg /run/amneziawg 2>/dev/null || true
-    # The apt retry ban (CVE-2026-109518) left behind by a killed run.
-    rm -f "$APT_NORETRY_CONF" "$APT_NORETRY_CONF".tmp.* 2>/dev/null || true
-    [[ -e "$APT_NORETRY_CONF" ]] && log_warn "Could not delete $APT_NORETRY_CONF: apt stays without download retries. Delete it by hand: rm -f $APT_NORETRY_CONF"
+    # The apt retry ban (CVE-2026-109518) covers the apt-get purge calls below
+    # too; the exit cleanup removes it. This also takes over a copy left by a
+    # killed run, so it goes away on exit as well. --soft: if the file cannot
+    # be written, the uninstall goes on with a warning instead of stopping.
+    _apt_noretry_enable --soft || true
     # The CVE-2026-98432 guard: unit, rule and helper. stop runs apart from the
     # unit in case the unit is already off while the rule stayed.
     log "Removing the CVE-2026-98432 guard (amneziawg-ipopts-guard)..."
@@ -6401,7 +6466,7 @@ step1_update_and_optimize() {
 # ==============================================================================
 
 # _rpi_headers_pkg <uname -r>: the Raspberry Pi headers meta-package for the
-# kernel flavour. The Raspberry Pi repository (bookworm) carries only rpi-v6,
+# kernel flavour. The Raspberry Pi repository (bookworm; trixie has no v7l) carries only rpi-v6,
 # rpi-v7 and rpi-v7l for armhf, and only rpi-v8 and rpi-2712 for arm64. The old
 # choice "everything but a Pi 5 is v8" asked a 32-bit system for a package its
 # repository does not have, so the flavour now comes from the kernel's own suffix.
@@ -6483,11 +6548,18 @@ _try_install_prebuilt_arm() {
     kernel="$(uname -r)"
     arch="$(dpkg --print-architecture)"
 
-    # Map kernel string to a build target ID
-    if [[ "$kernel" == *+rpt-rpi-2712* ]]; then
+    # Map kernel string to a build target ID. Raspberry Pi OS is built per
+    # release: trixie (13) has its own targets, anything else keeps bookworm.
+    if [[ "$kernel" == *+rpt-rpi-2712* && "${OS_VERSION:-}" == "13" ]]; then
+        target_id="rpi5-trixie-arm64"
+    elif [[ "$kernel" == *+rpt-rpi-2712* ]]; then
         target_id="rpi5-bookworm-arm64"
+    elif [[ "$kernel" == *+rpt* && "$arch" == "arm64" && "${OS_VERSION:-}" == "13" ]]; then
+        target_id="rpi-trixie-arm64"
     elif [[ "$kernel" == *+rpt* && "$arch" == "arm64" ]]; then
         target_id="rpi-bookworm-arm64"
+    elif [[ "$kernel" == *+rpt* && "$arch" == "armhf" && "${OS_VERSION:-}" == "13" ]]; then
+        target_id="rpi-trixie-armhf"
     elif [[ "$kernel" == *+rpt* && "$arch" == "armhf" ]]; then
         target_id="rpi-bookworm-armhf"
     elif [[ "$kernel" == *-generic* && "${OS_VERSION:-}" == "24.04" ]]; then

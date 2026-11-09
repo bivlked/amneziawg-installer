@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 3.x (3.1 по умолчанию; 2.0 по флагу, а также на ядрах старее 6.7 и на 32-битном ARM) на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 6.2.1
-# Дата: 2026-11-06
+# Версия: 6.2.2
+# Дата: 2026-11-09
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -39,7 +39,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.2.1"
+SCRIPT_VERSION="6.2.2"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -69,8 +69,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="cc851fe5e30fad9fbe37b9248336b91d3ef386e9e8d60cc7f72cd8183c5518cc"
-MANAGE_SCRIPT_SHA256="319699bf787c32d313e569b3539e6f0db3b445f58f8c9a0867c7f6e1650d02e9"
+COMMON_SCRIPT_SHA256="3336e419f9ecdf56d17109bbda0c10022cbff48387ef6f194bbb2797dab7ecac"
+MANAGE_SCRIPT_SHA256="52732252554cbb72bce31dc1b96f7b332a6b50cf20acb0ab9c76a9decce8cb27"
 
 # AmneziaWG 2.0 пин (H0, 31 jul 2026). Upstream влил AmneziaWG 3.0 в default-ветку
 # amneziawg-linux-kernel-module, и PPA переключился на 3.0. Тогда на ядрах старее
@@ -505,8 +505,12 @@ die()       { log_error "КРИТИЧЕСКАЯ ОШИБКА: $1"; log_error "У
 # запуск убит (SIGKILL, пропало питание), файл остаётся до следующего запуска,
 # который дойдёт до шагов, или до --uninstall и только запрещает повторы; запуск,
 # остановленный защитой «уже установлен», о нём предупреждает.
+# --soft (для --uninstall): если файл не записался - предупредить и вернуть 1
+# вместо die, и не проверять apt-config: удаление пакетов ничего не скачивает,
+# а оборвать удаление на полпути хуже, чем удалить без запрета.
 _apt_noretry_enable() {
-    local tmp="${APT_NORETRY_CONF}.tmp.$$" eff="" err="" rc=0
+    local tmp="${APT_NORETRY_CONF}.tmp.$$" eff="" err="" rc=0 soft=0
+    [[ "${1:-}" == "--soft" ]] && soft=1
     # Временный файл убитого запуска: apt ругался бы на него в каждой команде.
     # Второй экземпляр установщика сюда не доходит - его отсекает flock в
     # initialize_setup.
@@ -519,8 +523,13 @@ _apt_noretry_enable() {
             'Acquire::Retries "0";' > "$tmp" \
             && mv -f "$tmp" "$APT_NORETRY_CONF"; } 2>&1 ); then
         rm -f "$tmp" 2>/dev/null
+        if [[ "$soft" -eq 1 ]]; then
+            log_warn "Не удалось записать $APT_NORETRY_CONF (запрет повторов apt против CVE-2026-109518): ${err:-причина не сообщена}. Удаление продолжается без него."
+            return 1
+        fi
         die "Не удалось записать $APT_NORETRY_CONF (запрет повторов apt против CVE-2026-109518): ${err:-причина не сообщена}"
     fi
+    [[ "$soft" -eq 1 ]] && return 0
     # Повторы может вернуть /etc/apt/apt.conf (apt читает его после apt.conf.d),
     # файл с именем после нашего или APT_CONFIG со своим каталогом настроек.
     # Сказать об этом, но не останавливаться.
@@ -4525,6 +4534,57 @@ detect_ssh_ports() {
     printf '%s' "$valid"
 }
 
+# Образы Ubuntu в Oracle Cloud при загрузке поднимают свои правила iptables
+# (/etc/iptables/rules.v4 через netfilter-persistent), которые кончаются
+# `-j REJECT --reject-with icmp-host-prohibited` в INPUT и FORWARD.
+# Установка ufw удаляет netfilter-persistent, но загруженные правила остаются
+# в ядре до следующей загрузки, а UFW дописывает свои переходы ниже них: порт
+# VPN и ответы клиентам отбиваются до ещё одной перезагрузки. Удаляется ровно
+# этот REJECT, если он стоит выше первого перехода UFW в цепочке И та же строка
+# есть в сохранённых правилах образа, то есть он поднят при загрузке и после
+# следующей перезагрузки исчез бы сам. REJECT выше UFW, которого в файле нет,
+# может быть правилом администратора: он остаётся, с предупреждением. Любые
+# другие правила и тот же REJECT ниже UFW не трогаются. Шаг не роняет никогда.
+# IMAGE_RULES_V4 подменяет путь к файлу (тесты).
+remove_image_reject_above_ufw() {
+    command -v iptables >/dev/null 2>&1 || return 0
+    local chain rules line pos ufw_pos reject_pos _pass
+    local saved="${IMAGE_RULES_V4:-/etc/iptables/rules.v4}"
+    for chain in INPUT FORWARD; do
+        # Одно удаление за проход; предел не даёт зациклиться на странном iptables.
+        for _pass in 1 2 3 4 5; do
+            rules=$(iptables -w 5 -S "$chain" 2>/dev/null) || {
+                log_warn "Не удалось прочитать правила iptables в $chain (код $?). Если образ оставил REJECT выше UFW (Oracle Cloud), трафик VPN будет блокироваться до перезагрузки. Проверьте: iptables -S $chain"
+                break
+            }
+            pos=0; ufw_pos=0; reject_pos=0
+            while IFS= read -r line; do
+                [[ "$line" == "-A $chain "* ]] || continue
+                pos=$((pos + 1))
+                if [[ "$ufw_pos" -eq 0 && "$line" == "-A $chain -j ufw-"* ]]; then
+                    ufw_pos=$pos
+                fi
+                if [[ "$reject_pos" -eq 0 \
+                      && "$line" == "-A $chain -j REJECT --reject-with icmp-host-prohibited" ]]; then
+                    reject_pos=$pos
+                fi
+            done <<< "$rules"
+            [[ "$reject_pos" -gt 0 && "$reject_pos" -lt "$ufw_pos" ]] || break
+            if ! grep -qE "^-A $chain -j REJECT --reject-with icmp-host-prohibited[[:space:]]*\$" "$saved" 2>/dev/null; then
+                log_warn "REJECT выше UFW в $chain блокирует трафик VPN. Его нет в $saved, это может быть ваше собственное правило, и установщик его не трогает. Если вы его не ставили, удалите: iptables -D $chain -j REJECT --reject-with icmp-host-prohibited"
+                break
+            fi
+            if iptables -w 5 -D "$chain" -j REJECT --reject-with icmp-host-prohibited 2>/dev/null; then
+                log "Удалено правило образа выше UFW: -A $chain -j REJECT --reject-with icmp-host-prohibited (его ставят образы Oracle Cloud; оно блокировало бы трафик VPN до следующей перезагрузки)."
+            else
+                log_warn "Не удалось удалить правило образа выше UFW в $chain. Трафик VPN может блокироваться до перезагрузки. Удалите вручную: iptables -D $chain -j REJECT --reject-with icmp-host-prohibited"
+                break
+            fi
+        done
+    done
+    return 0
+}
+
 setup_improved_firewall() {
     log "Настройка UFW..."
     if ! command -v ufw &>/dev/null; then install_packages ufw; fi
@@ -4625,6 +4685,7 @@ setup_improved_firewall() {
         ufw reload || log_warn "Ошибка перезагрузки UFW."
         log "Правила обновлены."
     fi
+    remove_image_reject_above_ufw
     log "UFW настроен."
     log "$(ufw status verbose 2>&1)"
     return 0
@@ -5141,9 +5202,11 @@ step_uninstall() {
         2>/dev/null || true
     rm -f /var/log/amneziawg-ensure-module.log* 2>/dev/null || true
     rm -rf /var/lib/amneziawg /run/amneziawg 2>/dev/null || true
-    # Запрет повторов apt (CVE-2026-109518), оставленный убитым запуском.
-    rm -f "$APT_NORETRY_CONF" "$APT_NORETRY_CONF".tmp.* 2>/dev/null || true
-    [[ -e "$APT_NORETRY_CONF" ]] && log_warn "Не удалось удалить $APT_NORETRY_CONF: apt останется без повторов скачивания. Удалите вручную: rm -f $APT_NORETRY_CONF"
+    # Запрет повторов apt (CVE-2026-109518) действует и на apt-get purge ниже;
+    # убирает его очистка при выходе. Копию, оставленную убитым запуском, он
+    # тоже подхватывает, и она уходит при выходе. --soft: если файл не
+    # записался, удаление идёт дальше с предупреждением, а не обрывается.
+    _apt_noretry_enable --soft || true
     # Защита от CVE-2026-98432: юнит, правило и помощник. stop отдельно от
     # юнита - на случай, если юнит уже выключен, а правило осталось.
     log "Удаление защиты от CVE-2026-98432 (amneziawg-ipopts-guard)..."
@@ -6279,7 +6342,7 @@ step1_update_and_optimize() {
 # ==============================================================================
 
 # _rpi_headers_pkg <uname -r>: мета-пакет заголовков Raspberry Pi по варианту
-# ядра. В репозитории Raspberry Pi (bookworm) armhf несёт только rpi-v6, rpi-v7 и
+# ядра. В репозитории Raspberry Pi (bookworm; в trixie нет v7l) armhf несёт только rpi-v6, rpi-v7 и
 # rpi-v7l, arm64 - только rpi-v8 и rpi-2712. Прежний выбор «всё, кроме Pi 5, это
 # v8» на 32-битной системе просил пакет, которого в её репозитории нет, поэтому
 # вариант берётся из суффикса самого ядра. Незнакомый вариант - прежнее поведение
@@ -6352,10 +6415,18 @@ _try_install_prebuilt_arm() {
     kernel="$(uname -r)"
     arch="$(dpkg --print-architecture)"
 
-    if [[ "$kernel" == *+rpt-rpi-2712* ]]; then
+    # Raspberry Pi OS собирается под каждый выпуск: у trixie (13) свои цели,
+    # всё остальное остаётся на bookworm.
+    if [[ "$kernel" == *+rpt-rpi-2712* && "${OS_VERSION:-}" == "13" ]]; then
+        target_id="rpi5-trixie-arm64"
+    elif [[ "$kernel" == *+rpt-rpi-2712* ]]; then
         target_id="rpi5-bookworm-arm64"
+    elif [[ "$kernel" == *+rpt* && "$arch" == "arm64" && "${OS_VERSION:-}" == "13" ]]; then
+        target_id="rpi-trixie-arm64"
     elif [[ "$kernel" == *+rpt* && "$arch" == "arm64" ]]; then
         target_id="rpi-bookworm-arm64"
+    elif [[ "$kernel" == *+rpt* && "$arch" == "armhf" && "${OS_VERSION:-}" == "13" ]]; then
+        target_id="rpi-trixie-armhf"
     elif [[ "$kernel" == *+rpt* && "$arch" == "armhf" ]]; then
         target_id="rpi-bookworm-armhf"
     elif [[ "$kernel" == *-generic* && "${OS_VERSION:-}" == "24.04" ]]; then

@@ -12,6 +12,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.2] - 2026-11-09
+
+**v6.2.2** - ready-made modules for Raspberry Pi OS trixie, a VPN that works right after the install on Oracle Cloud, and the client table re-checked as of 9 November.
+
+### Added
+
+- **Ready-made modules for Raspberry Pi OS trixie.** The current Raspberry Pi OS image is on Debian trixie with kernel 6.18, while the ready-made second-line modules were built for bookworm only, so on trixie a 2.0 install (a 32-bit Pi or `--protocol=2.0`) installed the PPA module and built it through DKMS on the Pi itself. The build now ships trixie packages too: Pi 3/4 (64-bit), Pi 5 and the 32-bit `rpi-v7` kernel, and the installer picks the target by the system version (13 is trixie, anything else bookworm). The module build for kernel 6.18.60+rpt is checked on all three targets; these packages have not been run on a real Raspberry Pi.
+
+### Security
+
+- The apt download retry ban (the CVE-2026-109518 protection from v6.2.1) now covers `--uninstall` too: packages are removed with the ban on, and the ban file is deleted on exit, the same as after an install. If the file cannot be written (a full disk, for example), the uninstall does not stop halfway but goes on with a warning. Before, `--uninstall` only removed a file left by a cut-short run. In practice removing the installer's packages downloads nothing, so this closes a mostly theoretical case.
+
+### Fixed
+
+- **Oracle Cloud: the VPN works right after the install, with no extra reboot.** Oracle Cloud's Ubuntu images load their own iptables rules from `/etc/iptables/rules.v4` at boot, and those end INPUT and FORWARD with `REJECT --reject-with icmp-host-prohibited`. Installing UFW removes `netfilter-persistent`, but the rules already loaded stay in memory until the next boot and sit above UFW's rules, so the VPN port and the replies to clients were turned away until the server was rebooted once more. Now, after setting up UFW, the installer deletes exactly that rule when it sits above UFW and is in the image's saved rules, `/etc/iptables/rules.v4` (so it would be gone after the next reboot anyway), and says so in the log. The same rule when it is not in that file may be the administrator's own: the installer leaves it, warns that it blocks the VPN and gives the command to remove it. It leaves every other rule alone. Checked on an Ubuntu 24.04 ARM64 server with Oracle's rules reproduced.
+
+### Documentation
+
+- Oracle Cloud: INSTALL_VPS now gives the Always Free size of Ampere A1 as 2 OCPU and 12 GB (Oracle's docs on 9 November 2026), and the `--endpoint` note says the installer finds the outside address by itself, so the flag is only needed when that lookup gives the wrong address. The ARM table in ADVANCED now names the headers package for Ubuntu ARM64 by kernel flavor (`linux-headers-oracle` on Oracle, `linux-headers-aws` on AWS), which is how the installer picks it.
+- Client table in ADVANCED: Throne 1.4.1 (the padding fix landed in the stable 1.4.0), L×Box v2.25.20, AWG Manager v2.19.25 and KeeneticOS 5.2 Beta 3 re-checked as of 9 November 2026. The T-Mobile row no longer compares the profile with the Amnezia app as is: since version 5.1.0.6 the app sets up its new servers without `I1`.
+- The fallback snapshot of Russian networks for the cascade (`cascade/ru.zone`) is refreshed from ipdeny.com as of 9 November 2026: 8664 networks instead of 8626 in the 6 July snapshot. The cascade uses it only when ipdeny.com is unreachable.
+
 ## [6.2.1] - 2026-11-06
 
 **v6.2.1** - the install is protected from the apt vulnerability CVE-2026-109518, and the client table is re-checked as of 5 November, with a key recipe for gluetun.
@@ -2198,7 +2220,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.2...HEAD
+[6.2.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...v6.2.2
 [6.2.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.0...v6.2.1
 [6.2.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.2...v6.2.0
 [6.1.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.1...v6.1.2

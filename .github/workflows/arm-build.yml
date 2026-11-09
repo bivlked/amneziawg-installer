@@ -51,6 +51,7 @@ jobs:
             platform: linux/arm64
             image: debian:bookworm
             extra_sources: rpi
+            rpi_suite: bookworm
             headers_pkg: linux-headers-rpi-v8
             arch: arm64
 
@@ -59,6 +60,7 @@ jobs:
             platform: linux/arm64
             image: debian:bookworm
             extra_sources: rpi
+            rpi_suite: bookworm
             headers_pkg: linux-headers-rpi-2712
             arch: arm64
 
@@ -67,6 +69,34 @@ jobs:
             platform: linux/arm/v7
             image: debian:bookworm
             extra_sources: rpi
+            rpi_suite: bookworm
+            headers_pkg: linux-headers-rpi-v7
+            arch: armhf
+
+          # Raspberry Pi OS on Debian Trixie (the current default image,
+          # kernel 6.18+rpt): the same three boards. The trixie archive has no
+          # armhf v7l headers, only v6 and v7.
+          - id: rpi-trixie-arm64
+            platform: linux/arm64
+            image: debian:trixie
+            extra_sources: rpi
+            rpi_suite: trixie
+            headers_pkg: linux-headers-rpi-v8
+            arch: arm64
+
+          - id: rpi5-trixie-arm64
+            platform: linux/arm64
+            image: debian:trixie
+            extra_sources: rpi
+            rpi_suite: trixie
+            headers_pkg: linux-headers-rpi-2712
+            arch: arm64
+
+          - id: rpi-trixie-armhf
+            platform: linux/arm/v7
+            image: debian:trixie
+            extra_sources: rpi
+            rpi_suite: trixie
             headers_pkg: linux-headers-rpi-v7
             arch: armhf
 
@@ -109,6 +139,7 @@ jobs:
         env:
           KERNEL_ID: ${{ matrix.id }}
           EXTRA_SOURCES: ${{ matrix.extra_sources }}
+          RPI_SUITE: ${{ matrix.rpi_suite }}
           HEADERS_PKG: ${{ matrix.headers_pkg }}
           MODULE_VERSION: ${{ inputs.module_version }}
           # On a tag push this records the installer release in the build manifest;
@@ -123,6 +154,7 @@ jobs:
             -v ${{ github.workspace }}/output:/output
             -e KERNEL_ID
             -e EXTRA_SOURCES
+            -e RPI_SUITE
             -e HEADERS_PKG
             -e OUTPUT_DIR=/output
             -e MODULE_VERSION
@@ -137,13 +169,26 @@ jobs:
               build-essential git curl gnupg ca-certificates \
               kmod dkms dpkg-dev xz-utils
 
-            # Add Raspberry Pi Foundation apt repo if needed
+            # Add Raspberry Pi Foundation apt repo if needed. The key comes
+            # from the raspberrypi-archive-keyring package, pinned by sha256:
+            # raspberrypi.gpg.key carries SHA1 self-signatures from 2012 and
+            # apt 3.0 on trixie rejects it ("InRelease is not signed"); the
+            # package holds the same key (CF8A1AF5...7FA3303E) re-signed in
+            # 2025, which apt on bookworm accepts as well.
             if [[ "${EXTRA_SOURCES:-}" == "rpi" ]]; then
+              : "${RPI_SUITE:?RPI_SUITE must be set for Raspberry Pi targets}"
+              kr_deb=/tmp/raspberrypi-archive-keyring.deb
+              curl -fsSL -o "$kr_deb" \
+                "https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-archive-keyring/raspberrypi-archive-keyring_2025.1+rpt1_all.deb"
+              echo "2e727149d7acb8cc7f604e66d0049161039c8aa1eaf1175e54f9e69d963d60e4  $kr_deb" \
+                | sha256sum -c -
               mkdir -p /etc/apt/keyrings
-              curl -fsSL https://archive.raspberrypi.com/debian/raspberrypi.gpg.key \
-                | gpg --dearmor -o /etc/apt/keyrings/raspberrypi.gpg
-              echo "deb [signed-by=/etc/apt/keyrings/raspberrypi.gpg] \
-                https://archive.raspberrypi.com/debian/ bookworm main" \
+              dpkg-deb --fsys-tarfile "$kr_deb" \
+                | tar -xO ./usr/share/keyrings/raspberrypi-archive-keyring.pgp \
+                > /etc/apt/keyrings/raspberrypi.pgp
+              test -s /etc/apt/keyrings/raspberrypi.pgp
+              echo "deb [signed-by=/etc/apt/keyrings/raspberrypi.pgp] \
+                https://archive.raspberrypi.com/debian/ ${RPI_SUITE} main" \
                 > /etc/apt/sources.list.d/raspberrypi.list
               apt-get update -qq
             fi
