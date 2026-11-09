@@ -521,8 +521,13 @@ die()       { log_error "CRITICAL ERROR: $1"; log_error "Installation aborted. L
 # the file stays until the next run that reaches the steps, or --uninstall, and
 # does nothing but forbid retries; a run stopped by the "already installed"
 # guard warns about it.
+# --soft (for --uninstall): when the file cannot be written, warn and return 1
+# instead of die, and skip the apt-config check: removing packages downloads
+# nothing, and cutting the uninstall short halfway is worse than removing
+# without the ban.
 _apt_noretry_enable() {
-    local tmp="${APT_NORETRY_CONF}.tmp.$$" eff="" err="" rc=0
+    local tmp="${APT_NORETRY_CONF}.tmp.$$" eff="" err="" rc=0 soft=0
+    [[ "${1:-}" == "--soft" ]] && soft=1
     # A killed run's temporary file: apt would complain about it on every
     # command. A second installer instance never gets here - the flock in
     # initialize_setup stops it.
@@ -536,8 +541,13 @@ _apt_noretry_enable() {
             'Acquire::Retries "0";' > "$tmp" \
             && mv -f "$tmp" "$APT_NORETRY_CONF"; } 2>&1 ); then
         rm -f "$tmp" 2>/dev/null
+        if [[ "$soft" -eq 1 ]]; then
+            log_warn "Could not write $APT_NORETRY_CONF (the apt retry ban against CVE-2026-109518): ${err:-no reason given}. The uninstall goes on without it."
+            return 1
+        fi
         die "Could not write $APT_NORETRY_CONF (the apt retry ban against CVE-2026-109518): ${err:-no reason given}"
     fi
+    [[ "$soft" -eq 1 ]] && return 0
     # Retries can come back from /etc/apt/apt.conf (apt reads it after
     # apt.conf.d), a file named after this one, or APT_CONFIG with its own
     # parts directory. Say so, but do not stop.
@@ -4641,7 +4651,10 @@ remove_image_reject_above_ufw() {
         # One deletion per pass; the bound keeps a misbehaving iptables from
         # looping forever.
         for _pass in 1 2 3 4 5; do
-            rules=$(iptables -w 5 -S "$chain" 2>/dev/null) || break
+            rules=$(iptables -w 5 -S "$chain" 2>/dev/null) || {
+                log_warn "Could not list the iptables rules in $chain (code $?). If the image left a REJECT above UFW (Oracle Cloud), VPN traffic stays blocked until a reboot. Check: iptables -S $chain"
+                break
+            }
             pos=0; ufw_pos=0; reject_pos=0
             while IFS= read -r line; do
                 [[ "$line" == "-A $chain "* ]] || continue
@@ -5295,8 +5308,9 @@ step_uninstall() {
     rm -rf /var/lib/amneziawg /run/amneziawg 2>/dev/null || true
     # The apt retry ban (CVE-2026-109518) covers the apt-get purge calls below
     # too; the exit cleanup removes it. This also takes over a copy left by a
-    # killed run, so it goes away on exit as well.
-    _apt_noretry_enable
+    # killed run, so it goes away on exit as well. --soft: if the file cannot
+    # be written, the uninstall goes on with a warning instead of stopping.
+    _apt_noretry_enable --soft || true
     # The CVE-2026-98432 guard: unit, rule and helper. stop runs apart from the
     # unit in case the unit is already off while the rule stayed.
     log "Removing the CVE-2026-98432 guard (amneziawg-ipopts-guard)..."
@@ -6443,7 +6457,7 @@ step1_update_and_optimize() {
 # ==============================================================================
 
 # _rpi_headers_pkg <uname -r>: the Raspberry Pi headers meta-package for the
-# kernel flavour. The Raspberry Pi repository (bookworm) carries only rpi-v6,
+# kernel flavour. The Raspberry Pi repository (bookworm; trixie has no v7l) carries only rpi-v6,
 # rpi-v7 and rpi-v7l for armhf, and only rpi-v8 and rpi-2712 for arm64. The old
 # choice "everything but a Pi 5 is v8" asked a 32-bit system for a package its
 # repository does not have, so the flavour now comes from the kernel's own suffix.

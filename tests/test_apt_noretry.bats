@@ -265,57 +265,105 @@ CONF() { echo "$TMPD/apt.conf.d/99zz-amneziawg-installer-noretries"; }
 # The ban covers the uninstall too (review note on PR #382): step_uninstall
 # runs apt-get purge, and the ban file has to be there while it does, then go
 # away on exit. Every command step_uninstall touches is a shell function here;
-# rm only acts inside $TMPD, so nothing outside the test directory is touched
-# even when the suite runs as root.
+# rm only acts inside $TMPD, so nothing outside the test directory is touched.
+# The one exception is /usr/local/sbin/amneziawg-ipopts-guard, which
+# step_uninstall calls by absolute path: on a machine that has it, as root,
+# the test would stop the real CVE-2026-98432 rule, so it skips there.
+#
+# $1 installer, $2 ban file path. Purges go to $TMPD/purges, warnings to
+# $TMPD/uninst-warn.
+_run_uninstall() {
+    local f="$1" conf="$2"
+    if [ "$(id -u)" -eq 0 ] && [ -e /usr/local/sbin/amneziawg-ipopts-guard ]; then
+        skip "a real amneziawg-ipopts-guard is installed and this runs as root"
+    fi
+    rm -rf "$TMPD/purges" "$TMPD/awg" "$TMPD/uninst-warn"
+    mkdir -p "$TMPD/awg"
+    run bash -c '
+        PATH="'"$STUBS"':$PATH"
+        TMPDIR="'"$TMPD"'"; HOME="'"$TMPD"'"
+        T="'"$TMPD"'"
+        log() { :; }; log_error() { :; }; log_debug() { :; }
+        log_warn() { printf "%s\n" "$*" >> "$T/uninst-warn"; }
+        die() { echo "died: $*"; exit 1; }
+        APT_NORETRY_CONF="'"$conf"'"
+        AWG_DIR="$T/awg"; CONFIG_FILE="$T/awg/none"; LOG_FILE="$T/awg/log"
+        AUTO_YES=1
+        _apt_noretry_set=0; _install_cleaned=0; _install_temp_files=()
+        for fn in _apt_noretry_enable _apt_noretry_disable _install_cleanup step_uninstall; do
+            eval "$(awk -v f="$fn" '\''$0 ~ "^" f "\\(\\) \\{" {p=1} p {print} p && /^\}$/ {exit}'\'' "'"$f"'")"
+        done
+        rm() {
+            local a
+            for a in "$@"; do
+                case "$a" in -*) ;; "$T"/*) ;; *) return 0 ;; esac
+            done
+            command rm "$@"
+        }
+        apt-get() {
+            if [ -f "$APT_NORETRY_CONF" ]; then echo "purge with ban" >> "$T/purges"
+            else echo "purge WITHOUT ban" >> "$T/purges"; fi
+        }
+        # The DROP drain loops while -D succeeds: no rule to delete.
+        iptables() { return 1; }; ip6tables() { return 1; }
+        for c in systemctl modprobe ufw fail2ban-client apt-mark \
+                 dpkg dkms find depmod sysctl tar ip sed cp; do
+            eval "$c() { return 0; }"
+        done
+        _awg_installed_kmod_pkgs() { return 0; }
+        trap _install_cleanup EXIT
+        step_uninstall
+    '
+}
+
 @test "apt-noretry: uninstall purges with the ban in place and removes it on exit" {
     stub_apt_config "R='0'"
     for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
-        rm -rf "$TMPD/apt.conf.d" "$TMPD/purges" "$TMPD/awg"
-        mkdir -p "$TMPD/apt.conf.d" "$TMPD/awg"
-        # Leftovers of a killed run: the ban file and its temporary copy.
-        printf 'Acquire::Retries "0";\n' > "$(CONF)"
-        : > "$(CONF).tmp.4242"
-        run bash -c '
-            PATH="'"$STUBS"':$PATH"
-            TMPDIR="'"$TMPD"'"; HOME="'"$TMPD"'"
-            T="'"$TMPD"'"
-            log() { :; }; log_warn() { :; }; log_error() { :; }; log_debug() { :; }
-            die() { echo "died: $*"; exit 1; }
-            APT_NORETRY_CONF="$T/apt.conf.d/99zz-amneziawg-installer-noretries"
-            AWG_DIR="$T/awg"; CONFIG_FILE="$T/awg/none"; LOG_FILE="$T/awg/log"
-            AUTO_YES=1
-            _apt_noretry_set=0; _install_cleaned=0; _install_temp_files=()
-            for fn in _apt_noretry_enable _apt_noretry_disable _install_cleanup step_uninstall; do
-                eval "$(awk -v f="$fn" '\''$0 ~ "^" f "\\(\\) \\{" {p=1} p {print} p && /^\}$/ {exit}'\'' "'"$f"'")"
-            done
-            rm() {
-                local a
-                for a in "$@"; do
-                    case "$a" in -*) ;; "$T"/*) ;; *) return 0 ;; esac
-                done
-                command rm "$@"
-            }
-            apt-get() {
-                if [ -f "$APT_NORETRY_CONF" ]; then echo "purge with ban" >> "$T/purges"
-                else echo "purge WITHOUT ban" >> "$T/purges"; fi
-            }
-            # The DROP drain loops while -D succeeds: no rule to delete.
-            iptables() { return 1; }; ip6tables() { return 1; }
-            for c in systemctl modprobe ufw fail2ban-client apt-mark \
-                     dpkg dkms find depmod sysctl tar ip sed cp; do
-                eval "$c() { return 0; }"
-            done
-            _awg_installed_kmod_pkgs() { return 0; }
-            trap _install_cleanup EXIT
-            step_uninstall
-        '
+        # Pass 1: leftovers of a killed run (the ban file and its temporary
+        # copy). Pass 2: a clean server with no ban file at all - the uninstall
+        # has to write its own, not only pick up a leftover one.
+        for leftover in 1 0; do
+            rm -rf "$TMPD/apt.conf.d"
+            mkdir -p "$TMPD/apt.conf.d"
+            if [ "$leftover" -eq 1 ]; then
+                printf 'Acquire::Retries "0";\n' > "$(CONF)"
+                : > "$(CONF).tmp.4242"
+            fi
+            _run_uninstall "$f" "$(CONF)"
+            [ "$status" -eq 0 ]
+            # apt-get purge ran at least once, and every time with the ban on.
+            [ "$(grep -c . "$TMPD/purges")" -ge 1 ]
+            run grep -c 'WITHOUT' "$TMPD/purges"
+            [ "$output" = "0" ]
+            # Gone on exit, together with the killed run's temporary copy.
+            [ ! -e "$(CONF)" ]
+            [ ! -e "$(CONF).tmp.4242" ]
+        done
+    done
+}
+
+@test "apt-noretry: uninstall goes on with a warning when the ban cannot be written" {
+    stub_apt_config "R='0'"
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        # The directory does not exist, so the write fails (also as root).
+        _run_uninstall "$f" "$TMPD/no-such-dir/99zz-amneziawg-installer-noretries"
         [ "$status" -eq 0 ]
-        # apt-get purge ran at least once, and every time with the ban on.
-        [ "$(grep -c . "$TMPD/purges")" -ge 1 ]
-        run grep -c 'WITHOUT' "$TMPD/purges"
-        [ "$output" = "0" ]
-        # Gone on exit, together with the killed run's temporary copy.
-        [ ! -e "$(CONF)" ]
-        [ ! -e "$(CONF).tmp.4242" ]
+        [[ "$output" != *"died:"* ]]
+        # The purges still ran, without the ban, and the user was told why.
+        [ "$(grep -c 'purge WITHOUT ban' "$TMPD/purges")" -ge 1 ]
+        grep -qF 'CVE-2026-109518' "$TMPD/uninst-warn"
+    done
+}
+
+@test "apt-noretry: uninstall does not warn about apt retries (nothing is downloaded)" {
+    # apt retries are on in another setting: an install warns about it, the
+    # uninstall must not - it downloads nothing, the warning would only alarm.
+    stub_apt_config "R='3'"
+    for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
+        rm -rf "$TMPD/apt.conf.d"; mkdir -p "$TMPD/apt.conf.d"
+        _run_uninstall "$f" "$(CONF)"
+        [ "$status" -eq 0 ]
+        run grep -sc 'Acquire::Retries' "$TMPD/uninst-warn"
+        [ "$output" = "0" ] || [ -z "$output" ]
     done
 }

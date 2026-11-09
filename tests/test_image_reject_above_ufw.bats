@@ -47,11 +47,14 @@ done
 op="$1"; chain="$2"; shift 2
 case "$op" in
     -S)
+        [[ "${IPT_FAIL_LIST:-0}" == "1" ]] && exit 4
         echo "-P $chain ACCEPT"
         grep -F -- "-A $chain " "$IPT_STATE" || true
         ;;
     -D)
         [[ "${IPT_FAIL_DELETE:-0}" == "1" ]] && exit 1
+        # Claims success, deletes nothing: the loop must still end.
+        [[ "${IPT_NOOP_DELETE:-0}" == "1" ]] && exit 0
         want="-A $chain $*"
         out="" found=0
         while IFS= read -r line; do
@@ -110,9 +113,13 @@ _t_oracle() {
     run remove_image_reject_above_ufw
     [ "$status" -eq 0 ]
     diff <(_expected_after_oracle) "$IPT_STATE"
-    # One log line per removed rule, naming the chain.
-    [ "$(grep -c 'INPUT -j REJECT --reject-with icmp-host-prohibited' "$LOG_FILE")" -ge 1 ]
-    [ "$(grep -c 'FORWARD -j REJECT --reject-with icmp-host-prohibited' "$LOG_FILE")" -ge 1 ]
+    # Exactly one INFO line per removed rule, naming the chain, and no warning.
+    run grep -c '^INFO: .*-A INPUT -j REJECT --reject-with icmp-host-prohibited' "$LOG_FILE"
+    [ "$output" = "1" ]
+    run grep -c '^INFO: .*-A FORWARD -j REJECT --reject-with icmp-host-prohibited' "$LOG_FILE"
+    [ "$output" = "1" ]
+    run grep -c '^WARN' "$LOG_FILE"
+    [ "$output" = "0" ]
 }
 
 _t_below() {
@@ -188,6 +195,9 @@ _t_delete_fails() {
     grep -qF 'WARN: ' "$LOG_FILE"
     grep -qF 'iptables -D INPUT -j REJECT --reject-with icmp-host-prohibited' "$LOG_FILE"
     grep -qF 'iptables -D FORWARD -j REJECT --reject-with icmp-host-prohibited' "$LOG_FILE"
+    # One warning per chain, not one per pass.
+    run grep -c '^WARN' "$LOG_FILE"
+    [ "$output" = "2" ]
 }
 
 _t_no_iptables() {
@@ -266,11 +276,14 @@ _t_integration() {
     eval "$(awk '/^remove_image_reject_above_ufw\(\) \{/,/^\}/' "$script")"
     eval "$(awk '/^setup_improved_firewall\(\) \{/,/^\}/' "$script" | sed 's#< /dev/tty##')"
     UFW_STATE="$ufw_state"
+    # Like the real ufw: its jumps land at the END of the chains when it is
+    # enabled or reloaded. On a fresh Oracle image they are not there before.
     ufw() {
-        case "$1" in
-            status) echo "Status: $UFW_STATE" ;;
-            *)      return 0 ;;
+        case "$*" in
+            status*) echo "Status: $UFW_STATE" ;;
+            "--force enable"|reload) _ufw_add_jumps ;;
         esac
+        return 0
     }
     ip() { echo "1.1.1.1 dev eth0 src 10.0.0.1 uid 0"; }
     install_packages() { return 0; }
@@ -281,10 +294,32 @@ _t_integration() {
     AUTO_YES=1
     CLI_SSH_PORT=22
     export AWG_PORT AWG_DIR AUTO_YES CLI_SSH_PORT
-    _oracle_layout
+    if [[ "$ufw_state" == "inactive" ]]; then
+        # Fresh Oracle image: only Oracle's rules, no UFW jumps yet.
+        _oracle_layout
+        grep -v -- '-j ufw-' "$IPT_STATE" > "$IPT_STATE.new" && mv "$IPT_STATE.new" "$IPT_STATE"
+    else
+        _oracle_layout
+    fi
     run setup_improved_firewall < /dev/null
     [ "$status" -eq 0 ]
-    diff <(_expected_after_oracle) "$IPT_STATE"
+    diff <(_expected_after_oracle) <(_by_chain)
+}
+
+# Appends UFW's jumps at the end of each chain unless they are there already.
+_ufw_add_jumps() {
+    local r
+    for r in '-A INPUT -j ufw-before-logging-input' '-A INPUT -j ufw-before-input' \
+             '-A INPUT -j ufw-after-input' '-A FORWARD -j ufw-before-logging-forward' \
+             '-A FORWARD -j ufw-before-forward' '-A OUTPUT -j ufw-before-logging-output'; do
+        grep -qxF -- "$r" "$IPT_STATE" || printf '%s\n' "$r" >> "$IPT_STATE"
+    done
+}
+
+# The rule file ordered INPUT, FORWARD, OUTPUT (order inside a chain kept).
+_by_chain() {
+    local c
+    for c in INPUT FORWARD OUTPUT; do grep -F -- "-A $c " "$IPT_STATE" || true; done
 }
 
 @test "RU integration: UFW enabled by the installer - Oracle REJECT removed" {
@@ -301,4 +336,69 @@ _t_integration() {
 
 @test "EN integration: UFW already active - Oracle REJECT removed" {
     _t_integration "$EN_SCRIPT" active
+}
+
+_t_mixed() {
+    _load_fn "$1"
+    cat > "$IPT_STATE" <<'EOF'
+-A INPUT -j REJECT --reject-with icmp-host-prohibited
+-A INPUT -j ufw-before-input
+-A INPUT -j REJECT --reject-with icmp-host-prohibited
+EOF
+    run remove_image_reject_above_ufw
+    [ "$status" -eq 0 ]
+    diff <(printf '%s\n' '-A INPUT -j ufw-before-input' '-A INPUT -j REJECT --reject-with icmp-host-prohibited') "$IPT_STATE"
+}
+
+_t_list_fails() {
+    _load_fn "$1"
+    _oracle_layout
+    cp "$IPT_STATE" "$BATS_TEST_TMPDIR/before"
+    IPT_FAIL_LIST=1
+    export IPT_FAIL_LIST
+    run remove_image_reject_above_ufw
+    [ "$status" -eq 0 ]
+    diff "$BATS_TEST_TMPDIR/before" "$IPT_STATE"
+    # Not silent: one warning per chain, naming the chain and the check command.
+    run grep -c '^WARN' "$LOG_FILE"
+    [ "$output" = "2" ]
+    grep -qF 'iptables -S INPUT' "$LOG_FILE"
+    grep -qF 'iptables -S FORWARD' "$LOG_FILE"
+}
+
+_t_noop_delete() {
+    _load_fn "$1"
+    _oracle_layout
+    IPT_NOOP_DELETE=1
+    export IPT_NOOP_DELETE
+    local f
+    f="$(declare -f remove_image_reject_above_ufw log log_warn)"
+    run timeout 20 env LOG_FILE="$LOG_FILE" bash -c "$f; remove_image_reject_above_ufw"
+    [ "$status" -eq 0 ]
+    # The bound: at most 5 passes per chain, then it gives up.
+    [ "$(grep -c '^INFO' "$LOG_FILE")" -le 10 ]
+}
+
+@test "RU: REJECT above and below UFW - only the one above is removed" {
+    _t_mixed "$RU_SCRIPT"
+}
+
+@test "EN: REJECT above and below UFW - only the one above is removed" {
+    _t_mixed "$EN_SCRIPT"
+}
+
+@test "RU: iptables -S failing is reported, nothing changes" {
+    _t_list_fails "$RU_SCRIPT"
+}
+
+@test "EN: iptables -S failing is reported, nothing changes" {
+    _t_list_fails "$EN_SCRIPT"
+}
+
+@test "RU: a delete that reports success but removes nothing still ends" {
+    _t_noop_delete "$RU_SCRIPT"
+}
+
+@test "EN: a delete that reports success but removes nothing still ends" {
+    _t_noop_delete "$EN_SCRIPT"
 }

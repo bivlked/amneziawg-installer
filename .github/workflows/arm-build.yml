@@ -73,7 +73,7 @@ jobs:
             headers_pkg: linux-headers-rpi-v7
             arch: armhf
 
-          # Raspberry Pi OS on Debian Trixie (the default image since Oct 2026,
+          # Raspberry Pi OS on Debian Trixie (the current default image,
           # kernel 6.18+rpt): the same three boards. The trixie archive has no
           # armhf v7l headers, only v6 and v7.
           - id: rpi-trixie-arm64

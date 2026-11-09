@@ -210,3 +210,18 @@ _assert_asset() { # $1 expected asset file name
         grep -qxF '            rpi_suite: trixie' "$BATS_TEST_TMPDIR/entry"
     done
 }
+
+@test "RU/EN: plain Debian 13 arm64 (not a Raspberry Pi) stays on debian-trixie-arm64" {
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        _asset_for "$s" "6.12.113+deb13-arm64" arm64 13
+        _assert_asset "amneziawg-kmod-debian-trixie-arm64_6.12.113+deb13-arm64_arm64.deb"
+    done
+}
+
+@test "arm-build.yml passes RPI_SUITE into the container and uses it for the RPi source" {
+    grep -qxF '          RPI_SUITE: ${{ matrix.rpi_suite }}' "$WF"
+    grep -qxF '            -e RPI_SUITE' "$WF"
+    grep -qF 'https://archive.raspberrypi.com/debian/ ${RPI_SUITE} main' "$WF"
+    run grep -c 'archive.raspberrypi.com/debian/ bookworm main' "$WF"
+    [ "$output" = "0" ]
+}

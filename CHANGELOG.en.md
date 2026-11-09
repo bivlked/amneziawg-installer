@@ -18,7 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Security
 
-- The apt download retry ban (the CVE-2026-109518 protection from v6.2.1) now covers `--uninstall` too: packages are removed with the ban on, and the ban file is deleted on exit, the same as after an install. Before, `--uninstall` only removed a file left by a cut-short run. In practice removing the installer's packages downloads nothing, so this closes a mostly theoretical case.
+- The apt download retry ban (the CVE-2026-109518 protection from v6.2.1) now covers `--uninstall` too: packages are removed with the ban on, and the ban file is deleted on exit, the same as after an install. If the file cannot be written (a full disk, for example), the uninstall does not stop halfway but goes on with a warning. Before, `--uninstall` only removed a file left by a cut-short run. In practice removing the installer's packages downloads nothing, so this closes a mostly theoretical case.
 
 ### Fixed
 
