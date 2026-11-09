@@ -536,7 +536,7 @@ ip route show table 100
 Середину разбирайте последней: пока awg-in шлёт на неё трафик, остановка `awg1` на awg-mid сразу выпустит этот трафик с адреса awg-mid.
 
 - **Вернуться к двум серверам.** На awg-out выпустите клиента для входа (`bash /root/awg/manage_amneziawg.sh add ru_host`). На awg-in замените им `/etc/amnezia/amneziawg/awg1.conf`, как в [шаге 3](#step3), поставьте в `/root/awg/awg-routing.sh` адрес awg-out в `AWG1_ENDPOINT` и выполните `systemctl restart awg-quick@awg1`, `ip route del ВНЕШНИЙ_IP_AWG_MID` и `bash /root/awg/awg-routing.sh`. Убедитесь, что `awg show awg1` на awg-in показывает `latest handshake`, и только потом разбирайте середину.
-- **Убрать каскад целиком.** Сначала разберите вход по разделу [Как убрать каскад](#uninstall), потом середину.
+- **Убрать каскад целиком.** Сначала разберите вход по разделу [Как убрать каскад](#uninstall), потом середину. Последний шаг того раздела (`remove ru_host` на сервере-выходе для входа) в трёхзвенной схеме выполняется на awg-mid, поэтому ниже эту команду тогда пропустите.
 
 Сама середина разбирается так: на awg-mid `systemctl disable --now awg-quick@awg1`, `rm /etc/amnezia/amneziawg/awg1.conf` (`PostDown` сам снимет правило и NAT) и `bash /root/awg/manage_amneziawg.sh remove ru_host`, на awg-out `bash /root/awg/manage_amneziawg.sh remove mid_host`.
 

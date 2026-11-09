@@ -538,7 +538,7 @@ Two more downsides. Each server connects to the next one as a client, so its mod
 Take the middle apart last: while awg-in still sends traffic to it, stopping `awg1` on awg-mid lets that traffic out through awg-mid's address right away.
 
 - **Back to two servers.** On awg-out issue a client for the entry (`bash /root/awg/manage_amneziawg.sh add ru_host`). On awg-in replace `/etc/amnezia/amneziawg/awg1.conf` with it, as in [step 3](#step3), set the awg-out address as `AWG1_ENDPOINT` in `/root/awg/awg-routing.sh`, and run `systemctl restart awg-quick@awg1`, `ip route del AWG_MID_EXTERNAL_IP` and `bash /root/awg/awg-routing.sh`. Make sure `awg show awg1` on awg-in shows a `latest handshake`, and only then take the middle apart.
-- **Remove the whole cascade.** Take the entry apart first, as in [Removing the cascade](#uninstall), then the middle.
+- **Remove the whole cascade.** Take the entry apart first, as in [Removing the cascade](#uninstall), then the middle. The last step of that section (`remove ru_host` on the entry's exit server) runs on awg-mid in the three-server setup, so skip that command below in this case.
 
 The middle itself comes apart like this: on awg-mid `systemctl disable --now awg-quick@awg1`, `rm /etc/amnezia/amneziawg/awg1.conf` (`PostDown` removes the rule and the NAT by itself) and `bash /root/awg/manage_amneziawg.sh remove ru_host`, and on awg-out `bash /root/awg/manage_amneziawg.sh remove mid_host`.
 
