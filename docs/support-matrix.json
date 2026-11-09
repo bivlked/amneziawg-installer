@@ -90,7 +90,7 @@
       "lifecycle": "supported",
       "project_policy": "default",
       "ppa_suite": "noble",
-      "arm_prebuilt_targets": ["debian-trixie-arm64"]
+      "arm_prebuilt_targets": ["debian-trixie-arm64", "rpi-trixie-arm64", "rpi5-trixie-arm64", "rpi-trixie-armhf"]
     },
     {
       "id": "debian-12",
