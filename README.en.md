@@ -393,7 +393,7 @@ Installing AmneziaWG on Ubuntu or Debian comes down to three commands: download 
     > After reboots, resume with the same file: `sudo bash ./install_amneziawg.sh`
 
 5.  **Initial setup:** The script will interactively ask for:
-    * **UDP port:** Port for client connections (1-65535). Default: `39743`.
+    * **UDP port:** Port for client connections (1-65535). Default: a random free port in 10000-59999, named in the final install report; change it later with `manage port <number>`.
     * **Tunnel subnet:** Internal VPN network. Default: `10.9.9.1/24`.
     * **Disable IPv6:** recommended (`Y`). This is IPv6 on the server itself; whether your device's IPv6 goes into the tunnel is decided by the routing mode, see [Device IPv6, `::/0` and the local network](ADVANCED.en.md#client-ipv6-adv).
     * **Routing mode:** Determines which traffic goes through the VPN. Default `1` (all traffic, `0.0.0.0/0`) - the full-tunnel form clients expect. Mode `2` (Amnezia List + DNS) keeps the private ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) out of the tunnel, but some clients treat such a list as split routing and behave differently.
@@ -718,8 +718,8 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 </details>
 
 <details>
-  <summary><strong>Q: Why port 39743?</strong></summary>
-  <b>A:</b> It's a random port from the upper range, chosen as the default. You can change it during installation: <code>--port=N</code> (any port 1-65535). On mobile networks where the carrier drops unfamiliar ports, <code>443/udp</code> often helps - the <code>--mobile</code> flag sets it together with the obfuscation preset.
+  <summary><strong>Q: Which port does the server listen on, and how do I change it?</strong></summary>
+  <b>A:</b> A new install takes a random free port in 10000-59999 (except 51820 and 51821): the same port on every install would be a trait they all share. The final install report names the port, and it is also the <code>ListenPort</code> line in <code>/etc/amnezia/amneziawg/awg0.conf</code>. To set your own at install time: <code>--port=N</code> (any port 1-65535). To change it on a running server: <code>sudo bash /root/awg/manage_amneziawg.sh port N</code>; the command fixes the UFW rule and the client configs itself, but the clients need the new configs. Servers installed earlier listen on 39743 until the port is changed. On mobile networks where the carrier drops unfamiliar ports, <code>443/udp</code> often helps - the <code>--mobile</code> flag sets it together with the obfuscation preset.
 </details>
 
 <details>

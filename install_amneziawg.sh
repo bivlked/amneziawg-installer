@@ -3094,6 +3094,39 @@ rand_range() {
     echo $(( (random_val % range) + min ))
 }
 
+# Случайный свободный UDP-порт для новой установки: 10000-59999, кроме 51820 и
+# 51821 (порты WireGuard по умолчанию) и уже занятых. Один и тот же 39743 у всех
+# установок был их общим признаком (ntc t/22685 #35). Не нашёлся - код 1.
+_awg_pick_random_port() {
+    local p i busy
+    busy=$(ss -Hlun 2>/dev/null | awk '{n=split($4,a,":"); print a[n]}')
+    for (( i = 0; i < 64; i++ )); do
+        p=$(rand_range 10000 59999)
+        [[ "$p" == 51820 || "$p" == 51821 ]] && continue
+        grep -qxF -- "$p" <<< "$busy" && continue
+        printf '%s\n' "$p"
+        return 0
+    done
+    return 1
+}
+
+# Порт по умолчанию для шага 0. Первая установка (init ещё нет) - случайный;
+# при существующем init порт берётся из него, а 39743 остаётся запасным для
+# init без AWG_PORT, как раньше.
+_awg_default_port() {
+    local p
+    if [[ -f "$CONFIG_FILE" ]]; then
+        printf '39743\n'
+        return 0
+    fi
+    if p=$(_awg_pick_random_port); then
+        printf '%s\n' "$p"
+    else
+        log_warn "Не удалось выбрать случайный свободный порт, беру 39743."
+        printf '39743\n'
+    fi
+}
+
 # _awg_size_collisions <S1> <S2> <S3> <S4> : может ли приёмник принять пакет
 # ДАННЫХ за пакет рукопожатия. Печатает по строке «класс P» на каждый такой
 # случай (init, response, cookie; P - выровненная до 16 полезная нагрузка пакета
@@ -5143,6 +5176,25 @@ create_diagnostic_report() {
 # Деинсталляция
 # ==============================================================================
 
+# Порты, правила UFW которых снимает --uninstall: AWG_PORT из init, отложенный
+# PREV_AWG_PORT и ListenPort живого awg0.conf (порт меняет и manage port). Только
+# номера 1-65535, без повторов; нечего прочитать - пусто. Угадывать 39743 больше
+# нельзя: с случайным портом по умолчанию это было бы чужое правило.
+_awg_uninstall_ports() {
+    local p out="" init_port="" prev_port="" live_port=""
+    if [[ -f "$CONFIG_FILE" ]]; then
+        init_port=$(safe_read_config_key "AWG_PORT" "$CONFIG_FILE" 2>/dev/null)
+        prev_port=$(safe_read_config_key "PREV_AWG_PORT" "$CONFIG_FILE" 2>/dev/null)
+    fi
+    live_port=$(awk -F= '/^[[:space:]]*ListenPort[[:space:]]*=/{gsub(/[[:space:]\r]/,"",$2); print $2; exit}' "$SERVER_CONF_FILE" 2>/dev/null)
+    for p in "$init_port" "$prev_port" "$live_port"; do
+        [[ "$p" =~ ^[1-9][0-9]{0,4}$ ]] && (( p <= 65535 )) || continue
+        [[ " $out " == *" $p "* ]] && continue
+        out+="${out:+ }$p"
+    done
+    printf '%s\n' "$out"
+}
+
 step_uninstall() {
     log "### ДЕИНСТАЛЛЯЦИЯ AMNEZIAWG ###"
     echo ""
@@ -5234,14 +5286,11 @@ step_uninstall() {
     if [[ "$saved_no_tweaks" -eq 0 ]]; then
         log "Очистка правил UFW для AmneziaWG..."
         if command -v ufw &>/dev/null; then
-            local port_to_del
-            if [[ -f "$CONFIG_FILE" ]]; then
-                # shellcheck source=/dev/null
-                port_to_del=$(safe_read_config_key "AWG_PORT" "$CONFIG_FILE")
-            fi
-            port_to_del=${port_to_del:-39743}
+            local _uport
             # Удаление наших правил выполняется ВСЕГДА (idempotent)
-            ufw delete allow "${port_to_del}/udp" 2>/dev/null
+            for _uport in $(_awg_uninstall_ports); do
+                ufw delete allow "${_uport}/udp" 2>/dev/null
+            done
             # Для удаления route-правила нужно точное совпадение с тем как оно
             # было создано: "ufw route allow in on awg0 out on <nic>". Без "out on"
             # UFW не найдёт правило и оно останется в ufw status. Discussion #41.
@@ -5719,7 +5768,8 @@ initialize_setup() {
     check_kernel_version
     check_free_space
 
-    local default_port=39743
+    local default_port
+    default_port=$(_awg_default_port)
     local default_subnet="10.9.9.1/24"
     local config_exists=0
 
@@ -9201,6 +9251,7 @@ step99_finish() {
     log "=============================================================================="
     log "Установка и настройка AmneziaWG ${AWG_PROTOCOL:-2.0} УСПЕШНО ЗАВЕРШЕНА!"
     log "Поколение протокола: $(_awg_generation_summary)"
+    log "Порт VPN: ${AWG_PORT}/udp (сменить: sudo bash $MANAGE_SCRIPT_PATH port <номер>)"
     log " "
     log "КЛИЕНТСКИЕ ФАЙЛЫ:"
     log "  Конфиги (.conf) и QR-коды (.png) в: $AWG_DIR"

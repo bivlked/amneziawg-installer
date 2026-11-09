@@ -3272,6 +3272,109 @@ show_client_qr() {
     return 0
 }
 
+# manage port <N>: смена UDP-порта работающего сервера одной командой.
+# Новый порт пишется в ListenPort живого awg0.conf и в AWG_PORT init (их читают
+# разные команды: клиенты и vpn:// - awg0.conf, check, diagnose и --uninstall -
+# init). UFW открывает новый порт ДО перезапуска и закрывает старый ПОСЛЕ, затем
+# перевыпускаются все клиенты: порт входит в Endpoint каждого конфига. Сбой
+# перезапуска возвращает оба файла, поднимает сервер на старом порту и закрывает
+# новый. Плохой, занятый или тот же порт ничего не меняет.
+_port_read_listen() {
+    awk -F= '/^[[:space:]]*ListenPort[[:space:]]*=/{gsub(/[[:space:]\r]/,"",$2); print $2; exit}' "$SERVER_CONF_FILE" 2>/dev/null
+}
+_port_listening() {
+    ss -Hlun 2>/dev/null | awk '{n=split($4,a,":"); print a[n]}' | grep -qxF -- "$1"
+}
+_port_ufw_active() {
+    command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'
+}
+# _port_write <new>: оба файла через temp + mv под .awg_config.lock.
+_port_write() {
+    local new="$1" tmp lock_fd rc=0
+    exec {lock_fd}>"${AWG_DIR}/.awg_config.lock" || return 1
+    if ! flock -w 10 "$lock_fd"; then
+        exec {lock_fd}>&-
+        log_error "Конфиг занят другой командой (.awg_config.lock), повторите позже."
+        return 1
+    fi
+    tmp=$(mktemp "${SERVER_CONF_FILE}.port.XXXXXX") \
+        && sed -E "s/^([[:space:]]*ListenPort[[:space:]]*=[[:space:]]*)[0-9]+/\1${new}/" "$SERVER_CONF_FILE" > "$tmp" \
+        && chmod 600 "$tmp" && mv -f "$tmp" "$SERVER_CONF_FILE" || { rm -f "$tmp"; rc=1; }
+    if (( rc == 0 )) && [[ -f "$CONFIG_FILE" ]]; then
+        tmp=$(mktemp "${CONFIG_FILE}.port.XXXXXX") || rc=1
+        if (( rc == 0 )); then
+            if grep -qE '^(export[[:space:]]+)?AWG_PORT=' "$CONFIG_FILE"; then
+                sed -E "s/^(export[[:space:]]+)?AWG_PORT=.*/export AWG_PORT=${new}/" "$CONFIG_FILE" > "$tmp"
+            else
+                { cat "$CONFIG_FILE"; echo "export AWG_PORT=${new}"; } > "$tmp"
+            fi && chmod 600 "$tmp" && mv -f "$tmp" "$CONFIG_FILE" || { rm -f "$tmp"; rc=1; }
+        fi
+    fi
+    exec {lock_fd}>&-
+    return "$rc"
+}
+change_server_port() {
+    local new="$1" old ufw_on=0 bak_conf bak_init="" cname ok=0 fail=0
+    if ! [[ "$new" =~ ^[1-9][0-9]{0,4}$ ]] || (( new > 65535 )); then
+        _JSON_ERR="invalid port"
+        log_error "Некорректный порт '${new}': нужно число от 1 до 65535 без ведущих нулей."
+        return 1
+    fi
+    old=$(_port_read_listen)
+    if ! [[ "$old" =~ ^[0-9]+$ ]]; then
+        _JSON_ERR="no ListenPort in server config"
+        log_error "В $SERVER_CONF_FILE не найден ListenPort."
+        return 1
+    fi
+    if [[ "$new" == "$old" ]]; then
+        log "Сервер уже слушает ${new}/udp, менять нечего."
+        json_out "{\"command\":\"port\",\"ok\":true,\"old\":$old,\"new\":$new,\"changed\":false}"
+        return 0
+    fi
+    if _port_listening "$new"; then
+        _JSON_ERR="port busy"
+        log_error "Порт ${new}/udp уже занят другой программой."
+        return 1
+    fi
+    log_warn "Порт сервера сменится с ${old} на ${new}: подключённые клиенты отключатся, у всех клиентов поменяются конфиги и QR (перевыпуск сделается сам), их нужно будет раздать заново."
+    confirm_action "сменить порт" "сервера с ${old} на ${new}" || return 1
+    bak_conf="${SERVER_CONF_FILE}.port-bak"
+    cp -p "$SERVER_CONF_FILE" "$bak_conf" || { log_error "Не удалось сделать копию $SERVER_CONF_FILE."; return 1; }
+    if [[ -f "$CONFIG_FILE" ]]; then
+        bak_init="${CONFIG_FILE}.port-bak"
+        cp -p "$CONFIG_FILE" "$bak_init" || { rm -f "$bak_conf"; log_error "Не удалось сделать копию $CONFIG_FILE."; return 1; }
+    fi
+    if _port_ufw_active; then
+        ufw_on=1
+        if ! ufw allow "${new}/udp" comment "AmneziaWG VPN" >/dev/null; then
+            rm -f "$bak_conf" "$bak_init"
+            log_error "UFW не открыл ${new}/udp, порт не изменён."
+            return 1
+        fi
+    fi
+    if ! _port_write "$new" || ! systemctl restart awg-quick@awg0; then
+        log_error "Не удалось перейти на ${new}/udp, возвращаю ${old}/udp."
+        cp -p "$bak_conf" "$SERVER_CONF_FILE"
+        [[ -n "$bak_init" ]] && cp -p "$bak_init" "$CONFIG_FILE"
+        systemctl restart awg-quick@awg0 || log_error "Сервер не поднялся и на старом порту: systemctl status awg-quick@awg0"
+        (( ufw_on )) && ufw delete allow "${new}/udp" >/dev/null 2>&1
+        rm -f "$bak_conf" "$bak_init"
+        _JSON_ERR="restart on the new port failed, rolled back"
+        return 1
+    fi
+    awg_record_device_params 2>/dev/null || true
+    rm -f "$bak_conf" "$bak_init"
+    (( ufw_on )) && { ufw delete allow "${old}/udp" >/dev/null 2>&1 || log_warn "UFW не удалил правило старого порта: sudo ufw delete allow ${old}/udp"; }
+    log "Порт сервера сменён: ${old} -> ${new}/udp. Перевыпуск клиентов..."
+    while IFS= read -r cname; do
+        [[ -z "$cname" ]] && continue
+        if regenerate_client "$cname"; then ok=$((ok + 1)); else fail=$((fail + 1)); log_warn "Клиент '$cname' не перевыпущен: sudo bash $0 regen $cname"; fi
+    done < <(grep '^#_Name = ' "$SERVER_CONF_FILE" | sed 's/^#_Name = //; s/[[:space:]]*$//')
+    log "Перевыпущено клиентов: $ok, с ошибкой: $fail. Раздайте клиентам новые конфиги или QR из $AWG_DIR."
+    json_out "{\"command\":\"port\",\"ok\":$([[ $fail -eq 0 ]] && echo true || echo false),\"old\":$old,\"new\":$new,\"changed\":true,\"regenerated\":$ok,\"failed\":$fail}"
+    (( fail == 0 ))
+}
+
 usage() {
     # C1: явный help (rc=0) -> stdout + exit 0; ошибка использования (rc!=0,
     # дефолт) -> stderr + exit 1. Явные help-вызовы передают 0, error-вызовы
@@ -3319,6 +3422,7 @@ usage() {
     echo "  list [-v] [--json]    Показать список клиентов (--json: машиночитаемый, с client_ipv6)"
     echo "  stats [--json]        Статистика трафика по клиентам"
     echo "  regen [имя ...] [--reset-routes]  Перегенерировать файлы клиента(ов), можно несколько имён"
+    echo "  port <номер>                Сменить UDP-порт сервера (UFW, init, перевыпуск всех клиентов)"
     echo "  modify <имя> <пар> <зн> Изменить параметр клиента"
     echo "  backup                Создать бэкап"
     echo "  restore [файл]        Восстановить из бэкапа"
@@ -3834,6 +3938,9 @@ case $COMMAND in
         fi
         ;;
 
+    port)
+        change_server_port "$CLIENT_NAME" || exit 1
+        ;;
     restart)
         log "Перезапуск сервиса..."
         # Предупреждение ДО confirm_action: при --yes/AWG_YES=1 подтверждения не

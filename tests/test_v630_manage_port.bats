@@ -1,0 +1,212 @@
+#!/usr/bin/env bats
+# `manage port <N>`: change the server's UDP port on a running server.
+#
+# One command does what had to be done by hand: the new port goes into
+# ListenPort of awg0.conf and AWG_PORT of the init file, UFW opens the new port
+# before the restart and closes the old one after it, and every client is
+# regenerated, because the port is part of the Endpoint in each client config.
+# A failed restart puts both files back, restarts on the old port and closes
+# the new port again. A bad, busy or unchanged port changes nothing.
+#
+# The real manage script runs end to end with systemctl, ufw and ss stubbed on
+# PATH; every call is written to a log so the order can be checked.
+
+# shellcheck disable=SC2154  # $stderr is set by bats `run --separate-stderr`
+load test_helper
+
+bats_require_minimum_version 1.5.0
+
+setup_port_env() {
+    MGMT_DIR=$(mktemp -d)
+    mkdir -p "$MGMT_DIR/bin" "$MGMT_DIR/awg/keys"
+    export CALLS="$MGMT_DIR/calls"
+    : > "$CALLS"
+    cat > "$MGMT_DIR/bin/awg" << 'STUB'
+#!/bin/bash
+case "$1" in
+    genkey|genpsk) echo "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ;;
+    pubkey) cat >/dev/null; echo "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=" ;;
+    *) exit 0 ;;
+esac
+STUB
+    cat > "$MGMT_DIR/bin/systemctl" << 'STUB'
+#!/bin/bash
+echo "systemctl $*" >> "$CALLS"
+if [[ "$1" == restart && -n "${STUB_RESTART_FAIL:-}" ]]; then
+    # Fails only while the config names the new port: the restart that puts
+    # the old port back has to succeed.
+    grep -qE "^ListenPort = ${STUB_RESTART_FAIL}\$" "$STUB_SERVER_CONF" && exit 1
+fi
+exit 0
+STUB
+    cat > "$MGMT_DIR/bin/ufw" << 'STUB'
+#!/bin/bash
+echo "ufw $*" >> "$CALLS"
+if [[ "$1" == status ]]; then
+    [[ -n "${STUB_UFW_OFF:-}" ]] && { echo "Status: inactive"; exit 0; }
+    echo "Status: active"
+fi
+exit 0
+STUB
+    cat > "$MGMT_DIR/bin/ss" << 'STUB'
+#!/bin/bash
+# The server listens on whatever ListenPort says, plus the ports in STUB_BUSY.
+p=$(sed -n 's/^ListenPort = //p' "$STUB_SERVER_CONF")
+for q in $p ${STUB_BUSY:-}; do printf 'UNCONN 0 0 0.0.0.0:%s 0.0.0.0:*\n' "$q"; done
+STUB
+    chmod +x "$MGMT_DIR/bin/"*
+    export PATH="$MGMT_DIR/bin:$PATH"
+    export STUB_SERVER_CONF="$MGMT_DIR/awg/awg0.conf"
+    cat > "$MGMT_DIR/awg/awgsetup_cfg.init" << 'CONF'
+export AWG_PORT=39743
+export AWG_TUNNEL_SUBNET='10.9.9.1/24'
+export DISABLE_IPV6=1
+export ALLOWED_IPS_MODE=1
+export ALLOWED_IPS='0.0.0.0/0'
+export AWG_APPLY_MODE='syncconf'
+export AWG_ENDPOINT='vpn.example.com'
+CONF
+    cat > "$MGMT_DIR/awg/awg0.conf" << 'CONF'
+[Interface]
+PrivateKey = TESTKEY
+Address = 10.9.9.1/24
+MTU = 1280
+ListenPort = 39743
+Jc = 6
+Jmin = 55
+Jmax = 380
+S1 = 72
+S2 = 56
+S3 = 32
+S4 = 16
+H1 = 100000-800000
+H2 = 1000000-8000000
+H3 = 10000000-80000000
+H4 = 100000000-800000000
+CONF
+    export AWG_SKIP_APPLY=1
+}
+
+teardown() {
+    rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
+    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_RESTART_FAIL STUB_UFW_OFF STUB_BUSY
+}
+
+manage() {
+    local script="$1"; shift
+    local lib="awg_common.sh"
+    [[ "$script" == *_en.sh ]] && lib="awg_common_en.sh"
+    cp "$BATS_TEST_DIRNAME/../$lib" "$MGMT_DIR/awg/awg_common.sh"
+    run --separate-stderr bash "$BATS_TEST_DIRNAME/../$script" "$@" --yes \
+        --conf-dir="$MGMT_DIR/awg" --server-conf="$MGMT_DIR/awg/awg0.conf"
+}
+
+listen_port() { sed -n 's/^ListenPort = //p' "$MGMT_DIR/awg/awg0.conf"; }
+init_port() { sed -n 's/^export AWG_PORT=//p' "$MGMT_DIR/awg/awgsetup_cfg.init"; }
+endpoint() { sed -n 's/^Endpoint = //p' "$MGMT_DIR/awg/$1.conf"; }
+calls() { grep -vE '^(systemctl is-active|ufw status)' "$CALLS" | paste -sd'|' -; }
+
+each_manage() {
+    local seen=0 s
+    for s in manage_amneziawg.sh manage_amneziawg_en.sh; do
+        setup_port_env
+        "$1" "$s" || return 1
+        rm -rf "$MGMT_DIR"
+        seen=$((seen + 1))
+    done
+    [ "$seen" -eq 2 ]
+}
+
+_port_changes_everything() {
+    manage "$1" add alice bob
+    [ "$status" -eq 0 ] || { echo "$1: add failed: $stderr"; return 1; }
+    [ "$(endpoint alice)" = "vpn.example.com:39743" ] || { echo "$1: unexpected start endpoint $(endpoint alice)"; return 1; }
+    : > "$CALLS"
+    manage "$1" port 23456
+    [ "$status" -eq 0 ] || { echo "$1: port failed ($status): $stderr"; return 1; }
+    [ "$(listen_port)" = "23456" ] || { echo "$1: ListenPort is '$(listen_port)'"; return 1; }
+    [ "$(init_port)" = "23456" ] || { echo "$1: init AWG_PORT is '$(init_port)'"; return 1; }
+    [ "$(endpoint alice)" = "vpn.example.com:23456" ] || { echo "$1: alice endpoint '$(endpoint alice)'"; return 1; }
+    [ "$(endpoint bob)" = "vpn.example.com:23456" ] || { echo "$1: bob endpoint '$(endpoint bob)'"; return 1; }
+    local want="ufw allow 23456/udp comment AmneziaWG VPN|systemctl restart awg-quick@awg0|ufw delete allow 39743/udp"
+    [ "$(calls)" = "$want" ] || { echo "$1: calls"; echo " got  $(calls)"; echo " want $want"; return 1; }
+    [[ "$output$stderr" == *23456* ]] || { echo "$1: the result does not name the new port"; return 1; }
+}
+@test "port <N> changes ListenPort and the init, opens the new port before the restart, closes the old one, regenerates the clients" {
+    require_flock
+    each_manage _port_changes_everything
+}
+
+_port_refuses() {
+    local bad
+    for bad in 0 65536 abc 08080 ""; do
+        : > "$CALLS"
+        manage "$1" port $bad
+        [ "$status" -ne 0 ] || { echo "$1: port '$bad' was accepted"; return 1; }
+        [ "$(listen_port)" = "39743" ] && [ "$(init_port)" = "39743" ] || { echo "$1: '$bad' changed the files"; return 1; }
+        [ -z "$(calls)" ] || { echo "$1: '$bad' touched the system: $(calls)"; return 1; }
+    done
+    export STUB_BUSY=34567
+    manage "$1" port 34567
+    unset STUB_BUSY
+    [ "$status" -ne 0 ] || { echo "$1: a busy port was accepted"; return 1; }
+    [[ "$stderr" == *34567* ]] || { echo "$1: the refusal does not name the busy port: $stderr"; return 1; }
+    [ "$(listen_port)" = "39743" ] && [ -z "$(calls)" ] || { echo "$1: a busy port changed something: $(calls)"; return 1; }
+}
+@test "port refuses a bad or busy port and changes nothing" {
+    each_manage _port_refuses
+}
+
+_port_same_is_noop() {
+    manage "$1" port 39743
+    [ "$status" -eq 0 ] || { echo "$1: the same port failed: $stderr"; return 1; }
+    [ -z "$(calls)" ] || { echo "$1: the same port touched the system: $(calls)"; return 1; }
+}
+@test "port with the current port is a no-op" {
+    each_manage _port_same_is_noop
+}
+
+_port_restart_failure_rolls_back() {
+    manage "$1" add alice
+    [ "$status" -eq 0 ] || { echo "$1: add failed: $stderr"; return 1; }
+    local conf_before init_before client_before
+    conf_before=$(cat "$MGMT_DIR/awg/awg0.conf"); init_before=$(cat "$MGMT_DIR/awg/awgsetup_cfg.init")
+    client_before=$(cat "$MGMT_DIR/awg/alice.conf")
+    : > "$CALLS"
+    export STUB_RESTART_FAIL=23456
+    manage "$1" port 23456
+    unset STUB_RESTART_FAIL
+    [ "$status" -ne 0 ] || { echo "$1: a failed restart reported success"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awg0.conf")" = "$conf_before" ] || { echo "$1: awg0.conf not restored"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awgsetup_cfg.init")" = "$init_before" ] || { echo "$1: init not restored"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/alice.conf")" = "$client_before" ] || { echo "$1: the client was regenerated after a failed restart"; return 1; }
+    local want="ufw allow 23456/udp comment AmneziaWG VPN|systemctl restart awg-quick@awg0|systemctl restart awg-quick@awg0|ufw delete allow 23456/udp"
+    [ "$(calls)" = "$want" ] || { echo "$1: calls"; echo " got  $(calls)"; echo " want $want"; return 1; }
+    run bash -c "ls '$MGMT_DIR/awg' | grep -c port-bak"
+    [ "$output" = "0" ] || { echo "$1: backup files left behind"; return 1; }
+}
+@test "a failed restart puts the old port back everywhere and closes the new port" {
+    require_flock
+    each_manage _port_restart_failure_rolls_back
+}
+
+_port_without_ufw() {
+    export STUB_UFW_OFF=1
+    manage "$1" port 23456
+    unset STUB_UFW_OFF
+    [ "$status" -eq 0 ] || { echo "$1: port failed without UFW: $stderr"; return 1; }
+    [ "$(calls)" = "systemctl restart awg-quick@awg0" ] || { echo "$1: calls without UFW: $(calls)"; return 1; }
+    [ "$(listen_port)" = "23456" ] || { echo "$1: ListenPort '$(listen_port)'"; return 1; }
+}
+@test "port with UFW inactive does not add or delete UFW rules" {
+    require_flock
+    each_manage _port_without_ufw
+}
+
+@test "help lists the port command, both twins" {
+    local s
+    for s in manage_amneziawg.sh manage_amneziawg_en.sh; do
+        run bash "$BATS_TEST_DIRNAME/../$s" help
+        [[ "$output" == *"port <"* ]] || { echo "$s: help has no port command"; return 1; }
+    done
+}

@@ -12,7 +12,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`manage port <number>`: change the port of a running server in one command.** Before, the port could only be changed by hand: `ListenPort` in `awg0.conf`, the init, the UFW rule and the configs of every client, and `check` and `diagnose` looked in the wrong place after a manual edit. Now the command writes the new port into both files, opens it in UFW before the restart and closes the old one after, then regenerates every client: the port is part of the `Endpoint` in each config. If the server does not come up on the new port, the command puts back the old port, both files and the UFW rule. After the change the clients need the new configs or QR codes.
+
 ### Changed
+
+- **A random port for a new install (ntc t/22685 #35).** An install without `--port` no longer gives everyone the same `39743/udp`, it takes a random free port in 10000-59999 (except 51820 and 51821, the WireGuard defaults): the same port on every install was a trait they all shared. The final install report names the port. `--port` and `--mobile` (443) work as before, a reinstall keeps the port from the init, and servers already running stay on their port.
+- `--uninstall` removes the UFW rules for the port in the init, for a deferred old port and for the `ListenPort` of the live `awg0.conf`, instead of guessing `39743` when there is no init.
 
 - **A PresharedKey for every new client (D#371).** The installer's clients and new `manage add` clients get their own `PresharedKey`: an extra symmetric layer that does not change packet sizes or the masking. Before, only the `add --psk` flag gave one, and Shadowrocket, for example, did not connect without it. `add --no-psk` creates a client without a PSK, and an install with `--no-psk` does that for every new client of the server (saved as `NO_PSK=1` in the init); `--psk` still gives a client a PSK on such a server. Clients already issued do not change, and `regen` still keeps whatever a client has. `--psk` and `--no-psk` together, or with a command other than `add`, are now an error instead of silently doing nothing.
 
