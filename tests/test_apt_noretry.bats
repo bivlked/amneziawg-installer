@@ -8,7 +8,8 @@
 #
 # The installer therefore drops a temporary apt.conf.d file with
 # Acquire::Retries "0" before the step loop of EVERY run (resume included) and
-# removes it on exit. --uninstall removes a copy left by a killed run.
+# removes it on exit. --uninstall sets the same ban for its apt-get purge calls
+# (taking over a copy left by a killed run) and removes it on exit.
 #
 # The functional tests lift the real functions out of the shipped installers,
 # so deleting the guard from an installer turns them red.
@@ -260,9 +261,61 @@ CONF() { echo "$TMPD/apt.conf.d/99zz-amneziawg-installer-noretries"; }
     done
 }
 
-@test "apt-noretry: uninstall removes a copy left by a killed run" {
+
+# The ban covers the uninstall too (review note on PR #382): step_uninstall
+# runs apt-get purge, and the ban file has to be there while it does, then go
+# away on exit. Every command step_uninstall touches is a shell function here;
+# rm only acts inside $TMPD, so nothing outside the test directory is touched
+# even when the suite runs as root.
+@test "apt-noretry: uninstall purges with the ban in place and removes it on exit" {
+    stub_apt_config "R='0'"
     for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
-        extract_func "$f" step_uninstall \
-            | grep -qxF '    rm -f "$APT_NORETRY_CONF" "$APT_NORETRY_CONF".tmp.* 2>/dev/null || true'
+        rm -rf "$TMPD/apt.conf.d" "$TMPD/purges" "$TMPD/awg"
+        mkdir -p "$TMPD/apt.conf.d" "$TMPD/awg"
+        # Leftovers of a killed run: the ban file and its temporary copy.
+        printf 'Acquire::Retries "0";\n' > "$(CONF)"
+        : > "$(CONF).tmp.4242"
+        run bash -c '
+            PATH="'"$STUBS"':$PATH"
+            TMPDIR="'"$TMPD"'"; HOME="'"$TMPD"'"
+            T="'"$TMPD"'"
+            log() { :; }; log_warn() { :; }; log_error() { :; }; log_debug() { :; }
+            die() { echo "died: $*"; exit 1; }
+            APT_NORETRY_CONF="$T/apt.conf.d/99zz-amneziawg-installer-noretries"
+            AWG_DIR="$T/awg"; CONFIG_FILE="$T/awg/none"; LOG_FILE="$T/awg/log"
+            AUTO_YES=1
+            _apt_noretry_set=0; _install_cleaned=0; _install_temp_files=()
+            for fn in _apt_noretry_enable _apt_noretry_disable _install_cleanup step_uninstall; do
+                eval "$(awk -v f="$fn" '\''$0 ~ "^" f "\\(\\) \\{" {p=1} p {print} p && /^\}$/ {exit}'\'' "'"$f"'")"
+            done
+            rm() {
+                local a
+                for a in "$@"; do
+                    case "$a" in -*) ;; "$T"/*) ;; *) return 0 ;; esac
+                done
+                command rm "$@"
+            }
+            apt-get() {
+                if [ -f "$APT_NORETRY_CONF" ]; then echo "purge with ban" >> "$T/purges"
+                else echo "purge WITHOUT ban" >> "$T/purges"; fi
+            }
+            # The DROP drain loops while -D succeeds: no rule to delete.
+            iptables() { return 1; }; ip6tables() { return 1; }
+            for c in systemctl modprobe ufw fail2ban-client apt-mark \
+                     dpkg dkms find depmod sysctl tar ip sed cp; do
+                eval "$c() { return 0; }"
+            done
+            _awg_installed_kmod_pkgs() { return 0; }
+            trap _install_cleanup EXIT
+            step_uninstall
+        '
+        [ "$status" -eq 0 ]
+        # apt-get purge ran at least once, and every time with the ban on.
+        [ "$(grep -c . "$TMPD/purges")" -ge 1 ]
+        run grep -c 'WITHOUT' "$TMPD/purges"
+        [ "$output" = "0" ]
+        # Gone on exit, together with the killed run's temporary copy.
+        [ ! -e "$(CONF)" ]
+        [ ! -e "$(CONF).tmp.4242" ]
     done
 }

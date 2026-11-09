@@ -5181,9 +5181,10 @@ step_uninstall() {
         2>/dev/null || true
     rm -f /var/log/amneziawg-ensure-module.log* 2>/dev/null || true
     rm -rf /var/lib/amneziawg /run/amneziawg 2>/dev/null || true
-    # Запрет повторов apt (CVE-2026-109518), оставленный убитым запуском.
-    rm -f "$APT_NORETRY_CONF" "$APT_NORETRY_CONF".tmp.* 2>/dev/null || true
-    [[ -e "$APT_NORETRY_CONF" ]] && log_warn "Не удалось удалить $APT_NORETRY_CONF: apt останется без повторов скачивания. Удалите вручную: rm -f $APT_NORETRY_CONF"
+    # Запрет повторов apt (CVE-2026-109518) действует и на apt-get purge ниже;
+    # убирает его очистка при выходе. Копию, оставленную убитым запуском, он
+    # тоже подхватывает, и она уходит при выходе.
+    _apt_noretry_enable
     # Защита от CVE-2026-98432: юнит, правило и помощник. stop отдельно от
     # юнита - на случай, если юнит уже выключен, а правило осталось.
     log "Удаление защиты от CVE-2026-98432 (amneziawg-ipopts-guard)..."

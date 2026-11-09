@@ -5293,9 +5293,10 @@ step_uninstall() {
         2>/dev/null || true
     rm -f /var/log/amneziawg-ensure-module.log* 2>/dev/null || true
     rm -rf /var/lib/amneziawg /run/amneziawg 2>/dev/null || true
-    # The apt retry ban (CVE-2026-109518) left behind by a killed run.
-    rm -f "$APT_NORETRY_CONF" "$APT_NORETRY_CONF".tmp.* 2>/dev/null || true
-    [[ -e "$APT_NORETRY_CONF" ]] && log_warn "Could not delete $APT_NORETRY_CONF: apt stays without download retries. Delete it by hand: rm -f $APT_NORETRY_CONF"
+    # The apt retry ban (CVE-2026-109518) covers the apt-get purge calls below
+    # too; the exit cleanup removes it. This also takes over a copy left by a
+    # killed run, so it goes away on exit as well.
+    _apt_noretry_enable
     # The CVE-2026-98432 guard: unit, rule and helper. stop runs apart from the
     # unit in case the unit is already off while the rule stayed.
     log "Removing the CVE-2026-98432 guard (amneziawg-ipopts-guard)..."

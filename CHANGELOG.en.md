@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- The apt download retry ban (the CVE-2026-109518 protection from v6.2.1) now covers `--uninstall` too: packages are removed with the ban on, and the ban file is deleted on exit, the same as after an install. Before, `--uninstall` only removed a file left by a cut-short run. In practice removing the installer's packages downloads nothing, so this closes a mostly theoretical case.
+
 ### Fixed
 
 - **Oracle Cloud: the VPN works right after the install, with no extra reboot.** Oracle Cloud's Ubuntu images load their own iptables rules from `/etc/iptables/rules.v4` at boot, and those end INPUT and FORWARD with `REJECT --reject-with icmp-host-prohibited`. Installing UFW removes `netfilter-persistent`, but the rules already loaded stay in memory until the next boot and sit above UFW's rules, so the VPN port and the replies to clients were turned away until the server was rebooted once more. Now, after setting up UFW, the installer deletes exactly that rule when it sits above UFW and says so in the log; it leaves every other rule alone. Checked on an Ubuntu 24.04 ARM64 server with Oracle's rules reproduced.
