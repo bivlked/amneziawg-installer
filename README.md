@@ -562,7 +562,7 @@ sudo bash ./install_amneziawg_en.sh       # Запуск (+ 2 перезагру
 
 # Управление клиентами
 sudo bash /root/awg/manage_amneziawg.sh add my_phone       # Добавить
-sudo bash /root/awg/manage_amneziawg.sh add my_iphone --psk  # +PresharedKey (Shadowrocket iOS/macOS)
+sudo bash /root/awg/manage_amneziawg.sh add my_tv --no-psk     # Без PresharedKey (по умолчанию он у каждого)
 sudo bash /root/awg/manage_amneziawg.sh remove my_phone    # Удалить
 sudo bash /root/awg/manage_amneziawg.sh list                # Список
 sudo bash /root/awg/manage_amneziawg.sh list --json         # Список в JSON (для скриптов)
@@ -710,7 +710,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 <details>
   <summary><strong>В: Не подключается Shadowrocket на iOS/macOS - нужен PresharedKey</strong></summary>
-  <b>О:</b> Для этого у команды <code>add</code> есть флаг <code>--psk</code>: <code>sudo bash /root/awg/manage_amneziawg.sh add my_iphone --psk</code>. В файле клиента появится строка <code>PresharedKey = ...</code> совпадающая с серверным <code>[Peer]</code>. Для уже созданных клиентов: пересоздать с флагом (<code>remove</code> + <code>add --psk</code>) или вручную - сгенерировать ключ <em>один раз</em> (<code>PSK=$(awg genpsk)</code>) и вставить <em>одно и то же значение</em> в обе стороны (серверный <code>[Peer]</code> клиента и клиентский <code>[Peer]</code> сервера); если значения различаются - handshake не пройдёт. <code>regen</code> сохраняет существующий PSK через rotation. Подробнее - в <a href="ADVANCED.md#manage-cli-adv">ADVANCED.md</a>.
+  <b>О:</b> Новые клиенты получают <code>PresharedKey</code> сами: в файле клиента есть строка <code>PresharedKey = ...</code>, совпадающая с серверным <code>[Peer]</code>, так что Shadowrocket к ним подключается сразу. Если сервер поставлен с <code>--no-psk</code>, PSK клиенту даёт флаг <code>--psk</code>: <code>sudo bash /root/awg/manage_amneziawg.sh add my_iphone --psk</code>. Клиента, созданного раньше без PSK, проще пересоздать (<code>remove</code> + <code>add</code>). Вручную тоже можно: сгенерировать ключ <em>один раз</em> (<code>PSK=$(awg genpsk)</code>) и вставить <em>одно и то же значение</em> в обе стороны (серверный <code>[Peer]</code> клиента и клиентский <code>[Peer]</code> сервера); если значения различаются, handshake не пройдёт. <code>regen</code> сохраняет существующий PSK. Подробнее - в <a href="ADVANCED.md#manage-cli-adv">ADVANCED.md</a>.
 </details>
 
 <details>

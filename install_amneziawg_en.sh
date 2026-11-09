@@ -87,7 +87,7 @@ AWG2_PIN_TAG="v1.0.20260725"
 AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
 
 # CLI flags
-UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PSK=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 REPAIR_MODULE=0
 IPOPTS_GUARD=0
@@ -96,7 +96,7 @@ _AWG_KMOD_T1=0
 AWG_ENSURE_HELPER=/usr/local/sbin/amneziawg-ensure-module
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""; CLI_SSH_PORT_SET=0
-CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PREBUILT=0; CLI_CLIENT_IPV6_DIRECT=0; CLI_KEEP_PACKAGES=0
+CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PSK=0; CLI_NO_PREBUILT=0; CLI_CLIENT_IPV6_DIRECT=0; CLI_KEEP_PACKAGES=0
 CLI_ALLOW_IPV6_TUNNEL=0
 CLI_I1=""; CLI_I1_SET=0
 # A pinned I1 comes only from the init file, not from the calling shell.
@@ -343,6 +343,7 @@ while [[ $# -gt 0 ]]; do
         --yes|-y)        AUTO_YES=1 ;;
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
         --no-cps)        NO_CPS=1; CLI_NO_CPS=1 ;;
+        --no-psk)        NO_PSK=1; CLI_NO_PSK=1 ;;
         --no-prebuilt)   NO_PREBUILT=1; CLI_NO_PREBUILT=1 ;;
         --client-ipv6-direct) CLI_CLIENT_IPV6_DIRECT=1 ;;
         --keep-packages) KEEP_PACKAGES=1; CLI_KEEP_PACKAGES=1 ;;
@@ -820,6 +821,9 @@ Options:
                         the whole packet at most 1024 bytes).
                         The value is pinned: a reinstall keeps it, --no-cps or an
                         explicit --preset/--mobile/--jc/--jmin/--jmax drops it
+  --no-psk              Create clients without a PresharedKey: both the installer's
+                        clients and new manage add clients (by default each one gets
+                        its own PSK; manage add --psk brings it back for one client)
   --no-prebuilt        On ARM, do not install the prebuilt module package from
                         the arm-packages release; build the module with DKMS
 
@@ -2516,7 +2520,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PREBUILT|KEEP_PACKAGES|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PSK|NO_PREBUILT|KEEP_PACKAGES|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT|\
                 AWG_PROTOCOL_SOURCE|AWG_PROTOCOL_FALLBACK)
                     export "$key=$value"
@@ -5761,6 +5765,8 @@ export AWG_PRESET='${AWG_PRESET:-default}'
 export NO_TWEAKS=${NO_TWEAKS}
 export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
 export NO_CPS=${NO_CPS}
+# 1 - new clients without a PresharedKey (--no-psk); manage add --psk turns it on for one client.
+export NO_PSK=${NO_PSK:-0}
 export NO_PREBUILT=${NO_PREBUILT:-0}
 # Client devices' IPv6 directly, around the tunnel (mode 2 only). 0 - through the tunnel.
 export CLIENT_IPV6_DIRECT=${CLIENT_IPV6_DIRECT:-0}
@@ -6222,6 +6228,16 @@ initialize_setup() {
         fi
         AWG_I1=''
         log "CPS (I1) disabled (--no-cps / persisted NO_CPS=1): the desktop AmneziaVPN on macOS does not support CPS."
+    fi
+
+    # --no-psk turns it on, a persisted NO_PSK=1 stays: the init loaded above
+    # would otherwise overwrite the flag. Clients already issued do not change.
+    if [[ "${CLI_NO_PSK:-0}" -eq 1 ]]; then
+        NO_PSK=1
+    fi
+    [[ "${NO_PSK:-0}" == "1" ]] || NO_PSK=0
+    if [[ "$NO_PSK" -eq 1 ]]; then
+        log "PresharedKey for new clients is off (--no-psk / persisted NO_PSK=1)."
     fi
 
     # --no-prebuilt: the flag turns it on, a persisted NO_PREBUILT=1 survives the
@@ -9196,6 +9212,14 @@ step6_generate_configs() {
             log "Client '$client_name' already exists."
         else
             log "Creating client '$client_name'..."
+            # Each client gets its own PresharedKey: generate_client replaces "auto"
+            # with the generated value, hence the reset on every pass.
+            # NO_PSK=1 (--no-psk) means no PSK, even if CLIENT_PSK came from the environment.
+            if [[ "${NO_PSK:-0}" == "1" ]]; then
+                unset CLIENT_PSK
+            else
+                export CLIENT_PSK="auto"
+            fi
             if (( gen31 )); then
                 # The leftovers check proved absent files only for new_clients. A name
                 # outside that list was in the old config but the render did not carry
@@ -9211,6 +9235,7 @@ step6_generate_configs() {
             fi
         fi
     done
+    unset CLIENT_PSK
 
     # On 3.1 generate_client takes a NEW client with an incomplete set off by
     # itself, but it does not touch clients carried over from the previous config,

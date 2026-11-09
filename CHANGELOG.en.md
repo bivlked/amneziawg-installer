@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **A PresharedKey for every new client (D#371).** The installer's clients and new `manage add` clients get their own `PresharedKey`: an extra symmetric layer that does not change packet sizes or the masking. Before, only the `add --psk` flag gave one, and Shadowrocket, for example, did not connect without it. `add --no-psk` creates a client without a PSK, and an install with `--no-psk` does that for every new client of the server (saved as `NO_PSK=1` in the init); `--psk` still gives a client a PSK on such a server. Clients already issued do not change, and `regen` still keeps whatever a client has. `--psk` and `--no-psk` together, or with a command other than `add`, are now an error instead of silently doing nothing.
+
 ### Documentation
 
 - **A three-server cascade in CASCADE.en.md.** A new section on the `awg-in`, `awg-mid` and `awg-out` chain: one more foreign server sits between the entry and the exit, and the entry only talks to it. The middle does not split anything, it sends all traffic from the entry into the tunnel to the exit with one routing rule. @stromnov checked the setup on three VPS with Ubuntu 24.04 and 26.04 and the 3.1 profile (#120). The section also has a caveat: if the `awg1` tunnel on the middle is not up, traffic from the entry leaves from the middle's address.

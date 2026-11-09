@@ -84,7 +84,7 @@ AWG2_PIN_TAG="v1.0.20260725"
 AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
 
 # Флаги CLI
-UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PSK=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 REPAIR_MODULE=0
 IPOPTS_GUARD=0
@@ -93,7 +93,7 @@ _AWG_KMOD_T1=0
 AWG_ENSURE_HELPER=/usr/local/sbin/amneziawg-ensure-module
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""; CLI_SSH_PORT_SET=0
-CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PREBUILT=0; CLI_CLIENT_IPV6_DIRECT=0; CLI_KEEP_PACKAGES=0
+CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PSK=0; CLI_NO_PREBUILT=0; CLI_CLIENT_IPV6_DIRECT=0; CLI_KEEP_PACKAGES=0
 CLI_ALLOW_IPV6_TUNNEL=0
 CLI_I1=""; CLI_I1_SET=0
 # Закреплённый I1 приходит только из init, не из окружения вызвавшей оболочки.
@@ -330,6 +330,7 @@ while [[ $# -gt 0 ]]; do
         --yes|-y)        AUTO_YES=1 ;;
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
         --no-cps)        NO_CPS=1; CLI_NO_CPS=1 ;;
+        --no-psk)        NO_PSK=1; CLI_NO_PSK=1 ;;
         --no-prebuilt)   NO_PREBUILT=1; CLI_NO_PREBUILT=1 ;;
         --client-ipv6-direct) CLI_CLIENT_IPV6_DIRECT=1 ;;
         --keep-packages) KEEP_PACKAGES=1; CLI_KEEP_PACKAGES=1 ;;
@@ -797,6 +798,9 @@ show_help() {
                         весь пакет не больше 1024 байт).
                         Значение закрепляется: переустановка его сохраняет,
                         снимают --no-cps или явный --preset/--mobile/--jc/--jmin/--jmax
+  --no-psk              Создавать клиентов без PresharedKey: и клиентов установщика,
+                        и новых клиентов manage add (по умолчанию у каждого свой PSK;
+                        для отдельного клиента PSK вернёт manage add --psk)
   --no-prebuilt        На ARM не ставить готовый пакет модуля из релиза
                         arm-packages, а собрать модуль через DKMS
 
@@ -2442,7 +2446,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PREBUILT|KEEP_PACKAGES|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PSK|NO_PREBUILT|KEEP_PACKAGES|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT|\
                 AWG_PROTOCOL_SOURCE|AWG_PROTOCOL_FALLBACK)
                     export "$key=$value"
@@ -5647,6 +5651,8 @@ export AWG_PRESET='${AWG_PRESET:-default}'
 export NO_TWEAKS=${NO_TWEAKS}
 export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
 export NO_CPS=${NO_CPS}
+# 1 - новые клиенты без PresharedKey (--no-psk); manage add --psk включает его для отдельного клиента.
+export NO_PSK=${NO_PSK:-0}
 export NO_PREBUILT=${NO_PREBUILT:-0}
 # IPv6 устройств клиентов напрямую, мимо туннеля (только режим 2). 0 - через туннель.
 export CLIENT_IPV6_DIRECT=${CLIENT_IPV6_DIRECT:-0}
@@ -6100,6 +6106,16 @@ initialize_setup() {
         fi
         AWG_I1=''
         log "CPS (I1) отключён (--no-cps / сохранённый NO_CPS=1): десктопный AmneziaVPN на macOS не поддерживает CPS."
+    fi
+
+    # --no-psk включает, сохранённый NO_PSK=1 держится: init загружен выше и
+    # затёр бы значение флага. Уже выданных клиентов это не меняет.
+    if [[ "${CLI_NO_PSK:-0}" -eq 1 ]]; then
+        NO_PSK=1
+    fi
+    [[ "${NO_PSK:-0}" == "1" ]] || NO_PSK=0
+    if [[ "$NO_PSK" -eq 1 ]]; then
+        log "PresharedKey для новых клиентов отключён (--no-psk / сохранённый NO_PSK=1)."
     fi
 
     # --no-prebuilt: флаг включает, сохранённый NO_PREBUILT=1 держится между
@@ -9040,6 +9056,14 @@ step6_generate_configs() {
             log "Клиент '$client_name' уже существует."
         else
             log "Создание клиента '$client_name'..."
+            # Каждому клиенту свой PresharedKey: generate_client заменяет "auto"
+            # сгенерированным значением, поэтому сброс на каждой итерации.
+            # NO_PSK=1 (--no-psk) - без PSK, даже если CLIENT_PSK пришёл из окружения.
+            if [[ "${NO_PSK:-0}" == "1" ]]; then
+                unset CLIENT_PSK
+            else
+                export CLIENT_PSK="auto"
+            fi
             if (( gen31 )); then
                 # Отсутствие файлов доказано проверкой остатков только для new_clients.
                 # Имя вне этого списка было в прежнем конфиге, но рендер его не
@@ -9055,6 +9079,7 @@ step6_generate_configs() {
             fi
         fi
     done
+    unset CLIENT_PSK
 
     # generate_client на 3.1 сам снимает НОВОГО клиента с неполным комплектом, но
     # перенесённых из прежнего конфига не касается, поэтому

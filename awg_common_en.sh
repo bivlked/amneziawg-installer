@@ -1636,7 +1636,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PSK|KEEP_PACKAGES|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT)
                     export "$key=$value"
                     ;;
@@ -3894,8 +3894,8 @@ EOF
 [Peer]
 PublicKey = ${server_pubkey}
 EOF
-    # Optional PresharedKey — extra layer on top of AWG 2.0 obfuscation
-    # (enabled via `manage add --psk`). Must match on server peer and
+    # PresharedKey - extra layer on top of the AmneziaWG obfuscation (on by
+    # default for new clients, off with `manage add --no-psk`). Must match on server peer and
     # client [Peer].
     if [[ -n "${CLIENT_PSK:-}" ]]; then
         echo "PresharedKey = ${CLIENT_PSK}" >> "$tmpfile"
@@ -5769,7 +5769,7 @@ _remove_client_files() {
 #   CLIENT_PSK — optional. If set to "auto", a fresh PSK is generated via
 #     `awg genpsk` and written to both the server [Peer] and the client
 #     [Peer]. If set to a concrete value (32-byte base64), it is used as
-#     is without regenerating. Empty/unset — no PSK is added (default).
+#     is without regenerating. Empty/unset - no PSK is added (callers set auto by default).
 #   CLIENT_ALLOWED_IPS - optional (Issue #253). The client's own routes
 #     instead of the server-wide mode (ALLOWED_IPS): a comma-separated
 #     list of IPv4/IPv6 CIDRs. The value is validated and normalized
@@ -5823,7 +5823,7 @@ generate_client() {
         # Fail-closed; no artifacts exist yet (keys/config are created below), so
         # no rollback is needed.
         CLIENT_PSK=$(awg genpsk) || {
-            log_error "awg genpsk failed - client with PresharedKey (--psk) NOT created. Please retry."
+            log_error "awg genpsk failed - client NOT created. Please retry; for a client without a PresharedKey use manage add --no-psk."
             return 1
         }
     fi

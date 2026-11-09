@@ -236,6 +236,7 @@ while [[ $# -gt 0 ]]; do
             _CLI_APPLY_MODE="${1#*=}"
             shift ;;
         --psk)             CLI_ADD_PSK=1; shift ;;
+        --no-psk)          CLI_ADD_NO_PSK=1; shift ;;
         --allowed-ips=*)   CLI_ADD_ALLOWED_IPS="${1#*=}"; CLI_ADD_ALLOWED_IPS_SEEN=1; shift ;;
         --reset-routes)    CLI_RESET_ROUTES=1; shift ;;
         --yes)             CLI_YES=1; shift ;;
@@ -266,6 +267,20 @@ esac
 # --vpn нужен только qr: с другой командой он молча ничего бы не значил.
 if [[ "${CLI_QR_VPN:-0}" == "1" && "$COMMAND" != "qr" && "$COMMAND" != "help" ]]; then
     _JSON_ERR="--vpn работает только с командой qr"
+    echo "$_JSON_ERR" >&2
+    exit 1
+fi
+
+# --psk и --no-psk нужны только add: с другой командой (regen, list) они молча
+# ничего бы не значили, а вместе противоречат друг другу.
+if [[ "${CLI_ADD_PSK:-0}" == "1" || "${CLI_ADD_NO_PSK:-0}" == "1" ]] \
+    && [[ "$COMMAND" != "add" && "$COMMAND" != "help" ]]; then
+    _JSON_ERR="--psk и --no-psk работают только с командой add"
+    echo "$_JSON_ERR" >&2
+    exit 1
+fi
+if [[ "${CLI_ADD_PSK:-0}" == "1" && "${CLI_ADD_NO_PSK:-0}" == "1" ]]; then
+    _JSON_ERR="--psk и --no-psk противоречат друг другу: оставьте один из флагов"
     echo "$_JSON_ERR" >&2
     exit 1
 fi
@@ -3285,7 +3300,9 @@ usage() {
     echo "  --conf-dir=ПУТЬ       Указать директорию AWG (умолч: $AWG_DIR)"
     echo "  --server-conf=ПУТЬ    Указать файл конфига сервера"
     echo "  --apply-mode=РЕЖИМ    syncconf (умолч.) или restart (обход kernel panic)"
-    echo "  --psk                 (только для add) сгенерировать PresharedKey для клиента"
+    echo "  --psk                 (только для add) PresharedKey клиенту, даже если сервер"
+    echo "                        поставлен с --no-psk (по умолчанию PSK и так есть у каждого)"
+    echo "  --no-psk              (только для add) создать клиента без PresharedKey"
     echo "  --allowed-ips=СПИСОК  (только для add) индивидуальные AllowedIPs клиента - CIDR через"
     echo "                        запятую; без флага - глобальный режим маршрутизации сервера"
     echo "  --reset-routes        (только для regen) сбросить AllowedIPs клиентов на текущий"
@@ -3354,13 +3371,23 @@ case $COMMAND in
             fi
         fi
 
-        # --psk: включить опциональный PresharedKey для каждого нового клиента.
-        # Export CLIENT_PSK="auto" → generate_client сам сгенерирует 32-байт
-        # PSK через `awg genpsk` для каждого client'а в batch (разный PSK
-        # на каждого).
-        if [[ "${CLI_ADD_PSK:-0}" == "1" ]]; then
+        # PresharedKey по умолчанию (D#371): CLIENT_PSK="auto" -> generate_client
+        # сам сгенерирует PSK через `awg genpsk`, каждому клиенту batch-а свой.
+        # Без PSK: --no-psk или NO_PSK=1 в init (установка с --no-psk); --psk
+        # включает его поверх NO_PSK=1. Уже выданных клиентов это не касается.
+        _add_psk=1
+        if [[ "${CLI_ADD_NO_PSK:-0}" == "1" ]]; then
+            _add_psk=0
+        elif [[ "${CLI_ADD_PSK:-0}" != "1" ]]; then
+            _saved_no_psk=$(NO_PSK=""; safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${NO_PSK:-0}")
+            [[ "$_saved_no_psk" == "1" ]] && _add_psk=0
+        fi
+        if (( _add_psk )); then
             export CLIENT_PSK="auto"
-            log "PresharedKey будет сгенерирован для каждого нового клиента (--psk)."
+            log "PresharedKey будет сгенерирован для каждого нового клиента."
+        else
+            unset CLIENT_PSK
+            log "Клиенты создаются без PresharedKey (--no-psk или NO_PSK=1 в $CONFIG_FILE)."
         fi
 
         # --expires валидируем ОДИН раз ДО создания первого клиента. Иначе при
@@ -3427,7 +3454,7 @@ case $COMMAND in
 
             # В batch-режиме каждому клиенту — свой PSK: сбрасываем на "auto"
             # чтобы generate_client сгенерировал новый.
-            if [[ "${CLI_ADD_PSK:-0}" == "1" ]]; then
+            if (( _add_psk )); then
                 export CLIENT_PSK="auto"
             fi
 

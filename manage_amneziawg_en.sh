@@ -240,6 +240,7 @@ while [[ $# -gt 0 ]]; do
             _CLI_APPLY_MODE="${1#*=}"
             shift ;;
         --psk)             CLI_ADD_PSK=1; shift ;;
+        --no-psk)          CLI_ADD_NO_PSK=1; shift ;;
         --allowed-ips=*)   CLI_ADD_ALLOWED_IPS="${1#*=}"; CLI_ADD_ALLOWED_IPS_SEEN=1; shift ;;
         --reset-routes)    CLI_RESET_ROUTES=1; shift ;;
         --yes)             CLI_YES=1; shift ;;
@@ -270,6 +271,20 @@ esac
 # --vpn is for qr only: with another command it would silently mean nothing.
 if [[ "${CLI_QR_VPN:-0}" == "1" && "$COMMAND" != "qr" && "$COMMAND" != "help" ]]; then
     _JSON_ERR="--vpn works only with the qr command"
+    echo "$_JSON_ERR" >&2
+    exit 1
+fi
+
+# --psk and --no-psk are for add only: with another command (regen, list) they
+# would silently mean nothing, and together they contradict each other.
+if [[ "${CLI_ADD_PSK:-0}" == "1" || "${CLI_ADD_NO_PSK:-0}" == "1" ]] \
+    && [[ "$COMMAND" != "add" && "$COMMAND" != "help" ]]; then
+    _JSON_ERR="--psk and --no-psk work only with the add command"
+    echo "$_JSON_ERR" >&2
+    exit 1
+fi
+if [[ "${CLI_ADD_PSK:-0}" == "1" && "${CLI_ADD_NO_PSK:-0}" == "1" ]]; then
+    _JSON_ERR="--psk and --no-psk contradict each other: keep one of them"
     echo "$_JSON_ERR" >&2
     exit 1
 fi
@@ -3329,7 +3344,9 @@ usage() {
     echo "  --conf-dir=PATH       Specify AWG directory (default: $AWG_DIR)"
     echo "  --server-conf=PATH    Specify server config file"
     echo "  --apply-mode=MODE     syncconf (default) or restart (bypass kernel panic)"
-    echo "  --psk                 (add only) generate a PresharedKey for the new client"
+    echo "  --psk                 (add only) give the client a PresharedKey even if the"
+    echo "                        server was installed with --no-psk (by default every client has one)"
+    echo "  --no-psk              (add only) create the client without a PresharedKey"
     echo "  --allowed-ips=LIST    (add only) per-client AllowedIPs - comma-separated CIDRs;"
     echo "                        without the flag the server-wide routing mode is used"
     echo "  --reset-routes        (regen only) reset client AllowedIPs to the current"
@@ -3398,13 +3415,23 @@ case $COMMAND in
             fi
         fi
 
-        # --psk: enable optional PresharedKey for every new client.
-        # Export CLIENT_PSK="auto" -> generate_client produces a fresh
-        # 32-byte PSK via `awg genpsk` for each client in the batch
-        # (distinct PSK per client).
-        if [[ "${CLI_ADD_PSK:-0}" == "1" ]]; then
+        # PresharedKey by default (D#371): CLIENT_PSK="auto" -> generate_client
+        # makes a PSK via `awg genpsk`, a distinct one for each client in the batch.
+        # No PSK: --no-psk, or NO_PSK=1 in the init (installed with --no-psk); --psk
+        # turns it on over NO_PSK=1. Clients already issued are not affected.
+        _add_psk=1
+        if [[ "${CLI_ADD_NO_PSK:-0}" == "1" ]]; then
+            _add_psk=0
+        elif [[ "${CLI_ADD_PSK:-0}" != "1" ]]; then
+            _saved_no_psk=$(NO_PSK=""; safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${NO_PSK:-0}")
+            [[ "$_saved_no_psk" == "1" ]] && _add_psk=0
+        fi
+        if (( _add_psk )); then
             export CLIENT_PSK="auto"
-            log "PresharedKey will be generated for each new client (--psk)."
+            log "PresharedKey will be generated for each new client."
+        else
+            unset CLIENT_PSK
+            log "Clients are created without a PresharedKey (--no-psk or NO_PSK=1 in $CONFIG_FILE)."
         fi
 
         # Validate --expires ONCE before creating the first client. Otherwise a
@@ -3473,7 +3500,7 @@ case $COMMAND in
 
             # In batch mode each client gets its own PSK: reset to "auto"
             # so generate_client generates a new one every iteration.
-            if [[ "${CLI_ADD_PSK:-0}" == "1" ]]; then
+            if (( _add_psk )); then
                 export CLIENT_PSK="auto"
             fi
 

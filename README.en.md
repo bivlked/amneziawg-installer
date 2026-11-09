@@ -561,7 +561,7 @@ sudo bash ./install_amneziawg.sh          # Run (+ 2 reboots)
 
 # Client management
 sudo bash /root/awg/manage_amneziawg.sh add my_phone       # Add
-sudo bash /root/awg/manage_amneziawg.sh add my_iphone --psk  # +PresharedKey (Shadowrocket iOS/macOS)
+sudo bash /root/awg/manage_amneziawg.sh add my_tv --no-psk     # Without a PresharedKey (every client has one by default)
 sudo bash /root/awg/manage_amneziawg.sh remove my_phone    # Remove
 sudo bash /root/awg/manage_amneziawg.sh list                # List
 sudo bash /root/awg/manage_amneziawg.sh list --json         # List as JSON (for scripts)
@@ -709,7 +709,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: Shadowrocket on iOS/macOS does not connect - needs PresharedKey</strong></summary>
-  <b>A:</b> The <code>add</code> command has a <code>--psk</code> flag for that: <code>sudo bash /root/awg/manage_amneziawg.sh add my_iphone --psk</code>. The client config will include a <code>PresharedKey = ...</code> line matching the server <code>[Peer]</code>. For existing clients: recreate with the flag (<code>remove</code> + <code>add --psk</code>) or manually - generate the key <em>once</em> (<code>PSK=$(awg genpsk)</code>) and paste the <em>same value</em> into both sides (the server <code>[Peer]</code> for that client and the client's <code>[Peer]</code> for the server); the handshake fails if the values differ. <code>regen</code> preserves an existing PSK across rotation. Details - in <a href="ADVANCED.en.md#manage-cli-adv">ADVANCED.en.md</a>.
+  <b>A:</b> New clients get a <code>PresharedKey</code> by themselves: the client config has a <code>PresharedKey = ...</code> line matching the server <code>[Peer]</code>, so Shadowrocket connects to them right away. If the server was installed with <code>--no-psk</code>, the <code>--psk</code> flag gives a client its PSK: <code>sudo bash /root/awg/manage_amneziawg.sh add my_iphone --psk</code>. A client created earlier without a PSK is easiest to recreate (<code>remove</code> + <code>add</code>). It can also be done by hand: generate the key <em>once</em> (<code>PSK=$(awg genpsk)</code>) and paste the <em>same value</em> into both sides (the server <code>[Peer]</code> for that client and the client's <code>[Peer]</code> for the server); the handshake fails if the values differ. <code>regen</code> keeps an existing PSK. Details - in <a href="ADVANCED.en.md#manage-cli-adv">ADVANCED.en.md</a>.
 </details>
 
 <details>
