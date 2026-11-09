@@ -2328,7 +2328,7 @@ apt-get update && apt-get install -y curl
 | Raspberry Pi 3, 4 (64-bit) | ARM64 (aarch64) | `linux-headers-rpi-v8` |
 | Raspberry Pi 5 | ARM64 (aarch64) | `linux-headers-rpi-2712` |
 | Raspberry Pi 3, 4 (32-bit) | ARMv7 (armhf) | `linux-headers-rpi-v7` или `linux-headers-rpi-v7l`, по суффиксу ядра в `uname -r` |
-| Ubuntu ARM64 (AWS Graviton, Oracle Ampere, Hetzner) | ARM64 | `linux-headers-generic` |
+| Ubuntu ARM64 (AWS Graviton, Oracle Ampere, Hetzner) | ARM64 | по суффиксу ядра в `uname -r`: `linux-headers-generic` (Hetzner), `linux-headers-oracle` (Oracle), `linux-headers-aws` (AWS); `linux-headers-generic`, если пакета под вариант ядра нет |
 | Debian ARM64 (облачные VPS) | ARM64 | `linux-headers-arm64` |
 
 **Как это работает:**

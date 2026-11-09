@@ -12,6 +12,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Oracle Cloud: the VPN works right after the install, with no extra reboot.** Oracle Cloud's Ubuntu images load their own iptables rules from `/etc/iptables/rules.v4` at boot, and those end INPUT and FORWARD with `REJECT --reject-with icmp-host-prohibited`. Installing UFW removes `netfilter-persistent`, but the rules already loaded stay in memory until the next boot and sit above UFW's rules, so the VPN port and the replies to clients were turned away until the server was rebooted once more. Now, after setting up UFW, the installer deletes exactly that rule when it sits above UFW and says so in the log; it leaves every other rule alone. Checked on an Ubuntu 24.04 ARM64 server with Oracle's rules reproduced.
+
+### Documentation
+
+- Oracle Cloud: INSTALL_VPS now gives the Always Free size of Ampere A1 as 2 OCPU and 12 GB (Oracle's docs on 9 November 2026), and the `--endpoint` note says the installer finds the outside address by itself, so the flag is only needed when that lookup gives the wrong address. The ARM table in ADVANCED now names the headers package for Ubuntu ARM64 by kernel flavor (`linux-headers-oracle` on Oracle, `linux-headers-aws` on AWS), which is how the installer picks it.
+
 ## [6.2.1] - 2026-11-06
 
 **v6.2.1** - the install is protected from the apt vulnerability CVE-2026-109518, and the client table is re-checked as of 5 November, with a key recipe for gluetun.

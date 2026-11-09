@@ -1,0 +1,304 @@
+#!/usr/bin/env bats
+# Oracle Cloud Ubuntu images ship their own iptables rules
+# (/etc/iptables/rules.v4, loaded at boot by netfilter-persistent) that end in
+# `-j REJECT --reject-with icmp-host-prohibited` in INPUT and FORWARD.
+# Installing ufw removes netfilter-persistent (the ufw package Breaks it), but
+# the rules are already in the kernel and stay there until the next boot. UFW
+# appends its jumps at the END of the chains, below that REJECT, so right after
+# the install the VPN port and the replies to clients were rejected until one
+# more reboot (checked on a stand with Oracle's rules reproduced, 9 nov 2026).
+#
+# remove_image_reject_above_ufw() deletes exactly that REJECT when it sits
+# above the first UFW jump of the chain and leaves every other rule alone.
+# The tests drive it against a fake iptables that keeps the rules in a file,
+# and check the whole rule list afterwards, not a count. Both RU and EN.
+
+bats_require_minimum_version 1.5.0
+
+RU_SCRIPT="$BATS_TEST_DIRNAME/../install_amneziawg.sh"
+EN_SCRIPT="$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"
+
+_load_fn() {
+    eval "$(awk '/^remove_image_reject_above_ufw\(\) \{/,/^\}/' "$1")"
+    declare -f remove_image_reject_above_ufw >/dev/null
+}
+
+setup() {
+    LOG_FILE="$BATS_TEST_TMPDIR/log"
+    : > "$LOG_FILE"
+    log()       { echo "INFO: $*" >> "$LOG_FILE"; }
+    log_warn()  { echo "WARN: $*" >> "$LOG_FILE"; }
+    log_error() { echo "ERROR: $*" >> "$LOG_FILE"; }
+    log_debug() { :; }
+
+    # Fake iptables: rules live in $IPT_STATE as `-A CHAIN ...` lines.
+    #   -S CHAIN         prints the policy line and the chain's rules in order
+    #   -D CHAIN spec... deletes the FIRST rule equal to `-A CHAIN spec...`
+    # -w and its optional seconds argument are skipped. $IPT_FAIL_DELETE=1
+    # makes every -D fail without changing the state.
+    IPT_STATE="$BATS_TEST_TMPDIR/rules"
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    cat > "$BATS_TEST_TMPDIR/bin/iptables" <<'EOF'
+#!/usr/bin/env bash
+while [[ "${1:-}" == "-w" ]]; do
+    shift
+    [[ "${1:-}" =~ ^[0-9]+$ ]] && shift
+done
+op="$1"; chain="$2"; shift 2
+case "$op" in
+    -S)
+        echo "-P $chain ACCEPT"
+        grep -F -- "-A $chain " "$IPT_STATE" || true
+        ;;
+    -D)
+        [[ "${IPT_FAIL_DELETE:-0}" == "1" ]] && exit 1
+        want="-A $chain $*"
+        out="" found=0
+        while IFS= read -r line; do
+            if [[ "$found" -eq 0 && "$line" == "$want" ]]; then found=1; continue; fi
+            out+="$line"$'\n'
+        done < "$IPT_STATE"
+        [[ "$found" -eq 1 ]] || exit 1
+        printf '%s' "$out" > "$IPT_STATE"
+        ;;
+    *) exit 2 ;;
+esac
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/iptables"
+    PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+    export IPT_STATE PATH
+}
+
+# The rule layout seen on the stand after `ufw --force enable` on top of
+# Oracle's loaded rules (abridged: the ACCEPT rules above REJECT are kept).
+_oracle_layout() {
+    cat > "$IPT_STATE" <<'EOF'
+-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -p icmp -j ACCEPT
+-A INPUT -i lo -j ACCEPT
+-A INPUT -p tcp -m state --state NEW -m tcp --dport 22 -j ACCEPT
+-A INPUT -j REJECT --reject-with icmp-host-prohibited
+-A INPUT -j ufw-before-logging-input
+-A INPUT -j ufw-before-input
+-A INPUT -j ufw-after-input
+-A FORWARD -j REJECT --reject-with icmp-host-prohibited
+-A FORWARD -j ufw-before-logging-forward
+-A FORWARD -j ufw-before-forward
+-A OUTPUT -j ufw-before-logging-output
+EOF
+}
+
+_expected_after_oracle() {
+    cat <<'EOF'
+-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -p icmp -j ACCEPT
+-A INPUT -i lo -j ACCEPT
+-A INPUT -p tcp -m state --state NEW -m tcp --dport 22 -j ACCEPT
+-A INPUT -j ufw-before-logging-input
+-A INPUT -j ufw-before-input
+-A INPUT -j ufw-after-input
+-A FORWARD -j ufw-before-logging-forward
+-A FORWARD -j ufw-before-forward
+-A OUTPUT -j ufw-before-logging-output
+EOF
+}
+
+
+_t_oracle() {
+    _load_fn "$1"
+    _oracle_layout
+    run remove_image_reject_above_ufw
+    [ "$status" -eq 0 ]
+    diff <(_expected_after_oracle) "$IPT_STATE"
+    # One log line per removed rule, naming the chain.
+    [ "$(grep -c 'INPUT -j REJECT --reject-with icmp-host-prohibited' "$LOG_FILE")" -ge 1 ]
+    [ "$(grep -c 'FORWARD -j REJECT --reject-with icmp-host-prohibited' "$LOG_FILE")" -ge 1 ]
+}
+
+_t_below() {
+    _load_fn "$1"
+    cat > "$IPT_STATE" <<'EOF'
+-A INPUT -j ufw-before-logging-input
+-A INPUT -j ufw-before-input
+-A INPUT -j REJECT --reject-with icmp-host-prohibited
+-A FORWARD -j ufw-before-forward
+-A FORWARD -j REJECT --reject-with icmp-host-prohibited
+EOF
+    cp "$IPT_STATE" "$BATS_TEST_TMPDIR/before"
+    run remove_image_reject_above_ufw
+    [ "$status" -eq 0 ]
+    diff "$BATS_TEST_TMPDIR/before" "$IPT_STATE"
+    run grep -c 'REJECT' "$LOG_FILE"
+    [ "$output" = "0" ]
+}
+
+_t_no_ufw() {
+    _load_fn "$1"
+    cat > "$IPT_STATE" <<'EOF'
+-A INPUT -p tcp -m state --state NEW -m tcp --dport 22 -j ACCEPT
+-A INPUT -j REJECT --reject-with icmp-host-prohibited
+-A FORWARD -j REJECT --reject-with icmp-host-prohibited
+EOF
+    cp "$IPT_STATE" "$BATS_TEST_TMPDIR/before"
+    run remove_image_reject_above_ufw
+    [ "$status" -eq 0 ]
+    diff "$BATS_TEST_TMPDIR/before" "$IPT_STATE"
+}
+
+_t_other_form() {
+    _load_fn "$1"
+    cat > "$IPT_STATE" <<'EOF'
+-A INPUT -j REJECT --reject-with icmp-port-unreachable
+-A INPUT -s 203.0.113.0/24 -j REJECT --reject-with icmp-host-prohibited
+-A INPUT -j ufw-before-input
+-A FORWARD -j DROP
+-A FORWARD -j ufw-before-forward
+EOF
+    cp "$IPT_STATE" "$BATS_TEST_TMPDIR/before"
+    run remove_image_reject_above_ufw
+    [ "$status" -eq 0 ]
+    diff "$BATS_TEST_TMPDIR/before" "$IPT_STATE"
+    # Not even attempted: no removal and no warning in the log.
+    run grep -c 'REJECT' "$LOG_FILE"
+    [ "$output" = "0" ]
+}
+
+_t_duplicate() {
+    _load_fn "$1"
+    cat > "$IPT_STATE" <<'EOF'
+-A INPUT -j REJECT --reject-with icmp-host-prohibited
+-A INPUT -i lo -j ACCEPT
+-A INPUT -j REJECT --reject-with icmp-host-prohibited
+-A INPUT -j ufw-before-input
+EOF
+    run remove_image_reject_above_ufw
+    [ "$status" -eq 0 ]
+    diff <(printf '%s\n' '-A INPUT -i lo -j ACCEPT' '-A INPUT -j ufw-before-input') "$IPT_STATE"
+}
+
+_t_delete_fails() {
+    _load_fn "$1"
+    _oracle_layout
+    cp "$IPT_STATE" "$BATS_TEST_TMPDIR/before"
+    IPT_FAIL_DELETE=1
+    export IPT_FAIL_DELETE
+    run remove_image_reject_above_ufw
+    [ "$status" -eq 0 ]
+    diff "$BATS_TEST_TMPDIR/before" "$IPT_STATE"
+    grep -qF 'WARN: ' "$LOG_FILE"
+    grep -qF 'iptables -D INPUT -j REJECT --reject-with icmp-host-prohibited' "$LOG_FILE"
+    grep -qF 'iptables -D FORWARD -j REJECT --reject-with icmp-host-prohibited' "$LOG_FILE"
+}
+
+_t_no_iptables() {
+    _load_fn "$1"
+    _oracle_layout
+    cp "$IPT_STATE" "$BATS_TEST_TMPDIR/before"
+    # `command -v iptables` finds nothing.
+    command() { return 1; }
+    run remove_image_reject_above_ufw
+    unset -f command
+    [ "$status" -eq 0 ]
+    diff "$BATS_TEST_TMPDIR/before" "$IPT_STATE"
+}
+
+@test "RU: Oracle layout - both REJECT rules above UFW are removed, the rest is intact" {
+    _t_oracle "$RU_SCRIPT"
+}
+
+@test "RU: REJECT below the UFW jumps is left alone" {
+    _t_below "$RU_SCRIPT"
+}
+
+@test "RU: no UFW jumps (UFW off) - nothing is removed" {
+    _t_no_ufw "$RU_SCRIPT"
+}
+
+@test "RU: a REJECT of another form above UFW is left alone" {
+    _t_other_form "$RU_SCRIPT"
+}
+
+@test "RU: two identical REJECT rules above UFW are both removed" {
+    _t_duplicate "$RU_SCRIPT"
+}
+
+@test "RU: failed delete warns with the manual command and does not fail the step" {
+    _t_delete_fails "$RU_SCRIPT"
+}
+
+@test "RU: iptables missing - returns 0 and changes nothing" {
+    _t_no_iptables "$RU_SCRIPT"
+}
+
+@test "EN: Oracle layout - both REJECT rules above UFW are removed, the rest is intact" {
+    _t_oracle "$EN_SCRIPT"
+}
+
+@test "EN: REJECT below the UFW jumps is left alone" {
+    _t_below "$EN_SCRIPT"
+}
+
+@test "EN: no UFW jumps (UFW off) - nothing is removed" {
+    _t_no_ufw "$EN_SCRIPT"
+}
+
+@test "EN: a REJECT of another form above UFW is left alone" {
+    _t_other_form "$EN_SCRIPT"
+}
+
+@test "EN: two identical REJECT rules above UFW are both removed" {
+    _t_duplicate "$EN_SCRIPT"
+}
+
+@test "EN: failed delete warns with the manual command and does not fail the step" {
+    _t_delete_fails "$EN_SCRIPT"
+}
+
+@test "EN: iptables missing - returns 0 and changes nothing" {
+    _t_no_iptables "$EN_SCRIPT"
+}
+
+# setup_improved_firewall must call the cleanup on both paths: when it enables
+# UFW itself and when UFW was already active (rules updated, ufw reload).
+_t_integration() {
+    local script="$1" ufw_state="$2"
+    eval "$(awk '/^detect_ssh_ports\(\) \{/,/^\}/' "$script")"
+    eval "$(awk '/^remove_image_reject_above_ufw\(\) \{/,/^\}/' "$script")"
+    eval "$(awk '/^setup_improved_firewall\(\) \{/,/^\}/' "$script" | sed 's#< /dev/tty##')"
+    UFW_STATE="$ufw_state"
+    ufw() {
+        case "$1" in
+            status) echo "Status: $UFW_STATE" ;;
+            *)      return 0 ;;
+        esac
+    }
+    ip() { echo "1.1.1.1 dev eth0 src 10.0.0.1 uid 0"; }
+    install_packages() { return 0; }
+    touch() { return 0; }
+    die() { echo "DIE: $*"; return 1; }
+    AWG_PORT=39743
+    AWG_DIR="$BATS_TEST_TMPDIR"
+    AUTO_YES=1
+    CLI_SSH_PORT=22
+    export AWG_PORT AWG_DIR AUTO_YES CLI_SSH_PORT
+    _oracle_layout
+    run setup_improved_firewall < /dev/null
+    [ "$status" -eq 0 ]
+    diff <(_expected_after_oracle) "$IPT_STATE"
+}
+
+@test "RU integration: UFW enabled by the installer - Oracle REJECT removed" {
+    _t_integration "$RU_SCRIPT" inactive
+}
+
+@test "RU integration: UFW already active - Oracle REJECT removed" {
+    _t_integration "$RU_SCRIPT" active
+}
+
+@test "EN integration: UFW enabled by the installer - Oracle REJECT removed" {
+    _t_integration "$EN_SCRIPT" inactive
+}
+
+@test "EN integration: UFW already active - Oracle REJECT removed" {
+    _t_integration "$EN_SCRIPT" active
+}

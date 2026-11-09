@@ -4525,6 +4525,45 @@ detect_ssh_ports() {
     printf '%s' "$valid"
 }
 
+# Образы Ubuntu в Oracle Cloud при загрузке поднимают свои правила iptables
+# (/etc/iptables/rules.v4 через netfilter-persistent), которые кончаются
+# `-j REJECT --reject-with icmp-host-prohibited` в INPUT и FORWARD.
+# Установка ufw удаляет netfilter-persistent, но загруженные правила остаются
+# в ядре до следующей загрузки, а UFW дописывает свои переходы ниже них: порт
+# VPN и ответы клиентам отбиваются до ещё одной перезагрузки. Удаляем ровно
+# этот REJECT, если он стоит выше первого перехода UFW в цепочке; любые другие
+# правила и тот же REJECT ниже UFW не трогаем. Шаг не роняет никогда.
+remove_image_reject_above_ufw() {
+    command -v iptables >/dev/null 2>&1 || return 0
+    local chain rules line pos ufw_pos reject_pos _pass
+    for chain in INPUT FORWARD; do
+        # Одно удаление за проход; предел не даёт зациклиться на странном iptables.
+        for _pass in 1 2 3 4 5; do
+            rules=$(iptables -w 5 -S "$chain" 2>/dev/null) || break
+            pos=0; ufw_pos=0; reject_pos=0
+            while IFS= read -r line; do
+                [[ "$line" == "-A $chain "* ]] || continue
+                pos=$((pos + 1))
+                if [[ "$ufw_pos" -eq 0 && "$line" == "-A $chain -j ufw-"* ]]; then
+                    ufw_pos=$pos
+                fi
+                if [[ "$reject_pos" -eq 0 \
+                      && "$line" == "-A $chain -j REJECT --reject-with icmp-host-prohibited" ]]; then
+                    reject_pos=$pos
+                fi
+            done <<< "$rules"
+            [[ "$reject_pos" -gt 0 && "$reject_pos" -lt "$ufw_pos" ]] || break
+            if iptables -w 5 -D "$chain" -j REJECT --reject-with icmp-host-prohibited 2>/dev/null; then
+                log "Удалено правило образа выше UFW: -A $chain -j REJECT --reject-with icmp-host-prohibited (его ставят образы Oracle Cloud; оно блокировало бы трафик VPN до следующей перезагрузки)."
+            else
+                log_warn "Не удалось удалить правило образа выше UFW в $chain. Трафик VPN может блокироваться до перезагрузки. Удалите вручную: iptables -D $chain -j REJECT --reject-with icmp-host-prohibited"
+                break
+            fi
+        done
+    done
+    return 0
+}
+
 setup_improved_firewall() {
     log "Настройка UFW..."
     if ! command -v ufw &>/dev/null; then install_packages ufw; fi
@@ -4625,6 +4664,7 @@ setup_improved_firewall() {
         ufw reload || log_warn "Ошибка перезагрузки UFW."
         log "Правила обновлены."
     fi
+    remove_image_reject_above_ufw
     log "UFW настроен."
     log "$(ufw status verbose 2>&1)"
     return 0

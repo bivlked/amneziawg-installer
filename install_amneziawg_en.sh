@@ -4626,6 +4626,46 @@ detect_ssh_ports() {
     printf '%s' "$valid"
 }
 
+# Oracle Cloud Ubuntu images load their own iptables rules at boot
+# (/etc/iptables/rules.v4 via netfilter-persistent), ending in
+# `-j REJECT --reject-with icmp-host-prohibited` in INPUT and FORWARD.
+# Installing ufw removes netfilter-persistent, but the loaded rules stay in the
+# kernel until the next boot, and UFW appends its jumps below them: the VPN
+# port and the replies to clients are rejected until one more reboot. Delete
+# exactly that REJECT when it sits above the chain's first UFW jump; any other
+# rule, or the same REJECT below UFW, is left alone. Never fails the step.
+remove_image_reject_above_ufw() {
+    command -v iptables >/dev/null 2>&1 || return 0
+    local chain rules line pos ufw_pos reject_pos _pass
+    for chain in INPUT FORWARD; do
+        # One deletion per pass; the bound keeps a misbehaving iptables from
+        # looping forever.
+        for _pass in 1 2 3 4 5; do
+            rules=$(iptables -w 5 -S "$chain" 2>/dev/null) || break
+            pos=0; ufw_pos=0; reject_pos=0
+            while IFS= read -r line; do
+                [[ "$line" == "-A $chain "* ]] || continue
+                pos=$((pos + 1))
+                if [[ "$ufw_pos" -eq 0 && "$line" == "-A $chain -j ufw-"* ]]; then
+                    ufw_pos=$pos
+                fi
+                if [[ "$reject_pos" -eq 0 \
+                      && "$line" == "-A $chain -j REJECT --reject-with icmp-host-prohibited" ]]; then
+                    reject_pos=$pos
+                fi
+            done <<< "$rules"
+            [[ "$reject_pos" -gt 0 && "$reject_pos" -lt "$ufw_pos" ]] || break
+            if iptables -w 5 -D "$chain" -j REJECT --reject-with icmp-host-prohibited 2>/dev/null; then
+                log "Removed the image's rule above UFW: -A $chain -j REJECT --reject-with icmp-host-prohibited (Oracle Cloud images ship it; it would block VPN traffic until the next reboot)."
+            else
+                log_warn "Could not remove the image's rule above UFW in $chain. VPN traffic may be blocked until a reboot. Remove it by hand: iptables -D $chain -j REJECT --reject-with icmp-host-prohibited"
+                break
+            fi
+        done
+    done
+    return 0
+}
+
 setup_improved_firewall() {
     log "Configuring UFW..."
     if ! command -v ufw &>/dev/null; then install_packages ufw; fi
@@ -4726,6 +4766,7 @@ setup_improved_firewall() {
         ufw reload || log_warn "UFW reload error."
         log "Rules updated."
     fi
+    remove_image_reject_above_ufw
     log "UFW configured."
     log "$(ufw status verbose 2>&1)"
     return 0

@@ -2331,7 +2331,7 @@ An ARM64 server installed before v6.2.0 stays on 2.0: the installer does not cha
 | Raspberry Pi 3, 4 (64-bit) | ARM64 (aarch64) | `linux-headers-rpi-v8` |
 | Raspberry Pi 5 | ARM64 (aarch64) | `linux-headers-rpi-2712` |
 | Raspberry Pi 3, 4 (32-bit) | ARMv7 (armhf) | `linux-headers-rpi-v7` or `linux-headers-rpi-v7l`, by the kernel suffix in `uname -r` |
-| Ubuntu ARM64 (AWS Graviton, Oracle Ampere, Hetzner) | ARM64 | `linux-headers-generic` |
+| Ubuntu ARM64 (AWS Graviton, Oracle Ampere, Hetzner) | ARM64 | by the kernel suffix in `uname -r`: `linux-headers-generic` (Hetzner), `linux-headers-oracle` (Oracle), `linux-headers-aws` (AWS); `linux-headers-generic` if there is no flavor package |
 | Debian ARM64 (cloud VPS) | ARM64 | `linux-headers-arm64` |
 
 **How it works:**
