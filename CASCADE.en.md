@@ -500,9 +500,11 @@ The middle does not split anything: whatever arrives from awg-in, it sends into 
 2. **awg-mid.** Install it the same way as in step 1, with its own subnet, for example `--subnet=172.16.62.1/24`. Put `mid_host.conf` from awg-out on it as `/etc/amnezia/amneziawg/awg1.conf`, exactly as in [step 3](#step3): with `Table = off` and without the `DNS` line. Add two more lines to the `[Interface]` section:
 
    ```ini
-   PostUp = ip rule add iif awg0 lookup 100 priority 10000; ip route replace default dev awg1 table 100; iptables -t nat -A POSTROUTING -o awg1 -j MASQUERADE
-   PostDown = ip rule del iif awg0 lookup 100 priority 10000; ip route flush table 100; iptables -t nat -D POSTROUTING -o awg1 -j MASQUERADE
+   PostUp = ip rule del iif awg0 lookup 100 priority 10000 2>/dev/null || true; ip rule add iif awg0 lookup 100 priority 10000; ip route replace default dev awg1 table 100; iptables -t nat -C POSTROUTING -o awg1 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -o awg1 -j MASQUERADE
+   PostDown = ip rule del iif awg0 lookup 100 priority 10000 || true; ip route flush table 100 || true; iptables -t nat -D POSTROUTING -o awg1 -j MASQUERADE || true
    ```
+
+   The commands are safe to repeat: if the previous `PostDown` did not run and the rule is still there, `PostUp` does not fail on it but sets the rule again. With a failed `PostUp` the `awg1` tunnel would not come up at all.
 
    Then bring the tunnel up:
 
@@ -531,11 +533,16 @@ From a client, `curl -s ifconfig.me` should return the address of awg-out. If th
 
 **An important caveat.** The rule for the middle is set by the `PostUp` of the `awg1` tunnel. While `awg-quick@awg1` runs, traffic from the entry goes only toward the exit: if awg-out is unreachable, the packets go into the tunnel and are lost. But if `awg-quick@awg1` itself is stopped or failed to come up after a reboot, the rule is not there, and traffic from the entry goes out to the internet from the address of awg-mid, the very address this setup hides. The same happens in the first seconds after boot, before `awg1` is up. After a reboot and after any work on the middle, check `systemctl is-active awg-quick@awg1` (it should say `active`) and `ip rule | grep 'iif awg0'`.
 
-Two more downsides. The protocol generation (2.0 or 3.1) has to match on all three servers. And the latency gains the leg between the two foreign servers, so pick them close to each other.
+Two more downsides. Each server connects to the next one as a client, so its module and tools have to understand the generation of the next one (see [What you need](#prereq)), and the simplest is one generation (2.0 or 3.1) on all three. And the latency gains the leg between the two foreign servers, so pick them close to each other.
 
-To remove the middle: on awg-mid run `systemctl disable --now awg-quick@awg1` and `rm /etc/amnezia/amneziawg/awg1.conf` (`PostDown` removes the rule and the NAT by itself), and on awg-out `bash /root/awg/manage_amneziawg.sh remove mid_host`. The entry is taken apart as in [Removing the cascade](#uninstall).
+Take the middle apart last: while awg-in still sends traffic to it, stopping `awg1` on awg-mid lets that traffic out through awg-mid's address right away.
 
-The three-server setup was checked by [@stromnov](https://github.com/stromnov) in [#120](https://github.com/bivlked/amneziawg-installer/discussions/120): three VPS on Ubuntu 24.04 and 26.04 with the 3.1 profile, and the chain came up on the first try. I have not built it on my own servers: it is the two-server recipe plus one routing rule on the middle.
+- **Back to two servers.** On awg-out issue a client for the entry (`bash /root/awg/manage_amneziawg.sh add ru_host`). On awg-in replace `/etc/amnezia/amneziawg/awg1.conf` with it, as in [step 3](#step3), set the awg-out address as `AWG1_ENDPOINT` in `/root/awg/awg-routing.sh`, and run `systemctl restart awg-quick@awg1`, `ip route del AWG_MID_EXTERNAL_IP` and `bash /root/awg/awg-routing.sh`. Make sure `awg show awg1` on awg-in shows a `latest handshake`, and only then take the middle apart.
+- **Remove the whole cascade.** Take the entry apart first, as in [Removing the cascade](#uninstall), then the middle.
+
+The middle itself comes apart like this: on awg-mid `systemctl disable --now awg-quick@awg1`, `rm /etc/amnezia/amneziawg/awg1.conf` (`PostDown` removes the rule and the NAT by itself) and `bash /root/awg/manage_amneziawg.sh remove ru_host`, and on awg-out `bash /root/awg/manage_amneziawg.sh remove mid_host`.
+
+The three-server setup was checked by [@stromnov](https://github.com/stromnov) in [#120](https://github.com/bivlked/amneziawg-installer/discussions/120): three VPS on Ubuntu 24.04 and 26.04 with the 3.1 profile, and the chain came up on the first try. I have not built it on my own servers: it is the two-server recipe plus one routing rule on the middle. Compared with the version that was checked, I only made the `PostUp` and `PostDown` commands safe to repeat.
 
 <a id="trouble"></a>
 ## Troubleshooting

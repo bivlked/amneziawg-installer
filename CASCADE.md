@@ -498,9 +498,11 @@ flowchart LR
 2. **awg-mid.** Поставьте так же, как в шаге 1, но со своей подсетью, например `--subnet=172.16.62.1/24`. Файл `mid_host.conf` с awg-out положите на него как `/etc/amnezia/amneziawg/awg1.conf`, точно как в [шаге 3](#step3): с `Table = off` и без строки `DNS`. В секцию `[Interface]` добавьте ещё две строки:
 
    ```ini
-   PostUp = ip rule add iif awg0 lookup 100 priority 10000; ip route replace default dev awg1 table 100; iptables -t nat -A POSTROUTING -o awg1 -j MASQUERADE
-   PostDown = ip rule del iif awg0 lookup 100 priority 10000; ip route flush table 100; iptables -t nat -D POSTROUTING -o awg1 -j MASQUERADE
+   PostUp = ip rule del iif awg0 lookup 100 priority 10000 2>/dev/null || true; ip rule add iif awg0 lookup 100 priority 10000; ip route replace default dev awg1 table 100; iptables -t nat -C POSTROUTING -o awg1 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -o awg1 -j MASQUERADE
+   PostDown = ip rule del iif awg0 lookup 100 priority 10000 || true; ip route flush table 100 || true; iptables -t nat -D POSTROUTING -o awg1 -j MASQUERADE || true
    ```
+
+   Команды сделаны повторяемыми: если прошлый `PostDown` не отработал и правило осталось, `PostUp` не падает на нём, а ставит правило заново. При упавшем `PostUp` туннель `awg1` не поднялся бы вовсе.
 
    Затем включите туннель:
 
@@ -529,11 +531,16 @@ ip route show table 100
 
 **Важная оговорка.** Правило для середины ставит `PostUp` туннеля `awg1`. Пока `awg-quick@awg1` работает, трафик со входа идёт только в сторону выхода: если awg-out недоступен, пакеты уходят в туннель и теряются. Но если сам `awg-quick@awg1` остановлен или не поднялся после перезагрузки, правила нет, и трафик со входа уходит в интернет с адреса awg-mid, то есть с того адреса, который эта схема прячет. То же бывает в первые секунды после загрузки, пока `awg1` ещё не поднялся. После перезагрузки и любых работ на середине проверяйте `systemctl is-active awg-quick@awg1` (должно быть `active`) и `ip rule | grep 'iif awg0'`.
 
-Ещё два минуса. Поколение протокола (2.0 или 3.1) должно совпадать на всех трёх серверах. К задержке добавляется плечо между двумя зарубежными серверами, поэтому их лучше брать недалеко друг от друга.
+Ещё два минуса. Каждый сервер подключается к следующему как клиент, поэтому его модуль и утилиты должны понимать поколение следующего (см. [Что понадобится](#prereq)), и проще всего держать одно поколение (2.0 или 3.1) на всех трёх. К задержке добавляется плечо между двумя зарубежными серверами, поэтому их лучше брать недалеко друг от друга.
 
-Убрать середину: на awg-mid `systemctl disable --now awg-quick@awg1` и `rm /etc/amnezia/amneziawg/awg1.conf` (`PostDown` сам снимет правило и NAT), на awg-out `bash /root/awg/manage_amneziawg.sh remove mid_host`. Вход разбирается по разделу [Как убрать каскад](#uninstall).
+Середину разбирайте последней: пока awg-in шлёт на неё трафик, остановка `awg1` на awg-mid сразу выпустит этот трафик с адреса awg-mid.
 
-Трёхзвенную схему проверил [@stromnov](https://github.com/stromnov) в [#120](https://github.com/bivlked/amneziawg-installer/discussions/120): три VPS на Ubuntu 24.04 и 26.04 с профилем 3.1, цепочка поднялась с первой попытки. Сам я её на своих серверах не собирал: это двухзвенный рецепт плюс одно правило маршрутизации на середине.
+- **Вернуться к двум серверам.** На awg-out выпустите клиента для входа (`bash /root/awg/manage_amneziawg.sh add ru_host`). На awg-in замените им `/etc/amnezia/amneziawg/awg1.conf`, как в [шаге 3](#step3), поставьте в `/root/awg/awg-routing.sh` адрес awg-out в `AWG1_ENDPOINT` и выполните `systemctl restart awg-quick@awg1`, `ip route del ВНЕШНИЙ_IP_AWG_MID` и `bash /root/awg/awg-routing.sh`. Убедитесь, что `awg show awg1` на awg-in показывает `latest handshake`, и только потом разбирайте середину.
+- **Убрать каскад целиком.** Сначала разберите вход по разделу [Как убрать каскад](#uninstall), потом середину.
+
+Сама середина разбирается так: на awg-mid `systemctl disable --now awg-quick@awg1`, `rm /etc/amnezia/amneziawg/awg1.conf` (`PostDown` сам снимет правило и NAT) и `bash /root/awg/manage_amneziawg.sh remove ru_host`, на awg-out `bash /root/awg/manage_amneziawg.sh remove mid_host`.
+
+Трёхзвенную схему проверил [@stromnov](https://github.com/stromnov) в [#120](https://github.com/bivlked/amneziawg-installer/discussions/120): три VPS на Ubuntu 24.04 и 26.04 с профилем 3.1, цепочка поднялась с первой попытки. Сам я её на своих серверах не собирал: это двухзвенный рецепт плюс одно правило маршрутизации на середине. По сравнению с проверенным вариантом я только сделал команды `PostUp` и `PostDown` повторяемыми.
 
 <a id="trouble"></a>
 ## Диагностика
