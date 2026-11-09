@@ -70,6 +70,14 @@ EOF
     chmod +x "$BATS_TEST_TMPDIR/bin/iptables"
     PATH="$BATS_TEST_TMPDIR/bin:$PATH"
     export IPT_STATE PATH
+
+    # The image's saved rules (what netfilter-persistent loaded at boot). The
+    # function only removes a REJECT that is in this file; by default both
+    # Oracle lines are there.
+    IMAGE_RULES_V4="$BATS_TEST_TMPDIR/rules.v4"
+    printf '%s\n' '*filter' ':INPUT ACCEPT [0:0]' \
+        '-A INPUT -j REJECT --reject-with icmp-host-prohibited' \
+        '-A FORWARD -j REJECT --reject-with icmp-host-prohibited' 'COMMIT' > "$IMAGE_RULES_V4"
 }
 
 # The rule layout seen on the stand after `ufw --force enable` on top of
@@ -375,7 +383,7 @@ _t_noop_delete() {
     export IPT_NOOP_DELETE
     local f
     f="$(declare -f remove_image_reject_above_ufw log log_warn)"
-    run timeout 20 env LOG_FILE="$LOG_FILE" bash -c "$f; remove_image_reject_above_ufw"
+    run timeout 20 env LOG_FILE="$LOG_FILE" IMAGE_RULES_V4="$IMAGE_RULES_V4" bash -c "$f; remove_image_reject_above_ufw"
     [ "$status" -eq 0 ]
     # The bound: exactly 5 passes per chain (each "removal" claims success),
     # then it gives up; 2 chains, 10 INFO lines.
@@ -405,4 +413,55 @@ _t_noop_delete() {
 
 @test "EN: a delete that reports success but removes nothing still ends" {
     _t_noop_delete "$EN_SCRIPT"
+}
+
+# A REJECT above UFW that is NOT in the image's saved rules may be the
+# administrator's own: it is left in place, with a warning that says why VPN
+# traffic is blocked and how to remove it.
+_t_not_from_image() {
+    _load_fn "$1"
+    _oracle_layout
+    cp "$IPT_STATE" "$BATS_TEST_TMPDIR/before"
+    rm -f "$IMAGE_RULES_V4"
+    run remove_image_reject_above_ufw
+    [ "$status" -eq 0 ]
+    diff "$BATS_TEST_TMPDIR/before" "$IPT_STATE"
+    run grep -c '^WARN' "$LOG_FILE"
+    [ "$output" = "2" ]
+    grep -qF 'iptables -D INPUT -j REJECT --reject-with icmp-host-prohibited' "$LOG_FILE"
+    grep -qF 'iptables -D FORWARD -j REJECT --reject-with icmp-host-prohibited' "$LOG_FILE"
+    run grep -c '^INFO' "$LOG_FILE"
+    [ "$output" = "0" ]
+}
+
+# Only the INPUT line is saved: INPUT is cleaned, FORWARD gets the warning.
+_t_partly_from_image() {
+    _load_fn "$1"
+    _oracle_layout
+    printf '%s\n' '*filter' '-A INPUT -j REJECT --reject-with icmp-host-prohibited' 'COMMIT' > "$IMAGE_RULES_V4"
+    run remove_image_reject_above_ufw
+    [ "$status" -eq 0 ]
+    run grep -c -- '-A INPUT -j REJECT' "$IPT_STATE"
+    [ "$output" = "0" ]
+    run grep -c -- '-A FORWARD -j REJECT' "$IPT_STATE"
+    [ "$output" = "1" ]
+    run grep -c '^WARN' "$LOG_FILE"
+    [ "$output" = "1" ]
+    grep -qF 'iptables -D FORWARD -j REJECT --reject-with icmp-host-prohibited' "$LOG_FILE"
+}
+
+@test "RU: a REJECT not in the image's saved rules is left alone, with a warning" {
+    _t_not_from_image "$RU_SCRIPT"
+}
+
+@test "EN: a REJECT not in the image's saved rules is left alone, with a warning" {
+    _t_not_from_image "$EN_SCRIPT"
+}
+
+@test "RU: only the chain whose REJECT is saved by the image is cleaned" {
+    _t_partly_from_image "$RU_SCRIPT"
+}
+
+@test "EN: only the chain whose REJECT is saved by the image is cleaned" {
+    _t_partly_from_image "$EN_SCRIPT"
 }

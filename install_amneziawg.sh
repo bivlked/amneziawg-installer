@@ -4540,11 +4540,16 @@ detect_ssh_ports() {
 # Установка ufw удаляет netfilter-persistent, но загруженные правила остаются
 # в ядре до следующей загрузки, а UFW дописывает свои переходы ниже них: порт
 # VPN и ответы клиентам отбиваются до ещё одной перезагрузки. Удаляем ровно
-# этот REJECT, если он стоит выше первого перехода UFW в цепочке; любые другие
-# правила и тот же REJECT ниже UFW не трогаем. Шаг не роняет никогда.
+# этот REJECT, если он стоит выше первого перехода UFW в цепочке И та же строка
+# есть в сохранённых правилах образа, то есть он поднят при загрузке и после
+# следующей перезагрузки исчез бы сам. REJECT выше UFW, которого в файле нет,
+# может быть правилом администратора: он остаётся, с предупреждением. Любые
+# другие правила и тот же REJECT ниже UFW не трогаем. Шаг не роняет никогда.
+# IMAGE_RULES_V4 подменяет путь к файлу (тесты).
 remove_image_reject_above_ufw() {
     command -v iptables >/dev/null 2>&1 || return 0
     local chain rules line pos ufw_pos reject_pos _pass
+    local saved="${IMAGE_RULES_V4:-/etc/iptables/rules.v4}"
     for chain in INPUT FORWARD; do
         # Одно удаление за проход; предел не даёт зациклиться на странном iptables.
         for _pass in 1 2 3 4 5; do
@@ -4565,6 +4570,10 @@ remove_image_reject_above_ufw() {
                 fi
             done <<< "$rules"
             [[ "$reject_pos" -gt 0 && "$reject_pos" -lt "$ufw_pos" ]] || break
+            if ! grep -qE "^-A $chain -j REJECT --reject-with icmp-host-prohibited[[:space:]]*\$" "$saved" 2>/dev/null; then
+                log_warn "REJECT выше UFW в $chain блокирует трафик VPN. Его нет в $saved, это может быть ваше собственное правило, и установщик его не трогает. Если вы его не ставили, удалите: iptables -D $chain -j REJECT --reject-with icmp-host-prohibited"
+                break
+            fi
             if iptables -w 5 -D "$chain" -j REJECT --reject-with icmp-host-prohibited 2>/dev/null; then
                 log "Удалено правило образа выше UFW: -A $chain -j REJECT --reject-with icmp-host-prohibited (его ставят образы Oracle Cloud; оно блокировало бы трафик VPN до следующей перезагрузки)."
             else

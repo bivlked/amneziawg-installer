@@ -4642,11 +4642,16 @@ detect_ssh_ports() {
 # Installing ufw removes netfilter-persistent, but the loaded rules stay in the
 # kernel until the next boot, and UFW appends its jumps below them: the VPN
 # port and the replies to clients are rejected until one more reboot. Delete
-# exactly that REJECT when it sits above the chain's first UFW jump; any other
-# rule, or the same REJECT below UFW, is left alone. Never fails the step.
+# exactly that REJECT when it sits above the chain's first UFW jump AND the
+# same line is in the image's saved rules file, that is, it was loaded at boot
+# and would be gone after the next reboot anyway. A REJECT above UFW that is
+# not in the file may be the administrator's own: it stays, with a warning.
+# Any other rule, or the same REJECT below UFW, is left alone. Never fails
+# the step. IMAGE_RULES_V4 overrides the file path (tests).
 remove_image_reject_above_ufw() {
     command -v iptables >/dev/null 2>&1 || return 0
     local chain rules line pos ufw_pos reject_pos _pass
+    local saved="${IMAGE_RULES_V4:-/etc/iptables/rules.v4}"
     for chain in INPUT FORWARD; do
         # One deletion per pass; the bound keeps a misbehaving iptables from
         # looping forever.
@@ -4668,6 +4673,10 @@ remove_image_reject_above_ufw() {
                 fi
             done <<< "$rules"
             [[ "$reject_pos" -gt 0 && "$reject_pos" -lt "$ufw_pos" ]] || break
+            if ! grep -qE "^-A $chain -j REJECT --reject-with icmp-host-prohibited[[:space:]]*\$" "$saved" 2>/dev/null; then
+                log_warn "A REJECT above UFW in $chain blocks VPN traffic. It is not in $saved, so it may be your own rule and the installer leaves it alone. If you did not put it there, remove it: iptables -D $chain -j REJECT --reject-with icmp-host-prohibited"
+                break
+            fi
             if iptables -w 5 -D "$chain" -j REJECT --reject-with icmp-host-prohibited 2>/dev/null; then
                 log "Removed the image's rule above UFW: -A $chain -j REJECT --reject-with icmp-host-prohibited (Oracle Cloud images ship it; it would block VPN traffic until the next reboot)."
             else
