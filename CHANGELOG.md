@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [6.2.2] - 2026-11-09
+
+**v6.2.2** - готовые модули для Raspberry Pi OS trixie, VPN сразу после установки на Oracle Cloud и таблица клиентов, перепроверенная на 9 ноября.
+
 ### Добавлено
 
 - **Готовые модули для Raspberry Pi OS trixie.** Свежий образ Raspberry Pi OS теперь на Debian trixie с ядром 6.18, а готовые модули второй линии собирались только под bookworm, поэтому на trixie установка с 2.0 (32-битный Pi или `--protocol=2.0`) ставила модуль из PPA и собирала его через DKMS прямо на Pi. Теперь сборка выпускает пакеты и под trixie: Pi 3/4 (64 бит), Pi 5 и 32-битное ядро `rpi-v7`, а установщик выбирает цель по версии системы (13 - trixie, остальное - bookworm). Сборка модуля под ядро 6.18.60+rpt проверена на всех трёх целях; на живом Raspberry Pi эти пакеты не запускались.
@@ -2216,7 +2220,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.2...HEAD
+[6.2.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...v6.2.2
 [6.2.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.0...v6.2.1
 [6.2.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.2...v6.2.0
 [6.1.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.1...v6.1.2

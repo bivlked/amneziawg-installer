@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.2] - 2026-11-09
+
+**v6.2.2** - ready-made modules for Raspberry Pi OS trixie, a VPN that works right after the install on Oracle Cloud, and the client table re-checked as of 9 November.
+
 ### Added
 
 - **Ready-made modules for Raspberry Pi OS trixie.** The current Raspberry Pi OS image is on Debian trixie with kernel 6.18, while the ready-made second-line modules were built for bookworm only, so on trixie a 2.0 install (a 32-bit Pi or `--protocol=2.0`) installed the PPA module and built it through DKMS on the Pi itself. The build now ships trixie packages too: Pi 3/4 (64-bit), Pi 5 and the 32-bit `rpi-v7` kernel, and the installer picks the target by the system version (13 is trixie, anything else bookworm). The module build for kernel 6.18.60+rpt is checked on all three targets; these packages have not been run on a real Raspberry Pi.
@@ -2216,7 +2220,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.2...HEAD
+[6.2.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...v6.2.2
 [6.2.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.0...v6.2.1
 [6.2.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.2...v6.2.0
 [6.1.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.1...v6.1.2
