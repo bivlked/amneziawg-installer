@@ -3234,11 +3234,62 @@ _awg_exit_ip_check() {
         printf '%s\n' "an exit address does not combine with the IPv6 tunnel for clients (--allow-ipv6-tunnel): SNAT changes IPv4 only, client IPv6 would bypass the exit address"
         return 1
     fi
-    if ! ip -4 -o addr show 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="inet"){split($(i+1),a,"/"); print a[1]}}' | grep -qxF -- "$ip"; then
-        printf '%s\n' "address $ip is not on any interface of the server; configure it permanently (in netplan, for example) and try again"
+    if [[ -n "${AWG_ENDPOINT:-}" && "$AWG_ENDPOINT" == "$ip" ]]; then
+        printf '%s\n' "$ip is the entry address (--endpoint) clients connect to; the exit address has to be a different one"
+        return 1
+    fi
+    if ! ip -4 -o addr show 2>/dev/null | awk '$2 !~ /^(awg|wg|lo)/ {for(i=1;i<NF;i++) if($i=="inet"){split($(i+1),a,"/"); print a[1]}}' | grep -qxF -- "$ip"; then
+        printf '%s\n' "address $ip is not on an external interface of the server (tunnels and loopback do not count); configure it permanently (in netplan, for example) and try again"
         return 1
     fi
     return 0
+}
+
+# Step 0: --no-psk turns it on, a persisted NO_PSK=1 stays (the init loaded
+# earlier would otherwise overwrite the flag). Any other value in the init is
+# refused: silently reading it as 0 would issue a PSK against the saved choice.
+# Clients already issued do not change.
+_awg_resolve_no_psk() {
+    [[ "${CLI_NO_PSK:-0}" -eq 1 ]] && NO_PSK=1
+    case "${NO_PSK:-0}" in
+        0|1) NO_PSK=${NO_PSK:-0} ;;
+        *) die "NO_PSK in $CONFIG_FILE must be 0 or 1, it is '${NO_PSK}'. Fix or remove the line." ;;
+    esac
+    if [[ "$NO_PSK" -eq 1 ]]; then
+        log "PresharedKey for new clients is off (--no-psk / persisted NO_PSK=1)."
+    fi
+    return 0
+}
+
+# Step 0: the client exit address (I#384). The flag sets it, a saved one stays
+# and is checked again (the address may be gone), off removes it. An empty
+# --exit-ip= is refused: that is what an unset variable looks like, and the exit
+# would silently stay on the entry.
+_awg_resolve_exit_ip() {
+    local why
+    if [[ "${CLI_EXIT_IP_SET:-0}" -eq 1 ]]; then
+        [[ -n "$CLI_EXIT_IP" ]] || die "Empty --exit-ip=: give an IPv4 exit address or off."
+        if [[ "$CLI_EXIT_IP" == off ]]; then AWG_EXIT_IP=""; else AWG_EXIT_IP="$CLI_EXIT_IP"; fi
+    fi
+    if [[ -n "${AWG_EXIT_IP:-}" ]]; then
+        why=$(_awg_exit_ip_check "$AWG_EXIT_IP") || die "--exit-ip: ${why}."
+        log "Client exit address: $AWG_EXIT_IP (clients still connect to the entry address)."
+    fi
+    return 0
+}
+
+# Step 6: a reinstall that changes the exit address. The restart in step 7 would
+# remove rules by the PostDown of the NEW file, and the old SNAT rule would stay
+# above the MASQUERADE. So the service stops before the render: the PostDown of
+# the old file removes its rule, and step 7 starts the service again.
+_awg_stop_if_exit_ip_changed() {
+    local old
+    [[ -f "$SERVER_CONF_FILE" ]] || return 0
+    old=$(grep -E '^PostUp[[:space:]]*=' "$SERVER_CONF_FILE" | tr -d '\r' | grep -oE 'SNAT --to-source [0-9.]+' | head -1 | awk '{print $3}')
+    [[ "$old" == "${AWG_EXIT_IP:-}" ]] && return 0
+    systemctl is-active --quiet awg-quick@awg0 || return 0
+    log "The exit address changes ('${old:-none}' -> '${AWG_EXIT_IP:-none}'): the service is stopped before the new config is written."
+    systemctl stop awg-quick@awg0 || log_warn "The service did not stop: after the install check that iptables -t nat -S POSTROUTING has no SNAT rule to ${old}."
 }
 
 # _awg_size_collisions <S1> <S2> <S3> <S4> : whether the receiver can take a DATA
@@ -5427,9 +5478,11 @@ step_uninstall() {
     if [[ "$saved_no_tweaks" -eq 0 ]]; then
         log "Cleaning up AmneziaWG UFW rules..."
         if command -v ufw &>/dev/null; then
-            local _uport
+            local _uport _uports
             # Removing our rules is ALWAYS performed (idempotent)
-            for _uport in $(_awg_uninstall_ports); do
+            _uports=$(_awg_uninstall_ports)
+            [[ -n "$_uports" ]] || log_warn "The VPN port was not found in $CONFIG_FILE or $SERVER_CONF_FILE: check its UFW rule yourself (ufw status)."
+            for _uport in $_uports; do
                 ufw delete allow "${_uport}/udp" 2>/dev/null
             done
             # To delete a route rule we need an exact match with how it was created:
@@ -6311,15 +6364,8 @@ initialize_setup() {
         log "CPS (I1) disabled (--no-cps / persisted NO_CPS=1): the desktop AmneziaVPN on macOS does not support CPS."
     fi
 
-    # --no-psk turns it on, a persisted NO_PSK=1 stays: the init loaded above
-    # would otherwise overwrite the flag. Clients already issued do not change.
-    if [[ "${CLI_NO_PSK:-0}" -eq 1 ]]; then
-        NO_PSK=1
-    fi
-    [[ "${NO_PSK:-0}" == "1" ]] || NO_PSK=0
-    if [[ "$NO_PSK" -eq 1 ]]; then
-        log "PresharedKey for new clients is off (--no-psk / persisted NO_PSK=1)."
-    fi
+    _awg_resolve_no_psk
+
 
     # --no-prebuilt: the flag turns it on, a persisted NO_PREBUILT=1 survives the
     # reboots (step 2 runs in another process). To undo, delete the line from init.
@@ -6345,16 +6391,8 @@ initialize_setup() {
             || die "CLIENT_DNS in $CONFIG_FILE is invalid ('$CLIENT_DNS'): IP addresses separated by commas are needed, with no empty items."
     fi
 
-    # Client exit address (I#384): the flag sets it, a saved one stays, off removes it.
-    if [[ "${CLI_EXIT_IP_SET:-0}" -eq 1 ]]; then
-        [[ -n "$CLI_EXIT_IP" ]] || die "Empty --exit-ip=: give an IPv4 exit address or off."
-        if [[ "$CLI_EXIT_IP" == off ]]; then AWG_EXIT_IP=""; else AWG_EXIT_IP="$CLI_EXIT_IP"; fi
-    fi
-    if [[ -n "${AWG_EXIT_IP:-}" ]]; then
-        local _exit_why
-        _exit_why=$(_awg_exit_ip_check "$AWG_EXIT_IP") || die "--exit-ip: ${_exit_why}."
-        log "Client exit address: $AWG_EXIT_IP (clients still connect to the entry address)."
-    fi
+    _awg_resolve_exit_ip
+
 
     # Save configuration
     _awg_save_init
@@ -9292,6 +9330,7 @@ step6_generate_configs() {
     # that already exist, and the guard in generate_client refuses to recreate
     # one whose artifacts exist.
     log "Creating server config..."
+    _awg_stop_if_exit_ip_changed
     render_server_config "${s_bak:-}" || die "Server config creation error."
     if [[ -n "${s_bak:-}" && -f "$s_bak" ]] && grep -q '^\[Peer\]' "$s_bak" 2>/dev/null; then
         log "Existing peers restored from backup."

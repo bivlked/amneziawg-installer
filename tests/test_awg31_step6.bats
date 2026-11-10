@@ -55,6 +55,9 @@ generate_client() {
     # What step 6 asked for the PresharedKey, in a file of its own: the call
     # sequence the other tests assert stays as it was.
     printf '%s=%s\n' "$n" "${CLIENT_PSK-unset}" >> "$CALLS.psk"
+    # As the real function does: "auto" is replaced by the generated key, so a
+    # PSK that is not reset per client shows up as the first client's key.
+    [[ "${CLIENT_PSK-}" == auto ]] && CLIENT_PSK="gen-$n"
     # C6 of the real function: an existing client is refused, nothing touched.
     if [[ -e "$KEYS_DIR/$n.private" || -e "$KEYS_DIR/$n.public" || -e "$AWG_DIR/$n.conf" ]]; then
         return 1

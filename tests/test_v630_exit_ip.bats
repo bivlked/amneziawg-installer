@@ -108,8 +108,10 @@ xcheck() {
             || { echo "$s: no --exit-ip case"; return 1; }
         fn "$s" _awg_save_init | grep -qF "export AWG_EXIT_IP='\${AWG_EXIT_IP:-}'" \
             || { echo "$s: _awg_save_init does not save AWG_EXIT_IP"; return 1; }
-        fn "$s" initialize_setup | grep -qF '_awg_exit_ip_check "$AWG_EXIT_IP"' \
-            || { echo "$s: initialize_setup does not check the exit address"; return 1; }
+        fn "$s" initialize_setup | grep -qxE '\s+_awg_resolve_exit_ip' \
+            || { echo "$s: initialize_setup does not resolve the exit address"; return 1; }
+        fn "$s" step6_generate_configs | grep -qxE '\s+_awg_stop_if_exit_ip_changed' \
+            || { echo "$s: step 6 does not stop the service on an exit address change"; return 1; }
     done
     for f in awg_common.sh awg_common_en.sh install_amneziawg.sh install_amneziawg_en.sh; do
         fn "$f" safe_load_config | grep -qE '\|AWG_EXIT_IP\|' || { echo "AWG_EXIT_IP missing from the whitelist in $f"; return 1; }
@@ -133,6 +135,7 @@ STUB
     cat > "$MGMT_DIR/bin/systemctl" << 'STUB'
 #!/bin/bash
 echo "systemctl $*" >> "$CALLS"
+[[ "$1" == stop && -n "${STUB_STOP_FAIL:-}" ]] && exit 1
 if [[ "$1" == start && -n "${STUB_START_FAIL:-}" ]]; then
     grep -qF -- "--to-source ${STUB_START_FAIL}" "$STUB_SERVER_CONF" && exit 1
 fi
@@ -141,6 +144,18 @@ STUB
     cat > "$MGMT_DIR/bin/ip" << 'STUB'
 #!/bin/bash
 for a in ${STUB_ADDRS:-}; do printf '2: eth0    inet %s/24 brd x scope global eth0\n' "$a"; done
+printf '3: awg0    inet 10.9.9.1/24 scope global awg0\n'
+printf '1: lo    inet 127.0.0.1/8 scope host lo\n'
+STUB
+    # iptables: -C answers "the rule is there" only for STUB_IPT_LEFT; every
+    # -D is written to a log of its own.
+    cat > "$MGMT_DIR/bin/iptables" << 'STUB'
+#!/bin/bash
+case " $* " in
+    *" -C "*) [[ -n "${STUB_IPT_LEFT:-}" && " $* " == *"--to-source ${STUB_IPT_LEFT} "* ]] && exit 0; exit 1 ;;
+    *" -D "*) echo "iptables $*" >> "$CALLS.ipt"; exit 0 ;;
+esac
+exit 0
 STUB
     chmod +x "$MGMT_DIR/bin/"*
     export PATH="$MGMT_DIR/bin:$PATH"
@@ -175,7 +190,7 @@ CONF
 
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
-    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_ADDRS STUB_START_FAIL
+    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_ADDRS STUB_START_FAIL STUB_STOP_FAIL STUB_IPT_LEFT
 }
 
 manage() {
@@ -266,5 +281,161 @@ _exit_rollback() {
     for s in manage_amneziawg.sh manage_amneziawg_en.sh; do
         run bash "$BATS_TEST_DIRNAME/../$s" help
         [[ "$output" == *"exit-ip <"* ]] || { echo "$s: help has no exit-ip command"; return 1; }
+    done
+}
+
+_exit_more_refusals() {
+    manage "$1" exit-ip 10.9.9.1
+    [ "$status" -ne 0 ] || { echo "$1: the tunnel address was accepted as an exit"; return 1; }
+    manage "$1" exit-ip 127.0.0.1
+    [ "$status" -ne 0 ] || { echo "$1: loopback was accepted as an exit"; return 1; }
+    manage "$1" exit-ip 198.51.100.2
+    [ "$status" -ne 0 ] && [[ "$stderr" == *AWG_ENDPOINT* ]] || { echo "$1: the entry address was accepted as an exit: $stderr"; return 1; }
+    sed -i 's|^Address = 10.9.9.1/24$|Address = 10.9.9.1/24, fddd:2c4:2c4:2c4::1/64|' "$MGMT_DIR/awg/awg0.conf"
+    manage "$1" exit-ip 203.0.113.7
+    [ "$status" -ne 0 ] && [[ "$stderr" == *IPv6* ]] || { echo "$1: an IPv6 Address in awg0.conf did not stop it: $stderr"; return 1; }
+    [ -z "$(calls)" ] || { echo "$1: a refusal touched the service: $(calls)"; return 1; }
+}
+@test "exit-ip refuses the tunnel address, loopback, the entry address, and an IPv6 Address in awg0.conf" {
+    each_manage _exit_more_refusals
+}
+
+_exit_stop_fails() {
+    local conf_before; conf_before=$(cat "$MGMT_DIR/awg/awg0.conf")
+    export STUB_STOP_FAIL=1
+    manage "$1" exit-ip 203.0.113.7
+    unset STUB_STOP_FAIL
+    [ "$status" -ne 0 ] || { echo "$1: a failed stop reported success"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awg0.conf")" = "$conf_before" ] || { echo "$1: awg0.conf changed after a failed stop"; return 1; }
+    [ "$(calls)" = "systemctl stop awg-quick@awg0" ] || { echo "$1: calls '$(calls)'"; return 1; }
+}
+@test "exit-ip changes nothing when the service does not stop" {
+    require_flock
+    each_manage _exit_stop_fails
+}
+
+_exit_old_rule_left() {
+    manage "$1" exit-ip 203.0.113.7
+    [ "$status" -eq 0 ] || { echo "$1: set failed: $stderr"; return 1; }
+    : > "$CALLS.ipt"
+    export STUB_IPT_LEFT=203.0.113.7
+    manage "$1" exit-ip off
+    unset STUB_IPT_LEFT
+    [ "$status" -eq 0 ] || { echo "$1: off failed: $stderr"; return 1; }
+    grep -qxF "iptables -t nat -D POSTROUTING -s 10.9.9.1/24 -o eth0 -j SNAT --to-source 203.0.113.7" "$CALLS.ipt" \
+        || { echo "$1: the rule left after stop was not removed: $(cat "$CALLS.ipt")"; return 1; }
+}
+@test "exit-ip removes an old SNAT rule that PostDown left in place" {
+    require_flock
+    each_manage _exit_old_rule_left
+}
+
+_exit_crlf() {
+    sed -i 's/$/\r/' "$MGMT_DIR/awg/awg0.conf"
+    manage "$1" exit-ip 203.0.113.7
+    [ "$status" -eq 0 ] || { echo "$1: set on a CRLF config failed: $stderr"; return 1; }
+    run grep -c $'\r' "$MGMT_DIR/awg/awg0.conf"
+    [ "$output" = "0" ] || { echo "$1: a carriage return is left in awg0.conf"; return 1; }
+    grep -E '^PostUp = ' "$MGMT_DIR/awg/awg0.conf" | grep -qF -- "--set-mss 1240; $SNAT_UP" \
+        || { echo "$1: the last PostUp command is broken: $(grep '^PostUp' "$MGMT_DIR/awg/awg0.conf")"; return 1; }
+}
+@test "exit-ip on a CRLF awg0.conf keeps the last PostUp command intact" {
+    require_flock
+    each_manage _exit_crlf
+}
+
+_exit_foreign_snat() {
+    local foreign_up='iptables -t nat -I POSTROUTING -s 10.8.0.0/24 -o eth0 -j SNAT --to-source 203.0.113.8'
+    local foreign_down='iptables -t nat -D POSTROUTING -s 10.8.0.0/24 -o eth0 -j SNAT --to-source 203.0.113.8'
+    sed -i "s|^PostUp = .*|&; $foreign_up|; s|^PostDown = .*|&; $foreign_down|" "$MGMT_DIR/awg/awg0.conf"
+    manage "$1" exit-ip 203.0.113.8
+    [ "$status" -eq 0 ] || { echo "$1: set failed: $stderr"; return 1; }
+    [[ "$output$stderr" != *"менять нечего"* && "$output$stderr" != *"nothing to change"* ]] || { echo "$1: a foreign SNAT was taken for ours"; return 1; }
+    [[ "$(snat_up)" == *"-s 10.9.9.1/24 -o eth0 -j SNAT --to-source 203.0.113.8"* ]] || { echo "$1: the command's rule is missing: $(snat_up)"; return 1; }
+    manage "$1" exit-ip off
+    [ "$status" -eq 0 ] || { echo "$1: off failed: $stderr"; return 1; }
+    grep -E '^PostUp = ' "$MGMT_DIR/awg/awg0.conf" | grep -qF "$foreign_up" || { echo "$1: the foreign PostUp rule was removed"; return 1; }
+    grep -E '^PostDown = ' "$MGMT_DIR/awg/awg0.conf" | grep -qF "$foreign_down" || { echo "$1: the foreign PostDown rule was removed"; return 1; }
+    run grep -c -- '-s 10.9.9.1/24 -o eth0 -j SNAT' "$MGMT_DIR/awg/awg0.conf"
+    [ "$output" = "0" ] || { echo "$1: the command's rule is left after off"; return 1; }
+}
+@test "exit-ip leaves a SNAT rule for another subnet alone" {
+    require_flock
+    each_manage _exit_foreign_snat
+}
+
+# The rule render_server_config writes is the one manage exit-ip finds and removes.
+_exit_render_then_off() {
+    local up down
+    up=$(grep '^PostUp = ' "$RENDERED"); down=$(grep '^PostDown = ' "$RENDERED")
+    awk -v u="$up" -v d="$down" '/^PostUp = /{print u; next} /^PostDown = /{print d; next} {print}' \
+        "$MGMT_DIR/awg/awg0.conf" > "$MGMT_DIR/awg/awg0.conf.new" && mv "$MGMT_DIR/awg/awg0.conf.new" "$MGMT_DIR/awg/awg0.conf"
+    sed -i "s/^export AWG_TUNNEL_SUBNET=.*/export AWG_TUNNEL_SUBNET='10.9.9.1\/24'/" "$MGMT_DIR/awg/awgsetup_cfg.init"
+    manage "$1" exit-ip off
+    [ "$status" -eq 0 ] || { echo "$1: off failed: $stderr"; return 1; }
+    run grep -c 'SNAT' "$MGMT_DIR/awg/awg0.conf"
+    [ "$output" = "0" ] || { echo "$1: the rendered SNAT was not removed: $(grep '^Post' "$MGMT_DIR/awg/awg0.conf")"; return 1; }
+}
+@test "exit-ip off removes the SNAT that render_server_config wrote" {
+    require_flock
+    setup_render_env
+    export AWG_EXIT_IP="203.0.113.7"
+    run render_server_config
+    [ "$status" -eq 0 ]
+    unset AWG_EXIT_IP
+    export RENDERED="$BATS_TEST_TMPDIR/rendered.conf"
+    cp "$SERVER_CONF_FILE" "$RENDERED"
+    each_manage _exit_render_then_off
+}
+# xresolve <installer> <snippet>: _awg_resolve_exit_ip with die/log stubbed;
+# the snippet sets CLI_* and AWG_EXIT_IP, the output ends with AWG_EXIT_IP=<value>.
+xresolve() {
+    run bash -c '
+        log() { :; }; die() { echo "DIE: $*"; exit 1; }
+        '"$(fn "$1" _awg_exit_ip_check)"'
+        '"$(fn "$1" _awg_resolve_exit_ip)"'
+        ip() { local a; for a in $STUB_ADDRS; do printf "2: eth0    inet %s/24 brd x scope global eth0\n" "$a"; done; }
+        ALLOW_IPV6_TUNNEL=0 AWG_ENDPOINT=198.51.100.2
+        '"$2"'
+        _awg_resolve_exit_ip
+        echo "AWG_EXIT_IP=${AWG_EXIT_IP}"
+    '
+}
+
+@test "installer: --exit-ip sets, off clears, a saved value is checked again, an empty flag is refused, both twins" {
+    local s
+    export STUB_ADDRS="198.51.100.2 203.0.113.7"
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        xresolve "$s" 'CLI_EXIT_IP_SET=1 CLI_EXIT_IP=203.0.113.7 AWG_EXIT_IP=""'
+        [ "$status" -eq 0 ] && [[ "$output" == *"AWG_EXIT_IP=203.0.113.7" ]] || { echo "$s: set: $output"; return 1; }
+        xresolve "$s" 'CLI_EXIT_IP_SET=1 CLI_EXIT_IP=off AWG_EXIT_IP=203.0.113.7'
+        [ "$status" -eq 0 ] && [[ "$output" == *"AWG_EXIT_IP=" ]] || { echo "$s: off: $output"; return 1; }
+        xresolve "$s" 'CLI_EXIT_IP_SET=1 CLI_EXIT_IP="" AWG_EXIT_IP=""'
+        [ "$status" -ne 0 ] && [[ "$output" == *"DIE:"*"--exit-ip"* ]] || { echo "$s: an empty --exit-ip= passed: $output"; return 1; }
+        xresolve "$s" 'CLI_EXIT_IP_SET=0 AWG_EXIT_IP=192.0.2.50'
+        [ "$status" -ne 0 ] && [[ "$output" == *192.0.2.50* ]] || { echo "$s: a saved address that is gone passed: $output"; return 1; }
+        xresolve "$s" 'CLI_EXIT_IP_SET=1 CLI_EXIT_IP=198.51.100.2 AWG_EXIT_IP=""'
+        [ "$status" -ne 0 ] && [[ "$output" == *"--endpoint"* ]] || { echo "$s: the entry address passed as exit: $output"; return 1; }
+    done
+}
+
+# The service stops before the render only when the exit address really changes.
+@test "installer: a reinstall that changes the exit address stops the service before the render, both twins" {
+    local s d="$BATS_TEST_TMPDIR/stopx"
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        rm -rf "$d"; mkdir -p "$d"
+        printf 'PostUp = a; iptables -t nat -I POSTROUTING -s 10.9.9.1/24 -o eth0 -j SNAT --to-source 203.0.113.7\n' > "$d/awg0.conf"
+        local want new
+        for pair in "203.0.113.8:stop" ":stop" "203.0.113.7:"; do
+            new="${pair%%:*}"; want="${pair#*:}"
+            run bash -c '
+                log() { :; }; log_warn() { :; }
+                '"$(fn "$s" _awg_stop_if_exit_ip_changed)"'
+                systemctl() { [[ "$1" == is-active ]] && return 0; echo "$1"; }
+                SERVER_CONF_FILE="$1" AWG_EXIT_IP="$2"
+                _awg_stop_if_exit_ip_changed
+            ' _ "$d/awg0.conf" "$new"
+            [ "$output" = "$want" ] || { echo "$s: exit '$new': got '$output', want '$want'"; return 1; }
+        done
     done
 }

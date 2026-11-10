@@ -3147,11 +3147,60 @@ _awg_exit_ip_check() {
         printf '%s\n' "адрес выхода не сочетается с IPv6-туннелем клиентов (--allow-ipv6-tunnel): SNAT меняет только IPv4, IPv6 клиентов уходил бы мимо адреса выхода"
         return 1
     fi
-    if ! ip -4 -o addr show 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="inet"){split($(i+1),a,"/"); print a[1]}}' | grep -qxF -- "$ip"; then
-        printf '%s\n' "адреса $ip нет ни на одном интерфейсе сервера; пропишите его постоянно (например, в netplan) и повторите"
+    if [[ -n "${AWG_ENDPOINT:-}" && "$AWG_ENDPOINT" == "$ip" ]]; then
+        printf '%s\n' "$ip - адрес входа (--endpoint), к нему подключаются клиенты; адрес выхода должен быть другим"
+        return 1
+    fi
+    if ! ip -4 -o addr show 2>/dev/null | awk '$2 !~ /^(awg|wg|lo)/ {for(i=1;i<NF;i++) if($i=="inet"){split($(i+1),a,"/"); print a[1]}}' | grep -qxF -- "$ip"; then
+        printf '%s\n' "адреса $ip нет на внешних интерфейсах сервера (туннельные и loopback не в счёт); пропишите его постоянно (например, в netplan) и повторите"
         return 1
     fi
     return 0
+}
+
+# Шаг 0: --no-psk включает, сохранённый NO_PSK=1 держится (init загружен раньше и
+# затёр бы значение флага). Другое значение в init - отказ: молча считать его 0
+# значило бы выдать PSK вопреки записанному выбору. Выданных клиентов не меняет.
+_awg_resolve_no_psk() {
+    [[ "${CLI_NO_PSK:-0}" -eq 1 ]] && NO_PSK=1
+    case "${NO_PSK:-0}" in
+        0|1) NO_PSK=${NO_PSK:-0} ;;
+        *) die "NO_PSK в $CONFIG_FILE должен быть 0 или 1, сейчас '${NO_PSK}'. Исправьте или удалите строку." ;;
+    esac
+    if [[ "$NO_PSK" -eq 1 ]]; then
+        log "PresharedKey для новых клиентов отключён (--no-psk / сохранённый NO_PSK=1)."
+    fi
+    return 0
+}
+
+# Шаг 0: адрес выхода клиентов (I#384). Флаг задаёт, сохранённый в init держится
+# и проверяется заново (адрес мог пропасть), off снимает. Пустой --exit-ip= -
+# отказ: так выглядит незаданная переменная, и выход молча остался бы на входе.
+_awg_resolve_exit_ip() {
+    local why
+    if [[ "${CLI_EXIT_IP_SET:-0}" -eq 1 ]]; then
+        [[ -n "$CLI_EXIT_IP" ]] || die "Пустой --exit-ip=: укажите IPv4-адрес выхода или off."
+        if [[ "$CLI_EXIT_IP" == off ]]; then AWG_EXIT_IP=""; else AWG_EXIT_IP="$CLI_EXIT_IP"; fi
+    fi
+    if [[ -n "${AWG_EXIT_IP:-}" ]]; then
+        why=$(_awg_exit_ip_check "$AWG_EXIT_IP") || die "--exit-ip: ${why}."
+        log "Адрес выхода клиентов: $AWG_EXIT_IP (подключаются клиенты по-прежнему к адресу входа)."
+    fi
+    return 0
+}
+
+# Шаг 6: смена адреса выхода переустановкой. restart шага 7 снимал бы правила по
+# PostDown уже НОВОГО файла, и старое правило SNAT осталось бы выше MASQUERADE.
+# Поэтому сервис останавливается до рендера: PostDown старого файла снимает своё
+# правило, шаг 7 запускает сервис заново.
+_awg_stop_if_exit_ip_changed() {
+    local old
+    [[ -f "$SERVER_CONF_FILE" ]] || return 0
+    old=$(grep -E '^PostUp[[:space:]]*=' "$SERVER_CONF_FILE" | tr -d '\r' | grep -oE 'SNAT --to-source [0-9.]+' | head -1 | awk '{print $3}')
+    [[ "$old" == "${AWG_EXIT_IP:-}" ]] && return 0
+    systemctl is-active --quiet awg-quick@awg0 || return 0
+    log "Адрес выхода меняется ('${old:-нет}' -> '${AWG_EXIT_IP:-нет}'): сервис остановлен до записи нового конфига."
+    systemctl stop awg-quick@awg0 || log_warn "Сервис не остановился: проверьте после установки, что в iptables -t nat -S POSTROUTING нет правила SNAT на ${old}."
 }
 
 # _awg_size_collisions <S1> <S2> <S3> <S4> : может ли приёмник принять пакет
@@ -5313,9 +5362,11 @@ step_uninstall() {
     if [[ "$saved_no_tweaks" -eq 0 ]]; then
         log "Очистка правил UFW для AmneziaWG..."
         if command -v ufw &>/dev/null; then
-            local _uport
+            local _uport _uports
             # Удаление наших правил выполняется ВСЕГДА (idempotent)
-            for _uport in $(_awg_uninstall_ports); do
+            _uports=$(_awg_uninstall_ports)
+            [[ -n "$_uports" ]] || log_warn "Порт VPN не найден ни в $CONFIG_FILE, ни в $SERVER_CONF_FILE: правило UFW для него проверьте сами (ufw status)."
+            for _uport in $_uports; do
                 ufw delete allow "${_uport}/udp" 2>/dev/null
             done
             # Для удаления route-правила нужно точное совпадение с тем как оно
@@ -6188,15 +6239,8 @@ initialize_setup() {
         log "CPS (I1) отключён (--no-cps / сохранённый NO_CPS=1): десктопный AmneziaVPN на macOS не поддерживает CPS."
     fi
 
-    # --no-psk включает, сохранённый NO_PSK=1 держится: init загружен выше и
-    # затёр бы значение флага. Уже выданных клиентов это не меняет.
-    if [[ "${CLI_NO_PSK:-0}" -eq 1 ]]; then
-        NO_PSK=1
-    fi
-    [[ "${NO_PSK:-0}" == "1" ]] || NO_PSK=0
-    if [[ "$NO_PSK" -eq 1 ]]; then
-        log "PresharedKey для новых клиентов отключён (--no-psk / сохранённый NO_PSK=1)."
-    fi
+    _awg_resolve_no_psk
+
 
     # --no-prebuilt: флаг включает, сохранённый NO_PREBUILT=1 держится между
     # перезагрузками (шаг 2 идёт в другом процессе). Снять - удалить строку из init.
@@ -6221,16 +6265,8 @@ initialize_setup() {
             || die "CLIENT_DNS в $CONFIG_FILE невалиден ('$CLIENT_DNS'): нужны IP-адреса через запятую, без пустых элементов."
     fi
 
-    # Адрес выхода клиентов (I#384): флаг задаёт, сохранённый держится, off снимает.
-    if [[ "${CLI_EXIT_IP_SET:-0}" -eq 1 ]]; then
-        [[ -n "$CLI_EXIT_IP" ]] || die "Пустой --exit-ip=: укажите IPv4-адрес выхода или off."
-        if [[ "$CLI_EXIT_IP" == off ]]; then AWG_EXIT_IP=""; else AWG_EXIT_IP="$CLI_EXIT_IP"; fi
-    fi
-    if [[ -n "${AWG_EXIT_IP:-}" ]]; then
-        local _exit_why
-        _exit_why=$(_awg_exit_ip_check "$AWG_EXIT_IP") || die "--exit-ip: ${_exit_why}."
-        log "Адрес выхода клиентов: $AWG_EXIT_IP (подключаются клиенты по-прежнему к адресу входа)."
-    fi
+    _awg_resolve_exit_ip
+
 
     # Сохранение конфигурации
     _awg_save_init
@@ -9135,6 +9171,7 @@ step6_generate_configs() {
     # пропускает уже существующие пиры, а guard в generate_client отвергает
     # повторное создание при наличии артефактов.
     log "Создание серверного конфига..."
+    _awg_stop_if_exit_ip_changed
     render_server_config "${s_bak:-}" || die "Ошибка создания серверного конфига."
     if [[ -n "${s_bak:-}" && -f "$s_bak" ]] && grep -q '^\[Peer\]' "$s_bak" 2>/dev/null; then
         log "Существующие пиры восстановлены из бэкапа."

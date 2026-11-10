@@ -237,3 +237,22 @@ _installer_saves_no_psk() {
             || { echo "no --no-psk case in $s"; return 1; }
     done
 }
+
+@test "the installer: --no-psk wins over NO_PSK=0 in the init, a bad NO_PSK value is refused, both twins" {
+    local s
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        local body; body=$(awk '/^_awg_resolve_no_psk\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$s")
+        [ -n "$body" ] || { echo "$s: no _awg_resolve_no_psk"; return 1; }
+        run bash -c 'log() { :; }; die() { echo "DIE: $*"; exit 1; }; '"$body"'
+            CONFIG_FILE=/x/init; NO_PSK=0 CLI_NO_PSK=1; _awg_resolve_no_psk; echo "NO_PSK=$NO_PSK"'
+        [ "$output" = "NO_PSK=1" ] || { echo "$s: flag over init 0: $output"; return 1; }
+        run bash -c 'log() { :; }; die() { echo "DIE: $*"; exit 1; }; '"$body"'
+            CONFIG_FILE=/x/init; NO_PSK=1 CLI_NO_PSK=0; _awg_resolve_no_psk; echo "NO_PSK=$NO_PSK"'
+        [ "$output" = "NO_PSK=1" ] || { echo "$s: a saved 1 did not stay: $output"; return 1; }
+        run bash -c 'log() { :; }; die() { echo "DIE: $*"; exit 1; }; '"$body"'
+            CONFIG_FILE=/x/init; NO_PSK=yes CLI_NO_PSK=0; _awg_resolve_no_psk; echo "NO_PSK=$NO_PSK"'
+        [ "$status" -ne 0 ] && [[ "$output" == *"DIE:"*NO_PSK*yes* ]] || { echo "$s: a bad value passed: $output"; return 1; }
+        awk '/^initialize_setup\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$s" | grep -qxE '\s+_awg_resolve_no_psk' \
+            || { echo "$s: initialize_setup does not call _awg_resolve_no_psk"; return 1; }
+    done
+}

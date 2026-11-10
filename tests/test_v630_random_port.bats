@@ -173,7 +173,8 @@ _uninstall_ports_cases() {
 @test "step_uninstall deletes the UFW rule of every port from _awg_uninstall_ports, both twins" {
     local s
     for s in install_amneziawg.sh install_amneziawg_en.sh; do
-        fn "$s" step_uninstall | grep -qE 'for _uport in \$\(_awg_uninstall_ports\); do' \
+        fn "$s" step_uninstall | grep -qE '_uports=\$\(_awg_uninstall_ports\)' \
+            && fn "$s" step_uninstall | grep -qE 'for _uport in \$_uports; do' \
             || { echo "$s: step_uninstall does not loop over _awg_uninstall_ports"; return 1; }
         fn "$s" step_uninstall | grep -qF 'port_to_del:-39743' \
             && { echo "$s: the guessed 39743 is still there"; return 1; }

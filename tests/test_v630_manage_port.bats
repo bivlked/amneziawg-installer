@@ -41,11 +41,14 @@ exit 0
 STUB
     cat > "$MGMT_DIR/bin/ufw" << 'STUB'
 #!/bin/bash
-echo "ufw $*" >> "$CALLS"
 if [[ "$1" == status ]]; then
     [[ -n "${STUB_UFW_OFF:-}" ]] && { echo "Status: inactive"; exit 0; }
     echo "Status: active"
+    for r in ${STUB_UFW_HAS:-}; do printf '%s/udp                  ALLOW       Anywhere\n' "$r"; done
+    exit 0
 fi
+echo "ufw $*" >> "$CALLS"
+[[ "$1" == allow && -n "${STUB_UFW_ALLOW_FAIL:-}" ]] && exit 1
 exit 0
 STUB
     cat > "$MGMT_DIR/bin/ss" << 'STUB'
@@ -89,7 +92,7 @@ CONF
 
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
-    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_RESTART_FAIL STUB_UFW_OFF STUB_BUSY
+    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_RESTART_FAIL STUB_UFW_OFF STUB_BUSY STUB_UFW_HAS STUB_UFW_ALLOW_FAIL
 }
 
 manage() {
@@ -182,7 +185,7 @@ _port_restart_failure_rolls_back() {
     [ "$(cat "$MGMT_DIR/awg/alice.conf")" = "$client_before" ] || { echo "$1: the client was regenerated after a failed restart"; return 1; }
     local want="ufw allow 23456/udp comment AmneziaWG VPN|systemctl restart awg-quick@awg0|systemctl restart awg-quick@awg0|ufw delete allow 23456/udp"
     [ "$(calls)" = "$want" ] || { echo "$1: calls"; echo " got  $(calls)"; echo " want $want"; return 1; }
-    run bash -c "ls '$MGMT_DIR/awg' | grep -c port-bak"
+    run bash -c "ls '$MGMT_DIR/awg' | grep -c '\.bak\.'"
     [ "$output" = "0" ] || { echo "$1: backup files left behind"; return 1; }
 }
 @test "a failed restart puts the old port back everywhere and closes the new port" {
@@ -194,11 +197,14 @@ _port_without_ufw() {
     export STUB_UFW_OFF=1
     manage "$1" port 23456
     unset STUB_UFW_OFF
-    [ "$status" -eq 0 ] || { echo "$1: port failed without UFW: $stderr"; return 1; }
-    [ "$(calls)" = "systemctl restart awg-quick@awg0" ] || { echo "$1: calls without UFW: $(calls)"; return 1; }
+    [ "$status" -eq 0 ] || { echo "$1: port failed with UFW off: $stderr"; return 1; }
+    local want="ufw allow 23456/udp comment AmneziaWG VPN|systemctl restart awg-quick@awg0|ufw delete allow 39743/udp"
+    [ "$(calls)" = "$want" ] || { echo "$1: calls with UFW off: $(calls)"; return 1; }
     [ "$(listen_port)" = "23456" ] || { echo "$1: ListenPort '$(listen_port)'"; return 1; }
 }
-@test "port with UFW inactive does not add or delete UFW rules" {
+# UFW switched off now still gets the rules: turning it on later must not
+# close the VPN port.
+@test "port with UFW inactive still opens the new port and closes the old one" {
     require_flock
     each_manage _port_without_ufw
 }
@@ -209,4 +215,59 @@ _port_without_ufw() {
         run bash "$BATS_TEST_DIRNAME/../$s" help
         [[ "$output" == *"port <"* ]] || { echo "$s: help has no port command"; return 1; }
     done
+}
+
+_port_ufw_allow_fails() {
+    export STUB_UFW_ALLOW_FAIL=1
+    manage "$1" port 23456
+    unset STUB_UFW_ALLOW_FAIL
+    [ "$status" -ne 0 ] || { echo "$1: a failed ufw allow reported success"; return 1; }
+    [ "$(listen_port)" = "39743" ] && [ "$(init_port)" = "39743" ] || { echo "$1: the files changed after a failed ufw allow"; return 1; }
+    [[ "$(calls)" != *"systemctl restart"* ]] || { echo "$1: the server restarted onto a port UFW did not open: $(calls)"; return 1; }
+    run bash -c "ls '$MGMT_DIR/awg' | grep -c '\.bak\.'"
+    [ "$output" = "0" ] || { echo "$1: backup files left behind"; return 1; }
+}
+@test "port stops before any change when UFW does not open the new port" {
+    require_flock
+    each_manage _port_ufw_allow_fails
+}
+
+_port_rollback_keeps_existing_rule() {
+    export STUB_UFW_HAS=23456 STUB_RESTART_FAIL=23456
+    manage "$1" port 23456
+    unset STUB_UFW_HAS STUB_RESTART_FAIL
+    [ "$status" -ne 0 ] || { echo "$1: a failed restart reported success"; return 1; }
+    [[ "$(calls)" != *"ufw delete allow 23456/udp"* ]] || { echo "$1: the rollback removed a rule that existed before: $(calls)"; return 1; }
+    [ "$(listen_port)" = "39743" ] || { echo "$1: not rolled back"; return 1; }
+}
+@test "a rollback keeps a UFW rule for the new port that existed before the command" {
+    require_flock
+    each_manage _port_rollback_keeps_existing_rule
+}
+
+_port_partial_regen() {
+    manage "$1" add alice bob
+    [ "$status" -eq 0 ] || { echo "$1: add failed: $stderr"; return 1; }
+    # regen takes the key from keys/ or from the client .conf: with neither it fails.
+    rm -f "$MGMT_DIR/awg/keys/alice.private" "$MGMT_DIR/awg/keys/alice.public" "$MGMT_DIR/awg/alice.conf"
+    manage "$1" port 23456
+    [ "$status" -ne 0 ] || { echo "$1: a failed regen of one client reported success"; return 1; }
+    [[ "$stderr" == *alice* ]] || { echo "$1: the failed client is not named: $stderr"; return 1; }
+    [ "$(listen_port)" = "23456" ] || { echo "$1: the port was rolled back over a client failure"; return 1; }
+    [ "$(endpoint bob)" = "vpn.example.com:23456" ] || { echo "$1: bob not regenerated: $(endpoint bob)"; return 1; }
+}
+@test "port reports a client that could not be regenerated and keeps the new port" {
+    require_flock
+    each_manage _port_partial_regen
+}
+
+_port_init_without_key() {
+    sed -i '/^export AWG_PORT=/d' "$MGMT_DIR/awg/awgsetup_cfg.init"
+    manage "$1" port 23456
+    [ "$status" -eq 0 ] || { echo "$1: port failed: $stderr"; return 1; }
+    [ "$(init_port)" = "23456" ] || { echo "$1: AWG_PORT not added to the init: '$(init_port)'"; return 1; }
+}
+@test "port adds AWG_PORT to an init file that does not have it" {
+    require_flock
+    each_manage _port_init_without_key
 }
