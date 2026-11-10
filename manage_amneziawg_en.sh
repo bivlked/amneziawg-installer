@@ -3404,7 +3404,9 @@ _port_listening() {
     ss -Hlun 2>/dev/null | awk '{n=split($4,a,":"); print a[n]}' | grep -qxF -- "$1"
 }
 _port_ufw_has() {
-    LC_ALL=C ufw status 2>/dev/null | grep -qE "^${1}/udp[[:space:]]+ALLOW"
+    # ufw show added lists the rules also while UFW is off; status shows them only when on.
+    LC_ALL=C ufw show added 2>/dev/null | grep -qE "^ufw allow ${1}/udp([[:space:]]|$)" \
+        || LC_ALL=C ufw status 2>/dev/null | grep -qE "^${1}/udp[[:space:]]+ALLOW"
 }
 change_server_port() {
     local new="$1" old have_ufw=0 added_rule=0 cname ok=0 fail=0 rb
@@ -3548,7 +3550,8 @@ change_exit_ip() {
     fi
     # PostDown may have stopped before that rule: the old SNAT would then stay
     # above the MASQUERADE, and traffic would keep leaving from the old address.
-    if [[ -n "$cur" ]] && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur" 2>/dev/null; then
+    local _drain=0
+    while [[ -n "$cur" ]] && (( ++_drain <= 16 )) && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur" 2>/dev/null; do
         if ! iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur"; then
             systemctl start awg-quick@awg0 || log_error "The service did not start: systemctl status awg-quick@awg0"
             _txn_drop_backups; _txn_unlock
@@ -3556,7 +3559,7 @@ change_exit_ip() {
             log_error "Could not remove the previous SNAT rule to ${cur}: the exit address is unchanged."
             return 1
         fi
-    fi
+    done
     # Client connections already open keep the old address rewrite in conntrack.
     if command -v conntrack >/dev/null 2>&1; then
         conntrack -D -s "${subnet%/*}" --mask-src "$(_exit_prefix_mask "${subnet#*/}")" >/dev/null 2>&1 || true
@@ -3575,7 +3578,12 @@ change_exit_ip() {
     if (( rc != 0 )) || ! systemctl start awg-quick@awg0; then
         log_error "Could not apply the exit address ${want}, putting the previous settings back."
         rb=0
-        [[ "$want" != off ]] && iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null
+        if [[ "$want" != off ]]; then
+            _drain=0
+            while (( ++_drain <= 16 )) && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null; do
+                iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" || { rb=1; break; }
+            done
+        fi
         _txn_restore || rb=1
         systemctl start awg-quick@awg0 || { rb=1; log_error "The server did not come up on the previous settings either: systemctl status awg-quick@awg0"; }
         _txn_unlock

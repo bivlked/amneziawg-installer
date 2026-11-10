@@ -3289,7 +3289,24 @@ _awg_stop_if_exit_ip_changed() {
     [[ "$old" == "${AWG_EXIT_IP:-}" ]] && return 0
     systemctl is-active --quiet awg-quick@awg0 || return 0
     log "The exit address changes ('${old:-none}' -> '${AWG_EXIT_IP:-none}'): the service is stopped before the new config is written."
-    systemctl stop awg-quick@awg0 || log_warn "The service did not stop: after the install check that iptables -t nat -S POSTROUTING has no SNAT rule to ${old}."
+    if systemctl stop awg-quick@awg0; then
+        _AWG_STOPPED_FOR_EXIT=1
+    else
+        log_warn "The service did not stop: after the install check that iptables -t nat -S POSTROUTING has no SNAT rule to ${old}."
+    fi
+}
+
+# Step 6 did not finish after such a stop: the previous config is in place (the
+# render is atomic, the 3.1 undo puts it back), so the service comes up on it
+# instead of staying down until a rerun.
+_awg_start_if_stopped_for_exit() {
+    [[ "${_AWG_STOPPED_FOR_EXIT:-0}" -eq 1 ]] || return 0
+    _AWG_STOPPED_FOR_EXIT=0
+    if systemctl start awg-quick@awg0; then
+        log "The service is started again on the previous config."
+    else
+        log_error "The service did not start on the previous config: systemctl status awg-quick@awg0"
+    fi
 }
 
 # _awg_size_collisions <S1> <S2> <S3> <S4> : whether the receiver can take a DATA
@@ -9237,6 +9254,7 @@ _step6_undo_31() {
     if (( failed )); then
         die "${why}: the 3.1 install stopped, but the undo did NOT complete (errors above). Check $AWG_DIR and the server config by hand before running the install again."
     fi
+    _awg_start_if_stopped_for_exit
     die "${why}: the 3.1 install was undone, the files of this attempt are removed, the server keys are kept for a rerun."
 }
 
@@ -9331,7 +9349,7 @@ step6_generate_configs() {
     # one whose artifacts exist.
     log "Creating server config..."
     _awg_stop_if_exit_ip_changed
-    render_server_config "${s_bak:-}" || die "Server config creation error."
+    render_server_config "${s_bak:-}" || { _awg_start_if_stopped_for_exit; die "Server config creation error."; }
     if [[ -n "${s_bak:-}" && -f "$s_bak" ]] && grep -q '^\[Peer\]' "$s_bak" 2>/dev/null; then
         log "Existing peers restored from backup."
     fi

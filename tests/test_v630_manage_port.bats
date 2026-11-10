@@ -41,6 +41,10 @@ exit 0
 STUB
     cat > "$MGMT_DIR/bin/ufw" << 'STUB'
 #!/bin/bash
+if [[ "$1" == show ]]; then
+    for r in ${STUB_UFW_HAS:-}; do printf 'ufw allow %s/udp comment AmneziaWG\n' "$r"; done
+    exit 0
+fi
 if [[ "$1" == status ]]; then
     [[ -n "${STUB_UFW_OFF:-}" ]] && { echo "Status: inactive"; exit 0; }
     echo "Status: active"
@@ -270,4 +274,15 @@ _port_init_without_key() {
 @test "port adds AWG_PORT to an init file that does not have it" {
     require_flock
     each_manage _port_init_without_key
+}
+_port_rollback_keeps_rule_ufw_off() {
+    export STUB_UFW_OFF=1 STUB_UFW_HAS=23456 STUB_RESTART_FAIL=23456
+    manage "$1" port 23456
+    unset STUB_UFW_OFF STUB_UFW_HAS STUB_RESTART_FAIL
+    [ "$status" -ne 0 ] || { echo "$1: a failed restart reported success"; return 1; }
+    [[ "$(calls)" != *"ufw delete allow 23456/udp"* ]] || { echo "$1: with UFW off the rollback removed a rule that existed before: $(calls)"; return 1; }
+}
+@test "with UFW off a rollback still keeps a rule for the new port that existed before" {
+    require_flock
+    each_manage _port_rollback_keeps_rule_ufw_off
 }

@@ -2203,7 +2203,7 @@ sudo bash install_amneziawg_en.sh --endpoint=198.51.100.2 --exit-ip=203.0.113.7
 
 Better to give `--endpoint` explicitly here: with two addresses the installer may detect either of them.
 
-**On a running server:** `sudo bash /root/awg/manage_amneziawg.sh exit-ip 203.0.113.7`, to remove it `exit-ip off`. Client configs do not change, the service restarts, and clients lose the connection for a few seconds. To check from a client: `curl -s ifconfig.me` returns the exit address.
+**On a running server:** `sudo bash /root/awg/manage_amneziawg.sh exit-ip 203.0.113.7`, to remove it `exit-ip off`. Client configs do not change, the service restarts, and clients lose the connection for a few seconds. To check from a client: `curl -s ifconfig.me` returns the exit address. Connections already open (a long download, a call) are flushed through `conntrack` if that tool is on the server (`apt install conntrack`); without it they keep the old address until they reconnect.
 
 **How it works.** A `SNAT --to-source <exit address>` rule for the client subnet goes into the server's `PostUp`, above the usual MASQUERADE; the server's own traffic (updates, DNS) still leaves from the main address. If the exit address disappears from the interface, the rule still sets it as the source, so client traffic does not leave through the entry address. What happens next depends on the host: if it no longer sends that address to the server, no replies come back and the connection stops; if it still does, the connection may keep working. `manage check` shows a missing address.
 

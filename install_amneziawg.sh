@@ -3200,7 +3200,24 @@ _awg_stop_if_exit_ip_changed() {
     [[ "$old" == "${AWG_EXIT_IP:-}" ]] && return 0
     systemctl is-active --quiet awg-quick@awg0 || return 0
     log "Адрес выхода меняется ('${old:-нет}' -> '${AWG_EXIT_IP:-нет}'): сервис остановлен до записи нового конфига."
-    systemctl stop awg-quick@awg0 || log_warn "Сервис не остановился: проверьте после установки, что в iptables -t nat -S POSTROUTING нет правила SNAT на ${old}."
+    if systemctl stop awg-quick@awg0; then
+        _AWG_STOPPED_FOR_EXIT=1
+    else
+        log_warn "Сервис не остановился: проверьте после установки, что в iptables -t nat -S POSTROUTING нет правила SNAT на ${old}."
+    fi
+}
+
+# Шаг 6 не дошёл до конца после такой остановки: прежний конфиг на месте
+# (рендер атомарный, откат 3.1 его возвращает), поэтому сервис поднимается на
+# нём, а не остаётся лежать до повторного запуска.
+_awg_start_if_stopped_for_exit() {
+    [[ "${_AWG_STOPPED_FOR_EXIT:-0}" -eq 1 ]] || return 0
+    _AWG_STOPPED_FOR_EXIT=0
+    if systemctl start awg-quick@awg0; then
+        log "Сервис запущен снова на прежнем конфиге."
+    else
+        log_error "Сервис не запустился на прежнем конфиге: systemctl status awg-quick@awg0"
+    fi
 }
 
 # _awg_size_collisions <S1> <S2> <S3> <S4> : может ли приёмник принять пакет
@@ -9080,6 +9097,7 @@ _step6_undo_31() {
     if (( failed )); then
         die "${why}: установка 3.1 остановлена, но откат выполнен НЕ полностью (ошибки выше). Проверьте $AWG_DIR и серверный конфиг вручную, прежде чем запускать установку снова."
     fi
+    _awg_start_if_stopped_for_exit
     die "${why}: установка 3.1 отменена, файлы этой попытки убраны, ключи сервера оставлены для повторного запуска."
 }
 
@@ -9172,7 +9190,7 @@ step6_generate_configs() {
     # повторное создание при наличии артефактов.
     log "Создание серверного конфига..."
     _awg_stop_if_exit_ip_changed
-    render_server_config "${s_bak:-}" || die "Ошибка создания серверного конфига."
+    render_server_config "${s_bak:-}" || { _awg_start_if_stopped_for_exit; die "Ошибка создания серверного конфига."; }
     if [[ -n "${s_bak:-}" && -f "$s_bak" ]] && grep -q '^\[Peer\]' "$s_bak" 2>/dev/null; then
         log "Существующие пиры восстановлены из бэкапа."
     fi

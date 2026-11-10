@@ -152,8 +152,8 @@ STUB
     cat > "$MGMT_DIR/bin/iptables" << 'STUB'
 #!/bin/bash
 case " $* " in
-    *" -C "*) [[ -n "${STUB_IPT_LEFT:-}" && " $* " == *"--to-source ${STUB_IPT_LEFT} "* ]] && exit 0; exit 1 ;;
-    *" -D "*) echo "iptables $*" >> "$CALLS.ipt"; exit 0 ;;
+    *" -C "*) [[ -n "${STUB_IPT_LEFT:-}" && " $* " == *"--to-source ${STUB_IPT_LEFT} "* && ! -e "$CALLS.gone" ]] && exit 0; exit 1 ;;
+    *" -D "*) echo "iptables $*" >> "$CALLS.ipt"; [[ -n "${STUB_IPT_LEFT:-}" && " $* " == *"--to-source ${STUB_IPT_LEFT} "* ]] && : > "$CALLS.gone"; exit 0 ;;
 esac
 exit 0
 STUB
@@ -426,7 +426,7 @@ xresolve() {
         rm -rf "$d"; mkdir -p "$d"
         printf 'PostUp = a; iptables -t nat -I POSTROUTING -s 10.9.9.1/24 -o eth0 -j SNAT --to-source 203.0.113.7\n' > "$d/awg0.conf"
         local want new
-        for pair in "203.0.113.8:stop" ":stop" "203.0.113.7:"; do
+        for pair in "203.0.113.8:stop flag=1" ":stop flag=1" "203.0.113.7:flag=0"; do
             new="${pair%%:*}"; want="${pair#*:}"
             run bash -c '
                 log() { :; }; log_warn() { :; }
@@ -434,8 +434,9 @@ xresolve() {
                 systemctl() { [[ "$1" == is-active ]] && return 0; echo "$1"; }
                 SERVER_CONF_FILE="$1" AWG_EXIT_IP="$2"
                 _awg_stop_if_exit_ip_changed
+                echo "flag=${_AWG_STOPPED_FOR_EXIT:-0}"
             ' _ "$d/awg0.conf" "$new"
-            [ "$output" = "$want" ] || { echo "$s: exit '$new': got '$output', want '$want'"; return 1; }
+            [ "$(paste -sd' ' <<< "$output")" = "$want" ] || { echo "$s: exit '$new': got '$output', want '$want'"; return 1; }
         done
     done
 }
@@ -453,4 +454,32 @@ _exit_check_reports_missing() {
 @test "check reports an exit address that is no longer on the server" {
     require_flock
     each_manage _exit_check_reports_missing
+}
+_exit_rollback_removes_new_rule() {
+    : > "$CALLS.ipt"
+    export STUB_START_FAIL=203.0.113.7 STUB_IPT_LEFT=203.0.113.7
+    manage "$1" exit-ip 203.0.113.7
+    unset STUB_START_FAIL STUB_IPT_LEFT
+    [ "$status" -ne 0 ] || { echo "$1: a failed start reported success"; return 1; }
+    grep -qxF "iptables -t nat -D POSTROUTING -s 10.9.9.1/24 -o eth0 -j SNAT --to-source 203.0.113.7" "$CALLS.ipt" \
+        || { echo "$1: the new rule a failed start left behind was not removed: $(cat "$CALLS.ipt")"; return 1; }
+}
+@test "a failed start removes the new SNAT rule before the rollback" {
+    require_flock
+    each_manage _exit_rollback_removes_new_rule
+}
+
+@test "installer: a step 6 failure after the stop for an exit change starts the service again, both twins" {
+    local s
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        run bash -c '
+            log() { :; }; log_error() { echo "ERR $*"; }
+            '"$(fn "$s" _awg_start_if_stopped_for_exit)"'
+            systemctl() { echo "systemctl $*"; }
+            _awg_start_if_stopped_for_exit; echo "-"
+            _AWG_STOPPED_FOR_EXIT=1; _awg_start_if_stopped_for_exit; _awg_start_if_stopped_for_exit'
+        [ "$output" = $'-\nsystemctl start awg-quick@awg0' ] || { echo "$s: got '$output'"; return 1; }
+        fn "$s" _step6_undo_31 | grep -qxE '\s+_awg_start_if_stopped_for_exit' || { echo "$s: the 3.1 undo does not start the service again"; return 1; }
+        fn "$s" step6_generate_configs | grep -qF '|| { _awg_start_if_stopped_for_exit; die' || { echo "$s: a render failure does not start the service again"; return 1; }
+    done
 }
