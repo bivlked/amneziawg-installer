@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/Architecture-x86__64_|_ARM64_|_ARMv7-green" alt="x86_64 | ARM64 | ARMv7">
   <img src="https://img.shields.io/badge/AmneziaWG-3.1_&#124;_2.0-blueviolet" alt="AmneziaWG 3.1 and 2.0">
   <a href="https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
-  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-6.2.2-blue" alt="Version"></a>
+  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-6.3.0-blue" alt="Version"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/stargazers"><img src="https://img.shields.io/github/stars/bivlked/amneziawg-installer?style=flat" alt="Stars"></a>
   <img src="https://img.shields.io/github/last-commit/bivlked/amneziawg-installer" alt="Last commit">
@@ -34,7 +34,7 @@
 <!-- facts:begin -->
 <!-- Собирается scripts/update-facts-block.sh из данных репозитория.
      Руками не править: check-docs-consistency.sh сверит блок с источниками. -->
-**Факты на 2026-11-09.** Установщик 6.2.2. Сроки поддержки ОС проверены по данным вендоров на 2026-08-29.
+**Факты на 2026-11-10.** Установщик 6.3.0. Сроки поддержки ОС проверены по данным вендоров на 2026-08-29.
 
 | | |
 |---|---|
@@ -394,7 +394,7 @@ cat /sys/module/amneziawg/version    # версия загруженного м�
     > После перезагрузки продолжайте тем же файлом: `sudo bash ./install_amneziawg_en.sh`
 
 5.  **Начальная настройка:** Скрипт интерактивно запросит:
-    * **UDP порт:** Порт для подключения клиентов (1-65535). По умолчанию: `39743`.
+    * **UDP порт:** Порт для подключения клиентов (1-65535). По умолчанию - случайный свободный порт из 10000-59999, его называет итоговый отчёт установки; сменить потом можно командой `manage port <номер>`.
     * **Подсеть туннеля:** Внутренняя сеть для VPN. По умолчанию: `10.9.9.1/24`.
     * **Отключение IPv6:** рекомендуется (`Y`). Речь об IPv6 на самом сервере; попадёт ли в туннель IPv6 вашего устройства, решает режим маршрутизации, см. [IPv6 устройства, `::/0` и локальная сеть](ADVANCED.md#client-ipv6-adv).
     * **Режим маршрутизации:** Определяет, какой трафик пойдет через VPN. По умолчанию `1` (весь трафик, `0.0.0.0/0`) - привычная клиентам форма полного туннеля. Режим `2` (Список Amnezia+DNS) оставляет частные сети (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) вне туннеля, но часть клиентов считает такой список раздельной маршрутизацией и ведёт себя иначе.
@@ -562,7 +562,8 @@ sudo bash ./install_amneziawg_en.sh       # Запуск (+ 2 перезагру
 
 # Управление клиентами
 sudo bash /root/awg/manage_amneziawg.sh add my_phone       # Добавить
-sudo bash /root/awg/manage_amneziawg.sh add my_iphone --psk  # +PresharedKey (Shadowrocket iOS/macOS)
+sudo bash /root/awg/manage_amneziawg.sh add my_tv --no-psk     # Без PresharedKey (по умолчанию он у каждого нового)
+sudo bash /root/awg/manage_amneziawg.sh exit-ip 203.0.113.7    # Выход клиентов со второго IP сервера
 sudo bash /root/awg/manage_amneziawg.sh remove my_phone    # Удалить
 sudo bash /root/awg/manage_amneziawg.sh list                # Список
 sudo bash /root/awg/manage_amneziawg.sh list --json         # Список в JSON (для скриптов)
@@ -710,7 +711,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 <details>
   <summary><strong>В: Не подключается Shadowrocket на iOS/macOS - нужен PresharedKey</strong></summary>
-  <b>О:</b> Для этого у команды <code>add</code> есть флаг <code>--psk</code>: <code>sudo bash /root/awg/manage_amneziawg.sh add my_iphone --psk</code>. В файле клиента появится строка <code>PresharedKey = ...</code> совпадающая с серверным <code>[Peer]</code>. Для уже созданных клиентов: пересоздать с флагом (<code>remove</code> + <code>add --psk</code>) или вручную - сгенерировать ключ <em>один раз</em> (<code>PSK=$(awg genpsk)</code>) и вставить <em>одно и то же значение</em> в обе стороны (серверный <code>[Peer]</code> клиента и клиентский <code>[Peer]</code> сервера); если значения различаются - handshake не пройдёт. <code>regen</code> сохраняет существующий PSK через rotation. Подробнее - в <a href="ADVANCED.md#manage-cli-adv">ADVANCED.md</a>.
+  <b>О:</b> Новые клиенты получают <code>PresharedKey</code> сами: в файле клиента есть строка <code>PresharedKey = ...</code>, совпадающая с серверным <code>[Peer]</code>, так что Shadowrocket к ним подключается сразу. Если сервер поставлен с <code>--no-psk</code>, PSK клиенту даёт флаг <code>--psk</code>: <code>sudo bash /root/awg/manage_amneziawg.sh add my_iphone --psk</code>. Клиента, созданного раньше без PSK, проще пересоздать (<code>remove</code> + <code>add</code>). Вручную тоже можно: сгенерировать ключ <em>один раз</em> (<code>PSK=$(awg genpsk)</code>) и вставить <em>одно и то же значение</em> в обе стороны (серверный <code>[Peer]</code> клиента и клиентский <code>[Peer]</code> сервера); если значения различаются, handshake не пройдёт. <code>regen</code> сохраняет существующий PSK. Подробнее - в <a href="ADVANCED.md#manage-cli-adv">ADVANCED.md</a>.
 </details>
 
 <details>
@@ -719,8 +720,8 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 </details>
 
 <details>
-  <summary><strong>В: Почему порт 39743?</strong></summary>
-  <b>О:</b> Это случайный порт из верхнего диапазона, выбранный как дефолт. Можно изменить при установке: <code>--port=N</code> (любой порт 1-65535). На мобильных сетях, где оператор режет незнакомые порты, часто выручает <code>443/udp</code> - его ставит флаг <code>--mobile</code> вместе с пресетом обфускации.
+  <summary><strong>В: Какой порт слушает сервер и как его сменить?</strong></summary>
+  <b>О:</b> Новая установка берёт случайный свободный порт из диапазона 10000-59999 (кроме 51820 и 51821): один и тот же порт у всех установок был бы их общим признаком. Порт называет итоговый отчёт установки, его видно и в строке <code>ListenPort</code> файла <code>/etc/amnezia/amneziawg/awg0.conf</code>. Задать свой при установке: <code>--port=N</code> (любой порт 1-65535). Сменить на работающем сервере: <code>sudo bash /root/awg/manage_amneziawg.sh port N</code>, правило UFW и конфиги клиентов команда поправит сама, но клиентам нужно раздать новые конфиги, а проброс порта на роутере и фаервол хостера, если они есть, поменять самому. Серверы, поставленные раньше без <code>--port</code>, слушают 39743, пока порт не сменить. На мобильных сетях, где оператор режет незнакомые порты, часто выручает <code>443/udp</code> - его ставит флаг <code>--mobile</code> вместе с пресетом обфускации.
 </details>
 
 <details>

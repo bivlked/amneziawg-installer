@@ -52,6 +52,12 @@ render_server_config() {
 generate_client() {
     local n="$1"
     _call "client $n"
+    # What step 6 asked for the PresharedKey, in a file of its own: the call
+    # sequence the other tests assert stays as it was.
+    printf '%s=%s\n' "$n" "${CLIENT_PSK-unset}" >> "$CALLS.psk"
+    # As the real function does: "auto" is replaced by the generated key, so a
+    # PSK that is not reset per client shows up as the first client's key.
+    [[ "${CLIENT_PSK-}" == auto ]] && CLIENT_PSK="gen-$n"
     # C6 of the real function: an existing client is refused, nothing touched.
     if [[ -e "$KEYS_DIR/$n.private" || -e "$KEYS_DIR/$n.public" || -e "$AWG_DIR/$n.conf" ]]; then
         return 1
@@ -104,6 +110,7 @@ EOF
         declare -F step6_generate_configs >/dev/null || { echo NO_STEP6; exit 7; }
         step6_generate_configs
         echo "RC=$?"
+        echo "PSKVAR=${CLIENT_PSK-unset}"
     ' _ "$src"
 }
 
@@ -380,4 +387,33 @@ t_31_rm_failure_reported() {
 }
 @test "step 6 on 3.1: a config that could not be removed on a first-install undo is reported as an incomplete undo, both twins" {
     both t_31_rm_failure_reported
+}
+
+# ---------- PresharedKey for the default clients (D#371) ----------
+
+s6_psk() { paste -sd'|' "$(dirname "$(s6_dir "$1")")/calls.psk"; }
+
+t_psk_default() {
+    local src="$1" out gen
+    for gen in 3.1 2.0; do
+        out=$(STUB_GEN=$gen step6_run "$src" 'unset NO_PSK')
+        [[ "$out" == *"RC=0"* ]] || { echo "a clean $gen run failed ($src): $out"; return 1; }
+        [ "$(s6_psk "$src")" = "my_phone=auto|my_laptop=auto" ] || { echo "$gen: default clients asked for '$(s6_psk "$src")' ($src)"; return 1; }
+        [[ "$out" == *"PSKVAR=unset"* ]] || { echo "$gen: CLIENT_PSK leaked out of step 6 ($src): $out"; return 1; }
+    done
+}
+@test "step 6: each default client gets its own PresharedKey, on 3.1 and 2.0, both twins" {
+    both t_psk_default
+}
+
+t_psk_off() {
+    local src="$1" out gen
+    for gen in 3.1 2.0; do
+        out=$(export NO_PSK=1 STUB_GEN=$gen; export CLIENT_PSK=auto; step6_run "$src" ':')
+        [[ "$out" == *"RC=0"* ]] || { echo "a $gen run with NO_PSK=1 failed ($src): $out"; return 1; }
+        [ "$(s6_psk "$src")" = "my_phone=unset|my_laptop=unset" ] || { echo "$gen: NO_PSK=1 but the clients asked for '$(s6_psk "$src")' ($src)"; return 1; }
+    done
+}
+@test "step 6: NO_PSK=1 creates the default clients without PresharedKey, even with CLIENT_PSK in the environment, both twins" {
+    both t_psk_off
 }

@@ -62,6 +62,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 - [📱 vpn:// URI Import](#vpnuri-adv)
 - [📱 MTU and Mobile Clients](#mtu-mobile-adv)
 - [🚧 Host Unreachable from Russia (Hetzner): AS-based Blocking](#as-blocking-adv)
+- [🔀 A Separate Exit Address: Entry and Exit on Different IPs](#exit-ip-adv)
 - [🛡️ Active Probing and Obfuscation Without a Proxy](#active-probing-adv)
 - [📋 Client Compatibility](#client-compat-adv)
   - [Which AmneziaWG generation a client speaks](#client-gen-adv)
@@ -846,6 +847,7 @@ ContentPaddingAddition = 32-128
 [Peer]
 #_Name = my_phone
 PublicKey = [CLIENT_PUBLIC_KEY]
+PresharedKey = [PRESHARED_KEY]
 AllowedIPs = 10.9.9.2/32
 ```
 
@@ -878,6 +880,7 @@ ContentPaddingAddition = 32-128
 
 [Peer]
 PublicKey = [SERVER_PUBLIC_KEY]
+PresharedKey = [PRESHARED_KEY]
 Endpoint = 203.0.113.1:39743
 AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 33
@@ -941,6 +944,7 @@ I1 = <r 2><b 0x858000010002000000001c><rc 28><b 0x0463646e730669636c6f756403636f
 [Peer]
 #_Name = my_phone
 PublicKey = [CLIENT_PUBLIC_KEY]
+PresharedKey = [PRESHARED_KEY]
 AllowedIPs = 10.9.9.2/32
 ```
 
@@ -1007,6 +1011,7 @@ I1 = <r 2><b 0x858000010002000000001c><rc 28><b 0x0463646e730669636c6f756403636f
 
 [Peer]
 PublicKey = [SERVER_PUBLIC_KEY]
+PresharedKey = [PRESHARED_KEY]
 Endpoint = 203.0.113.1:39743
 AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 33
@@ -1097,7 +1102,8 @@ Options:
   --json                Machine-readable JSON output (v5.21.0: most commands, see the "JSON interface" section)
   --expires=DURATION    Expiry duration for add (1h, 12h, 1d, 7d, 30d, 4w)
   --apply-mode=MODE     syncconf (default) or restart (bypass kernel panic)
-  --psk                 (add only) generate a PresharedKey for the new client (v5.11.1+)
+  --psk                 (add only) give the client a PresharedKey even if the server was installed with --no-psk
+  --no-psk              (add only) create the client without a PresharedKey
   --allowed-ips=LIST    (add only) per-client AllowedIPs - comma-separated CIDRs;
                         without the flag the server-wide routing mode is used
   --yes                 Do not prompt for confirmation (ENV: AWG_YES=1)
@@ -1106,7 +1112,7 @@ Options:
   --vpn                 (qr only) the vpn:// link QR code instead of the config QR code
 ```
 
-> **`--psk`** - optional extra layer on top of the AmneziaWG obfuscation. Generates a 32-byte symmetric key via `awg genpsk` and writes it to both the server `[Peer]` and the client `[Peer]` (`PresharedKey = ...`). Compatible with any WireGuard/AmneziaWG client. In batch mode (`add c1 c2 c3 --psk`) each client gets its own PSK. Without the flag clients are created without `PresharedKey` (by default - the AmneziaWG obfuscation is enough for most scenarios). The flag only affects the new clients created by this `add` invocation - existing clients without PSK stay untouched and keep connecting as before.
+> **PresharedKey** - an extra symmetric layer on top of the AmneziaWG obfuscation. Every new client, including the installer's clients, gets its own 32-byte key from `awg genpsk`: it is written to both the server and the client `[Peer]` (`PresharedKey = ...`) and goes into the `vpn://` link and the QR codes. A PSK does not change packet sizes or the masking, and any WireGuard or AmneziaWG client understands it. In batch mode (`add c1 c2 c3`) each client gets its own PSK. Without a PSK: `add <name> --no-psk` for one call, or for all new clients at once, an install with `--no-psk` (saved as `NO_PSK=1` in `/root/awg/awgsetup_cfg.init`); on such a server `add <name> --psk` still gives the client a PSK. Clients already issued do not change: those without a PSK connect as before, and `regen` keeps whatever a client has.
 
 > **`--allowed-ips=LIST`** - the client's own routes right at creation, without a follow-up `modify` (Issue #253). A comma-separated list of IPv4/IPv6 CIDRs: `add phone --allowed-ips="10.0.0.0/8, 192.168.0.0/16"`. Validated and normalized before the first client is created (an invalid or EMPTY value aborts the command creating nothing) and applied to every name in the batch - like `--expires`. The value goes through the same rules as the global mode: a full-tunnel IPv4 list gets an IPv6 route next to it (the iOS rule): `::/0` with `0.0.0.0/0`, `2000::/3` with a service address for a list, and on dual-stack `::/0` with native server IPv6 or the tunnel ULA without it; a split list never gets `::/0`, and a list with explicit IPv6 tokens (e.g. `0.0.0.0/0, ::/0`) is written as is - and when a full tunnel spells out IPv6 without `::/0`, `add` warns right away, the way `regen` does. Without the flag - the server-wide routing mode, as before. For existing clients `modify` still changes routes, and `regen` preserves such per-client lists.
 >
@@ -1130,7 +1136,7 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 
 > **How `manage` finds clients in the server config.** Every `[Peer]` created by my installer or by `manage add` has a marker comment `#_Name = <name>` on the first line of the block. That marker is what `list`, `remove`, `regen`, `modify` look up. If you are migrating `awg0.conf` from an older server or adding a peer by hand, include `#_Name = <name>` right after `[Peer]` — otherwise `manage` will not see the client. Example: the `[Peer]` block in the server config above (see [Configuration Examples](#config-examples-adv)).
 
-* **`add <name> [name2 ...] [--expires=DURATION] [--psk] [--allowed-ips=LIST]`:** Add one or multiple clients. In batch mode, `awg syncconf` is called once for all. With `--expires` - expiry applies to all clients. With `--psk` - each client gets its own PresharedKey (v5.11.1+). With `--allowed-ips` - each gets per-client routes instead of the global mode (Issue #253).
+* **`add <name> [name2 ...] [--expires=DURATION] [--psk|--no-psk] [--allowed-ips=LIST]`:** Add one or multiple clients. In batch mode, `awg syncconf` is called once for all. With `--expires` - expiry applies to all clients. Each client gets its own PresharedKey; `--no-psk` creates clients without one, `--psk` gives one even on a server installed with `--no-psk`. With `--allowed-ips` - each gets per-client routes instead of the global mode (Issue #253).
 * **`remove <name> [name2 ...]`:** Remove one or multiple clients. In batch mode, apply_config is called once for all.
 * **`list [-v] [--json]`:** List clients (with details when using `-v`; `--json` - machine-readable, includes the `client_ipv6` and `expires_at` fields).
 * **`regen [name ...] [--reset-routes]`:** Regenerate `.conf`/`.png` files for the listed clients or all at once. By default preserves the client's individual `AllowedIPs`/`DNS`/`PersistentKeepalive` (set via `modify`). With `--reset-routes` - resets `AllowedIPs` to the current global routing mode from `awgsetup_cfg.init`; use it after changing the mode via reinstall (`--force --route-all` / `--route-amnezia` / `--route-custom=`) so the new mode reaches existing clients (Issue #170).
@@ -1140,6 +1146,8 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 * **`check` / `status`:** Check server status (service, port, module, the installation's protocol generation 3.1 or 2.0, and the obfuscation parameters).
 * **`show`:** Run `awg show`.
 * **`qr <name> [--vpn]`:** Print the client's QR code right in the terminal, to scan it with a phone without copying a picture off the server. Without the flag - the config QR for the AmneziaWG app, with `--vpn` - the `vpn://` link QR for Amnezia VPN. A 3.1 config QR takes about 90-110 characters in width and 45-55 lines, a `vpn://` link QR about 120 by 60; if the window is smaller, the command warns up front, and then make the terminal font smaller. The code holds the client's private key: show it when nobody can see the screen, and run `clear` after scanning. `--json` is not supported.
+* **`port <number>`:** Change the UDP port of a running server: the new port goes into `ListenPort` of `awg0.conf` and `AWG_PORT` of `awgsetup_cfg.init`, if ufw is installed, the new port is opened in it before the restart and the old one closed after (even with UFW off), then every client is regenerated (the port is part of the `Endpoint`). If the server does not come up on the new port, the command puts the old port and both files back. A client that could not be regenerated is named and the command ends with an error, while the port stays new. The clients need the new configs or QR codes, and a port forward on a router or the host's firewall has to be changed by hand. A busy, invalid or unchanged port changes nothing.
+* **`exit-ip <IPv4|off>`:** Set the address client traffic leaves to the internet from, or remove it (`off`). Clients do not change, the service restarts. Details - [A separate exit address](#exit-ip-adv).
 * **`restart`:** Restart the AmneziaWG service.
 * **`diagnose [--carrier=NAME]`:** Self-troubleshooting: checks the kernel module, sysctl and UFW; with `--carrier=NAME` it compares AWG parameters against a mobile carrier profile. Names: `beeline_msk`, `yota_msk`, `tele2_msk`, `tele2_krasnoyarsk`, `tattelecom`, `megafon_regions`, `tmobile_us` (the last name is historical: it is the Russian T-Mobile, Moscow and region).
 * **`repair-module`** (alias `repair`): Rebuild/restore the amneziawg kernel module (DKMS) after a server kernel upgrade; for kernels 7.0.0-38 and later see [Known Limitations](#kernel-70-backport-adv).
@@ -1289,7 +1297,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common_en.sh` and `manage_amneziawg_en.sh` (the Russian installer: `awg_common.sh` and `manage_amneziawg.sh`) from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.2.2/awg_common_en.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.0/awg_common_en.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -1443,7 +1451,7 @@ If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULL
 
 <details>
   <summary><strong>Q: How do I set up port forwarding (NAT) for AmneziaWG?</strong></summary>
-  <b>A:</b> If the server is behind NAT (e.g., in a cloud with a private IP): 1. Forward the AmneziaWG UDP port (default 39743) to the external IP. 2. During installation, specify the external IP: <code>--endpoint=EXTERNAL_IP</code>. 3. Make sure the provider's firewall allows incoming UDP on that port.
+  <b>A:</b> If the server is behind NAT (e.g., in a cloud with a private IP): 1. Forward the AmneziaWG UDP port (named in the final install report and in the <code>ListenPort</code> line of <code>awg0.conf</code>) to the external IP. 2. During installation, specify the external IP: <code>--endpoint=EXTERNAL_IP</code>. 3. Make sure the provider's firewall allows incoming UDP on that port.
 </details>
 
 <details>
@@ -1559,7 +1567,7 @@ sudo systemctl restart awg-quick@awg0</pre>
   <br>
   <b>QUIC-mimicry I1 (experimental):</b> instead of a random <code>&lt;r N&gt;</code> you can set I1 as a block that mimics the start of a QUIC packet: <code>I1 = &lt;b 0xc30000000108&gt;&lt;r 8&gt;&lt;b 0x08&gt;&lt;r 8&gt;&lt;b 0x0045dc&gt;&lt;t&gt;&lt;r 16&gt;</code>. The first bytes (<code>0xC3</code> + version) look like a QUIC v1 long-header, and DPI that classifies UDP/443 as QUIC let the flow through in this report. It held for 2+ days on Tele2/Megafon (Kemerovo) (Issue <a href="https://github.com/bivlked/amneziawg-installer/issues/42">#42</a>, @Fourdot-co). This is a client-side parameter, changed only in client <code>.conf</code> files, no server sync needed; mind that editing just one exported <code>.conf</code> will be lost on the next client <code>regen</code>. Note: do not base it on a TLS ClientHello (<code>&lt;b 0x160301...&gt;</code>) - that is a TCP format, over UDP the DPI will see the TCP structure and drop the packet. For UDP mimicry use a QUIC long-header or DTLS (the same ClientHello handshake type, but with a record header that adds epoch and sequence number).
   <br>
-  <b>How to check whether a carrier is blocking your VPN server (DPI/TSPU diagnostics):</b> if AmneziaWG cannot punch through on a particular carrier, first find out whether the server IP itself is blocked and by what signal. The open-source scanner <a href="https://github.com/pwnnex/ByeByeVPN">ByeByeVPN</a> inspects the address from the censor's side and helps tell an obfuscation-parameter problem (then tune Jc/I1 per the table above) apart from an AS/IP-level block (then see the <a href="#as-blocking-adv">Hosting unreachable from Russia</a> section). For reference, a stock install scores 100/100 CLEAN with this scanner (checked against version 2.8.3 in August 2026). Its AmneziaWG probes go to ports 51820 and 55555 while the installer listens on 39743 by default; and even on 51820 the server leaves those probes unanswered, because it silently drops a handshake that was not built with its public key. Do not read that as "undetectable": the scanner asks the server questions, while a carrier's passive traffic analysis works differently and takes no part in this check.
+  <b>How to check whether a carrier is blocking your VPN server (DPI/TSPU diagnostics):</b> if AmneziaWG cannot punch through on a particular carrier, first find out whether the server IP itself is blocked and by what signal. The open-source scanner <a href="https://github.com/pwnnex/ByeByeVPN">ByeByeVPN</a> inspects the address from the censor's side and helps tell an obfuscation-parameter problem (then tune Jc/I1 per the table above) apart from an AS/IP-level block (then see the <a href="#as-blocking-adv">Hosting unreachable from Russia</a> section). For reference, a stock install scores 100/100 CLEAN with this scanner (checked against version 2.8.3 in August 2026). Its AmneziaWG probes go to ports 51820 and 55555 while my installer listened on 39743 by default back then (a new install now takes a random port); and even on 51820 the server leaves those probes unanswered, because it silently drops a handshake that was not built with its public key. Do not read that as "undetectable": the scanner asks the server questions, while a carrier's passive traffic analysis works differently and takes no part in this check.
 </details>
 
 <details>
@@ -2114,7 +2122,7 @@ The rule is applied automatically on install and reinstall (`--force`) for v5.17
 
 If the tunnel does not come up at all on cellular (the handshake never completes) while it works fine on Wi-Fi, there are TWO known causes, and one look at the server tells them apart.
 
-**Cause one: the port.** By default the server listens on UDP 39743; some carriers drop that non-standard UDP port but reliably pass `443/udp` - it looks like QUIC/HTTP3. `--preset=mobile` does not help here: it changes the traffic disguise, not the port. The tell: the server sees **nothing at all** - `tcpdump` on your port is silent and there is no peer activity in `awg show`.
+**Cause one: the port.** The server listens on a random UDP port in 10000-59999 (older installs without `--port` on 39743); some carriers drop that non-standard UDP port but reliably pass `443/udp` - it looks like QUIC/HTTP3. `--preset=mobile` does not help here: it changes the traffic disguise, not the port. The tell: the server sees **nothing at all** - `tcpdump` on your port is silent and there is no peer activity in `awg show`.
 
 **Cause two: the shape of the `I1` concealment packet.** The tell is the opposite: packets from the client **do arrive**, the peer's `endpoint` updates, the received counter grows, and `latest handshake` never moves. Analysis and measurement: [the handshake never completes on cellular](#no-hs-mobile-adv).
 
@@ -2169,6 +2177,39 @@ Control: a tunnel to a server in a different AS (US) came up and held on all thr
 
 ---
 
+<a id="exit-ip-adv"></a>
+## 🔀 A Separate Exit Address: Entry and Exit on Different IPs
+
+If the server has two public IPv4 addresses, clients can connect to one while their traffic leaves to the internet from the other. Sites and apps see only the exit address. According to [reports](https://github.com/net4people/bbs/issues/671), with two addresses it is the exit that gets blocked while the entry keeps working, and then it is enough to change the exit address without reissuing clients. The request came in [#384](https://github.com/bivlked/amneziawg-installer/issues/384).
+
+**What you need.** The second address has to be on an interface of the server permanently. The host assigns it, but sometimes you have to configure it yourself, for example with netplan (take the interface name from `ip -br addr`):
+
+```yaml
+# /etc/netplan/60-exit-ip.yaml
+network:
+  version: 2
+  ethernets:
+    ens3:
+      addresses: [203.0.113.7/32]
+```
+
+Then `sudo netplan apply`. Before the install, check that the address works: `curl -s --interface 203.0.113.7 https://api.ipify.org` should return `203.0.113.7`. On my test server the address started working only after a restart of the server from the host's panel. After the install this check no longer works: the installer's general MASQUERADE rule rewrites the server's own traffic to the main address too.
+
+**At install time** the entry address is set with `--endpoint` (clients get it) and the exit address with `--exit-ip`:
+
+```bash
+sudo bash install_amneziawg_en.sh --endpoint=198.51.100.2 --exit-ip=203.0.113.7
+```
+
+Better to give `--endpoint` explicitly here: with two addresses the installer may detect either of them.
+
+**On a running server:** `sudo bash /root/awg/manage_amneziawg.sh exit-ip 203.0.113.7`, to remove it `exit-ip off`. Client configs do not change, the service restarts, and clients lose the connection for a few seconds. To check from a client: `curl -s ifconfig.me` returns the exit address. Connections already open (a long download, a call) are flushed through `conntrack` if that tool is on the server (`apt install conntrack`); without it they keep the old address until they reconnect.
+
+**How it works.** A `SNAT --to-source <exit address>` rule for the client subnet goes into the server's `PostUp`, above the usual MASQUERADE; the server's own traffic (updates, DNS) still leaves from the main address. If the exit address disappears from the interface, the rule still sets it as the source, so client traffic does not leave through the entry address. What happens next depends on the host. Usually its router finds the address by ARP: while it remembers the address the connection goes on, and when it asks again the server does not answer, replies stop coming back and the connection stops. On my stand this took 9 to 28 seconds in three measurements, not a single packet left from the entry address in that time, and once the address was back the connection returned within a second. If the host routes the address to the server without ARP, the connection may keep working. `manage check` shows a missing address.
+
+**Limits.** IPv4 only: an exit address does not combine with the IPv6 tunnel for clients (`--allow-ipv6-tunnel`), the installer and `manage` refuse it. The exit address cannot be the entry address, the tunnel address or loopback. A second address from the same host is often in the same subnet: while single addresses get blocked, that is enough, but if the subnet is closed, both go. For setups with several servers, see the [cascade](CASCADE.en.md).
+
+---
 <a id="active-probing-adv"></a>
 ## 🛡️ Active Probing and Obfuscation Without a Proxy
 

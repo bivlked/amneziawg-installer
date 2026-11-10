@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on 32-bit ARM) installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 6.2.2
-# Date: 2026-11-09
+# Version: 6.3.0
+# Date: 2026-11-10
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -40,7 +40,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.2.2"
+SCRIPT_VERSION="6.3.0"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -71,8 +71,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="053a80d7863dceb8f7ad0b6e06ca8f997875e20bc301d1429a25ea0f8f230836"
-MANAGE_SCRIPT_SHA256="7b13ce5e525424bcd5fb72e152b15d145909a90fb95009617fc1363c8616fdab"
+COMMON_SCRIPT_SHA256="e10db6ebd0ebe13bc1cf75150a7473f2e6d354316664ae1933170350466493bd"
+MANAGE_SCRIPT_SHA256="dab0a8c986486b73ef73846c4b90bdf7b10347c6edc1299a589d09b94a789a03"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back
@@ -87,7 +87,7 @@ AWG2_PIN_TAG="v1.0.20260725"
 AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
 
 # CLI flags
-UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PSK=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 REPAIR_MODULE=0
 IPOPTS_GUARD=0
@@ -96,7 +96,7 @@ _AWG_KMOD_T1=0
 AWG_ENSURE_HELPER=/usr/local/sbin/amneziawg-ensure-module
 _APT_UPDATED=0
 CLI_PORT=""; CLI_SUBNET=""; CLI_DISABLE_IPV6="default"; CLI_SSH_PORT=""; CLI_SSH_PORT_SET=0
-CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PREBUILT=0; CLI_CLIENT_IPV6_DIRECT=0; CLI_KEEP_PACKAGES=0
+CLI_ROUTING_MODE="default"; CLI_CUSTOM_ROUTES=""; CLI_ENDPOINT=""; CLI_NO_TWEAKS=0; CLI_NO_CPS=0; CLI_NO_PSK=0; CLI_EXIT_IP=""; CLI_EXIT_IP_SET=0; CLI_NO_PREBUILT=0; CLI_CLIENT_IPV6_DIRECT=0; CLI_KEEP_PACKAGES=0
 CLI_ALLOW_IPV6_TUNNEL=0
 CLI_I1=""; CLI_I1_SET=0
 # A pinned I1 comes only from the init file, not from the calling shell.
@@ -285,6 +285,9 @@ _install_cleanup() {
     type _awg_cleanup &>/dev/null && _awg_cleanup
     # The apt retry ban lives only while the installer runs.
     declare -F _apt_noretry_disable >/dev/null && _apt_noretry_disable
+    # A service that step 6 stopped for an exit address change is not left down.
+    declare -F _awg_start_if_stopped_for_exit >/dev/null && _awg_start_if_stopped_for_exit
+    return 0
 }
 # On INT/TERM the cleanup used to run but the script did NOT exit - execution
 # continued past the interrupted command (dangerous mid apt/dpkg/config edits)
@@ -318,6 +321,7 @@ while [[ $# -gt 0 ]]; do
         --route-custom=*) CLI_ROUTING_MODE=3; CLI_CUSTOM_ROUTES="${1#*=}" ;;
         --isolation=*)   CLI_ISOLATION="${1#*=}" ;;
         --endpoint=*)    CLI_ENDPOINT="${1#*=}" ;;
+        --exit-ip=*)     CLI_EXIT_IP="${1#*=}"; CLI_EXIT_IP_SET=1 ;;
         --server-name=*) CLI_SERVER_NAME="${1#*=}" ;;
         --mobile)        CLI_MOBILE=1 ;;
         --protocol=*)    CLI_PROTOCOL="${1#*=}"; CLI_PROTOCOL_SET=1 ;;
@@ -343,6 +347,7 @@ while [[ $# -gt 0 ]]; do
         --yes|-y)        AUTO_YES=1 ;;
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
         --no-cps)        NO_CPS=1; CLI_NO_CPS=1 ;;
+        --no-psk)        NO_PSK=1; CLI_NO_PSK=1 ;;
         --no-prebuilt)   NO_PREBUILT=1; CLI_NO_PREBUILT=1 ;;
         --client-ipv6-direct) CLI_CLIENT_IPV6_DIRECT=1 ;;
         --keep-packages) KEEP_PACKAGES=1; CLI_KEEP_PACKAGES=1 ;;
@@ -776,6 +781,9 @@ Options:
   --isolation=on|off    Isolate VPN clients from each other (default on).
                         off: the tunnel subnet is added to client AllowedIPs
   --endpoint=ADDR       External server endpoint: FQDN, IPv4 or [IPv6] (NAT)
+  --exit-ip=IPv4        A second server address that client traffic leaves to the
+                        internet from (clients still connect to --endpoint);
+                        the address has to be on an interface, off removes it
   --server-name=NAME    Server name shown in the Amnezia app on vpn:// import
                         (default 'AWG Server'; no quotes or control characters)
   --mobile              Mobile setup in one flag: --preset=mobile + port 443/udp
@@ -820,6 +828,9 @@ Options:
                         the whole packet at most 1024 bytes).
                         The value is pinned: a reinstall keeps it, --no-cps or an
                         explicit --preset/--mobile/--jc/--jmin/--jmax drops it
+  --no-psk              Create clients without a PresharedKey: both the installer's
+                        clients and new manage add clients (by default each one gets
+                        its own PSK; manage add --psk brings it back for one client)
   --no-prebuilt        On ARM, do not install the prebuilt module package from
                         the arm-packages release; build the module with DKMS
 
@@ -2516,7 +2527,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PREBUILT|KEEP_PACKAGES|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PSK|AWG_EXIT_IP|NO_PREBUILT|KEEP_PACKAGES|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT|\
                 AWG_PROTOCOL_SOURCE|AWG_PROTOCOL_FALLBACK)
                     export "$key=$value"
@@ -3174,6 +3185,142 @@ rand_range() {
         random_val=$(( (RANDOM << 16) ^ (RANDOM << 8) ^ RANDOM ))
     fi
     echo $(( (random_val % range) + min ))
+}
+
+# A random free UDP port for a new install: 10000-59999, except 51820 and 51821
+# (the WireGuard defaults) and ports already in use. The same 39743 on every
+# install was a trait they all shared (ntc t/22685 #35). None found - code 1.
+_awg_pick_random_port() {
+    local p i busy
+    busy=$(ss -Hlun 2>/dev/null | awk '{n=split($4,a,":"); print a[n]}')
+    for (( i = 0; i < 64; i++ )); do
+        p=$(rand_range 10000 59999)
+        [[ "$p" == 51820 || "$p" == 51821 ]] && continue
+        grep -qxF -- "$p" <<< "$busy" && continue
+        printf '%s\n' "$p"
+        return 0
+    done
+    return 1
+}
+
+# The default port for step 0. A first install (no init yet) gets a random one;
+# with an existing init the port comes from it, and 39743 stays the fallback
+# for an init without AWG_PORT, as before.
+_awg_default_port() {
+    local p
+    if [[ -f "$CONFIG_FILE" ]]; then
+        printf '39743\n'
+        return 0
+    fi
+    if p=$(_awg_pick_random_port); then
+        printf '%s\n' "$p"
+    else
+        log_warn "Could not pick a random free port, using 39743."
+        printf '39743\n'
+    fi
+}
+
+# --exit-ip (I#384): the exit address has to be an IPv4 on an interface of this
+# server and does not combine with the IPv6 tunnel for clients: SNAT changes
+# IPv4 only, and client IPv6 would bypass the exit address. The reason goes to
+# stdout, code 1.
+_awg_exit_ip_check() {
+    local ip="$1" o
+    if ! [[ "$ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+        printf '%s\n' "exit address '$ip' does not look like IPv4"
+        return 1
+    fi
+    for o in "${BASH_REMATCH[@]:1}"; do
+        if (( 10#$o > 255 )); then printf '%s\n' "exit address '$ip' does not look like IPv4"; return 1; fi
+    done
+    if [[ "${ALLOW_IPV6_TUNNEL:-0}" == "1" ]]; then
+        printf '%s\n' "an exit address does not combine with the IPv6 tunnel for clients (--allow-ipv6-tunnel): SNAT changes IPv4 only, client IPv6 would bypass the exit address"
+        return 1
+    fi
+    if [[ -n "${AWG_ENDPOINT:-}" && "$AWG_ENDPOINT" == "$ip" ]]; then
+        printf '%s\n' "$ip is the entry address (--endpoint) clients connect to; the exit address has to be a different one"
+        return 1
+    fi
+    # Without --endpoint the entry address is found on its own: it is the address the
+    # server leaves from by the default route (MASQUERADE uses it anyway). Local, no network.
+    if [[ -z "${AWG_ENDPOINT:-}" ]]; then
+        local src
+        src=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}' | head -n 1)
+        if [[ -n "$src" && "$src" == "$ip" ]]; then
+            printf '%s\n' "$ip is the main address of the server: without --endpoint clients connect to it; the exit address has to be a different one (or set --endpoint to the entry address)"
+            return 1
+        fi
+    fi
+    if ! ip -4 -o addr show 2>/dev/null | awk '$2 !~ /^(awg|wg|lo)/ {for(i=1;i<NF;i++) if($i=="inet"){split($(i+1),a,"/"); print a[1]}}' | grep -qxF -- "$ip"; then
+        printf '%s\n' "address $ip is not on an external interface of the server (tunnels and loopback do not count); configure it permanently (in netplan, for example) and try again"
+        return 1
+    fi
+    return 0
+}
+
+# Step 0: --no-psk turns it on, a persisted NO_PSK=1 stays (the init loaded
+# earlier would otherwise overwrite the flag). Any other value in the init is
+# refused: silently reading it as 0 would issue a PSK against the saved choice.
+# Clients already issued do not change.
+_awg_resolve_no_psk() {
+    [[ "${CLI_NO_PSK:-0}" -eq 1 ]] && NO_PSK=1
+    case "${NO_PSK:-0}" in
+        0|1) NO_PSK=${NO_PSK:-0} ;;
+        *) die "NO_PSK in $CONFIG_FILE must be 0 or 1, it is '${NO_PSK}'. Fix or remove the line." ;;
+    esac
+    if [[ "$NO_PSK" -eq 1 ]]; then
+        log "PresharedKey for new clients is off (--no-psk / persisted NO_PSK=1)."
+    fi
+    return 0
+}
+
+# Step 0: the client exit address (I#384). The flag sets it, a saved one stays
+# and is checked again (the address may be gone), off removes it. An empty
+# --exit-ip= is refused: that is what an unset variable looks like, and the exit
+# would silently stay on the entry.
+_awg_resolve_exit_ip() {
+    local why
+    if [[ "${CLI_EXIT_IP_SET:-0}" -eq 1 ]]; then
+        [[ -n "$CLI_EXIT_IP" ]] || die "Empty --exit-ip=: give an IPv4 exit address or off."
+        if [[ "$CLI_EXIT_IP" == off ]]; then AWG_EXIT_IP=""; else AWG_EXIT_IP="$CLI_EXIT_IP"; fi
+    fi
+    if [[ -n "${AWG_EXIT_IP:-}" ]]; then
+        why=$(_awg_exit_ip_check "$AWG_EXIT_IP") || die "--exit-ip: ${why}."
+        log "Client exit address: $AWG_EXIT_IP (clients still connect to the entry address)."
+    fi
+    return 0
+}
+
+# Step 6: a reinstall that changes the exit address. The restart in step 7 would
+# remove rules by the PostDown of the NEW file, and the old SNAT rule would stay
+# above the MASQUERADE. So the service stops before the render: the PostDown of
+# the old file removes its rule, and step 7 starts the service again.
+_awg_stop_if_exit_ip_changed() {
+    local old
+    [[ -f "$SERVER_CONF_FILE" ]] || return 0
+    old=$(grep -E '^PostUp[[:space:]]*=' "$SERVER_CONF_FILE" | tr -d '\r' | grep -oE 'SNAT --to-source [0-9.]+' | head -1 | awk '{print $3}')
+    [[ "$old" == "${AWG_EXIT_IP:-}" ]] && return 0
+    systemctl is-active --quiet awg-quick@awg0 || return 0
+    log "The exit address changes ('${old:-none}' -> '${AWG_EXIT_IP:-none}'): the service is stopped before the new config is written."
+    # Mark before the stop: an interruption or a failed stop also bring the service up on exit.
+    _AWG_STOPPED_FOR_EXIT=1
+    if ! systemctl stop awg-quick@awg0; then
+        die "The service did not stop: the exit address is unchanged and the config untouched. Check: systemctl status awg-quick@awg0"
+    fi
+}
+
+# The install did not reach step 7 after such a stop (a step 6 failure, die, an
+# interruption): the service comes up on the config on disk (the render is
+# atomic, the 3.1 undo puts the previous one back) instead of staying down until
+# a rerun. Called by the step 6 undo and _install_cleanup; step 7 clears the mark.
+_awg_start_if_stopped_for_exit() {
+    [[ "${_AWG_STOPPED_FOR_EXIT:-0}" -eq 1 ]] || return 0
+    _AWG_STOPPED_FOR_EXIT=0
+    if systemctl start awg-quick@awg0; then
+        log "The service stopped for the exit address change is started again."
+    else
+        log_error "The service stopped for the exit address change did not start: systemctl status awg-quick@awg0"
+    fi
 }
 
 # _awg_size_collisions <S1> <S2> <S3> <S4> : whether the receiver can take a DATA
@@ -5252,6 +5399,25 @@ create_diagnostic_report() {
 # Uninstall
 # ==============================================================================
 
+# Ports whose UFW rules --uninstall removes: AWG_PORT from the init, a deferred
+# PREV_AWG_PORT and the ListenPort of the live awg0.conf (manage port changes it
+# too). Only numbers 1-65535, no repeats; nothing to read - empty. Guessing 39743
+# is no longer possible: with a random default port it would be someone else's rule.
+_awg_uninstall_ports() {
+    local p out="" init_port="" prev_port="" live_port=""
+    if [[ -f "$CONFIG_FILE" ]]; then
+        init_port=$(safe_read_config_key "AWG_PORT" "$CONFIG_FILE" 2>/dev/null)
+        prev_port=$(safe_read_config_key "PREV_AWG_PORT" "$CONFIG_FILE" 2>/dev/null)
+    fi
+    live_port=$(awk -F= '/^[[:space:]]*ListenPort[[:space:]]*=/{gsub(/[[:space:]\r]/,"",$2); print $2; exit}' "$SERVER_CONF_FILE" 2>/dev/null)
+    for p in "$init_port" "$prev_port" "$live_port"; do
+        [[ "$p" =~ ^[1-9][0-9]{0,4}$ ]] && (( p <= 65535 )) || continue
+        [[ " $out " == *" $p "* ]] && continue
+        out+="${out:+ }$p"
+    done
+    printf '%s\n' "$out"
+}
+
 step_uninstall() {
     log "### AMNEZIAWG UNINSTALL ###"
     echo ""
@@ -5343,14 +5509,13 @@ step_uninstall() {
     if [[ "$saved_no_tweaks" -eq 0 ]]; then
         log "Cleaning up AmneziaWG UFW rules..."
         if command -v ufw &>/dev/null; then
-            local port_to_del
-            if [[ -f "$CONFIG_FILE" ]]; then
-                # shellcheck source=/dev/null
-                port_to_del=$(safe_read_config_key "AWG_PORT" "$CONFIG_FILE")
-            fi
-            port_to_del=${port_to_del:-39743}
+            local _uport _uports
             # Removing our rules is ALWAYS performed (idempotent)
-            ufw delete allow "${port_to_del}/udp" 2>/dev/null
+            _uports=$(_awg_uninstall_ports)
+            [[ -n "$_uports" ]] || log_warn "The VPN port was not found in $CONFIG_FILE or $SERVER_CONF_FILE: check its UFW rule yourself (ufw status)."
+            for _uport in $_uports; do
+                ufw delete allow "${_uport}/udp" 2>/dev/null
+            done
             # To delete a route rule we need an exact match with how it was created:
             # "ufw route allow in on awg0 out on <nic>". Without "out on", UFW will
             # not find the rule and it stays in ufw status. Discussion #41.
@@ -5761,6 +5926,10 @@ export AWG_PRESET='${AWG_PRESET:-default}'
 export NO_TWEAKS=${NO_TWEAKS}
 export KEEP_PACKAGES=${KEEP_PACKAGES:-1}
 export NO_CPS=${NO_CPS}
+# 1 - new clients without a PresharedKey (--no-psk); manage add --psk turns it on for one client.
+export NO_PSK=${NO_PSK:-0}
+# Client exit address (--exit-ip). Empty - traffic leaves from the entry address.
+export AWG_EXIT_IP='${AWG_EXIT_IP:-}'
 export NO_PREBUILT=${NO_PREBUILT:-0}
 # Client devices' IPv6 directly, around the tunnel (mode 2 only). 0 - through the tunnel.
 export CLIENT_IPV6_DIRECT=${CLIENT_IPV6_DIRECT:-0}
@@ -5828,7 +5997,8 @@ initialize_setup() {
     check_kernel_version
     check_free_space
 
-    local default_port=39743
+    local default_port
+    default_port=$(_awg_default_port)
     local default_subnet="10.9.9.1/24"
     local config_exists=0
 
@@ -5839,6 +6009,7 @@ initialize_setup() {
     ALLOWED_IPS_MODE="default"
     ALLOWED_IPS=""
     AWG_ENDPOINT=""
+    AWG_EXIT_IP=""
     CLIENT_ISOLATION=""
     # Hard reset (not ${VAR:-}): the internal ownership marker must not be
     # inherited from the environment - an externally exported variable would
@@ -6224,6 +6395,9 @@ initialize_setup() {
         log "CPS (I1) disabled (--no-cps / persisted NO_CPS=1): the desktop AmneziaVPN on macOS does not support CPS."
     fi
 
+    _awg_resolve_no_psk
+
+
     # --no-prebuilt: the flag turns it on, a persisted NO_PREBUILT=1 survives the
     # reboots (step 2 runs in another process). To undo, delete the line from init.
     # A safety flag: "true" or "yes" in the file would read as "no" under -eq 1, and
@@ -6247,6 +6421,9 @@ initialize_setup() {
         _client_dns_shape_ok "$CLIENT_DNS" \
             || die "CLIENT_DNS in $CONFIG_FILE is invalid ('$CLIENT_DNS'): IP addresses separated by commas are needed, with no empty items."
     fi
+
+    _awg_resolve_exit_ip
+
 
     # Save configuration
     _awg_save_init
@@ -6314,7 +6491,7 @@ initialize_setup() {
     if (( current_step > 4 )) && { [[ -n "$CLI_PORT" ]] || [[ -n "$CLI_SUBNET" ]] \
         || [[ -n "$CLI_SSH_PORT" ]] || [[ "$CLI_ROUTING_MODE" != "default" ]] \
         || [[ -n "$_cfg_allowed_ips_mode" && "$_cfg_allowed_ips_mode" != "$ALLOWED_IPS_MODE" ]] \
-        || [[ -n "$CLI_ENDPOINT" ]] || [[ "$CLI_DISABLE_IPV6" != "default" ]] \
+        || [[ -n "$CLI_ENDPOINT" ]] || [[ "${CLI_EXIT_IP_SET:-0}" -eq 1 ]] || [[ "$CLI_DISABLE_IPV6" != "default" ]] \
         || [[ "${CLI_ALLOW_IPV6_TUNNEL:-0}" -eq 1 ]] || [[ -n "${CLI_PRESET:-}" ]] \
         || [[ -n "${CLI_JC:-}" ]] || [[ -n "${CLI_JMIN:-}" ]] || [[ -n "${CLI_JMAX:-}" ]] \
         || [[ "${CLI_ISOLATION:-default}" != "default" ]] \
@@ -9091,6 +9268,7 @@ _step6_undo_31() {
     if (( failed )); then
         die "${why}: the 3.1 install stopped, but the undo did NOT complete (errors above). Check $AWG_DIR and the server config by hand before running the install again."
     fi
+    _awg_start_if_stopped_for_exit
     die "${why}: the 3.1 install was undone, the files of this attempt are removed, the server keys are kept for a rerun."
 }
 
@@ -9184,7 +9362,8 @@ step6_generate_configs() {
     # that already exist, and the guard in generate_client refuses to recreate
     # one whose artifacts exist.
     log "Creating server config..."
-    render_server_config "${s_bak:-}" || die "Server config creation error."
+    _awg_stop_if_exit_ip_changed
+    render_server_config "${s_bak:-}" || { _awg_start_if_stopped_for_exit; die "Server config creation error."; }
     if [[ -n "${s_bak:-}" && -f "$s_bak" ]] && grep -q '^\[Peer\]' "$s_bak" 2>/dev/null; then
         log "Existing peers restored from backup."
     fi
@@ -9196,6 +9375,14 @@ step6_generate_configs() {
             log "Client '$client_name' already exists."
         else
             log "Creating client '$client_name'..."
+            # Each client gets its own PresharedKey: generate_client replaces "auto"
+            # with the generated value, hence the reset on every pass.
+            # NO_PSK=1 (--no-psk) means no PSK, even if CLIENT_PSK came from the environment.
+            if [[ "${NO_PSK:-0}" == "1" ]]; then
+                unset CLIENT_PSK
+            else
+                export CLIENT_PSK="auto"
+            fi
             if (( gen31 )); then
                 # The leftovers check proved absent files only for new_clients. A name
                 # outside that list was in the old config but the render did not carry
@@ -9211,6 +9398,7 @@ step6_generate_configs() {
             fi
         fi
     done
+    unset CLIENT_PSK
 
     # On 3.1 generate_client takes a NEW client with an incomplete set off by
     # itself, but it does not touch clients carried over from the previous config,
@@ -9277,6 +9465,8 @@ step7_start_service() {
     else
         systemctl enable --now awg-quick@awg0 || die "enable --now error."
     fi
+    # Step 7 started the service: the mark of a stop for an exit address change is no longer needed.
+    _AWG_STOPPED_FOR_EXIT=0
     # The interface has just come up, so record the device-parameter set: the
     # management script should know from the start what is on the live interface.
     # Without this the very first removal detection would have nothing to compare.
@@ -9333,6 +9523,7 @@ step99_finish() {
     log "=============================================================================="
     log "AmneziaWG ${AWG_PROTOCOL:-2.0} installation and configuration COMPLETED SUCCESSFULLY!"
     log "Protocol generation: $(_awg_generation_summary)"
+    log "VPN port: ${AWG_PORT}/udp (to change it: sudo bash $MANAGE_SCRIPT_PATH port <number>)"
     log " "
     log "CLIENT FILES:"
     log "  Configs (.conf) and QR codes (.png) in: $AWG_DIR"

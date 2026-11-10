@@ -12,6 +12,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.0] - 2026-11-10
+
+**v6.3.0** - a separate exit address, a random port and a PresharedKey by default on new installs, and a one-command port change.
+
+### Added
+
+- **A separate exit address: entry and exit on different IPs (#384).** If the server has two public IPv4 addresses, clients connect to one while their traffic leaves to the internet from the other: `--exit-ip=<IPv4>` at install time or `manage exit-ip <IPv4|off>` on a running server. Client configs do not change when the exit address changes, so a blocked exit is replaced with one command. The rule is a `SNAT` for the client subnet above the usual MASQUERADE; the server's own traffic is unchanged. While the rule is in place, client traffic never leaves through the entry address, even if the exit address is gone from the interface; `manage check` shows a missing address. The address has to be on an interface of the server; it does not combine with the IPv6 tunnel for clients (SNAT changes IPv4 only), and the installer and `manage` refuse that combination. ADVANCED section: "A separate exit address".
+- **`manage port <number>`: change the port of a running server in one command.** Before, the port could only be changed by hand: `ListenPort` in `awg0.conf`, the init, the UFW rule and the configs of every client, and `check` and `diagnose` looked in the wrong place after a manual edit. Now the command writes the new port into both files, opens it in UFW before the restart and closes the old one after, then regenerates every client: the port is part of the `Endpoint` in each config. If the server does not come up on the new port, the command puts back the old port and both files and removes the new port's rule if it added it. A port forward on a router and the host's firewall are changed by hand. After the change the clients need the new configs or QR codes.
+
+### Changed
+
+- **A random port for a new install (ntc t/22685 #35).** An install without `--port` no longer gives everyone the same `39743/udp`, it takes a random free port in 10000-59999 (except 51820 and 51821, the WireGuard defaults): the same port on every install was a trait they all shared. The final install report names the port. `--port` and `--mobile` (443) work as before, a reinstall keeps the port from the init, and servers already running stay on their port.
+- `--uninstall` removes the UFW rules for the port in the init, for a deferred old port and for the `ListenPort` of the live `awg0.conf`, instead of guessing `39743` when there is no init.
+- **A PresharedKey for every new client (D#371).** The installer's clients and new `manage add` clients get their own `PresharedKey`: an extra symmetric layer that does not change packet sizes or the masking. Before, only the `add --psk` flag gave one, and Shadowrocket, for example, did not connect without it. `add --no-psk` creates a client without a PSK, and an install with `--no-psk` does that for every new client of the server (saved as `NO_PSK=1` in the init); `--psk` still gives a client a PSK on such a server. Clients already issued do not change, and `regen` still keeps whatever a client has. `--psk` and `--no-psk` together, or with a command other than `add`, are now an error instead of silently doing nothing.
+
 ### Documentation
 
 - **A three-server cascade in CASCADE.en.md.** A new section on the `awg-in`, `awg-mid` and `awg-out` chain: one more foreign server sits between the entry and the exit, and the entry only talks to it. The middle does not split anything, it sends all traffic from the entry into the tunnel to the exit with one routing rule. @stromnov checked the setup on three VPS with Ubuntu 24.04 and 26.04 and the 3.1 profile (#120). The section also has a caveat: if the `awg1` tunnel on the middle is not up, traffic from the entry leaves from the middle's address.
@@ -2225,7 +2240,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.2...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.0...HEAD
+[6.3.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.2...v6.3.0
 [6.2.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...v6.2.2
 [6.2.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.0...v6.2.1
 [6.2.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.2...v6.2.0

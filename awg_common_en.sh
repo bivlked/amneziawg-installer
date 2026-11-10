@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 3.x and 2.0
 # Author: @bivlked
-# Version: 6.2.2
-# Date: 2026-11-09
+# Version: 6.3.0
+# Date: 2026-11-10
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -24,7 +24,7 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # drifted apart (one file updated, the other not) - otherwise the mismatch shows
 # up as a "command not found" somewhere random. Bumped with the other versions.
 # shellcheck disable=SC2034  # used by the manage script after sourcing
-AWG_COMMON_VERSION="6.2.2"
+AWG_COMMON_VERSION="6.3.0"
 
 # --- Auto-cleanup of temporary files ---
 # NOTE: trap is NOT set here to avoid overwriting the caller's trap handler.
@@ -1636,7 +1636,7 @@ safe_load_config() {
                 OS_ID|OS_VERSION|OS_CODENAME|AWG_PORT|AWG_TUNNEL_SUBNET|\
                 DISABLE_IPV6|ALLOWED_IPS_MODE|ALLOWED_IPS|AWG_ENDPOINT|AWG_MTU|\
                 AWG_Jc|AWG_Jmin|AWG_Jmax|AWG_S1|AWG_S2|AWG_S3|AWG_S4|\
-                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|KEEP_PACKAGES|\
+                AWG_H1|AWG_H2|AWG_H3|AWG_H4|AWG_I1|AWG_I1_PIN|AWG_I2|AWG_I3|AWG_I4|AWG_I5|AWG_PRESET|NO_TWEAKS|NO_CPS|NO_PSK|AWG_EXIT_IP|KEEP_PACKAGES|\
                 AWG_APPLY_MODE|ALLOW_IPV6_TUNNEL|IPV6_SUBNET|SERVER_HAS_NATIVE_IPV6|PREV_AWG_PORT|CLIENT_ISOLATION|CLIENT_ISOLATION_NET|AWG_PROTOCOL|AWG_CPA|AWG_SERVER_NAME|CLIENT_DNS|CLIENT_IPV6_DIRECT)
                     export "$key=$value"
                     ;;
@@ -3398,6 +3398,22 @@ render_server_config() {
     # PostUp/PostDown rules for routing
     local postup="iptables -I FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${nic} -j MASQUERADE"
     local postdown="iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o ${nic} -j MASQUERADE"
+    # Exit address (I#384): client traffic leaves to the internet from
+    # AWG_EXIT_IP instead of the entry address. The SNAT is inserted (-I) ABOVE
+    # the MASQUERADE and only for the client subnet: the server's own traffic is
+    # unchanged. If the address disappears from the interface, SNAT still sets it
+    # as the source, so client traffic does not leave through the entry (whether
+    # replies still arrive depends on the host). The value goes into PostUp, so it is checked
+    # here again.
+    local exit_ip="${AWG_EXIT_IP:-}"
+    if [[ -n "$exit_ip" ]]; then
+        if ! _valid_ipv4 "$exit_ip"; then
+            log_error "Invalid exit address AWG_EXIT_IP='$exit_ip': an IPv4 address is needed."
+            return 1
+        fi
+        postup="${postup}; iptables -t nat -I POSTROUTING -s ${AWG_TUNNEL_SUBNET} -o ${nic} -j SNAT --to-source ${exit_ip}"
+        postdown="${postdown}; iptables -t nat -D POSTROUTING -s ${AWG_TUNNEL_SUBNET} -o ${nic} -j SNAT --to-source ${exit_ip}"
+    fi
 
     # MSS/PMTU clamp: pin the TCP MSS to the tunnel MTU so large segments do not
     # stall against the 1280 tunnel when ICMP "frag needed" is filtered (PMTU
@@ -3894,8 +3910,8 @@ EOF
 [Peer]
 PublicKey = ${server_pubkey}
 EOF
-    # Optional PresharedKey — extra layer on top of AWG 2.0 obfuscation
-    # (enabled via `manage add --psk`). Must match on server peer and
+    # PresharedKey - extra layer on top of the AmneziaWG obfuscation (on by
+    # default for new clients, off with `manage add --no-psk`). Must match on server peer and
     # client [Peer].
     if [[ -n "${CLIENT_PSK:-}" ]]; then
         echo "PresharedKey = ${CLIENT_PSK}" >> "$tmpfile"
@@ -5769,7 +5785,7 @@ _remove_client_files() {
 #   CLIENT_PSK — optional. If set to "auto", a fresh PSK is generated via
 #     `awg genpsk` and written to both the server [Peer] and the client
 #     [Peer]. If set to a concrete value (32-byte base64), it is used as
-#     is without regenerating. Empty/unset — no PSK is added (default).
+#     is without regenerating. Empty/unset - no PSK is added (callers set auto by default).
 #   CLIENT_ALLOWED_IPS - optional (Issue #253). The client's own routes
 #     instead of the server-wide mode (ALLOWED_IPS): a comma-separated
 #     list of IPv4/IPv6 CIDRs. The value is validated and normalized
@@ -5818,12 +5834,12 @@ generate_client() {
     # Optional PresharedKey: "auto" -> `awg genpsk`, otherwise use the
     # given value as-is. Empty/unset -> no PSK.
     if [[ "${CLIENT_PSK:-}" == "auto" ]]; then
-        # --psk was requested explicitly: on awg genpsk failure do NOT silently
-        # degrade to a PSK-less client (that would weaken the requested security).
+        # A PSK is the default and a client without one is made only on purpose
+        # (--no-psk): on awg genpsk failure do NOT silently degrade to a PSK-less client.
         # Fail-closed; no artifacts exist yet (keys/config are created below), so
         # no rollback is needed.
         CLIENT_PSK=$(awg genpsk) || {
-            log_error "awg genpsk failed - client with PresharedKey (--psk) NOT created. Please retry."
+            log_error "awg genpsk failed - client NOT created. Please retry; for a client without a PresharedKey use --no-psk."
             return 1
         }
     fi
@@ -6152,7 +6168,7 @@ regenerate_client() {
         _v=$(awg_normalize_csv "$(printf '%s' "$_raw" | paste -sd, -)")
         [[ -n "$_v" ]] && current_allowed_ips="$_v"
         # v5.11.1: preserve PresharedKey through regen. Without this,
-        # clients added with `manage add --psk` would lose their PSK on
+        # clients with a PSK (the default, or --psk) would lose their PSK on
         # regen — the server peer still holds the PSK but the client
         # conf would drop it, breaking the handshake. CLIENT_PSK is
         # passed through to render_client_config.

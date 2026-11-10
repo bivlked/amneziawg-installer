@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x and 2.0 peer management script
 # Author: @bivlked
-# Version: 6.2.2
-# Date: 2026-11-09
+# Version: 6.3.0
+# Date: 2026-11-10
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="6.2.2"
+SCRIPT_VERSION="6.3.0"
 set -o pipefail
 # awg show colours its labels when WG_COLOR_MODE=always is in the environment,
 # even into a pipe. The secrets filter then does not recognise "header
@@ -240,6 +240,7 @@ while [[ $# -gt 0 ]]; do
             _CLI_APPLY_MODE="${1#*=}"
             shift ;;
         --psk)             CLI_ADD_PSK=1; shift ;;
+        --no-psk)          CLI_ADD_NO_PSK=1; shift ;;
         --allowed-ips=*)   CLI_ADD_ALLOWED_IPS="${1#*=}"; CLI_ADD_ALLOWED_IPS_SEEN=1; shift ;;
         --reset-routes)    CLI_RESET_ROUTES=1; shift ;;
         --yes)             CLI_YES=1; shift ;;
@@ -270,6 +271,20 @@ esac
 # --vpn is for qr only: with another command it would silently mean nothing.
 if [[ "${CLI_QR_VPN:-0}" == "1" && "$COMMAND" != "qr" && "$COMMAND" != "help" ]]; then
     _JSON_ERR="--vpn works only with the qr command"
+    echo "$_JSON_ERR" >&2
+    exit 1
+fi
+
+# --psk and --no-psk are for add only: with another command (regen, list) they
+# would silently mean nothing, and together they contradict each other.
+if [[ "${CLI_ADD_PSK:-0}" == "1" || "${CLI_ADD_NO_PSK:-0}" == "1" ]] \
+    && [[ "$COMMAND" != "add" && "$COMMAND" != "help" ]]; then
+    _JSON_ERR="--psk and --no-psk work only with the add command"
+    echo "$_JSON_ERR" >&2
+    exit 1
+fi
+if [[ "${CLI_ADD_PSK:-0}" == "1" && "${CLI_ADD_NO_PSK:-0}" == "1" ]]; then
+    _JSON_ERR="--psk and --no-psk contradict each other: keep one of them"
     echo "$_JSON_ERR" >&2
     exit 1
 fi
@@ -1830,6 +1845,20 @@ check_server() {
         log " - IP Forwarding is enabled."
     fi
 
+    # Exit address (I#384): a SNAT rule in PostUp but no such address on an interface -
+    # client traffic does not get out, although the service is active and handshakes pass.
+    local _exit_ip
+    _exit_ip=$(grep -E '^PostUp[[:space:]]*=' "$SERVER_CONF_FILE" 2>/dev/null | tr -d '\r' | grep -oE 'SNAT --to-source [0-9.]+' | head -1 | awk '{print $3}')
+    if [[ -n "$_exit_ip" ]]; then
+        log "Exit address:"
+        if _exit_ifaddrs | grep -qxF -- "$_exit_ip"; then
+            log " - $_exit_ip is on a server interface."
+        else
+            log_error " - $_exit_ip is not on any server interface: client traffic still leaves with this address, but replies usually stop coming back. Bring the address back (in netplan, for example) or remove it: manage exit-ip off"
+            ok=0
+        fi
+    fi
+
     log "Kernel module:"
     # Pattern from diagnose: exact module name in the first lsmod column.
     if lsmod 2>/dev/null | awk '$1 == "amneziawg" {f=1} END {exit !f}'; then
@@ -3300,6 +3329,377 @@ show_client_qr() {
     return 0
 }
 
+# Shared by manage port and manage exit-ip: both change the live awg0.conf and
+# the init in one transaction under .awg_config.lock (add, remove and regen take
+# it too): backups, the edit and the rollback run under one lock, backups have
+# unique names. The rollback checks each of its steps; a backup is removed only
+# once its file is restored, otherwise its path is printed.
+_txn_lock() {
+    exec {_TXN_FD}>"${AWG_DIR}/.awg_config.lock" || { log_error "Cannot open ${AWG_DIR}/.awg_config.lock."; return 1; }
+    if ! flock -w 10 "$_TXN_FD"; then
+        exec {_TXN_FD}>&-
+        _TXN_FD=""
+        log_error "The config is busy with another command (.awg_config.lock), try again later. Nothing was changed."
+        return 1
+    fi
+}
+_txn_unlock() {
+    [[ -n "${_TXN_FD:-}" ]] && exec {_TXN_FD}>&-
+    _TXN_FD=""
+}
+# _txn_backup: backups of awg0.conf and the init (if any) in _TXN_BAK_CONF/_TXN_BAK_INIT.
+_txn_backup() {
+    _TXN_BAK_CONF=""; _TXN_BAK_INIT=""
+    _TXN_BAK_CONF=$(mktemp "${SERVER_CONF_FILE}.bak.XXXXXX") && cp -p "$SERVER_CONF_FILE" "$_TXN_BAK_CONF" \
+        || { rm -f "$_TXN_BAK_CONF"; _TXN_BAK_CONF=""; log_error "Could not back up $SERVER_CONF_FILE. Nothing was changed."; return 1; }
+    if [[ -f "$CONFIG_FILE" ]]; then
+        _TXN_BAK_INIT=$(mktemp "${CONFIG_FILE}.bak.XXXXXX") && cp -p "$CONFIG_FILE" "$_TXN_BAK_INIT" \
+            || { rm -f "$_TXN_BAK_CONF" "$_TXN_BAK_INIT"; _TXN_BAK_CONF=""; _TXN_BAK_INIT=""; log_error "Could not back up $CONFIG_FILE. Nothing was changed."; return 1; }
+    fi
+}
+_txn_drop_backups() { rm -f "${_TXN_BAK_CONF:-}" "${_TXN_BAK_INIT:-}"; _TXN_BAK_CONF=""; _TXN_BAK_INIT=""; }
+# _txn_restore: the files from the backups. Code 0 - both files restored.
+_txn_restore() {
+    local ok=0
+    if cp -p "$_TXN_BAK_CONF" "$SERVER_CONF_FILE"; then rm -f "$_TXN_BAK_CONF"
+    else ok=1; log_error "$SERVER_CONF_FILE was not restored, the previous file: $_TXN_BAK_CONF"; fi
+    if [[ -n "$_TXN_BAK_INIT" ]]; then
+        if cp -p "$_TXN_BAK_INIT" "$CONFIG_FILE"; then rm -f "$_TXN_BAK_INIT"
+        else ok=1; log_error "$CONFIG_FILE was not restored, the previous file: $_TXN_BAK_INIT"; fi
+    fi
+    return "$ok"
+}
+# _txn_write_file <file> <filter...>: the file through the filter into a temp next to it, chmod 600, mv.
+_txn_write_file() {
+    local f="$1" tmp; shift
+    tmp=$(mktemp "${f}.new.XXXXXX") || return 1
+    if "$@" < "$f" > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$f"; then return 0; fi
+    rm -f "$tmp"
+    return 1
+}
+# _txn_set_init_key <KEY> <value>: export KEY=value in the init (replaced or appended).
+_txn_set_init_key() {
+    local key="$1" val="$2"
+    [[ -f "$CONFIG_FILE" ]] || return 0
+    _txn_write_file "$CONFIG_FILE" awk -v k="$key" -v v="$val" '
+        { sub(/\r$/, "") }
+        $0 ~ "^(export[ \t]+)?" k "=" { if (!done) print "export " k "=" v; done = 1; next }
+        { print }
+        END { if (!done) print "export " k "=" v }'
+}
+
+# manage port <N>: change the UDP port of a running server in one command.
+# The new port goes into ListenPort of the live awg0.conf and AWG_PORT of the
+# init (different commands read them: clients and vpn:// read awg0.conf, check,
+# diagnose and --uninstall read the init). If ufw is installed, the new port is
+# opened BEFORE the restart and the old one closed AFTER it, even with UFW off:
+# otherwise turning UFW on later would close the VPN. Then every client is
+# regenerated: the port is part of the Endpoint in each config. A failed restart
+# puts both files back, brings the server up on the old port and removes the new
+# port's rule if this command added it.
+_port_read_listen() {
+    awk -F= '/^[[:space:]]*ListenPort[[:space:]]*=/{gsub(/[[:space:]\r]/,"",$2); print $2; exit}' "$SERVER_CONF_FILE" 2>/dev/null
+}
+_port_listening() {
+    # grep without -q reads the whole output: otherwise under pipefail the writer gets SIGPIPE and a match counts as none.
+    ss -Hlun 2>/dev/null | awk '{n=split($4,a,":"); print a[n]}' | grep -xF -- "$1" >/dev/null
+}
+_port_ufw_has() {
+    # ufw show added lists the rules also while UFW is off; status shows them only when on.
+    LC_ALL=C ufw show added 2>/dev/null | grep -E "^ufw allow ${1}/udp([[:space:]]|$)" >/dev/null \
+        || LC_ALL=C ufw status 2>/dev/null | grep -E "^${1}/udp[[:space:]]+ALLOW" >/dev/null
+}
+change_server_port() {
+    local new="$1" old have_ufw=0 added_rule=0 cname ok=0 fail=0 rb
+    if ! [[ "$new" =~ ^[1-9][0-9]{0,4}$ ]] || (( new > 65535 )); then
+        _JSON_ERR="invalid port"
+        log_error "Invalid port '${new}': a number from 1 to 65535 without leading zeros is needed."
+        return 1
+    fi
+    old=$(_port_read_listen)
+    if ! [[ "$old" =~ ^[0-9]+$ ]]; then
+        _JSON_ERR="no ListenPort in server config"
+        log_error "No ListenPort found in $SERVER_CONF_FILE."
+        return 1
+    fi
+    if [[ "$new" == "$old" ]]; then
+        log "The server already listens on ${new}/udp, nothing to change."
+        json_out "{\"command\":\"port\",\"ok\":true,\"old\":$old,\"new\":$new,\"changed\":false}"
+        return 0
+    fi
+    if _port_listening "$new"; then
+        _JSON_ERR="port busy"
+        log_error "Port ${new}/udp is already used by another program."
+        return 1
+    fi
+    log_warn "The server port changes from ${old} to ${new}: connected clients drop, every client gets a new config and QR (regenerated automatically), and they have to be handed out again. A port forward on a router and the host's firewall, if any, have to be changed by hand."
+    confirm_action "change the port" "of the server from ${old} to ${new}" || return 1
+    _txn_lock || { _JSON_ERR="config locked"; return 1; }
+    # Another command may have changed the port while this one waited for the lock:
+    # the old port is read again under it, or the rule of the wrong port would be closed.
+    old=$(_port_read_listen)
+    if ! [[ "$old" =~ ^[0-9]+$ ]]; then
+        _txn_unlock
+        _JSON_ERR="no ListenPort in server config"
+        log_error "No ListenPort found in $SERVER_CONF_FILE."
+        return 1
+    fi
+    if [[ "$new" == "$old" ]]; then
+        _txn_unlock
+        log "The server already listens on ${new}/udp, nothing to change."
+        json_out "{\"command\":\"port\",\"ok\":true,\"old\":$old,\"new\":$new,\"changed\":false}"
+        return 0
+    fi
+    _txn_backup || { _txn_unlock; _JSON_ERR="backup failed"; return 1; }
+    _txn_trap_on _port_txn_on_signal
+    if command -v ufw >/dev/null 2>&1; then
+        have_ufw=1
+        _port_ufw_has "$new" || added_rule=1
+        if ! ufw allow "${new}/udp" comment "AmneziaWG VPN" >/dev/null; then
+            _txn_trap_off
+            _txn_drop_backups; _txn_unlock
+            _JSON_ERR="ufw allow failed"
+            log_error "UFW did not open ${new}/udp, the port is unchanged."
+            return 1
+        fi
+    fi
+    if ! _txn_write_file "$SERVER_CONF_FILE" sed -E "s/^([[:space:]]*ListenPort[[:space:]]*=[[:space:]]*)[0-9]+/\1${new}/" \
+        || ! _txn_set_init_key AWG_PORT "$new" || ! systemctl restart awg-quick@awg0; then
+        log_error "Could not switch to ${new}/udp, putting ${old}/udp back."
+        rb=0
+        _txn_restore || rb=1
+        systemctl restart awg-quick@awg0 || { rb=1; log_error "The server did not come up on the old port either: systemctl status awg-quick@awg0"; }
+        if (( added_rule )); then
+            ufw delete allow "${new}/udp" >/dev/null 2>&1 || { rb=1; log_warn "UFW did not remove the new port rule: sudo ufw delete allow ${new}/udp"; }
+        fi
+        _txn_unlock
+        if (( rb == 0 )); then _JSON_ERR="restart on the new port failed, rolled back"
+        else _JSON_ERR="restart on the new port failed, rollback incomplete"; fi
+        _txn_trap_off
+        return 1
+    fi
+    _txn_trap_off
+    _txn_drop_backups; _txn_unlock
+    awg_record_device_params
+    if (( have_ufw )); then
+        ufw delete allow "${old}/udp" >/dev/null 2>&1 || log_warn "UFW did not remove the old port rule: sudo ufw delete allow ${old}/udp"
+    fi
+    log "Server port changed: ${old} -> ${new}/udp. Regenerating clients..."
+    while IFS= read -r cname; do
+        [[ -z "$cname" ]] && continue
+        if regenerate_client "$cname"; then ok=$((ok + 1)); else fail=$((fail + 1)); log_warn "Client '$cname' was not regenerated: sudo bash $0 regen $cname"; fi
+    done < <(grep '^#_Name = ' "$SERVER_CONF_FILE" | sed 's/^#_Name = //; s/[[:space:]\r]*$//')
+    log "Clients regenerated: $ok, failed: $fail. Hand the new configs or QR codes from $AWG_DIR to the clients."
+    (( fail == 0 )) || _JSON_ERR="port changed, some clients were not regenerated"
+    json_out "{\"command\":\"port\",\"ok\":$([[ $fail -eq 0 ]] && echo true || echo false),\"old\":$old,\"new\":$new,\"changed\":true,\"regenerated\":$ok,\"failed\":$fail}"
+    (( fail == 0 ))
+}
+
+# _txn_restore_present: each transaction copy that still exists goes back on its
+# own: the rollback may have put one of them back already. For the signal handlers.
+_txn_restore_present() {
+    if [[ -n "${_TXN_BAK_CONF:-}" && -f "$_TXN_BAK_CONF" ]]; then
+        cp -p "$_TXN_BAK_CONF" "$SERVER_CONF_FILE" && rm -f "$_TXN_BAK_CONF"
+    fi
+    if [[ -n "${_TXN_BAK_INIT:-}" && -f "$_TXN_BAK_INIT" ]]; then
+        cp -p "$_TXN_BAK_INIT" "$CONFIG_FILE" && rm -f "$_TXN_BAK_INIT"
+    fi
+}
+# _txn_trap_on <handler>: an INT/TERM handler for the transaction; _txn_trap_off: the global one.
+# SC2064: the handler name is expanded right away, on purpose.
+# shellcheck disable=SC2064
+_txn_trap_on()  { trap "$1 130" INT; trap "$1 143" TERM; }
+_txn_trap_off() { trap '_manage_on_signal 130' INT; trap '_manage_on_signal 143' TERM; }
+
+# A signal in the middle of a port change: the files come back from the copies, the
+# service restarts on the old port, and the new port's UFW rule is removed only if
+# this command added it. new and added_rule come from change_server_port.
+_port_txn_on_signal() {
+    # A second INT/TERM does not cut the restore short.
+    trap '' INT TERM
+    _txn_restore_present
+    systemctl restart awg-quick@awg0 || log_error "The server did not come up on the old port either: systemctl status awg-quick@awg0"
+    if (( ${added_rule:-0} )); then
+        ufw delete allow "${new}/udp" >/dev/null 2>&1 || log_warn "UFW did not delete the new port's rule: sudo ufw delete allow ${new}/udp"
+    fi
+    _txn_unlock
+    log_error "The port command was interrupted: the old port is back."
+    _manage_on_signal "$1"
+}
+# A signal while exit-ip holds the service down: the files come back from the
+# copies, the new address's SNAT rule is removed and the service comes up on the
+# previous config, instead of leaving the VPN down. want, subnet and nic come
+# from change_exit_ip.
+_exit_txn_on_signal() {
+    # A second INT/TERM does not cut the restore short between the stop and the start.
+    trap '' INT TERM
+    local _n=0
+    # The signal may come when the service is already up, or still coming up
+    # (activating), on the new config: stop it first, while the new file is on disk
+    # (its PostDown removes its rule), then the files. A stop of a stopped service does nothing.
+    systemctl stop awg-quick@awg0
+    _txn_restore_present
+
+    if [[ "${want:-off}" != off && -n "${subnet:-}" && -n "${nic:-}" ]]; then
+        while (( ++_n <= 16 )) && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null; do
+            iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null || break
+        done
+    fi
+    systemctl start awg-quick@awg0 || log_error "The service did not start: systemctl status awg-quick@awg0"
+    _txn_unlock
+    log_error "The exit-ip command was interrupted: the previous settings are back."
+    _manage_on_signal "$1"
+}
+
+# manage exit-ip <IPv4|off>: the address client traffic leaves to the internet
+# from (I#384). It changes the command's own SNAT rule (the client subnet and the external
+# interface from awg0.conf) in PostUp/PostDown of the live awg0.conf and
+# AWG_EXIT_IP in the init; clients are not touched: they still connect to the
+# same entry address. Order: the service stops BEFORE the file is edited
+# (PostDown removes the old rule), a leftover of the rule is removed explicitly,
+# old client connections are flushed from conntrack, then the file is edited and
+# the service starts. If it does not start, the new rule is removed, the files go
+# back and the service starts on the previous ones.
+_exit_ifaddrs() {
+    # IPv4 addresses on interfaces, except awg*/wg* tunnels and loopback.
+    ip -4 -o addr show 2>/dev/null | awk '$2 !~ /^(awg|wg|lo)/ {for(i=1;i<NF;i++) if($i=="inet"){split($(i+1),a,"/"); print a[1]}}'
+}
+_exit_rule() { printf 'iptables -t nat -%s POSTROUTING -s %s -o %s -j SNAT --to-source %s' "$1" "$2" "$3" "$4"; }
+_exit_prefix_mask() {
+    local p="$1" m=0 i
+    for (( i = 0; i < 32; i++ )); do (( i < p )) && m=$(( m | (1 << (31 - i)) )); done
+    printf '%d.%d.%d.%d' $(( (m >> 24) & 255 )) $(( (m >> 16) & 255 )) $(( (m >> 8) & 255 )) $(( m & 255 ))
+}
+change_exit_ip() {
+    local want="$1" cur nic subnet v6 rb rc=0 snat_re
+    if [[ "$want" != off ]]; then
+        if ! _valid_ipv4 "$want"; then
+            _JSON_ERR="invalid exit address"
+            log_error "Invalid exit address '${want}': an IPv4 address or off is needed."
+            return 1
+        fi
+        if ! _exit_ifaddrs | grep -qxF -- "$want"; then
+            _JSON_ERR="exit address not on an interface"
+            log_error "Address $want is not on an external interface of the server (tunnels and loopback do not count). Configure it permanently (in netplan, for example) and try again."
+            return 1
+        fi
+        local endpoint
+        endpoint=$(AWG_ENDPOINT=""; safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${AWG_ENDPOINT:-}")
+        if [[ -n "$endpoint" && "$endpoint" == "$want" ]]; then
+            _JSON_ERR="exit address equals entry address"
+            log_error "$want is the entry address (AWG_ENDPOINT) clients connect to. The exit address has to be a different one."
+            return 1
+        fi
+        # Without AWG_ENDPOINT clients connect to the main address (the default route's source).
+        if [[ -z "$endpoint" ]]; then
+            local src
+            src=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}' | head -n 1)
+            if [[ -n "$src" && "$src" == "$want" ]]; then
+                _JSON_ERR="exit address equals entry address"
+                log_error "$want is the main address of the server: without AWG_ENDPOINT clients connect to it. The exit address has to be a different one."
+                return 1
+            fi
+        fi
+    fi
+    v6=$(ALLOW_IPV6_TUNNEL=""; safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${ALLOW_IPV6_TUNNEL:-0}")
+    if grep -E '^[[:space:]]*Address[[:space:]]*=' "$SERVER_CONF_FILE" | grep -q ':'; then v6=1; fi
+    if [[ "$want" != off && "$v6" == "1" ]]; then
+        _JSON_ERR="exit address with IPv6 tunnel"
+        log_error "An exit address does not combine with the IPv6 tunnel for clients: SNAT changes IPv4 only, client IPv6 would bypass the exit address."
+        return 1
+    fi
+    nic=$(grep -E '^PostUp[[:space:]]*=' "$SERVER_CONF_FILE" | tr -d '\r' | grep -oE 'iptables -t nat -A POSTROUTING -o [A-Za-z0-9._-]+ -j MASQUERADE' | head -1 | awk '{print $7}')
+    subnet=$(awk -F= '/^[[:space:]]*Address[[:space:]]*=/{gsub(/[[:space:]\r]/,"",$2); split($2,a,","); print a[1]; exit}' "$SERVER_CONF_FILE")
+    if [[ -z "$nic" || ! "$subnet" =~ ^[0-9.]+/[0-9]+$ ]]; then
+        _JSON_ERR="cannot read nic or subnet from server config"
+        log_error "No MASQUERADE in PostUp or no IPv4 in Address found in $SERVER_CONF_FILE: nothing to attach the exit rule to."
+        return 1
+    fi
+    # The command's rule is only the one for its subnet and interface: other SNAT rules in
+    # PostUp (other subnets) are left alone.
+    snat_re="; iptables -t nat -[ID] POSTROUTING -s ${subnet//./[.]} -o ${nic//./[.]} -j SNAT --to-source [0-9.]+"
+    cur=$(grep -E '^PostUp[[:space:]]*=' "$SERVER_CONF_FILE" | tr -d '\r' | grep -oE -- "-s ${subnet//./[.]} -o ${nic//./[.]} -j SNAT --to-source [0-9.]+" | head -1 | awk '{print $NF}')
+    if [[ "$want" == "${cur:-off}" ]]; then
+        log "The exit address is already ${want}, nothing to change."
+        json_out "{\"command\":\"exit-ip\",\"ok\":true,\"exit_ip\":\"${cur}\",\"changed\":false}"
+        return 0
+    fi
+    log_warn "The service restarts, connected clients lose the connection for a few seconds. Client configs do not change."
+    confirm_action "change the exit address" "to ${want}" || return 1
+    _txn_lock || { _JSON_ERR="config locked"; return 1; }
+    _txn_backup || { _txn_unlock; _JSON_ERR="backup failed"; return 1; }
+    _txn_trap_on _exit_txn_on_signal
+    if ! systemctl stop awg-quick@awg0; then
+        # The stop may have failed half way through the teardown: the previous config
+        # is started again (start does nothing on a running service).
+        systemctl start awg-quick@awg0 || log_error "The service did not start: systemctl status awg-quick@awg0"
+        _txn_trap_off
+        _txn_drop_backups; _txn_unlock
+        _JSON_ERR="service stop failed"
+        log_error "The service did not stop: the exit address is unchanged. Check: systemctl status awg-quick@awg0"
+        return 1
+    fi
+    # PostDown may have stopped before that rule: the old SNAT would then stay
+    # above the MASQUERADE, and traffic would keep leaving from the old address.
+    local _drain=0
+    while [[ -n "$cur" ]] && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur" 2>/dev/null; do
+        # 16 passes cover any real leftover; a rule still there after them counts as not removed.
+        if (( ++_drain > 16 )) || ! iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur"; then
+            systemctl start awg-quick@awg0 || log_error "The service did not start: systemctl status awg-quick@awg0"
+            _txn_trap_off
+            _txn_drop_backups; _txn_unlock
+            _JSON_ERR="old exit rule could not be removed"
+            log_error "Could not remove the previous SNAT rule to ${cur}: the exit address is unchanged."
+            return 1
+        fi
+    done
+    # Client connections already open keep the old address rewrite in conntrack.
+    if command -v conntrack >/dev/null 2>&1; then
+        conntrack -D -s "${subnet%/*}" --mask-src "$(_exit_prefix_mask "${subnet#*/}")" >/dev/null 2>&1 || true
+    else
+        log_warn "No conntrack tool: client connections already open keep the previous address until they reconnect (apt install conntrack)."
+    fi
+    _txn_write_file "$SERVER_CONF_FILE" awk -v re="$snat_re" -v up="$( [[ "$want" == off ]] || _exit_rule I "$subnet" "$nic" "$want")" \
+        -v down="$( [[ "$want" == off ]] || _exit_rule D "$subnet" "$nic" "$want")" '
+        { sub(/\r$/, "") }
+        /^PostUp[ \t]*=/   { gsub(re, ""); if (up != "")   $0 = $0 "; " up }
+        /^PostDown[ \t]*=/ { gsub(re, ""); if (down != "") $0 = $0 "; " down }
+        { print }' || rc=1
+    if (( rc == 0 )); then
+        _txn_set_init_key AWG_EXIT_IP "'$([[ "$want" == off ]] || printf '%s' "$want")'" || rc=1
+    fi
+    if (( rc != 0 )) || ! systemctl start awg-quick@awg0; then
+        log_error "Could not apply the exit address ${want}, putting the previous settings back."
+        rb=0
+        if [[ "$want" != off ]]; then
+            _drain=0
+            while iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null; do
+                if (( ++_drain > 16 )) || ! iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want"; then
+                    rb=1
+                    log_error "The SNAT rule to ${want} is still in iptables, remove it: iptables -t nat -D POSTROUTING -s ${subnet} -o ${nic} -j SNAT --to-source ${want}"
+                    break
+                fi
+            done
+        fi
+        _txn_restore || rb=1
+        systemctl start awg-quick@awg0 || { rb=1; log_error "The server did not come up on the previous settings either: systemctl status awg-quick@awg0"; }
+        _txn_unlock
+        if (( rb == 0 )); then _JSON_ERR="start with the new exit address failed, rolled back"
+        else _JSON_ERR="start with the new exit address failed, rollback incomplete"; fi
+        _txn_trap_off
+        return 1
+    fi
+    _txn_trap_off
+    _txn_drop_backups; _txn_unlock
+    awg_record_device_params
+    if [[ "$want" == off ]]; then
+        log "Exit address removed: client traffic leaves from the same address they connect to."
+    else
+        log "Exit address: ${want}. To check from a client: curl -s ifconfig.me should return ${want}."
+    fi
+    json_out "{\"command\":\"exit-ip\",\"ok\":true,\"exit_ip\":\"$([[ $want == off ]] || printf '%s' "$want")\",\"changed\":true}"
+}
+
 usage() {
     # C1: explicit help (rc=0) -> stdout + exit 0; usage error (rc!=0, default)
     # -> stderr + exit 1. Explicit-help callers pass 0, error callers omit the
@@ -3329,7 +3729,9 @@ usage() {
     echo "  --conf-dir=PATH       Specify AWG directory (default: $AWG_DIR)"
     echo "  --server-conf=PATH    Specify server config file"
     echo "  --apply-mode=MODE     syncconf (default) or restart (bypass kernel panic)"
-    echo "  --psk                 (add only) generate a PresharedKey for the new client"
+    echo "  --psk                 (add only) give the client a PresharedKey even if the"
+    echo "                        server was installed with --no-psk (by default every new client has one)"
+    echo "  --no-psk              (add only) create the client without a PresharedKey"
     echo "  --allowed-ips=LIST    (add only) per-client AllowedIPs - comma-separated CIDRs;"
     echo "                        without the flag the server-wide routing mode is used"
     echo "  --reset-routes        (regen only) reset client AllowedIPs to the current"
@@ -3346,6 +3748,8 @@ usage() {
     echo "  list [-v] [--json]    List clients (--json: machine-readable, includes client_ipv6)"
     echo "  stats [--json]        Client traffic statistics"
     echo "  regen [name ...] [--reset-routes]  Regenerate client file(s), multiple names allowed"
+    echo "  port <number>               Change the server UDP port (UFW, init, all clients regenerated)"
+    echo "  exit-ip <IPv4|off>          The address client traffic leaves to the internet from (clients unchanged)"
     echo "  modify <name> <p> <v> Modify a client parameter"
     echo "  backup                Create a backup"
     echo "  restore [file]        Restore from backup"
@@ -3398,13 +3802,23 @@ case $COMMAND in
             fi
         fi
 
-        # --psk: enable optional PresharedKey for every new client.
-        # Export CLIENT_PSK="auto" -> generate_client produces a fresh
-        # 32-byte PSK via `awg genpsk` for each client in the batch
-        # (distinct PSK per client).
-        if [[ "${CLI_ADD_PSK:-0}" == "1" ]]; then
+        # PresharedKey by default (D#371): CLIENT_PSK="auto" -> generate_client
+        # makes a PSK via `awg genpsk`, a distinct one for each client in the batch.
+        # No PSK: --no-psk, or NO_PSK=1 in the init (installed with --no-psk); --psk
+        # turns it on over NO_PSK=1. Clients already issued are not affected.
+        _add_psk=1
+        if [[ "${CLI_ADD_NO_PSK:-0}" == "1" ]]; then
+            _add_psk=0
+        elif [[ "${CLI_ADD_PSK:-0}" != "1" ]]; then
+            _saved_no_psk=$(NO_PSK=""; safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${NO_PSK:-0}")
+            [[ "$_saved_no_psk" == "1" ]] && _add_psk=0
+        fi
+        if (( _add_psk )); then
             export CLIENT_PSK="auto"
-            log "PresharedKey will be generated for each new client (--psk)."
+            log "PresharedKey will be generated for each new client."
+        else
+            unset CLIENT_PSK
+            log "Clients are created without a PresharedKey (--no-psk or NO_PSK=1 in $CONFIG_FILE)."
         fi
 
         # Validate --expires ONCE before creating the first client. Otherwise a
@@ -3473,7 +3887,7 @@ case $COMMAND in
 
             # In batch mode each client gets its own PSK: reset to "auto"
             # so generate_client generates a new one every iteration.
-            if [[ "${CLI_ADD_PSK:-0}" == "1" ]]; then
+            if (( _add_psk )); then
                 export CLIENT_PSK="auto"
             fi
 
@@ -3855,6 +4269,12 @@ case $COMMAND in
         fi
         ;;
 
+    exit-ip)
+        change_exit_ip "$CLIENT_NAME" || exit 1
+        ;;
+    port)
+        change_server_port "$CLIENT_NAME" || exit 1
+        ;;
     restart)
         log "Restarting service..."
         # Warn BEFORE confirm_action: with --yes/AWG_YES=1 there is no prompt, and
