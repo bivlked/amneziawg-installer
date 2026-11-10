@@ -238,13 +238,13 @@
       "id": "awg-manager",
       "name": {"ru": "AWG Manager (Keenetic, сторонний)", "en": "AWG Manager (Keenetic, third-party)"},
       "support": "yes",
-      "version": "v2.19.25",
-      "version_date": "2026-11-05",
+      "version": "v2.20.0",
+      "version_date": "2026-11-10",
       "since": {"ru": "штатным модулем на KeeneticOS 5.2 Alpha 11 и новее; на других прошивках - своим модулем ядра или встроенным sing-box (нужны Entware и компонент WireGuard)", "en": "with the stock module on KeeneticOS 5.2 Alpha 11 and newer; on other firmware with its own kernel module or its bundled sing-box (needs Entware and the WireGuard component)"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/hoaxisr/awg-manager/blob/v2.19.25/CHANGELOG.md", "ref": "internal/singbox/installer/embedded.go at v2.19.25: sing-box 1.15.0-alpha.13-awgm.36 (hoaxisr/amnezia-box, release target 0a65d49308ff), whose go.mod replaces amneziawg-go/v3 with hoaxisr/amneziawg-go v3.1.0-awgm.3; CHANGELOG 2.19.10: 3.0/3.1 on KeeneticOS 5.2 Alpha 11+; 2.18.0: own module 3.1.20260906"},
-      "checked_at": "2026-11-09"
+      "evidence": {"url": "https://github.com/hoaxisr/awg-manager/blob/v2.20.0/CHANGELOG.md", "ref": "internal/singbox/installer/embedded.go at v2.20.0: sing-box 1.15.0-alpha.13-awgm.38 (hoaxisr/amnezia-box, release target 1c665f43e5a0), whose go.mod replaces amneziawg-go/v3 with hoaxisr/amneziawg-go v3.1.0-awgm.3; CHANGELOG 2.19.10: 3.0/3.1 on KeeneticOS 5.2 Alpha 11+; 2.18.0: own module 3.1.20260906"},
+      "checked_at": "2026-11-10"
     },
     {
       "id": "openwrt",
