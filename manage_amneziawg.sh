@@ -3551,6 +3551,20 @@ change_exit_ip() {
             log_error "$want - адрес входа (AWG_ENDPOINT), к нему подключаются клиенты. Адрес выхода должен быть другим."
             return 1
         fi
+        # AWG_ENDPOINT бывает именем: сравниваются адреса, в которые оно резолвится
+        # (ревью PR #389). Не резолвится - не отказ, но и не молча.
+        if [[ -n "$endpoint" && ! "$endpoint" =~ ^[0-9.]+$ && "$endpoint" != *:* ]]; then
+            local rr
+            if rr=$(getent ahostsv4 "$endpoint" 2>/dev/null | awk '{print $1}' | sort -u) && [[ -n "$rr" ]]; then
+                if grep -qxF -- "$want" <<<"$rr"; then
+                    _JSON_ERR="exit address equals entry address"
+                    log_error "$want - в этот адрес резолвится имя входа $endpoint (AWG_ENDPOINT), к нему подключаются клиенты. Адрес выхода должен быть другим."
+                    return 1
+                fi
+            else
+                log_warn "Имя входа $endpoint не резолвится: проверить, что оно не указывает на адрес выхода $want, не удалось. Клиенты должны подключаться к другому адресу."
+            fi
+        fi
         # Без AWG_ENDPOINT клиенты подключаются к основному адресу (источник маршрута по умолчанию).
         if [[ -z "$endpoint" ]]; then
             local src

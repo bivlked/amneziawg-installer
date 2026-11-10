@@ -3241,6 +3241,21 @@ _awg_exit_ip_check() {
         printf '%s\n' "$ip is the entry address (--endpoint) clients connect to; the exit address has to be a different one"
         return 1
     fi
+    # --endpoint can be a name: then the addresses it resolves to are compared
+    # (review of PR #389). A name that does not resolve is not a refusal (DNS may
+    # be set up later), but not silent either: the check could not be made. The
+    # warning goes to stderr: the caller takes this function's stdout as the reason.
+    if [[ -n "${AWG_ENDPOINT:-}" && ! "$AWG_ENDPOINT" =~ ^[0-9.]+$ && "$AWG_ENDPOINT" != *:* ]]; then
+        local rr
+        if rr=$(getent ahostsv4 "$AWG_ENDPOINT" 2>/dev/null | awk '{print $1}' | sort -u) && [[ -n "$rr" ]]; then
+            if grep -qxF -- "$ip" <<<"$rr"; then
+                printf '%s\n' "$ip is an address the entry name $AWG_ENDPOINT (--endpoint) resolves to, and clients connect to it; the exit address has to be a different one"
+                return 1
+            fi
+        else
+            log_warn "The entry name $AWG_ENDPOINT does not resolve: could not check that it does not point to the exit address $ip. The clients must connect to another address." >&2
+        fi
+    fi
     # Without --endpoint the entry address is found on its own: it is the address the
     # server leaves from by the default route (MASQUERADE uses it anyway). Local, no network.
     if [[ -z "${AWG_ENDPOINT:-}" ]]; then

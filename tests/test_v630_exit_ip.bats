@@ -79,7 +79,11 @@ setup_render_env() {
 # xcheck <installer> <ip> <ipv6 tunnel> <addresses on interfaces>
 xcheck() {
     run bash -c '
-        log() { :; }
+        log() { :; }; log_warn() { echo "WARN: $*" >&2; }
+        getent() {
+            [[ "$1" == ahostsv4 && -n "${STUB_DNS:-}" ]] || return 2
+            local a; for a in $STUB_DNS; do printf "%s       STREAM %s\n%s       DGRAM\n" "$a" "$2" "$a"; done
+        }
         '"$(fn "$1" _awg_exit_ip_check)"'
         ip() {
             if [[ "$*" == *"route get"* ]]; then
@@ -185,6 +189,13 @@ for a in ${STUB_ADDRS:-}; do printf '2: eth0    inet %s/24 brd x scope global et
 printf '3: awg0    inet 10.9.9.1/24 scope global awg0\n'
 printf '1: lo    inet 127.0.0.1/8 scope host lo\n'
 STUB
+    # getent: STUB_DNS holds the IPv4 addresses a name resolves to; unset = not found.
+    cat > "$MGMT_DIR/bin/getent" << 'STUB'
+#!/bin/bash
+echo "getent $*" >> "$CALLS.dns"
+[[ "$1" == ahostsv4 && -n "${STUB_DNS:-}" ]] || exit 2
+for a in $STUB_DNS; do printf '%s       STREAM %s\n%s       DGRAM\n' "$a" "$2" "$a"; done
+STUB
     # iptables: -C answers "the rule is there" only for STUB_IPT_LEFT; every
     # -D is written to a log of its own. STUB_IPT_STUCK: a rule that -C always
     # finds and -D never removes (more copies than any bounded loop takes).
@@ -230,7 +241,7 @@ CONF
 
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
-    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_ADDRS STUB_START_FAIL STUB_STOP_FAIL STUB_IPT_LEFT STUB_IPT_STUCK STUB_STOP_SIGNAL STUB_START_SIGNAL STUB_RM_SIGNAL STUB_START_ACTIVATING STUB_SECOND_SIGNAL STUB_SRC
+    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_ADDRS STUB_START_FAIL STUB_STOP_FAIL STUB_IPT_LEFT STUB_IPT_STUCK STUB_STOP_SIGNAL STUB_START_SIGNAL STUB_RM_SIGNAL STUB_START_ACTIVATING STUB_SECOND_SIGNAL STUB_SRC STUB_DNS
 }
 
 manage() {
@@ -717,4 +728,44 @@ _exit_main_address_without_endpoint() {
 @test "exit-ip without a saved endpoint refuses the main address the default route leaves from, both twins" {
     require_flock
     each_manage _exit_main_address_without_endpoint
+}
+
+# ---------- --endpoint given as a name (bot review of PR #389) ----------
+
+@test "installer: an --endpoint name that resolves to the exit address is refused; another address passes; a name that does not resolve warns, both twins" {
+    local s
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        STUB_ADDRS="198.51.100.2 203.0.113.7" STUB_EP=vpn.example.com STUB_DNS="198.51.100.2 203.0.113.7" xcheck "$s" 203.0.113.7 0
+        [ "$status" -ne 0 ] && [[ "$output" == *vpn.example.com* ]] || { echo "$s: the exit address behind the entry name passed: $output"; return 1; }
+        STUB_ADDRS="198.51.100.2 203.0.113.7" STUB_EP=vpn.example.com STUB_DNS="198.51.100.2" xcheck "$s" 203.0.113.7 0
+        [ "$status" -eq 0 ] || { echo "$s: an exit address the name does not point to was refused: $output"; return 1; }
+        [[ "$output" != *WARN* ]] || { echo "$s: a resolved name warned: $output"; return 1; }
+        STUB_ADDRS="198.51.100.2 203.0.113.7" STUB_EP=vpn.example.com xcheck "$s" 203.0.113.7 0
+        [ "$status" -eq 0 ] || { echo "$s: a name that does not resolve blocked the install: $output"; return 1; }
+        [[ "$output" == *"WARN: "*vpn.example.com* ]] || { echo "$s: an unresolved name passed silently: $output"; return 1; }
+        # an IPv4 endpoint is compared as before, the resolver is not asked
+        STUB_ADDRS="198.51.100.2 203.0.113.7" STUB_EP=198.51.100.2 STUB_DNS="203.0.113.7" xcheck "$s" 203.0.113.7 0
+        [ "$status" -eq 0 ] || { echo "$s: an IPv4 endpoint went to the resolver: $output"; return 1; }
+    done
+}
+
+_exit_endpoint_name() {
+    local conf_before
+    sed -i "s/^export AWG_ENDPOINT=.*/export AWG_ENDPOINT='vpn.example.com'/" "$MGMT_DIR/awg/awgsetup_cfg.init"
+    conf_before=$(cat "$MGMT_DIR/awg/awg0.conf")
+    export STUB_DNS="198.51.100.2 203.0.113.7"
+    manage "$1" exit-ip 203.0.113.7
+    [ "$status" -ne 0 ] && [[ "$stderr" == *vpn.example.com* ]] || { echo "$1: the exit address behind the entry name passed: $stderr"; unset STUB_DNS; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awg0.conf")" = "$conf_before" ] || { echo "$1: awg0.conf changed"; unset STUB_DNS; return 1; }
+    [ -z "$(calls)" ] || { echo "$1: a refusal touched the service: $(calls)"; unset STUB_DNS; return 1; }
+    manage "$1" exit-ip 203.0.113.8
+    [ "$status" -eq 0 ] || { echo "$1: an address the name does not point to was refused: $stderr"; unset STUB_DNS; return 1; }
+    unset STUB_DNS
+    manage "$1" exit-ip 203.0.113.7
+    [ "$status" -eq 0 ] || { echo "$1: a name that does not resolve blocked the change: $stderr"; return 1; }
+    [[ "$stderr$output" == *vpn.example.com* ]] || { echo "$1: an unresolved name passed silently: $stderr"; return 1; }
+}
+@test "exit-ip refuses an address the saved endpoint name resolves to, warns when the name does not resolve, both twins" {
+    require_flock
+    each_manage _exit_endpoint_name
 }

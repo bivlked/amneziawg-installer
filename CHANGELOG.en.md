@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **The kernel module builds again after a 24.04 HWE to 26.04 upgrade.** When the old and the new release share a kernel name (7.0.0-43 on both 24.04 HWE and 26.04, for example), DKMS kept the module built against the old headers; after the reboot it did not load (`Exec format error`, `disagrees about version of symbol module_layout` in `dmesg`) and the VPN did not come up. The boot helper tried a forced rebuild, but `dkms install --force` put the same cached file back. The rebuild now goes through `dkms build --force`, so the module is built again at boot by itself; `manage repair-module` also rebuilds a module that is on disk but does not load. `manage check` no longer calls this "normal for userspace mode" and says where to find the reason and how to rebuild. Checked on a stand: Ubuntu 24.04 HWE 7.0.0-43, then an upgrade to 26.04.1.
+- **The exit address cannot be the entry address, even when the entry is a name.** When `--endpoint` (or `AWG_ENDPOINT` in `manage exit-ip`) is a name such as `vpn.example.com`, the installer and `manage` compared the exit address only with the name string itself, so the address the name points to passed as an exit address. The name is now resolved, and an address from its A records is refused. A name that does not resolve does not block the install, but a warning says the check could not be made.
 
 ### Documentation
 

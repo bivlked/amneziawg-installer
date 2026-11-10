@@ -3598,6 +3598,20 @@ change_exit_ip() {
             log_error "$want is the entry address (AWG_ENDPOINT) clients connect to. The exit address has to be a different one."
             return 1
         fi
+        # AWG_ENDPOINT can be a name: the addresses it resolves to are compared
+        # (review of PR #389). Does not resolve: not a refusal, but not silent.
+        if [[ -n "$endpoint" && ! "$endpoint" =~ ^[0-9.]+$ && "$endpoint" != *:* ]]; then
+            local rr
+            if rr=$(getent ahostsv4 "$endpoint" 2>/dev/null | awk '{print $1}' | sort -u) && [[ -n "$rr" ]]; then
+                if grep -qxF -- "$want" <<<"$rr"; then
+                    _JSON_ERR="exit address equals entry address"
+                    log_error "$want is an address the entry name $endpoint (AWG_ENDPOINT) resolves to, and clients connect to it. The exit address has to be a different one."
+                    return 1
+                fi
+            else
+                log_warn "The entry name $endpoint does not resolve: could not check that it does not point to the exit address $want. The clients must connect to another address."
+            fi
+        fi
         # Without AWG_ENDPOINT clients connect to the main address (the default route's source).
         if [[ -z "$endpoint" ]]; then
             local src
