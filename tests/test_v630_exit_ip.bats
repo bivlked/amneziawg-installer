@@ -337,9 +337,9 @@ _exit_stop_fails() {
     unset STUB_STOP_FAIL
     [ "$status" -ne 0 ] || { echo "$1: a failed stop reported success"; return 1; }
     [ "$(cat "$MGMT_DIR/awg/awg0.conf")" = "$conf_before" ] || { echo "$1: awg0.conf changed after a failed stop"; return 1; }
-    [ "$(calls)" = "systemctl stop awg-quick@awg0" ] || { echo "$1: calls '$(calls)'"; return 1; }
+    [ "$(calls)" = "systemctl stop awg-quick@awg0|systemctl start awg-quick@awg0" ] || { echo "$1: a failed stop did not try to start the old config: '$(calls)'"; return 1; }
 }
-@test "exit-ip changes nothing when the service does not stop" {
+@test "exit-ip changes nothing when the service does not stop, and tries to start the old config" {
     require_flock
     each_manage _exit_stop_fails
 }

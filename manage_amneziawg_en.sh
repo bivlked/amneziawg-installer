@@ -3436,10 +3436,12 @@ change_server_port() {
     confirm_action "change the port" "of the server from ${old} to ${new}" || return 1
     _txn_lock || { _JSON_ERR="config locked"; return 1; }
     _txn_backup || { _txn_unlock; _JSON_ERR="backup failed"; return 1; }
+    _txn_trap_on _port_txn_on_signal
     if command -v ufw >/dev/null 2>&1; then
         have_ufw=1
         _port_ufw_has "$new" || added_rule=1
         if ! ufw allow "${new}/udp" comment "AmneziaWG VPN" >/dev/null; then
+            _txn_trap_off
             _txn_drop_backups; _txn_unlock
             _JSON_ERR="ufw allow failed"
             log_error "UFW did not open ${new}/udp, the port is unchanged."
@@ -3458,8 +3460,10 @@ change_server_port() {
         _txn_unlock
         if (( rb == 0 )); then _JSON_ERR="restart on the new port failed, rolled back"
         else _JSON_ERR="restart on the new port failed, rollback incomplete"; fi
+        _txn_trap_off
         return 1
     fi
+    _txn_trap_off
     _txn_drop_backups; _txn_unlock
     awg_record_device_params
     if (( have_ufw )); then
@@ -3476,6 +3480,37 @@ change_server_port() {
     (( fail == 0 ))
 }
 
+# _txn_restore_present: each transaction copy that still exists goes back on its
+# own: the rollback may have put one of them back already. For the signal handlers.
+_txn_restore_present() {
+    if [[ -n "${_TXN_BAK_CONF:-}" && -f "$_TXN_BAK_CONF" ]]; then
+        cp -p "$_TXN_BAK_CONF" "$SERVER_CONF_FILE" && rm -f "$_TXN_BAK_CONF"
+    fi
+    if [[ -n "${_TXN_BAK_INIT:-}" && -f "$_TXN_BAK_INIT" ]]; then
+        cp -p "$_TXN_BAK_INIT" "$CONFIG_FILE" && rm -f "$_TXN_BAK_INIT"
+    fi
+}
+# _txn_trap_on <handler>: an INT/TERM handler for the transaction; _txn_trap_off: the global one.
+# SC2064: the handler name is expanded right away, on purpose.
+# shellcheck disable=SC2064
+_txn_trap_on()  { trap "$1 130" INT; trap "$1 143" TERM; }
+_txn_trap_off() { trap '_manage_on_signal 130' INT; trap '_manage_on_signal 143' TERM; }
+
+# A signal in the middle of a port change: the files come back from the copies, the
+# service restarts on the old port, and the new port's UFW rule is removed only if
+# this command added it. new and added_rule come from change_server_port.
+_port_txn_on_signal() {
+    # A second INT/TERM does not cut the restore short.
+    trap '' INT TERM
+    _txn_restore_present
+    systemctl restart awg-quick@awg0 || log_error "The server did not come up on the old port either: systemctl status awg-quick@awg0"
+    if (( ${added_rule:-0} )); then
+        ufw delete allow "${new}/udp" >/dev/null 2>&1 || log_warn "UFW did not delete the new port's rule: sudo ufw delete allow ${new}/udp"
+    fi
+    _txn_unlock
+    log_error "The port command was interrupted: the old port is back."
+    _manage_on_signal "$1"
+}
 # A signal while exit-ip holds the service down: the files come back from the
 # copies, the new address's SNAT rule is removed and the service comes up on the
 # previous config, instead of leaving the VPN down. want, subnet and nic come
@@ -3488,13 +3523,8 @@ _exit_txn_on_signal() {
     # (activating), on the new config: stop it first, while the new file is on disk
     # (its PostDown removes its rule), then the files. A stop of a stopped service does nothing.
     systemctl stop awg-quick@awg0
-    # The copies come back one by one: the rollback may have put one of them back already.
-    if [[ -n "${_TXN_BAK_CONF:-}" && -f "$_TXN_BAK_CONF" ]]; then
-        cp -p "$_TXN_BAK_CONF" "$SERVER_CONF_FILE" && rm -f "$_TXN_BAK_CONF"
-    fi
-    if [[ -n "${_TXN_BAK_INIT:-}" && -f "$_TXN_BAK_INIT" ]]; then
-        cp -p "$_TXN_BAK_INIT" "$CONFIG_FILE" && rm -f "$_TXN_BAK_INIT"
-    fi
+    _txn_restore_present
+
     if [[ "${want:-off}" != off && -n "${subnet:-}" && -n "${nic:-}" ]]; then
         while (( ++_n <= 16 )) && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null; do
             iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null || break
@@ -3505,8 +3535,6 @@ _exit_txn_on_signal() {
     log_error "The exit-ip command was interrupted: the previous settings are back."
     _manage_on_signal "$1"
 }
-_exit_txn_trap_on()  { trap '_exit_txn_on_signal 130' INT; trap '_exit_txn_on_signal 143' TERM; }
-_exit_txn_trap_off() { trap '_manage_on_signal 130' INT; trap '_manage_on_signal 143' TERM; }
 
 # manage exit-ip <IPv4|off>: the address client traffic leaves to the internet
 # from (I#384). It changes the command's own SNAT rule (the client subnet and the external
@@ -3575,9 +3603,12 @@ change_exit_ip() {
     confirm_action "change the exit address" "to ${want}" || return 1
     _txn_lock || { _JSON_ERR="config locked"; return 1; }
     _txn_backup || { _txn_unlock; _JSON_ERR="backup failed"; return 1; }
-    _exit_txn_trap_on
+    _txn_trap_on _exit_txn_on_signal
     if ! systemctl stop awg-quick@awg0; then
-        _exit_txn_trap_off
+        # The stop may have failed half way through the teardown: the previous config
+        # is started again (start does nothing on a running service).
+        systemctl start awg-quick@awg0 || log_error "The service did not start: systemctl status awg-quick@awg0"
+        _txn_trap_off
         _txn_drop_backups; _txn_unlock
         _JSON_ERR="service stop failed"
         log_error "The service did not stop: the exit address is unchanged. Check: systemctl status awg-quick@awg0"
@@ -3590,7 +3621,7 @@ change_exit_ip() {
         # 16 passes cover any real leftover; a rule still there after them counts as not removed.
         if (( ++_drain > 16 )) || ! iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur"; then
             systemctl start awg-quick@awg0 || log_error "The service did not start: systemctl status awg-quick@awg0"
-            _exit_txn_trap_off
+            _txn_trap_off
             _txn_drop_backups; _txn_unlock
             _JSON_ERR="old exit rule could not be removed"
             log_error "Could not remove the previous SNAT rule to ${cur}: the exit address is unchanged."
@@ -3630,10 +3661,10 @@ change_exit_ip() {
         _txn_unlock
         if (( rb == 0 )); then _JSON_ERR="start with the new exit address failed, rolled back"
         else _JSON_ERR="start with the new exit address failed, rollback incomplete"; fi
-        _exit_txn_trap_off
+        _txn_trap_off
         return 1
     fi
-    _exit_txn_trap_off
+    _txn_trap_off
     _txn_drop_backups; _txn_unlock
     awg_record_device_params
     if [[ "$want" == off ]]; then

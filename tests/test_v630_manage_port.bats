@@ -37,6 +37,11 @@ if [[ "$1" == restart && -n "${STUB_RESTART_FAIL:-}" ]]; then
     # the old port back has to succeed.
     grep -qE "^ListenPort = ${STUB_RESTART_FAIL}\$" "$STUB_SERVER_CONF" && exit 1
 fi
+# STUB_RESTART_SIGNAL: one TERM to manage itself (the parent) during the restart on the new port.
+if [[ "$1" == restart && -n "${STUB_RESTART_SIGNAL:-}" && ! -e "$CALLS.signaled" ]] \
+    && grep -qE "^ListenPort = ${STUB_RESTART_SIGNAL}\$" "$STUB_SERVER_CONF"; then
+    : > "$CALLS.signaled"; kill -TERM "$PPID"
+fi
 exit 0
 STUB
     cat > "$MGMT_DIR/bin/ufw" << 'STUB'
@@ -96,7 +101,7 @@ CONF
 
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
-    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_RESTART_FAIL STUB_UFW_OFF STUB_BUSY STUB_UFW_HAS STUB_UFW_ALLOW_FAIL
+    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_RESTART_FAIL STUB_UFW_OFF STUB_BUSY STUB_UFW_HAS STUB_UFW_ALLOW_FAIL STUB_RESTART_SIGNAL
 }
 
 manage() {
@@ -304,4 +309,34 @@ _port_rollback_keeps_rule_ufw_off() {
         [[ "$output" == *ufw-yes* ]] || { echo "$s: _port_ufw_has missed the rule: $output"; return 1; }
         [[ "$output" == *ss-yes* ]] || { echo "$s: _port_listening missed the port: $output"; return 1; }
     done
+}
+# ---------- an interruption in the middle of the port change ----------
+
+_port_signal_at_restart() {
+    export STUB_RESTART_SIGNAL=23456
+    manage "$1" port 23456
+    unset STUB_RESTART_SIGNAL
+    [ "$status" -eq 143 ] || { echo "$1: status $status, want 143"; return 1; }
+    [ "$(listen_port)" = "39743" ] || { echo "$1: ListenPort left at $(listen_port)"; return 1; }
+    [ "$(init_port)" = "39743" ] || { echo "$1: AWG_PORT left at $(init_port)"; return 1; }
+    [[ "$(calls)" == *"systemctl restart awg-quick@awg0|systemctl restart awg-quick@awg0"* ]] || { echo "$1: the old port was not restarted: '$(calls)'"; return 1; }
+    [[ "$(calls)" == *"ufw delete allow 23456/udp"* ]] || { echo "$1: the new port's rule was left: '$(calls)'"; return 1; }
+    local left; left=$(compgen -G "$MGMT_DIR/awg/*.bak.*")
+    [ -z "$left" ] || { echo "$1: copies left: $left"; return 1; }
+}
+@test "port interrupted during the restart puts the old port back and removes the rule it added, both twins" {
+    require_flock
+    each_manage _port_signal_at_restart
+}
+
+_port_signal_keeps_existing_rule() {
+    export STUB_RESTART_SIGNAL=23456 STUB_UFW_HAS=23456
+    manage "$1" port 23456
+    unset STUB_RESTART_SIGNAL STUB_UFW_HAS
+    [ "$status" -eq 143 ] || { echo "$1: status $status, want 143"; return 1; }
+    [[ "$(calls)" != *"ufw delete allow 23456/udp"* ]] || { echo "$1: a rule that was there before was deleted: '$(calls)'"; return 1; }
+}
+@test "port interrupted keeps a rule for the new port that existed before, both twins" {
+    require_flock
+    each_manage _port_signal_keeps_existing_rule
 }

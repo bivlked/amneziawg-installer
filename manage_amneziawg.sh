@@ -3392,10 +3392,12 @@ change_server_port() {
     confirm_action "сменить порт" "сервера с ${old} на ${new}" || return 1
     _txn_lock || { _JSON_ERR="config locked"; return 1; }
     _txn_backup || { _txn_unlock; _JSON_ERR="backup failed"; return 1; }
+    _txn_trap_on _port_txn_on_signal
     if command -v ufw >/dev/null 2>&1; then
         have_ufw=1
         _port_ufw_has "$new" || added_rule=1
         if ! ufw allow "${new}/udp" comment "AmneziaWG VPN" >/dev/null; then
+            _txn_trap_off
             _txn_drop_backups; _txn_unlock
             _JSON_ERR="ufw allow failed"
             log_error "UFW не открыл ${new}/udp, порт не изменён."
@@ -3414,8 +3416,10 @@ change_server_port() {
         _txn_unlock
         if (( rb == 0 )); then _JSON_ERR="restart on the new port failed, rolled back"
         else _JSON_ERR="restart on the new port failed, rollback incomplete"; fi
+        _txn_trap_off
         return 1
     fi
+    _txn_trap_off
     _txn_drop_backups; _txn_unlock
     awg_record_device_params
     if (( have_ufw )); then
@@ -3432,6 +3436,37 @@ change_server_port() {
     (( fail == 0 ))
 }
 
+# _txn_restore_present: каждая копия транзакции, которая ещё есть, возвращается на
+# место сама по себе: откат мог успеть вернуть одну из них. Для обработчиков сигналов.
+_txn_restore_present() {
+    if [[ -n "${_TXN_BAK_CONF:-}" && -f "$_TXN_BAK_CONF" ]]; then
+        cp -p "$_TXN_BAK_CONF" "$SERVER_CONF_FILE" && rm -f "$_TXN_BAK_CONF"
+    fi
+    if [[ -n "${_TXN_BAK_INIT:-}" && -f "$_TXN_BAK_INIT" ]]; then
+        cp -p "$_TXN_BAK_INIT" "$CONFIG_FILE" && rm -f "$_TXN_BAK_INIT"
+    fi
+}
+# _txn_trap_on <обработчик>: свой INT/TERM на время транзакции; _txn_trap_off - общий.
+# SC2064: имя обработчика подставляется сразу, так и задумано.
+# shellcheck disable=SC2064
+_txn_trap_on()  { trap "$1 130" INT; trap "$1 143" TERM; }
+_txn_trap_off() { trap '_manage_on_signal 130' INT; trap '_manage_on_signal 143' TERM; }
+
+# Сигнал посреди смены порта: файлы возвращаются из копий, сервис перезапускается на
+# старом порту, правило UFW нового порта снимается, только если его добавила эта
+# команда. new и added_rule видны из change_server_port.
+_port_txn_on_signal() {
+    # Повторный INT/TERM не обрывает восстановление.
+    trap '' INT TERM
+    _txn_restore_present
+    systemctl restart awg-quick@awg0 || log_error "Сервер не поднялся и на старом порту: systemctl status awg-quick@awg0"
+    if (( ${added_rule:-0} )); then
+        ufw delete allow "${new}/udp" >/dev/null 2>&1 || log_warn "UFW не удалил правило нового порта: sudo ufw delete allow ${new}/udp"
+    fi
+    _txn_unlock
+    log_error "Команда port прервана: прежний порт возвращён."
+    _manage_on_signal "$1"
+}
 # Сигнал, пока exit-ip держит сервис остановленным: файлы возвращаются из копий,
 # правило SNAT нового адреса снимается, сервис поднимается на прежнем конфиге,
 # иначе VPN остался бы лежать. want, subnet и nic видны из change_exit_ip.
@@ -3443,13 +3478,8 @@ _exit_txn_on_signal() {
     # новом конфиге: сначала остановка, пока на диске новый файл (его PostDown снимет
     # своё правило), потом возврат файлов. stop остановленного сервиса ничего не делает.
     systemctl stop awg-quick@awg0
-    # Копии возвращаются по отдельности: откат мог успеть вернуть одну из них.
-    if [[ -n "${_TXN_BAK_CONF:-}" && -f "$_TXN_BAK_CONF" ]]; then
-        cp -p "$_TXN_BAK_CONF" "$SERVER_CONF_FILE" && rm -f "$_TXN_BAK_CONF"
-    fi
-    if [[ -n "${_TXN_BAK_INIT:-}" && -f "$_TXN_BAK_INIT" ]]; then
-        cp -p "$_TXN_BAK_INIT" "$CONFIG_FILE" && rm -f "$_TXN_BAK_INIT"
-    fi
+    _txn_restore_present
+
     if [[ "${want:-off}" != off && -n "${subnet:-}" && -n "${nic:-}" ]]; then
         while (( ++_n <= 16 )) && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null; do
             iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null || break
@@ -3460,8 +3490,6 @@ _exit_txn_on_signal() {
     log_error "Команда exit-ip прервана: прежние настройки возвращены."
     _manage_on_signal "$1"
 }
-_exit_txn_trap_on()  { trap '_exit_txn_on_signal 130' INT; trap '_exit_txn_on_signal 143' TERM; }
-_exit_txn_trap_off() { trap '_manage_on_signal 130' INT; trap '_manage_on_signal 143' TERM; }
 
 # manage exit-ip <IPv4|off>: адрес, с которого трафик клиентов уходит в интернет
 # (I#384). Меняется правило SNAT этой команды (подсеть клиентов и внешний интерфейс из
@@ -3529,9 +3557,12 @@ change_exit_ip() {
     confirm_action "сменить адрес выхода" "на ${want}" || return 1
     _txn_lock || { _JSON_ERR="config locked"; return 1; }
     _txn_backup || { _txn_unlock; _JSON_ERR="backup failed"; return 1; }
-    _exit_txn_trap_on
+    _txn_trap_on _exit_txn_on_signal
     if ! systemctl stop awg-quick@awg0; then
-        _exit_txn_trap_off
+        # stop мог сорваться посреди разборки: прежний конфиг поднимается снова
+        # (на работающем сервисе start ничего не делает).
+        systemctl start awg-quick@awg0 || log_error "Сервис не запустился: systemctl status awg-quick@awg0"
+        _txn_trap_off
         _txn_drop_backups; _txn_unlock
         _JSON_ERR="service stop failed"
         log_error "Сервис не остановился: адрес выхода не изменён. Проверьте: systemctl status awg-quick@awg0"
@@ -3544,7 +3575,7 @@ change_exit_ip() {
         # 16 проходов хватает на любой реальный остаток; правило, оставшееся после них, считается неснятым.
         if (( ++_drain > 16 )) || ! iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur"; then
             systemctl start awg-quick@awg0 || log_error "Сервис не запустился: systemctl status awg-quick@awg0"
-            _exit_txn_trap_off
+            _txn_trap_off
             _txn_drop_backups; _txn_unlock
             _JSON_ERR="old exit rule could not be removed"
             log_error "Не удалось снять прежнее правило SNAT на ${cur}: адрес выхода не изменён."
@@ -3584,10 +3615,10 @@ change_exit_ip() {
         _txn_unlock
         if (( rb == 0 )); then _JSON_ERR="start with the new exit address failed, rolled back"
         else _JSON_ERR="start with the new exit address failed, rollback incomplete"; fi
-        _exit_txn_trap_off
+        _txn_trap_off
         return 1
     fi
-    _exit_txn_trap_off
+    _txn_trap_off
     _txn_drop_backups; _txn_unlock
     awg_record_device_params
     if [[ "$want" == off ]]; then
