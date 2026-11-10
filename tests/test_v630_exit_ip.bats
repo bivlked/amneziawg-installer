@@ -81,8 +81,14 @@ xcheck() {
     run bash -c '
         log() { :; }
         '"$(fn "$1" _awg_exit_ip_check)"'
-        ip() { local a; for a in $STUB_ADDRS; do printf "2: eth0    inet %s/24 brd x scope global eth0\n" "$a"; done; }
-        ALLOW_IPV6_TUNNEL="$3"
+        ip() {
+            if [[ "$*" == *"route get"* ]]; then
+                [[ -n "${STUB_SRC:-}" ]] && printf "1.1.1.1 via 198.51.100.1 dev eth0 src %s uid 0\n" "$STUB_SRC"
+                return 0
+            fi
+            local a; for a in $STUB_ADDRS; do printf "2: eth0    inet %s/24 brd x scope global eth0\n" "$a"; done
+        }
+        ALLOW_IPV6_TUNNEL="$3" AWG_ENDPOINT="${STUB_EP:-}"
         _awg_exit_ip_check "$2"
     ' _ "$1" "$2" "$3"
 }
@@ -171,6 +177,10 @@ STUB
 
     cat > "$MGMT_DIR/bin/ip" << 'STUB'
 #!/bin/bash
+if [[ "$*" == *"route get"* ]]; then
+    [[ -n "${STUB_SRC:-}" ]] && printf '1.1.1.1 via 198.51.100.1 dev eth0 src %s uid 0\n' "$STUB_SRC"
+    exit 0
+fi
 for a in ${STUB_ADDRS:-}; do printf '2: eth0    inet %s/24 brd x scope global eth0\n' "$a"; done
 printf '3: awg0    inet 10.9.9.1/24 scope global awg0\n'
 printf '1: lo    inet 127.0.0.1/8 scope host lo\n'
@@ -220,7 +230,7 @@ CONF
 
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
-    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_ADDRS STUB_START_FAIL STUB_STOP_FAIL STUB_IPT_LEFT STUB_IPT_STUCK STUB_STOP_SIGNAL STUB_START_SIGNAL STUB_RM_SIGNAL STUB_START_ACTIVATING STUB_SECOND_SIGNAL
+    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_ADDRS STUB_START_FAIL STUB_STOP_FAIL STUB_IPT_LEFT STUB_IPT_STUCK STUB_STOP_SIGNAL STUB_START_SIGNAL STUB_RM_SIGNAL STUB_START_ACTIVATING STUB_SECOND_SIGNAL STUB_SRC
 }
 
 manage() {
@@ -677,4 +687,34 @@ _exit_second_signal_in_handler() {
 @test "a second signal while exit-ip restores does not leave the service down, both twins" {
     require_flock
     each_manage _exit_second_signal_in_handler
+}
+# ---------- no --endpoint: the entry is the server's main address ----------
+
+@test "installer: without --endpoint the exit address cannot be the main address the default route leaves from, both twins" {
+    local s
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        STUB_ADDRS="198.51.100.2 203.0.113.7" STUB_SRC=198.51.100.2 xcheck "$s" 198.51.100.2 0
+        [ "$status" -ne 0 ] && [[ "$output" == *198.51.100.2* ]] || { echo "$s: the auto-detected entry address passed as the exit: $output"; return 1; }
+        STUB_ADDRS="198.51.100.2 203.0.113.7" STUB_SRC=198.51.100.2 xcheck "$s" 203.0.113.7 0
+        [ "$status" -eq 0 ] || { echo "$s: the second address was refused: $output"; return 1; }
+        STUB_ADDRS="198.51.100.2 203.0.113.7" STUB_SRC=198.51.100.2 STUB_EP=203.0.113.7 xcheck "$s" 198.51.100.2 0
+        [ "$status" -eq 0 ] || { echo "$s: entry on the second address, exit on the main one was refused: $output"; return 1; }
+    done
+}
+
+_exit_main_address_without_endpoint() {
+    local conf_before
+    sed -i "s/^export AWG_ENDPOINT=.*/export AWG_ENDPOINT=''/" "$MGMT_DIR/awg/awgsetup_cfg.init"
+    conf_before=$(cat "$MGMT_DIR/awg/awg0.conf")
+    export STUB_SRC=198.51.100.2
+    manage "$1" exit-ip 198.51.100.2
+    [ "$status" -ne 0 ] || { echo "$1: the main address was accepted as the exit without an endpoint"; unset STUB_SRC; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awg0.conf")" = "$conf_before" ] || { echo "$1: awg0.conf changed"; unset STUB_SRC; return 1; }
+    manage "$1" exit-ip 203.0.113.7
+    unset STUB_SRC
+    [ "$status" -eq 0 ] || { echo "$1: the second address was refused: $stderr"; return 1; }
+}
+@test "exit-ip without a saved endpoint refuses the main address the default route leaves from, both twins" {
+    require_flock
+    each_manage _exit_main_address_without_endpoint
 }

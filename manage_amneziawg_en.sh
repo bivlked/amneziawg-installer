@@ -3435,6 +3435,21 @@ change_server_port() {
     log_warn "The server port changes from ${old} to ${new}: connected clients drop, every client gets a new config and QR (regenerated automatically), and they have to be handed out again. A port forward on a router and the host's firewall, if any, have to be changed by hand."
     confirm_action "change the port" "of the server from ${old} to ${new}" || return 1
     _txn_lock || { _JSON_ERR="config locked"; return 1; }
+    # Another command may have changed the port while this one waited for the lock:
+    # the old port is read again under it, or the rule of the wrong port would be closed.
+    old=$(_port_read_listen)
+    if ! [[ "$old" =~ ^[0-9]+$ ]]; then
+        _txn_unlock
+        _JSON_ERR="no ListenPort in server config"
+        log_error "No ListenPort found in $SERVER_CONF_FILE."
+        return 1
+    fi
+    if [[ "$new" == "$old" ]]; then
+        _txn_unlock
+        log "The server already listens on ${new}/udp, nothing to change."
+        json_out "{\"command\":\"port\",\"ok\":true,\"old\":$old,\"new\":$new,\"changed\":false}"
+        return 0
+    fi
     _txn_backup || { _txn_unlock; _JSON_ERR="backup failed"; return 1; }
     _txn_trap_on _port_txn_on_signal
     if command -v ufw >/dev/null 2>&1; then
@@ -3574,6 +3589,16 @@ change_exit_ip() {
             _JSON_ERR="exit address equals entry address"
             log_error "$want is the entry address (AWG_ENDPOINT) clients connect to. The exit address has to be a different one."
             return 1
+        fi
+        # Without AWG_ENDPOINT clients connect to the main address (the default route's source).
+        if [[ -z "$endpoint" ]]; then
+            local src
+            src=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}' | head -n 1)
+            if [[ -n "$src" && "$src" == "$want" ]]; then
+                _JSON_ERR="exit address equals entry address"
+                log_error "$want is the main address of the server: without AWG_ENDPOINT clients connect to it. The exit address has to be a different one."
+                return 1
+            fi
         fi
     fi
     v6=$(ALLOW_IPV6_TUNNEL=""; safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${ALLOW_IPV6_TUNNEL:-0}")

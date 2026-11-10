@@ -70,7 +70,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="176ec35655c3e2270533b54da0818d1bb38ca4af6ba6efc8376eb9d3915a4e6d"
-MANAGE_SCRIPT_SHA256="ec1e8b99f5720d071c6be55ca537e4654078ab7752c14a6cd5d8dcf473212c7a"
+MANAGE_SCRIPT_SHA256="f6d6c855592122b283ee53b7267ead6727267887e83803f160bdc426e77db3bf"
 
 # AmneziaWG 2.0 пин (H0, 31 jul 2026). Upstream влил AmneziaWG 3.0 в default-ветку
 # amneziawg-linux-kernel-module, и PPA переключился на 3.0. Тогда на ядрах старее
@@ -3153,6 +3153,16 @@ _awg_exit_ip_check() {
     if [[ -n "${AWG_ENDPOINT:-}" && "$AWG_ENDPOINT" == "$ip" ]]; then
         printf '%s\n' "$ip - адрес входа (--endpoint), к нему подключаются клиенты; адрес выхода должен быть другим"
         return 1
+    fi
+    # Без --endpoint адрес входа определяется сам: это адрес, с которого сервер выходит
+    # по маршруту по умолчанию (MASQUERADE и так ставит его источником). Локально, без сети.
+    if [[ -z "${AWG_ENDPOINT:-}" ]]; then
+        local src
+        src=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}' | head -n 1)
+        if [[ -n "$src" && "$src" == "$ip" ]]; then
+            printf '%s\n' "$ip - основной адрес сервера: без --endpoint клиенты подключаются к нему; адрес выхода должен быть другим (или задайте --endpoint с адресом входа)"
+            return 1
+        fi
     fi
     if ! ip -4 -o addr show 2>/dev/null | awk '$2 !~ /^(awg|wg|lo)/ {for(i=1;i<NF;i++) if($i=="inet"){split($(i+1),a,"/"); print a[1]}}' | grep -qxF -- "$ip"; then
         printf '%s\n' "адреса $ip нет на внешних интерфейсах сервера (туннельные и loopback не в счёт); пропишите его постоянно (например, в netplan) и повторите"

@@ -340,3 +340,28 @@ _port_signal_keeps_existing_rule() {
     require_flock
     each_manage _port_signal_keeps_existing_rule
 }
+# Another manage port committed between this command's first read and its lock.
+_port_old_reread_under_lock() {
+    cat > "$MGMT_DIR/bin/flock" << 'STUB'
+#!/bin/bash
+if [[ -n "${STUB_FLOCK_SET_PORT:-}" && ! -e "$CALLS.flocked" ]]; then
+    : > "$CALLS.flocked"
+    sed -i "s/^ListenPort = .*/ListenPort = ${STUB_FLOCK_SET_PORT}/" "$STUB_SERVER_CONF"
+fi
+exec /usr/bin/flock "$@"
+STUB
+    chmod +x "$MGMT_DIR/bin/flock"
+    export STUB_FLOCK_SET_PORT=34567
+    manage "$1" port 23456
+    unset STUB_FLOCK_SET_PORT
+    /bin/rm -f "$MGMT_DIR/bin/flock"; hash -r
+    [ "$status" -eq 0 ] || { echo "$1: status $status: $stderr"; return 1; }
+    [ "$(listen_port)" = "23456" ] || { echo "$1: ListenPort $(listen_port)"; return 1; }
+    [[ "$(calls)" == *"ufw delete allow 34567/udp"* ]] || { echo "$1: the port in place at the lock was not closed: '$(calls)'"; return 1; }
+    [[ "$(calls)" != *"ufw delete allow 39743/udp"* ]] || { echo "$1: the stale first read was used: '$(calls)'"; return 1; }
+}
+@test "port reads the old port again under the lock, both twins" {
+    require_flock
+    [ -x /usr/bin/flock ] || skip "no /usr/bin/flock"
+    each_manage _port_old_reread_under_lock
+}

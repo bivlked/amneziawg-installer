@@ -72,7 +72,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="e10db6ebd0ebe13bc1cf75150a7473f2e6d354316664ae1933170350466493bd"
-MANAGE_SCRIPT_SHA256="e206dead46b9c2b2eaf04b1deacd26529ce829c828ff0dc84915147df5f4b9f3"
+MANAGE_SCRIPT_SHA256="dab0a8c986486b73ef73846c4b90bdf7b10347c6edc1299a589d09b94a789a03"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back
@@ -3240,6 +3240,16 @@ _awg_exit_ip_check() {
     if [[ -n "${AWG_ENDPOINT:-}" && "$AWG_ENDPOINT" == "$ip" ]]; then
         printf '%s\n' "$ip is the entry address (--endpoint) clients connect to; the exit address has to be a different one"
         return 1
+    fi
+    # Without --endpoint the entry address is found on its own: it is the address the
+    # server leaves from by the default route (MASQUERADE uses it anyway). Local, no network.
+    if [[ -z "${AWG_ENDPOINT:-}" ]]; then
+        local src
+        src=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}' | head -n 1)
+        if [[ -n "$src" && "$src" == "$ip" ]]; then
+            printf '%s\n' "$ip is the main address of the server: without --endpoint clients connect to it; the exit address has to be a different one (or set --endpoint to the entry address)"
+            return 1
+        fi
     fi
     if ! ip -4 -o addr show 2>/dev/null | awk '$2 !~ /^(awg|wg|lo)/ {for(i=1;i<NF;i++) if($i=="inet"){split($(i+1),a,"/"); print a[1]}}' | grep -qxF -- "$ip"; then
         printf '%s\n' "address $ip is not on an external interface of the server (tunnels and loopback do not count); configure it permanently (in netplan, for example) and try again"
