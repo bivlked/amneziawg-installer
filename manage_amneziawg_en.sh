@@ -1854,7 +1854,7 @@ check_server() {
         if _exit_ifaddrs | grep -qxF -- "$_exit_ip"; then
             log " - $_exit_ip is on a server interface."
         else
-            log_error " - $_exit_ip is not on any server interface: client traffic does not get out. Bring the address back (in netplan, for example) or remove it: manage exit-ip off"
+            log_error " - $_exit_ip is not on any server interface: client traffic still leaves with this address, but replies usually stop coming back. Bring the address back (in netplan, for example) or remove it: manage exit-ip off"
             ok=0
         fi
     fi

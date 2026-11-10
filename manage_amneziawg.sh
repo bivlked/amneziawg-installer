@@ -1821,7 +1821,7 @@ check_server() {
         if _exit_ifaddrs | grep -qxF -- "$_exit_ip"; then
             log " - $_exit_ip на интерфейсе сервера."
         else
-            log_error " - $_exit_ip нет на интерфейсах сервера: трафик клиентов наружу не идёт. Верните адрес (например, в netplan) или снимите его: manage exit-ip off"
+            log_error " - $_exit_ip нет на интерфейсах сервера: трафик клиентов уходит с этим адресом, но ответы на него обычно перестают приходить. Верните адрес (например, в netplan) или снимите его: manage exit-ip off"
             ok=0
         fi
     fi
