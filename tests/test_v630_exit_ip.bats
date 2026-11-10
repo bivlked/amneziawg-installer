@@ -135,18 +135,29 @@ STUB
     cat > "$MGMT_DIR/bin/systemctl" << 'STUB'
 #!/bin/bash
 echo "systemctl $*" >> "$CALLS"
+# The service state lives in a file: active until a stop, active again after a start.
+if [[ "$1" == is-active ]]; then [[ "$(cat "$CALLS.state" 2>/dev/null || echo active)" == active ]]; exit; fi
 [[ "$1" == stop && -n "${STUB_STOP_FAIL:-}" ]] && exit 1
-# STUB_STOP_SIGNAL / STUB_START_SIGNAL: TERM to manage itself (the parent) while
-# the service is down: right at the stop, or at the start on the new exit address.
-[[ "$1" == stop && -n "${STUB_STOP_SIGNAL:-}" ]] && { kill -TERM "$PPID"; exit 0; }
-if [[ "$1" == start && -n "${STUB_START_SIGNAL:-}" ]] && grep -qF -- "--to-source ${STUB_START_SIGNAL}" "$STUB_SERVER_CONF"; then
-    kill -TERM "$PPID"; exit 0
+if [[ "$1" == stop ]]; then
+    x=$(grep -oE -- '--to-source [0-9.]+' "$STUB_SERVER_CONF" | head -1 | awk '{print $2}')
+    echo "${x:-none}" >> "$CALLS.stopconf"
+    echo inactive > "$CALLS.state"
 fi
 if [[ "$1" == start && -n "${STUB_START_FAIL:-}" ]]; then
     grep -qF -- "--to-source ${STUB_START_FAIL}" "$STUB_SERVER_CONF" && exit 1
 fi
+[[ "$1" == start ]] && echo active > "$CALLS.state"
+# STUB_STOP_SIGNAL / STUB_START_SIGNAL: one TERM to manage itself (the parent): right
+# at the stop, or after the service came up on the new exit address.
+sig=0
+[[ "$1" == stop && -n "${STUB_STOP_SIGNAL:-}" ]] && sig=1
+[[ "$1" == start && -n "${STUB_START_SIGNAL:-}" ]] && grep -qF -- "--to-source ${STUB_START_SIGNAL}" "$STUB_SERVER_CONF" && sig=1
+if (( sig )) && [[ ! -e "$CALLS.signaled" ]]; then
+    : > "$CALLS.signaled"; kill -TERM "$PPID"
+fi
 exit 0
 STUB
+
     cat > "$MGMT_DIR/bin/ip" << 'STUB'
 #!/bin/bash
 for a in ${STUB_ADDRS:-}; do printf '2: eth0    inet %s/24 brd x scope global eth0\n' "$a"; done
@@ -198,7 +209,7 @@ CONF
 
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
-    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_ADDRS STUB_START_FAIL STUB_STOP_FAIL STUB_IPT_LEFT STUB_IPT_STUCK STUB_STOP_SIGNAL STUB_START_SIGNAL
+    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_ADDRS STUB_START_FAIL STUB_STOP_FAIL STUB_IPT_LEFT STUB_IPT_STUCK STUB_STOP_SIGNAL STUB_START_SIGNAL STUB_RM_SIGNAL
 }
 
 manage() {
@@ -550,9 +561,10 @@ _exit_signal_at_new_start() {
     [ "$status" -eq 143 ] || { echo "$1: status $status, want 143"; return 1; }
     [ "$(cat "$MGMT_DIR/awg/awg0.conf")" = "$conf_before" ] || { echo "$1: awg0.conf not put back"; return 1; }
     [ "$(cat "$MGMT_DIR/awg/awgsetup_cfg.init")" = "$init_before" ] || { echo "$1: init not put back"; return 1; }
-    [ "$(calls)" = "systemctl stop awg-quick@awg0|systemctl start awg-quick@awg0|systemctl start awg-quick@awg0" ] || { echo "$1: calls '$(calls)'"; return 1; }
+    [ "$(calls)" = "systemctl stop awg-quick@awg0|systemctl start awg-quick@awg0|systemctl stop awg-quick@awg0|systemctl start awg-quick@awg0" ] || { echo "$1: calls '$(calls)'"; return 1; }
+    [ "$(sed -n 2p "$CALLS.stopconf")" = "203.0.113.7" ] || { echo "$1: the new instance was not stopped on the new file: $(paste -sd' ' "$CALLS.stopconf")"; return 1; }
 }
-@test "exit-ip interrupted after the files are written puts them back and starts the old config, both twins" {
+@test "exit-ip interrupted after the service came up on the new address stops it, puts the files back and starts the old config, both twins" {
     require_flock
     each_manage _exit_signal_at_new_start
 }
@@ -598,4 +610,30 @@ _exit_signal_at_new_start() {
             echo "flag=$_AWG_STOPPED_FOR_EXIT"'
         [ "$output" = "flag=0" ] || { echo "$s: after step 7: '$output'"; return 1; }
     done
+}
+_exit_signal_between_copies() {
+    local conf_before init_before
+    conf_before=$(cat "$MGMT_DIR/awg/awg0.conf"); init_before=$(cat "$MGMT_DIR/awg/awgsetup_cfg.init")
+    # rm stub for this case only: one TERM when the rollback has removed the copy of
+    # awg0.conf (awg0.conf is back) and is about to put the init back.
+    cat > "$MGMT_DIR/bin/rm" << 'STUB'
+#!/bin/bash
+/bin/rm "$@"; rc=$?
+if [[ -n "${STUB_RM_SIGNAL:-}" && ! -e "$CALLS.signaled" && " $* " == *"awg0.conf.bak."* ]]; then
+    : > "$CALLS.signaled"; kill -TERM "$PPID"
+fi
+exit $rc
+STUB
+    chmod +x "$MGMT_DIR/bin/rm"
+    export STUB_START_FAIL=203.0.113.7 STUB_RM_SIGNAL=1
+    manage "$1" exit-ip 203.0.113.7
+    unset STUB_START_FAIL STUB_RM_SIGNAL
+    /bin/rm -f "$MGMT_DIR/bin/rm"; hash -r
+    [ "$status" -eq 143 ] || { echo "$1: status $status, want 143"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awg0.conf")" = "$conf_before" ] || { echo "$1: awg0.conf not put back"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awgsetup_cfg.init")" = "$init_before" ] || { echo "$1: the init kept the new exit address"; return 1; }
+}
+@test "exit-ip interrupted in the rollback between the two copies still puts the init back, both twins" {
+    require_flock
+    each_manage _exit_signal_between_copies
 }

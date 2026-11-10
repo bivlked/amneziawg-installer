@@ -3438,7 +3438,16 @@ change_server_port() {
 _exit_txn_on_signal() {
     trap - INT TERM
     local _n=0
-    [[ -n "${_TXN_BAK_CONF:-}" && -f "$_TXN_BAK_CONF" ]] && _txn_restore
+    # Сигнал мог прийти, когда сервис уже поднят на новом конфиге: сначала остановка,
+    # пока на диске новый файл (его PostDown снимет своё правило), потом возврат файлов.
+    systemctl is-active --quiet awg-quick@awg0 && systemctl stop awg-quick@awg0
+    # Копии возвращаются по отдельности: откат мог успеть вернуть одну из них.
+    if [[ -n "${_TXN_BAK_CONF:-}" && -f "$_TXN_BAK_CONF" ]]; then
+        cp -p "$_TXN_BAK_CONF" "$SERVER_CONF_FILE" && rm -f "$_TXN_BAK_CONF"
+    fi
+    if [[ -n "${_TXN_BAK_INIT:-}" && -f "$_TXN_BAK_INIT" ]]; then
+        cp -p "$_TXN_BAK_INIT" "$CONFIG_FILE" && rm -f "$_TXN_BAK_INIT"
+    fi
     if [[ "${want:-off}" != off && -n "${subnet:-}" && -n "${nic:-}" ]]; then
         while (( ++_n <= 16 )) && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null; do
             iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null || break
@@ -3532,8 +3541,8 @@ change_exit_ip() {
     while [[ -n "$cur" ]] && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur" 2>/dev/null; do
         # 16 проходов хватает на любой реальный остаток; правило, оставшееся после них, считается неснятым.
         if (( ++_drain > 16 )) || ! iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur"; then
-            _exit_txn_trap_off
             systemctl start awg-quick@awg0 || log_error "Сервис не запустился: systemctl status awg-quick@awg0"
+            _exit_txn_trap_off
             _txn_drop_backups; _txn_unlock
             _JSON_ERR="old exit rule could not be removed"
             log_error "Не удалось снять прежнее правило SNAT на ${cur}: адрес выхода не изменён."
