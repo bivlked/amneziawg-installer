@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x and 2.0 peer management script
 # Author: @bivlked
-# Version: 6.2.2
-# Date: 2026-11-09
+# Version: 6.3.0
+# Date: 2026-11-10
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="6.2.2"
+SCRIPT_VERSION="6.3.0"
 set -o pipefail
 # awg show colours its labels when WG_COLOR_MODE=always is in the environment,
 # even into a pipe. The secrets filter then does not recognise "header

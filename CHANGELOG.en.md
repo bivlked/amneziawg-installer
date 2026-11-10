@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.0] - 2026-11-10
+
+**v6.3.0** - a separate exit address, a random port and a PresharedKey by default on new installs, and a one-command port change.
+
 ### Added
 
 - **A separate exit address: entry and exit on different IPs (#384).** If the server has two public IPv4 addresses, clients connect to one while their traffic leaves to the internet from the other: `--exit-ip=<IPv4>` at install time or `manage exit-ip <IPv4|off>` on a running server. Client configs do not change when the exit address changes, so a blocked exit is replaced with one command. The rule is a `SNAT` for the client subnet above the usual MASQUERADE; the server's own traffic is unchanged. While the rule is in place, client traffic never leaves through the entry address, even if the exit address is gone from the interface; `manage check` shows a missing address. The address has to be on an interface of the server; it does not combine with the IPv6 tunnel for clients (SNAT changes IPv4 only), and the installer and `manage` refuse that combination. ADVANCED section: "A separate exit address".
@@ -2236,7 +2240,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.2...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.0...HEAD
+[6.3.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.2...v6.3.0
 [6.2.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...v6.2.2
 [6.2.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.0...v6.2.1
 [6.2.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.1.2...v6.2.0
