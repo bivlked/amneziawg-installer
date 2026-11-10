@@ -3514,7 +3514,7 @@ EOF
             END { if (in_peer) printf "%s", buf }
         ' "$peers_source")
         if [[ -n "$_peers" ]]; then
-            printf '\n%s' "$_peers" >> "$tmpfile" || {
+            printf '\n%s\n' "$_peers" >> "$tmpfile" || {
                 rm -f "$tmpfile"
                 log_error "Failed to carry [Peer] blocks into the new config"
                 return 1
