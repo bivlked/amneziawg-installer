@@ -769,3 +769,25 @@ _exit_endpoint_name() {
     require_flock
     each_manage _exit_endpoint_name
 }
+
+# The caller takes the check's stdout as the reason text (why=$(...)): the
+# warning for a name that does not resolve must reach the user through stderr,
+# not vanish into that variable on success. Run through the real caller, with
+# log_warn writing to stdout like any plain logger would.
+@test "installer: the unresolved-name warning reaches the user through the real caller, not its captured stdout, both twins" {
+    local s
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        run --separate-stderr bash -c '
+            set -o pipefail
+            log() { echo "LOG: $*"; }; log_warn() { echo "WARN: $*"; }; die() { echo "DIE: $*"; exit 1; }
+            getent() { return 2; }
+            ip() { [[ "$*" == *"route get"* ]] && return 0; printf "2: eth0    inet 203.0.113.7/24 brd x scope global eth0\n"; }
+            '"$(fn "$s" _awg_exit_ip_check)"'
+            '"$(fn "$s" _awg_resolve_exit_ip)"'
+            CLI_EXIT_IP_SET=1 CLI_EXIT_IP=203.0.113.7 ALLOW_IPV6_TUNNEL=0 AWG_ENDPOINT=no-such-name.invalid
+            _awg_resolve_exit_ip
+        '
+        [ "$status" -eq 0 ] || { echo "$s: $status $output / $stderr"; return 1; }
+        [[ "$stderr" == *"WARN: "*no-such-name.invalid* ]] || { echo "$s: the warning did not reach stderr: out='$output' err='$stderr'"; return 1; }
+    done
+}
