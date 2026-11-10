@@ -22,6 +22,7 @@
 - [Проверка](#verify)
 - [Обновление списка российских сетей](#update)
 - [Три сервера: вход, середина и выход](#three-hop)
+- [Свои адреса для входа, выхода и туннеля](#own-addresses)
 - [Диагностика](#trouble)
 - [Безопасность](#security)
 - [Как убрать каскад](#uninstall)
@@ -171,6 +172,8 @@ set -euo pipefail
 CLIENT_SUBNET="172.16.17.0/24"          # подсеть клиентов AWG0 (см. Address в /etc/amnezia/amneziawg/awg0.conf)
 AWG1_IF="awg1"                           # имя интерфейса туннеля к серверу-выходу
 AWG1_ENDPOINT="CHANGE_ME"               # внешний IP сервера AWG1 (Endpoint из awg1.conf, без порта)
+AWG1_SRC=""                             # необязательно: свой адрес AWG0, с которого держать туннель к AWG1
+                                        # (пусто = основной адрес; см. раздел "Свои адреса для входа, выхода и туннеля")
 TABLE_ID=100                            # номер таблицы маршрутизации для трафика "на выход"
 FWMARK="0x1"                            # метка для трафика, уходящего через awg1
 RULE_PRIO=10000                        # приоритет правила ip rule (нестандартный, чтобы не конфликтовать)
@@ -204,6 +207,9 @@ WAN_IF="$(printf '%s' "$EP_ROUTE" | grep -oP '\bdev \K\S+' || true)"
 WAN_GW="$(printf '%s' "$EP_ROUTE" | grep -oP '\bvia \K\S+' || true)"
 { [ -n "$WAN_IF" ] && [ "$WAN_IF" != "$AWG1_IF" ]; } \
     || { echo "ERROR: не удалось определить WAN-интерфейс к AWG1 (или он указывает в туннель)" >&2; exit 1; }
+if [ -n "$AWG1_SRC" ] && ! ip -4 -o addr show dev "$WAN_IF" | grep -F " $AWG1_SRC/" >/dev/null; then
+    echo "ERROR: адреса AWG1_SRC=$AWG1_SRC нет на интерфейсе $WAN_IF (см. ip -4 addr)" >&2; exit 1
+fi
 
 # Предупреждение про IPv6: схема только для IPv4, при включённом IPv6 он пойдёт мимо деления.
 if [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo 1)" = "0" ] \
@@ -278,10 +284,22 @@ ip rule add fwmark "$FWMARK" table "$TABLE_ID" priority "$RULE_PRIO"
 if [ -n "$WAN_GW" ]; then
     # На VPS со шлюзом вне подсети сервера (напр. Hetzner, интерфейс /32) обычный replace падает
     # с "Nexthop has invalid gateway" - тогда повторяем с onlink (шлюз доступен прямо на интерфейсе).
-    ip route replace "$AWG1_ENDPOINT" via "$WAN_GW" dev "$WAN_IF" 2>/dev/null \
-        || ip route replace "$AWG1_ENDPOINT" via "$WAN_GW" dev "$WAN_IF" onlink
+    ip route replace "$AWG1_ENDPOINT" via "$WAN_GW" dev "$WAN_IF" ${AWG1_SRC:+src "$AWG1_SRC"} 2>/dev/null \
+        || ip route replace "$AWG1_ENDPOINT" via "$WAN_GW" dev "$WAN_IF" onlink ${AWG1_SRC:+src "$AWG1_SRC"}
 else
-    ip route replace "$AWG1_ENDPOINT" dev "$WAN_IF"
+    ip route replace "$AWG1_ENDPOINT" dev "$WAN_IF" ${AWG1_SRC:+src "$AWG1_SRC"}
+fi
+
+# 4a) Туннель к AWG1 со своего адреса (только если задан AWG1_SRC). Общий MASQUERADE установщика
+#     подменил бы адрес на основной, поэтому пакеты туннеля к AWG1 выводятся из-под NAT. awg1
+#     поднимается раньше скрипта и запоминает основной адрес: сброс endpoint заставляет его
+#     заново выбрать адрес по маршруту выше.
+if [ -n "$AWG1_SRC" ]; then
+    iptables -t nat -C POSTROUTING -s "$AWG1_SRC" -d "$AWG1_ENDPOINT" -j ACCEPT 2>/dev/null \
+        || iptables -t nat -I POSTROUTING 1 -s "$AWG1_SRC" -d "$AWG1_ENDPOINT" -j ACCEPT
+    awg show "$AWG1_IF" endpoints | while read -r pk ep; do
+        [ "$ep" = "(none)" ] || awg set "$AWG1_IF" peer "$pk" endpoint "$ep"
+    done
 fi
 
 # Пересылку (FORWARD) и NAT прямого RU-трафика (-o WAN) уже настроил установщик в awg0.conf,
@@ -323,7 +341,7 @@ bash /root/awg/awg-routing.sh
 1. Скачивает список российских сетей во временный файл и подменяет рабочий только при успешной загрузке. Источники по очереди: ipdeny (актуальный список), при его недоступности - снимок из этого репозитория (`cascade/ru.zone`), затем уже лежащий локальный список. Сорванная закачка не обнулит уже загруженный список.
 2. Загружает сети в `ipset` через временный набор, добавляет туда же ваши `EXTRA_RU_NETS` и атомарно подменяет рабочий (`ipset swap`) - без окна, когда набор пустой.
 3. Создаёт таблицу маршрутизации для помеченного трафика и правило `ip rule` по метке. Таблица задаётся номером, файл `rt_tables` не нужен.
-4. Прокладывает маршрут к самому AWG1 вне туннеля, иначе пакеты к нему закольцуются.
+4. Прокладывает маршрут к самому AWG1 вне туннеля, иначе пакеты к нему закольцуются. Если задан `AWG1_SRC`, туннель к AWG1 переводится на этот адрес (см. [Свои адреса для входа, выхода и туннеля](#own-addresses)).
 5. Метит трафик: к российским сетям - напрямую (`RETURN`), остальное - меткой для ухода в `awg1`.
 6. Добавляет NAT для трафика, уходящего через `awg1`.
 
@@ -542,6 +560,23 @@ ip route show table 100
 
 Трёхзвенную схему проверил [@stromnov](https://github.com/stromnov) в [#120](https://github.com/bivlked/amneziawg-installer/discussions/120): три VPS на Ubuntu 24.04 и 26.04 с профилем 3.1, цепочка поднялась с первой попытки. Сам я её на своих серверах не собирал: это двухзвенный рецепт плюс одно правило маршрутизации на середине. По сравнению с проверенным вариантом я только сделал команды `PostUp` и `PostDown` повторяемыми.
 
+<a id="own-addresses"></a>
+## Свои адреса для входа, выхода и туннеля
+
+Если у AWG0 несколько публичных IPv4, каждой роли можно отдать свой адрес. Схема из [#384](https://github.com/bivlked/amneziawg-installer/issues/384): клиенты подключаются к первому адресу, российские сайты видят второй, а туннель к AWG1 идёт с третьего. Заблокируют один из них - меняется только он, остальное не трогается.
+
+- **Вход**, к нему подключаются клиенты: `--endpoint=<IPv4>` при установке AWG0.
+- **Прямой выход** для российского трафика: `--exit-ip=<IPv4>` при установке или `bash /root/awg/manage_amneziawg.sh exit-ip <IPv4>` на работающем сервере (с v6.3.0). Подробно - в [ADVANCED.md](ADVANCED.md#exit-ip-adv).
+- **Туннель к AWG1**: `AWG1_SRC` в начале `/root/awg/awg-routing.sh`, затем `bash /root/awg/awg-routing.sh`. Пусто - туннель идёт с основного адреса, как раньше.
+
+Все адреса должны стоять на внешнем интерфейсе AWG0 (`ip -4 addr`); если адреса из `AWG1_SRC` там нет, скрипт остановится с ошибкой. Для туннеля одного источника в маршруте мало, поэтому скрипт делает ещё две вещи. Общий `MASQUERADE` установщика подменил бы адрес пакетов туннеля на основной, и скрипт выводит их из-под NAT отдельным правилом. А `awg1` поднимается раньше скрипта и запоминает основной адрес, поэтому скрипт сбрасывает в нём адрес AWG1, и туннель заново выбирает, с какого адреса слать.
+
+Проверка на AWG1: `awg show awg0 endpoints` - у клиента `ru_host` должен стоять адрес из `AWG1_SRC`.
+
+Сменить адрес туннеля или вернуть его на основной: сначала снимите правило прежнего адреса, `iptables -t nat -D POSTROUTING -s <прежний AWG1_SRC> -d <AWG1_ENDPOINT> -j ACCEPT`, иначе оно так и останется в таблице. Затем впишите новый `AWG1_SRC` (или очистите его) и выполните `systemctl restart awg-quick@awg1` и `bash /root/awg/awg-routing.sh`.
+
+Проверено на стенде: Ubuntu 24.04, профиль 3.1, вход на основном адресе, прямой выход (`--exit-ip`) и туннель на втором, в том числе после двух перезагрузок AWG0. Без правила для NAT и без сброса адреса туннель на втором адресе не держался: в первом случае его подменял `MASQUERADE`, во втором после перезагрузки он оставался на основном.
+
 <a id="trouble"></a>
 ## Диагностика
 
@@ -563,12 +598,13 @@ ip route show table 100
 <a id="uninstall"></a>
 ## Как убрать каскад
 
-На AWG0 подставьте свои значения из начала `/root/awg/awg-routing.sh`: `CLIENT_SUBNET` и `AWG1_ENDPOINT`, а если меняли, то и `AWG1_IF`, `TABLE_ID`, `FWMARK`. Затем выполните:
+На AWG0 подставьте свои значения из начала `/root/awg/awg-routing.sh`: `CLIENT_SUBNET` и `AWG1_ENDPOINT`, а если меняли, то и `AWG1_IF`, `AWG1_SRC`, `TABLE_ID`, `FWMARK`. Затем выполните:
 
 ```bash
 CLIENT_SUBNET="172.16.17.0/24"
 AWG1_IF="awg1"
 AWG1_ENDPOINT="ВНЕШНИЙ_IP_AWG1"
+AWG1_SRC=""
 TABLE_ID=100
 FWMARK="0x1"
 
@@ -580,6 +616,7 @@ systemctl daemon-reload
 iptables -t mangle -D PREROUTING -i awg0 -s "$CLIENT_SUBNET" -m set --match-set ru dst -j RETURN
 iptables -t mangle -D PREROUTING -i awg0 -s "$CLIENT_SUBNET" -j MARK --set-mark "$FWMARK"
 iptables -t nat -D POSTROUTING -s "$CLIENT_SUBNET" -o "$AWG1_IF" -j MASQUERADE
+[ -z "$AWG1_SRC" ] || iptables -t nat -D POSTROUTING -s "$AWG1_SRC" -d "$AWG1_ENDPOINT" -j ACCEPT
 ip rule del fwmark "$FWMARK" table "$TABLE_ID" 2>/dev/null
 ip route del default dev "$AWG1_IF" table "$TABLE_ID" 2>/dev/null
 ip route del "$AWG1_ENDPOINT" 2>/dev/null

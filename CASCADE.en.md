@@ -22,6 +22,7 @@ This guide turns two `amneziawg-installer` setups into a cascade: a client conne
 - [Verification](#verify)
 - [Updating the list of Russian networks](#update)
 - [Three servers: entry, middle and exit](#three-hop)
+- [Own addresses for entry, exit and tunnel](#own-addresses)
 - [Troubleshooting](#trouble)
 - [Security](#security)
 - [Removing the cascade](#uninstall)
@@ -171,6 +172,8 @@ set -euo pipefail
 CLIENT_SUBNET="172.16.17.0/24"          # AWG0 client subnet (see Address in /etc/amnezia/amneziawg/awg0.conf)
 AWG1_IF="awg1"                           # name of the tunnel interface to the exit server
 AWG1_ENDPOINT="CHANGE_ME"               # external IP of AWG1 (Endpoint from awg1.conf, without the port)
+AWG1_SRC=""                             # optional: an AWG0 address of your own to hold the tunnel to AWG1 from
+                                        # (empty = the main address; see "Own addresses for entry, exit and tunnel")
 TABLE_ID=100                            # routing table number for "to the exit" traffic
 FWMARK="0x1"                            # mark for traffic leaving via awg1
 RULE_PRIO=10000                        # ip rule priority (uncommon, to avoid collisions)
@@ -204,6 +207,9 @@ WAN_IF="$(printf '%s' "$EP_ROUTE" | grep -oP '\bdev \K\S+' || true)"
 WAN_GW="$(printf '%s' "$EP_ROUTE" | grep -oP '\bvia \K\S+' || true)"
 { [ -n "$WAN_IF" ] && [ "$WAN_IF" != "$AWG1_IF" ]; } \
     || { echo "ERROR: could not determine the WAN interface to AWG1 (or it points into the tunnel)" >&2; exit 1; }
+if [ -n "$AWG1_SRC" ] && ! ip -4 -o addr show dev "$WAN_IF" | grep -F " $AWG1_SRC/" >/dev/null; then
+    echo "ERROR: the address AWG1_SRC=$AWG1_SRC is not on the interface $WAN_IF (see ip -4 addr)" >&2; exit 1
+fi
 
 # IPv6 warning: this scheme is IPv4-only; with IPv6 enabled, that traffic bypasses the split.
 if [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo 1)" = "0" ] \
@@ -280,10 +286,22 @@ ip rule add fwmark "$FWMARK" table "$TABLE_ID" priority "$RULE_PRIO"
 if [ -n "$WAN_GW" ]; then
     # On a VPS whose gateway is outside the server's subnet (e.g. Hetzner, a /32 interface) a plain
     # replace fails with "Nexthop has invalid gateway" - then retry with onlink (gateway is on the link).
-    ip route replace "$AWG1_ENDPOINT" via "$WAN_GW" dev "$WAN_IF" 2>/dev/null \
-        || ip route replace "$AWG1_ENDPOINT" via "$WAN_GW" dev "$WAN_IF" onlink
+    ip route replace "$AWG1_ENDPOINT" via "$WAN_GW" dev "$WAN_IF" ${AWG1_SRC:+src "$AWG1_SRC"} 2>/dev/null \
+        || ip route replace "$AWG1_ENDPOINT" via "$WAN_GW" dev "$WAN_IF" onlink ${AWG1_SRC:+src "$AWG1_SRC"}
 else
-    ip route replace "$AWG1_ENDPOINT" dev "$WAN_IF"
+    ip route replace "$AWG1_ENDPOINT" dev "$WAN_IF" ${AWG1_SRC:+src "$AWG1_SRC"}
+fi
+
+# 4a) The tunnel to AWG1 from an address of your own (only when AWG1_SRC is set). The installer's
+#     general MASQUERADE would rewrite it to the main address, so the tunnel packets to AWG1 are kept
+#     out of NAT. awg1 comes up before this script and remembers the main address: setting the
+#     endpoint again makes it pick the address by the route above.
+if [ -n "$AWG1_SRC" ]; then
+    iptables -t nat -C POSTROUTING -s "$AWG1_SRC" -d "$AWG1_ENDPOINT" -j ACCEPT 2>/dev/null \
+        || iptables -t nat -I POSTROUTING 1 -s "$AWG1_SRC" -d "$AWG1_ENDPOINT" -j ACCEPT
+    awg show "$AWG1_IF" endpoints | while read -r pk ep; do
+        [ "$ep" = "(none)" ] || awg set "$AWG1_IF" peer "$pk" endpoint "$ep"
+    done
 fi
 
 # Forwarding (FORWARD) and NAT for direct RU traffic (-o WAN) are already set by the installer in awg0.conf,
@@ -325,7 +343,7 @@ What the script does, step by step:
 1. Downloads the list of Russian networks into a temp file and swaps the working file only on a successful download. Sources are tried in order: ipdeny (the current list), then the snapshot bundled in this repository (`cascade/ru.zone`) if ipdeny is unreachable, then whatever local list is already there. A failed download will not wipe the already-loaded list.
 2. Loads the networks into `ipset` through a temp set, adds your `EXTRA_RU_NETS` to the same set, and atomically swaps the working one (`ipset swap`) - with no window where the set is empty.
 3. Creates a routing table for marked traffic and an `ip rule` by mark. The table is addressed by number, so no `rt_tables` file is needed.
-4. Lays a route to AWG1 itself outside the tunnel, otherwise packets to it would loop.
+4. Lays a route to AWG1 itself outside the tunnel, otherwise packets to it would loop. With `AWG1_SRC` set, it moves the tunnel to AWG1 onto that address (see [Own addresses for entry, exit and tunnel](#own-addresses)).
 5. Marks traffic: to Russian networks - direct (`RETURN`), the rest - marked to leave via `awg1`.
 6. Adds NAT for traffic leaving via `awg1`.
 
@@ -544,6 +562,23 @@ The middle itself comes apart like this: on awg-mid `systemctl disable --now awg
 
 The three-server setup was checked by [@stromnov](https://github.com/stromnov) in [#120](https://github.com/bivlked/amneziawg-installer/discussions/120): three VPS on Ubuntu 24.04 and 26.04 with the 3.1 profile, and the chain came up on the first try. I have not built it on my own servers: it is the two-server recipe plus one routing rule on the middle. Compared with the version that was checked, I only made the `PostUp` and `PostDown` commands safe to repeat.
 
+<a id="own-addresses"></a>
+## Own addresses for entry, exit and tunnel
+
+If AWG0 has several public IPv4 addresses, each role can get an address of its own. The setup from [#384](https://github.com/bivlked/amneziawg-installer/issues/384): clients connect to the first address, Russian sites see the second, and the tunnel to AWG1 runs from the third. If one of them gets blocked, only that one changes and the rest stays as it is.
+
+- **Entry**, the address clients connect to: `--endpoint=<IPv4>` when installing AWG0.
+- **Direct exit** for Russian traffic: `--exit-ip=<IPv4>` at install time or `bash /root/awg/manage_amneziawg.sh exit-ip <IPv4>` on a running server (since v6.3.0). Details are in [ADVANCED.en.md](ADVANCED.en.md#exit-ip-adv).
+- **Tunnel to AWG1**: `AWG1_SRC` at the top of `/root/awg/awg-routing.sh`, then `bash /root/awg/awg-routing.sh`. Empty means the tunnel runs from the main address, as before.
+
+All the addresses have to be on the external interface of AWG0 (`ip -4 addr`); if the `AWG1_SRC` address is not there, the script stops with an error. A source in the route is not enough for the tunnel, so the script does two more things. The installer's general `MASQUERADE` would rewrite the address of the tunnel packets to the main one, and the script keeps them out of NAT with a rule of its own. And `awg1` comes up before the script and remembers the main address, so the script sets the AWG1 endpoint in it again, and the tunnel picks the address to send from anew.
+
+Check on AWG1: `awg show awg0 endpoints` should show the `AWG1_SRC` address for the `ru_host` client.
+
+To change the tunnel address or move it back to the main one: first remove the rule of the old address, `iptables -t nat -D POSTROUTING -s <old AWG1_SRC> -d <AWG1_ENDPOINT> -j ACCEPT`, or it stays in the table. Then set the new `AWG1_SRC` (or clear it) and run `systemctl restart awg-quick@awg1` and `bash /root/awg/awg-routing.sh`.
+
+Checked on a stand: Ubuntu 24.04, the 3.1 profile, the entry on the main address, the direct exit (`--exit-ip`) and the tunnel on the second one, including after two reboots of AWG0. Without the NAT rule or without setting the endpoint again the tunnel did not stay on the second address: in the first case `MASQUERADE` rewrote it, in the second it stayed on the main address after a reboot.
+
 <a id="trouble"></a>
 ## Troubleshooting
 
@@ -565,12 +600,13 @@ The three-server setup was checked by [@stromnov](https://github.com/stromnov) i
 <a id="uninstall"></a>
 ## Removing the cascade
 
-On AWG0, fill in your own values from the top of `/root/awg/awg-routing.sh`: `CLIENT_SUBNET` and `AWG1_ENDPOINT`, plus `AWG1_IF`, `TABLE_ID` and `FWMARK` if you changed them. Then run:
+On AWG0, fill in your own values from the top of `/root/awg/awg-routing.sh`: `CLIENT_SUBNET` and `AWG1_ENDPOINT`, plus `AWG1_IF`, `AWG1_SRC`, `TABLE_ID` and `FWMARK` if you changed them. Then run:
 
 ```bash
 CLIENT_SUBNET="172.16.17.0/24"
 AWG1_IF="awg1"
 AWG1_ENDPOINT="AWG1_PUBLIC_IP"
+AWG1_SRC=""
 TABLE_ID=100
 FWMARK="0x1"
 
@@ -582,6 +618,7 @@ systemctl daemon-reload
 iptables -t mangle -D PREROUTING -i awg0 -s "$CLIENT_SUBNET" -m set --match-set ru dst -j RETURN
 iptables -t mangle -D PREROUTING -i awg0 -s "$CLIENT_SUBNET" -j MARK --set-mark "$FWMARK"
 iptables -t nat -D POSTROUTING -s "$CLIENT_SUBNET" -o "$AWG1_IF" -j MASQUERADE
+[ -z "$AWG1_SRC" ] || iptables -t nat -D POSTROUTING -s "$AWG1_SRC" -d "$AWG1_ENDPOINT" -j ACCEPT
 ip rule del fwmark "$FWMARK" table "$TABLE_ID" 2>/dev/null
 ip route del default dev "$AWG1_IF" table "$TABLE_ID" 2>/dev/null
 ip route del "$AWG1_ENDPOINT" 2>/dev/null
