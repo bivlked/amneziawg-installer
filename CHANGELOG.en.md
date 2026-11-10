@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The parameter generator never picks `S4` = 16.** A data packet of `S4` + 32 + 16k bytes with `S4` = 16 is a multiple of 16 whatever the payload length, as with plain WireGuard, and that length trait stays in plain sight. New installs now take `S4` from the same range without 16 (4-27 in the 2.0 profile, 12-27 in 3.1). Running servers and issued configs do not change: the parameters come from the live `awg0.conf`, and `S4` has to match on the server and the clients.
+
 ### Fixed
 
 - **The kernel module builds again after a 24.04 HWE to 26.04 upgrade.** When the old and the new release share a kernel name (7.0.0-43 on both 24.04 HWE and 26.04, for example), DKMS kept the module built against the old headers; after the reboot it did not load (`Exec format error`, `disagrees about version of symbol module_layout` in `dmesg`) and the VPN did not come up. The boot helper tried a forced rebuild, but `dkms install --force` put the same cached file back. The rebuild now goes through `dkms build --force`, so the module is built again at boot by itself; `manage repair-module` also rebuilds a module that is on disk but does not load. `manage check` no longer calls this "normal for userspace mode" and says where to find the reason and how to rebuild. Checked on a stand: Ubuntu 24.04 HWE 7.0.0-43, then an upgrade to 26.04.1.

@@ -256,6 +256,49 @@ setup() {
     done
 }
 
+# s4_all <installer> <lib> <protocol> <S1=S2> : every S4 the generator can pick
+# for that S1/S2 (S3 at its lower bound), in order. The index draw is the only
+# rand_range call with lower bound 0; it is answered 0, 1, 2... until the list ends.
+s4_all() {
+    timeout 60 bash -c '
+        log() { :; }; log_warn() { :; }; log_error() { :; }; log_debug() { :; }
+        die() { echo "DIE: $*"; exit 1; }
+        source "$2" >/dev/null 2>&1 || true
+        for f in _awg_size_collisions validate_jc_value validate_junk_size generate_awg_params; do eval "$(sed -n "/^${f}()/,/^}/p" "$1")"; done
+        S12="$4"
+        rand_range() { case "$1" in 15) echo "$S12" ;; 0) echo "$PICK" ;; *) echo "$1" ;; esac; }
+        generate_awg_h_ranges() { printf "%s\n" 100000-200000 300000-400000 500000-600000 700000-800000; }
+        generate_cps_i1() { echo "<r 2>"; }
+        unset CLI_PRESET CLI_JC CLI_JMIN CLI_JMAX
+        export AWG_PROTOCOL="$3"
+        out=""
+        for ((PICK = 0; PICK < 32; PICK++)); do
+            generate_awg_params
+            [[ -n "$AWG_S4" ]] || break
+            out+="$AWG_S4 "
+        done
+        echo "${out% }"
+    ' _ "$@"
+}
+
+# A data packet is S4 + 32 + 16k bytes (16-byte header, ciphertext padded to 16,
+# 16-byte tag): with S4 = 16 every length is a multiple of 16, as with plain
+# WireGuard. Only 16 is in the generator's range (4..27; 0 and 32 are not).
+@test "gen: S4 is never 16 (data lengths would keep plain WireGuard's multiple of 16), its neighbours stay, both protocols, both twins" {
+    local pair inst lib proto
+    for pair in "$INST|$COMMON" "$INST_EN|$COMMON_EN"; do
+        inst="${pair%%|*}"; lib="${pair##*|}"
+        for proto in 2.0 3.1; do
+            # S1 = S2 = 32: 16 is free of length matches in both profiles (with 20 it is not)
+            run s4_all "$inst" "$lib" "$proto" 32
+            [ "$status" -eq 0 ] || { echo "$inst $proto: $output"; return 1; }
+            [[ " $output " != *" 16 "* ]] || { echo "$inst $proto: 16 can be picked: $output"; return 1; }
+            [[ " $output " == *" 15 "* && " $output " == *" 17 "* ]] || { echo "$inst $proto: more than 16 went: $output"; return 1; }
+            [[ " $output " == *" 27 "* ]] || { echo "$inst $proto: the top of the range went: $output"; return 1; }
+        done
+    done
+}
+
 @test "gen: without the helper the generator stops loudly instead of skipping the check, both twins" {
     local inst lib
     for pair in "$INST|$COMMON" "$INST_EN|$COMMON_EN"; do

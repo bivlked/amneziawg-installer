@@ -115,7 +115,7 @@ These obfuscation parameters exist in both profiles, 3.1 and 2.0; only the lower
 | `S1` | Init message padding (bytes) | 15-150 | the same | `72` |
 | `S2` | Response message padding (bytes) | 15-150, S1+56≠S2 | the same | `56` |
 | `S3` | Cookie message padding (bytes) | 8-55 | 12-55 | `32` |
-| `S4` | Data message padding (bytes) | 4-27 | 12-27 | `16` |
+| `S4` | Data message padding (bytes) | 4-27, except 16 | 12-27, except 16 | `17` |
 | `H1` | Init message identifier | uint32 range | `1` | `134567-245678` |
 | `H2` | Response message identifier | uint32 range | `2` | `3456789-4567890` |
 | `H3` | Cookie message identifier | uint32 range | `3` | `56789012-67890123` |
@@ -130,6 +130,7 @@ These obfuscation parameters exist in both profiles, 3.1 and 2.0; only the lower
 * `S1 + 56 ≠ S2` — prevents init and response messages from having the same size.
 * `S3 ≠ S2 + 28` - keeps the response and cookie messages from having the same size.
 * `S4` is chosen to avoid the harmful length matches between data packets and handshake packets found by the 2.0 transport model: otherwise in the 2.0 profile some data packets could be taken for a handshake and lost. Harmless matches are allowed.
+* `S4` is never 16: a data packet of `S4` + 32 + 16k bytes is then a multiple of 16 whatever the payload length, as with plain WireGuard, and that length trait stays in plain sight.
 * `S1`-`S4` and `H1`-`H4` **must** match on the server and the clients (in 3.1, the `HeaderProtectionKey` too): the receiver strips that padding and checks those headers. In 2.0, `H1`-`H4` are ranges - the same ranges on both sides.
 * `Jc`/`Jmin`/`Jmax` and `I1`-`I5` **do not** have to match: they are separate decoy packets, only the handshake initiator sends them and the other side discards them. Each of `I1`-`I5` is sent when it is set; the installer sets only `I1`, so `--no-cps` removes the concealment packet entirely.
 

@@ -3647,12 +3647,16 @@ generate_awg_params() {
     # 8 oct 2026): see _awg_size_collisions. S4 is one draw of an index into the
     # list of values with no match, not a "draw until it fits" loop.
     # Each condition forbids at most one residue of S4 modulo 16, and the S4 range holds
-    # at least 16 values, so free values always exist. Without the helper the
+    # at least 16 values, so free values always exist (the three conditions and the
+    # excluded 16 below take at most four of sixteen). Without the helper the
     # generator stops: a silently skipped check would hand out a set that drops packets.
+    # S4 = 16 is never picked: a data packet of S4 + 32 + 16k bytes is then a multiple
+    # of 16 for any k, as with plain WireGuard, and that length trait stays visible.
     declare -F _awg_size_collisions >/dev/null \
         || die "Internal error: _awg_size_collisions is missing, obfuscation parameters were not generated."
     local _s4 _s4_free=()
     for ((_s4 = _s4_min; _s4 <= 27; _s4++)); do
+        (( _s4 == 16 )) && continue
         [[ -z "$(_awg_size_collisions "$AWG_S1" "$AWG_S2" "$AWG_S3" "$_s4")" ]] && _s4_free+=("$_s4")
     done
     (( ${#_s4_free[@]} > 0 )) \
