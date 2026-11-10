@@ -136,6 +136,12 @@ STUB
 #!/bin/bash
 echo "systemctl $*" >> "$CALLS"
 [[ "$1" == stop && -n "${STUB_STOP_FAIL:-}" ]] && exit 1
+# STUB_STOP_SIGNAL / STUB_START_SIGNAL: TERM to manage itself (the parent) while
+# the service is down: right at the stop, or at the start on the new exit address.
+[[ "$1" == stop && -n "${STUB_STOP_SIGNAL:-}" ]] && { kill -TERM "$PPID"; exit 0; }
+if [[ "$1" == start && -n "${STUB_START_SIGNAL:-}" ]] && grep -qF -- "--to-source ${STUB_START_SIGNAL}" "$STUB_SERVER_CONF"; then
+    kill -TERM "$PPID"; exit 0
+fi
 if [[ "$1" == start && -n "${STUB_START_FAIL:-}" ]]; then
     grep -qF -- "--to-source ${STUB_START_FAIL}" "$STUB_SERVER_CONF" && exit 1
 fi
@@ -192,7 +198,7 @@ CONF
 
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
-    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_ADDRS STUB_START_FAIL STUB_STOP_FAIL STUB_IPT_LEFT STUB_IPT_STUCK
+    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_ADDRS STUB_START_FAIL STUB_STOP_FAIL STUB_IPT_LEFT STUB_IPT_STUCK STUB_STOP_SIGNAL STUB_START_SIGNAL
 }
 
 manage() {
@@ -514,4 +520,82 @@ _exit_rollback_rule_stuck() {
 @test "a rollback that cannot remove the new SNAT rule says so and names it, both twins" {
     require_flock
     each_manage _exit_rollback_rule_stuck
+}
+# ---------- an interruption while the service is down ----------
+
+_exit_signal_at_stop() {
+    local conf_before init_before
+    conf_before=$(cat "$MGMT_DIR/awg/awg0.conf"); init_before=$(cat "$MGMT_DIR/awg/awgsetup_cfg.init")
+    export STUB_STOP_SIGNAL=1
+    manage "$1" exit-ip 203.0.113.7
+    unset STUB_STOP_SIGNAL
+    [ "$status" -eq 143 ] || { echo "$1: status $status, want 143"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awg0.conf")" = "$conf_before" ] || { echo "$1: awg0.conf changed"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awgsetup_cfg.init")" = "$init_before" ] || { echo "$1: init changed"; return 1; }
+    [ "$(calls)" = "systemctl stop awg-quick@awg0|systemctl start awg-quick@awg0" ] || { echo "$1: the service was not started again: '$(calls)'"; return 1; }
+    local left; left=$(compgen -G "$MGMT_DIR/awg/*.bak.*"; compgen -G "$MGMT_DIR/awg/*.new.*")
+    [ -z "$left" ] || { echo "$1: copies left: $left"; return 1; }
+}
+@test "exit-ip interrupted right at the stop starts the service again on the unchanged config, both twins" {
+    require_flock
+    each_manage _exit_signal_at_stop
+}
+
+_exit_signal_at_new_start() {
+    local conf_before init_before
+    conf_before=$(cat "$MGMT_DIR/awg/awg0.conf"); init_before=$(cat "$MGMT_DIR/awg/awgsetup_cfg.init")
+    export STUB_START_SIGNAL=203.0.113.7
+    manage "$1" exit-ip 203.0.113.7
+    unset STUB_START_SIGNAL
+    [ "$status" -eq 143 ] || { echo "$1: status $status, want 143"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awg0.conf")" = "$conf_before" ] || { echo "$1: awg0.conf not put back"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awgsetup_cfg.init")" = "$init_before" ] || { echo "$1: init not put back"; return 1; }
+    [ "$(calls)" = "systemctl stop awg-quick@awg0|systemctl start awg-quick@awg0|systemctl start awg-quick@awg0" ] || { echo "$1: calls '$(calls)'"; return 1; }
+}
+@test "exit-ip interrupted after the files are written puts them back and starts the old config, both twins" {
+    require_flock
+    each_manage _exit_signal_at_new_start
+}
+
+@test "installer: a failed stop for an exit change aborts before the config is written and marks the service for a restart, both twins" {
+    local s d="$BATS_TEST_TMPDIR/stopfail"
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        rm -rf "$d"; mkdir -p "$d"
+        printf 'PostUp = a; iptables -t nat -I POSTROUTING -s 10.9.9.1/24 -o eth0 -j SNAT --to-source 203.0.113.7\n' > "$d/awg0.conf"
+        run bash -c '
+            log() { :; }; log_warn() { :; }
+            die() { echo "DIE flag=${_AWG_STOPPED_FOR_EXIT:-0}"; exit 1; }
+            '"$(fn "$s" _awg_stop_if_exit_ip_changed)"'
+            systemctl() { [[ "$1" == is-active ]] && return 0; [[ "$1" == stop ]] && return 1; return 0; }
+            SERVER_CONF_FILE="$1" AWG_EXIT_IP=203.0.113.8
+            _awg_stop_if_exit_ip_changed
+            echo "went on"
+        ' _ "$d/awg0.conf"
+        [ "$status" -eq 1 ] && [ "$output" = "DIE flag=1" ] || { echo "$s: status $status, output '$output'"; return 1; }
+    done
+}
+
+@test "installer: the exit cleanup starts a service stopped for an exit change, and step 7 clears the mark, both twins" {
+    local s
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        run bash -c '
+            log() { :; }; log_warn() { :; }; log_error() { :; }; log_debug() { :; }
+            _apt_noretry_set=0; _install_cleaned=0; _install_temp_files=()
+            '"$(fn "$s" _awg_start_if_stopped_for_exit)"'
+            '"$(fn "$s" _install_cleanup)"'
+            systemctl() { echo "systemctl $*"; }
+            _AWG_STOPPED_FOR_EXIT=1; _install_cleanup; echo "-"
+            _install_cleanup'
+        [ "$output" = $'systemctl start awg-quick@awg0\n-' ] || { echo "$s: cleanup gave '$output'"; return 1; }
+        run bash -c '
+            log() { :; }; log_warn() { :; }; log_debug() { :; }; die() { echo "DIE $*"; exit 1; }
+            update_state() { :; }; awg_record_device_params() { :; }; check_service_status() { return 0; }
+            setup_fail2ban() { :; }; sleep() { :; }
+            systemctl() { [[ "$1" == is-active ]] && return 1; return 0; }
+            '"$(fn "$s" step7_start_service)"'
+            NO_TWEAKS=1 CLIENT_ISOLATION=1 _AWG_STOPPED_FOR_EXIT=1
+            step7_start_service
+            echo "flag=$_AWG_STOPPED_FOR_EXIT"'
+        [ "$output" = "flag=0" ] || { echo "$s: after step 7: '$output'"; return 1; }
+    done
 }

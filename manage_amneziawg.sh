@@ -3432,6 +3432,26 @@ change_server_port() {
     (( fail == 0 ))
 }
 
+# Сигнал, пока exit-ip держит сервис остановленным: файлы возвращаются из копий,
+# правило SNAT нового адреса снимается, сервис поднимается на прежнем конфиге,
+# иначе VPN остался бы лежать. want, subnet и nic видны из change_exit_ip.
+_exit_txn_on_signal() {
+    trap - INT TERM
+    local _n=0
+    [[ -n "${_TXN_BAK_CONF:-}" && -f "$_TXN_BAK_CONF" ]] && _txn_restore
+    if [[ "${want:-off}" != off && -n "${subnet:-}" && -n "${nic:-}" ]]; then
+        while (( ++_n <= 16 )) && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null; do
+            iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null || break
+        done
+    fi
+    systemctl start awg-quick@awg0 || log_error "Сервис не запустился: systemctl status awg-quick@awg0"
+    _txn_unlock
+    log_error "Команда exit-ip прервана: прежние настройки возвращены."
+    _manage_on_signal "$1"
+}
+_exit_txn_trap_on()  { trap '_exit_txn_on_signal 130' INT; trap '_exit_txn_on_signal 143' TERM; }
+_exit_txn_trap_off() { trap '_manage_on_signal 130' INT; trap '_manage_on_signal 143' TERM; }
+
 # manage exit-ip <IPv4|off>: адрес, с которого трафик клиентов уходит в интернет
 # (I#384). Меняется правило SNAT этой команды (подсеть клиентов и внешний интерфейс из
 # awg0.conf) в PostUp/PostDown живого awg0.conf и AWG_EXIT_IP в init; клиентов
@@ -3498,7 +3518,9 @@ change_exit_ip() {
     confirm_action "сменить адрес выхода" "на ${want}" || return 1
     _txn_lock || { _JSON_ERR="config locked"; return 1; }
     _txn_backup || { _txn_unlock; _JSON_ERR="backup failed"; return 1; }
+    _exit_txn_trap_on
     if ! systemctl stop awg-quick@awg0; then
+        _exit_txn_trap_off
         _txn_drop_backups; _txn_unlock
         _JSON_ERR="service stop failed"
         log_error "Сервис не остановился: адрес выхода не изменён. Проверьте: systemctl status awg-quick@awg0"
@@ -3510,6 +3532,7 @@ change_exit_ip() {
     while [[ -n "$cur" ]] && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur" 2>/dev/null; do
         # 16 проходов хватает на любой реальный остаток; правило, оставшееся после них, считается неснятым.
         if (( ++_drain > 16 )) || ! iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur"; then
+            _exit_txn_trap_off
             systemctl start awg-quick@awg0 || log_error "Сервис не запустился: systemctl status awg-quick@awg0"
             _txn_drop_backups; _txn_unlock
             _JSON_ERR="old exit rule could not be removed"
@@ -3550,8 +3573,10 @@ change_exit_ip() {
         _txn_unlock
         if (( rb == 0 )); then _JSON_ERR="start with the new exit address failed, rolled back"
         else _JSON_ERR="start with the new exit address failed, rollback incomplete"; fi
+        _exit_txn_trap_off
         return 1
     fi
+    _exit_txn_trap_off
     _txn_drop_backups; _txn_unlock
     awg_record_device_params
     if [[ "$want" == off ]]; then

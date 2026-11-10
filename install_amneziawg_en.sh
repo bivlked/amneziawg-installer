@@ -72,7 +72,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="e10db6ebd0ebe13bc1cf75150a7473f2e6d354316664ae1933170350466493bd"
-MANAGE_SCRIPT_SHA256="1d89296e5184a3dff677e35bfd7befb37a86563fea0bc0f03f0d293949c1f135"
+MANAGE_SCRIPT_SHA256="d65c9de043a1e0e58a7ef918062ec4e40a5bd7d3cb0f2dbda3e03980c5082111"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back
@@ -285,6 +285,9 @@ _install_cleanup() {
     type _awg_cleanup &>/dev/null && _awg_cleanup
     # The apt retry ban lives only while the installer runs.
     declare -F _apt_noretry_disable >/dev/null && _apt_noretry_disable
+    # A service that step 6 stopped for an exit address change is not left down.
+    declare -F _awg_start_if_stopped_for_exit >/dev/null && _awg_start_if_stopped_for_exit
+    return 0
 }
 # On INT/TERM the cleanup used to run but the script did NOT exit - execution
 # continued past the interrupted command (dangerous mid apt/dpkg/config edits)
@@ -3289,23 +3292,24 @@ _awg_stop_if_exit_ip_changed() {
     [[ "$old" == "${AWG_EXIT_IP:-}" ]] && return 0
     systemctl is-active --quiet awg-quick@awg0 || return 0
     log "The exit address changes ('${old:-none}' -> '${AWG_EXIT_IP:-none}'): the service is stopped before the new config is written."
-    if systemctl stop awg-quick@awg0; then
-        _AWG_STOPPED_FOR_EXIT=1
-    else
-        log_warn "The service did not stop: after the install check that iptables -t nat -S POSTROUTING has no SNAT rule to ${old}."
+    # Mark before the stop: an interruption or a failed stop also bring the service up on exit.
+    _AWG_STOPPED_FOR_EXIT=1
+    if ! systemctl stop awg-quick@awg0; then
+        die "The service did not stop: the exit address is unchanged and the config untouched. Check: systemctl status awg-quick@awg0"
     fi
 }
 
-# Step 6 did not finish after such a stop: the previous config is in place (the
-# render is atomic, the 3.1 undo puts it back), so the service comes up on it
-# instead of staying down until a rerun.
+# The install did not reach step 7 after such a stop (a step 6 failure, die, an
+# interruption): the service comes up on the config on disk (the render is
+# atomic, the 3.1 undo puts the previous one back) instead of staying down until
+# a rerun. Called by the step 6 undo and _install_cleanup; step 7 clears the mark.
 _awg_start_if_stopped_for_exit() {
     [[ "${_AWG_STOPPED_FOR_EXIT:-0}" -eq 1 ]] || return 0
     _AWG_STOPPED_FOR_EXIT=0
     if systemctl start awg-quick@awg0; then
-        log "The service is started again on the previous config."
+        log "The service stopped for the exit address change is started again."
     else
-        log_error "The service did not start on the previous config: systemctl status awg-quick@awg0"
+        log_error "The service stopped for the exit address change did not start: systemctl status awg-quick@awg0"
     fi
 }
 
@@ -9451,6 +9455,8 @@ step7_start_service() {
     else
         systemctl enable --now awg-quick@awg0 || die "enable --now error."
     fi
+    # Step 7 started the service: the mark of a stop for an exit address change is no longer needed.
+    _AWG_STOPPED_FOR_EXIT=0
     # The interface has just come up, so record the device-parameter set: the
     # management script should know from the start what is on the live interface.
     # Without this the very first removal detection would have nothing to compare.

@@ -70,7 +70,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="176ec35655c3e2270533b54da0818d1bb38ca4af6ba6efc8376eb9d3915a4e6d"
-MANAGE_SCRIPT_SHA256="7dba421ec9cdd8463e342c4ed0704964f4e5aad8c33496ec1fbf37304aa5876c"
+MANAGE_SCRIPT_SHA256="7d2f98df5d307fb1a06c12fa53eb4882ca29557e1612dd174c83300d50fe1b4d"
 
 # AmneziaWG 2.0 пин (H0, 31 jul 2026). Upstream влил AmneziaWG 3.0 в default-ветку
 # amneziawg-linux-kernel-module, и PPA переключился на 3.0. Тогда на ядрах старее
@@ -274,6 +274,9 @@ _install_cleanup() {
     type _awg_cleanup &>/dev/null && _awg_cleanup
     # Запрет повторов apt живёт только пока работает установщик.
     declare -F _apt_noretry_disable >/dev/null && _apt_noretry_disable
+    # Сервис, остановленный шагом 6 для смены адреса выхода, не оставляем лежать.
+    declare -F _awg_start_if_stopped_for_exit >/dev/null && _awg_start_if_stopped_for_exit
+    return 0
 }
 # На INT/TERM раньше cleanup срабатывал, но скрипт НЕ завершался - выполнение
 # продолжалось после прерванной команды (опасно посреди apt/dpkg/правки конфигов),
@@ -3200,23 +3203,24 @@ _awg_stop_if_exit_ip_changed() {
     [[ "$old" == "${AWG_EXIT_IP:-}" ]] && return 0
     systemctl is-active --quiet awg-quick@awg0 || return 0
     log "Адрес выхода меняется ('${old:-нет}' -> '${AWG_EXIT_IP:-нет}'): сервис остановлен до записи нового конфига."
-    if systemctl stop awg-quick@awg0; then
-        _AWG_STOPPED_FOR_EXIT=1
-    else
-        log_warn "Сервис не остановился: проверьте после установки, что в iptables -t nat -S POSTROUTING нет правила SNAT на ${old}."
+    # Отметка до stop: прерывание или отказ остановки тоже поднимают сервис на выходе.
+    _AWG_STOPPED_FOR_EXIT=1
+    if ! systemctl stop awg-quick@awg0; then
+        die "Сервис не остановился: адрес выхода не изменён, конфиг не тронут. Проверьте: systemctl status awg-quick@awg0"
     fi
 }
 
-# Шаг 6 не дошёл до конца после такой остановки: прежний конфиг на месте
-# (рендер атомарный, откат 3.1 его возвращает), поэтому сервис поднимается на
-# нём, а не остаётся лежать до повторного запуска.
+# Установка не дошла до шага 7 после такой остановки (отказ шага 6, die,
+# прерывание): сервис поднимается на конфиге, который лежит на диске (рендер
+# атомарный, откат 3.1 возвращает прежний), а не остаётся лежать до повторного
+# запуска. Зовут откат шага 6 и _install_cleanup; шаг 7 снимает отметку.
 _awg_start_if_stopped_for_exit() {
     [[ "${_AWG_STOPPED_FOR_EXIT:-0}" -eq 1 ]] || return 0
     _AWG_STOPPED_FOR_EXIT=0
     if systemctl start awg-quick@awg0; then
-        log "Сервис запущен снова на прежнем конфиге."
+        log "Сервис, остановленный для смены адреса выхода, запущен снова."
     else
-        log_error "Сервис не запустился на прежнем конфиге: systemctl status awg-quick@awg0"
+        log_error "Сервис, остановленный для смены адреса выхода, не запустился: systemctl status awg-quick@awg0"
     fi
 }
 
@@ -9291,6 +9295,8 @@ step7_start_service() {
     else
         systemctl enable --now awg-quick@awg0 || die "Ошибка enable --now."
     fi
+    # Сервис запущен шагом 7: отметка остановки для смены адреса выхода больше не нужна.
+    _AWG_STOPPED_FOR_EXIT=0
     # Интерфейс только что поднят - фиксируем набор device-параметров, чтобы
     # управляющий скрипт с самого начала знал, что стоит на живом интерфейсе.
     # Без этого первое же обнаружение снятия сравнивать было бы не с чем.

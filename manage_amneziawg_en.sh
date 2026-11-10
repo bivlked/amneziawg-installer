@@ -3476,6 +3476,27 @@ change_server_port() {
     (( fail == 0 ))
 }
 
+# A signal while exit-ip holds the service down: the files come back from the
+# copies, the new address's SNAT rule is removed and the service comes up on the
+# previous config, instead of leaving the VPN down. want, subnet and nic come
+# from change_exit_ip.
+_exit_txn_on_signal() {
+    trap - INT TERM
+    local _n=0
+    [[ -n "${_TXN_BAK_CONF:-}" && -f "$_TXN_BAK_CONF" ]] && _txn_restore
+    if [[ "${want:-off}" != off && -n "${subnet:-}" && -n "${nic:-}" ]]; then
+        while (( ++_n <= 16 )) && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null; do
+            iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null || break
+        done
+    fi
+    systemctl start awg-quick@awg0 || log_error "The service did not start: systemctl status awg-quick@awg0"
+    _txn_unlock
+    log_error "The exit-ip command was interrupted: the previous settings are back."
+    _manage_on_signal "$1"
+}
+_exit_txn_trap_on()  { trap '_exit_txn_on_signal 130' INT; trap '_exit_txn_on_signal 143' TERM; }
+_exit_txn_trap_off() { trap '_manage_on_signal 130' INT; trap '_manage_on_signal 143' TERM; }
+
 # manage exit-ip <IPv4|off>: the address client traffic leaves to the internet
 # from (I#384). It changes the command's own SNAT rule (the client subnet and the external
 # interface from awg0.conf) in PostUp/PostDown of the live awg0.conf and
@@ -3543,7 +3564,9 @@ change_exit_ip() {
     confirm_action "change the exit address" "to ${want}" || return 1
     _txn_lock || { _JSON_ERR="config locked"; return 1; }
     _txn_backup || { _txn_unlock; _JSON_ERR="backup failed"; return 1; }
+    _exit_txn_trap_on
     if ! systemctl stop awg-quick@awg0; then
+        _exit_txn_trap_off
         _txn_drop_backups; _txn_unlock
         _JSON_ERR="service stop failed"
         log_error "The service did not stop: the exit address is unchanged. Check: systemctl status awg-quick@awg0"
@@ -3555,6 +3578,7 @@ change_exit_ip() {
     while [[ -n "$cur" ]] && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur" 2>/dev/null; do
         # 16 passes cover any real leftover; a rule still there after them counts as not removed.
         if (( ++_drain > 16 )) || ! iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur"; then
+            _exit_txn_trap_off
             systemctl start awg-quick@awg0 || log_error "The service did not start: systemctl status awg-quick@awg0"
             _txn_drop_backups; _txn_unlock
             _JSON_ERR="old exit rule could not be removed"
@@ -3595,8 +3619,10 @@ change_exit_ip() {
         _txn_unlock
         if (( rb == 0 )); then _JSON_ERR="start with the new exit address failed, rolled back"
         else _JSON_ERR="start with the new exit address failed, rollback incomplete"; fi
+        _exit_txn_trap_off
         return 1
     fi
+    _exit_txn_trap_off
     _txn_drop_backups; _txn_unlock
     awg_record_device_params
     if [[ "$want" == off ]]; then
