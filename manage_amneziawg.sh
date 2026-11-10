@@ -3436,11 +3436,13 @@ change_server_port() {
 # правило SNAT нового адреса снимается, сервис поднимается на прежнем конфиге,
 # иначе VPN остался бы лежать. want, subnet и nic видны из change_exit_ip.
 _exit_txn_on_signal() {
-    trap - INT TERM
+    # Повторный INT/TERM не обрывает восстановление между stop и start.
+    trap '' INT TERM
     local _n=0
-    # Сигнал мог прийти, когда сервис уже поднят на новом конфиге: сначала остановка,
-    # пока на диске новый файл (его PostDown снимет своё правило), потом возврат файлов.
-    systemctl is-active --quiet awg-quick@awg0 && systemctl stop awg-quick@awg0
+    # Сигнал мог прийти, когда сервис уже поднят или ещё поднимается (activating) на
+    # новом конфиге: сначала остановка, пока на диске новый файл (его PostDown снимет
+    # своё правило), потом возврат файлов. stop остановленного сервиса ничего не делает.
+    systemctl stop awg-quick@awg0
     # Копии возвращаются по отдельности: откат мог успеть вернуть одну из них.
     if [[ -n "${_TXN_BAK_CONF:-}" && -f "$_TXN_BAK_CONF" ]]; then
         cp -p "$_TXN_BAK_CONF" "$SERVER_CONF_FILE" && rm -f "$_TXN_BAK_CONF"

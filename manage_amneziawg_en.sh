@@ -3481,11 +3481,13 @@ change_server_port() {
 # previous config, instead of leaving the VPN down. want, subnet and nic come
 # from change_exit_ip.
 _exit_txn_on_signal() {
-    trap - INT TERM
+    # A second INT/TERM does not cut the restore short between the stop and the start.
+    trap '' INT TERM
     local _n=0
-    # The signal may come when the service is already up on the new config: stop it
-    # first, while the new file is on disk (its PostDown removes its rule), then the files.
-    systemctl is-active --quiet awg-quick@awg0 && systemctl stop awg-quick@awg0
+    # The signal may come when the service is already up, or still coming up
+    # (activating), on the new config: stop it first, while the new file is on disk
+    # (its PostDown removes its rule), then the files. A stop of a stopped service does nothing.
+    systemctl stop awg-quick@awg0
     # The copies come back one by one: the rollback may have put one of them back already.
     if [[ -n "${_TXN_BAK_CONF:-}" && -f "$_TXN_BAK_CONF" ]]; then
         cp -p "$_TXN_BAK_CONF" "$SERVER_CONF_FILE" && rm -f "$_TXN_BAK_CONF"

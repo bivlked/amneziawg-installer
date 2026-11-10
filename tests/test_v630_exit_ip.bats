@@ -147,6 +147,17 @@ if [[ "$1" == start && -n "${STUB_START_FAIL:-}" ]]; then
     grep -qF -- "--to-source ${STUB_START_FAIL}" "$STUB_SERVER_CONF" && exit 1
 fi
 [[ "$1" == start ]] && echo active > "$CALLS.state"
+# STUB_START_ACTIVATING: the start on the new exit address is cut short while systemd
+# is still bringing the unit up (state activating, which is-active does not count).
+if [[ "$1" == start && -n "${STUB_START_ACTIVATING:-}" && ! -e "$CALLS.signaled" ]] \
+    && grep -qF -- "--to-source ${STUB_START_ACTIVATING}" "$STUB_SERVER_CONF"; then
+    echo activating > "$CALLS.state"; : > "$CALLS.signaled"; kill -TERM "$PPID"; exit 0
+fi
+# STUB_SECOND_SIGNAL: one more TERM at the second stop (the handler's own stop).
+if [[ "$1" == stop && -n "${STUB_SECOND_SIGNAL:-}" && ! -e "$CALLS.signaled2" ]] \
+    && [[ "$(wc -l < "$CALLS.stopconf")" -ge 2 ]]; then
+    : > "$CALLS.signaled2"; kill -TERM "$PPID"
+fi
 # STUB_STOP_SIGNAL / STUB_START_SIGNAL: one TERM to manage itself (the parent): right
 # at the stop, or after the service came up on the new exit address.
 sig=0
@@ -209,7 +220,7 @@ CONF
 
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
-    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_ADDRS STUB_START_FAIL STUB_STOP_FAIL STUB_IPT_LEFT STUB_IPT_STUCK STUB_STOP_SIGNAL STUB_START_SIGNAL STUB_RM_SIGNAL
+    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_ADDRS STUB_START_FAIL STUB_STOP_FAIL STUB_IPT_LEFT STUB_IPT_STUCK STUB_STOP_SIGNAL STUB_START_SIGNAL STUB_RM_SIGNAL STUB_START_ACTIVATING STUB_SECOND_SIGNAL
 }
 
 manage() {
@@ -543,7 +554,7 @@ _exit_signal_at_stop() {
     [ "$status" -eq 143 ] || { echo "$1: status $status, want 143"; return 1; }
     [ "$(cat "$MGMT_DIR/awg/awg0.conf")" = "$conf_before" ] || { echo "$1: awg0.conf changed"; return 1; }
     [ "$(cat "$MGMT_DIR/awg/awgsetup_cfg.init")" = "$init_before" ] || { echo "$1: init changed"; return 1; }
-    [ "$(calls)" = "systemctl stop awg-quick@awg0|systemctl start awg-quick@awg0" ] || { echo "$1: the service was not started again: '$(calls)'"; return 1; }
+    [ "$(calls)" = "systemctl stop awg-quick@awg0|systemctl stop awg-quick@awg0|systemctl start awg-quick@awg0" ] || { echo "$1: the service was not started again: '$(calls)'"; return 1; }
     local left; left=$(compgen -G "$MGMT_DIR/awg/*.bak.*"; compgen -G "$MGMT_DIR/awg/*.new.*")
     [ -z "$left" ] || { echo "$1: copies left: $left"; return 1; }
 }
@@ -636,4 +647,34 @@ STUB
 @test "exit-ip interrupted in the rollback between the two copies still puts the init back, both twins" {
     require_flock
     each_manage _exit_signal_between_copies
+}
+_exit_signal_while_activating() {
+    local conf_before
+    conf_before=$(cat "$MGMT_DIR/awg/awg0.conf")
+    export STUB_START_ACTIVATING=203.0.113.7
+    manage "$1" exit-ip 203.0.113.7
+    unset STUB_START_ACTIVATING
+    [ "$status" -eq 143 ] || { echo "$1: status $status, want 143"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awg0.conf")" = "$conf_before" ] || { echo "$1: awg0.conf not put back"; return 1; }
+    [ "$(sed -n 2p "$CALLS.stopconf")" = "203.0.113.7" ] || { echo "$1: a start still in progress on the new file was not stopped: $(paste -sd' ' "$CALLS.stopconf")"; return 1; }
+}
+@test "exit-ip interrupted while the new start is still activating stops it before the files come back, both twins" {
+    require_flock
+    each_manage _exit_signal_while_activating
+}
+
+_exit_second_signal_in_handler() {
+    local conf_before
+    conf_before=$(cat "$MGMT_DIR/awg/awg0.conf")
+    export STUB_START_SIGNAL=203.0.113.7 STUB_SECOND_SIGNAL=1
+    manage "$1" exit-ip 203.0.113.7
+    unset STUB_START_SIGNAL STUB_SECOND_SIGNAL
+    [ -e "$CALLS.signaled2" ] || { echo "$1: the second signal was not sent"; return 1; }
+    [ "$status" -eq 143 ] || { echo "$1: status $status, want 143"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awg0.conf")" = "$conf_before" ] || { echo "$1: awg0.conf not put back"; return 1; }
+    [ "$(calls | awk -F'|' '{print $NF}')" = "systemctl start awg-quick@awg0" ] || { echo "$1: a second signal left the service down: '$(calls)'"; return 1; }
+}
+@test "a second signal while exit-ip restores does not leave the service down, both twins" {
+    require_flock
+    each_manage _exit_second_signal_in_handler
 }
