@@ -1812,6 +1812,20 @@ check_server() {
         log " - IP Forwarding включен."
     fi
 
+    # Адрес выхода (I#384): правило SNAT в PostUp есть, а адреса на интерфейсе нет -
+    # трафик клиентов наружу не идёт, хотя сервис active и рукопожатия проходят.
+    local _exit_ip
+    _exit_ip=$(grep -E '^PostUp[[:space:]]*=' "$SERVER_CONF_FILE" 2>/dev/null | tr -d '\r' | grep -oE 'SNAT --to-source [0-9.]+' | head -1 | awk '{print $3}')
+    if [[ -n "$_exit_ip" ]]; then
+        log "Адрес выхода:"
+        if _exit_ifaddrs | grep -qxF -- "$_exit_ip"; then
+            log " - $_exit_ip на интерфейсе сервера."
+        else
+            log_error " - $_exit_ip нет на интерфейсах сервера: трафик клиентов наружу не идёт. Верните адрес (например, в netplan) или снимите его: manage exit-ip off"
+            ok=0
+        fi
+    fi
+
     log "Модуль ядра:"
     # Паттерн из diagnose: точное имя модуля в первом столбце lsmod.
     if lsmod 2>/dev/null | awk '$1 == "amneziawg" {f=1} END {exit !f}'; then
@@ -3563,7 +3577,7 @@ usage() {
     echo "  --server-conf=ПУТЬ    Указать файл конфига сервера"
     echo "  --apply-mode=РЕЖИМ    syncconf (умолч.) или restart (обход kernel panic)"
     echo "  --psk                 (только для add) PresharedKey клиенту, даже если сервер"
-    echo "                        поставлен с --no-psk (по умолчанию PSK и так есть у каждого)"
+    echo "                        поставлен с --no-psk (по умолчанию PSK и так есть у каждого нового)"
     echo "  --no-psk              (только для add) создать клиента без PresharedKey"
     echo "  --allowed-ips=СПИСОК  (только для add) индивидуальные AllowedIPs клиента - CIDR через"
     echo "                        запятую; без флага - глобальный режим маршрутизации сервера"

@@ -3402,8 +3402,8 @@ render_server_config() {
     # AWG_EXIT_IP instead of the entry address. The SNAT is inserted (-I) ABOVE
     # the MASQUERADE and only for the client subnet: the server's own traffic is
     # unchanged. If the address disappears from the interface, SNAT still sets it
-    # as the source, no replies come back, and client traffic stops instead of
-    # leaving through the entry. The value goes into PostUp, so it is checked
+    # as the source, so client traffic does not leave through the entry (whether
+    # replies still arrive depends on the host). The value goes into PostUp, so it is checked
     # here again.
     local exit_ip="${AWG_EXIT_IP:-}"
     if [[ -n "$exit_ip" ]]; then
@@ -5834,12 +5834,12 @@ generate_client() {
     # Optional PresharedKey: "auto" -> `awg genpsk`, otherwise use the
     # given value as-is. Empty/unset -> no PSK.
     if [[ "${CLIENT_PSK:-}" == "auto" ]]; then
-        # --psk was requested explicitly: on awg genpsk failure do NOT silently
-        # degrade to a PSK-less client (that would weaken the requested security).
+        # A PSK is the default and a client without one is made only on purpose
+        # (--no-psk): on awg genpsk failure do NOT silently degrade to a PSK-less client.
         # Fail-closed; no artifacts exist yet (keys/config are created below), so
         # no rollback is needed.
         CLIENT_PSK=$(awg genpsk) || {
-            log_error "awg genpsk failed - client NOT created. Please retry; for a client without a PresharedKey use manage add --no-psk."
+            log_error "awg genpsk failed - client NOT created. Please retry; for a client without a PresharedKey use --no-psk."
             return 1
         }
     fi
@@ -6168,7 +6168,7 @@ regenerate_client() {
         _v=$(awg_normalize_csv "$(printf '%s' "$_raw" | paste -sd, -)")
         [[ -n "$_v" ]] && current_allowed_ips="$_v"
         # v5.11.1: preserve PresharedKey through regen. Without this,
-        # clients added with `manage add --psk` would lose their PSK on
+        # clients with a PSK (the default, or --psk) would lose their PSK on
         # regen — the server peer still holds the PSK but the client
         # conf would drop it, breaking the handshake. CLIENT_PSK is
         # passed through to render_client_config.

@@ -1845,6 +1845,20 @@ check_server() {
         log " - IP Forwarding is enabled."
     fi
 
+    # Exit address (I#384): a SNAT rule in PostUp but no such address on an interface -
+    # client traffic does not get out, although the service is active and handshakes pass.
+    local _exit_ip
+    _exit_ip=$(grep -E '^PostUp[[:space:]]*=' "$SERVER_CONF_FILE" 2>/dev/null | tr -d '\r' | grep -oE 'SNAT --to-source [0-9.]+' | head -1 | awk '{print $3}')
+    if [[ -n "$_exit_ip" ]]; then
+        log "Exit address:"
+        if _exit_ifaddrs | grep -qxF -- "$_exit_ip"; then
+            log " - $_exit_ip is on a server interface."
+        else
+            log_error " - $_exit_ip is not on any server interface: client traffic does not get out. Bring the address back (in netplan, for example) or remove it: manage exit-ip off"
+            ok=0
+        fi
+    fi
+
     log "Kernel module:"
     # Pattern from diagnose: exact module name in the first lsmod column.
     if lsmod 2>/dev/null | awk '$1 == "amneziawg" {f=1} END {exit !f}'; then
@@ -3609,7 +3623,7 @@ usage() {
     echo "  --server-conf=PATH    Specify server config file"
     echo "  --apply-mode=MODE     syncconf (default) or restart (bypass kernel panic)"
     echo "  --psk                 (add only) give the client a PresharedKey even if the"
-    echo "                        server was installed with --no-psk (by default every client has one)"
+    echo "                        server was installed with --no-psk (by default every new client has one)"
     echo "  --no-psk              (add only) create the client without a PresharedKey"
     echo "  --allowed-ips=LIST    (add only) per-client AllowedIPs - comma-separated CIDRs;"
     echo "                        without the flag the server-wide routing mode is used"

@@ -562,7 +562,7 @@ sudo bash ./install_amneziawg_en.sh       # Запуск (+ 2 перезагру
 
 # Управление клиентами
 sudo bash /root/awg/manage_amneziawg.sh add my_phone       # Добавить
-sudo bash /root/awg/manage_amneziawg.sh add my_tv --no-psk     # Без PresharedKey (по умолчанию он у каждого)
+sudo bash /root/awg/manage_amneziawg.sh add my_tv --no-psk     # Без PresharedKey (по умолчанию он у каждого нового)
 sudo bash /root/awg/manage_amneziawg.sh exit-ip 203.0.113.7    # Выход клиентов со второго IP сервера
 sudo bash /root/awg/manage_amneziawg.sh remove my_phone    # Удалить
 sudo bash /root/awg/manage_amneziawg.sh list                # Список
@@ -721,7 +721,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 <details>
   <summary><strong>В: Какой порт слушает сервер и как его сменить?</strong></summary>
-  <b>О:</b> Новая установка берёт случайный свободный порт из диапазона 10000-59999 (кроме 51820 и 51821): один и тот же порт у всех установок был бы их общим признаком. Порт называет итоговый отчёт установки, его видно и в строке <code>ListenPort</code> файла <code>/etc/amnezia/amneziawg/awg0.conf</code>. Задать свой при установке: <code>--port=N</code> (любой порт 1-65535). Сменить на работающем сервере: <code>sudo bash /root/awg/manage_amneziawg.sh port N</code>, правило UFW и конфиги клиентов команда поправит сама, но клиентам нужно раздать новые конфиги. Серверы, поставленные раньше, слушают 39743, пока порт не сменить. На мобильных сетях, где оператор режет незнакомые порты, часто выручает <code>443/udp</code> - его ставит флаг <code>--mobile</code> вместе с пресетом обфускации.
+  <b>О:</b> Новая установка берёт случайный свободный порт из диапазона 10000-59999 (кроме 51820 и 51821): один и тот же порт у всех установок был бы их общим признаком. Порт называет итоговый отчёт установки, его видно и в строке <code>ListenPort</code> файла <code>/etc/amnezia/amneziawg/awg0.conf</code>. Задать свой при установке: <code>--port=N</code> (любой порт 1-65535). Сменить на работающем сервере: <code>sudo bash /root/awg/manage_amneziawg.sh port N</code>, правило UFW и конфиги клиентов команда поправит сама, но клиентам нужно раздать новые конфиги, а проброс порта на роутере и фаервол хостера, если они есть, поменять самому. Серверы, поставленные раньше без <code>--port</code>, слушают 39743, пока порт не сменить. На мобильных сетях, где оператор режет незнакомые порты, часто выручает <code>443/udp</code> - его ставит флаг <code>--mobile</code> вместе с пресетом обфускации.
 </details>
 
 <details>

@@ -561,7 +561,7 @@ sudo bash ./install_amneziawg.sh          # Run (+ 2 reboots)
 
 # Client management
 sudo bash /root/awg/manage_amneziawg.sh add my_phone       # Add
-sudo bash /root/awg/manage_amneziawg.sh add my_tv --no-psk     # Without a PresharedKey (every client has one by default)
+sudo bash /root/awg/manage_amneziawg.sh add my_tv --no-psk     # Without a PresharedKey (every new client has one by default)
 sudo bash /root/awg/manage_amneziawg.sh exit-ip 203.0.113.7    # Client traffic leaves from the server's second IP
 sudo bash /root/awg/manage_amneziawg.sh remove my_phone    # Remove
 sudo bash /root/awg/manage_amneziawg.sh list                # List
@@ -720,7 +720,7 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 
 <details>
   <summary><strong>Q: Which port does the server listen on, and how do I change it?</strong></summary>
-  <b>A:</b> A new install takes a random free port in 10000-59999 (except 51820 and 51821): the same port on every install would be a trait they all share. The final install report names the port, and it is also the <code>ListenPort</code> line in <code>/etc/amnezia/amneziawg/awg0.conf</code>. To set your own at install time: <code>--port=N</code> (any port 1-65535). To change it on a running server: <code>sudo bash /root/awg/manage_amneziawg.sh port N</code>; the command fixes the UFW rule and the client configs itself, but the clients need the new configs. Servers installed earlier listen on 39743 until the port is changed. On mobile networks where the carrier drops unfamiliar ports, <code>443/udp</code> often helps - the <code>--mobile</code> flag sets it together with the obfuscation preset.
+  <b>A:</b> A new install takes a random free port in 10000-59999 (except 51820 and 51821): the same port on every install would be a trait they all share. The final install report names the port, and it is also the <code>ListenPort</code> line in <code>/etc/amnezia/amneziawg/awg0.conf</code>. To set your own at install time: <code>--port=N</code> (any port 1-65535). To change it on a running server: <code>sudo bash /root/awg/manage_amneziawg.sh port N</code>; the command fixes the UFW rule and the client configs itself, but the clients need the new configs, and a port forward on a router or the host's firewall, if any, has to be changed by hand. Servers installed earlier without <code>--port</code> listen on 39743 until the port is changed. On mobile networks where the carrier drops unfamiliar ports, <code>443/udp</code> often helps - the <code>--mobile</code> flag sets it together with the obfuscation preset.
 </details>
 
 <details>

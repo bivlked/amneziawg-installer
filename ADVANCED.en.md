@@ -847,6 +847,7 @@ ContentPaddingAddition = 32-128
 [Peer]
 #_Name = my_phone
 PublicKey = [CLIENT_PUBLIC_KEY]
+PresharedKey = [PRESHARED_KEY]
 AllowedIPs = 10.9.9.2/32
 ```
 
@@ -879,6 +880,7 @@ ContentPaddingAddition = 32-128
 
 [Peer]
 PublicKey = [SERVER_PUBLIC_KEY]
+PresharedKey = [PRESHARED_KEY]
 Endpoint = 203.0.113.1:39743
 AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 33
@@ -942,6 +944,7 @@ I1 = <r 2><b 0x858000010002000000001c><rc 28><b 0x0463646e730669636c6f756403636f
 [Peer]
 #_Name = my_phone
 PublicKey = [CLIENT_PUBLIC_KEY]
+PresharedKey = [PRESHARED_KEY]
 AllowedIPs = 10.9.9.2/32
 ```
 
@@ -1008,6 +1011,7 @@ I1 = <r 2><b 0x858000010002000000001c><rc 28><b 0x0463646e730669636c6f756403636f
 
 [Peer]
 PublicKey = [SERVER_PUBLIC_KEY]
+PresharedKey = [PRESHARED_KEY]
 Endpoint = 203.0.113.1:39743
 AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 33
@@ -1142,7 +1146,7 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 * **`check` / `status`:** Check server status (service, port, module, the installation's protocol generation 3.1 or 2.0, and the obfuscation parameters).
 * **`show`:** Run `awg show`.
 * **`qr <name> [--vpn]`:** Print the client's QR code right in the terminal, to scan it with a phone without copying a picture off the server. Without the flag - the config QR for the AmneziaWG app, with `--vpn` - the `vpn://` link QR for Amnezia VPN. A 3.1 config QR takes about 90-110 characters in width and 45-55 lines, a `vpn://` link QR about 120 by 60; if the window is smaller, the command warns up front, and then make the terminal font smaller. The code holds the client's private key: show it when nobody can see the screen, and run `clear` after scanning. `--json` is not supported.
-* **`port <number>`:** Change the UDP port of a running server: the new port goes into `ListenPort` of `awg0.conf` and `AWG_PORT` of `awgsetup_cfg.init`, UFW opens it before the restart and closes the old one after, then every client is regenerated (the port is part of the `Endpoint`). If the server does not come up on the new port, the command puts the old port and both files back. The clients need the new configs or QR codes. A busy, invalid or unchanged port changes nothing.
+* **`port <number>`:** Change the UDP port of a running server: the new port goes into `ListenPort` of `awg0.conf` and `AWG_PORT` of `awgsetup_cfg.init`, if ufw is installed, the new port is opened in it before the restart and the old one closed after (even with UFW off), then every client is regenerated (the port is part of the `Endpoint`). If the server does not come up on the new port, the command puts the old port and both files back. A client that could not be regenerated is named and the command ends with an error, while the port stays new. The clients need the new configs or QR codes, and a port forward on a router or the host's firewall has to be changed by hand. A busy, invalid or unchanged port changes nothing.
 * **`exit-ip <IPv4|off>`:** Set the address client traffic leaves to the internet from, or remove it (`off`). Clients do not change, the service restarts. Details - [A separate exit address](#exit-ip-adv).
 * **`restart`:** Restart the AmneziaWG service.
 * **`diagnose [--carrier=NAME]`:** Self-troubleshooting: checks the kernel module, sysctl and UFW; with `--carrier=NAME` it compares AWG parameters against a mobile carrier profile. Names: `beeline_msk`, `yota_msk`, `tele2_msk`, `tele2_krasnoyarsk`, `tattelecom`, `megafon_regions`, `tmobile_us` (the last name is historical: it is the Russian T-Mobile, Moscow and region).
@@ -2118,7 +2122,7 @@ The rule is applied automatically on install and reinstall (`--force`) for v5.17
 
 If the tunnel does not come up at all on cellular (the handshake never completes) while it works fine on Wi-Fi, there are TWO known causes, and one look at the server tells them apart.
 
-**Cause one: the port.** The server listens on a random UDP port in 10000-59999 (older installs on 39743); some carriers drop that non-standard UDP port but reliably pass `443/udp` - it looks like QUIC/HTTP3. `--preset=mobile` does not help here: it changes the traffic disguise, not the port. The tell: the server sees **nothing at all** - `tcpdump` on your port is silent and there is no peer activity in `awg show`.
+**Cause one: the port.** The server listens on a random UDP port in 10000-59999 (older installs without `--port` on 39743); some carriers drop that non-standard UDP port but reliably pass `443/udp` - it looks like QUIC/HTTP3. `--preset=mobile` does not help here: it changes the traffic disguise, not the port. The tell: the server sees **nothing at all** - `tcpdump` on your port is silent and there is no peer activity in `awg show`.
 
 **Cause two: the shape of the `I1` concealment packet.** The tell is the opposite: packets from the client **do arrive**, the peer's `endpoint` updates, the received counter grows, and `latest handshake` never moves. Analysis and measurement: [the handshake never completes on cellular](#no-hs-mobile-adv).
 
@@ -2201,9 +2205,9 @@ Better to give `--endpoint` explicitly here: with two addresses the installer ma
 
 **On a running server:** `sudo bash /root/awg/manage_amneziawg.sh exit-ip 203.0.113.7`, to remove it `exit-ip off`. Client configs do not change, the service restarts, and clients lose the connection for a few seconds. To check from a client: `curl -s ifconfig.me` returns the exit address.
 
-**How it works.** A `SNAT --to-source <exit address>` rule for the client subnet goes into the server's `PostUp`, above the usual MASQUERADE; the server's own traffic (updates, DNS) still leaves from the main address. If the exit address disappears from the interface, the rule still sets it as the source, no replies come back, and client traffic stops instead of leaving through the entry address.
+**How it works.** A `SNAT --to-source <exit address>` rule for the client subnet goes into the server's `PostUp`, above the usual MASQUERADE; the server's own traffic (updates, DNS) still leaves from the main address. If the exit address disappears from the interface, the rule still sets it as the source, so client traffic does not leave through the entry address. What happens next depends on the host: if it no longer sends that address to the server, no replies come back and the connection stops; if it still does, the connection may keep working. `manage check` shows a missing address.
 
-**Limits.** IPv4 only: an exit address does not combine with the IPv6 tunnel for clients (`--allow-ipv6-tunnel`), the installer and `manage` refuse it. A second address from the same host is often in the same subnet: while single addresses get blocked, that is enough, but if the subnet is closed, both go. For setups with several servers, see the [cascade](CASCADE.en.md).
+**Limits.** IPv4 only: an exit address does not combine with the IPv6 tunnel for clients (`--allow-ipv6-tunnel`), the installer and `manage` refuse it. The exit address cannot be the entry address, the tunnel address or loopback. A second address from the same host is often in the same subnet: while single addresses get blocked, that is enough, but if the subnet is closed, both go. For setups with several servers, see the [cascade](CASCADE.en.md).
 
 ---
 <a id="active-probing-adv"></a>

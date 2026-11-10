@@ -439,3 +439,18 @@ xresolve() {
         done
     done
 }
+_exit_check_reports_missing() {
+    manage "$1" exit-ip 203.0.113.7
+    [ "$status" -eq 0 ] || { echo "$1: set failed: $stderr"; return 1; }
+    manage "$1" check
+    [[ "$output$stderr" == *203.0.113.7* ]] || { echo "$1: check does not mention the exit address"; return 1; }
+    [[ "$output$stderr" != *"203.0.113.7 нет"* && "$output$stderr" != *"203.0.113.7 is not on"* ]] || { echo "$1: check calls a present address missing"; return 1; }
+    export STUB_ADDRS="198.51.100.2"
+    manage "$1" check
+    [ "$status" -ne 0 ] || { echo "$1: check passed with the exit address gone"; return 1; }
+    [[ "$stderr" == *"203.0.113.7 нет"* || "$stderr" == *"203.0.113.7 is not on"* ]] || { echo "$1: check does not say the address is gone: $stderr"; return 1; }
+}
+@test "check reports an exit address that is no longer on the server" {
+    require_flock
+    each_manage _exit_check_reports_missing
+}
