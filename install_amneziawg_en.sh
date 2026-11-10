@@ -5857,8 +5857,12 @@ repair_module_cmd() {
     _awg_kmod_status_warn
     if [[ "$rc" -eq 0 && "$hrc" -eq 0 && "$frc" -eq 0 ]]; then
         log "Done: the module is on disk for every kernel with headers, no unfinished packages left (dpkg --audit is empty). The script does not reboot."
-        if [[ ! -d /sys/module/amneziawg ]]; then
+        if [[ ! -d "${AWG_SYS_MODULE_DIR:-/sys/module}/amneziawg" ]]; then
             log_warn "The module is not loaded now, so the tunnel is down. Reboot, or run: sudo modprobe amneziawg && sudo systemctl restart awg-quick@awg0"
+        elif [[ -f "$SERVER_CONF_FILE" ]] && ! systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then
+            # The helper (--repair) loads the running kernel's module itself, so
+            # a loaded module no longer means a running tunnel.
+            log_warn "The module is loaded, but the awg-quick@awg0 service is not running, so the tunnel is down. Run: sudo systemctl restart awg-quick@awg0"
         fi
         exit 0
     fi

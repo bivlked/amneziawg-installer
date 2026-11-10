@@ -566,6 +566,29 @@ EOF
     done
 }
 
+# The helper's --repair test-loads the running kernel's module (since the
+# stale same-named build fix): a loaded module no longer means a running
+# tunnel, so a stopped awg-quick@awg0 is named with its command.
+@test "repair-module: module loaded but awg0 stopped: says so and gives the restart command; running awg0: silent" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        _rm_server; _rm_driver "$f"
+        mkdir -p "$T/sysmod/amneziawg"; : > "$T/awg0.conf"
+        sed -i "1i AWG_SYS_MODULE_DIR=$T/sysmod; SERVER_CONF_FILE=$T/awg0.conf" "$T/drv.sh"
+        sed -i '1i systemctl() { [[ "$1 $2 $3" == "is-active --quiet awg-quick@awg0" ]] && [[ -e "$T/svc.up" ]]; }' "$T/drv.sh"
+        run bash "$T/drv.sh"
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
+        grep -q '^WARN: .*awg-quick@awg0.*sudo systemctl restart awg-quick@awg0' <<<"$output" || { echo "$f: no restart hint: $output"; return 1; }
+        # the module IS loaded: no advice to load it
+        if grep -q 'modprobe amneziawg' <<<"$output"; then echo "$f: modprobe advised with the module loaded: $output"; return 1; fi
+        : > "$T/svc.up"
+        run bash "$T/drv.sh"
+        [ "$status" -eq 0 ] || { echo "$f: $output"; return 1; }
+        if grep -q 'systemctl restart awg-quick@awg0' <<<"$output"; then echo "$f: hint with awg0 running: $output"; return 1; fi
+        rm -f "$T/svc.up"
+    done
+}
+
 @test "repair-module: a running kernel whose module file is gone is named before a reboot" {
     local f
     for f in "${INSTALLERS[@]}"; do

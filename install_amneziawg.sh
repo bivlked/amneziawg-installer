@@ -5740,8 +5740,12 @@ repair_module_cmd() {
     _awg_kmod_status_warn
     if [[ "$rc" -eq 0 && "$hrc" -eq 0 && "$frc" -eq 0 ]]; then
         log "Готово: модуль на диске у всех ядер с заголовками, недонастроенных пакетов нет (dpkg --audit пуст). Перезагрузку скрипт не делает."
-        if [[ ! -d /sys/module/amneziawg ]]; then
+        if [[ ! -d "${AWG_SYS_MODULE_DIR:-/sys/module}/amneziawg" ]]; then
             log_warn "Модуль сейчас не загружен, туннель не работает. Перезагрузите сервер или выполните: sudo modprobe amneziawg && sudo systemctl restart awg-quick@awg0"
+        elif [[ -f "$SERVER_CONF_FILE" ]] && ! systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then
+            # Помощник (--repair) сам загружает модуль работающего ядра, поэтому
+            # загруженный модуль ещё не значит работающий туннель.
+            log_warn "Модуль загружен, но сервис awg-quick@awg0 не работает, туннель выключен. Запустите: sudo systemctl restart awg-quick@awg0"
         fi
         exit 0
     fi
