@@ -575,7 +575,7 @@ All the addresses have to be on the external interface of AWG0 (`ip -4 addr`); i
 
 Check on AWG1: `awg show awg0 endpoints` should show the `AWG1_SRC` address for the `ru_host` client.
 
-To move the tunnel back to the main address: clear `AWG1_SRC`, remove the rule with `iptables -t nat -D POSTROUTING -s <old AWG1_SRC> -d <AWG1_ENDPOINT> -j ACCEPT`, then run `systemctl restart awg-quick@awg1` and `bash /root/awg/awg-routing.sh`.
+To change the tunnel address or move it back to the main one: first remove the rule of the old address, `iptables -t nat -D POSTROUTING -s <old AWG1_SRC> -d <AWG1_ENDPOINT> -j ACCEPT`, or it stays in the table. Then set the new `AWG1_SRC` (or clear it) and run `systemctl restart awg-quick@awg1` and `bash /root/awg/awg-routing.sh`.
 
 Checked on a stand: Ubuntu 24.04, the 3.1 profile, the entry on the main address, the direct exit (`--exit-ip`) and the tunnel on the second one, including after two reboots of AWG0. Without the NAT rule or without setting the endpoint again the tunnel did not stay on the second address: in the first case `MASQUERADE` rewrote it, in the second it stayed on the main address after a reboot.
 

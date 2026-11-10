@@ -573,7 +573,7 @@ ip route show table 100
 
 Проверка на AWG1: `awg show awg0 endpoints` - у клиента `ru_host` должен стоять адрес из `AWG1_SRC`.
 
-Вернуть туннель на основной адрес: очистите `AWG1_SRC`, снимите правило `iptables -t nat -D POSTROUTING -s <прежний AWG1_SRC> -d <AWG1_ENDPOINT> -j ACCEPT`, выполните `systemctl restart awg-quick@awg1` и `bash /root/awg/awg-routing.sh`.
+Сменить адрес туннеля или вернуть его на основной: сначала снимите правило прежнего адреса, `iptables -t nat -D POSTROUTING -s <прежний AWG1_SRC> -d <AWG1_ENDPOINT> -j ACCEPT`, иначе оно так и останется в таблице. Затем впишите новый `AWG1_SRC` (или очистите его) и выполните `systemctl restart awg-quick@awg1` и `bash /root/awg/awg-routing.sh`.
 
 Проверено на стенде: Ubuntu 24.04, профиль 3.1, вход на основном адресе, прямой выход (`--exit-ip`) и туннель на втором, в том числе после двух перезагрузок AWG0. Без правила для NAT и без сброса адреса туннель на втором адресе не держался: в первом случае его подменял `MASQUERADE`, во втором после перезагрузки он оставался на основном.
 
