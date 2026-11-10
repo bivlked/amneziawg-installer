@@ -8036,13 +8036,30 @@ log_prints() {
 # size or content) since just before the attempt: neither a log of an
 # earlier attempt nor one of another kernel in this run is blamed.
 build_kernel() { # kernel [timeout-seconds] [--force]
-    local k="$1" limit="${2:-0}" force="${3:-}" before after log="" rc=0 line
+    local k="$1" limit="${2:-0}" force="${3:-}" before after log="" rc=0 line t0 left
     local -a cmd=(dkms install -m amneziawg -v "$SRC_VER" -k "$k")
+    local -a bcmd=(dkms build -m amneziawg -v "$SRC_VER" -k "$k" --force)
     [[ -n "$force" ]] && cmd+=(--force)
-    [[ "$limit" -gt 0 ]] && cmd=(timeout -k 5 "$limit" "${cmd[@]}")
     before=$(log_prints)
-    log_line "dkms install -m amneziawg -v ${SRC_VER} -k ${k}${force:+ --force}"
-    if "${cmd[@]}"; then rc=0; else rc=$?; fi
+    t0=$SECONDS
+    # A forced rebuild must build: "dkms install --force" puts back the build
+    # DKMS cached for this kernel name (DKMS 3.0.11 and 3.2.2), and after a
+    # same-named kernel with new headers (24.04 HWE 7.0.0-43 -> 26.04 7.0.0-43)
+    # that build does not load. Only "dkms build --force" builds again. Both
+    # steps share the time limit.
+    if [[ -n "$force" ]]; then
+        [[ "$limit" -gt 0 ]] && bcmd=(timeout -k 5 "$limit" "${bcmd[@]}")
+        log_line "dkms build -m amneziawg -v ${SRC_VER} -k ${k} --force"
+        if "${bcmd[@]}"; then rc=0; else rc=$?; fi
+    fi
+    if [[ "$rc" -eq 0 && "$limit" -gt 0 ]]; then
+        left=$((limit - (SECONDS - t0)))
+        if [[ "$left" -gt 0 ]]; then cmd=(timeout -k 5 "$left" "${cmd[@]}"); else rc=124; fi
+    fi
+    if [[ "$rc" -eq 0 ]]; then
+        log_line "dkms install -m amneziawg -v ${SRC_VER} -k ${k}${force:+ --force}"
+        if "${cmd[@]}"; then rc=0; else rc=$?; fi
+    fi
     after=$(log_prints)
     while IFS= read -r line; do
         [[ -n "$line" ]] || continue
@@ -8306,6 +8323,19 @@ mode_repair() {
     # difference afterwards is apt or dpkg working on the source meanwhile.
     before=$(snapshot)
     build_targets
+    # The running kernel's module is on disk but does not load: DKMS kept a
+    # build made against other headers of a kernel with the same name (24.04
+    # HWE -> 26.04, both 7.0.0-43). The boot path rebuilds it; repair-module
+    # must too, or it only reports the failure.
+    if has_module "$cur" && [[ ! -d "${SYS_MODULE_DIR}/amneziawg" ]] \
+            && ! timeout -k 5 60 modprobe amneziawg >/dev/null 2>&1; then
+        log_line "kernel ${cur} (running): module on disk does not load; building it again"
+        if build_kernel "$cur" 0 --force; then
+            depmod -a "$cur" || { log_line "WARN: depmod -a ${cur} failed" >&2; BUILD_FAILED=1; }
+        else
+            BUILD_FAILED=1
+        fi
+    fi
     after=$(snapshot)
     if [[ "$before" != "$after" ]]; then
         log_line "ERROR: the module source or the amneziawg-dkms package changed while the module was built; result not counted, run again after apt finishes" >&2

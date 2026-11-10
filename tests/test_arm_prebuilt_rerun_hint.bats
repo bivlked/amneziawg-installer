@@ -192,6 +192,28 @@ _check_text() {
         [[ "$output" != *"sudo bash install_amneziawg"* ]] || { echo "$m control: recipe printed: $output"; return 1; }
     done
 }
+# A module file for the running kernel is on disk but the module is not loaded
+# (a stale build after 24.04 HWE -> 26.04, stand 10 nov 2026): that is a kernel
+# module install, so "normal for userspace mode" would send the reader away;
+# the line names repair-module and where the reason is.
+@test "check: a module on disk that is not loaded names repair-module, not userspace (RU + EN)" {
+    local m
+    for m in manage_amneziawg.sh manage_amneziawg_en.sh; do
+        mkdir -p "$T/modules/6.8.0-149-generic/updates/dkms"
+        echo ko > "$T/modules/6.8.0-149-generic/updates/dkms/amneziawg.ko.zst"
+        KMOD="" run _check_text "$ROOT/$m"
+        [[ "$output" == *"manage_amneziawg.sh repair-module"* ]] || { echo "$m: no repair hint: $output"; return 1; }
+        [[ "$output" == *"journalctl -u amneziawg-ensure-module -b"* ]] || { echo "$m: no reason hint: $output"; return 1; }
+        [[ "$output" != *"userspace"* ]] || { echo "$m: still says userspace: $output"; return 1; }
+        [[ "$output" != *"command not found"* ]] || { echo "$m: harness gap: $output"; return 1; }
+        # control: no module file -> the userspace line as before
+        rm -rf "$T/modules"
+        KMOD="" run _check_text "$ROOT/$m"
+        [[ "$output" == *"userspace"* ]] || { echo "$m control: $output"; return 1; }
+        [[ "$output" != *"repair-module"* ]] || { echo "$m control: repair hint printed: $output"; return 1; }
+    done
+}
+
 # The arm reason texts name the real architecture (since v6.2.0 the arm code is
 # 32-bit ARM and aarch64_be only, so the text must say which one it saw), and
 # arch_unsupported names both allowed architectures.

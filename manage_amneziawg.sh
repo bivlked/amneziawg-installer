@@ -1849,6 +1849,13 @@ check_server() {
         if awg_prebuilt_needs_rerun; then
             log_warn " - Модуль amneziawg не загружен."
             awg_prebuilt_rerun_hint log_warn
+        elif [[ -n "$(find "${AWG_MODULES_DIR:-/lib/modules}/$(uname -r)" -name 'amneziawg.ko*' -print -quit 2>/dev/null)" ]]; then
+            # Файл модуля под это ядро есть, а модуль не загружен: это не userspace.
+            # Так бывает со сборкой под другие заголовки одноимённого ядра
+            # (24.04 HWE -> 26.04, замер 10 nov 2026); repair-module её пересобирает.
+            log_warn " - Модуль amneziawg не загружен, хотя файл модуля для ядра $(uname -r) есть на диске."
+            log_warn "   Причина: journalctl -u amneziawg-ensure-module -b; dmesg | grep amneziawg"
+            log_warn "   Пересборка: sudo bash /root/awg/manage_amneziawg.sh repair-module"
         else
             log_warn " - Модуль amneziawg не загружен (для userspace-режима это норма)."
         fi

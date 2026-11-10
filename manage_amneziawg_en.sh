@@ -1883,6 +1883,14 @@ check_server() {
         if awg_prebuilt_needs_rerun; then
             log_warn " - amneziawg module is not loaded."
             awg_prebuilt_rerun_hint log_warn
+        elif [[ -n "$(find "${AWG_MODULES_DIR:-/lib/modules}/$(uname -r)" -name 'amneziawg.ko*' -print -quit 2>/dev/null)" ]]; then
+            # A module file for this kernel is on disk, yet the module is not
+            # loaded: not userspace. A build against other headers of a same-named
+            # kernel does this (24.04 HWE -> 26.04, measured 10 nov 2026);
+            # repair-module rebuilds it.
+            log_warn " - amneziawg module is not loaded, although a module file for kernel $(uname -r) is on disk."
+            log_warn "   Reason: journalctl -u amneziawg-ensure-module -b; dmesg | grep amneziawg"
+            log_warn "   Rebuild: sudo bash /root/awg/manage_amneziawg.sh repair-module"
         else
             log_warn " - amneziawg module is not loaded (normal for userspace mode)."
         fi

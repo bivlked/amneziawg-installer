@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The kernel module builds again after a 24.04 HWE to 26.04 upgrade.** When the old and the new release share a kernel name (7.0.0-43 on both 24.04 HWE and 26.04, for example), DKMS kept the module built against the old headers; after the reboot it did not load (`Exec format error`, `disagrees about version of symbol module_layout` in `dmesg`) and the VPN did not come up. The boot helper tried a forced rebuild, but `dkms install --force` put the same cached file back. The rebuild now goes through `dkms build --force`, so the module is built again at boot by itself; `manage repair-module` also rebuilds a module that is on disk but does not load. `manage check` no longer calls this "normal for userspace mode" and says where to find the reason and how to rebuild. Checked on a stand: Ubuntu 24.04 HWE 7.0.0-43, then an upgrade to 26.04.1.
+
 ### Documentation
 
 - **An address of your own for the cascade tunnel to the exit (#384).** CASCADE.en.md has a new section, "Own addresses for entry, exit and tunnel": if the entry server has several public IPv4 addresses, clients connect to one, Russian sites see the second (`--exit-ip`), and the tunnel to the foreign server runs from the third. The routing script gets an optional `AWG1_SRC`: a source address in the route to AWG1, a rule that keeps the tunnel packets out of the general MASQUERADE, and setting the endpoint in `awg1` again, so the tunnel does not stay on the main address after a reboot. Without `AWG1_SRC` the script works as before. Checked on a stand with Ubuntu 24.04 and the 3.1 profile, including after reboots.
