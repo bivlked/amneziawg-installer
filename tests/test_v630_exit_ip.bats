@@ -148,11 +148,13 @@ printf '3: awg0    inet 10.9.9.1/24 scope global awg0\n'
 printf '1: lo    inet 127.0.0.1/8 scope host lo\n'
 STUB
     # iptables: -C answers "the rule is there" only for STUB_IPT_LEFT; every
-    # -D is written to a log of its own.
+    # -D is written to a log of its own. STUB_IPT_STUCK: a rule that -C always
+    # finds and -D never removes (more copies than any bounded loop takes).
     cat > "$MGMT_DIR/bin/iptables" << 'STUB'
 #!/bin/bash
 case " $* " in
-    *" -C "*) [[ -n "${STUB_IPT_LEFT:-}" && " $* " == *"--to-source ${STUB_IPT_LEFT} "* && ! -e "$CALLS.gone" ]] && exit 0; exit 1 ;;
+    *" -C "*) [[ -n "${STUB_IPT_STUCK:-}" && " $* " == *"--to-source ${STUB_IPT_STUCK} "* ]] && exit 0
+              [[ -n "${STUB_IPT_LEFT:-}" && " $* " == *"--to-source ${STUB_IPT_LEFT} "* && ! -e "$CALLS.gone" ]] && exit 0; exit 1 ;;
     *" -D "*) echo "iptables $*" >> "$CALLS.ipt"; [[ -n "${STUB_IPT_LEFT:-}" && " $* " == *"--to-source ${STUB_IPT_LEFT} "* ]] && : > "$CALLS.gone"; exit 0 ;;
 esac
 exit 0
@@ -190,7 +192,7 @@ CONF
 
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
-    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_ADDRS STUB_START_FAIL STUB_STOP_FAIL STUB_IPT_LEFT
+    unset AWG_SKIP_APPLY CALLS STUB_SERVER_CONF STUB_ADDRS STUB_START_FAIL STUB_STOP_FAIL STUB_IPT_LEFT STUB_IPT_STUCK
 }
 
 manage() {
@@ -482,4 +484,34 @@ _exit_rollback_removes_new_rule() {
         fn "$s" _step6_undo_31 | grep -qxE '\s+_awg_start_if_stopped_for_exit' || { echo "$s: the 3.1 undo does not start the service again"; return 1; }
         fn "$s" step6_generate_configs | grep -qF '|| { _awg_start_if_stopped_for_exit; die' || { echo "$s: a render failure does not start the service again"; return 1; }
     done
+}
+_exit_old_rule_stuck() {
+    local conf_before
+    manage "$1" exit-ip 203.0.113.7
+    [ "$status" -eq 0 ] || { echo "$1: set failed: $stderr"; return 1; }
+    conf_before=$(cat "$MGMT_DIR/awg/awg0.conf"); : > "$CALLS"
+    export STUB_IPT_STUCK=203.0.113.7
+    manage "$1" exit-ip off
+    unset STUB_IPT_STUCK
+    [ "$status" -ne 0 ] || { echo "$1: off reported success while the old SNAT rule is still in place"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awg0.conf")" = "$conf_before" ] || { echo "$1: awg0.conf changed"; return 1; }
+    [[ "$stderr" == *203.0.113.7* ]] || { echo "$1: the error does not name the rule: $stderr"; return 1; }
+    [ "$(calls)" = "systemctl stop awg-quick@awg0|systemctl start awg-quick@awg0" ] || { echo "$1: calls '$(calls)'"; return 1; }
+}
+@test "exit-ip fails and starts the service again when the old SNAT rule does not go away, both twins" {
+    require_flock
+    each_manage _exit_old_rule_stuck
+}
+
+_exit_rollback_rule_stuck() {
+    export STUB_START_FAIL=203.0.113.7 STUB_IPT_STUCK=203.0.113.7
+    manage "$1" exit-ip 203.0.113.7 --json
+    unset STUB_START_FAIL STUB_IPT_STUCK
+    [ "$status" -ne 0 ] || { echo "$1: a failed start reported success"; return 1; }
+    [[ "$output" == *"rollback incomplete"* ]] || { echo "$1: rollback reported complete with the new rule left: $output"; return 1; }
+    [[ "$stderr" == *SNAT*203.0.113.7* ]] || { echo "$1: no log line names the SNAT rule left behind: $stderr"; return 1; }
+}
+@test "a rollback that cannot remove the new SNAT rule says so and names it, both twins" {
+    require_flock
+    each_manage _exit_rollback_rule_stuck
 }

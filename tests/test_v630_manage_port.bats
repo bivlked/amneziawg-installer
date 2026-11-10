@@ -286,3 +286,22 @@ _port_rollback_keeps_rule_ufw_off() {
     require_flock
     each_manage _port_rollback_keeps_rule_ufw_off
 }
+# A match at the top of a long output must count under pipefail: grep -q quits
+# early, the writer gets SIGPIPE, and pipefail would turn the pipeline false.
+@test "_port_ufw_has and _port_listening see a match at the top of a long output under pipefail, both twins" {
+    local s
+    for s in manage_amneziawg.sh manage_amneziawg_en.sh; do
+        run bash -c '
+            set -o pipefail
+            '"$(awk '/^_port_listening\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$s")"'
+            '"$(awk '/^_port_ufw_has\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$s")"'
+            ufw() { [[ "$1" == show ]] || return 0; echo "ufw allow 23456/udp comment AmneziaWG"; seq 1 200000 | sed "s/^/ufw allow 1\/tcp # /"; }
+            ss() { echo "UNCONN 0 0 0.0.0.0:23456 0.0.0.0:*"; seq 1 200000 | sed "s/^/UNCONN 0 0 0.0.0.0:1 # /"; }
+            _port_ufw_has 23456 && echo ufw-yes
+            _port_listening 23456 && echo ss-yes
+            :
+        '
+        [[ "$output" == *ufw-yes* ]] || { echo "$s: _port_ufw_has missed the rule: $output"; return 1; }
+        [[ "$output" == *ss-yes* ]] || { echo "$s: _port_listening missed the port: $output"; return 1; }
+    done
+}

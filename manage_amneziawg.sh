@@ -3357,12 +3357,13 @@ _port_read_listen() {
     awk -F= '/^[[:space:]]*ListenPort[[:space:]]*=/{gsub(/[[:space:]\r]/,"",$2); print $2; exit}' "$SERVER_CONF_FILE" 2>/dev/null
 }
 _port_listening() {
-    ss -Hlun 2>/dev/null | awk '{n=split($4,a,":"); print a[n]}' | grep -qxF -- "$1"
+    # grep без -q дочитывает вывод: иначе при pipefail писатель ловит SIGPIPE и найденное считается ненайденным.
+    ss -Hlun 2>/dev/null | awk '{n=split($4,a,":"); print a[n]}' | grep -xF -- "$1" >/dev/null
 }
 _port_ufw_has() {
     # ufw show added lists the rules also while UFW is off; status shows them only when on.
-    LC_ALL=C ufw show added 2>/dev/null | grep -qE "^ufw allow ${1}/udp([[:space:]]|$)" \
-        || LC_ALL=C ufw status 2>/dev/null | grep -qE "^${1}/udp[[:space:]]+ALLOW"
+    LC_ALL=C ufw show added 2>/dev/null | grep -E "^ufw allow ${1}/udp([[:space:]]|$)" >/dev/null \
+        || LC_ALL=C ufw status 2>/dev/null | grep -E "^${1}/udp[[:space:]]+ALLOW" >/dev/null
 }
 change_server_port() {
     local new="$1" old have_ufw=0 added_rule=0 cname ok=0 fail=0 rb
@@ -3506,8 +3507,9 @@ change_exit_ip() {
     # PostDown мог оборваться раньше этого правила: тогда старое SNAT осталось
     # бы выше MASQUERADE, и трафик продолжал бы уходить с прежнего адреса.
     local _drain=0
-    while [[ -n "$cur" ]] && (( ++_drain <= 16 )) && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur" 2>/dev/null; do
-        if ! iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur"; then
+    while [[ -n "$cur" ]] && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur" 2>/dev/null; do
+        # 16 проходов хватает на любой реальный остаток; правило, оставшееся после них, считается неснятым.
+        if (( ++_drain > 16 )) || ! iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$cur"; then
             systemctl start awg-quick@awg0 || log_error "Сервис не запустился: systemctl status awg-quick@awg0"
             _txn_drop_backups; _txn_unlock
             _JSON_ERR="old exit rule could not be removed"
@@ -3535,8 +3537,12 @@ change_exit_ip() {
         rb=0
         if [[ "$want" != off ]]; then
             _drain=0
-            while (( ++_drain <= 16 )) && iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null; do
-                iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" || { rb=1; break; }
+            while iptables -t nat -C POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want" 2>/dev/null; do
+                if (( ++_drain > 16 )) || ! iptables -t nat -D POSTROUTING -s "$subnet" -o "$nic" -j SNAT --to-source "$want"; then
+                    rb=1
+                    log_error "Правило SNAT на ${want} осталось в iptables, снимите его: iptables -t nat -D POSTROUTING -s ${subnet} -o ${nic} -j SNAT --to-source ${want}"
+                    break
+                fi
             done
         fi
         _txn_restore || rb=1
