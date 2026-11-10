@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **An address of your own for the cascade tunnel to the exit (#384).** CASCADE.en.md has a new section, "Own addresses for entry, exit and tunnel": if the entry server has several public IPv4 addresses, clients connect to one, Russian sites see the second (`--exit-ip`), and the tunnel to the foreign server runs from the third. The routing script gets an optional `AWG1_SRC`: a source address in the route to AWG1, a rule that keeps the tunnel packets out of the general MASQUERADE, and setting the endpoint in `awg1` again, so the tunnel does not stay on the main address after a reboot. Without `AWG1_SRC` the script works as before. Checked on a stand with Ubuntu 24.04 and the 3.1 profile, including after reboots.
+
 ## [6.3.0] - 2026-11-10
 
 **v6.3.0** - a separate exit address, a random port and a PresharedKey by default on new installs, and a one-command port change.
