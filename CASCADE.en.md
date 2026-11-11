@@ -585,7 +585,7 @@ Checked on a stand: Ubuntu 24.04, the 3.1 profile, the entry on the main address
 <a id="replace-exit"></a>
 ## If the exit gets blocked
 
-The address of the foreign exit server can get blocked from Russia. Then `awg show awg1` on AWG0 stops showing a fresh `latest handshake`, and `ping` and `ssh` to AWG1 from Russia fail. While the exit is down, the clients' foreign traffic is lost in the tunnel and does not go around it. But the clients' DNS (`1.1.1.1` in their configs) goes through the exit too, so Russian sites stop opening for them as well.
+The address of the foreign exit server can get blocked from Russia. Then `awg show awg1` on AWG0 stops showing a fresh `latest handshake`. To tell an address block from a block of the protocol itself, try `ping` and `ssh` to AWG1 from AWG0: if they fail too, the address is blocked, and the recipe below is for exactly that case. While the exit is down, the clients' foreign traffic is lost in the tunnel and does not go around it. But the clients' DNS (`1.1.1.1` in their configs) goes through the exit too, so Russian sites stop opening for them as well.
 
 The fix is a new exit server. The clients are not affected: they connect to AWG0, and their configs stay the same.
 
@@ -605,9 +605,9 @@ Check: `awg show awg1` shows a `latest handshake`, `systemctl is-active awg-rout
 
 While the script applies the rules again (about 10 seconds in my test), the clients' foreign traffic goes out directly from the AWG0 address. If that matters, change the exit when the clients are idle.
 
-If the hoster just gave the exit a new address and the server itself is fine, you do not need a new server: change the address in the `Endpoint` line of `awg1.conf` and in `AWG1_ENDPOINT`, and do item 4.
+If the hoster just gave the exit a new address and the server itself is fine, you do not need a new server: change the address in the `Endpoint` line of `awg1.conf` and do items 3 and 4.
 
-With [three servers](#three-hop), only the address of the middle is visible from Russia. If that one is blocked, set up a new middle and do items 2-4 on awg-in with its `ru_host.conf`. If the address of the exit awg-out lands on a list, set up a new exit and replace `awg1.conf` on awg-mid, keeping `Table = off` and the `PostUp` and `PostDown` lines in it. The entry and the clients are not affected.
+With [three servers](#three-hop), only the address of the middle is visible from Russia. If that one is blocked, build a new middle with item 2 of that section (issue a new `mid_host` client for it on awg-out) and do items 2-4 on awg-in with its `ru_host.conf`. If the address of the exit awg-out lands on a list, set up a new exit, issue `mid_host` on it and use it to replace `awg1.conf` on awg-mid, keeping `Table = off` and the `PostUp` and `PostDown` lines in it. Then run `chmod 600 /etc/amnezia/amneziawg/awg1.conf` and `systemctl restart awg-quick@awg1` on awg-mid and check `ip rule | grep 'iif awg0'`. While `awg1` on the middle restarts, traffic from the entry leaves from the awg-mid address for a few seconds (see the caveat in that section). The entry and the clients are not affected.
 
 Checked on a stand with the 3.1 profile: the exit was reinstalled from scratch (new keys, port and parameters), and the entry's client worked again without any change to its config. I have not repeated a change of the exit address or a replacement in the three-server setup on a stand.
 
