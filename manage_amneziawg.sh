@@ -1855,12 +1855,12 @@ check_server() {
             # (24.04 HWE -> 26.04, замер 10 nov 2026). Её пересобирает помощник
             # версии 4; помощник версии 3 такой модуль пропускает, и тогда путь -
             # установщик, который ставит новый помощник. Без помощника, со
-            # старым (1-2) или с закреплённым amneziawg-dkms установщик этот путь
-            # не чинит, там строка прежняя.
+            # старым (1-2), с закреплённым amneziawg-dkms или со стоящим пребилтом
+            # установщик этот путь не чинит, там строка прежняя.
             log_warn " - Модуль amneziawg не загружен, хотя файл модуля для ядра $(uname -r) есть на диске."
             log_warn "   Причина: journalctl -u amneziawg-ensure-module -b; dmesg | grep amneziawg"
             _kmod_helper_class
-            if [[ "$_KH_CLASS" == current && "$_KH_VER" -lt 4 ]] && _kmod_dkms_unheld; then
+            if [[ "$_KH_CLASS" == current && "$_KH_VER" -lt 4 ]] && _kmod_installer_repair_admits; then
                 log_warn "   Пересборка: помощник модуля на этом сервере версии ${_KH_VER} и такой модуль не пересобирает; обновите его и пересоберите модуль: sudo bash install_amneziawg.sh --repair-module"
             else
                 log_warn "   Пересборка: sudo bash /root/awg/manage_amneziawg.sh repair-module"
@@ -2011,13 +2011,21 @@ check_server() {
 #              unknown mode» в stderr;
 #   absent   - файла нет (серверы до v5.12.0, ARM-пребилт);
 #   broken   - файл есть, но не исполняется или отвечает непонятно.
-# 0 - пакет amneziawg-dkms стоит и не закреплён (hold); 1 - закреплён, не стоит
-# или dpkg ответить не смог. Закреплённый пакет - это закреплённый модуль 2.0
-# или ARM-пребилт, их install --repair-module не чинит.
-_kmod_dkms_unheld() {
-    local s
+# 0 - install --repair-module пустит этот сервер по пакетам: amneziawg-dkms
+# стоит и не закреплён (hold), ни одного пакета amneziawg-kmod-* (ARM-пребилт)
+# не стоит. 1 - иначе, и когда dpkg ответить не смог. Закреплённый пакет - это
+# закреплённый модуль 2.0 или ARM-пребилт; установщик отказывает и при любом
+# стоящем пребилте (тот же разбор, что _awg_kmod_prebuilt_present).
+_kmod_installer_repair_admits() {
+    local s q e
     s=$(LC_ALL=C dpkg-query -W -f='${Status}' amneziawg-dkms 2>/dev/null) || return 1
-    [[ "$s" == *" installed" && "${s%% *}" != hold ]]
+    [[ "$s" == *" installed" && "${s%% *}" != hold ]] || return 1
+    if q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null); then
+        awk '$NF != "not-installed" && $NF != "config-files" {f=1} END {exit f}' <<<"$q"
+    else
+        e=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>&1 >/dev/null || true)
+        [[ "$e" == *"no packages found matching"* ]]
+    fi
 }
 
 _KH_CLASS="" _KH_VER=0

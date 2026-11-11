@@ -159,8 +159,8 @@ _check_text() {
     printf '#!/usr/bin/env bash\necho "Status: active"\n' > "$bin/ufw"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$bin/awg"
     # amneziawg-dkms answers DKMS_ST (default installed, "fail" = dpkg error);
-    # the prebuilt pattern answers KMOD.
-    printf '#!/usr/bin/env bash\nif [ "${*: -1}" = amneziawg-dkms ]; then [ "${DKMS_ST:-}" = fail ] && exit 2; printf "%%s" "${DKMS_ST:-install ok installed}"; exit 0; fi\n[ -z "$KMOD" ] && exit 1\nprintf "%%s\\n" "$KMOD"\n' > "$bin/dpkg-query"
+    # the prebuilt pattern answers KMOD ("fail" = dpkg error).
+    printf '#!/usr/bin/env bash\nif [ "${*: -1}" = amneziawg-dkms ]; then [ "${DKMS_ST:-}" = fail ] && exit 2; printf "%%s" "${DKMS_ST:-install ok installed}"; exit 0; fi\n[ "$KMOD" = fail ] && { echo "dpkg-query: error: parsing file /var/lib/dpkg/status" >&2; exit 2; }\n[ -z "$KMOD" ] && { echo "dpkg-query: no packages found matching $1" >&2; exit 1; }\nprintf "%%s\\n" "$KMOD"\n' > "$bin/dpkg-query"
     printf '#!/usr/bin/env bash\n[ "$1" = -r ] && { echo 6.8.0-149-generic; exit 0; }\nexec /bin/uname "$@"\n' > "$bin/uname"
     # The module helper answers --version with HV (default 4, the current one).
     # HV=none: no helper file (the ARM prebuilt, servers before v5.12.0).
@@ -179,7 +179,7 @@ _check_text() {
         for f in _sanitize_port awg_module_version awg_installed_protocol _awg_generation_from_init _mask_report_secrets awg_prebuilt_needs_rerun awg_prebuilt_rerun_hint; do
             eval "$(awk "/^$f\\(\\) \\{/,/^\\}/" "$2")"
         done
-        for f in _json_utf8_sanitize json_escape json_out _ipopts_guard_report _kmod_helper_class _kmod_dkms_unheld check_server; do
+        for f in _json_utf8_sanitize json_escape json_out _ipopts_guard_report _kmod_helper_class _kmod_installer_repair_admits check_server; do
             eval "$(awk "/^$f\\(\\) \\{/,/^\\}/" "$1")"
         done
         check_server
@@ -222,11 +222,13 @@ _check_text() {
         [[ "$output" != *"manage_amneziawg.sh repair-module"* ]] || { echo "$m v3: manage named: $output"; return 1; }
         [[ "$output" == *"journalctl -u amneziawg-ensure-module -b"* ]] || { echo "$m v3: no reason hint: $output"; return 1; }
         # The installer's --repair-module refuses a held amneziawg-dkms (the
-        # pinned 2.0 module, the ARM prebuilt), and it cannot help where there is
-        # no helper or the dpkg state is unknown: the line stays as before there.
-        local c
-        for c in "HV=3 DKMS_ST=hold ok installed" "HV=3 DKMS_ST=fail" "HV=none DKMS_ST=" "HV=2 DKMS_ST="; do
-            HV="${c%% DKMS_ST=*}"; HV="${HV#HV=}"; DKMS_ST="${c#* DKMS_ST=}" KMOD="" run _check_text "$ROOT/$m"
+        # pinned 2.0 module, the ARM prebuilt) and any installed prebuilt
+        # package, and it cannot help where there is no helper or the dpkg
+        # state is unknown: the line stays as before there. Fields: HV|DKMS_ST|KMOD.
+        local c k
+        for c in "3|hold ok installed|" "3|fail|" "none||" "2||" "3||$PKG" "3||fail"; do
+            IFS='|' read -r HV DKMS_ST k <<<"$c"
+            DKMS_ST="$DKMS_ST" KMOD="$k" run _check_text "$ROOT/$m"
             [[ "$output" == *"manage_amneziawg.sh repair-module"* ]] || { echo "$m $c: no manage line: $output"; return 1; }
             [[ "$output" != *"install_amneziawg"* ]] || { echo "$m $c: installer named: $output"; return 1; }
         done
