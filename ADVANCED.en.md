@@ -130,7 +130,7 @@ These obfuscation parameters exist in both profiles, 3.1 and 2.0; only the lower
 * `S1 + 56 ≠ S2` — prevents init and response messages from having the same size.
 * `S3 ≠ S2 + 28` - keeps the response and cookie messages from having the same size.
 * `S4` is chosen to avoid the harmful length matches between data packets and handshake packets found by the 2.0 transport model: otherwise in the 2.0 profile some data packets could be taken for a handshake and lost. Harmless matches are allowed.
-* `S4` is never 16: a data packet of `S4` + 32 + 16k bytes is then a multiple of 16 whatever the payload length, as with plain WireGuard, and that length trait stays in plain sight.
+* `S4` is never 16: in the 2.0 profile a data packet of `S4` + 32 + 16k bytes is then a multiple of 16 whatever the payload length, as with plain WireGuard, and that length trait stays in plain sight. In 3.1 `ContentPaddingAddition` already changes the data packet length; 16 is left out there too, because without that parameter in the config the same trait would come back.
 * `S1`-`S4` and `H1`-`H4` **must** match on the server and the clients (in 3.1, the `HeaderProtectionKey` too): the receiver strips that padding and checks those headers. In 2.0, `H1`-`H4` are ranges - the same ranges on both sides.
 * `Jc`/`Jmin`/`Jmax` and `I1`-`I5` **do not** have to match: they are separate decoy packets, only the handshake initiator sends them and the other side discards them. Each of `I1`-`I5` is sent when it is set; the installer sets only `I1`, so `--no-cps` removes the concealment packet entirely.
 
@@ -907,7 +907,7 @@ export AWG_Jmax=205
 export AWG_S1=72
 export AWG_S2=56
 export AWG_S3=32
-export AWG_S4=16
+export AWG_S4=17
 export AWG_H1='234567-345678'
 export AWG_H2='3456789-4567890'
 export AWG_H3='56789012-67890123'
@@ -935,7 +935,7 @@ Jmax = 205
 S1 = 72
 S2 = 56
 S3 = 32
-S4 = 16
+S4 = 17
 H1 = 234567-345678
 H2 = 3456789-4567890
 H3 = 56789012-67890123
@@ -1003,7 +1003,7 @@ Jmax = 205
 S1 = 72
 S2 = 56
 S3 = 32
-S4 = 16
+S4 = 17
 H1 = 234567-345678
 H2 = 3456789-4567890
 H3 = 56789012-67890123

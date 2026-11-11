@@ -3157,16 +3157,17 @@ _awg_exit_ip_check() {
     # --endpoint бывает именем: тогда сравниваются адреса, в которые оно резолвится
     # (ревью PR #389). Имя, которое не резолвится, - не отказ (DNS могут настроить
     # позже), но и не молча: проверить не удалось. Предупреждение в stderr: stdout
-    # этой функции вызывающий забирает как текст причины.
+    # этой функции вызывающий забирает как текст причины. 127.x не в счёт: getent
+    # читает и /etc/hosts, а cloud-init пишет туда 127.0.1.1 для имени сервера.
     if [[ -n "${AWG_ENDPOINT:-}" && ! "$AWG_ENDPOINT" =~ ^[0-9.]+$ && "$AWG_ENDPOINT" != *:* ]]; then
         local rr
-        if rr=$(getent ahostsv4 "$AWG_ENDPOINT" 2>/dev/null | awk '{print $1}' | sort -u) && [[ -n "$rr" ]]; then
+        if rr=$(timeout 10 getent ahostsv4 "$AWG_ENDPOINT" 2>/dev/null | awk '$1 !~ /^127\./ {print $1}' | sort -u) && [[ -n "$rr" ]]; then
             if grep -qxF -- "$ip" <<<"$rr"; then
                 printf '%s\n' "$ip - в этот адрес резолвится имя входа $AWG_ENDPOINT (--endpoint), к нему подключаются клиенты; адрес выхода должен быть другим"
                 return 1
             fi
         else
-            log_warn "Имя входа $AWG_ENDPOINT не резолвится: проверить, что оно не указывает на адрес выхода $ip, не удалось. Клиенты должны подключаться к другому адресу." >&2
+            log_warn "Имя входа $AWG_ENDPOINT не резолвится в IPv4-адрес (127.x из /etc/hosts не в счёт): проверить, что оно не указывает на адрес выхода $ip, не удалось. Клиенты должны подключаться к другому адресу." >&2
         fi
     fi
     # Без --endpoint адрес входа определяется сам: это адрес, с которого сервер выходит
@@ -5762,7 +5763,7 @@ repair_module_cmd() {
         if [[ ! -d "${AWG_SYS_MODULE_DIR:-/sys/module}/amneziawg" ]]; then
             log_warn "Модуль сейчас не загружен, туннель не работает. Перезагрузите сервер или выполните: sudo modprobe amneziawg && sudo systemctl restart awg-quick@awg0"
         elif [[ -f "$SERVER_CONF_FILE" ]] && ! systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then
-            # Помощник (--repair) сам загружает модуль работающего ядра, поэтому
+            # Помощник (--repair) пробует загрузить модуль работающего ядра, поэтому
             # загруженный модуль ещё не значит работающий туннель.
             log_warn "Модуль загружен, но сервис awg-quick@awg0 не работает, туннель выключен. Запустите: sudo systemctl restart awg-quick@awg0"
         fi
@@ -8169,12 +8170,15 @@ mode_systemd() {
 }
 
 # Outside apt: fix the source, build for every kernel with headers that
-# lacks the module and refresh the module index of all of them.
+# lacks the module and refresh the module index of all of them. The running
+# kernel's module, on disk but not loaded, is loaded; one that does not load
+# is built again (--force) and loaded once more, and if it still does not
+# load, that is a failure (exit 1): a rebuild does not fix that cause.
 # 0 all done; 1 the running kernel has its module but something else failed
 # (the source fix, another kernel, depmod); 2 the running kernel has none,
 # or the job could not run.
 mode_repair() {
-    local before after cur k rc=0 lrc=0
+    local before after cur k rc=0 lrc=0 mout="" mrc=0
     cur=$(uname -r)
     command -v dkms >/dev/null 2>&1 || { log_line "ERROR: dkms is not installed" >&2; exit 2; }
     require_dpkg_idle || exit 2
@@ -8197,13 +8201,24 @@ mode_repair() {
     # build made against other headers of a kernel with the same name (24.04
     # HWE -> 26.04, both 7.0.0-43). The boot path rebuilds it; repair-module
     # must too, or it only reports the failure.
-    if has_module "$cur" && [[ ! -d "${SYS_MODULE_DIR}/amneziawg" ]] \
-            && ! timeout -k 5 60 modprobe amneziawg >/dev/null 2>&1; then
-        log_line "kernel ${cur} (running): module on disk does not load; building it again"
-        if build_kernel "$cur" 0 --force; then
-            depmod -a "$cur" || { log_line "WARN: depmod -a ${cur} failed" >&2; BUILD_FAILED=1; }
-        else
-            BUILD_FAILED=1
+    # modprobe's own words (Exec format error, Key was rejected) are the reason:
+    # they go to the log, one line.
+    if has_module "$cur" && [[ ! -d "${SYS_MODULE_DIR}/amneziawg" ]]; then
+        if mout=$(timeout -k 5 60 modprobe amneziawg 2>&1); then mrc=0; else mrc=$?; fi
+        if [[ "$mrc" -ne 0 ]]; then
+            log_line "kernel ${cur} (running): modprobe amneziawg failed (rc=${mrc})${mout:+: ${mout//$'\n'/ }}" >&2
+            log_line "kernel ${cur} (running): module on disk does not load; building it again"
+            if ! build_kernel "$cur" 0 --force; then
+                BUILD_FAILED=1
+            elif ! depmod -a "$cur"; then
+                log_line "WARN: depmod -a ${cur} failed" >&2; BUILD_FAILED=1
+            elif mout=$(timeout -k 5 60 modprobe amneziawg 2>&1); then
+                log_line "kernel ${cur} (running): the rebuilt module loads"
+            else
+                mrc=$?
+                log_line "kernel ${cur} (running): the rebuilt module does not load either (rc=${mrc})${mout:+: ${mout//$'\n'/ }}; a rebuild does not fix this (a Secure Boot signature, a blacklist): see journalctl -k" >&2
+                BUILD_FAILED=1
+            fi
         fi
     fi
     after=$(snapshot)

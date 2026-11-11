@@ -1849,7 +1849,7 @@ check_server() {
         if awg_prebuilt_needs_rerun; then
             log_warn " - Модуль amneziawg не загружен."
             awg_prebuilt_rerun_hint log_warn
-        elif [[ -n "$(find "${AWG_MODULES_DIR:-/lib/modules}/$(uname -r)" -name 'amneziawg.ko*' -print -quit 2>/dev/null)" ]]; then
+        elif [[ -n "$(find "${AWG_MODULES_DIR:-/lib/modules}/$(uname -r)" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]]; then
             # Файл модуля под это ядро есть, а модуль не загружен: это не userspace.
             # Так бывает со сборкой под другие заголовки одноимённого ядра
             # (24.04 HWE -> 26.04, замер 10 nov 2026); repair-module её пересобирает.
@@ -3552,17 +3552,18 @@ change_exit_ip() {
             return 1
         fi
         # AWG_ENDPOINT бывает именем: сравниваются адреса, в которые оно резолвится
-        # (ревью PR #389). Не резолвится - не отказ, но и не молча.
+        # (ревью PR #389). Не резолвится - не отказ, но и не молча. 127.x не в счёт:
+        # getent читает и /etc/hosts, а cloud-init пишет туда 127.0.1.1 для имени сервера.
         if [[ -n "$endpoint" && ! "$endpoint" =~ ^[0-9.]+$ && "$endpoint" != *:* ]]; then
             local rr
-            if rr=$(getent ahostsv4 "$endpoint" 2>/dev/null | awk '{print $1}' | sort -u) && [[ -n "$rr" ]]; then
+            if rr=$(timeout 10 getent ahostsv4 "$endpoint" 2>/dev/null | awk '$1 !~ /^127\./ {print $1}' | sort -u) && [[ -n "$rr" ]]; then
                 if grep -qxF -- "$want" <<<"$rr"; then
                     _JSON_ERR="exit address equals entry address"
                     log_error "$want - в этот адрес резолвится имя входа $endpoint (AWG_ENDPOINT), к нему подключаются клиенты. Адрес выхода должен быть другим."
                     return 1
                 fi
             else
-                log_warn "Имя входа $endpoint не резолвится: проверить, что оно не указывает на адрес выхода $want, не удалось. Клиенты должны подключаться к другому адресу."
+                log_warn "Имя входа $endpoint не резолвится в IPv4-адрес (127.x из /etc/hosts не в счёт): проверить, что оно не указывает на адрес выхода $want, не удалось. Клиенты должны подключаться к другому адресу."
             fi
         fi
         # Без AWG_ENDPOINT клиенты подключаются к основному адресу (источник маршрута по умолчанию).

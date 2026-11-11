@@ -567,8 +567,8 @@ EOF
 }
 
 # The helper's --repair test-loads the running kernel's module (since the
-# stale same-named build fix): a loaded module no longer means a running
-# tunnel, so a stopped awg-quick@awg0 is named with its command.
+# stale same-named build fix): a loaded module does not by itself mean a
+# running tunnel, so a stopped awg-quick@awg0 is named with its command.
 @test "repair-module: module loaded but awg0 stopped: says so and gives the restart command; running awg0: silent" {
     local f
     for f in "${INSTALLERS[@]}"; do

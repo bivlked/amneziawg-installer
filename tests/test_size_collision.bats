@@ -289,7 +289,7 @@ s4_all() {
     for pair in "$INST|$COMMON" "$INST_EN|$COMMON_EN"; do
         inst="${pair%%|*}"; lib="${pair##*|}"
         for proto in 2.0 3.1; do
-            # S1 = S2 = 32: 16 is free of length matches in both profiles (with 20 it is not)
+            # S1 = S2 = 32: 16 is free of length matches in both profiles (with S1 = S2 = 20 it is not: response p = 64)
             run s4_all "$inst" "$lib" "$proto" 32
             [ "$status" -eq 0 ] || { echo "$inst $proto: $output"; return 1; }
             [[ " $output " != *" 16 "* ]] || { echo "$inst $proto: 16 can be picked: $output"; return 1; }

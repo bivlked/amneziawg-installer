@@ -281,6 +281,40 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
     [[ "$output" == *"kernel ${OLD}: NOT built"* ]]
 }
 
+@test "repair: the modprobe refusal of a stale module is logged, not thrown away" {
+    _mk_server "$OLD"
+    echo hwe > "$T/lib/modules/$OLD/hdr/id"
+    dkms install -m amneziawg -v 1.0.0 -k "$OLD" >/dev/null
+    echo resolute > "$T/lib/modules/$OLD/hdr/id"
+    run "$H" --repair
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"Exec format error"* ]] || { echo "$output"; return 1; }
+}
+
+@test "repair: a rebuilt module that still does not load is exit 1 and says a rebuild does not fix it" {
+    _mk_server "$OLD"
+    _put_ko "$OLD"
+    : > "$T/modprobe.fail"
+    : > "$T/calls"
+    run "$H" --repair
+    [ "$status" -eq 1 ] || { echo "status $status: $output"; return 1; }
+    [[ "$(_calls)" == *"dkms build -m amneziawg -v 1.0.0 -k $OLD --force"* ]]
+    [[ "$output" == *"kernel ${OLD} (running): the rebuilt module does not load either"* ]] || { echo "$output"; return 1; }
+    [ ! -e "$(_stamp)" ]
+}
+
+@test "repair: a depmod that fails after the forced rebuild is exit 1" {
+    _mk_server "$OLD"
+    echo hwe > "$T/lib/modules/$OLD/hdr/id"
+    dkms install -m amneziawg -v 1.0.0 -k "$OLD" >/dev/null
+    echo resolute > "$T/lib/modules/$OLD/hdr/id"
+    # depmod works for build_targets and fails only once the rebuild ran
+    echo ': > "$T/depmod.fail"' > "$T/dkms.side"
+    run "$H" --repair
+    [ "$status" -eq 1 ] || { echo "status $status: $output"; return 1; }
+    [[ "$output" == *"WARN: depmod -a ${OLD} failed"* ]] || { echo "$output"; return 1; }
+}
+
 @test "repair: the running kernel without a module is exit 2" {
     echo "$NEW" > "$T/uname"
     _mk_server "$NEW"
@@ -686,6 +720,20 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
     [[ "$(_calls)" == *"dkms build -m amneziawg -v 1.0.0 -k $OLD --force"* ]]
     run grep -c '^dkms install' "$T/calls"
     [ "$output" = "0" ]
+}
+
+@test "systemd: a forced rebuild runs the build under timeout and gives install only what is left" {
+    _mk_server "$OLD"
+    _put_ko "$OLD"
+    : > "$T/modprobe.fail"; echo 'rm -f "$T/modprobe.fail"' > "$T/dkms.side"
+    _stub timeout 'echo "timeout $*" >> "$T/calls"; shift 3; exec "$@"'
+    run "$H" --systemd
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    local b i
+    b=$(sed -n "s/^timeout -k 5 \([0-9]*\) dkms build -m amneziawg -v 1.0.0 -k $OLD --force\$/\1/p" "$T/calls")
+    i=$(sed -n "s/^timeout -k 5 \([0-9]*\) dkms install -m amneziawg -v 1.0.0 -k $OLD --force\$/\1/p" "$T/calls")
+    [[ "$b" =~ ^[0-9]+$ && "$i" =~ ^[0-9]+$ ]] || { echo "build '$b' install '$i'"; _calls; return 1; }
+    [ "$i" -le "$b" ] || { echo "install got $i s, more than the build's $b s"; return 1; }
 }
 
 @test "systemd: a forced rebuild that fixes the load ends loaded" {

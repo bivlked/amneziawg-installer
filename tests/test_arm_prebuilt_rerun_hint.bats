@@ -206,6 +206,10 @@ _check_text() {
         [[ "$output" == *"journalctl -u amneziawg-ensure-module -b"* ]] || { echo "$m: no reason hint: $output"; return 1; }
         [[ "$output" != *"userspace"* ]] || { echo "$m: still says userspace: $output"; return 1; }
         [[ "$output" != *"command not found"* ]] || { echo "$m: harness gap: $output"; return 1; }
+        # an empty file is not a module (the helper's has_module says the same)
+        : > "$T/modules/6.8.0-149-generic/updates/dkms/amneziawg.ko.zst"
+        KMOD="" run _check_text "$ROOT/$m"
+        [[ "$output" != *"repair-module"* ]] || { echo "$m: an empty file counted as a module: $output"; return 1; }
         # control: no module file -> the userspace line as before
         rm -rf "$T/modules"
         KMOD="" run _check_text "$ROOT/$m"

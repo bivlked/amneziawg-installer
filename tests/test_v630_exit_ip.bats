@@ -76,14 +76,24 @@ setup_render_env() {
 
 # ---------- the installer ----------
 
+# getent and timeout as programs on PATH: the check runs getent under timeout,
+# and timeout cannot run a shell function. STUB_DNS holds the IPv4 addresses a
+# name resolves to (unset = not found); timeout logs its arguments to XCALLS.
+XBIN=""; XCALLS=""
+_xbin() {
+    XBIN="$BATS_TEST_TMPDIR/xbin"; XCALLS="$BATS_TEST_TMPDIR/xcalls"; mkdir -p "$XBIN"; : > "$XCALLS"
+    printf '%s\n' '#!/bin/bash' '[[ "$1" == ahostsv4 && -n "${STUB_DNS:-}" ]] || exit 2' \
+        'for a in $STUB_DNS; do printf "%s       STREAM %s\n%s       DGRAM\n" "$a" "$2" "$a"; done' > "$XBIN/getent"
+    printf '%s\n' '#!/bin/bash' "echo \"timeout \$*\" >> '$XCALLS'" \
+        'while [[ "$1" == -* ]]; do shift 2; done; shift; exec "$@"' > "$XBIN/timeout"
+    chmod +x "$XBIN/getent" "$XBIN/timeout"
+}
+
 # xcheck <installer> <ip> <ipv6 tunnel> <addresses on interfaces>
 xcheck() {
-    run bash -c '
+    _xbin
+    run env PATH="$XBIN:$PATH" bash -c '
         log() { :; }; log_warn() { echo "WARN: $*" >&2; }
-        getent() {
-            [[ "$1" == ahostsv4 && -n "${STUB_DNS:-}" ]] || return 2
-            local a; for a in $STUB_DNS; do printf "%s       STREAM %s\n%s       DGRAM\n" "$a" "$2" "$a"; done
-        }
         '"$(fn "$1" _awg_exit_ip_check)"'
         ip() {
             if [[ "$*" == *"route get"* ]]; then
@@ -740,6 +750,7 @@ _exit_main_address_without_endpoint() {
         STUB_ADDRS="198.51.100.2 203.0.113.7" STUB_EP=vpn.example.com STUB_DNS="198.51.100.2" xcheck "$s" 203.0.113.7 0
         [ "$status" -eq 0 ] || { echo "$s: an exit address the name does not point to was refused: $output"; return 1; }
         [[ "$output" != *WARN* ]] || { echo "$s: a resolved name warned: $output"; return 1; }
+        grep -qxF "timeout 10 getent ahostsv4 vpn.example.com" "$XCALLS" || { echo "$s: getent not under timeout 10: $(cat "$XCALLS" 2>/dev/null)"; return 1; }
         STUB_ADDRS="198.51.100.2 203.0.113.7" STUB_EP=vpn.example.com xcheck "$s" 203.0.113.7 0
         [ "$status" -eq 0 ] || { echo "$s: a name that does not resolve blocked the install: $output"; return 1; }
         [[ "$output" == *"WARN: "*vpn.example.com* ]] || { echo "$s: an unresolved name passed silently: $output"; return 1; }
@@ -763,7 +774,9 @@ _exit_endpoint_name() {
     unset STUB_DNS
     manage "$1" exit-ip 203.0.113.7
     [ "$status" -eq 0 ] || { echo "$1: a name that does not resolve blocked the change: $stderr"; return 1; }
-    [[ "$stderr$output" == *vpn.example.com* ]] || { echo "$1: an unresolved name passed silently: $stderr"; return 1; }
+    local warn="Имя входа vpn.example.com не резолвится в IPv4-адрес"
+    [[ "$1" == *_en.sh ]] && warn="The entry name vpn.example.com does not resolve to an IPv4 address"
+    [[ "$stderr" == *"$warn"* ]] || { echo "$1: an unresolved name passed without the warning: $stderr"; return 1; }
 }
 @test "exit-ip refuses an address the saved endpoint name resolves to, warns when the name does not resolve, both twins" {
     require_flock
@@ -776,11 +789,11 @@ _exit_endpoint_name() {
 # log_warn writing to stdout like any plain logger would.
 @test "installer: the unresolved-name warning reaches the user through the real caller, not its captured stdout, both twins" {
     local s
+    _xbin
     for s in install_amneziawg.sh install_amneziawg_en.sh; do
-        run --separate-stderr bash -c '
+        run --separate-stderr env PATH="$XBIN:$PATH" bash -c '
             set -o pipefail
             log() { echo "LOG: $*"; }; log_warn() { echo "WARN: $*"; }; die() { echo "DIE: $*"; exit 1; }
-            getent() { return 2; }
             ip() { [[ "$*" == *"route get"* ]] && return 0; printf "2: eth0    inet 203.0.113.7/24 brd x scope global eth0\n"; }
             '"$(fn "$s" _awg_exit_ip_check)"'
             '"$(fn "$s" _awg_resolve_exit_ip)"'
@@ -790,4 +803,38 @@ _exit_endpoint_name() {
         [ "$status" -eq 0 ] || { echo "$s: $status $output / $stderr"; return 1; }
         [[ "$stderr" == *"WARN: "*no-such-name.invalid* ]] || { echo "$s: the warning did not reach stderr: out='$output' err='$stderr'"; return 1; }
     done
+}
+
+# A name /etc/hosts maps to loopback (cloud-init writes "127.0.1.1 <fqdn> <host>")
+# says nothing about the address the clients reach: getent reads /etc/hosts
+# first, so 127.x must not count as "resolved, no match" (review of v6.3.1).
+@test "installer: an --endpoint name that resolves only to loopback warns instead of passing as checked, both twins" {
+    local s
+    for s in install_amneziawg.sh install_amneziawg_en.sh; do
+        STUB_ADDRS="198.51.100.2 203.0.113.7" STUB_EP=vpn.example.com STUB_DNS="127.0.1.1" xcheck "$s" 203.0.113.7 0
+        [ "$status" -eq 0 ] || { echo "$s: a loopback-only name blocked the install: $output"; return 1; }
+        [[ "$output" == *"WARN: "*vpn.example.com* ]] || { echo "$s: a loopback-only name passed as checked: $output"; return 1; }
+        # loopback next to a real address: the real one is compared, no warning
+        STUB_ADDRS="198.51.100.2 203.0.113.7" STUB_EP=vpn.example.com STUB_DNS="127.0.1.1 203.0.113.7" xcheck "$s" 203.0.113.7 0
+        [ "$status" -ne 0 ] || { echo "$s: the exit address behind the name passed next to loopback: $output"; return 1; }
+    done
+}
+
+_exit_endpoint_loopback() {
+    sed -i "s/^export AWG_ENDPOINT=.*/export AWG_ENDPOINT='vpn.example.com'/" "$MGMT_DIR/awg/awgsetup_cfg.init"
+    printf '%s\n' '#!/bin/bash' 'echo "timeout $*" >> "$CALLS.to"' 'exec /usr/bin/timeout "$@"' > "$MGMT_DIR/bin/timeout"
+    chmod +x "$MGMT_DIR/bin/timeout"
+    export STUB_DNS="127.0.1.1"
+    manage "$1" exit-ip 203.0.113.7
+    unset STUB_DNS
+    [ "$status" -eq 0 ] || { echo "$1: a loopback-only name blocked the change: $stderr"; return 1; }
+    local warn="Имя входа vpn.example.com не резолвится в IPv4-адрес"
+    [[ "$1" == *_en.sh ]] && warn="The entry name vpn.example.com does not resolve to an IPv4 address"
+    [[ "$stderr" == *"$warn"* ]] || { echo "$1: a loopback-only name passed as checked: $stderr"; return 1; }
+    grep -qxF "timeout 10 getent ahostsv4 vpn.example.com" "$CALLS.to" || { echo "$1: getent not under timeout 10: $(cat "$CALLS.to" 2>/dev/null)"; return 1; }
+}
+@test "exit-ip: a saved endpoint name that resolves only to loopback warns, and getent runs under timeout, both twins" {
+    require_flock
+    [ -x /usr/bin/timeout ] || skip "no /usr/bin/timeout"
+    each_manage _exit_endpoint_loopback
 }

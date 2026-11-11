@@ -1883,7 +1883,7 @@ check_server() {
         if awg_prebuilt_needs_rerun; then
             log_warn " - amneziawg module is not loaded."
             awg_prebuilt_rerun_hint log_warn
-        elif [[ -n "$(find "${AWG_MODULES_DIR:-/lib/modules}/$(uname -r)" -name 'amneziawg.ko*' -print -quit 2>/dev/null)" ]]; then
+        elif [[ -n "$(find "${AWG_MODULES_DIR:-/lib/modules}/$(uname -r)" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]]; then
             # A module file for this kernel is on disk, yet the module is not
             # loaded: not userspace. A build against other headers of a same-named
             # kernel does this (24.04 HWE -> 26.04, measured 10 nov 2026);
@@ -3599,17 +3599,19 @@ change_exit_ip() {
             return 1
         fi
         # AWG_ENDPOINT can be a name: the addresses it resolves to are compared
-        # (review of PR #389). Does not resolve: not a refusal, but not silent.
+        # (review of PR #389). Does not resolve: not a refusal, but not silent. 127.x
+        # does not count: getent reads /etc/hosts too, and cloud-init puts 127.0.1.1
+        # there for the server's own name.
         if [[ -n "$endpoint" && ! "$endpoint" =~ ^[0-9.]+$ && "$endpoint" != *:* ]]; then
             local rr
-            if rr=$(getent ahostsv4 "$endpoint" 2>/dev/null | awk '{print $1}' | sort -u) && [[ -n "$rr" ]]; then
+            if rr=$(timeout 10 getent ahostsv4 "$endpoint" 2>/dev/null | awk '$1 !~ /^127\./ {print $1}' | sort -u) && [[ -n "$rr" ]]; then
                 if grep -qxF -- "$want" <<<"$rr"; then
                     _JSON_ERR="exit address equals entry address"
                     log_error "$want is an address the entry name $endpoint (AWG_ENDPOINT) resolves to, and clients connect to it. The exit address has to be a different one."
                     return 1
                 fi
             else
-                log_warn "The entry name $endpoint does not resolve: could not check that it does not point to the exit address $want. The clients must connect to another address."
+                log_warn "The entry name $endpoint does not resolve to an IPv4 address (127.x from /etc/hosts does not count): could not check that it does not point to the exit address $want. The clients must connect to another address."
             fi
         fi
         # Without AWG_ENDPOINT clients connect to the main address (the default route's source).
