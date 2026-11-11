@@ -1887,15 +1887,17 @@ check_server() {
             # A module file for this kernel is on disk, yet the module is not
             # loaded: not userspace. A build against other headers of a same-named
             # kernel does this (24.04 HWE -> 26.04, measured 10 nov 2026). A
-            # version 4 helper rebuilds it; an older one skips such a module,
-            # and then the way is the installer, which deploys the new helper.
+            # version 4 helper rebuilds it; a version 3 helper skips such a
+            # module, and then the way is the installer, which deploys the new
+            # helper. With no helper, an old one (1-2) or a held amneziawg-dkms
+            # the installer does not repair this path: the line stays as before.
             log_warn " - amneziawg module is not loaded, although a module file for kernel $(uname -r) is on disk."
             log_warn "   Reason: journalctl -u amneziawg-ensure-module -b; dmesg | grep amneziawg"
             _kmod_helper_class
-            if [[ "$_KH_CLASS" == current && "$_KH_VER" -ge 4 ]]; then
-                log_warn "   Rebuild: sudo bash /root/awg/manage_amneziawg.sh repair-module"
+            if [[ "$_KH_CLASS" == current && "$_KH_VER" -lt 4 ]] && _kmod_dkms_unheld; then
+                log_warn "   Rebuild: the module helper on this server is version ${_KH_VER} and does not rebuild such a module; update it and rebuild the module: sudo bash install_amneziawg_en.sh --repair-module"
             else
-                log_warn "   Rebuild: the module helper on this server is old and does not rebuild such a module; update it and rebuild the module: sudo bash install_amneziawg_en.sh --repair-module"
+                log_warn "   Rebuild: sudo bash /root/awg/manage_amneziawg.sh repair-module"
             fi
         else
             log_warn " - amneziawg module is not loaded (normal for userspace mode)."
@@ -2044,6 +2046,16 @@ check_server() {
 #              "missing or unknown mode" on stderr;
 #   absent   - no file (servers before v5.12.0, the ARM prebuilt);
 #   broken   - the file is there but does not run or answers oddly.
+# 0 - the amneziawg-dkms package is installed and not on hold; 1 - on
+# hold, not installed, or dpkg could not answer. A held package is the
+# pinned 2.0 module or the ARM prebuilt, which install --repair-module
+# does not repair.
+_kmod_dkms_unheld() {
+    local s
+    s=$(LC_ALL=C dpkg-query -W -f='${Status}' amneziawg-dkms 2>/dev/null) || return 1
+    [[ "$s" == *" installed" && "${s%% *}" != hold ]]
+}
+
 _KH_CLASS="" _KH_VER=0
 _kmod_helper_class() {
     local out err rc=0

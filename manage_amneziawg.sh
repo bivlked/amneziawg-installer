@@ -1853,15 +1853,17 @@ check_server() {
             # Файл модуля под это ядро есть, а модуль не загружен: это не userspace.
             # Так бывает со сборкой под другие заголовки одноимённого ядра
             # (24.04 HWE -> 26.04, замер 10 nov 2026). Её пересобирает помощник
-            # версии 4; более старый такой модуль пропускает, и тогда путь -
-            # установщик, который ставит новый помощник.
+            # версии 4; помощник версии 3 такой модуль пропускает, и тогда путь -
+            # установщик, который ставит новый помощник. Без помощника, со
+            # старым (1-2) или с закреплённым amneziawg-dkms установщик этот путь
+            # не чинит, там строка прежняя.
             log_warn " - Модуль amneziawg не загружен, хотя файл модуля для ядра $(uname -r) есть на диске."
             log_warn "   Причина: journalctl -u amneziawg-ensure-module -b; dmesg | grep amneziawg"
             _kmod_helper_class
-            if [[ "$_KH_CLASS" == current && "$_KH_VER" -ge 4 ]]; then
-                log_warn "   Пересборка: sudo bash /root/awg/manage_amneziawg.sh repair-module"
+            if [[ "$_KH_CLASS" == current && "$_KH_VER" -lt 4 ]] && _kmod_dkms_unheld; then
+                log_warn "   Пересборка: помощник модуля на этом сервере версии ${_KH_VER} и такой модуль не пересобирает; обновите его и пересоберите модуль: sudo bash install_amneziawg.sh --repair-module"
             else
-                log_warn "   Пересборка: помощник модуля на этом сервере старый и такой модуль не пересобирает; обновите его и пересоберите модуль: sudo bash install_amneziawg.sh --repair-module"
+                log_warn "   Пересборка: sudo bash /root/awg/manage_amneziawg.sh repair-module"
             fi
         else
             log_warn " - Модуль amneziawg не загружен (для userspace-режима это норма)."
@@ -2009,6 +2011,15 @@ check_server() {
 #              unknown mode» в stderr;
 #   absent   - файла нет (серверы до v5.12.0, ARM-пребилт);
 #   broken   - файл есть, но не исполняется или отвечает непонятно.
+# 0 - пакет amneziawg-dkms стоит и не закреплён (hold); 1 - закреплён, не стоит
+# или dpkg ответить не смог. Закреплённый пакет - это закреплённый модуль 2.0
+# или ARM-пребилт, их install --repair-module не чинит.
+_kmod_dkms_unheld() {
+    local s
+    s=$(LC_ALL=C dpkg-query -W -f='${Status}' amneziawg-dkms 2>/dev/null) || return 1
+    [[ "$s" == *" installed" && "${s%% *}" != hold ]]
+}
+
 _KH_CLASS="" _KH_VER=0
 _kmod_helper_class() {
     local out err rc=0
