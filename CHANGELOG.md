@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [6.3.1] - 2026-11-11
+
+**v6.3.1** - модуль ядра сам пересобирается после обновления 24.04 HWE до 26.04; адрес выхода сверяется и с именем входа; генератор не берёт `S4` = 16.
+
 ### Изменено
 
 - **Генератор параметров не выбирает `S4` = 16.** В профиле 2.0 пакет данных длиной `S4` + 32 + 16k байт при `S4` = 16 кратен 16 при любой длине содержимого, как у обычного WireGuard, и этот признак длины остаётся на виду. Теперь новые установки берут `S4` из того же диапазона без 16 (4-27 в профиле 2.0, 12-27 в 3.1). В 3.1 длину и так меняет `ContentPaddingAddition`, а 16 исключено, чтобы признак не вернулся без этого параметра. Примеры конфигов профиля 2.0 в ADVANCED теперь с `S4` = 17. Работающие серверы и выданные конфиги не меняются: параметры берутся из живого `awg0.conf`, а `S4` обязан совпадать у сервера и клиентов.
@@ -2255,7 +2259,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.1...HEAD
+[6.3.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.0...v6.3.1
 [6.3.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.2...v6.3.0
 [6.2.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...v6.2.2
 [6.2.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.0...v6.2.1

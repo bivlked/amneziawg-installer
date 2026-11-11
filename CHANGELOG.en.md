@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.1] - 2026-11-11
+
+**v6.3.1** - the kernel module rebuilds itself after a 24.04 HWE to 26.04 upgrade; the exit address is checked against an entry name too; the generator never picks `S4` = 16.
+
 ### Changed
 
 - **The parameter generator never picks `S4` = 16.** In the 2.0 profile a data packet of `S4` + 32 + 16k bytes with `S4` = 16 is a multiple of 16 whatever the payload length, as with plain WireGuard, and that length trait stays in plain sight. New installs now take `S4` from the same range without 16 (4-27 in the 2.0 profile, 12-27 in 3.1). In 3.1 `ContentPaddingAddition` already changes the length, and 16 is left out so that the trait does not come back without that parameter. The 2.0 config examples in ADVANCED now use `S4` = 17. Running servers and issued configs do not change: the parameters come from the live `awg0.conf`, and `S4` has to match on the server and the clients.
@@ -2255,7 +2259,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.1...HEAD
+[6.3.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.0...v6.3.1
 [6.3.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.2...v6.3.0
 [6.2.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...v6.2.2
 [6.2.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.0...v6.2.1
