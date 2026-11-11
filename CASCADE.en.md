@@ -207,7 +207,9 @@ WAN_IF="$(printf '%s' "$EP_ROUTE" | grep -oP '\bdev \K\S+' || true)"
 WAN_GW="$(printf '%s' "$EP_ROUTE" | grep -oP '\bvia \K\S+' || true)"
 { [ -n "$WAN_IF" ] && [ "$WAN_IF" != "$AWG1_IF" ]; } \
     || { echo "ERROR: could not determine the WAN interface to AWG1 (or it points into the tunnel)" >&2; exit 1; }
-if [ -n "$AWG1_SRC" ] && ! ip -4 -o addr show dev "$WAN_IF" | grep -F " $AWG1_SRC/" >/dev/null; then
+# The address is matched against the field after "inet": usually "A/24", on point-to-point "A peer B/32".
+if [ -n "$AWG1_SRC" ] && ! ip -4 -o addr show dev "$WAN_IF" \
+        | awk -v a="$AWG1_SRC" '{for (i = 1; i < NF; i++) if ($i == "inet") { split($(i + 1), p, "/"); if (p[1] == a) f = 1 }} END {exit !f}'; then
     echo "ERROR: the address AWG1_SRC=$AWG1_SRC is not on the interface $WAN_IF (see ip -4 addr)" >&2; exit 1
 fi
 

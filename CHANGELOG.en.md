@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **`AWG1_SRC` in the cascade script accepts an address on a point-to-point interface.** There `ip -o addr` prints the address as `inet A peer B/32`, with no `/` right after `A`, and the check at the top of `awg-routing.sh` stopped the script with "the address is not on the interface" although it was. Now the address is matched against the field after `inet`, and the usual `A/24` form passes as before. Checked on an interface with both kinds of address under gawk and mawk.
+
 ## [6.3.1] - 2026-11-11
 
 **v6.3.1** - the kernel module rebuilds itself after a 24.04 HWE to 26.04 upgrade; the exit address is checked against an entry name too; the generator never picks `S4` = 16.
