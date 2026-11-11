@@ -115,7 +115,7 @@ These obfuscation parameters exist in both profiles, 3.1 and 2.0; only the lower
 | `S1` | Init message padding (bytes) | 15-150 | the same | `72` |
 | `S2` | Response message padding (bytes) | 15-150, S1+56≠S2 | the same | `56` |
 | `S3` | Cookie message padding (bytes) | 8-55 | 12-55 | `32` |
-| `S4` | Data message padding (bytes) | 4-27 | 12-27 | `16` |
+| `S4` | Data message padding (bytes) | 4-27, except 16 | 12-27, except 16 | `17` |
 | `H1` | Init message identifier | uint32 range | `1` | `134567-245678` |
 | `H2` | Response message identifier | uint32 range | `2` | `3456789-4567890` |
 | `H3` | Cookie message identifier | uint32 range | `3` | `56789012-67890123` |
@@ -130,6 +130,7 @@ These obfuscation parameters exist in both profiles, 3.1 and 2.0; only the lower
 * `S1 + 56 ≠ S2` — prevents init and response messages from having the same size.
 * `S3 ≠ S2 + 28` - keeps the response and cookie messages from having the same size.
 * `S4` is chosen to avoid the harmful length matches between data packets and handshake packets found by the 2.0 transport model: otherwise in the 2.0 profile some data packets could be taken for a handshake and lost. Harmless matches are allowed.
+* `S4` is never 16: in the 2.0 profile a data packet of `S4` + 32 + 16k bytes is then a multiple of 16 whatever the payload length, as with plain WireGuard, and that length trait stays in plain sight. In 3.1 `ContentPaddingAddition` already changes the data packet length; 16 is left out there too, because without that parameter in the config the same trait would come back.
 * `S1`-`S4` and `H1`-`H4` **must** match on the server and the clients (in 3.1, the `HeaderProtectionKey` too): the receiver strips that padding and checks those headers. In 2.0, `H1`-`H4` are ranges - the same ranges on both sides.
 * `Jc`/`Jmin`/`Jmax` and `I1`-`I5` **do not** have to match: they are separate decoy packets, only the handshake initiator sends them and the other side discards them. Each of `I1`-`I5` is sent when it is set; the installer sets only `I1`, so `--no-cps` removes the concealment packet entirely.
 
@@ -906,7 +907,7 @@ export AWG_Jmax=205
 export AWG_S1=72
 export AWG_S2=56
 export AWG_S3=32
-export AWG_S4=16
+export AWG_S4=17
 export AWG_H1='234567-345678'
 export AWG_H2='3456789-4567890'
 export AWG_H3='56789012-67890123'
@@ -934,7 +935,7 @@ Jmax = 205
 S1 = 72
 S2 = 56
 S3 = 32
-S4 = 16
+S4 = 17
 H1 = 234567-345678
 H2 = 3456789-4567890
 H3 = 56789012-67890123
@@ -1002,7 +1003,7 @@ Jmax = 205
 S1 = 72
 S2 = 56
 S3 = 32
-S4 = 16
+S4 = 17
 H1 = 234567-345678
 H2 = 3456789-4567890
 H3 = 56789012-67890123
@@ -1297,7 +1298,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common_en.sh` and `manage_amneziawg_en.sh` (the Russian installer: `awg_common.sh` and `manage_amneziawg.sh`) from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.0/awg_common_en.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.1/awg_common_en.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -2274,7 +2275,7 @@ Recorded 5 November 2026 from the release pages, the app stores and the projects
 | gluetun (Docker, third-party) | in the daily feed, no tag | latest image from master; tag v3.41.3 has no AmneziaWG | master (26 Sep 2026); a 3.0 engine: it does not read RandomTrailers and DisableCookies lines, and this installer's profile does not write them; it expects HeaderProtectionKey as 64 hex characters, while this installer's profile writes base64: the key has to be converted | Docker Hub, tag latest | project code |
 | Hiddify | no | v5.5.5; AmneziaWG is in, but the .conf and link import does not read HeaderProtectionKey and ContentPaddingAddition (4 Nov 2026) | - | - | project code |
 | KeeneticOS (stock firmware) | development channel only | 5.2 Beta 3 (5 Nov 2026) | 5.2 Alpha 11 (25 Sep 2026); not in stable 5.1 | Keenetic development channel | project pages, 9 Nov 2026 |
-| AWG Manager (Keenetic, third-party) | yes | v2.19.25 (5 Nov 2026) | with the stock module on KeeneticOS 5.2 Alpha 11 and newer; on other firmware with its own kernel module or its bundled sing-box (needs Entware and the WireGuard component) | project releases page | project code, 9 Nov 2026 |
+| AWG Manager (Keenetic, third-party) | yes | v2.20.0 (10 Nov 2026) | with the stock module on KeeneticOS 5.2 Alpha 11 and newer; on other firmware with its own kernel module or its bundled sing-box (needs Entware and the WireGuard component) | project releases page | project code, 10 Nov 2026 |
 | OpenWrt (official packages) | no | no package; openwrt/packages PRs #30492 and #30493 are open, without maintainer approval | - | - | project pages |
 | awg-openwrt (OpenWrt, third-party) | yes | v25.12.6, v24.10.8 | v25.12.5, v24.10.8 (22 Sep 2026); the packages of these releases were replaced under the same tags; ones downloaded earlier and packages for older OpenWrt have no 3.1 | project releases page, project feed | project code |
 | GL.iNet (stock firmware) | no | AmneziaWG 2.0 since firmware 4.9; no date for 3.x | - | - | project pages |

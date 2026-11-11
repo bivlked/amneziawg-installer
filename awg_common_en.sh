@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 3.x and 2.0
 # Author: @bivlked
-# Version: 6.3.0
-# Date: 2026-11-10
+# Version: 6.3.1
+# Date: 2026-11-11
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -24,7 +24,7 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # drifted apart (one file updated, the other not) - otherwise the mismatch shows
 # up as a "command not found" somewhere random. Bumped with the other versions.
 # shellcheck disable=SC2034  # used by the manage script after sourcing
-AWG_COMMON_VERSION="6.3.0"
+AWG_COMMON_VERSION="6.3.1"
 
 # --- Auto-cleanup of temporary files ---
 # NOTE: trap is NOT set here to avoid overwriting the caller's trap handler.
@@ -3514,7 +3514,7 @@ EOF
             END { if (in_peer) printf "%s", buf }
         ' "$peers_source")
         if [[ -n "$_peers" ]]; then
-            printf '\n%s' "$_peers" >> "$tmpfile" || {
+            printf '\n%s\n' "$_peers" >> "$tmpfile" || {
                 rm -f "$tmpfile"
                 log_error "Failed to carry [Peer] blocks into the new config"
                 return 1

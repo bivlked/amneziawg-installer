@@ -93,6 +93,11 @@ setup() {
 k=$(uname -r)
 [[ -e "$T/modprobe.fail" ]] && exit 1
 [[ -n "$(find "$T/lib/modules/$k" -name "amneziawg.ko*" -type f -size +0c 2>/dev/null)" ]] || exit 1
+# Built against other headers of a same-named kernel: the kernel refuses it
+# ("disagrees about version of symbol module_layout", Exec format error).
+if [[ -f "$T/lib/modules/$k/hdr/id" ]]; then
+  [[ "$(cat "$T/lib/modules/$k/updates/dkms/amneziawg.ko.zst" 2>/dev/null)" == "ko $(cat "$T/lib/modules/$k/hdr/id")" ]] || { echo "modprobe: ERROR: could not insert '"'"'amneziawg'"'"': Exec format error" >&2; exit 1; }
+fi
 mkdir -p "$T/sys/module/amneziawg"'
     # Status per package from $T/st/<pkg>; amneziawg-dkms has a version too.
     # dq.listfail breaks only the pattern query (the kernel image list).
@@ -121,10 +126,21 @@ case "$1" in
   --audit) [[ -e "$T/audit.fail" ]] && exit 2; cat "$T/audit" 2>/dev/null; exit 0 ;;
   --configure) [[ -e "$T/configure.fail" ]] && exit 1; if [[ -e "$T/configure.side" ]]; then bash "$T/configure.side" || { echo "configure.side failed" >&2; exit 97; }; fi; rm -f "$T/audit"; for f in "$T"/st/linux-image-*; do [[ -e "$f" ]] && echo "install ok installed" > "$f"; done; exit 0 ;;
 esac'
+    # Like real DKMS (3.0.11 and 3.2.2, checked 10 nov 2026): a build is
+    # cached per kernel name; install reuses the cache, even with --force,
+    # and only "build --force" builds again. The cache and the installed
+    # file carry the headers id ($T/lib/modules/<k>/hdr/id) they were built
+    # against, so a same-named kernel with new headers is detectable.
     _stub dkms 'echo "dkms $*" >> "$T/calls"
-[[ "$1" == install ]] || exit 0
-shift; k=""; v=""
-while [[ $# -gt 0 ]]; do case "$1" in -k) k="$2"; shift ;; -v) v="$2"; shift ;; esac; shift; done
+cmd="$1"; [[ "$cmd" == install || "$cmd" == build ]] || exit 0
+shift; k=""; v=""; force=""
+while [[ $# -gt 0 ]]; do case "$1" in -k) k="$2"; shift ;; -v) v="$2"; shift ;; --force) force=1 ;; esac; shift; done
+cache="$T/var/lib/dkms/amneziawg/$v/$k/x86_64/module/amneziawg.ko"
+hid=$(cat "$T/lib/modules/$k/hdr/id" 2>/dev/null || true)
+if [[ -f "$cache" && ( "$cmd" == install || -z "$force" ) ]]; then
+  [[ "$cmd" == build ]] && exit 0
+  mkdir -p "$T/lib/modules/$k/updates/dkms"; cp "$cache" "$T/lib/modules/$k/updates/dkms/amneziawg.ko.zst"; exit 0
+fi
 date +%s > "$T/dkms.start"
 [[ -e "$T/dkms.side" ]] && bash "$T/dkms.side"
 d="$T/var/lib/dkms/amneziawg/$v/build"; mkdir -p "$d"
@@ -136,7 +152,9 @@ if [[ "$k" == 7.0.0-38* && "$(sha256sum < "$T/usr/src/amneziawg-$v/compat/compat
   exit 10
 fi
 if [[ -e "$T/dkms.fail.$k" ]]; then echo "error: something else" > "$d/make.log"; exit 10; fi
-mkdir -p "$T/lib/modules/$k/updates/dkms"; echo ko > "$T/lib/modules/$k/updates/dkms/amneziawg.ko.zst"'
+mkdir -p "${cache%/*}"; echo "ko${hid:+ $hid}" > "$cache"
+[[ "$cmd" == build ]] && exit 0
+mkdir -p "$T/lib/modules/$k/updates/dkms"; cp "$cache" "$T/lib/modules/$k/updates/dkms/amneziawg.ko.zst"'
     # Holds as apt-mark lists them; am.fail breaks the query.
     _stub apt-mark '[[ "$1" == showhold ]] || exit 0
 [[ -e "$T/am.fail" ]] && { echo "E: cannot read the selections" >&2; exit 100; }
@@ -227,6 +245,74 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
     rm "$(_src)"
     run "$H" --repair
     [[ "$output" == *"compat.h not found; fix not applied"* ]]
+}
+
+@test "repair: the running kernel's module on disk that does not load (stale same-named build) is built again and loads" {
+    _mk_server "$OLD"
+    echo hwe > "$T/lib/modules/$OLD/hdr/id"
+    dkms install -m amneziawg -v 1.0.0 -k "$OLD" >/dev/null
+    echo resolute > "$T/lib/modules/$OLD/hdr/id"
+    : > "$T/calls"
+    run "$H" --repair
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"kernel ${OLD} (running): module on disk does not load; building it again"* ]]
+    [[ "$(_calls)" == *"dkms build -m amneziawg -v 1.0.0 -k $OLD --force"* ]]
+    [ "$(cat "$(_ko "$OLD")")" = "ko resolute" ]
+}
+
+@test "repair: a running kernel's module that loads is not built again" {
+    _mk_server "$OLD"
+    _put_ko "$OLD"
+    : > "$T/calls"
+    run "$H" --repair
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$(_calls)" == *"modprobe amneziawg"* ]]
+    run grep -c '^dkms \(build\|install\)' "$T/calls"
+    [ "$output" = "0" ]
+}
+
+@test "repair: a forced rebuild that fails for the running kernel is exit 1 and says so" {
+    _mk_server "$OLD"
+    _put_ko "$OLD"
+    : > "$T/modprobe.fail"; : > "$T/dkms.fail.$OLD"
+    run "$H" --repair
+    [ "$status" -eq 1 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"module on disk does not load; building it again"* ]]
+    [[ "$output" == *"kernel ${OLD}: NOT built"* ]]
+}
+
+@test "repair: the modprobe refusal of a stale module is logged, not thrown away" {
+    _mk_server "$OLD"
+    echo hwe > "$T/lib/modules/$OLD/hdr/id"
+    dkms install -m amneziawg -v 1.0.0 -k "$OLD" >/dev/null
+    echo resolute > "$T/lib/modules/$OLD/hdr/id"
+    run "$H" --repair
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"Exec format error"* ]] || { echo "$output"; return 1; }
+}
+
+@test "repair: a rebuilt module that still does not load is exit 1 and says a rebuild does not fix it" {
+    _mk_server "$OLD"
+    _put_ko "$OLD"
+    : > "$T/modprobe.fail"
+    : > "$T/calls"
+    run "$H" --repair
+    [ "$status" -eq 1 ] || { echo "status $status: $output"; return 1; }
+    [[ "$(_calls)" == *"dkms build -m amneziawg -v 1.0.0 -k $OLD --force"* ]]
+    [[ "$output" == *"kernel ${OLD} (running): the rebuilt module does not load either"* ]] || { echo "$output"; return 1; }
+    [ ! -e "$(_stamp)" ]
+}
+
+@test "repair: a depmod that fails after the forced rebuild is exit 1" {
+    _mk_server "$OLD"
+    echo hwe > "$T/lib/modules/$OLD/hdr/id"
+    dkms install -m amneziawg -v 1.0.0 -k "$OLD" >/dev/null
+    echo resolute > "$T/lib/modules/$OLD/hdr/id"
+    # depmod works for build_targets and fails only once the rebuild ran
+    echo ': > "$T/depmod.fail"' > "$T/dkms.side"
+    run "$H" --repair
+    [ "$status" -eq 1 ] || { echo "status $status: $output"; return 1; }
+    [[ "$output" == *"WARN: depmod -a ${OLD} failed"* ]] || { echo "$output"; return 1; }
 }
 
 @test "repair: the running kernel without a module is exit 2" {
@@ -609,6 +695,47 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
     [[ "$output" == *"Secure Boot"* ]]
 }
 
+@test "systemd: a stale DKMS build of a same-named kernel is built again, not reinstalled from the cache, and loads" {
+    # 24.04 HWE 7.0.0-43~24.04.1 -> do-release-upgrade -> 26.04 7.0.0-43.43:
+    # same kernel name, new headers; DKMS keeps the old build (stand, 10 nov 2026).
+    _mk_server "$OLD"
+    echo hwe > "$T/lib/modules/$OLD/hdr/id"
+    dkms install -m amneziawg -v 1.0.0 -k "$OLD" >/dev/null
+    echo resolute > "$T/lib/modules/$OLD/hdr/id"
+    : > "$T/calls"
+    run "$H" --systemd
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [ -d "$T/sys/module/amneziawg" ]
+    [ "$(cat "$(_ko "$OLD")")" = "ko resolute" ]
+    [[ "$(_calls)" == *"dkms build -m amneziawg -v 1.0.0 -k $OLD --force"* ]]
+}
+
+@test "systemd: a forced rebuild whose build step runs out of time does not install and says it did not finish" {
+    _mk_server "$OLD"
+    _put_ko "$OLD"
+    : > "$T/modprobe.fail"; : > "$T/dkms.rc124"
+    run "$H" --systemd
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel ${OLD}: NOT built: the build did not finish within"* ]] || { echo "$output"; return 1; }
+    [[ "$(_calls)" == *"dkms build -m amneziawg -v 1.0.0 -k $OLD --force"* ]]
+    run grep -c '^dkms install' "$T/calls"
+    [ "$output" = "0" ]
+}
+
+@test "systemd: a forced rebuild runs the build under timeout and gives install only what is left" {
+    _mk_server "$OLD"
+    _put_ko "$OLD"
+    : > "$T/modprobe.fail"; echo 'rm -f "$T/modprobe.fail"' > "$T/dkms.side"
+    _stub timeout 'echo "timeout $*" >> "$T/calls"; shift 3; exec "$@"'
+    run "$H" --systemd
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    local b i
+    b=$(sed -n "s/^timeout -k 5 \([0-9]*\) dkms build -m amneziawg -v 1.0.0 -k $OLD --force\$/\1/p" "$T/calls")
+    i=$(sed -n "s/^timeout -k 5 \([0-9]*\) dkms install -m amneziawg -v 1.0.0 -k $OLD --force\$/\1/p" "$T/calls")
+    [[ "$b" =~ ^[0-9]+$ && "$i" =~ ^[0-9]+$ ]] || { echo "build '$b' install '$i'"; _calls; return 1; }
+    [ "$i" -le "$b" ] || { echo "install got $i s, more than the build's $b s"; return 1; }
+}
+
 @test "systemd: a forced rebuild that fixes the load ends loaded" {
     _mk_server "$OLD"
     _put_ko "$OLD"
@@ -661,8 +788,12 @@ teardown() { [[ -n "${LFD:-}" ]] && exec {LFD}>&- || :; rm -rf "$T"; }
 # module from the DKMS tree for every kernel and builds it back only for the
 # running one (stand LA #2, 4 oct 2026). Our apt hook does not fire under a
 # bare dpkg, so --finish has to build the other kernels again.
+# Configuring amneziawg-dkms runs dkms remove: the installed files AND the
+# build cache go (the stub's install would otherwise reuse the cache).
+_dkms_cache() { printf '%s' "$T/var/lib/dkms/amneziawg/1.0.0/$1"; }
 _configure_drops_others() {
     cat > "$T/configure.side" <<EOF
+rm -rf "$(_dkms_cache "$OLD")" "$(_dkms_cache "$NEW")"
 rm -f "$(_ko "$OLD")" "$(_ko "$NEW")"
 mkdir -p "\$(dirname "$(_ko "$OLD")")"; echo ko > "$(_ko "$OLD")"
 EOF
@@ -813,7 +944,7 @@ EOF
     _mk_server "$OLD" "$NEW"
     "$H" --repair >/dev/null 2>&1
     echo "amneziawg-dkms is only half configured" > "$T/audit"
-    printf 'rm -f "%s" "%s"\n: > "%s"\n' "$(_ko "$OLD")" "$(_ko "$NEW")" "$T/dkms.fail.$OLD" > "$T/configure.side"
+    printf 'rm -rf "%s" "%s"\nrm -f "%s" "%s"\n: > "%s"\n' "$(_dkms_cache "$OLD")" "$(_dkms_cache "$NEW")" "$(_ko "$OLD")" "$(_ko "$NEW")" "$T/dkms.fail.$OLD" > "$T/configure.side"
     run "$H" --finish
     [ "$status" -eq 1 ] || { echo "$output"; return 1; }
     [[ "$output" == *"the module did not build again for: $OLD;"* ]] || { echo "$output"; return 1; }
@@ -1331,7 +1462,7 @@ exec \"$rt\" \"\$@\""
 
 @test "helper: --version identifies the new helper, an unknown mode is exit 2" {
     run "$H" --version
-    [ "$status" -eq 0 ]; [ "$output" = "amneziawg-ensure-module 3" ]
+    [ "$status" -eq 0 ]; [ "$output" = "amneziawg-ensure-module 4" ]
     run "$H" --bogus
     [ "$status" -eq 2 ]
 }
@@ -1345,6 +1476,9 @@ _rec() { grep -E "^$1( |\$)" "$T/st.out" || true; }
 @test "status: a healthy server - every record, exactly one running kernel, complete, nothing changed" {
     _mk_server "$OLD" "$NEW"
     "$H" --repair >/dev/null 2>&1
+    # --repair test-loads the running kernel's module; unload it here, so the
+    # record below is about a module that is on disk but not loaded.
+    rm -rf "$T/sys/module/amneziawg"
     rm -f "$T/calls"
     local before; before=$(_sha "$(_src)")
     _status

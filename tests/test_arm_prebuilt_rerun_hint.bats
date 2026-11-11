@@ -158,11 +158,18 @@ _check_text() {
     printf '#!/usr/bin/env bash\n:\n' > "$bin/lsmod"
     printf '#!/usr/bin/env bash\necho "Status: active"\n' > "$bin/ufw"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$bin/awg"
-    printf '#!/usr/bin/env bash\n[ -z "$KMOD" ] && exit 1\nprintf "%%s\\n" "$KMOD"\n' > "$bin/dpkg-query"
+    # amneziawg-dkms answers DKMS_ST (default installed, "fail" = dpkg error);
+    # the prebuilt pattern answers KMOD ("fail" = dpkg error).
+    printf '#!/usr/bin/env bash\nif [ "${*: -1}" = amneziawg-dkms ]; then [ "${DKMS_ST:-}" = fail ] && exit 2; printf "%%s" "${DKMS_ST:-install ok installed}"; exit 0; fi\n[ "$KMOD" = fail ] && { echo "dpkg-query: error: parsing file /var/lib/dpkg/status" >&2; exit 2; }\n[ -z "$KMOD" ] && { echo "dpkg-query: no packages found matching $1" >&2; exit 1; }\nprintf "%%s\\n" "$KMOD"\n' > "$bin/dpkg-query"
     printf '#!/usr/bin/env bash\n[ "$1" = -r ] && { echo 6.8.0-149-generic; exit 0; }\nexec /bin/uname "$@"\n' > "$bin/uname"
-    chmod +x "$bin"/*
+    # The module helper answers --version with HV (default 4, the current one).
+    # HV=none: no helper file (the ARM prebuilt, servers before v5.12.0).
+    rm -f "$T/helper"
+    [ "${HV:-4}" = none ] || printf '#!/usr/bin/env bash\n[ "$1" = --version ] && { echo "amneziawg-ensure-module %s"; exit 0; }\nexit 2\n' "${HV:-4}" > "$T/helper"
+    chmod +x "$bin"/*; [ ! -e "$T/helper" ] || chmod +x "$T/helper"
     printf '[Interface]\n[Peer]\n' > "$T/awg/awg0.conf"
     KMOD="${KMOD:-}" AWG_MODULES_DIR="$T/modules" AWG_DKMS_STATE_DIR="$T/nodkms" PATH="$bin:/usr/bin:/bin" \
+    AWG_ENSURE_HELPER="$T/helper" DKMS_ST="${DKMS_ST:-}" \
     AWG_DIR="$T/awg" CONFIG_FILE="$T/awg/awgsetup_cfg.init" SERVER_CONF_FILE="$T/awg/awg0.conf" \
     bash -c '
         log() { echo "LOG: $*"; }; log_warn() { echo "WARN: $*"; }; log_error() { echo "ERR: $*"; }; log_debug() { :; }
@@ -172,7 +179,7 @@ _check_text() {
         for f in _sanitize_port awg_module_version awg_installed_protocol _awg_generation_from_init _mask_report_secrets awg_prebuilt_needs_rerun awg_prebuilt_rerun_hint; do
             eval "$(awk "/^$f\\(\\) \\{/,/^\\}/" "$2")"
         done
-        for f in _json_utf8_sanitize json_escape json_out _ipopts_guard_report check_server; do
+        for f in _json_utf8_sanitize json_escape json_out _ipopts_guard_report _kmod_helper_class _kmod_installer_repair_admits check_server; do
             eval "$(awk "/^$f\\(\\) \\{/,/^\\}/" "$1")"
         done
         check_server
@@ -192,6 +199,52 @@ _check_text() {
         [[ "$output" != *"sudo bash install_amneziawg"* ]] || { echo "$m control: recipe printed: $output"; return 1; }
     done
 }
+# A module file for the running kernel is on disk but the module is not loaded
+# (a stale build after 24.04 HWE -> 26.04, stand 10 nov 2026): that is a kernel
+# module install, so "normal for userspace mode" would send the reader away;
+# the line names repair-module and where the reason is.
+@test "check: a module on disk that is not loaded names repair-module, not userspace (RU + EN)" {
+    local m
+    for m in manage_amneziawg.sh manage_amneziawg_en.sh; do
+        mkdir -p "$T/modules/6.8.0-149-generic/updates/dkms"
+        echo ko > "$T/modules/6.8.0-149-generic/updates/dkms/amneziawg.ko.zst"
+        KMOD="" run _check_text "$ROOT/$m"
+        [[ "$output" == *"manage_amneziawg.sh repair-module"* ]] || { echo "$m: no repair hint: $output"; return 1; }
+        [[ "$output" != *"install_amneziawg"* ]] || { echo "$m: installer named with a current helper: $output"; return 1; }
+        [[ "$output" == *"journalctl -u amneziawg-ensure-module -b"* ]] || { echo "$m: no reason hint: $output"; return 1; }
+        [[ "$output" != *"userspace"* ]] || { echo "$m: still says userspace: $output"; return 1; }
+        [[ "$output" != *"command not found"* ]] || { echo "$m: harness gap: $output"; return 1; }
+        # A version 3 helper (v6.3.0 and older) skips a kernel that has a module
+        # file, so manage repair-module would not rebuild it: the line names the
+        # installer, which deploys the new helper.
+        HV=3 KMOD="" run _check_text "$ROOT/$m"
+        [[ "$output" == *"WARN:"*"sudo bash install_amneziawg"*"--repair-module"* ]] || { echo "$m v3: no installer: $output"; return 1; }
+        [[ "$output" != *"manage_amneziawg.sh repair-module"* ]] || { echo "$m v3: manage named: $output"; return 1; }
+        [[ "$output" == *"journalctl -u amneziawg-ensure-module -b"* ]] || { echo "$m v3: no reason hint: $output"; return 1; }
+        # The installer's --repair-module refuses a held amneziawg-dkms (the
+        # pinned 2.0 module, the ARM prebuilt) and any installed prebuilt
+        # package, and it cannot help where there is no helper or the dpkg
+        # state is unknown: the line stays as before there. Fields: HV|DKMS_ST|KMOD.
+        local c k
+        for c in "3|hold ok installed|" "3|fail|" "none||" "2||" "3||$PKG" "3||fail"; do
+            IFS='|' read -r HV DKMS_ST k <<<"$c"
+            DKMS_ST="$DKMS_ST" KMOD="$k" run _check_text "$ROOT/$m"
+            [[ "$output" == *"manage_amneziawg.sh repair-module"* ]] || { echo "$m $c: no manage line: $output"; return 1; }
+            [[ "$output" != *"install_amneziawg"* ]] || { echo "$m $c: installer named: $output"; return 1; }
+        done
+        HV=4
+        # an empty file is not a module (the helper's has_module says the same)
+        : > "$T/modules/6.8.0-149-generic/updates/dkms/amneziawg.ko.zst"
+        KMOD="" run _check_text "$ROOT/$m"
+        [[ "$output" != *"repair-module"* ]] || { echo "$m: an empty file counted as a module: $output"; return 1; }
+        # control: no module file -> the userspace line as before
+        rm -rf "$T/modules"
+        KMOD="" run _check_text "$ROOT/$m"
+        [[ "$output" == *"userspace"* ]] || { echo "$m control: $output"; return 1; }
+        [[ "$output" != *"repair-module"* ]] || { echo "$m control: repair hint printed: $output"; return 1; }
+    done
+}
+
 # The arm reason texts name the real architecture (since v6.2.0 the arm code is
 # 32-bit ARM and aarch64_be only, so the text must say which one it saw), and
 # arch_unsupported names both allowed architectures.

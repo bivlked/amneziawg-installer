@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # Скрипт для управления пользователями (пирами) AmneziaWG 3.x и 2.0
 # Автор: @bivlked
-# Версия: 6.3.0
-# Дата: 2026-11-10
+# Версия: 6.3.1
+# Дата: 2026-11-11
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="6.3.0"
+SCRIPT_VERSION="6.3.1"
 set -o pipefail
 # awg show раскрашивает подписи, если в окружении WG_COLOR_MODE=always, даже при
 # выводе в канал. Тогда фильтр секретов не узнаёт «header protection key» и
@@ -1849,6 +1849,22 @@ check_server() {
         if awg_prebuilt_needs_rerun; then
             log_warn " - Модуль amneziawg не загружен."
             awg_prebuilt_rerun_hint log_warn
+        elif [[ -n "$(find "${AWG_MODULES_DIR:-/lib/modules}/$(uname -r)" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]]; then
+            # Файл модуля под это ядро есть, а модуль не загружен: это не userspace.
+            # Так бывает со сборкой под другие заголовки одноимённого ядра
+            # (24.04 HWE -> 26.04, замер 10 nov 2026). Её пересобирает помощник
+            # версии 4; помощник версии 3 такой модуль пропускает, и тогда путь -
+            # установщик, который ставит новый помощник. Без помощника, со
+            # старым (1-2), с закреплённым amneziawg-dkms или со стоящим пребилтом
+            # установщик этот путь не чинит, там строка прежняя.
+            log_warn " - Модуль amneziawg не загружен, хотя файл модуля для ядра $(uname -r) есть на диске."
+            log_warn "   Причина: journalctl -u amneziawg-ensure-module -b; dmesg | grep amneziawg"
+            _kmod_helper_class
+            if [[ "$_KH_CLASS" == current && "$_KH_VER" -lt 4 ]] && _kmod_installer_repair_admits; then
+                log_warn "   Пересборка: помощник модуля на этом сервере версии ${_KH_VER} и такой модуль не пересобирает; обновите его и пересоберите модуль: sudo bash install_amneziawg.sh --repair-module"
+            else
+                log_warn "   Пересборка: sudo bash /root/awg/manage_amneziawg.sh repair-module"
+            fi
         else
             log_warn " - Модуль amneziawg не загружен (для userspace-режима это норма)."
         fi
@@ -1987,21 +2003,41 @@ check_server() {
 # ==============================================================================
 
 # Какой помощник стоит. _KH_CLASS:
-#   current  - версия 3 и новее: есть --repair, --finish и --status;
+#   current  - версия 3 и новее: есть --repair, --finish и --status (версия
+#              3, v6.3.0 и старше, не пересобирает модуль, который уже лежит
+#              на диске; номер версии - в _KH_VER);
 #   outdated - заведомо старый: версия 1-2, либо помощник до v5.37.1, который
 #              на --version отвечает кодом 2, пустым stdout и «missing or
 #              unknown mode» в stderr;
 #   absent   - файла нет (серверы до v5.12.0, ARM-пребилт);
 #   broken   - файл есть, но не исполняется или отвечает непонятно.
-_KH_CLASS=""
+# 0 - install --repair-module пустит этот сервер по пакетам: amneziawg-dkms
+# стоит и не закреплён (hold), ни одного пакета amneziawg-kmod-* (ARM-пребилт)
+# не стоит. 1 - иначе, и когда dpkg ответить не смог. Закреплённый пакет - это
+# закреплённый модуль 2.0 или ARM-пребилт; установщик отказывает и при любом
+# стоящем пребилте (тот же разбор, что _awg_kmod_prebuilt_present).
+_kmod_installer_repair_admits() {
+    local s q e
+    s=$(LC_ALL=C dpkg-query -W -f='${Status}' amneziawg-dkms 2>/dev/null) || return 1
+    [[ "$s" == *" installed" && "${s%% *}" != hold ]] || return 1
+    if q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null); then
+        awk '$NF != "not-installed" && $NF != "config-files" {f=1} END {exit f}' <<<"$q"
+    else
+        e=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>&1 >/dev/null || true)
+        [[ "$e" == *"no packages found matching"* ]]
+    fi
+}
+
+_KH_CLASS="" _KH_VER=0
 _kmod_helper_class() {
     local out err rc=0
-    _KH_CLASS=broken
+    _KH_CLASS=broken _KH_VER=0
     if [[ ! -e "$AWG_ENSURE_HELPER" && ! -L "$AWG_ENSURE_HELPER" ]]; then _KH_CLASS=absent; return 0; fi
     [[ -f "$AWG_ENSURE_HELPER" && -x "$AWG_ENSURE_HELPER" ]] || return 0
     out=$(timeout 10 "$AWG_ENSURE_HELPER" --version 2>/dev/null) || rc=$?
     if [[ "$rc" -eq 0 && "$out" =~ ^amneziawg-ensure-module\ ([0-9]+)$ ]]; then
-        if [[ "${BASH_REMATCH[1]}" -ge 3 ]]; then _KH_CLASS=current; else _KH_CLASS=outdated; fi
+        _KH_VER=$((10#${BASH_REMATCH[1]}))
+        if [[ "$_KH_VER" -ge 3 ]]; then _KH_CLASS=current; else _KH_CLASS=outdated; fi
         return 0
     fi
     if [[ "$rc" -eq 2 && -z "$out" ]]; then
@@ -2221,7 +2257,12 @@ _kmod_repair_via_helper() {
         log_warn "Итоговое состояние модуля получить не удалось ($AWG_ENSURE_HELPER --status): перед перезагрузкой проверьте dkms status amneziawg и dpkg --audit сами."
     fi
     case "$mrc" in
-        1) log_error "Модуль ядра amneziawg для $cur не загружен." ;;
+        1) log_error "Модуль ядра amneziawg для $cur не загружен."
+           # Помощник версии 3 пропускает ядро, у которого файл модуля уже
+           # есть, и сборка под чужие заголовки одноимённого ядра остаётся.
+           if [[ "$_KH_VER" -lt 4 && -n "$(find "$KMOD_MODULES_DIR/$cur" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]]; then
+               log_error "Помощник модуля на этом сервере версии ${_KH_VER}: он не пересобирает модуль, который уже лежит на диске. Обновите помощник и пересоберите модуль: sudo bash install_amneziawg.sh --repair-module (как скачать и проверить установщик - ADVANCED.md, раздел kernel-70-backport-adv)."
+           fi ;;
         2) log_error "Модуль ядра в порядке, но сервис awg-quick@awg0 НЕ запустился."
            log_error "Диагностика: systemctl status awg-quick@awg0; journalctl -u awg-quick@awg0 -n 50" ;;
     esac
@@ -3543,6 +3584,21 @@ change_exit_ip() {
             _JSON_ERR="exit address equals entry address"
             log_error "$want - адрес входа (AWG_ENDPOINT), к нему подключаются клиенты. Адрес выхода должен быть другим."
             return 1
+        fi
+        # AWG_ENDPOINT бывает именем: сравниваются адреса, в которые оно резолвится
+        # (ревью PR #389). Не резолвится - не отказ, но и не молча. 127.x не в счёт:
+        # getent читает и /etc/hosts, а cloud-init пишет туда 127.0.1.1 для имени сервера.
+        if [[ -n "$endpoint" && ! "$endpoint" =~ ^[0-9.]+$ && "$endpoint" != *:* ]]; then
+            local rr
+            if rr=$(timeout 10 getent ahostsv4 "$endpoint" 2>/dev/null | awk '$1 !~ /^127\./ {print $1}' | sort -u) && [[ -n "$rr" ]]; then
+                if grep -qxF -- "$want" <<<"$rr"; then
+                    _JSON_ERR="exit address equals entry address"
+                    log_error "$want - в этот адрес резолвится имя входа $endpoint (AWG_ENDPOINT), к нему подключаются клиенты. Адрес выхода должен быть другим."
+                    return 1
+                fi
+            else
+                log_warn "Имя входа $endpoint не резолвится в IPv4-адрес (127.x из /etc/hosts не в счёт): проверить, что оно не указывает на адрес выхода $want, не удалось. Клиенты должны подключаться к другому адресу."
+            fi
         fi
         # Без AWG_ENDPOINT клиенты подключаются к основному адресу (источник маршрута по умолчанию).
         if [[ -z "$endpoint" ]]; then

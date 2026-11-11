@@ -68,18 +68,21 @@ g_server() {
     d="$BATS_TEST_TMPDIR/g-$(basename "$lib" .sh)"
     out=$(lib_run "$lib" 'render_server_config "$SERVER_CONF_FILE"; echo "RC=$?"')
     [[ "$out" == *"RC=0"* ]] || { echo "render failed ($lib): $out"; return 1; }
-    # Compared through command substitution on both sides: it strips trailing
-    # newlines, and this file legitimately ends without one (the peer block is
-    # carried over through a substitution, which eats the last newline). A plain
-    # diff would report that as a difference and say nothing about the keys.
+    # Compared through command substitution on both sides: only the keys count
+    # here; how the file ends is checked separately below.
     local got want
     got=$(keys_of "$d/awg0.conf")
     want=$(printf '%s\n' '[Interface]' PrivateKey Address MTU ListenPort \
         PostUp PostDown Jc Jmin Jmax S1 S2 S3 S4 H1 H2 H3 H4 I1 '[Peer]' PublicKey AllowedIPs)
     [ "$got" = "$want" ] || { echo "server keys differ ($lib):"; diff <(echo "$want") <(echo "$got"); return 1; }
-    # The missing final newline is itself part of the 2.0 shape: anything the
-    # third line appends AFTER the peers would change it.
-    [ -n "$(tail -c 1 "$d/awg0.conf")" ] || { echo "server config now ends with a newline ($lib)"; return 1; }
+    # The file ends with exactly one newline after the carried peers. The peer
+    # blocks used to come through a command substitution that ate the last one,
+    # so awg0.conf ended mid-line and a manual `echo >>` glued onto the last key
+    # (seen on a reinstall, 10 nov 2026). Exactly one: no blank line either.
+    [ "$(tail -c 1 "$d/awg0.conf" | od -An -tx1 | tr -d ' ')" = "0a" ] \
+        || { echo "server config does not end with a newline ($lib)"; return 1; }
+    [ "$(tail -c 2 "$d/awg0.conf" | od -An -tx1 | tr -d ' ')" != "0a0a" ] \
+        || { echo "server config ends with a blank line ($lib)"; return 1; }
     grep -q '^#_Name = my_phone$' "$d/awg0.conf" || { echo "carried peer lost ($lib)"; return 1; }
     grep -qx 'I1 = <r 128>' "$d/awg0.conf" || { echo "I1 value changed ($lib)"; return 1; }
 }

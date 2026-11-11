@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x and 2.0 peer management script
 # Author: @bivlked
-# Version: 6.3.0
-# Date: 2026-11-10
+# Version: 6.3.1
+# Date: 2026-11-11
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="6.3.0"
+SCRIPT_VERSION="6.3.1"
 set -o pipefail
 # awg show colours its labels when WG_COLOR_MODE=always is in the environment,
 # even into a pipe. The secrets filter then does not recognise "header
@@ -1883,6 +1883,23 @@ check_server() {
         if awg_prebuilt_needs_rerun; then
             log_warn " - amneziawg module is not loaded."
             awg_prebuilt_rerun_hint log_warn
+        elif [[ -n "$(find "${AWG_MODULES_DIR:-/lib/modules}/$(uname -r)" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]]; then
+            # A module file for this kernel is on disk, yet the module is not
+            # loaded: not userspace. A build against other headers of a same-named
+            # kernel does this (24.04 HWE -> 26.04, measured 10 nov 2026). A
+            # version 4 helper rebuilds it; a version 3 helper skips such a
+            # module, and then the way is the installer, which deploys the new
+            # helper. With no helper, an old one (1-2), a held amneziawg-dkms or
+            # an installed prebuilt the installer does not repair this path: the
+            # line stays as before.
+            log_warn " - amneziawg module is not loaded, although a module file for kernel $(uname -r) is on disk."
+            log_warn "   Reason: journalctl -u amneziawg-ensure-module -b; dmesg | grep amneziawg"
+            _kmod_helper_class
+            if [[ "$_KH_CLASS" == current && "$_KH_VER" -lt 4 ]] && _kmod_installer_repair_admits; then
+                log_warn "   Rebuild: the module helper on this server is version ${_KH_VER} and does not rebuild such a module; update it and rebuild the module: sudo bash install_amneziawg_en.sh --repair-module"
+            else
+                log_warn "   Rebuild: sudo bash /root/awg/manage_amneziawg.sh repair-module"
+            fi
         else
             log_warn " - amneziawg module is not loaded (normal for userspace mode)."
         fi
@@ -2022,21 +2039,42 @@ check_server() {
 # ==============================================================================
 
 # Which helper is installed. _KH_CLASS:
-#   current  - version 3 or later: has --repair, --finish and --status;
+#   current  - version 3 or later: has --repair, --finish and --status
+#              (version 3, v6.3.0 and older, does not rebuild a module that
+#              is already on disk; the version number is in _KH_VER);
 #   outdated - known to be old: version 1-2, or a helper from before v5.37.1,
 #              which answers --version with exit 2, an empty stdout and
 #              "missing or unknown mode" on stderr;
 #   absent   - no file (servers before v5.12.0, the ARM prebuilt);
 #   broken   - the file is there but does not run or answers oddly.
-_KH_CLASS=""
+# 0 - install --repair-module admits this server by its packages:
+# amneziawg-dkms is installed and not on hold, and no amneziawg-kmod-*
+# package (the ARM prebuilt) is installed. 1 - otherwise, and when dpkg
+# could not answer. A held package is the pinned 2.0 module or the ARM
+# prebuilt; the installer also refuses any installed prebuilt (the same
+# parsing as _awg_kmod_prebuilt_present).
+_kmod_installer_repair_admits() {
+    local s q e
+    s=$(LC_ALL=C dpkg-query -W -f='${Status}' amneziawg-dkms 2>/dev/null) || return 1
+    [[ "$s" == *" installed" && "${s%% *}" != hold ]] || return 1
+    if q=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>/dev/null); then
+        awk '$NF != "not-installed" && $NF != "config-files" {f=1} END {exit f}' <<<"$q"
+    else
+        e=$(LC_ALL=C dpkg-query -W -f='${Package} ${Status}\n' 'amneziawg-kmod-*' 2>&1 >/dev/null || true)
+        [[ "$e" == *"no packages found matching"* ]]
+    fi
+}
+
+_KH_CLASS="" _KH_VER=0
 _kmod_helper_class() {
     local out err rc=0
-    _KH_CLASS=broken
+    _KH_CLASS=broken _KH_VER=0
     if [[ ! -e "$AWG_ENSURE_HELPER" && ! -L "$AWG_ENSURE_HELPER" ]]; then _KH_CLASS=absent; return 0; fi
     [[ -f "$AWG_ENSURE_HELPER" && -x "$AWG_ENSURE_HELPER" ]] || return 0
     out=$(timeout 10 "$AWG_ENSURE_HELPER" --version 2>/dev/null) || rc=$?
     if [[ "$rc" -eq 0 && "$out" =~ ^amneziawg-ensure-module\ ([0-9]+)$ ]]; then
-        if [[ "${BASH_REMATCH[1]}" -ge 3 ]]; then _KH_CLASS=current; else _KH_CLASS=outdated; fi
+        _KH_VER=$((10#${BASH_REMATCH[1]}))
+        if [[ "$_KH_VER" -ge 3 ]]; then _KH_CLASS=current; else _KH_CLASS=outdated; fi
         return 0
     fi
     if [[ "$rc" -eq 2 && -z "$out" ]]; then
@@ -2259,7 +2297,12 @@ _kmod_repair_via_helper() {
         log_warn "The final module state could not be obtained ($AWG_ENSURE_HELPER --status): before a reboot check dkms status amneziawg and dpkg --audit yourself."
     fi
     case "$mrc" in
-        1) log_error "The amneziawg kernel module for $cur is not loaded." ;;
+        1) log_error "The amneziawg kernel module for $cur is not loaded."
+           # A version 3 helper skips a kernel that already has a module
+           # file, so a build against other headers of a same-named kernel stays.
+           if [[ "$_KH_VER" -lt 4 && -n "$(find "$KMOD_MODULES_DIR/$cur" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]]; then
+               log_error "The module helper on this server is version ${_KH_VER}: it does not rebuild a module that is already on disk. Update the helper and rebuild the module: sudo bash install_amneziawg_en.sh --repair-module (how to download and verify the installer: ADVANCED.en.md, section kernel-70-backport-adv)."
+           fi ;;
         2) log_error "The kernel module is fine, but the awg-quick@awg0 service did NOT start."
            log_error "Diagnostics: systemctl status awg-quick@awg0; journalctl -u awg-quick@awg0 -n 50" ;;
     esac
@@ -3589,6 +3632,22 @@ change_exit_ip() {
             _JSON_ERR="exit address equals entry address"
             log_error "$want is the entry address (AWG_ENDPOINT) clients connect to. The exit address has to be a different one."
             return 1
+        fi
+        # AWG_ENDPOINT can be a name: the addresses it resolves to are compared
+        # (review of PR #389). Does not resolve: not a refusal, but not silent. 127.x
+        # does not count: getent reads /etc/hosts too, and cloud-init puts 127.0.1.1
+        # there for the server's own name.
+        if [[ -n "$endpoint" && ! "$endpoint" =~ ^[0-9.]+$ && "$endpoint" != *:* ]]; then
+            local rr
+            if rr=$(timeout 10 getent ahostsv4 "$endpoint" 2>/dev/null | awk '$1 !~ /^127\./ {print $1}' | sort -u) && [[ -n "$rr" ]]; then
+                if grep -qxF -- "$want" <<<"$rr"; then
+                    _JSON_ERR="exit address equals entry address"
+                    log_error "$want is an address the entry name $endpoint (AWG_ENDPOINT) resolves to, and clients connect to it. The exit address has to be a different one."
+                    return 1
+                fi
+            else
+                log_warn "The entry name $endpoint does not resolve to an IPv4 address (127.x from /etc/hosts does not count): could not check that it does not point to the exit address $want. The clients must connect to another address."
+            fi
         fi
         # Without AWG_ENDPOINT clients connect to the main address (the default route's source).
         if [[ -z "$endpoint" ]]; then

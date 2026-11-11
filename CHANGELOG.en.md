@@ -12,8 +12,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.1] - 2026-11-11
+
+**v6.3.1** - the kernel module rebuilds itself after a 24.04 HWE to 26.04 upgrade; the exit address is checked against an entry name too; the generator never picks `S4` = 16.
+
+### Changed
+
+- **The parameter generator never picks `S4` = 16.** In the 2.0 profile a data packet of `S4` + 32 + 16k bytes with `S4` = 16 is a multiple of 16 whatever the payload length, as with plain WireGuard, and that length trait stays in plain sight. New installs now take `S4` from the same range without 16 (4-27 in the 2.0 profile, 12-27 in 3.1). In 3.1 `ContentPaddingAddition` already changes the length, and 16 is left out so that the trait does not come back without that parameter. The 2.0 config examples in ADVANCED now use `S4` = 17. Running servers and issued configs do not change: the parameters come from the live `awg0.conf`, and `S4` has to match on the server and the clients.
+
+### Fixed
+
+- **The kernel module builds again after a 24.04 HWE to 26.04 upgrade.** When the old and the new release share a kernel name (7.0.0-43 on both 24.04 HWE and 26.04, for example), DKMS kept the module built against the old headers; after the reboot it did not load (`Exec format error`, `disagrees about version of symbol module_layout` in `dmesg`) and the VPN did not come up. The boot helper tried a forced rebuild, but `dkms install --force` put the same cached file back. The rebuild now goes through `dkms build --force`, so the module is built again at boot by itself; `manage repair-module` also rebuilds a module that is on disk but does not load. `repair-module` logs why the module did not load (the words of `modprobe`); if the rebuilt module does not load either (a Secure Boot signature, a blacklist), it ends with an error rather than "Done", and when the module is loaded but `awg-quick@awg0` is stopped, it says so and gives the start command. `manage check` no longer calls this "normal for userspace mode" and says where to find the reason and how to rebuild. The new rebuild is done by the module helper version 4, and only the installer deploys it: a server where only `manage` and `awg_common` were updated keeps the version 3 helper, which leaves a module on disk alone. `manage check` and `repair-module` recognise that helper and point to `install_amneziawg_en.sh --repair-module`: it deploys the new helper and rebuilds the module without running the normal install. Checked on a stand: Ubuntu 24.04 HWE 7.0.0-43, then an upgrade to 26.04.1.
+- **The exit address cannot be the entry address, even when the entry is a name.** When `--endpoint` (or `AWG_ENDPOINT` in `manage exit-ip`) is a name such as `vpn.example.com`, the installer and `manage` compared the exit address only with the name string itself, so the address the name points to passed as an exit address. The name is now resolved, and any of its IPv4 addresses is refused (127.x from `/etc/hosts` does not count: that is how cloud-init records the server's own name). A name that does not resolve to an IPv4 address does not block the install, but a warning says the check could not be made; the lookup waits 10 seconds at most.
+- **`awg0.conf` ends with a newline after a reinstall.** The `[Peer]` blocks were carried into the new config through a command substitution, which drops the last newline, so the file stopped at the last key and a line added by hand with `echo >>` was glued onto it. The tunnel was not affected: `manage add` starts a new block with a blank line.
+
 ### Documentation
 
+- **Client table in ADVANCED: AWG Manager v2.20.0 (10 November 2026).** 3.1 support is unchanged: the bundled sing-box moved to 1.15.0-alpha.13-awgm.38, and its amneziawg-go is the same (v3.1.0-awgm.3); checked in the project code at tag v2.20.0.
 - **An address of your own for the cascade tunnel to the exit (#384).** CASCADE.en.md has a new section, "Own addresses for entry, exit and tunnel": if the entry server has several public IPv4 addresses, clients connect to one, Russian sites see the second (`--exit-ip`), and the tunnel to the foreign server runs from the third. The routing script gets an optional `AWG1_SRC`: a source address in the route to AWG1, a rule that keeps the tunnel packets out of the general MASQUERADE, and setting the endpoint in `awg1` again, so the tunnel does not stay on the main address after a reboot. Without `AWG1_SRC` the script works as before. Checked on a stand with Ubuntu 24.04 and the 3.1 profile, including after reboots.
 
 ## [6.3.0] - 2026-11-10
@@ -2244,7 +2259,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.0...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.1...HEAD
+[6.3.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.0...v6.3.1
 [6.3.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.2...v6.3.0
 [6.2.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...v6.2.2
 [6.2.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.0...v6.2.1

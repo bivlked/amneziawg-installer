@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 3.x (3.1 по умолчанию; 2.0 по флагу, а также на ядрах старее 6.7 и на 32-битном ARM) на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 6.3.0
-# Дата: 2026-11-10
+# Версия: 6.3.1
+# Дата: 2026-11-11
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -39,7 +39,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.0"
+SCRIPT_VERSION="6.3.1"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -69,8 +69,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="176ec35655c3e2270533b54da0818d1bb38ca4af6ba6efc8376eb9d3915a4e6d"
-MANAGE_SCRIPT_SHA256="f6d6c855592122b283ee53b7267ead6727267887e83803f160bdc426e77db3bf"
+COMMON_SCRIPT_SHA256="145f43dfb2153685686c653dd6b446bf76ec2a3a8c1af9773bd3fdee3f0bee9d"
+MANAGE_SCRIPT_SHA256="c550ef8734af0d9751e0686b5a80b10c71273121f5510caa5b96b8bde887ee42"
 
 # AmneziaWG 2.0 пин (H0, 31 jul 2026). Upstream влил AmneziaWG 3.0 в default-ветку
 # amneziawg-linux-kernel-module, и PPA переключился на 3.0. Тогда на ядрах старее
@@ -3154,6 +3154,22 @@ _awg_exit_ip_check() {
         printf '%s\n' "$ip - адрес входа (--endpoint), к нему подключаются клиенты; адрес выхода должен быть другим"
         return 1
     fi
+    # --endpoint бывает именем: тогда сравниваются адреса, в которые оно резолвится
+    # (ревью PR #389). Имя, которое не резолвится, - не отказ (DNS могут настроить
+    # позже), но и не молча: проверить не удалось. Предупреждение в stderr: stdout
+    # этой функции вызывающий забирает как текст причины. 127.x не в счёт: getent
+    # читает и /etc/hosts, а cloud-init пишет туда 127.0.1.1 для имени сервера.
+    if [[ -n "${AWG_ENDPOINT:-}" && ! "$AWG_ENDPOINT" =~ ^[0-9.]+$ && "$AWG_ENDPOINT" != *:* ]]; then
+        local rr
+        if rr=$(timeout 10 getent ahostsv4 "$AWG_ENDPOINT" 2>/dev/null | awk '$1 !~ /^127\./ {print $1}' | sort -u) && [[ -n "$rr" ]]; then
+            if grep -qxF -- "$ip" <<<"$rr"; then
+                printf '%s\n' "$ip - в этот адрес резолвится имя входа $AWG_ENDPOINT (--endpoint), к нему подключаются клиенты; адрес выхода должен быть другим"
+                return 1
+            fi
+        else
+            log_warn "Имя входа $AWG_ENDPOINT не резолвится в IPv4-адрес (127.x из /etc/hosts не в счёт): проверить, что оно не указывает на адрес выхода $ip, не удалось. Клиенты должны подключаться к другому адресу." >&2
+        fi
+    fi
     # Без --endpoint адрес входа определяется сам: это адрес, с которого сервер выходит
     # по маршруту по умолчанию (MASQUERADE и так ставит его источником). Локально, без сети.
     if [[ -z "${AWG_ENDPOINT:-}" ]]; then
@@ -3538,12 +3554,16 @@ generate_awg_params() {
     # см. _awg_size_collisions. S4 берётся одним розыгрышем индекса по списку
     # значений без совпадения, а не циклом «тяни, пока не устроит». Каждое условие
     # запрещает не больше одного остатка S4 по модулю 16, а диапазон S4 содержит не
-    # меньше 16 значений, так что свободные значения есть всегда. Без помощника
+    # меньше 16 значений, так что свободные значения есть всегда (три условия и
+    # исключённое 16 ниже снимают не больше четырёх из шестнадцати). Без помощника
     # генератор останавливается: молча пропущенная проверка выдала бы набор с потерями.
+    # S4 = 16 не берётся: пакет данных длиной S4 + 32 + 16k тогда кратен 16 при любом
+    # k, как у обычного WireGuard, и этот признак длины остаётся виден.
     declare -F _awg_size_collisions >/dev/null \
         || die "Внутренняя ошибка: нет _awg_size_collisions, параметры обфускации не сгенерированы."
     local _s4 _s4_free=()
     for ((_s4 = _s4_min; _s4 <= 27; _s4++)); do
+        (( _s4 == 16 )) && continue
         [[ -z "$(_awg_size_collisions "$AWG_S1" "$AWG_S2" "$AWG_S3" "$_s4")" ]] && _s4_free+=("$_s4")
     done
     (( ${#_s4_free[@]} > 0 )) \
@@ -5740,8 +5760,12 @@ repair_module_cmd() {
     _awg_kmod_status_warn
     if [[ "$rc" -eq 0 && "$hrc" -eq 0 && "$frc" -eq 0 ]]; then
         log "Готово: модуль на диске у всех ядер с заголовками, недонастроенных пакетов нет (dpkg --audit пуст). Перезагрузку скрипт не делает."
-        if [[ ! -d /sys/module/amneziawg ]]; then
+        if [[ ! -d "${AWG_SYS_MODULE_DIR:-/sys/module}/amneziawg" ]]; then
             log_warn "Модуль сейчас не загружен, туннель не работает. Перезагрузите сервер или выполните: sudo modprobe amneziawg && sudo systemctl restart awg-quick@awg0"
+        elif [[ -f "$SERVER_CONF_FILE" ]] && ! systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then
+            # Помощник (--repair) пробует загрузить модуль работающего ядра, поэтому
+            # загруженный модуль ещё не значит работающий туннель.
+            log_warn "Модуль загружен, но сервис awg-quick@awg0 не работает, туннель выключен. Запустите: sudo systemctl restart awg-quick@awg0"
         fi
         exit 0
     fi
@@ -7450,7 +7474,10 @@ _awg_deploy_ensure_helper() {
 #                boot kernel, source, packages); see mode_status.
 #   --revert, --enable - support: undo the source fix and keep it off, or
 #                allow it again.
-#   --version  - prints "amneziawg-ensure-module 3" (3: --status added).
+#   --version  - prints "amneziawg-ensure-module 4" (3: --status added;
+#                4: --repair and the boot path rebuild a module that is on
+#                disk but does not load; manage sends the owner of an older
+#                helper to the installer).
 #
 # Kernels: /lib/modules/<ver>/build (installed headers). uname -r alone is
 # not enough in the apt hook: it returns the OLD running kernel while the
@@ -7480,7 +7507,7 @@ export PATH
 MODE="${1:-}"
 case "$MODE" in
     --hook|--systemd|--repair|--prepare|--prepare-locked|--finish|--status|--revert|--enable) ;;
-    --version) echo "amneziawg-ensure-module 3"; exit 0 ;;
+    --version) echo "amneziawg-ensure-module 4"; exit 0 ;;
     --help|-h) echo "Usage: $0 --hook | --systemd | --repair | --prepare | --finish | --status | --revert | --enable | --version"; exit 0 ;;
     *) echo "amneziawg-ensure-module: missing or unknown mode (see --help)" >&2; exit 2 ;;
 esac
@@ -7883,13 +7910,30 @@ log_prints() {
 # size or content) since just before the attempt: neither a log of an
 # earlier attempt nor one of another kernel in this run is blamed.
 build_kernel() { # kernel [timeout-seconds] [--force]
-    local k="$1" limit="${2:-0}" force="${3:-}" before after log="" rc=0 line
+    local k="$1" limit="${2:-0}" force="${3:-}" before after log="" rc=0 line t0 left
     local -a cmd=(dkms install -m amneziawg -v "$SRC_VER" -k "$k")
+    local -a bcmd=(dkms build -m amneziawg -v "$SRC_VER" -k "$k" --force)
     [[ -n "$force" ]] && cmd+=(--force)
-    [[ "$limit" -gt 0 ]] && cmd=(timeout -k 5 "$limit" "${cmd[@]}")
     before=$(log_prints)
-    log_line "dkms install -m amneziawg -v ${SRC_VER} -k ${k}${force:+ --force}"
-    if "${cmd[@]}"; then rc=0; else rc=$?; fi
+    t0=$SECONDS
+    # A forced rebuild must build: "dkms install --force" puts back the build
+    # DKMS cached for this kernel name (DKMS 3.0.11 and 3.2.2), and after a
+    # same-named kernel with new headers (24.04 HWE 7.0.0-43 -> 26.04 7.0.0-43)
+    # that build does not load. Only "dkms build --force" builds again. Both
+    # steps share the time limit.
+    if [[ -n "$force" ]]; then
+        [[ "$limit" -gt 0 ]] && bcmd=(timeout -k 5 "$limit" "${bcmd[@]}")
+        log_line "dkms build -m amneziawg -v ${SRC_VER} -k ${k} --force"
+        if "${bcmd[@]}"; then rc=0; else rc=$?; fi
+    fi
+    if [[ "$rc" -eq 0 && "$limit" -gt 0 ]]; then
+        left=$((limit - (SECONDS - t0)))
+        if [[ "$left" -gt 0 ]]; then cmd=(timeout -k 5 "$left" "${cmd[@]}"); else rc=124; fi
+    fi
+    if [[ "$rc" -eq 0 ]]; then
+        log_line "dkms install -m amneziawg -v ${SRC_VER} -k ${k}${force:+ --force}"
+        if "${cmd[@]}"; then rc=0; else rc=$?; fi
+    fi
     after=$(log_prints)
     while IFS= read -r line; do
         [[ -n "$line" ]] || continue
@@ -8129,12 +8173,15 @@ mode_systemd() {
 }
 
 # Outside apt: fix the source, build for every kernel with headers that
-# lacks the module and refresh the module index of all of them.
+# lacks the module and refresh the module index of all of them. The running
+# kernel's module, on disk but not loaded, is loaded; one that does not load
+# is built again (--force) and loaded once more, and if it still does not
+# load, that is a failure (exit 1): a rebuild does not fix that cause.
 # 0 all done; 1 the running kernel has its module but something else failed
 # (the source fix, another kernel, depmod); 2 the running kernel has none,
 # or the job could not run.
 mode_repair() {
-    local before after cur k rc=0 lrc=0
+    local before after cur k rc=0 lrc=0 mout="" mrc=0
     cur=$(uname -r)
     command -v dkms >/dev/null 2>&1 || { log_line "ERROR: dkms is not installed" >&2; exit 2; }
     require_dpkg_idle || exit 2
@@ -8153,6 +8200,30 @@ mode_repair() {
     # difference afterwards is apt or dpkg working on the source meanwhile.
     before=$(snapshot)
     build_targets
+    # The running kernel's module is on disk but does not load: DKMS kept a
+    # build made against other headers of a kernel with the same name (24.04
+    # HWE -> 26.04, both 7.0.0-43). The boot path rebuilds it; repair-module
+    # must too, or it only reports the failure.
+    # modprobe's own words (Exec format error, Key was rejected) are the reason:
+    # they go to the log, one line.
+    if has_module "$cur" && [[ ! -d "${SYS_MODULE_DIR}/amneziawg" ]]; then
+        if mout=$(timeout -k 5 60 modprobe amneziawg 2>&1); then mrc=0; else mrc=$?; fi
+        if [[ "$mrc" -ne 0 ]]; then
+            log_line "kernel ${cur} (running): modprobe amneziawg failed (rc=${mrc})${mout:+: ${mout//$'\n'/ }}" >&2
+            log_line "kernel ${cur} (running): module on disk does not load; building it again"
+            if ! build_kernel "$cur" 0 --force; then
+                BUILD_FAILED=1
+            elif ! depmod -a "$cur"; then
+                log_line "WARN: depmod -a ${cur} failed" >&2; BUILD_FAILED=1
+            elif mout=$(timeout -k 5 60 modprobe amneziawg 2>&1); then
+                log_line "kernel ${cur} (running): the rebuilt module loads"
+            else
+                mrc=$?
+                log_line "kernel ${cur} (running): the rebuilt module does not load either (rc=${mrc})${mout:+: ${mout//$'\n'/ }}; a rebuild does not fix this (a Secure Boot signature, a blacklist): see journalctl -k" >&2
+                BUILD_FAILED=1
+            fi
+        fi
+    fi
     after=$(snapshot)
     if [[ "$before" != "$after" ]]; then
         log_line "ERROR: the module source or the amneziawg-dkms package changed while the module was built; result not counted, run again after apt finishes" >&2

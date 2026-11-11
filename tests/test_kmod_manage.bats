@@ -66,7 +66,7 @@ cat "$T/st/$p"'
 m="$1"
 if [[ "$m" == --version ]]; then
   [[ -e "$T/helper.verr" ]] && cat "$T/helper.verr" >&2
-  [[ -e "$T/helper.version" ]] && cat "$T/helper.version" || echo "amneziawg-ensure-module 3"
+  [[ -e "$T/helper.version" ]] && cat "$T/helper.version" || echo "amneziawg-ensure-module 4"
   exit "$(cat "$T/helper.vrc" 2>/dev/null || echo 0)"
 fi
 echo "helper $m" >> "$T/calls"
@@ -260,6 +260,41 @@ _scr() { if [[ "$1" == EN ]]; then SCR="$M_EN"; else SCR="$M"; fi; }
         # The service was not looked at: null, not false.
         _j '.ok==false and .rc==1 and .module_loaded==false and .service_active==null' || { echo "$l: $output"; return 1; }
         [[ "$(_calls)" != *"systemctl start"* ]] || { echo "$l: service started"; return 1; }
+    done
+}
+
+# A version 3 helper (v6.3.0 and older) skips a kernel that already has a
+# module file, so a stale build after 24.04 HWE -> 26.04 stays and does not
+# load: repair-module names the installer, which deploys the new helper. A
+# version 4 helper rebuilds such a module itself: no installer line there.
+@test "new path: a version 3 helper and a module on disk that does not load name the installer; version 4 does not" {
+    local l
+    : > "$T/modprobe.fail"
+    for l in "${LANGS[@]}"; do
+        echo "amneziawg-ensure-module 3" > "$T/helper.version"
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l"; return 1; }
+        _j '.ok==false and .rc==1 and .helper=="current" and .path=="helper"' || { echo "$l: $output"; return 1; }
+        if [[ "$l" == EN ]]; then
+            [[ "$stderr" == *"is version 3: it does not rebuild a module that is already on disk"* ]] || { echo "$l: $stderr"; return 1; }
+            [[ "$stderr" == *"sudo bash install_amneziawg_en.sh --repair-module"* ]] || { echo "$l: $stderr"; return 1; }
+        else
+            [[ "$stderr" == *"версии 3: он не пересобирает модуль, который уже лежит на диске"* ]] || { echo "$l: $stderr"; return 1; }
+            [[ "$stderr" == *"sudo bash install_amneziawg.sh --repair-module"* ]] || { echo "$l: $stderr"; return 1; }
+        fi
+        echo "amneziawg-ensure-module 4" > "$T/helper.version"
+        _fresh; _repair
+        [ "$status" -eq 1 ] || { echo "$l v4"; return 1; }
+        [[ "$stderr" == *"amneziawg"*"$RUN"* ]] || { echo "$l v4: no module line: $stderr"; return 1; }
+        [[ "$stderr" != *"install_amneziawg"* ]] || { echo "$l v4: installer named: $stderr"; return 1; }
+    done
+    # No module file for the running kernel: the old helper is not the reason.
+    echo "amneziawg-ensure-module 3" > "$T/helper.version"
+    rm -f "$T/lib/modules/$RUN/updates/amneziawg.ko"
+    for l in "${LANGS[@]}"; do
+        _fresh; _scr "$l"; _repair
+        [ "$status" -eq 1 ] || { echo "$l no file"; return 1; }
+        [[ "$stderr" != *"install_amneziawg"* ]] || { echo "$l no file: installer named: $stderr"; return 1; }
     done
 }
 
