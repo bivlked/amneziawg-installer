@@ -23,6 +23,7 @@ This guide turns two `amneziawg-installer` setups into a cascade: a client conne
 - [Updating the list of Russian networks](#update)
 - [Three servers: entry, middle and exit](#three-hop)
 - [Own addresses for entry, exit and tunnel](#own-addresses)
+- [If the exit gets blocked](#replace-exit)
 - [Troubleshooting](#trouble)
 - [Security](#security)
 - [Removing the cascade](#uninstall)
@@ -207,7 +208,9 @@ WAN_IF="$(printf '%s' "$EP_ROUTE" | grep -oP '\bdev \K\S+' || true)"
 WAN_GW="$(printf '%s' "$EP_ROUTE" | grep -oP '\bvia \K\S+' || true)"
 { [ -n "$WAN_IF" ] && [ "$WAN_IF" != "$AWG1_IF" ]; } \
     || { echo "ERROR: could not determine the WAN interface to AWG1 (or it points into the tunnel)" >&2; exit 1; }
-if [ -n "$AWG1_SRC" ] && ! ip -4 -o addr show dev "$WAN_IF" | grep -F " $AWG1_SRC/" >/dev/null; then
+# The address is matched against the field after "inet": usually "A/24", on point-to-point "A peer B/32".
+if [ -n "$AWG1_SRC" ] && ! ip -4 -o addr show dev "$WAN_IF" \
+        | awk -v a="$AWG1_SRC" '{for (i = 1; i < NF; i++) if ($i == "inet") { split($(i + 1), p, "/"); if (p[1] == a) f = 1 }} END {exit !f}'; then
     echo "ERROR: the address AWG1_SRC=$AWG1_SRC is not on the interface $WAN_IF (see ip -4 addr)" >&2; exit 1
 fi
 
@@ -578,6 +581,35 @@ Check on AWG1: `awg show awg0 endpoints` should show the `AWG1_SRC` address for 
 To change the tunnel address or move it back to the main one: first remove the rule of the old address, `iptables -t nat -D POSTROUTING -s <old AWG1_SRC> -d <AWG1_ENDPOINT> -j ACCEPT`, or it stays in the table. Then set the new `AWG1_SRC` (or clear it) and run `systemctl restart awg-quick@awg1` and `bash /root/awg/awg-routing.sh`.
 
 Checked on a stand: Ubuntu 24.04, the 3.1 profile, the entry on the main address, the direct exit (`--exit-ip`) and the tunnel on the second one, including after two reboots of AWG0. Without the NAT rule or without setting the endpoint again the tunnel did not stay on the second address: in the first case `MASQUERADE` rewrote it, in the second it stayed on the main address after a reboot.
+
+<a id="replace-exit"></a>
+## If the exit gets blocked
+
+The address of the foreign exit server can get blocked from Russia. Then `awg show awg1` on AWG0 stops showing a fresh `latest handshake`. To tell an address block from a block of the protocol itself, try `ping` and `ssh` to AWG1 from AWG0: if they fail too, the address is blocked, and the recipe below is for exactly that case. While the exit is down, the clients' foreign traffic is lost in the tunnel and does not go around it. But the clients' DNS (`1.1.1.1` in their configs) goes through the exit too, so Russian sites stop opening for them as well.
+
+The fix is a new exit server. The clients are not affected: they connect to AWG0, and their configs stay the same.
+
+1. Set up the new server as AWG1 with [step 1](#step1), using the same `--subnet` as the old exit (it has to differ from the AWG0 subnet), and issue a client for the entry on it, as in [step 2](#step2): `bash /root/awg/manage_amneziawg.sh add ru_host`.
+2. On AWG0, replace `/etc/amnezia/amneziawg/awg1.conf` with the new `ru_host.conf`, as in [step 3](#step3): with `Table = off`, without the `DNS` line, then `chmod 600 /etc/amnezia/amneziawg/awg1.conf`.
+3. In `/root/awg/awg-routing.sh`, set `AWG1_ENDPOINT` to the address of the new server. If `AWG1_SRC` is set, first remove the rule of the old address: `iptables -t nat -D POSTROUTING -s <AWG1_SRC> -d <old AWG1_ENDPOINT> -j ACCEPT`.
+4. Restart the tunnel and remove the route to the old exit:
+
+   ```bash
+   systemctl restart awg-quick@awg1
+   ip route del OLD_AWG1_IP
+   ```
+
+The `awg-routing` unit from [step 5](#step5) is bound to `awg1` and restarts together with it, so the routing script runs by itself, already with the new `AWG1_ENDPOINT`. If the unit is not enabled, run `bash /root/awg/awg-routing.sh` by hand.
+
+Check: `awg show awg1` shows a `latest handshake`, `systemctl is-active awg-routing` answers `active`, and `curl -s ifconfig.me` on a client returns the address of the new exit.
+
+While the script applies the rules again (about 10 seconds in my test), the clients' foreign traffic goes out directly from the AWG0 address. If that matters, change the exit when the clients are idle.
+
+If the hoster just gave the exit a new address and the server itself is fine, you do not need a new server: change the address in the `Endpoint` line of `awg1.conf` and do items 3 and 4.
+
+With [three servers](#three-hop), only the address of the middle is visible from Russia. If that one is blocked, build a new middle with item 2 of that section (issue a new `mid_host` client for it on awg-out) and do items 2-4 on awg-in with its `ru_host.conf`. If the address of the exit awg-out lands on a list, set up a new exit, issue `mid_host` on it and use it to replace `awg1.conf` on awg-mid, keeping `Table = off` and the `PostUp` and `PostDown` lines in it. Then run `chmod 600 /etc/amnezia/amneziawg/awg1.conf` and `systemctl restart awg-quick@awg1` on awg-mid and check `ip rule | grep 'iif awg0'`. While `awg1` on the middle restarts, traffic from the entry leaves from the awg-mid address for a few seconds (see the caveat in that section). The entry and the clients are not affected.
+
+Checked on a stand with the 3.1 profile: the exit was reinstalled from scratch (new keys, port and parameters), and the entry's client worked again without any change to its config. I have not repeated a change of the exit address or a replacement in the three-server setup on a stand.
 
 <a id="trouble"></a>
 ## Troubleshooting
