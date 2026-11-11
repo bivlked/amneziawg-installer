@@ -1886,11 +1886,17 @@ check_server() {
         elif [[ -n "$(find "${AWG_MODULES_DIR:-/lib/modules}/$(uname -r)" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]]; then
             # A module file for this kernel is on disk, yet the module is not
             # loaded: not userspace. A build against other headers of a same-named
-            # kernel does this (24.04 HWE -> 26.04, measured 10 nov 2026);
-            # repair-module rebuilds it.
+            # kernel does this (24.04 HWE -> 26.04, measured 10 nov 2026). A
+            # version 4 helper rebuilds it; an older one skips such a module,
+            # and then the way is the installer, which deploys the new helper.
             log_warn " - amneziawg module is not loaded, although a module file for kernel $(uname -r) is on disk."
             log_warn "   Reason: journalctl -u amneziawg-ensure-module -b; dmesg | grep amneziawg"
-            log_warn "   Rebuild: sudo bash /root/awg/manage_amneziawg.sh repair-module"
+            _kmod_helper_class
+            if [[ "$_KH_CLASS" == current && "$_KH_VER" -ge 4 ]]; then
+                log_warn "   Rebuild: sudo bash /root/awg/manage_amneziawg.sh repair-module"
+            else
+                log_warn "   Rebuild: the module helper on this server is old and does not rebuild such a module; update it and rebuild the module: sudo bash install_amneziawg_en.sh --repair-module"
+            fi
         else
             log_warn " - amneziawg module is not loaded (normal for userspace mode)."
         fi
@@ -2030,21 +2036,24 @@ check_server() {
 # ==============================================================================
 
 # Which helper is installed. _KH_CLASS:
-#   current  - version 3 or later: has --repair, --finish and --status;
+#   current  - version 3 or later: has --repair, --finish and --status
+#              (version 3, v6.3.0 and older, does not rebuild a module that
+#              is already on disk; the version number is in _KH_VER);
 #   outdated - known to be old: version 1-2, or a helper from before v5.37.1,
 #              which answers --version with exit 2, an empty stdout and
 #              "missing or unknown mode" on stderr;
 #   absent   - no file (servers before v5.12.0, the ARM prebuilt);
 #   broken   - the file is there but does not run or answers oddly.
-_KH_CLASS=""
+_KH_CLASS="" _KH_VER=0
 _kmod_helper_class() {
     local out err rc=0
-    _KH_CLASS=broken
+    _KH_CLASS=broken _KH_VER=0
     if [[ ! -e "$AWG_ENSURE_HELPER" && ! -L "$AWG_ENSURE_HELPER" ]]; then _KH_CLASS=absent; return 0; fi
     [[ -f "$AWG_ENSURE_HELPER" && -x "$AWG_ENSURE_HELPER" ]] || return 0
     out=$(timeout 10 "$AWG_ENSURE_HELPER" --version 2>/dev/null) || rc=$?
     if [[ "$rc" -eq 0 && "$out" =~ ^amneziawg-ensure-module\ ([0-9]+)$ ]]; then
-        if [[ "${BASH_REMATCH[1]}" -ge 3 ]]; then _KH_CLASS=current; else _KH_CLASS=outdated; fi
+        _KH_VER=$((10#${BASH_REMATCH[1]}))
+        if [[ "$_KH_VER" -ge 3 ]]; then _KH_CLASS=current; else _KH_CLASS=outdated; fi
         return 0
     fi
     if [[ "$rc" -eq 2 && -z "$out" ]]; then
@@ -2267,7 +2276,12 @@ _kmod_repair_via_helper() {
         log_warn "The final module state could not be obtained ($AWG_ENSURE_HELPER --status): before a reboot check dkms status amneziawg and dpkg --audit yourself."
     fi
     case "$mrc" in
-        1) log_error "The amneziawg kernel module for $cur is not loaded." ;;
+        1) log_error "The amneziawg kernel module for $cur is not loaded."
+           # A version 3 helper skips a kernel that already has a module
+           # file, so a build against other headers of a same-named kernel stays.
+           if [[ "$_KH_VER" -lt 4 && -n "$(find "$KMOD_MODULES_DIR/$cur" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]]; then
+               log_error "The module helper on this server is version ${_KH_VER}: it does not rebuild a module that is already on disk. Update the helper and rebuild the module: sudo bash install_amneziawg_en.sh --repair-module (how to download and verify the installer: ADVANCED.en.md, section kernel-70-backport-adv)."
+           fi ;;
         2) log_error "The kernel module is fine, but the awg-quick@awg0 service did NOT start."
            log_error "Diagnostics: systemctl status awg-quick@awg0; journalctl -u awg-quick@awg0 -n 50" ;;
     esac

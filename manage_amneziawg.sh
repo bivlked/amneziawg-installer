@@ -1852,10 +1852,17 @@ check_server() {
         elif [[ -n "$(find "${AWG_MODULES_DIR:-/lib/modules}/$(uname -r)" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]]; then
             # Файл модуля под это ядро есть, а модуль не загружен: это не userspace.
             # Так бывает со сборкой под другие заголовки одноимённого ядра
-            # (24.04 HWE -> 26.04, замер 10 nov 2026); repair-module её пересобирает.
+            # (24.04 HWE -> 26.04, замер 10 nov 2026). Её пересобирает помощник
+            # версии 4; более старый такой модуль пропускает, и тогда путь -
+            # установщик, который ставит новый помощник.
             log_warn " - Модуль amneziawg не загружен, хотя файл модуля для ядра $(uname -r) есть на диске."
             log_warn "   Причина: journalctl -u amneziawg-ensure-module -b; dmesg | grep amneziawg"
-            log_warn "   Пересборка: sudo bash /root/awg/manage_amneziawg.sh repair-module"
+            _kmod_helper_class
+            if [[ "$_KH_CLASS" == current && "$_KH_VER" -ge 4 ]]; then
+                log_warn "   Пересборка: sudo bash /root/awg/manage_amneziawg.sh repair-module"
+            else
+                log_warn "   Пересборка: помощник модуля на этом сервере старый и такой модуль не пересобирает; обновите его и пересоберите модуль: sudo bash install_amneziawg.sh --repair-module"
+            fi
         else
             log_warn " - Модуль amneziawg не загружен (для userspace-режима это норма)."
         fi
@@ -1994,21 +2001,24 @@ check_server() {
 # ==============================================================================
 
 # Какой помощник стоит. _KH_CLASS:
-#   current  - версия 3 и новее: есть --repair, --finish и --status;
+#   current  - версия 3 и новее: есть --repair, --finish и --status (версия
+#              3, v6.3.0 и старше, не пересобирает модуль, который уже лежит
+#              на диске; номер версии - в _KH_VER);
 #   outdated - заведомо старый: версия 1-2, либо помощник до v5.37.1, который
 #              на --version отвечает кодом 2, пустым stdout и «missing or
 #              unknown mode» в stderr;
 #   absent   - файла нет (серверы до v5.12.0, ARM-пребилт);
 #   broken   - файл есть, но не исполняется или отвечает непонятно.
-_KH_CLASS=""
+_KH_CLASS="" _KH_VER=0
 _kmod_helper_class() {
     local out err rc=0
-    _KH_CLASS=broken
+    _KH_CLASS=broken _KH_VER=0
     if [[ ! -e "$AWG_ENSURE_HELPER" && ! -L "$AWG_ENSURE_HELPER" ]]; then _KH_CLASS=absent; return 0; fi
     [[ -f "$AWG_ENSURE_HELPER" && -x "$AWG_ENSURE_HELPER" ]] || return 0
     out=$(timeout 10 "$AWG_ENSURE_HELPER" --version 2>/dev/null) || rc=$?
     if [[ "$rc" -eq 0 && "$out" =~ ^amneziawg-ensure-module\ ([0-9]+)$ ]]; then
-        if [[ "${BASH_REMATCH[1]}" -ge 3 ]]; then _KH_CLASS=current; else _KH_CLASS=outdated; fi
+        _KH_VER=$((10#${BASH_REMATCH[1]}))
+        if [[ "$_KH_VER" -ge 3 ]]; then _KH_CLASS=current; else _KH_CLASS=outdated; fi
         return 0
     fi
     if [[ "$rc" -eq 2 && -z "$out" ]]; then
@@ -2228,7 +2238,12 @@ _kmod_repair_via_helper() {
         log_warn "Итоговое состояние модуля получить не удалось ($AWG_ENSURE_HELPER --status): перед перезагрузкой проверьте dkms status amneziawg и dpkg --audit сами."
     fi
     case "$mrc" in
-        1) log_error "Модуль ядра amneziawg для $cur не загружен." ;;
+        1) log_error "Модуль ядра amneziawg для $cur не загружен."
+           # Помощник версии 3 пропускает ядро, у которого файл модуля уже
+           # есть, и сборка под чужие заголовки одноимённого ядра остаётся.
+           if [[ "$_KH_VER" -lt 4 && -n "$(find "$KMOD_MODULES_DIR/$cur" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]]; then
+               log_error "Помощник модуля на этом сервере версии ${_KH_VER}: он не пересобирает модуль, который уже лежит на диске. Обновите помощник и пересоберите модуль: sudo bash install_amneziawg.sh --repair-module (как скачать и проверить установщик - ADVANCED.md, раздел kernel-70-backport-adv)."
+           fi ;;
         2) log_error "Модуль ядра в порядке, но сервис awg-quick@awg0 НЕ запустился."
            log_error "Диагностика: systemctl status awg-quick@awg0; journalctl -u awg-quick@awg0 -n 50" ;;
     esac

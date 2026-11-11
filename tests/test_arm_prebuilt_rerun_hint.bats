@@ -160,9 +160,12 @@ _check_text() {
     printf '#!/usr/bin/env bash\nexit 0\n' > "$bin/awg"
     printf '#!/usr/bin/env bash\n[ -z "$KMOD" ] && exit 1\nprintf "%%s\\n" "$KMOD"\n' > "$bin/dpkg-query"
     printf '#!/usr/bin/env bash\n[ "$1" = -r ] && { echo 6.8.0-149-generic; exit 0; }\nexec /bin/uname "$@"\n' > "$bin/uname"
-    chmod +x "$bin"/*
+    # The module helper answers --version with HV (default 4, the current one).
+    printf '#!/usr/bin/env bash\n[ "$1" = --version ] && { echo "amneziawg-ensure-module %s"; exit 0; }\nexit 2\n' "${HV:-4}" > "$T/helper"
+    chmod +x "$bin"/* "$T/helper"
     printf '[Interface]\n[Peer]\n' > "$T/awg/awg0.conf"
     KMOD="${KMOD:-}" AWG_MODULES_DIR="$T/modules" AWG_DKMS_STATE_DIR="$T/nodkms" PATH="$bin:/usr/bin:/bin" \
+    AWG_ENSURE_HELPER="$T/helper" \
     AWG_DIR="$T/awg" CONFIG_FILE="$T/awg/awgsetup_cfg.init" SERVER_CONF_FILE="$T/awg/awg0.conf" \
     bash -c '
         log() { echo "LOG: $*"; }; log_warn() { echo "WARN: $*"; }; log_error() { echo "ERR: $*"; }; log_debug() { :; }
@@ -172,7 +175,7 @@ _check_text() {
         for f in _sanitize_port awg_module_version awg_installed_protocol _awg_generation_from_init _mask_report_secrets awg_prebuilt_needs_rerun awg_prebuilt_rerun_hint; do
             eval "$(awk "/^$f\\(\\) \\{/,/^\\}/" "$2")"
         done
-        for f in _json_utf8_sanitize json_escape json_out _ipopts_guard_report check_server; do
+        for f in _json_utf8_sanitize json_escape json_out _ipopts_guard_report _kmod_helper_class check_server; do
             eval "$(awk "/^$f\\(\\) \\{/,/^\\}/" "$1")"
         done
         check_server
@@ -203,9 +206,17 @@ _check_text() {
         echo ko > "$T/modules/6.8.0-149-generic/updates/dkms/amneziawg.ko.zst"
         KMOD="" run _check_text "$ROOT/$m"
         [[ "$output" == *"manage_amneziawg.sh repair-module"* ]] || { echo "$m: no repair hint: $output"; return 1; }
+        [[ "$output" != *"install_amneziawg"* ]] || { echo "$m: installer named with a current helper: $output"; return 1; }
         [[ "$output" == *"journalctl -u amneziawg-ensure-module -b"* ]] || { echo "$m: no reason hint: $output"; return 1; }
         [[ "$output" != *"userspace"* ]] || { echo "$m: still says userspace: $output"; return 1; }
         [[ "$output" != *"command not found"* ]] || { echo "$m: harness gap: $output"; return 1; }
+        # A version 3 helper (v6.3.0 and older) skips a kernel that has a module
+        # file, so manage repair-module would not rebuild it: the line names the
+        # installer, which deploys the new helper.
+        HV=3 KMOD="" run _check_text "$ROOT/$m"
+        [[ "$output" == *"WARN:"*"sudo bash install_amneziawg"*"--repair-module"* ]] || { echo "$m v3: no installer: $output"; return 1; }
+        [[ "$output" != *"manage_amneziawg.sh repair-module"* ]] || { echo "$m v3: manage named: $output"; return 1; }
+        [[ "$output" == *"journalctl -u amneziawg-ensure-module -b"* ]] || { echo "$m v3: no reason hint: $output"; return 1; }
         # an empty file is not a module (the helper's has_module says the same)
         : > "$T/modules/6.8.0-149-generic/updates/dkms/amneziawg.ko.zst"
         KMOD="" run _check_text "$ROOT/$m"

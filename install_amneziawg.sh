@@ -70,7 +70,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="145f43dfb2153685686c653dd6b446bf76ec2a3a8c1af9773bd3fdee3f0bee9d"
-MANAGE_SCRIPT_SHA256="d13cfa69f341d5611dac516f3bc3138e91ac02e2817655ba952905919e13c84d"
+MANAGE_SCRIPT_SHA256="b2f1a94dab7379cbb56679ff8528bfaa213e4ca6359c30664dd1a737f8c4e79e"
 
 # AmneziaWG 2.0 пин (H0, 31 jul 2026). Upstream влил AmneziaWG 3.0 в default-ветку
 # amneziawg-linux-kernel-module, и PPA переключился на 3.0. Тогда на ядрах старее
@@ -7474,7 +7474,10 @@ _awg_deploy_ensure_helper() {
 #                boot kernel, source, packages); see mode_status.
 #   --revert, --enable - support: undo the source fix and keep it off, or
 #                allow it again.
-#   --version  - prints "amneziawg-ensure-module 3" (3: --status added).
+#   --version  - prints "amneziawg-ensure-module 4" (3: --status added;
+#                4: --repair and the boot path rebuild a module that is on
+#                disk but does not load; manage sends the owner of an older
+#                helper to the installer).
 #
 # Kernels: /lib/modules/<ver>/build (installed headers). uname -r alone is
 # not enough in the apt hook: it returns the OLD running kernel while the
@@ -7504,7 +7507,7 @@ export PATH
 MODE="${1:-}"
 case "$MODE" in
     --hook|--systemd|--repair|--prepare|--prepare-locked|--finish|--status|--revert|--enable) ;;
-    --version) echo "amneziawg-ensure-module 3"; exit 0 ;;
+    --version) echo "amneziawg-ensure-module 4"; exit 0 ;;
     --help|-h) echo "Usage: $0 --hook | --systemd | --repair | --prepare | --finish | --status | --revert | --enable | --version"; exit 0 ;;
     *) echo "amneziawg-ensure-module: missing or unknown mode (see --help)" >&2; exit 2 ;;
 esac

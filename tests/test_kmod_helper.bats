@@ -1462,7 +1462,7 @@ exec \"$rt\" \"\$@\""
 
 @test "helper: --version identifies the new helper, an unknown mode is exit 2" {
     run "$H" --version
-    [ "$status" -eq 0 ]; [ "$output" = "amneziawg-ensure-module 3" ]
+    [ "$status" -eq 0 ]; [ "$output" = "amneziawg-ensure-module 4" ]
     run "$H" --bogus
     [ "$status" -eq 2 ]
 }
