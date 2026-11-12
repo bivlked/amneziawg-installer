@@ -279,6 +279,9 @@ ipset swap ru_tmp ru
 ipset destroy ru_tmp
 
 # 3) Таблица + правило: помеченный трафик уходит на выход через awg1 (по номеру таблицы, rt_tables не нужен).
+#    Маршрут unreachable с большой метрикой - запасной: перезапуск awg-quick@awg1 удаляет маршрут через awg1,
+#    и без запасного помеченный трафик ушёл бы по основной таблице напрямую с адреса этого сервера.
+ip route replace unreachable default metric 65535 table "$TABLE_ID"
 ip route replace default dev "$AWG1_IF" table "$TABLE_ID"
 ip rule del fwmark "$FWMARK" table "$TABLE_ID" 2>/dev/null || true
 ip rule add fwmark "$FWMARK" table "$TABLE_ID" priority "$RULE_PRIO"
@@ -343,7 +346,7 @@ bash /root/awg/awg-routing.sh
 0. Берёт блокировку `/root/awg/awg-routing.lock`. Если скрипт уже работает (например, юнит `awg-routing` доканчивает запуск после перезагрузки), второй экземпляр ждёт до 5 минут и отрабатывает следом, а не ломается на полпути.
 1. Скачивает список российских сетей во временный файл и подменяет рабочий только при успешной загрузке. Источники по очереди: ipdeny (актуальный список), при его недоступности - снимок из этого репозитория (`cascade/ru.zone`), затем уже лежащий локальный список. Сорванная закачка не обнулит уже загруженный список.
 2. Загружает сети в `ipset` через временный набор, добавляет туда же ваши `EXTRA_RU_NETS` и атомарно подменяет рабочий (`ipset swap`) - без окна, когда набор пустой.
-3. Создаёт таблицу маршрутизации для помеченного трафика и правило `ip rule` по метке. Таблица задаётся номером, файл `rt_tables` не нужен.
+3. Создаёт таблицу маршрутизации для помеченного трафика и правило `ip rule` по метке. Таблица задаётся номером, файл `rt_tables` не нужен. В ту же таблицу кладётся запасной маршрут `unreachable`: пока `awg1` перезапускается, помеченный трафик отбрасывается, а не уходит напрямую.
 4. Прокладывает маршрут к самому AWG1 вне туннеля, иначе пакеты к нему закольцуются. Если задан `AWG1_SRC`, туннель к AWG1 переводится на этот адрес (см. [Свои адреса для входа, выхода и туннеля](#own-addresses)).
 5. Метит трафик: к российским сетям - напрямую (`RETURN`), остальное - меткой для ухода в `awg1`.
 6. Добавляет NAT для трафика, уходящего через `awg1`.
@@ -396,6 +399,7 @@ ip rule show | grep fwmark
 
 ip route show table 100
 # default dev awg1 scope link
+# unreachable default metric 65535
 
 ipset list ru | grep "Number of entries"
 # Number of entries: 8600+   (число российских сетей)
@@ -601,7 +605,7 @@ ip route show table 100
 
 Проверка: `awg show awg1` показывает `latest handshake`, `systemctl is-active awg-routing` отвечает `active`, а с клиента `curl -s ifconfig.me` возвращает адрес нового выхода.
 
-Пока скрипт заново применяет правила (у меня это заняло около 10 секунд), зарубежный трафик клиентов идёт напрямую с адреса AWG0. Если это важно, меняйте выход, когда клиенты не активны.
+Пока скрипт заново применяет правила (у меня это заняло около 10 секунд), зарубежные сайты у клиентов не открываются: трафик ждёт туннель и напрямую не уходит. Если это важно, меняйте выход, когда клиенты не активны. В скрипте, поставленном раньше, в блоке `# 3)` файла `awg-routing.sh` может не быть строки с `unreachable`: тогда добавьте её, иначе всё это время зарубежный трафик идёт напрямую с адреса AWG0.
 
 Если хостер просто выдал выходу новый адрес, а сам сервер цел, новый сервер не нужен: поменяйте адрес в строке `Endpoint` файла `awg1.conf` и выполните пункты 3 и 4.
 
@@ -651,6 +655,7 @@ iptables -t nat -D POSTROUTING -s "$CLIENT_SUBNET" -o "$AWG1_IF" -j MASQUERADE
 [ -z "$AWG1_SRC" ] || iptables -t nat -D POSTROUTING -s "$AWG1_SRC" -d "$AWG1_ENDPOINT" -j ACCEPT
 ip rule del fwmark "$FWMARK" table "$TABLE_ID" 2>/dev/null
 ip route del default dev "$AWG1_IF" table "$TABLE_ID" 2>/dev/null
+ip route del unreachable default metric 65535 table "$TABLE_ID" 2>/dev/null
 ip route del "$AWG1_ENDPOINT" 2>/dev/null
 ipset destroy ru_tmp 2>/dev/null
 ipset destroy ru
