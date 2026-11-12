@@ -281,6 +281,10 @@ ipset swap ru_tmp ru
 ipset destroy ru_tmp
 
 # 3) Table + rule: marked traffic leaves via awg1 (by table number, no rt_tables needed).
+#    The unreachable route with a high metric is a fallback: restarting awg-quick@awg1 removes the route
+#    through awg1, and without the fallback marked traffic would take the main table and leave directly
+#    from this server's address.
+ip route replace unreachable default metric 65535 table "$TABLE_ID"
 ip route replace default dev "$AWG1_IF" table "$TABLE_ID"
 ip rule del fwmark "$FWMARK" table "$TABLE_ID" 2>/dev/null || true
 ip rule add fwmark "$FWMARK" table "$TABLE_ID" priority "$RULE_PRIO"
@@ -345,7 +349,7 @@ What the script does, step by step:
 0. Takes a lock on `/root/awg/awg-routing.lock`. If the script is already running (for example the `awg-routing` unit is finishing its boot run), the second instance waits up to 5 minutes and runs afterwards instead of breaking halfway through.
 1. Downloads the list of Russian networks into a temp file and swaps the working file only on a successful download. Sources are tried in order: ipdeny (the current list), then the snapshot bundled in this repository (`cascade/ru.zone`) if ipdeny is unreachable, then whatever local list is already there. A failed download will not wipe the already-loaded list.
 2. Loads the networks into `ipset` through a temp set, adds your `EXTRA_RU_NETS` to the same set, and atomically swaps the working one (`ipset swap`) - with no window where the set is empty.
-3. Creates a routing table for marked traffic and an `ip rule` by mark. The table is addressed by number, so no `rt_tables` file is needed.
+3. Creates a routing table for marked traffic and an `ip rule` by mark. The table is addressed by number, so no `rt_tables` file is needed. The same table gets a fallback `unreachable` route: while `awg1` restarts, marked traffic is dropped instead of going out directly.
 4. Lays a route to AWG1 itself outside the tunnel, otherwise packets to it would loop. With `AWG1_SRC` set, it moves the tunnel to AWG1 onto that address (see [Own addresses for entry, exit and tunnel](#own-addresses)).
 5. Marks traffic: to Russian networks - direct (`RETURN`), the rest - marked to leave via `awg1`.
 6. Adds NAT for traffic leaving via `awg1`.
@@ -385,7 +389,7 @@ systemctl daemon-reload
 systemctl enable awg-quick@awg1 awg-routing
 ```
 
-`Requires` here is hard: if `awg1` fails to come up, the routing script will not run (clients still connect to `awg0`, but without the split exit - all traffic goes direct). After a reboot the tunnels and routing come up on their own, nothing needs to be touched by hand.
+`Requires` here is hard: if `awg1` fails to come up at boot, the routing script will not run (clients still connect to `awg0`, but without the split exit - all traffic goes direct). If `awg1` fails to come up after a restart of a cascade that was already running, the rules from the previous run stay, and foreign sites do not open for the clients until the tunnel works. After a reboot the tunnels and routing come up on their own, nothing needs to be touched by hand.
 
 <a id="verify"></a>
 ## Verification
@@ -398,6 +402,7 @@ ip rule show | grep fwmark
 
 ip route show table 100
 # default dev awg1 scope link
+# unreachable default metric 65535
 
 ipset list ru | grep "Number of entries"
 # Number of entries: 8600+   (number of Russian networks)
@@ -591,7 +596,7 @@ The fix is a new exit server. The clients are not affected: they connect to AWG0
 
 1. Set up the new server as AWG1 with [step 1](#step1), using the same `--subnet` as the old exit (it has to differ from the AWG0 subnet), and issue a client for the entry on it, as in [step 2](#step2): `bash /root/awg/manage_amneziawg.sh add ru_host`.
 2. On AWG0, replace `/etc/amnezia/amneziawg/awg1.conf` with the new `ru_host.conf`, as in [step 3](#step3): with `Table = off`, without the `DNS` line, then `chmod 600 /etc/amnezia/amneziawg/awg1.conf`.
-3. In `/root/awg/awg-routing.sh`, set `AWG1_ENDPOINT` to the address of the new server. If `AWG1_SRC` is set, first remove the rule of the old address: `iptables -t nat -D POSTROUTING -s <AWG1_SRC> -d <old AWG1_ENDPOINT> -j ACCEPT`.
+3. In `/root/awg/awg-routing.sh`, set `AWG1_ENDPOINT` to the address of the new server. If `AWG1_SRC` is set, first remove the rule of the old address: `iptables -t nat -D POSTROUTING -s <AWG1_SRC> -d <old AWG1_ENDPOINT> -j ACCEPT`. Check the `# 3)` block too: a script set up earlier may have no `ip route replace unreachable default metric 65535 table "$TABLE_ID"` line. Without it, during the restart in item 4 the clients' foreign traffic goes out directly from the AWG0 address, so add it before `ip route replace default dev ...` and run it once by hand before item 4: `ip route replace unreachable default metric 65535 table 100` (your own number if you changed `TABLE_ID`).
 4. Restart the tunnel and remove the route to the old exit:
 
    ```bash
@@ -603,7 +608,7 @@ The `awg-routing` unit from [step 5](#step5) is bound to `awg1` and restarts tog
 
 Check: `awg show awg1` shows a `latest handshake`, `systemctl is-active awg-routing` answers `active`, and `curl -s ifconfig.me` on a client returns the address of the new exit.
 
-While the script applies the rules again (about 10 seconds in my test), the clients' foreign traffic goes out directly from the AWG0 address. If that matters, change the exit when the clients are idle.
+While the script applies the rules again (about 10 seconds in my test), foreign sites do not open for the clients: the traffic is dropped and does not go out directly. If that matters, change the exit when the clients are idle.
 
 If the hoster just gave the exit a new address and the server itself is fine, you do not need a new server: change the address in the `Endpoint` line of `awg1.conf` and do items 3 and 4.
 
@@ -653,6 +658,7 @@ iptables -t nat -D POSTROUTING -s "$CLIENT_SUBNET" -o "$AWG1_IF" -j MASQUERADE
 [ -z "$AWG1_SRC" ] || iptables -t nat -D POSTROUTING -s "$AWG1_SRC" -d "$AWG1_ENDPOINT" -j ACCEPT
 ip rule del fwmark "$FWMARK" table "$TABLE_ID" 2>/dev/null
 ip route del default dev "$AWG1_IF" table "$TABLE_ID" 2>/dev/null
+ip route del unreachable default metric 65535 table "$TABLE_ID" 2>/dev/null
 ip route del "$AWG1_ENDPOINT" 2>/dev/null
 ipset destroy ru_tmp 2>/dev/null
 ipset destroy ru
