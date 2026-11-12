@@ -593,7 +593,7 @@ ip route show table 100
 
 1. Поставьте новый сервер как AWG1 по [шагу 1](#step1), с той же `--subnet`, что у прежнего выхода (она должна отличаться от подсети AWG0), и выпустите на нём клиента для входа, как в [шаге 2](#step2): `bash /root/awg/manage_amneziawg.sh add ru_host`.
 2. На AWG0 замените `/etc/amnezia/amneziawg/awg1.conf` новым `ru_host.conf`, как в [шаге 3](#step3): с `Table = off`, без строки `DNS`, затем `chmod 600 /etc/amnezia/amneziawg/awg1.conf`.
-3. В `/root/awg/awg-routing.sh` впишите в `AWG1_ENDPOINT` адрес нового сервера. Если задан `AWG1_SRC`, сначала снимите правило прежнего адреса: `iptables -t nat -D POSTROUTING -s <AWG1_SRC> -d <прежний AWG1_ENDPOINT> -j ACCEPT`. Проверьте и блок `# 3)`: в скрипте, поставленном раньше, может не быть строки `ip route replace unreachable default metric 65535 table "$TABLE_ID"`. Без неё во время перезапуска из пункта 4 зарубежный трафик клиентов уходит напрямую с адреса AWG0, поэтому добавьте её перед `ip route replace default dev ...`.
+3. В `/root/awg/awg-routing.sh` впишите в `AWG1_ENDPOINT` адрес нового сервера. Если задан `AWG1_SRC`, сначала снимите правило прежнего адреса: `iptables -t nat -D POSTROUTING -s <AWG1_SRC> -d <прежний AWG1_ENDPOINT> -j ACCEPT`. Проверьте и блок `# 3)`: в скрипте, поставленном раньше, может не быть строки `ip route replace unreachable default metric 65535 table "$TABLE_ID"`. Без неё во время перезапуска из пункта 4 зарубежный трафик клиентов уходит напрямую с адреса AWG0, поэтому добавьте её перед `ip route replace default dev ...` и один раз выполните вручную, до пункта 4: `ip route replace unreachable default metric 65535 table 100` (с вашим номером, если меняли `TABLE_ID`).
 4. Перезапустите туннель и уберите маршрут к прежнему выходу:
 
    ```bash
