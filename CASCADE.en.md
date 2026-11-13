@@ -118,12 +118,12 @@ Jc = ... (obfuscation parameters; a 3.1 server adds HeaderProtectionKey and Cont
 
 [Peer]
 PublicKey = ...
-Endpoint = AWG1_PUBLIC_IP:39743
+Endpoint = AWG1_PUBLIC_IP:AWG1_PORT
 AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 33
 ```
 
-Note the `Endpoint` (AWG1 public IP) - you will need it in the routing script.
+The port in `Endpoint` is the one the final install report of AWG1 named: since v6.3.0 a new install without `--port` takes a random port, and servers installed earlier without it listen on 39743. Note the AWG1 public IP from `Endpoint`: you will need it in the routing script.
 
 <a id="step3"></a>
 ## Step 3. AWG0 (entry): the tunnel to the exit
@@ -140,7 +140,7 @@ Jc = ... (obfuscation parameters; a 3.1 server adds HeaderProtectionKey and Cont
 
 [Peer]
 PublicKey = ...
-Endpoint = AWG1_PUBLIC_IP:39743
+Endpoint = AWG1_PUBLIC_IP:AWG1_PORT
 AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 33
 ```
