@@ -3534,8 +3534,8 @@ _port_shown() {
 # old port back.
 _server_port_drift_text() {
     if (( _SRV_PORT_NOLINE )); then
-        printf '%s has no ListenPort line: the server listens on a random port that changes on every start. The check uses the port from %s.' \
-            "$SERVER_CONF_FILE" "$CONFIG_FILE"
+        printf '%s has no ListenPort line: the server listens on a random port that changes on every start.' "$SERVER_CONF_FILE"
+        (( _SRV_PORT > 0 )) && printf ' The check uses the port from %s.' "$CONFIG_FILE"
         return 0
     fi
     (( _SRV_PORT_MISMATCH )) || return 0
@@ -3658,8 +3658,11 @@ change_server_port() {
             return 1
         fi
     fi
-    # The key in any case (I), the way awg and _port_read_listen read it.
+    # The key in any case (I), the way awg and _port_read_listen read it. The port
+    # is read back after the write: a line the reader sees but sed does not match
+    # (say 'Listen Port = N') would otherwise stay on the old port silently.
     if ! _txn_write_file "$SERVER_CONF_FILE" sed -E "s/^([[:space:]]*ListenPort[[:space:]]*=[[:space:]]*)[0-9]+/\1${new}/I" \
+        || [[ "$(_sanitize_port "$(_port_read_listen)")" != "$new" ]] \
         || ! _txn_set_init_key AWG_PORT "$new" || ! systemctl restart awg-quick@awg0; then
         log_error "Could not switch to ${new}/udp, putting ${old}/udp back."
         rb=0

@@ -489,3 +489,38 @@ _port_lowercase_key() {
     require_flock
     each_manage _port_lowercase_key
 }
+
+# A line the reader takes for ListenPort but the rewrite does not match: the
+# command must refuse and put everything back, not report a change that did not
+# happen.
+_port_unrewritable_line() {
+    sed -i 's/^ListenPort = /Listen Port = /' "$MGMT_DIR/awg/awg0.conf"
+    local conf_before init_before
+    conf_before=$(cat "$MGMT_DIR/awg/awg0.conf"); init_before=$(cat "$MGMT_DIR/awg/awgsetup_cfg.init")
+    export STUB_LISTEN=39743
+    manage "$1" port 23456
+    [ "$status" -ne 0 ] || { echo "$1: a ListenPort line that was not rewritten reported success"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awg0.conf")" = "$conf_before" ] || { echo "$1: awg0.conf not restored"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/awgsetup_cfg.init")" = "$init_before" ] || { echo "$1: init changed"; return 1; }
+    [[ "$(calls)" != *"ufw delete allow 39743/udp"* ]] || { echo "$1: the rule of the port in use was removed: $(calls)"; return 1; }
+}
+@test "port refuses and rolls back when the ListenPort line cannot be rewritten, both twins" {
+    require_flock
+    each_manage _port_unrewritable_line
+}
+
+# No ListenPort line and no init port: the note must not claim a check by the
+# init port that did not happen.
+_check_noline_noinit() {
+    sed -i '/^ListenPort/d' "$MGMT_DIR/awg/awg0.conf"
+    sed -i '/^export AWG_PORT=/d' "$MGMT_DIR/awg/awgsetup_cfg.init"
+    export STUB_LISTEN=39743 STUB_UFW_HAS=39743
+    manage "$1" check
+    local all="$output$stderr" claim
+    if ru "$1"; then claim="Проверка идёт по порту из"; else claim="The check uses the port from"; fi
+    [[ "$all" == *"$(noline_text "$1")"* ]] || { echo "$1: the missing line is not named: $all"; return 1; }
+    [[ "$all" != *"$claim"* ]] || { echo "$1: claims a check by an init port that does not exist: $all"; return 1; }
+}
+@test "check: without ListenPort and without an init port the note does not claim a check by the init, both twins" {
+    each_manage _check_noline_noinit
+}

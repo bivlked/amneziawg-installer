@@ -3487,8 +3487,8 @@ _port_shown() {
 # серверу старый порт.
 _server_port_drift_text() {
     if (( _SRV_PORT_NOLINE )); then
-        printf 'В %s нет строки ListenPort: сервер слушает случайный порт, который меняется при каждом запуске. Проверка идёт по порту из %s.' \
-            "$SERVER_CONF_FILE" "$CONFIG_FILE"
+        printf 'В %s нет строки ListenPort: сервер слушает случайный порт, который меняется при каждом запуске.' "$SERVER_CONF_FILE"
+        (( _SRV_PORT > 0 )) && printf ' Проверка идёт по порту из %s.' "$CONFIG_FILE"
         return 0
     fi
     (( _SRV_PORT_MISMATCH )) || return 0
@@ -3608,8 +3608,11 @@ change_server_port() {
             return 1
         fi
     fi
-    # Ключ без учёта регистра (I), как его читают awg и _port_read_listen.
+    # Ключ без учёта регистра (I), как его читают awg и _port_read_listen. После
+    # записи порт перечитывается: строку, которую чтение видит, а sed не узнал
+    # (например, 'Listen Port = N'), иначе молча оставили бы на старом порту.
     if ! _txn_write_file "$SERVER_CONF_FILE" sed -E "s/^([[:space:]]*ListenPort[[:space:]]*=[[:space:]]*)[0-9]+/\1${new}/I" \
+        || [[ "$(_sanitize_port "$(_port_read_listen)")" != "$new" ]] \
         || ! _txn_set_init_key AWG_PORT "$new" || ! systemctl restart awg-quick@awg0; then
         log_error "Не удалось перейти на ${new}/udp, возвращаю ${old}/udp."
         rb=0
