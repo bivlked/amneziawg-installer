@@ -43,7 +43,7 @@ The following are **out of scope**:
 
 Vulnerabilities in upstream AmneziaWG components (kernel module, userspace tools, client apps) should be reported directly to [amnezia-vpn](https://github.com/amnezia-vpn). Scripts are updated as upstream fixes arrive.
 
-A known upstream issue affects every build of the module the scripts install: [amneziawg-linux-kernel-module#233](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/233). `check` and `diagnose` warn when it is reachable without root; the mitigation is in [ADVANCED.en.md](ADVANCED.en.md#userns-module-adv).
+A known upstream issue affects every build of the module the scripts install: [amneziawg-linux-kernel-module#233](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/233). The vendor fixed it on 13 November 2026 in the 3.1 line (module tag `v3.1.20261113-02`). The PPA has no fixed package yet, and the pinned 2.0 source and the ARM packages built from it do not get this fix. `check` and `diagnose` warn when it is reachable without root; the mitigation is in [ADVANCED.en.md](ADVANCED.en.md#userns-module-adv).
 
 ## Disclosure Policy
 
