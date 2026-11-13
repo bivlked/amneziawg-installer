@@ -1770,18 +1770,17 @@ check_server() {
 
     log "Прослушивание порта:"
     safe_load_config "$CONFIG_FILE" 2>/dev/null
-    local port
-    port=$(_sanitize_port "${AWG_PORT:-}")
+    # Порт - ListenPort живого awg0.conf, init только без этой строки
+    # (_server_port_resolve).
+    local port _drift
+    _server_port_resolve
+    port="$_SRV_PORT"
     if [[ "$port" -eq 0 ]]; then
-        if [[ -n "${AWG_PORT:-}" ]]; then
+        if (( _SRV_PORT_BAD )); then
             # В конфиге что-то лежит, но портом это не является: файл повреждён,
             # а не «настройка не задана». Молчать нельзя - для мониторинга это
-            # такая же поломка, как незапущенный сервис. Значение показываю
-            # обрезанным и без управляющих символов: строка там произвольная и
-            # может утащить с собой перевод строки или ESC-последовательность.
-            local _bad_port="${AWG_PORT:0:32}"
-            _bad_port="${_bad_port//[^[:print:]]/?}"
-            log_error " - Порт в конфиге некорректный: '${_bad_port}'."
+            # такая же поломка, как незапущенный сервис.
+            log_error " - Порт в $_SRV_PORT_FILE некорректный: '$(_port_shown "$_SRV_PORT_RAW")'."
             ok=0
         else
             log_warn " - Не удалось определить порт."
@@ -1801,6 +1800,8 @@ check_server() {
             log " - Порт ${port}/udp прослушивается."
         fi
     fi
+    _drift=$(_server_port_drift_text)
+    [[ -z "$_drift" ]] || log_warn " - ${_drift}"
 
     log "Настройки ядра:"
     local fwd
@@ -1888,7 +1889,7 @@ check_server() {
             _c_allowed=true
             log " - Правило UFW для ${port}/udp есть."
         else
-            log_warn " - Правило UFW для ${port}/udp не найдено!"
+            log_warn " - Правило UFW для ${port}/udp не найдено! Открыть: sudo ufw allow ${port}/udp"
         fi
     else
         log_warn " - UFW не установлен."
@@ -2604,9 +2605,11 @@ diagnose_server() {
     safe_load_config "$CONFIG_FILE" 2>/dev/null
     # Порт берётся без дефолта: подставить 39743 и отчитаться по нему значило бы
     # утверждать про порт, которого в конфиге нет. Заодно значение больше не
-    # попадает сырым в regex ниже, где '.*' совпадал с любым правилом.
-    local awg_port
-    awg_port=$(_sanitize_port "${AWG_PORT:-}")
+    # попадает сырым в regex ниже, где '.*' совпадал с любым правилом. Источник -
+    # ListenPort живого awg0.conf, init только без этой строки (_server_port_resolve).
+    local awg_port _drift
+    _server_port_resolve
+    awg_port="$_SRV_PORT"
     if command -v ufw &>/dev/null; then
         local ufw_st
         ufw_st=$(ufw status 2>/dev/null | head -1)
@@ -2615,10 +2618,8 @@ diagnose_server() {
             # терять её из-за неисправного порта нельзя.
             local _ufw_state_txt="UFW active"
             [[ "$ufw_st" == "Status: active" ]] || _ufw_state_txt="UFW не active ($ufw_st)"
-            if [[ -n "${AWG_PORT:-}" ]]; then
-                local _bad_port="${AWG_PORT:0:32}"
-                _bad_port="${_bad_port//[^[:print:]]/?}"
-                _diag_line FAIL "${_ufw_state_txt}; порт в конфиге некорректный ('${_bad_port}'), правило не проверено"
+            if (( _SRV_PORT_BAD )); then
+                _diag_line FAIL "${_ufw_state_txt}; порт в $_SRV_PORT_FILE некорректный ('$(_port_shown "$_SRV_PORT_RAW")'), правило не проверено"
                 fail=$((fail+1))
             else
                 _diag_line WARN "${_ufw_state_txt}; порт в конфиге не найден, правило не проверено"
@@ -2629,6 +2630,7 @@ diagnose_server() {
                 _diag_line OK "UFW active, ${awg_port}/udp ALLOW"; ok=$((ok+1))
             else
                 _diag_line WARN "UFW active, но ${awg_port}/udp не в ALLOW (трафик может не приходить)"
+                echo "        Fix: sudo ufw allow ${awg_port}/udp"
                 warn=$((warn+1))
             fi
         else
@@ -2636,6 +2638,10 @@ diagnose_server() {
         fi
     else
         _diag_line WARN "ufw не установлен"; warn=$((warn+1))
+    fi
+    _drift=$(_server_port_drift_text)
+    if [[ -n "$_drift" ]]; then
+        _diag_line WARN "$_drift"; warn=$((warn+1))
     fi
 
     # 7. Peer count
@@ -3388,14 +3394,66 @@ _txn_set_init_key() {
 
 # manage port <N>: смена UDP-порта работающего сервера одной командой.
 # Новый порт пишется в ListenPort живого awg0.conf и в AWG_PORT init (их читают
-# разные команды: клиенты и vpn:// - awg0.conf, check, diagnose и --uninstall -
-# init). Если ufw установлен, новый порт открывается ДО перезапуска, а старый
+# разные команды: клиенты, vpn://, check и diagnose - awg0.conf, повторный запуск
+# установщика - init, --uninstall - оба). Если ufw установлен, новый порт открывается ДО перезапуска, а старый
 # закрывается ПОСЛЕ, даже при выключенном UFW: иначе включение UFW потом
 # закрыло бы VPN. Затем перевыпускаются все клиенты: порт входит в Endpoint
 # каждого конфига. Сбой перезапуска возвращает оба файла, поднимает сервер на
 # старом порту и снимает правило нового порта, если его добавила эта команда.
+# _port_read_listen: значение ListenPort из awg0.conf без пробелов и без
+# комментария после '#' (awg-quick его отбрасывает). Код 1 - строки ListenPort
+# нет или файла нет; пустое значение при коде 0 - строка есть, но пустая.
 _port_read_listen() {
-    awk -F= '/^[[:space:]]*ListenPort[[:space:]]*=/{gsub(/[[:space:]\r]/,"",$2); print $2; exit}' "$SERVER_CONF_FILE" 2>/dev/null
+    awk -F= '/^[[:space:]]*ListenPort[[:space:]]*=/{v=$2; sub(/#.*/,"",v); gsub(/[[:space:]\r]/,"",v); print v; f=1; exit} END{exit !f}' "$SERVER_CONF_FILE" 2>/dev/null
+}
+# _server_port_resolve: порт сервера для check и diagnose. Источник - ListenPort
+# живого awg0.conf: его слушает сервер и его получают клиенты. AWG_PORT из init
+# берётся, только когда строки ListenPort нет (конфиг ещё не создан или строку
+# удалили). Раньше обе команды брали init, и после смены порта правкой awg0.conf
+# check подтверждал правило UFW старого порта. Битый ListenPort не заменяется
+# портом init: это неисправность самого конфига, и её надо показать.
+# Ждёт загруженный init. Ставит:
+#   _SRV_PORT       число или 0, если порт не определён;
+#   _SRV_PORT_RAW   значение как записано (для текста отказа);
+#   _SRV_PORT_FILE  файл, откуда взят порт;
+#   _SRV_PORT_BAD   1 - значение записано, но портом не является;
+#   _SRV_PORT_INIT  порт init (0 - нет или некорректный), _SRV_PORT_INIT_RAW - как записан.
+_server_port_resolve() {
+    local _live
+    _SRV_PORT_INIT_RAW="${AWG_PORT:-}"
+    _SRV_PORT_INIT=$(_sanitize_port "$_SRV_PORT_INIT_RAW")
+    if _live=$(_port_read_listen); then
+        _SRV_PORT_RAW="$_live"; _SRV_PORT_FILE="$SERVER_CONF_FILE"
+    else
+        _SRV_PORT_RAW="$_SRV_PORT_INIT_RAW"; _SRV_PORT_FILE="$CONFIG_FILE"
+    fi
+    _SRV_PORT=$(_sanitize_port "$_SRV_PORT_RAW")
+    _SRV_PORT_BAD=0
+    # Пустая строка ListenPort - тоже неисправность: такой конфиг сервер поднимет
+    # на случайном порту.
+    if (( _SRV_PORT == 0 )) && [[ -n "$_SRV_PORT_RAW" || "$_SRV_PORT_FILE" == "$SERVER_CONF_FILE" ]]; then
+        _SRV_PORT_BAD=1
+    fi
+}
+# _port_shown <значение>: обрезано до 32 символов, управляющие заменены на '?':
+# строка в конфиге произвольная и может нести перевод строки или ESC.
+_port_shown() {
+    local v="${1:0:32}"
+    printf '%s' "${v//[^[:print:]]/?}"
+}
+# _server_port_drift_text: пусто, если init согласен с ListenPort; иначе строка
+# о расхождении для check и diagnose. Установщик при повторном запуске берёт порт
+# из init, поэтому отставший init вернул бы серверу старый порт.
+_server_port_drift_text() {
+    [[ "$_SRV_PORT_FILE" == "$SERVER_CONF_FILE" ]] && (( _SRV_PORT > 0 )) || return 0
+    if (( _SRV_PORT_INIT > 0 )); then
+        (( _SRV_PORT_INIT != _SRV_PORT )) || return 0
+        printf 'Порт в %s (%s) не совпадает с ListenPort в %s (%s), проверка идёт по %s. Повторный запуск установщика без --port вернул бы порт %s. Записать %s в init: sudo bash %s port %s' \
+            "$CONFIG_FILE" "$_SRV_PORT_INIT" "$SERVER_CONF_FILE" "$_SRV_PORT" "$_SRV_PORT" "$_SRV_PORT_INIT" "$_SRV_PORT" "$0" "$_SRV_PORT"
+    elif [[ -n "$_SRV_PORT_INIT_RAW" ]]; then
+        printf "Порт в %s некорректный ('%s'), проверка идёт по ListenPort %s. Исправить init: sudo bash %s port %s" \
+            "$CONFIG_FILE" "$(_port_shown "$_SRV_PORT_INIT_RAW")" "$_SRV_PORT" "$0" "$_SRV_PORT"
+    fi
 }
 _port_listening() {
     # grep без -q дочитывает вывод: иначе при pipefail писатель ловит SIGPIPE и найденное считается ненайденным.
@@ -3405,6 +3463,46 @@ _port_ufw_has() {
     # ufw show added lists the rules also while UFW is off; status shows them only when on.
     LC_ALL=C ufw show added 2>/dev/null | grep -E "^ufw allow ${1}/udp([[:space:]]|$)" >/dev/null \
         || LC_ALL=C ufw status 2>/dev/null | grep -E "^${1}/udp[[:space:]]+ALLOW" >/dev/null
+}
+# _port_init_lags <порт>: код 0 - init есть, а AWG_PORT в нём другой, битый или
+# отсутствует. Init читается заново: в окружении может лежать значение из другого
+# источника.
+_port_init_lags() {
+    [[ -f "$CONFIG_FILE" ]] || return 1
+    local v
+    v=$(unset AWG_PORT; safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${AWG_PORT:-}")
+    [[ "$(_sanitize_port "$v")" != "$1" ]]
+}
+# _port_sync_init <порт>: ListenPort уже равен порту, init отстал. Пишется только
+# AWG_PORT в init, под той же блокировкой: сервер, UFW и клиенты не трогаются.
+# Клиентов не перевыпускаю сам: после ручной смены порта их могли уже раздать.
+_port_sync_init() {
+    local new="$1" cur
+    _txn_lock || { _JSON_ERR="config locked"; return 1; }
+    cur=$(_port_read_listen)
+    if [[ "$cur" != "$new" ]]; then
+        _txn_unlock
+        _JSON_ERR="ListenPort changed meanwhile"
+        log_error "Пока команда ждала блокировку, ListenPort в $SERVER_CONF_FILE сменился на '$(_port_shown "$cur")'. Ничего не изменено, повторите команду."
+        return 1
+    fi
+    if ! _port_init_lags "$new"; then
+        _txn_unlock
+        log "Сервер уже слушает ${new}/udp, менять нечего."
+        json_out "{\"command\":\"port\",\"ok\":true,\"old\":$new,\"new\":$new,\"changed\":false}"
+        return 0
+    fi
+    if ! _txn_set_init_key AWG_PORT "$new"; then
+        _txn_unlock
+        _JSON_ERR="init write failed"
+        log_error "Не удалось записать AWG_PORT=${new} в $CONFIG_FILE. Ничего не изменено."
+        return 1
+    fi
+    _txn_unlock
+    log "ListenPort в $SERVER_CONF_FILE уже ${new}, теперь и AWG_PORT в $CONFIG_FILE = ${new}. Сервер, UFW и клиенты не тронуты."
+    log "Если клиентам раздавались конфиги со старым портом, перевыпустите их: sudo bash $0 regen"
+    json_out "{\"command\":\"port\",\"ok\":true,\"old\":$new,\"new\":$new,\"changed\":false,\"init_synced\":true}"
+    return 0
 }
 change_server_port() {
     local new="$1" old have_ufw=0 added_rule=0 cname ok=0 fail=0 rb
@@ -3420,6 +3518,9 @@ change_server_port() {
         return 1
     fi
     if [[ "$new" == "$old" ]]; then
+        # Порт меняли правкой awg0.conf, а init остался со старым: это и чинит
+        # команда с текущим портом (её называют check и diagnose).
+        _port_init_lags "$new" && { _port_sync_init "$new"; return; }
         log "Сервер уже слушает ${new}/udp, менять нечего."
         json_out "{\"command\":\"port\",\"ok\":true,\"old\":$old,\"new\":$new,\"changed\":false}"
         return 0
@@ -3757,7 +3858,7 @@ usage() {
     echo "  list [-v] [--json]    Показать список клиентов (--json: машиночитаемый, с client_ipv6)"
     echo "  stats [--json]        Статистика трафика по клиентам"
     echo "  regen [имя ...] [--reset-routes]  Перегенерировать файлы клиента(ов), можно несколько имён"
-    echo "  port <номер>                Сменить UDP-порт сервера (UFW, init, перевыпуск всех клиентов)"
+    echo "  port <номер>                Сменить UDP-порт сервера (UFW, init, перевыпуск всех клиентов); с текущим портом - записать его в init"
     echo "  exit-ip <IPv4|off>          Адрес, с которого трафик клиентов уходит в интернет (клиенты не меняются)"
     echo "  modify <имя> <пар> <зн> Изменить параметр клиента"
     echo "  backup                Создать бэкап"

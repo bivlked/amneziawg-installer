@@ -90,7 +90,7 @@ _run() {
         _JSON_EMITTED=0
         NO_COLOR=1
         CLI_CARRIER=""
-        for f in _json_utf8_sanitize json_escape json_out check_server show_awg_status \
+        for f in _json_utf8_sanitize json_escape json_out _port_read_listen _server_port_resolve _port_shown _server_port_drift_text check_server show_awg_status \
                  _diagnose_carrier_known _diagnose_carrier_list _diag_line _diag_cps_guard diagnose_server; do
             eval "$(awk "/^${f}\\(\\) \\{/,/^\\}/" "$2")"
         done
