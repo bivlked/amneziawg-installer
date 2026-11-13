@@ -119,6 +119,7 @@ _run_check() {
         # warning branch): proves it adds nothing to the JSON on stdout.
         '"$(awk '/^_ipopts_guard_report\(\) \{/,/^\}/' "$src")"'
         '"$(awk '/^_port_read_listen\(\) \{/,/^\}/' "$src")"'
+        '"$(awk '/^_port_init_raw\(\) \{/,/^\}/' "$src")"'
         '"$(awk '/^_server_port_resolve\(\) \{/,/^\}/' "$src")"'
         '"$(awk '/^_port_shown\(\) \{/,/^\}/' "$src")"'
         '"$(awk '/^_server_port_drift_text\(\) \{/,/^\}/' "$src")"'
@@ -193,6 +194,7 @@ _run_check() {
             '"$(awk '/^json_out\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             '"$(awk '/^_ipopts_guard_report\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             '"$(awk '/^_port_read_listen\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
+            '"$(awk '/^_port_init_raw\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             '"$(awk '/^_server_port_resolve\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             '"$(awk '/^_port_shown\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             '"$(awk '/^_server_port_drift_text\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'

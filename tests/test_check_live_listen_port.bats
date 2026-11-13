@@ -133,6 +133,22 @@ ru()            { [[ "$1" != *_en.sh ]]; }
 drift_text() {
     if ru "$1"; then echo "не совпадает с ListenPort"; else echo "does not match ListenPort"; fi
 }
+noline_text() {
+    if ru "$1"; then echo "нет строки ListenPort"; else echo "has no ListenPort line"; fi
+}
+noinit_text() {
+    if ru "$1"; then echo "нет AWG_PORT"; else echo "has no AWG_PORT"; fi
+}
+
+# PATH without any ufw at all: the stub removed and every directory that holds a
+# real ufw left out.
+path_without_ufw() {
+    rm -f "$MGMT_DIR/bin/ufw"
+    local d out="" ds
+    IFS=: read -ra ds <<< "$PATH"
+    for d in "${ds[@]}"; do [[ -x "$d/ufw" ]] || out+="${out:+:}$d"; done
+    printf '%s' "$out"
+}
 
 each_manage() {
     local seen=0 s
@@ -160,6 +176,8 @@ _check_sees_edited_port() {
         || { echo "$1: the live port is not seen as listening: $output"; return 1; }
     printf '%s' "$output" | jq -e '.firewall.port_allowed == false' >/dev/null \
         || { echo "$1: the rule of the old port was taken for the live one: $output"; return 1; }
+    printf '%s' "$output" | jq -e '.port.source == "listen_port" and .port.init_mismatch == true' >/dev/null \
+        || { echo "$1: JSON does not show the source and the mismatch: $output"; return 1; }
     [[ "$stderr" == *"ufw allow 51820/udp"* ]] \
         || { echo "$1: the missing rule has no fix command: $stderr"; return 1; }
     [[ "$stderr" == *"$(drift_text "$1")"* && "$stderr" == *39743* ]] \
@@ -203,7 +221,7 @@ _check_edit_not_applied() {
 # init, whose port would make everything look fine here.
 _check_corrupt_listen() {
     local bad
-    for bad in abc 70000 ""; do
+    for bad in abc 70000 "" "51820=x"; do
         set_listen "$bad"
         export STUB_LISTEN=39743 STUB_UFW_HAS=39743
         manage "$1" check --json
@@ -233,15 +251,17 @@ _check_listen_with_comment() {
     each_manage _check_listen_with_comment
 }
 
-# No ListenPort line at all: the init port is used, as before.
+# No ListenPort line at all: the init port is used, as before, but not silently:
+# such a server listens on a random port.
 _check_no_listen_line() {
     sed -i '/^ListenPort/d' "$MGMT_DIR/awg/awg0.conf"
     export STUB_LISTEN=39743 STUB_UFW_HAS=39743
     manage "$1" check --json
     [ "$status" -eq 0 ] || { echo "$1: check failed ($status): $stderr"; return 1; }
-    printf '%s' "$output" | jq -e '.ok == true and .port.number == 39743 and .firewall.port_allowed == true' >/dev/null \
+    printf '%s' "$output" | jq -e '.ok == true and .port.number == 39743 and .firewall.port_allowed == true and .port.source == "init" and .port.init_mismatch == false' >/dev/null \
         || { echo "$1: without ListenPort the init port is not used: $output"; return 1; }
     [[ "$stderr" != *"$(drift_text "$1")"* ]] || { echo "$1: drift reported with no ListenPort: $stderr"; return 1; }
+    [[ "$stderr" == *"$(noline_text "$1")"* ]] || { echo "$1: a missing ListenPort line is not named: $stderr"; return 1; }
 }
 @test "check: without a ListenPort line the init port is used, both twins" {
     require_jq
@@ -252,7 +272,7 @@ _check_in_sync_no_drift() {
     export STUB_LISTEN=39743 STUB_UFW_HAS=39743
     manage "$1" check --json
     [ "$status" -eq 0 ] || { echo "$1: check failed ($status): $stderr"; return 1; }
-    printf '%s' "$output" | jq -e '.ok == true and .port.number == 39743' >/dev/null \
+    printf '%s' "$output" | jq -e '.ok == true and .port.number == 39743 and .port.source == "listen_port" and .port.init_mismatch == false' >/dev/null \
         || { echo "$1: a healthy server is not green: $output"; return 1; }
     [[ "$stderr" == *39743* ]] || { echo "$1: the port section is not in the log at all: $stderr"; return 1; }
     [[ "$stderr" != *"$(drift_text "$1")"* ]] || { echo "$1: drift reported when the ports agree: $stderr"; return 1; }
@@ -268,7 +288,8 @@ _check_corrupt_init_good_listen() {
     sed -i 's/^export AWG_PORT=.*/export AWG_PORT=abc/' "$MGMT_DIR/awg/awgsetup_cfg.init"
     export STUB_LISTEN=39743 STUB_UFW_HAS=39743
     manage "$1" check --json
-    printf '%s' "$output" | jq -e '.port.number == 39743 and .firewall.port_allowed == true' >/dev/null \
+    [ "$status" -eq 0 ] || { echo "$1: a broken init port next to a good ListenPort failed check ($status): $stderr"; return 1; }
+    printf '%s' "$output" | jq -e '.port.number == 39743 and .firewall.port_allowed == true and .port.init_mismatch == true' >/dev/null \
         || { echo "$1: a broken init port overrode a good ListenPort: $output"; return 1; }
     [[ "$stderr" == *"'abc'"* && "$stderr" == *"port 39743"* ]] \
         || { echo "$1: the broken init port is not named with its fix: $stderr"; return 1; }
@@ -314,11 +335,15 @@ _diag_corrupt_listen() {
 # regen (the clients may already carry it; regen stays the user's call).
 _port_current_syncs_init() {
     set_listen 51820
-    local conf_before; conf_before=$(cat "$MGMT_DIR/awg/awg0.conf")
+    # A client in place: a regen would rewrite or refuse its config.
+    printf '\n[Peer]\n#_Name = alice\nPublicKey = ALICEPUB\nAllowedIPs = 10.9.9.2/32\n' >> "$MGMT_DIR/awg/awg0.conf"
+    printf '[Interface]\nPrivateKey = ALICEKEY\nAddress = 10.9.9.2/32\n[Peer]\nEndpoint = vpn.example.com:39743\n' > "$MGMT_DIR/awg/alice.conf"
+    local conf_before alice_before; conf_before=$(cat "$MGMT_DIR/awg/awg0.conf"); alice_before=$(cat "$MGMT_DIR/awg/alice.conf")
     manage "$1" port 51820 --json
     [ "$status" -eq 0 ] || { echo "$1: port failed ($status): $stderr"; return 1; }
     [ "$(init_port)" = "51820" ] || { echo "$1: init AWG_PORT is '$(init_port)'"; return 1; }
     [ "$(cat "$MGMT_DIR/awg/awg0.conf")" = "$conf_before" ] || { echo "$1: awg0.conf changed"; return 1; }
+    [ "$(cat "$MGMT_DIR/awg/alice.conf")" = "$alice_before" ] || { echo "$1: the client config was regenerated"; return 1; }
     [ -z "$(calls)" ] || { echo "$1: touched the system: $(calls)"; return 1; }
     printf '%s' "$output" | jq -e '.ok == true and .changed == false and .init_synced == true' >/dev/null \
         || { echo "$1: JSON does not say the init was synced: $output"; return 1; }
@@ -343,4 +368,124 @@ _port_current_in_sync_untouched() {
     require_flock
     require_jq
     each_manage _port_current_in_sync_untouched
+}
+
+_port_current_init_without_key() {
+    set_listen 51820
+    sed -i '/^export AWG_PORT=/d' "$MGMT_DIR/awg/awgsetup_cfg.init"
+    manage "$1" port 51820 --json
+    [ "$status" -eq 0 ] || { echo "$1: port failed ($status): $stderr"; return 1; }
+    [ "$(init_port)" = "51820" ] || { echo "$1: AWG_PORT not added: '$(init_port)'"; return 1; }
+    [ -z "$(calls)" ] || { echo "$1: touched the system: $(calls)"; return 1; }
+}
+@test "port <current port> adds AWG_PORT to an init without it, both twins" {
+    require_flock
+    each_manage _port_current_init_without_key
+}
+
+# ---------------------------------------------------------------- reading ListenPort like awg
+
+# awg applies the keys in order, so the last ListenPort wins, and it reads the
+# key in any case.
+_check_listen_last_and_case() {
+    sed -i 's/^ListenPort = .*/ListenPort = 39743\nListenPort = 51820/' "$MGMT_DIR/awg/awg0.conf"
+    export STUB_LISTEN=51820 STUB_UFW_HAS=51820
+    manage "$1" check --json
+    printf '%s' "$output" | jq -e '.port.number == 51820 and .port.listening == true' >/dev/null \
+        || { echo "$1: two ListenPort lines, the first one was taken: $output"; return 1; }
+    sed -i '/^ListenPort/d' "$MGMT_DIR/awg/awg0.conf"
+    sed -i 's/^MTU = 1280$/MTU = 1280\nlistenport = 51820/' "$MGMT_DIR/awg/awg0.conf"
+    manage "$1" check --json
+    printf '%s' "$output" | jq -e '.port.number == 51820 and .port.source == "listen_port"' >/dev/null \
+        || { echo "$1: a lowercase key fell back to the init: $output"; return 1; }
+}
+@test "check: the last ListenPort line counts and the key is read in any case, both twins" {
+    require_jq
+    each_manage _check_listen_last_and_case
+}
+
+_check_init_without_key() {
+    set_listen 51820
+    sed -i '/^export AWG_PORT=/d' "$MGMT_DIR/awg/awgsetup_cfg.init"
+    export STUB_LISTEN=51820 STUB_UFW_HAS=51820
+    manage "$1" check --json
+    [ "$status" -eq 0 ] || { echo "$1: check failed ($status): $stderr"; return 1; }
+    printf '%s' "$output" | jq -e '.port.number == 51820 and .port.init_mismatch == true' >/dev/null \
+        || { echo "$1: an init without AWG_PORT is not a mismatch: $output"; return 1; }
+    [[ "$stderr" == *"$(noinit_text "$1")"* && "$stderr" == *"port 51820"* ]] \
+        || { echo "$1: an init without AWG_PORT is not named with its fix: $stderr"; return 1; }
+}
+@test "check: an init without AWG_PORT next to a good ListenPort is named with its fix, both twins" {
+    require_jq
+    each_manage _check_init_without_key
+}
+
+# AWG_PORT in root's environment is not the init: with the key missing from the
+# file, an environment value equal to ListenPort must not hide the gap.
+_check_init_port_not_from_env() {
+    set_listen 51820
+    sed -i '/^export AWG_PORT=/d' "$MGMT_DIR/awg/awgsetup_cfg.init"
+    export STUB_LISTEN=51820 STUB_UFW_HAS=51820
+    AWG_PORT=51820 manage "$1" check --json
+    printf '%s' "$output" | jq -e '.port.init_mismatch == true' >/dev/null \
+        || { echo "$1: the environment value passed for the init port: $output"; return 1; }
+}
+@test "check: AWG_PORT from the environment does not pass for the init port, both twins" {
+    require_jq
+    each_manage _check_init_port_not_from_env
+}
+
+# Control characters in the init value never reach the terminal raw.
+_check_init_value_scrubbed() {
+    printf 'export AWG_PORT=12\033[31mX\n' > "$MGMT_DIR/awg/init.new"
+    grep -v '^export AWG_PORT=' "$MGMT_DIR/awg/awgsetup_cfg.init" >> "$MGMT_DIR/awg/init.new"
+    mv "$MGMT_DIR/awg/init.new" "$MGMT_DIR/awg/awgsetup_cfg.init"
+    export STUB_LISTEN=39743 STUB_UFW_HAS=39743
+    manage "$1" check --json --no-color
+    [[ "$stderr" == *"'12?[31mX'"* ]] || { echo "$1: the init value is not shown scrubbed: $stderr"; return 1; }
+    [[ "$stderr" != *$'\033[31mX'* ]] || { echo "$1: a raw ESC from the init reached the output"; return 1; }
+}
+@test "check: an init port with control characters is shown scrubbed, both twins" {
+    each_manage _check_init_value_scrubbed
+}
+
+_diag_corrupt_listen_no_ufw() {
+    set_listen abc
+    export STUB_LISTEN=39743
+    PATH=$(path_without_ufw) manage "$1" diagnose
+    local all="$output$stderr"
+    [[ "$all" == *FAIL*awg0.conf*"'abc'"* ]] || { echo "$1: without ufw a corrupt ListenPort is not a FAIL: $all"; return 1; }
+}
+@test "diagnose: without ufw a corrupt ListenPort is still a FAIL, both twins" {
+    each_manage _diag_corrupt_listen_no_ufw
+}
+
+# '08080' is port 8080: port with 8080 must not take it for a change.
+_port_leading_zero() {
+    sed -i 's/^ListenPort = .*/ListenPort = 08080/' "$MGMT_DIR/awg/awg0.conf"
+    sed -i 's/^export AWG_PORT=.*/export AWG_PORT=8080/' "$MGMT_DIR/awg/awgsetup_cfg.init"
+    export STUB_LISTEN=8080
+    manage "$1" port 8080 --json
+    [ "$status" -eq 0 ] || { echo "$1: a leading zero turned the current port into a change ($status): $stderr"; return 1; }
+    printf '%s' "$output" | jq -e '.changed == false' >/dev/null || { echo "$1: $output"; return 1; }
+    [ -z "$(calls)" ] || { echo "$1: touched the system: $(calls)"; return 1; }
+}
+@test "port with the current port written with a leading zero changes nothing, both twins" {
+    require_flock
+    require_jq
+    each_manage _port_leading_zero
+}
+
+# The key in another case: port reads it and rewrites it.
+_port_lowercase_key() {
+    sed -i 's/^ListenPort = /listenport = /' "$MGMT_DIR/awg/awg0.conf"
+    export STUB_LISTEN=39743
+    manage "$1" port 23456
+    [ "$status" -eq 0 ] || { echo "$1: port failed ($status): $stderr"; return 1; }
+    grep -qx 'listenport = 23456' "$MGMT_DIR/awg/awg0.conf" || { echo "$1: the lowercase key was not rewritten: $(grep -i listenport "$MGMT_DIR/awg/awg0.conf")"; return 1; }
+    [ "$(init_port)" = "23456" ] || { echo "$1: init AWG_PORT is '$(init_port)'"; return 1; }
+}
+@test "port rewrites a ListenPort key written in another case, both twins" {
+    require_flock
+    each_manage _port_lowercase_key
 }

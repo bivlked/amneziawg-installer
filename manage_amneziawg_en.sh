@@ -1805,9 +1805,16 @@ check_server() {
     safe_load_config "$CONFIG_FILE" 2>/dev/null
     # The port is ListenPort of the live awg0.conf, the init only without that
     # line (_server_port_resolve).
-    local port _drift
+    local port _drift _c_port_src=null _c_port_mismatch=false
     _server_port_resolve
     port="$_SRV_PORT"
+    # For monitoring in the JSON: where the port came from and whether the init agrees.
+    if [[ "$_SRV_PORT_FILE" == "$SERVER_CONF_FILE" ]]; then
+        _c_port_src='"listen_port"'
+    elif (( port > 0 || _SRV_PORT_BAD )); then
+        _c_port_src='"init"'
+    fi
+    (( _SRV_PORT_MISMATCH )) && _c_port_mismatch=true
     if [[ "$port" -eq 0 ]]; then
         if (( _SRV_PORT_BAD )); then
             # The config holds something that is not a port: the file is
@@ -2011,7 +2018,7 @@ check_server() {
         local _c_clients _jok=false
         _c_clients=$(grep -c '^\[Peer\]' "$SERVER_CONF_FILE" 2>/dev/null) || _c_clients=0
         [[ "$ok" -eq 1 ]] && _jok=true
-        json_out "{\"command\":\"check\",\"ok\":$_jok,\"service\":{\"unit\":\"awg-quick@awg0\",\"active\":$_c_svc_active},\"interface\":{\"name\":\"awg0\",\"present\":$_c_present,\"mtu\":$_c_mtu,\"addresses\":[$_c_addrs]},\"port\":{\"number\":$port,\"proto\":\"udp\",\"listening\":$_c_listen},\"module\":{\"loaded\":$_c_mod,\"version\":$([[ -n "$_c_mod_ver" ]] && printf '"%s"' "$(json_escape "$_c_mod_ver")" || printf 'null')},\"clients\":{\"total\":$_c_clients},\"firewall\":{\"ufw_active\":$_c_ufw_active,\"port_allowed\":$_c_allowed},\"protocol\":$_c_proto_json,\"protocol_error\":$_c_proto_err}"
+        json_out "{\"command\":\"check\",\"ok\":$_jok,\"service\":{\"unit\":\"awg-quick@awg0\",\"active\":$_c_svc_active},\"interface\":{\"name\":\"awg0\",\"present\":$_c_present,\"mtu\":$_c_mtu,\"addresses\":[$_c_addrs]},\"port\":{\"number\":$port,\"proto\":\"udp\",\"listening\":$_c_listen,\"source\":$_c_port_src,\"init_mismatch\":$_c_port_mismatch},\"module\":{\"loaded\":$_c_mod,\"version\":$([[ -n "$_c_mod_ver" ]] && printf '"%s"' "$(json_escape "$_c_mod_ver")" || printf 'null')},\"clients\":{\"total\":$_c_clients},\"firewall\":{\"ufw_active\":$_c_ufw_active,\"port_allowed\":$_c_allowed},\"protocol\":$_c_proto_json,\"protocol_error\":$_c_proto_err}"
     fi
 
     if [[ "$ok" -eq 1 ]]; then
@@ -2679,6 +2686,12 @@ diagnose_server() {
         fi
     else
         _diag_line WARN "ufw is not installed"; warn=$((warn+1))
+        # Without ufw there is no rule check, but a broken port is a finding of its
+        # own, and a missing ufw must not hide it.
+        if (( _SRV_PORT_BAD )); then
+            _diag_line FAIL "the port in $_SRV_PORT_FILE is invalid ('$(_port_shown "$_SRV_PORT_RAW")')"
+            fail=$((fail+1))
+        fi
     fi
     _drift=$(_server_port_drift_text)
     if [[ -n "$_drift" ]]; then
@@ -3441,18 +3454,32 @@ _txn_set_init_key() {
 # manage port <N>: change the UDP port of a running server in one command.
 # The new port goes into ListenPort of the live awg0.conf and AWG_PORT of the
 # init (different commands read them: clients, vpn://, check and diagnose read
-# awg0.conf, a rerun of the installer reads the init, --uninstall reads both). If
-# ufw is installed, the new port is
-# opened BEFORE the restart and the old one closed AFTER it, even with UFW off:
-# otherwise turning UFW on later would close the VPN. Then every client is
-# regenerated: the port is part of the Endpoint in each config. A failed restart
-# puts both files back, brings the server up on the old port and removes the new
-# port's rule if this command added it.
-# _port_read_listen: the ListenPort value of awg0.conf without spaces and without
-# a comment after '#' (awg-quick drops it). Status 1 - no ListenPort line or no
-# file; an empty value with status 0 - the line is there but empty.
+# awg0.conf, a reinstall reads the init, --uninstall reads both). If ufw is
+# installed, the new port is opened BEFORE the restart and the old one closed
+# AFTER it, even with UFW off: otherwise turning UFW on later would close the
+# VPN. Then every client is regenerated: the port is part of the Endpoint in each
+# config. A failed restart puts both files back, brings the server up on the old
+# port and removes the new port's rule if this command added it.
+
+# _port_read_listen: the ListenPort value of awg0.conf the way awg applies it: the
+# key in any case, with several lines the last one, without spaces and without a
+# comment after '#'. A non-zero status - no ListenPort line or no file; an empty
+# value with status 0 - the line is there but empty. Everything after the first
+# '=' stays in the value: '51820=x' is not a port.
 _port_read_listen() {
-    awk -F= '/^[[:space:]]*ListenPort[[:space:]]*=/{v=$2; sub(/#.*/,"",v); gsub(/[[:space:]\r]/,"",v); print v; f=1; exit} END{exit !f}' "$SERVER_CONF_FILE" 2>/dev/null
+    awk '{ l = $0; sub(/\r$/, "", l); k = l
+           if (!sub(/=.*/, "", k)) next
+           gsub(/[[:space:]]/, "", k)
+           if (tolower(k) != "listenport") next
+           v = l; sub(/^[^=]*=/, "", v); sub(/#.*/, "", v); gsub(/[[:space:]]/, "", v)
+           last = v; f = 1 }
+         END { if (f) print last; exit !f }' "$SERVER_CONF_FILE" 2>/dev/null
+}
+# _port_init_raw: AWG_PORT of the init as written, empty - no key or no file. The
+# init is read afresh with AWG_PORT taken out of the environment: otherwise a
+# value from root's environment would pass for the init port.
+_port_init_raw() {
+    (unset AWG_PORT; safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${AWG_PORT:-}")
 }
 # _server_port_resolve: the server port for check and diagnose. The source is
 # ListenPort of the live awg0.conf: the server listens on it and the clients get
@@ -3461,27 +3488,38 @@ _port_read_listen() {
 # the init, and after a port change made by editing awg0.conf check confirmed the
 # UFW rule of the old port. A broken ListenPort is not replaced by the init port:
 # the config itself is faulty, and that has to be shown.
-# Expects the init loaded. Sets:
-#   _SRV_PORT       a number, or 0 when the port is not determined;
-#   _SRV_PORT_RAW   the value as written (for the failure text);
-#   _SRV_PORT_FILE  the file the port came from;
-#   _SRV_PORT_BAD   1 - a value is written but it is not a port;
-#   _SRV_PORT_INIT  the init port (0 - none or invalid), _SRV_PORT_INIT_RAW - as written.
+# Sets:
+#   _SRV_PORT          a number, or 0 when the port is not determined;
+#   _SRV_PORT_RAW      the value as written (for the failure text);
+#   _SRV_PORT_FILE     the file the port came from;
+#   _SRV_PORT_BAD      1 - a value is written but it is not a port;
+#   _SRV_PORT_NOLINE   1 - awg0.conf exists but has no ListenPort line;
+#   _SRV_PORT_INIT     the init port (0 - none or invalid), _SRV_PORT_INIT_RAW - as written;
+#   _SRV_PORT_MISMATCH 1 - the init exists and disagrees with ListenPort.
 _server_port_resolve() {
     local _live
-    _SRV_PORT_INIT_RAW="${AWG_PORT:-}"
+    _SRV_PORT_INIT_RAW=$(_port_init_raw)
     _SRV_PORT_INIT=$(_sanitize_port "$_SRV_PORT_INIT_RAW")
+    _SRV_PORT_NOLINE=0
     if _live=$(_port_read_listen); then
         _SRV_PORT_RAW="$_live"; _SRV_PORT_FILE="$SERVER_CONF_FILE"
+    elif [[ -e "$SERVER_CONF_FILE" && ! ( -f "$SERVER_CONF_FILE" && -r "$SERVER_CONF_FILE" ) ]]; then
+        # awg0.conf is there but cannot be read: a fault, not a reason to take the init.
+        _SRV_PORT_RAW=""; _SRV_PORT_FILE="$SERVER_CONF_FILE"
     else
+        [[ -e "$SERVER_CONF_FILE" ]] && _SRV_PORT_NOLINE=1
         _SRV_PORT_RAW="$_SRV_PORT_INIT_RAW"; _SRV_PORT_FILE="$CONFIG_FILE"
     fi
     _SRV_PORT=$(_sanitize_port "$_SRV_PORT_RAW")
     _SRV_PORT_BAD=0
-    # An empty ListenPort line is a fault too: the server brings such a config up
-    # on a random port.
+    # An empty ListenPort line is a fault too: awg setconf does not accept an empty
+    # port, and the interface does not come up.
     if (( _SRV_PORT == 0 )) && [[ -n "$_SRV_PORT_RAW" || "$_SRV_PORT_FILE" == "$SERVER_CONF_FILE" ]]; then
         _SRV_PORT_BAD=1
+    fi
+    _SRV_PORT_MISMATCH=0
+    if [[ "$_SRV_PORT_FILE" == "$SERVER_CONF_FILE" && -f "$CONFIG_FILE" ]] && (( _SRV_PORT > 0 && _SRV_PORT_INIT != _SRV_PORT )); then
+        _SRV_PORT_MISMATCH=1
     fi
 }
 # _port_shown <value>: cut to 32 characters, control characters replaced with
@@ -3490,19 +3528,26 @@ _port_shown() {
     local v="${1:0:32}"
     printf '%s' "${v//[^[:print:]]/?}"
 }
-# _server_port_drift_text: empty when the init agrees with ListenPort; otherwise
-# a line about the mismatch for check and diagnose. A rerun of the installer takes
-# the port from the init, so an init left behind would give the server its old
-# port back.
+# _server_port_drift_text: empty when the port adds up; otherwise a warning line
+# for check and diagnose. A reinstall (with --force or with the service stopped)
+# takes the port from the init, so an init left behind would give the server its
+# old port back.
 _server_port_drift_text() {
-    [[ "$_SRV_PORT_FILE" == "$SERVER_CONF_FILE" ]] && (( _SRV_PORT > 0 )) || return 0
+    if (( _SRV_PORT_NOLINE )); then
+        printf '%s has no ListenPort line: the server listens on a random port that changes on every start. The check uses the port from %s.' \
+            "$SERVER_CONF_FILE" "$CONFIG_FILE"
+        return 0
+    fi
+    (( _SRV_PORT_MISMATCH )) || return 0
     if (( _SRV_PORT_INIT > 0 )); then
-        (( _SRV_PORT_INIT != _SRV_PORT )) || return 0
-        printf 'The port in %s (%s) does not match ListenPort in %s (%s), the check uses %s. A rerun of the installer without --port would bring port %s back. Write %s into the init: sudo bash %s port %s' \
+        printf 'The port in %s (%s) does not match ListenPort in %s (%s), the check uses %s. A reinstall without --port would bring port %s back. Write %s into the init: sudo bash %s port %s' \
             "$CONFIG_FILE" "$_SRV_PORT_INIT" "$SERVER_CONF_FILE" "$_SRV_PORT" "$_SRV_PORT" "$_SRV_PORT_INIT" "$_SRV_PORT" "$0" "$_SRV_PORT"
     elif [[ -n "$_SRV_PORT_INIT_RAW" ]]; then
-        printf "The port in %s is invalid ('%s'), the check uses ListenPort %s. Fix the init: sudo bash %s port %s" \
-            "$CONFIG_FILE" "$(_port_shown "$_SRV_PORT_INIT_RAW")" "$_SRV_PORT" "$0" "$_SRV_PORT"
+        printf "The port in %s is invalid ('%s'), the check uses ListenPort %s. Write %s into the init: sudo bash %s port %s" \
+            "$CONFIG_FILE" "$(_port_shown "$_SRV_PORT_INIT_RAW")" "$_SRV_PORT" "$_SRV_PORT" "$0" "$_SRV_PORT"
+    else
+        printf '%s has no AWG_PORT, the check uses ListenPort %s. A reinstall without --port would choose a port by itself. Write %s into the init: sudo bash %s port %s' \
+            "$CONFIG_FILE" "$_SRV_PORT" "$_SRV_PORT" "$0" "$_SRV_PORT"
     fi
 }
 _port_listening() {
@@ -3515,13 +3560,10 @@ _port_ufw_has() {
         || LC_ALL=C ufw status 2>/dev/null | grep -E "^${1}/udp[[:space:]]+ALLOW" >/dev/null
 }
 # _port_init_lags <port>: status 0 - the init exists and its AWG_PORT is
-# different, invalid or missing. The init is read afresh: the environment may
-# hold a value from another source.
+# different, invalid or missing.
 _port_init_lags() {
     [[ -f "$CONFIG_FILE" ]] || return 1
-    local v
-    v=$(unset AWG_PORT; safe_load_config "$CONFIG_FILE" >/dev/null 2>&1; printf '%s' "${AWG_PORT:-}")
-    [[ "$(_sanitize_port "$v")" != "$1" ]]
+    [[ "$(_sanitize_port "$(_port_init_raw)")" != "$1" ]]
 }
 # _port_sync_init <port>: ListenPort already equals the port, the init lags
 # behind. Only AWG_PORT in the init is written, under the same lock: the server,
@@ -3531,7 +3573,7 @@ _port_sync_init() {
     local new="$1" cur
     _txn_lock || { _JSON_ERR="config locked"; return 1; }
     cur=$(_port_read_listen)
-    if [[ "$cur" != "$new" ]]; then
+    if [[ "$(_sanitize_port "$cur")" != "$new" ]]; then
         _txn_unlock
         _JSON_ERR="ListenPort changed meanwhile"
         log_error "While the command waited for the lock, ListenPort in $SERVER_CONF_FILE changed to '$(_port_shown "$cur")'. Nothing changed, run the command again."
@@ -3562,10 +3604,13 @@ change_server_port() {
         log_error "Invalid port '${new}': a number from 1 to 65535 without leading zeros is needed."
         return 1
     fi
-    old=$(_port_read_listen)
-    if ! [[ "$old" =~ ^[0-9]+$ ]]; then
+    # The value is brought to a number: '039743' is the same port 39743, and a
+    # string comparison would send the command with the current port into a full
+    # port change.
+    old=$(_sanitize_port "$(_port_read_listen)")
+    if (( old == 0 )); then
         _JSON_ERR="no ListenPort in server config"
-        log_error "No ListenPort found in $SERVER_CONF_FILE."
+        log_error "No valid ListenPort in $SERVER_CONF_FILE."
         return 1
     fi
     if [[ "$new" == "$old" ]]; then
@@ -3587,11 +3632,11 @@ change_server_port() {
     _txn_lock || { _JSON_ERR="config locked"; return 1; }
     # Another command may have changed the port while this one waited for the lock:
     # the old port is read again under it, or the rule of the wrong port would be closed.
-    old=$(_port_read_listen)
-    if ! [[ "$old" =~ ^[0-9]+$ ]]; then
+    old=$(_sanitize_port "$(_port_read_listen)")
+    if (( old == 0 )); then
         _txn_unlock
         _JSON_ERR="no ListenPort in server config"
-        log_error "No ListenPort found in $SERVER_CONF_FILE."
+        log_error "No valid ListenPort in $SERVER_CONF_FILE."
         return 1
     fi
     if [[ "$new" == "$old" ]]; then
@@ -3613,7 +3658,8 @@ change_server_port() {
             return 1
         fi
     fi
-    if ! _txn_write_file "$SERVER_CONF_FILE" sed -E "s/^([[:space:]]*ListenPort[[:space:]]*=[[:space:]]*)[0-9]+/\1${new}/" \
+    # The key in any case (I), the way awg and _port_read_listen read it.
+    if ! _txn_write_file "$SERVER_CONF_FILE" sed -E "s/^([[:space:]]*ListenPort[[:space:]]*=[[:space:]]*)[0-9]+/\1${new}/I" \
         || ! _txn_set_init_key AWG_PORT "$new" || ! systemctl restart awg-quick@awg0; then
         log_error "Could not switch to ${new}/udp, putting ${old}/udp back."
         rb=0
@@ -3914,7 +3960,7 @@ usage() {
     echo "  list [-v] [--json]    List clients (--json: machine-readable, includes client_ipv6)"
     echo "  stats [--json]        Client traffic statistics"
     echo "  regen [name ...] [--reset-routes]  Regenerate client file(s), multiple names allowed"
-    echo "  port <number>               Change the server UDP port (UFW, init, all clients regenerated); with the current port - write it into the init"
+    echo "  port <number>               Change the server UDP port (UFW, init, all clients regenerated); with the current port - fix an init left behind"
     echo "  exit-ip <IPv4|off>          The address client traffic leaves to the internet from (clients unchanged)"
     echo "  modify <name> <p> <v> Modify a client parameter"
     echo "  backup                Create a backup"
