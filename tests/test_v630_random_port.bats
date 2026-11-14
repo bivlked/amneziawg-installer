@@ -165,6 +165,14 @@ _uninstall_ports_cases() {
     [ "$output" = "" ] || { echo "$1: nothing to read gave '$output' (the old code fell back to 39743)"; return 1; }
     uports "$1" $'export AWG_PORT=99999' $'[Interface]\nListenPort = abc'
     [ "$output" = "" ] || { echo "$1: invalid values gave '$output'"; return 1; }
+    # The live port is read the way awg applies it: a comment after '#' dropped,
+    # the last of several lines, the key in any case.
+    uports "$1" - $'[Interface]\nListenPort = 45678   # moved'
+    [ "$output" = "45678" ] || { echo "$1: a commented ListenPort gave '$output'"; return 1; }
+    uports "$1" - $'[Interface]\nListenPort = 45678\nListenPort = 45679'
+    [ "$output" = "45679" ] || { echo "$1: two ListenPort lines gave '$output', want the last"; return 1; }
+    uports "$1" - $'[Interface]\nlistenport = 45678'
+    [ "$output" = "45678" ] || { echo "$1: a lowercase key gave '$output'"; return 1; }
 }
 @test "--uninstall removes the init port, a deferred old port and the live ListenPort, never a guessed 39743, both twins" {
     both _uninstall_ports_cases

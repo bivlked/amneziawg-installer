@@ -453,6 +453,11 @@ mcheck() {
         eval "$(awk "/^json_escape\\(\\) \\{/,/^\\}/" "$2")"
         eval "$(awk "/^json_out\\(\\) \\{/,/^\\}/" "$2")"
         eval "$(awk "/^_conf_jc\\(\\) \\{/,/^\\}/" "$2")"
+        eval "$(awk "/^_port_read_listen\\(\\) \\{/,/^\\}/" "$2")"
+        eval "$(awk "/^_port_init_raw\\(\\) \\{/,/^\\}/" "$2")"
+        eval "$(awk "/^_server_port_resolve\\(\\) \\{/,/^\\}/" "$2")"
+        eval "$(awk "/^_port_shown\\(\\) \\{/,/^\\}/" "$2")"
+        eval "$(awk "/^_server_port_drift_text\\(\\) \\{/,/^\\}/" "$2")"
         eval "$(awk "/^check_server\\(\\) \\{/,/^\\}/" "$2")"
         declare -F _conf_jc check_server >/dev/null || { echo "NO_FUNCTION"; exit 3; }
         check_server

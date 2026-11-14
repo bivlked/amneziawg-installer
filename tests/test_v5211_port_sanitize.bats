@@ -67,11 +67,17 @@ setup() {
 @test "diagnose reads the port without substituting a default first" {
     # Sanitizing "${AWG_PORT:-39743}" would report on a port the config does
     # not hold: the default slips past the validator and looks like a finding.
+    # Since the live ListenPort became the source, check and diagnose read the
+    # port through one resolver, which takes the init value with no default.
     for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
-        run grep -F '_sanitize_port "${AWG_PORT:-39743}"' "$BATS_TEST_DIRNAME/../$f"
-        [ "$status" -ne 0 ] || { echo "$f still sanitizes the default port"; return 1; }
-        run grep -cF '_sanitize_port "${AWG_PORT:-}"' "$BATS_TEST_DIRNAME/../$f"
-        [ "$output" -eq 2 ] || { echo "$f: expected 2 sanitizer calls, found $output"; return 1; }
+        run grep -F '${AWG_PORT:-39743}' "$BATS_TEST_DIRNAME/../$f"
+        [ "$status" -ne 0 ] || { echo "$f still substitutes the default port"; return 1; }
+        run grep -cF "safe_load_config \"\$CONFIG_FILE\" >/dev/null 2>&1; printf '%s' \"\${AWG_PORT:-}\")" "$BATS_TEST_DIRNAME/../$f"
+        [ "$output" -eq 1 ] || { echo "$f: expected _port_init_raw to read the init port once, found $output"; return 1; }
+        run grep -cF '_SRV_PORT_INIT_RAW=$(_port_init_raw)' "$BATS_TEST_DIRNAME/../$f"
+        [ "$output" -eq 1 ] || { echo "$f: the resolver does not take the init port from _port_init_raw ($output)"; return 1; }
+        run grep -cE '^[[:space:]]+_server_port_resolve$' "$BATS_TEST_DIRNAME/../$f"
+        [ "$output" -eq 2 ] || { echo "$f: expected check and diagnose to call the resolver, found $output"; return 1; }
     done
 }
 
@@ -128,24 +134,28 @@ setup() {
 
 @test "check_server calls the sanitizer instead of reading AWG_PORT raw" {
     for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
-        run grep -E 'port=\$\(_sanitize_port "\$\{AWG_PORT:-\}"\)' "$BATS_TEST_DIRNAME/../$f"
-        [ "$status" -eq 0 ] || { echo "$f does not call _sanitize_port"; return 1; }
+        run grep -F '_SRV_PORT=$(_sanitize_port "$_SRV_PORT_RAW")' "$BATS_TEST_DIRNAME/../$f"
+        [ "$status" -eq 0 ] || { echo "$f: the resolver does not sanitize the port"; return 1; }
+        run grep -cF 'port="$_SRV_PORT"' "$BATS_TEST_DIRNAME/../$f"
+        [ "$output" -eq 2 ] || { echo "$f: check and diagnose do not both take the sanitized port ($output)"; return 1; }
         run grep -F 'local port=${AWG_PORT:-0}' "$BATS_TEST_DIRNAME/../$f"
         [ "$status" -ne 0 ] || { echo "$f still reads AWG_PORT raw"; return 1; }
     done
 }
 
 @test "RU/EN parity: the empty-vs-junk branches stay identical" {
-    # The function collapses both cases to 0; the callers tell them apart with
-    # [[ -n "${AWG_PORT:-}" ]], and that decision lives in four places
-    # (check_server and diagnose_server, times two languages). Pinning the
-    # sanitizer body alone would let the branches drift apart unnoticed.
+    # The function collapses both cases to 0; the resolver tells them apart in
+    # _SRV_PORT_BAD, and check_server (once) and diagnose_server (with and
+    # without ufw) branch on it, times two languages. Pinning the sanitizer body
+    # alone would let the branches drift apart unnoticed.
     for f in manage_amneziawg.sh manage_amneziawg_en.sh; do
-        run grep -c 'if \[\[ -n "${AWG_PORT:-}" \]\]; then' "$BATS_TEST_DIRNAME/../$f"
-        [ "$output" -eq 2 ] || { echo "$f: expected 2 empty-vs-junk branches, found $output"; return 1; }
-        # Both branches must scrub the value before printing it.
-        run grep -c '_bad_port="${_bad_port//\[^\[:print:\]\]/?}"' "$BATS_TEST_DIRNAME/../$f"
-        [ "$output" -eq 2 ] || { echo "$f: value not scrubbed in both branches ($output)"; return 1; }
+        run grep -c 'if (( _SRV_PORT_BAD )); then' "$BATS_TEST_DIRNAME/../$f"
+        [ "$output" -eq 3 ] || { echo "$f: expected 3 empty-vs-junk branches, found $output"; return 1; }
+        # Every branch must scrub the value before printing it.
+        run grep -c '_port_shown "$_SRV_PORT_RAW"' "$BATS_TEST_DIRNAME/../$f"
+        [ "$output" -eq 3 ] || { echo "$f: value not scrubbed in every branch ($output)"; return 1; }
+        run grep -c 'printf .%s. "${v//\[^\[:print:\]\]/?}"' "$BATS_TEST_DIRNAME/../$f"
+        [ "$output" -eq 1 ] || { echo "$f: _port_shown does not scrub control characters ($output)"; return 1; }
     done
 }
 

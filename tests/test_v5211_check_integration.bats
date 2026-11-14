@@ -118,6 +118,11 @@ _run_check() {
         # The real CVE-2026-98432 guard report (no helper here, so it takes its
         # warning branch): proves it adds nothing to the JSON on stdout.
         '"$(awk '/^_ipopts_guard_report\(\) \{/,/^\}/' "$src")"'
+        '"$(awk '/^_port_read_listen\(\) \{/,/^\}/' "$src")"'
+        '"$(awk '/^_port_init_raw\(\) \{/,/^\}/' "$src")"'
+        '"$(awk '/^_server_port_resolve\(\) \{/,/^\}/' "$src")"'
+        '"$(awk '/^_port_shown\(\) \{/,/^\}/' "$src")"'
+        '"$(awk '/^_server_port_drift_text\(\) \{/,/^\}/' "$src")"'
         '"$(awk '/^check_server\(\) \{/,/^\}/' "$src")"'
         check_server
     '
@@ -188,6 +193,11 @@ _run_check() {
             '"$(awk '/^json_escape\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             '"$(awk '/^json_out\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             '"$(awk '/^_ipopts_guard_report\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
+            '"$(awk '/^_port_read_listen\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
+            '"$(awk '/^_port_init_raw\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
+            '"$(awk '/^_server_port_resolve\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
+            '"$(awk '/^_port_shown\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
+            '"$(awk '/^_server_port_drift_text\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             '"$(awk '/^check_server\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../manage_amneziawg.sh")"'
             check_server
         '

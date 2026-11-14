@@ -87,6 +87,11 @@ _run_check() {
         eval "$(awk "/^_json_utf8_sanitize\\(\\) \\{/,/^\\}/" "$2")"
         eval "$(awk "/^json_escape\\(\\) \\{/,/^\\}/" "$2")"
         eval "$(awk "/^json_out\\(\\) \\{/,/^\\}/" "$2")"
+        eval "$(awk "/^_port_read_listen\\(\\) \\{/,/^\\}/" "$2")"
+        eval "$(awk "/^_port_init_raw\\(\\) \\{/,/^\\}/" "$2")"
+        eval "$(awk "/^_server_port_resolve\\(\\) \\{/,/^\\}/" "$2")"
+        eval "$(awk "/^_port_shown\\(\\) \\{/,/^\\}/" "$2")"
+        eval "$(awk "/^_server_port_drift_text\\(\\) \\{/,/^\\}/" "$2")"
         eval "$(awk "/^check_server\\(\\) \\{/,/^\\}/" "$2")"
         declare -F check_server >/dev/null || { echo "NO_CHECK_FUNCTION"; exit 7; }
         check_server

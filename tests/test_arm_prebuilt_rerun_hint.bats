@@ -179,7 +179,7 @@ _check_text() {
         for f in _sanitize_port awg_module_version awg_installed_protocol _awg_generation_from_init _mask_report_secrets awg_prebuilt_needs_rerun awg_prebuilt_rerun_hint; do
             eval "$(awk "/^$f\\(\\) \\{/,/^\\}/" "$2")"
         done
-        for f in _json_utf8_sanitize json_escape json_out _ipopts_guard_report _kmod_helper_class _kmod_installer_repair_admits check_server; do
+        for f in _json_utf8_sanitize json_escape json_out _ipopts_guard_report _kmod_helper_class _kmod_installer_repair_admits _port_read_listen _port_init_raw _server_port_resolve _port_shown _server_port_drift_text check_server; do
             eval "$(awk "/^$f\\(\\) \\{/,/^\\}/" "$1")"
         done
         check_server

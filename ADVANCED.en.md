@@ -1144,10 +1144,10 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 * **`modify <name> <param> <value>`:** Modify a client parameter in the `.conf` file. Allowed parameters: DNS, Endpoint, AllowedIPs, PersistentKeepalive. QR code and vpn:// URI are automatically regenerated after modification; the previous copies are removed before the edit, so a file that could not be rebuilt is missing rather than stale.
 * **`backup`:** Create a backup (configs + keys + client expiry data + cron).
 * **`restore [file]`:** Restore from a backup (including expiry data and cron job).
-* **`check` / `status`:** Check server status (service, port, module, the installation's protocol generation 3.1 or 2.0, and the obfuscation parameters).
+* **`check` / `status`:** Check server status (service, port, module, the installation's protocol generation 3.1 or 2.0, and the obfuscation parameters). The port and its UFW rule are checked against `ListenPort` from `awg0.conf`, read the way AmneziaWG itself reads it. If `AWG_PORT` in `awgsetup_cfg.init` differs from it, `check` and `diagnose` warn about it and name the command that fixes the init. In `check --json` these are the fields `port.source` and `port.init_mismatch`.
 * **`show`:** Run `awg show`.
 * **`qr <name> [--vpn]`:** Print the client's QR code right in the terminal, to scan it with a phone without copying a picture off the server. Without the flag - the config QR for the AmneziaWG app, with `--vpn` - the `vpn://` link QR for Amnezia VPN. A 3.1 config QR takes about 90-110 characters in width and 45-55 lines, a `vpn://` link QR about 120 by 60; if the window is smaller, the command warns up front, and then make the terminal font smaller. The code holds the client's private key: show it when nobody can see the screen, and run `clear` after scanning. `--json` is not supported.
-* **`port <number>`:** Change the UDP port of a running server: the new port goes into `ListenPort` of `awg0.conf` and `AWG_PORT` of `awgsetup_cfg.init`, if ufw is installed, the new port is opened in it before the restart and the old one closed after (even with UFW off), then every client is regenerated (the port is part of the `Endpoint`). If the server does not come up on the new port, the command puts the old port and both files back. A client that could not be regenerated is named and the command ends with an error, while the port stays new. The clients need the new configs or QR codes, and a port forward on a router or the host's firewall has to be changed by hand. A busy, invalid or unchanged port changes nothing.
+* **`port <number>`:** Change the UDP port of a running server: the new port goes into `ListenPort` of `awg0.conf` and `AWG_PORT` of `awgsetup_cfg.init`, if ufw is installed, the new port is opened in it before the restart and the old one closed after (even with UFW off), then every client is regenerated (the port is part of the `Endpoint`). If the server does not come up on the new port, the command puts the old port and both files back. A client that could not be regenerated is named and the command ends with an error, while the port stays new. The clients need the new configs or QR codes, and a port forward on a router or the host's firewall has to be changed by hand. A busy or invalid port changes nothing. Neither does the current port, with one exception: if `awgsetup_cfg.init` holds a different port, an invalid one or none (this happens after a manual edit of `awg0.conf`), the command writes the current one there and touches neither the server nor UFW nor the clients.
 * **`exit-ip <IPv4|off>`:** Set the address client traffic leaves to the internet from, or remove it (`off`). Clients do not change, the service restarts. Details - [A separate exit address](#exit-ip-adv).
 * **`restart`:** Restart the AmneziaWG service.
 * **`diagnose [--carrier=NAME]`:** Self-troubleshooting: checks the kernel module, sysctl and UFW; with `--carrier=NAME` it compares AWG parameters against a mobile carrier profile. Names: `beeline_msk`, `yota_msk`, `tele2_msk`, `tele2_krasnoyarsk`, `tattelecom`, `megafon_regions`, `tmobile_us` (the last name is historical: it is the Russian T-Mobile, Moscow and region).
@@ -1392,7 +1392,7 @@ If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULL
 
 <details>
   <summary><strong>Q: How do I change the AmneziaWG port after installation?</strong></summary>
-  <b>A:</b> 1. Change <code>ListenPort</code> in <code>/etc/amnezia/amneziawg/awg0.conf</code>. 2. Change <code>AWG_PORT</code> in <code>/root/awg/awgsetup_cfg.init</code>. 3. Update UFW (<code>sudo ufw delete allow &lt;old_port&gt;/udp</code>, <code>sudo ufw allow &lt;new_port&gt;/udp</code>). 4. Restart the service (<code>sudo systemctl restart awg-quick@awg0</code>). 5. <b>Regenerate ALL client configs</b> (<code>sudo bash /root/awg/manage_amneziawg.sh regen</code>) and distribute them.
+  <b>A:</b> The easiest way is one command (v6.3.0 and later): <code>sudo bash /root/awg/manage_amneziawg.sh port &lt;new_port&gt;</code>. It does steps 1-5 by itself, handing the new configs to the clients stays with you. By hand: 1. Change <code>ListenPort</code> in <code>/etc/amnezia/amneziawg/awg0.conf</code>. 2. Change <code>AWG_PORT</code> in <code>/root/awg/awgsetup_cfg.init</code>. 3. Update UFW (<code>sudo ufw delete allow &lt;old_port&gt;/udp</code>, <code>sudo ufw allow &lt;new_port&gt;/udp</code>). 4. Restart the service (<code>sudo systemctl restart awg-quick@awg0</code>). 5. <b>Regenerate ALL client configs</b> (<code>sudo bash /root/awg/manage_amneziawg.sh regen</code>) and distribute them.
 </details>
 
 <details>
@@ -2129,7 +2129,7 @@ If the tunnel does not come up at all on cellular (the handshake never completes
 
 ⚠️ Do not assume the port by default. In our September 2026 measurement on MTS (Moscow) a non-standard UDP port passed freely and the cause was entirely `I1`. Look at the server first, change the port second.
 
-Set the port at install time - `sudo bash install_amneziawg_en.sh --port=443 ...`. On an already running server, change the port without reinstalling:
+Set the port at install time - `sudo bash install_amneziawg_en.sh --port=443 ...`. On an already running server, change the port without reinstalling with `sudo bash /root/awg/manage_amneziawg.sh port 443` (v6.3.0 and later): if ufw is installed, it opens 443 there and closes the old port, then it regenerates every client by itself. By hand:
 
 ```bash
 sudo sed -i 's/^ListenPort = .*/ListenPort = 443/' /etc/amnezia/amneziawg/awg0.conf
@@ -2138,7 +2138,7 @@ sudo ufw allow 443/udp
 sudo systemctl restart awg-quick@awg0
 ```
 
-Then re-issue the client configs (`sudo bash /root/awg/manage_amneziawg.sh regen <name>`) - the new port lands in `Endpoint` - and re-import them on the devices. Port 443 also works on regular networks, so you can move all devices to it.
+After a change by hand, re-issue the client configs (`sudo bash /root/awg/manage_amneziawg.sh regen <name>`), the new port lands in `Endpoint`, and re-import them on the devices. Port 443 also works on regular networks, so you can move all devices to it.
 
 > If, on the other hand, the tunnel comes up but some sites (e.g. YouTube) do not open while the VPN is connected, the cause is usually not the port but the device's IPv6 going around the tunnel. Since v5.31.0 that applies to profiles issued earlier and to your own network list (`--route-custom`): a full tunnel, the default mode included, takes IPv6 in, so this cause no longer applies to it. See the [IPv6 in IPv4-only mode](#ipv6-tunnel-adv) section for the explanation and fix.
 
