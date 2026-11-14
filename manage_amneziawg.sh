@@ -3457,12 +3457,15 @@ _server_port_resolve() {
     _SRV_PORT_NOLINE=0 _SRV_PORT_ZERO=0
     if _live=$(_port_read_listen) && ! _port_is_random "$_live"; then
         _SRV_PORT_RAW="$_live"; _SRV_PORT_FILE="$SERVER_CONF_FILE"
+    elif _port_is_random "$_live"; then
+        # ListenPort = 0: постоянного порта нет, проверять нечего. Порт init здесь
+        # не подходит: сервер слушает другой, и проверка по init соврала бы.
+        _SRV_PORT_ZERO=1; _SRV_PORT_RAW=""; _SRV_PORT_FILE=""
     elif [[ -e "$SERVER_CONF_FILE" && ! ( -f "$SERVER_CONF_FILE" && -r "$SERVER_CONF_FILE" ) ]]; then
         # awg0.conf есть, но не читается: это неисправность, а не повод взять init.
         _SRV_PORT_RAW=""; _SRV_PORT_FILE="$SERVER_CONF_FILE"
     else
-        if _port_is_random "$_live"; then _SRV_PORT_ZERO=1
-        elif [[ -e "$SERVER_CONF_FILE" ]]; then _SRV_PORT_NOLINE=1; fi
+        [[ -e "$SERVER_CONF_FILE" ]] && _SRV_PORT_NOLINE=1
         _SRV_PORT_RAW="$_SRV_PORT_INIT_RAW"; _SRV_PORT_FILE="$CONFIG_FILE"
     fi
     _SRV_PORT=$(_sanitize_port "$_SRV_PORT_RAW")
@@ -3495,7 +3498,8 @@ _port_shown() {
 _server_port_drift_text() {
     if (( _SRV_PORT_NOLINE || _SRV_PORT_ZERO )); then
         if (( _SRV_PORT_ZERO )); then
-            printf 'В %s ListenPort = 0: сервер слушает случайный порт, который меняется при каждом запуске.' "$SERVER_CONF_FILE"
+            printf 'В %s ListenPort = 0: сервер слушает случайный порт, который меняется при каждом запуске, порт и правило UFW не проверены. Закрепить порт: sudo bash %s port <порт>' "$SERVER_CONF_FILE" "$0"
+            return 0
         else
             printf 'В %s нет строки ListenPort: сервер слушает случайный порт, который меняется при каждом запуске.' "$SERVER_CONF_FILE"
         fi

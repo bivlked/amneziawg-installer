@@ -3504,12 +3504,16 @@ _server_port_resolve() {
     _SRV_PORT_NOLINE=0 _SRV_PORT_ZERO=0
     if _live=$(_port_read_listen) && ! _port_is_random "$_live"; then
         _SRV_PORT_RAW="$_live"; _SRV_PORT_FILE="$SERVER_CONF_FILE"
+    elif _port_is_random "$_live"; then
+        # ListenPort = 0: there is no fixed port, nothing to check. The init port
+        # does not fit here: the server listens on another one, and a check by the
+        # init would lie.
+        _SRV_PORT_ZERO=1; _SRV_PORT_RAW=""; _SRV_PORT_FILE=""
     elif [[ -e "$SERVER_CONF_FILE" && ! ( -f "$SERVER_CONF_FILE" && -r "$SERVER_CONF_FILE" ) ]]; then
         # awg0.conf is there but cannot be read: a fault, not a reason to take the init.
         _SRV_PORT_RAW=""; _SRV_PORT_FILE="$SERVER_CONF_FILE"
     else
-        if _port_is_random "$_live"; then _SRV_PORT_ZERO=1
-        elif [[ -e "$SERVER_CONF_FILE" ]]; then _SRV_PORT_NOLINE=1; fi
+        [[ -e "$SERVER_CONF_FILE" ]] && _SRV_PORT_NOLINE=1
         _SRV_PORT_RAW="$_SRV_PORT_INIT_RAW"; _SRV_PORT_FILE="$CONFIG_FILE"
     fi
     _SRV_PORT=$(_sanitize_port "$_SRV_PORT_RAW")
@@ -3542,7 +3546,8 @@ _port_shown() {
 _server_port_drift_text() {
     if (( _SRV_PORT_NOLINE || _SRV_PORT_ZERO )); then
         if (( _SRV_PORT_ZERO )); then
-            printf '%s has ListenPort = 0: the server listens on a random port that changes on every start.' "$SERVER_CONF_FILE"
+            printf '%s has ListenPort = 0: the server listens on a random port that changes on every start, the port and its UFW rule are not checked. Fix the port: sudo bash %s port <port>' "$SERVER_CONF_FILE" "$0"
+            return 0
         else
             printf '%s has no ListenPort line: the server listens on a random port that changes on every start.' "$SERVER_CONF_FILE"
         fi

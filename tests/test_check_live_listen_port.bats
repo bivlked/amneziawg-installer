@@ -527,8 +527,9 @@ _check_noline_noinit() {
 
 # ---------------------------------------------------------------- ListenPort = 0
 
-# 'ListenPort = 0' is a valid setting: awg takes a random port, as with no line.
-# Not a corrupt config: check and diagnose treat it like a missing line.
+# 'ListenPort = 0' is a valid setting: awg takes a random port. Not a corrupt
+# config, and not a reason to check the init port either: the server listens on
+# some other port (45678 here), so a check by the init would report it down.
 zero_text() {
     if ru "$1"; then echo "ListenPort = 0: сервер слушает случайный порт"; else echo "ListenPort = 0: the server listens on a random port"; fi
 }
@@ -536,12 +537,14 @@ _check_listen_zero() {
     local z
     for z in 0 00; do
         set_listen "$z"
-        export STUB_LISTEN=39743 STUB_UFW_HAS=39743
+        export STUB_LISTEN=45678 STUB_UFW_HAS=39743
         manage "$1" check --json
         [ "$status" -eq 0 ] || { echo "$1 [$z]: check failed ($status): $stderr"; return 1; }
-        printf '%s' "$output" | jq -e '.ok == true and .port.number == 39743 and .port.source == "init" and .port.init_mismatch == false' >/dev/null \
-            || { echo "$1 [$z]: ListenPort = 0 is not handled like a missing line: $output"; return 1; }
-        [[ "$stderr" == *"$(zero_text "$1")"* ]] || { echo "$1 [$z]: the random port is not named: $stderr"; return 1; }
+        printf '%s' "$output" | jq -e '.ok == true and .port.number == 0 and .port.source == null and .port.init_mismatch == false' >/dev/null \
+            || { echo "$1 [$z]: ListenPort = 0 is checked by some port: $output"; return 1; }
+        [[ "$stderr" == *"$(zero_text "$1")"* && "$stderr" == *"port <"* ]] \
+            || { echo "$1 [$z]: the random port is not named with its fix: $stderr"; return 1; }
+        [[ "$stderr" != *39743* ]] || { echo "$1 [$z]: the init port is used for a random-port server: $stderr"; return 1; }
         [[ "$stderr" != *"$(noline_text "$1")"* ]] || { echo "$1 [$z]: claims there is no ListenPort line: $stderr"; return 1; }
     done
 }
@@ -552,10 +555,11 @@ _check_listen_zero() {
 
 _diag_listen_zero() {
     set_listen 0
-    export STUB_LISTEN=39743 STUB_UFW_HAS=39743
+    export STUB_LISTEN=45678 STUB_UFW_HAS=39743
     manage "$1" diagnose
     local all="$output$stderr"
     [[ "$all" != *FAIL*awg0.conf* ]] || { echo "$1: ListenPort = 0 is a FAIL: $all"; return 1; }
+    [[ "$all" != *"39743/udp"* ]] || { echo "$1: the init port is used for a random-port server: $all"; return 1; }
     [[ "$all" == *"$(zero_text "$1")"* ]] || { echo "$1: the random port is not named: $all"; return 1; }
 }
 @test "diagnose: ListenPort = 0 is not a FAIL, both twins" {
