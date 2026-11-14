@@ -103,6 +103,7 @@ _run_check() {
         eval "$(awk "/^_port_read_listen\\(\\) \\{/,/^\\}/" "$2")"
         eval "$(awk "/^_port_init_raw\\(\\) \\{/,/^\\}/" "$2")"
         eval "$(awk "/^_server_port_resolve\\(\\) \\{/,/^\\}/" "$2")"
+        eval "$(awk "/^_port_is_random\\(\\) \\{/,/^\\}/" "$2")"
         eval "$(awk "/^_port_shown\\(\\) \\{/,/^\\}/" "$2")"
         eval "$(awk "/^_server_port_drift_text\\(\\) \\{/,/^\\}/" "$2")"
         eval "$(awk "/^check_server\\(\\) \\{/,/^\\}/" "$2")"

@@ -524,3 +524,60 @@ _check_noline_noinit() {
 @test "check: without ListenPort and without an init port the note does not claim a check by the init, both twins" {
     each_manage _check_noline_noinit
 }
+
+# ---------------------------------------------------------------- ListenPort = 0
+
+# 'ListenPort = 0' is a valid setting: awg takes a random port, as with no line.
+# Not a corrupt config: check and diagnose treat it like a missing line.
+zero_text() {
+    if ru "$1"; then echo "ListenPort = 0: сервер слушает случайный порт"; else echo "ListenPort = 0: the server listens on a random port"; fi
+}
+_check_listen_zero() {
+    local z
+    for z in 0 00; do
+        set_listen "$z"
+        export STUB_LISTEN=39743 STUB_UFW_HAS=39743
+        manage "$1" check --json
+        [ "$status" -eq 0 ] || { echo "$1 [$z]: check failed ($status): $stderr"; return 1; }
+        printf '%s' "$output" | jq -e '.ok == true and .port.number == 39743 and .port.source == "init" and .port.init_mismatch == false' >/dev/null \
+            || { echo "$1 [$z]: ListenPort = 0 is not handled like a missing line: $output"; return 1; }
+        [[ "$stderr" == *"$(zero_text "$1")"* ]] || { echo "$1 [$z]: the random port is not named: $stderr"; return 1; }
+        [[ "$stderr" != *"$(noline_text "$1")"* ]] || { echo "$1 [$z]: claims there is no ListenPort line: $stderr"; return 1; }
+    done
+}
+@test "check: ListenPort = 0 is a random port, not a corrupt config, both twins" {
+    require_jq
+    each_manage _check_listen_zero
+}
+
+_diag_listen_zero() {
+    set_listen 0
+    export STUB_LISTEN=39743 STUB_UFW_HAS=39743
+    manage "$1" diagnose
+    local all="$output$stderr"
+    [[ "$all" != *FAIL*awg0.conf* ]] || { echo "$1: ListenPort = 0 is a FAIL: $all"; return 1; }
+    [[ "$all" == *"$(zero_text "$1")"* ]] || { echo "$1: the random port is not named: $all"; return 1; }
+}
+@test "diagnose: ListenPort = 0 is not a FAIL, both twins" {
+    each_manage _diag_listen_zero
+}
+
+# port moves a server off the random port: the line is rewritten, and there is
+# no old rule to remove (no 'ufw delete allow 0/udp').
+_port_from_zero() {
+    set_listen 0
+    export STUB_LISTEN=39743
+    manage "$1" port 23456 --json
+    [ "$status" -eq 0 ] || { echo "$1: port from ListenPort = 0 failed ($status): $stderr"; return 1; }
+    [ "$(listen_port)" = "23456" ] || { echo "$1: ListenPort is '$(listen_port)'"; return 1; }
+    [ "$(init_port)" = "23456" ] || { echo "$1: init AWG_PORT is '$(init_port)'"; return 1; }
+    [[ "$(calls)" == *"ufw allow 23456/udp"* ]] || { echo "$1: the new port was not opened: $(calls)"; return 1; }
+    [[ "$(calls)" != *"delete allow 0/udp"* ]] ||{ echo "$1: tried to remove a rule for port 0: $(calls)"; return 1; }
+    printf '%s' "$output" | jq -e '.ok == true and .changed == true and .old == 0 and .new == 23456' >/dev/null \
+        || { echo "$1: $output"; return 1; }
+}
+@test "port moves a server off ListenPort = 0 without touching a rule for port 0, both twins" {
+    require_flock
+    require_jq
+    each_manage _port_from_zero
+}

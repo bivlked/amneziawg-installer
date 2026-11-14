@@ -3447,20 +3447,22 @@ _port_init_raw() {
 #   _SRV_PORT_FILE     файл, откуда взят порт;
 #   _SRV_PORT_BAD      1 - значение записано, но портом не является;
 #   _SRV_PORT_NOLINE   1 - awg0.conf есть, а строки ListenPort в нём нет;
+#   _SRV_PORT_ZERO     1 - ListenPort = 0: awg берёт случайный порт, как и без строки;
 #   _SRV_PORT_INIT     порт init (0 - нет или некорректный), _SRV_PORT_INIT_RAW - как записан;
 #   _SRV_PORT_MISMATCH 1 - init есть и не согласен с ListenPort.
 _server_port_resolve() {
-    local _live
+    local _live=""
     _SRV_PORT_INIT_RAW=$(_port_init_raw)
     _SRV_PORT_INIT=$(_sanitize_port "$_SRV_PORT_INIT_RAW")
-    _SRV_PORT_NOLINE=0
-    if _live=$(_port_read_listen); then
+    _SRV_PORT_NOLINE=0 _SRV_PORT_ZERO=0
+    if _live=$(_port_read_listen) && ! _port_is_random "$_live"; then
         _SRV_PORT_RAW="$_live"; _SRV_PORT_FILE="$SERVER_CONF_FILE"
     elif [[ -e "$SERVER_CONF_FILE" && ! ( -f "$SERVER_CONF_FILE" && -r "$SERVER_CONF_FILE" ) ]]; then
         # awg0.conf есть, но не читается: это неисправность, а не повод взять init.
         _SRV_PORT_RAW=""; _SRV_PORT_FILE="$SERVER_CONF_FILE"
     else
-        [[ -e "$SERVER_CONF_FILE" ]] && _SRV_PORT_NOLINE=1
+        if _port_is_random "$_live"; then _SRV_PORT_ZERO=1
+        elif [[ -e "$SERVER_CONF_FILE" ]]; then _SRV_PORT_NOLINE=1; fi
         _SRV_PORT_RAW="$_SRV_PORT_INIT_RAW"; _SRV_PORT_FILE="$CONFIG_FILE"
     fi
     _SRV_PORT=$(_sanitize_port "$_SRV_PORT_RAW")
@@ -3475,6 +3477,11 @@ _server_port_resolve() {
         _SRV_PORT_MISMATCH=1
     fi
 }
+# _port_is_random <значение>: 0 (и '00'...) в ListenPort - законная настройка,
+# awg берёт случайный порт, как и без строки. Это не битый конфиг.
+_port_is_random() {
+    [[ "$1" =~ ^0+$ ]]
+}
 # _port_shown <значение>: обрезано до 32 символов, управляющие заменены на '?':
 # строка в конфиге произвольная и может нести перевод строки или ESC.
 _port_shown() {
@@ -3486,8 +3493,12 @@ _port_shown() {
 # остановленном сервисе) берёт порт из init, поэтому отставший init вернул бы
 # серверу старый порт.
 _server_port_drift_text() {
-    if (( _SRV_PORT_NOLINE )); then
-        printf 'В %s нет строки ListenPort: сервер слушает случайный порт, который меняется при каждом запуске.' "$SERVER_CONF_FILE"
+    if (( _SRV_PORT_NOLINE || _SRV_PORT_ZERO )); then
+        if (( _SRV_PORT_ZERO )); then
+            printf 'В %s ListenPort = 0: сервер слушает случайный порт, который меняется при каждом запуске.' "$SERVER_CONF_FILE"
+        else
+            printf 'В %s нет строки ListenPort: сервер слушает случайный порт, который меняется при каждом запуске.' "$SERVER_CONF_FILE"
+        fi
         (( _SRV_PORT > 0 )) && printf ' Проверка идёт по порту из %s.' "$CONFIG_FILE"
         return 0
     fi
@@ -3550,16 +3561,17 @@ _port_sync_init() {
     return 0
 }
 change_server_port() {
-    local new="$1" old have_ufw=0 added_rule=0 cname ok=0 fail=0 rb
+    local new="$1" old old_raw have_ufw=0 added_rule=0 cname ok=0 fail=0 rb
     if ! [[ "$new" =~ ^[1-9][0-9]{0,4}$ ]] || (( new > 65535 )); then
         _JSON_ERR="invalid port"
         log_error "Некорректный порт '${new}': нужно число от 1 до 65535 без ведущих нулей."
         return 1
     fi
     # Значение приводится к числу: '039743' - тот же порт 39743, и сравнение строк
-    # отправило бы команду с текущим портом в полную смену порта.
-    old=$(_sanitize_port "$(_port_read_listen)")
-    if (( old == 0 )); then
+    # отправило бы команду с текущим портом в полную смену порта. ListenPort = 0
+    # (случайный порт) даёт old=0: с него переход на постоянный порт разрешён.
+    old_raw=$(_port_read_listen); old=$(_sanitize_port "$old_raw")
+    if (( old == 0 )) && ! _port_is_random "$old_raw"; then
         _JSON_ERR="no ListenPort in server config"
         log_error "В $SERVER_CONF_FILE нет корректного ListenPort."
         return 1
@@ -3582,8 +3594,8 @@ change_server_port() {
     _txn_lock || { _JSON_ERR="config locked"; return 1; }
     # Другая команда могла сменить порт, пока эта ждала блокировку: старый порт
     # перечитывается под ней, иначе закрылось бы правило не того порта.
-    old=$(_sanitize_port "$(_port_read_listen)")
-    if (( old == 0 )); then
+    old_raw=$(_port_read_listen); old=$(_sanitize_port "$old_raw")
+    if (( old == 0 )) && ! _port_is_random "$old_raw"; then
         _txn_unlock
         _JSON_ERR="no ListenPort in server config"
         log_error "В $SERVER_CONF_FILE нет корректного ListenPort."
@@ -3630,7 +3642,8 @@ change_server_port() {
     _txn_trap_off
     _txn_drop_backups; _txn_unlock
     awg_record_device_params
-    if (( have_ufw )); then
+    # У случайного порта (old=0) правила в UFW нет, снимать нечего.
+    if (( have_ufw && old > 0 )); then
         ufw delete allow "${old}/udp" >/dev/null 2>&1 || log_warn "UFW не удалил правило старого порта: sudo ufw delete allow ${old}/udp"
     fi
     log "Порт сервера сменён: ${old} -> ${new}/udp. Перевыпуск клиентов..."
