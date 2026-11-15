@@ -5430,7 +5430,15 @@ _awg_uninstall_ports() {
         init_port=$(safe_read_config_key "AWG_PORT" "$CONFIG_FILE" 2>/dev/null)
         prev_port=$(safe_read_config_key "PREV_AWG_PORT" "$CONFIG_FILE" 2>/dev/null)
     fi
-    live_port=$(awk -F= '/^[[:space:]]*ListenPort[[:space:]]*=/{gsub(/[[:space:]\r]/,"",$2); print $2; exit}' "$SERVER_CONF_FILE" 2>/dev/null)
+    # ListenPort the way awg applies it (like _port_read_listen in manage): the key
+    # in any case, the last of the lines, without a comment after '#'.
+    live_port=$(awk '{ l = $0; sub(/\r$/, "", l); k = l
+                       if (!sub(/=.*/, "", k)) next
+                       gsub(/[[:space:]]/, "", k)
+                       if (tolower(k) != "listenport") next
+                       v = l; sub(/^[^=]*=/, "", v); sub(/#.*/, "", v); gsub(/[[:space:]]/, "", v)
+                       last = v; f = 1 }
+                     END { if (f) print last }' "$SERVER_CONF_FILE" 2>/dev/null)
     for p in "$init_port" "$prev_port" "$live_port"; do
         [[ "$p" =~ ^[1-9][0-9]{0,4}$ ]] && (( p <= 65535 )) || continue
         [[ " $out " == *" $p "* ]] && continue
