@@ -120,14 +120,14 @@
       "id": "mihomo",
       "name": {"ru": "mihomo (ядро для Clash Verge Rev и других)", "en": "mihomo (core for Clash Verge Rev and others)"},
       "support": "yes",
-      "version": "v1.19.33",
-      "version_date": "2026-10-21",
+      "version": "v1.19.34",
+      "version_date": "2026-11-11",
       "since": "v1.19.30",
       "since_note": {"ru": "3.1 включается только строкой `version: 3` в `amnezia-wg-option`", "en": "3.1 is on only with `version: 3` in `amnezia-wg-option`"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/MetaCubeX/mihomo/blob/v1.19.33/adapter/outbound/wireguard.go", "ref": "adapter/outbound/wireguard.go at v1.19.33: Version == 3 selects the v3 device, header-protection-key is decoded from base64 to hex, content-padding-addition is passed on; go.mod: metacubex/amneziawg-go 0c1c6f40ecd7"},
-      "checked_at": "2026-11-05"
+      "evidence": {"url": "https://github.com/MetaCubeX/mihomo/blob/v1.19.34/adapter/outbound/wireguard.go", "ref": "adapter/outbound/wireguard.go at v1.19.34: Version == 3 selects the v3 device, header-protection-key is decoded from base64 to hex, content-padding-addition is passed on; go.mod: metacubex/amneziawg-go 0c1c6f40ecd7"},
+      "checked_at": "2026-11-16"
     },
     {
       "id": "flclash",
@@ -147,28 +147,28 @@
       "id": "throne",
       "name": {"ru": "Throne (Windows, Linux, macOS, сторонний)", "en": "Throne (Windows, Linux, macOS, third-party)"},
       "support": "yes",
-      "version": "1.4.1",
-      "version_date": "2026-11-06",
+      "version": "1.4.2",
+      "version_date": "2026-11-14",
       "since": "1.3.0",
       "since_date": "2026-09-17",
       "since_note": {"ru": "в 1.3.x паддинг части пакетов урезается до свободного места в буфере; исправлено в 1.4.0", "en": "in 1.3.x the padding of some packets is cut to the room left in the buffer; fixed in 1.4.0"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/throneproj/Throne", "ref": "core/go.mod at 1.4.0 and 1.4.1: throneproj/wireguard-go e11787583013, the line pinned since 1.4.0-beta.5 with padding fix 8da5ee3 (the rebased ca68c0e of beta.1 to beta.4); 1.3.2 pinned f60e4eda0d08, without the fix"},
-      "checked_at": "2026-11-09"
+      "evidence": {"url": "https://github.com/throneproj/Throne", "ref": "core/go.mod at 1.4.2: throneproj/wireguard-go 827ce83a4eed, which is e11787583013 of 1.4.0 and 1.4.1 plus one commit (extend quic decoy method); e11787583013 is the line pinned since 1.4.0-beta.5 with padding fix 8da5ee3 (the rebased ca68c0e of beta.1 to beta.4); 1.3.2 pinned f60e4eda0d08, without the fix"},
+      "checked_at": "2026-11-16"
     },
     {
       "id": "lxbox",
       "name": {"ru": "L×Box (Android, сторонний)", "en": "L×Box (Android, third-party)"},
       "support": "yes",
-      "version": "v2.25.20",
-      "version_date": "2026-11-05",
+      "version": "v2.25.21",
+      "version_date": "2026-11-12",
       "since": "v2.23.0",
       "since_date": "2026-09-05",
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/Leadaxe/LxBox", "ref": "app/android/libbox.version at v2.25.20: sing-box-lx v1.14.4-lx.32, whose wireguard-go submodule 9115d9022cd0 (the same as in lx.31 of v2.25.19) (8a53421edf7e plus 5 commits) handles header_protection_key and content_padding_addition; since from the v2.23.0 release notes (AmneziaWG 3.0/3.1, HeaderProtectionKey and ContentPaddingAddition import)"},
-      "checked_at": "2026-11-09"
+      "evidence": {"url": "https://github.com/Leadaxe/LxBox", "ref": "app/android/libbox.version at v2.25.21: sing-box-lx v1.14.4-lx.33, whose wireguard-go submodule 9115d9022cd0 (the same as in lx.31 and lx.32) (8a53421edf7e plus 5 commits) handles header_protection_key and content_padding_addition; since from the v2.23.0 release notes (AmneziaWG 3.0/3.1, HeaderProtectionKey and ContentPaddingAddition import)"},
+      "checked_at": "2026-11-16"
     },
     {
       "id": "zedsecure",
@@ -213,12 +213,15 @@
     {
       "id": "hiddify",
       "name": "Hiddify",
-      "support": "no",
-      "version": {"ru": "v5.5.5; AmneziaWG появился, но импорт .conf и ссылок не читает HeaderProtectionKey и ContentPaddingAddition", "en": "v5.5.5; AmneziaWG is in, but the .conf and link import does not read HeaderProtectionKey and ContentPaddingAddition"},
-      "version_date": "2026-11-04",
+      "support": "dev-channel",
+      "version": {"ru": "v5.9.8, предварительный выпуск; в стабильной v5.5.5 импорт .conf и ссылок не читает HeaderProtectionKey и ContentPaddingAddition", "en": "v5.9.8, pre-release; in stable v5.5.5 the .conf and link import does not read HeaderProtectionKey and ContentPaddingAddition"},
+      "version_date": "2026-11-15",
+      "since": "v5.9.8",
+      "since_note": {"ru": "проверено по коду этого выпуска, более ранние предварительные выпуски не разбирал; на профиле этого установщика не проверено", "en": "read in the code of this release, earlier pre-releases not checked; not tested on this installer's profile"},
+      "where": {"ru": "страница релизов проекта, предварительные выпуски", "en": "project releases page, pre-releases"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/hiddify/ray2sing/blob/ed1a4b12297992de89adf2a7a91ce5ec397d4819/ray2sing/awg.go", "ref": "submodule hiddify-core at v5.5.5: hiddify-core v5.5.5 ad83d7570c06, which takes ray2sing from submodule ed1a4b122979: ray2sing/awg.go AWGSingboxTxt ([Interface] .conf) and AWGSingbox (awg://, wg://, wireguard://) read Jc to I5 only; hiddify-sing-box 1614c5edb52d protocol/awg/endpoint.go passes header_protection_key to the engine as is, option/awg.go documents it as 64 hex digits; engine hiddify/amneziawg-go a529f73d0905 parses header_protection_key with FromHex and knows content_padding_addition"},
-      "checked_at": "2026-11-05"
+      "evidence": {"url": "https://github.com/hiddify/ray2sing/blob/6974ad6382d6/ray2sing/awg.go", "ref": "submodule hiddify-core at v5.9.8: 6777b7fe76e1, which takes ray2sing from submodule 6974ad6382d6: ray2sing/awg.go reads headerprotectionkey (base64 or hex, passed on as 64 hex digits) and contentpaddingaddition; stable v5.5.5 takes ray2sing ed1a4b122979, whose awg.go reads Jc to I5 only"},
+      "checked_at": "2026-11-16"
     },
     {
       "id": "keeneticos",
@@ -238,13 +241,13 @@
       "id": "awg-manager",
       "name": {"ru": "AWG Manager (Keenetic, сторонний)", "en": "AWG Manager (Keenetic, third-party)"},
       "support": "yes",
-      "version": "v2.20.0",
-      "version_date": "2026-11-10",
+      "version": "v2.20.4",
+      "version_date": "2026-11-15",
       "since": {"ru": "штатным модулем на KeeneticOS 5.2 Alpha 11 и новее; на других прошивках - своим модулем ядра или встроенным sing-box (нужны Entware и компонент WireGuard)", "en": "with the stock module on KeeneticOS 5.2 Alpha 11 and newer; on other firmware with its own kernel module or its bundled sing-box (needs Entware and the WireGuard component)"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/hoaxisr/awg-manager/blob/v2.20.0/CHANGELOG.md", "ref": "internal/singbox/installer/embedded.go at v2.20.0: sing-box 1.15.0-alpha.13-awgm.38 (hoaxisr/amnezia-box, release target 1c665f43e5a0), whose go.mod replaces amneziawg-go/v3 with hoaxisr/amneziawg-go v3.1.0-awgm.3; CHANGELOG 2.19.10: 3.0/3.1 on KeeneticOS 5.2 Alpha 11+; 2.18.0: own module 3.1.20260906"},
-      "checked_at": "2026-11-10"
+      "evidence": {"url": "https://github.com/hoaxisr/awg-manager/blob/v2.20.4/CHANGELOG.md", "ref": "internal/singbox/installer/embedded.go at v2.20.4: awgm-box build 41 on sing-box 1.15.0-alpha.13 (hoaxisr/awgm-box, release 41 target eae0c6d2834d), whose go.mod replaces amneziawg-go/v3 with hoaxisr/amneziawg-go v3.1.0-awgm.3; CHANGELOG 2.19.10: 3.0/3.1 on KeeneticOS 5.2 Alpha 11+; 2.18.0: own module 3.1.20260906"},
+      "checked_at": "2026-11-16"
     },
     {
       "id": "openwrt",
@@ -281,24 +284,24 @@
       "id": "amneziawg-mikrotik-c",
       "name": {"ru": "amneziawg-mikrotik-c (MikroTik, сторонний)", "en": "amneziawg-mikrotik-c (MikroTik, third-party)"},
       "support": "yes",
-      "version": "v1.4.5",
-      "version_date": "2026-10-30",
+      "version": "v1.4.6",
+      "version_date": "2026-11-11",
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "vendor-docs",
-      "evidence": {"url": "https://github.com/timbrs/amneziawg-mikrotik-c"},
-      "checked_at": "2026-11-05"
+      "evidence": {"url": "https://github.com/timbrs/amneziawg-mikrotik-c/releases/tag/v1.4.6"},
+      "checked_at": "2026-11-16"
     },
     {
       "id": "amneziawg-mikrotik",
       "name": {"ru": "AmneziaWG-MikroTik (сторонний)", "en": "AmneziaWG-MikroTik (third-party)"},
       "support": "yes",
       "version": "Containers_3.1",
-      "version_date": "2026-08-30",
+      "version_date": "2026-11-06",
       "since": "Containers_3.1",
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "vendor-docs",
-      "evidence": {"url": "https://github.com/catesin/AmneziaWG-MikroTik"},
-      "checked_at": "2026-11-05"
+      "evidence": {"url": "https://github.com/catesin/AmneziaWG-MikroTik/releases/tag/Containers_3.1"},
+      "checked_at": "2026-11-16"
     }
   ]
 }

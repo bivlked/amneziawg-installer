@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Client table as of 16 November 2026.** Hiddify understands the 3.1 profile in the v5.9.8 pre-release: its `.conf` and link import reads `HeaderProtectionKey` and `ContentPaddingAddition` there, while stable v5.5.5 still does not, so the table now lists it as development channel only. New versions: mihomo v1.19.34, Throne 1.4.2, L×Box v2.25.21, AWG Manager v2.20.4, amneziawg-mikrotik-c v1.4.6 and the AmneziaWG-MikroTik containers rebuilt on 6 November. Every changed row was re-checked against the project's code or page on the day of the edit.
+
 ### Fixed
 
 - **`check` and `diagnose` check the port the server is really configured with.** The port for the listening check and the UFW rule now comes from `ListenPort` in `awg0.conf`, not from `AWG_PORT` in `awgsetup_cfg.init`. After a port change made by editing `awg0.conf` the commands compared the UFW rule of the previous port; now they check the new one and name the `ufw allow` command for a missing rule. If the init port is different, invalid or missing, `check` and `diagnose` warn about it: a reinstall without `--port` would give the server the port from the init. The init is fixed with `manage port <current port>`: in that case the command writes the port into the init and touches nothing else. In `check --json` the port got the fields `source` and `init_mismatch`. An invalid or empty `ListenPort` counts as a failure, also in `diagnose` without ufw, and the init port is not put in its place. When there is no `ListenPort` line at all, the check uses the init as before, but with a warning: such a server listens on a random port. `ListenPort = 0` (AmneziaWG takes a random port for it too) is not a failure: the port and its UFW rule are not checked, and the warning names the `port` command that moves the server to a fixed port.
