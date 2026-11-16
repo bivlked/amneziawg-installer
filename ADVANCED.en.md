@@ -1065,7 +1065,7 @@ Options:
                         stops. If the awg tools are older than a third-line
                         module, the install stops and asks to upgrade them.
                         --protocol=2.0 is needed if the clients are routers on
-                        stock firmware, Hiddify or apps that are not updated.
+                        stock firmware, stable Hiddify or apps that are not updated.
                         An explicit --protocol=3.1 on an unsuitable machine ends
                         the install and names the reason. On an already
                         configured server a flag naming a DIFFERENT generation
@@ -2243,7 +2243,7 @@ A client has to understand your server's generation: a new install gives the 3.1
 | [WG Tunnel Desktop](https://github.com/wgtunnel/desktop) | Windows, Linux, macOS | ✅ (v2 line) | ✅ | Same engine as the Android version |
 | `awg-quick` ([amneziawg-tools](https://github.com/amnezia-vpn/amneziawg-tools) + a module or amneziawg-go) | Linux | ✅ (third-line module and tools) | ✅ | For servers and machines without a desktop, see [Connecting a Linux machine as a client](#linux-client-adv) |
 | [WireSock VPN Client](https://www.ntkernel.com) | Windows | not claimed | ❌ (no `S3`/`S4`) | Commercial, its own engine. By the vendor's documentation (wiresock.net, October 2026) `I1`-`I5` are silently dropped and `S3`/`S4` are not supported; both our profiles set `S3`/`S4`, so do not expect it to connect |
-| Hiddify | all | ❌ | - | AmneziaWG arrived in 5.5.5 (4 November 2026), but the `.conf` and link import drops `HeaderProtectionKey`, so a 3.1 profile will not connect: for Hiddify install the server with `--protocol=2.0` |
+| Hiddify | all | ❌ | - | AmneziaWG arrived in stable 5.5.5 (4 November 2026), but the `.conf` and link import drops `HeaderProtectionKey`, so a 3.1 profile will not connect: for stable Hiddify install the server with `--protocol=2.0`. The v5.9.8 pre-release (15 November 2026) already reads the key on import, as its code shows; I have not tested it on a profile from this installer |
 | Standard WireGuard | All | ❌ | ❌ | Does not support AWG parameters |
 
 > If a client shows an error about an unknown parameter (`HeaderProtectionKey`, `ContentPaddingAddition`, S3, S4, I1, or H1 as a range), it does not understand the server generation: update it or take a client from the first rows of the table. A client that does not know 3.1 may show no error at all - then there is simply no handshake.
@@ -2266,21 +2266,21 @@ Recorded 5 November 2026 from the release pages, the app stores and the projects
 | AmneziaWG for Windows 7 and 8 (RomikB build, third-party) | yes | v3.1.1 (28 Aug 2026) | v3.1.1 | project releases page, files with windows7 in the name | project code |
 | WG Tunnel (Android, third-party) | yes | 5.8.2 (19 Oct 2026) | 5.6.0 | Google Play, IzzyOnDroid, APK | project code |
 | WG Tunnel Desktop (third-party) | yes | v2.4.1 (17 Oct 2026) | 2.0.0 (13 Sep 2026) | project releases page, choco, apt, AUR | project code |
-| mihomo (core for Clash Verge Rev and others) | yes | v1.19.33 (21 Oct 2026) | v1.19.30; 3.1 is on only with `version: 3` in `amnezia-wg-option` | project releases page | project code |
+| mihomo (core for Clash Verge Rev and others) | yes | v1.19.34 (11 Nov 2026) | v1.19.30; 3.1 is on only with `version: 3` in `amnezia-wg-option` | project releases page | project code, 16 Nov 2026 |
 | FlClash (Android, Windows, macOS, Linux, third-party) | yes | v0.9.3 (4 Nov 2026) | v0.8.97 (10 Sep 2026); mihomo core: needs `version: 3` in `amnezia-wg-option` | project releases page | project code |
-| Throne (Windows, Linux, macOS, third-party) | yes | 1.4.1 (6 Nov 2026) | 1.3.0 (17 Sep 2026); in 1.3.x the padding of some packets is cut to the room left in the buffer; fixed in 1.4.0 | project releases page | project code, 9 Nov 2026 |
-| L×Box (Android, third-party) | yes | v2.25.20 (5 Nov 2026) | v2.23.0 (5 Sep 2026) | project releases page | project code, 9 Nov 2026 |
+| Throne (Windows, Linux, macOS, third-party) | yes | 1.4.2 (14 Nov 2026) | 1.3.0 (17 Sep 2026); in 1.3.x the padding of some packets is cut to the room left in the buffer; fixed in 1.4.0 | project releases page | project code, 16 Nov 2026 |
+| L×Box (Android, third-party) | yes | v2.25.21 (12 Nov 2026) | v2.23.0 (5 Sep 2026) | project releases page | project code, 16 Nov 2026 |
 | ZedSecure (Android, third-party) | yes | v3.1.8 (2 Nov 2026) | v3.1.8 (2 Nov 2026); earlier versions did not connect 3.1 profiles: a base64 HeaderProtectionKey is converted to hex only since v3.1.8 | project releases page | project code |
 | network-manager-amneziawg (Linux, third-party) | yes | v0.9.12 (13 Oct 2026) | v0.9.12; no engine of its own: needs a third-line kernel module, and in external mode third-line awg tools as well | project releases page | project pages |
 | gluetun (Docker, third-party) | in the daily feed, no tag | latest image from master; tag v3.41.3 has no AmneziaWG | master (26 Sep 2026); a 3.0 engine: it does not read RandomTrailers and DisableCookies lines, and this installer's profile does not write them; it expects HeaderProtectionKey as 64 hex characters, while this installer's profile writes base64: the key has to be converted | Docker Hub, tag latest | project code |
-| Hiddify | no | v5.5.5; AmneziaWG is in, but the .conf and link import does not read HeaderProtectionKey and ContentPaddingAddition (4 Nov 2026) | - | - | project code |
+| Hiddify | development channel only | v5.9.8, pre-release; in stable v5.5.5 the .conf and link import does not read HeaderProtectionKey and ContentPaddingAddition (15 Nov 2026) | v5.9.8; read in the code of this release, earlier pre-releases not checked; not tested on this installer's profile | project releases page, pre-releases | project code, 16 Nov 2026 |
 | KeeneticOS (stock firmware) | development channel only | 5.2 Beta 3 (5 Nov 2026) | 5.2 Alpha 11 (25 Sep 2026); not in stable 5.1 | Keenetic development channel | project pages, 9 Nov 2026 |
-| AWG Manager (Keenetic, third-party) | yes | v2.20.0 (10 Nov 2026) | with the stock module on KeeneticOS 5.2 Alpha 11 and newer; on other firmware with its own kernel module or its bundled sing-box (needs Entware and the WireGuard component) | project releases page | project code, 10 Nov 2026 |
+| AWG Manager (Keenetic, third-party) | yes | v2.20.4 (15 Nov 2026) | with the stock module on KeeneticOS 5.2 Alpha 11 and newer; on other firmware with its own kernel module or its bundled sing-box (needs Entware and the WireGuard component) | project releases page | project code, 16 Nov 2026 |
 | OpenWrt (official packages) | no | no package; openwrt/packages PRs #30492 and #30493 are open, without maintainer approval | - | - | project pages |
 | awg-openwrt (OpenWrt, third-party) | yes | v25.12.6, v24.10.8 | v25.12.5, v24.10.8 (22 Sep 2026); the packages of these releases were replaced under the same tags; ones downloaded earlier and packages for older OpenWrt have no 3.1 | project releases page, project feed | project code |
 | GL.iNet (stock firmware) | no | AmneziaWG 2.0 since firmware 4.9; no date for 3.x | - | - | project pages |
-| amneziawg-mikrotik-c (MikroTik, third-party) | yes | v1.4.5 (30 Oct 2026) | - | project releases page | project pages |
-| AmneziaWG-MikroTik (third-party) | yes | Containers_3.1 (30 Aug 2026) | Containers_3.1 | project releases page | project pages |
+| amneziawg-mikrotik-c (MikroTik, third-party) | yes | v1.4.6 (11 Nov 2026) | - | project releases page | project pages, 16 Nov 2026 |
+| AmneziaWG-MikroTik (third-party) | yes | Containers_3.1 (6 Nov 2026) | Containers_3.1 | project releases page | project pages, 16 Nov 2026 |
 <!-- clients:end -->
 
 - **sing-box-extended** speaks 3.1 since v1.14.0-extended-2.7.0 (4 September 2026) but crashes with `ContentPaddingAddition` above 16 in the device's own config and traffic from TUN ([issue #158](https://github.com/shtorm-7/sing-box-extended/issues/158), open as of 15 October 2026), while our 3.1 client profile carries `32-128`. It is the client's padding that matters, not the server's: the parameter is one-sided, so in that device's profile the line can be lowered to 16 or removed, and the server does not need to change. On OpenWrt this build runs AmneziaWG in tachyon (the successor of forkop) when the extended variant is chosen; podkop takes AmneziaWG from the system interface and is not affected, and forkop does not build AmneziaWG tunnels itself. NyameBox moved to this build on its master branch only, its releases do not have it. Throne does not crash: in 1.3.x the padding is cut (see the table), and the 1.4.0 pre-releases reserve room for it in the buffer.

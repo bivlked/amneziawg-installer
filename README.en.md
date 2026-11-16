@@ -58,7 +58,7 @@ sudo bash ./install_amneziawg_en.sh
 >
 > **Connect a device.** You need a client with 3.1 support: on Android, WG Tunnel or AmneziaWG; on iPhone, AmneziaWG (scan the `my_phone.png` QR code); on Mac, AmneziaWG (import the `.conf`); on Windows, AmneziaWG (import `my_laptop.conf`); on any platform, Amnezia VPN (the `vpn://` link); on Linux, [with awg-quick](ADVANCED.en.md#linux-client-adv). How to get the files off the server is in [After installation](#after-installation); another device later is a single `add` command.
 >
-> Have a router on stock firmware, Hiddify, or apps that have not been updated for a long time? Add `--protocol=2.0` to the last command, [here is why](#awg3). On 32-bit ARM and on a stock Debian 12 the installer picks 2.0 by itself.
+> Have a router on stock firmware, stable Hiddify, or apps that have not been updated for a long time? Add `--protocol=2.0` to the last command, [here is why](#awg3). On 32-bit ARM and on a stock Debian 12 the installer picks 2.0 by itself.
 
 > 📘 Full deployment guide: [Install AmneziaWG VPN server on Ubuntu/Debian VPS](INSTALL_VPS.md) - covers VPS choice, ARM, troubleshooting, and uninstall.
 
@@ -151,7 +151,7 @@ Since version 6.0.0 a new install gets **AmneziaWG 3.1** by default: both the se
 sudo bash ./install_amneziawg_en.sh --protocol=2.0
 ```
 
-Still without 3.1 support: routers on stock firmware (stable KeeneticOS, OpenWrt with an old amneziawg package), Hiddify, and apps that have not been updated for a long time. Which clients understand 3.1 and from which version is in the [client table](ADVANCED.en.md#client-gen-adv). Better decide before installing: the generation of a running server changes only through a reinstall, and then every client profile is issued again.
+Still without 3.1 support: routers on stock firmware (stable KeeneticOS, OpenWrt with an old amneziawg package), stable Hiddify, and apps that have not been updated for a long time. Which clients understand 3.1 and from which version is in the [client table](ADVANCED.en.md#client-gen-adv). Better decide before installing: the generation of a running server changes only through a reinstall, and then every client profile is issued again.
 
 **Where the installer picks 2.0 by itself.** On kernels older than 6.7 (a stock Debian 12 with kernel 6.1) and on 32-bit ARM the installer deliberately does not issue 3.1: these platforms have not been measured. If you did not choose a generation, it installs 2.0 by itself, explains the reason in the log and repeats it in the final report. Where the installed `awg` tools or the kernel module do not understand 3.1 parameters, it switches to 2.0 if the module accepts the 2.0 set, and otherwise stops and says what to fix (for old tools, the package to upgrade). An explicit `--protocol=3.1` on an unsuitable machine stops the install and names the reason.
 
