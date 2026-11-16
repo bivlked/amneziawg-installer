@@ -308,9 +308,9 @@ Your carrier is not on the list? Try `--preset=mobile`. If that doesn't work - o
 
 | OS | Our pick | Vendor support | Notes |
 |----|----------|----------------|-------|
-| Ubuntu 24.04 LTS | ✅ default pick | until 2029-05-31 | The best-tested platform. The HWE kernel 7.0.0-38 is supported: the installer fixes the PPA module source itself ([details](ADVANCED.en.md#kernel-70-backport-adv)) |
+| Ubuntu 24.04 LTS | ✅ default pick | until 2029-05-31 | The best-tested platform. The HWE kernel 7.0 is supported: since 13 November 2026 the PPA module builds on it by itself, and for the old build the installer fixes the source ([details](ADVANCED.en.md#kernel-70-backport-adv)) |
 | Debian 13 (trixie) | ✅ default pick | until 2028-08-09 | Tested. PPA via codename mapping to noble, DEB822 |
-| Ubuntu 26.04 | ✅ supported | until 2031-05-29 | The PPA publishes packages for it (`resolute`). The PPA module does not build for kernel 7.0.0-38 on its own; the installer fixes its source itself ([details](ADVANCED.en.md#kernel-70-backport-adv)) |
+| Ubuntu 26.04 | ✅ supported | until 2031-05-29 | The PPA publishes packages for it (`resolute`). Since 13 November 2026 the PPA module builds on kernel 7.0.0-38 and newer too; for the old build the installer fixes its source itself ([details](ADVANCED.en.md#kernel-70-backport-adv)) |
 | Debian 12 (bookworm) | ⚠️ for migration | regular ended 2026-07-11, Debian LTS until 2028-06-30 | Works and is tested, security updates continue through Debian LTS. PPA via codename mapping to focal. For a new server prefer Debian 13 |
 | Ubuntu 25.10 (questing) | ❌ not supported since v6.0.0 | ended 2026-07-01, no extension | Out of vendor support, no security updates are published for it. The installer warns about an untested release and asks for confirmation. Move to 26.04 LTS (`do-release-upgrade`, then run the latest installer again) or reinstall on 24.04 LTS |
 
