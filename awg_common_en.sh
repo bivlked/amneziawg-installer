@@ -2818,6 +2818,15 @@ _awg_sysctl_num() {
     return 0
 }
 
+# _awg_kmod_has_233_fix <module version> : 0 when an amneziawg module of this
+# version carries the vendor fix for amneziawg-linux-kernel-module#233 (the 3.x
+# line or newer, the date in the version 20261113 or later); 1 when it does not
+# or the version is unknown.
+_awg_kmod_has_233_fix() {
+    [[ "${1:-}" =~ ^([0-9]+)\.[0-9]+\.([0-9]{8}) ]] || return 1
+    (( 10#${BASH_REMATCH[1]} >= 3 && 10#${BASH_REMATCH[2]} >= 20261113 ))
+}
+
 # awg_userns_module_lines : for check and diagnose - a "message<TAB>how to close
 # it" line when the amneziawg kernel module is on the system and unprivileged
 # user namespaces are allowed without restriction.
@@ -2860,20 +2869,34 @@ _awg_sysctl_num() {
 # which costs more.
 # The module itself cannot be checked for the bug: a probe with a negative
 # length is the bug.
-# 🔴 To revisit: once the vendor fix (#237/#247) reaches the PPA,
-# "unfixed bug" becomes false for PPA builds - tell builds apart by srcversion or
-# narrow the warning to the pinned 2.0 and ARM.
+# The module version does tell the fix apart: the vendor fixed the bug in
+# 3.1.20261113 (PRs #237 and #247, PPA build 63ed35d of 13 Nov 2026). A loaded
+# module names its version in /sys/module/amneziawg/version, one that is not
+# loaded through modinfo of its file. With the fix (_awg_kmod_has_233_fix) the
+# function is quiet. The loaded module decides: after a package upgrade the old
+# one stays in the kernel until a reboot. The 2.0 line (1.0.x, the pinned
+# source and the ARM prebuilts) has no fixed release; an unknown version keeps
+# the warning as it was, with no guess about the build.
 #
 # AWG_USERNS_ROOT is overridden only by tests (bats): a prefix for /proc, /sys
 # and /lib/modules.
 awg_userns_module_lines() {
-    local root="${AWG_USERNS_ROOT:-}" loaded=1 clone maxns netns aa aac md aa_on="" f kver key="" val="" price="" pre=""
-    if [[ ! -d "$root/sys/module/amneziawg" ]]; then
+    local root="${AWG_USERNS_ROOT:-}" loaded=1 clone maxns netns aa aac md aa_on="" f kver key="" val="" price="" pre="" kofile="" kmver="" note=""
+    if [[ -d "$root/sys/module/amneziawg" ]]; then
+        if [[ -r "$root/sys/module/amneziawg/version" ]]; then
+            IFS= read -r kmver 2>/dev/null < "$root/sys/module/amneziawg/version" || true
+        fi
+    else
         loaded=0
         kver=$(uname -r 2>/dev/null) || return 0
         [[ -n "$kver" && -d "$root/lib/modules/$kver" ]] || return 0
-        [[ -n "$(find "$root/lib/modules/$kver" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]] || return 0
+        kofile=$(find "$root/lib/modules/$kver" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)
+        [[ -n "$kofile" ]] || return 0
+        kmver=$(modinfo -F version "$kofile" 2>/dev/null | head -n 1) || kmver=""
     fi
+    kmver="${kmver//[[:space:]]/}"
+    [[ "$kmver" =~ ^[0-9]+\.[0-9]+\.[0-9]{8}([-.+~][0-9A-Za-z.+~-]{0,32})?$ ]] || kmver=""
+    _awg_kmod_has_233_fix "$kmver" && return 0
     # A setting that exists but was not read (or holds no number) is "do not
     # know", not "allowed": otherwise a closed host with one unreadable file
     # would get the warning "any user may".
@@ -2910,8 +2933,13 @@ awg_userns_module_lines() {
         pre="First write down the previous value (sysctl user.max_user_namespaces), so you can put it back. "
         price="user namespaces can no longer be created at all, root included: rootless containers, application sandboxes, systemd services with PrivateUsers= and Docker with userns-remap stop working."
     fi
+    if [[ "$kmver" == [0-2].* ]]; then
+        note=" This module is version ${kmver}: that is the 2.0 line, and the vendor has no fixed 2.0 release."
+    elif [[ -n "$kmver" ]]; then
+        note=" This module is version ${kmver}, the fix is in 3.1.20261113 and newer: sudo apt-get update && sudo apt-get install --only-upgrade amneziawg-dkms, then a reboot, and this warning goes away."
+    fi
     printf '%s\t%s\n' \
-        "The amneziawg kernel module is on the system (loaded, or it may load on the first request), and any user may create user namespaces. That lets an unprivileged process set up its own AmneziaWG interface and hand the module I1-I5 values. The vendor module has an unfixed bug in parsing <r>/<rc>/<rd> tags with a negative length (amneziawg-linux-kernel-module#233): in some combinations it writes past a kernel buffer. Our commands refuse such values; the risk comes from other users and programs on this server." \
+        "The amneziawg kernel module is on the system (loaded, or it may load on the first request), and any user may create user namespaces. That lets an unprivileged process set up its own AmneziaWG interface and hand the module I1-I5 values. Vendor modules older than 3.1.20261113 have a bug in parsing <r>/<rc>/<rd> tags with a negative length (amneziawg-linux-kernel-module#233): in some combinations it writes past a kernel buffer.${note} Our commands refuse such values; the risk comes from other users and programs on this server." \
         "${pre}To close this path: sudo sysctl -w ${key}=${val}, and to keep it after a reboot: echo '${key} = ${val}' | sudo tee /etc/sysctl.d/99-userns.conf. The cost: ${price} Namespaces that already exist are not affected: reboot after it to be sure. Details: ADVANCED.en.md#userns-module-adv"
     return 0
 }

@@ -341,6 +341,104 @@ warns() {
     done
 }
 
+# The vendor fixed #233 in module 3.1.20261113 (PRs #237 and #247, PPA build
+# 63ed35d of 13 Nov 2026). The module version tells the fix apart: a loaded
+# module from /sys/module/amneziawg/version, one that is not loaded from modinfo
+# of its file. 3.x from 20261113 on is fixed; the 2.0 line (1.0.x) has no fixed
+# release; an unknown version keeps the warning as it was.
+
+# modver <version> : the loaded module reports this version.
+modver() { module; printf '%s\n' "$1" > "$AWG_USERNS_ROOT/sys/module/amneziawg/version"; }
+
+# stub_modinfo <version|fail> : modinfo on PATH that prints the version of any file.
+stub_modinfo() {
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    if [[ "$1" == fail ]]; then
+        printf '#!/bin/sh\nexit 1\n' > "$BATS_TEST_TMPDIR/bin/modinfo"
+    else
+        printf '#!/bin/sh\n[ "$1" = -F ] && [ "$2" = version ] || exit 2\nprintf "%%s\\n" "%s"\n' "$1" > "$BATS_TEST_TMPDIR/bin/modinfo"
+    fi
+    chmod +x "$BATS_TEST_TMPDIR/bin/modinfo"
+    export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+}
+
+@test "userns: a loaded module with the vendor fix (3.1.20261113 and newer) stays quiet, both twins" {
+    debian
+    local v
+    for v in 3.1.20261113 3.1.20261113-02 3.1.20261201 4.0.20270101; do
+        modver "$v"; quiet "fixed $v"
+    done
+}
+
+@test "userns: a loaded 3.1 module older than the fix warns, names its version and the PPA upgrade with a reboot, both twins" {
+    debian; modver 3.1.20260812
+    warns old31 "kernel.unprivileged_userns_clone=0"
+    local lib
+    for lib in "$COMMON" "$COMMON_EN"; do
+        run lines "$lib"
+        [[ "$output" == *"3.1.20260812"* ]] || { echo "$lib version: $output"; return 1; }
+        [[ "$output" == *"3.1.20261113"* ]] || { echo "$lib fixed version: $output"; return 1; }
+        [[ "$output" == *"sudo apt-get update && sudo apt-get install --only-upgrade amneziawg-dkms"* ]] || { echo "$lib upgrade: $output"; return 1; }
+        [[ "$output" == *"перезагруз"* || "$output" == *"reboot"* ]] || { echo "$lib reboot: $output"; return 1; }
+    done
+}
+
+@test "userns: a loaded 2.0 line module warns without the PPA upgrade, which has no 2.0 fix, both twins" {
+    debian; modver 1.0.20260725
+    warns twozero "kernel.unprivileged_userns_clone=0"
+    local lib
+    for lib in "$COMMON" "$COMMON_EN"; do
+        run lines "$lib"
+        [[ "$output" == *"1.0.20260725"* ]] || { echo "$lib version: $output"; return 1; }
+        [[ "$output" != *"only-upgrade"* ]] || { echo "$lib advises the PPA for 2.0: $output"; return 1; }
+        [[ "$output" == *"2.0"* ]] || { echo "$lib 2.0: $output"; return 1; }
+    done
+    # a later date does not make a 2.0 line module fixed: the fix is in 3.1 only
+    modver 1.0.20261201
+    warns twozero-late "kernel.unprivileged_userns_clone=0"
+}
+
+@test "userns: an unknown or odd module version keeps the warning without a version claim, both twins" {
+    debian
+    local v lib
+    for v in "" "garbage" "3.1.2026111" "3.1.20261113\$(id)" missing; do
+        if [[ "$v" == missing ]]; then
+            module; rm -f "$AWG_USERNS_ROOT/sys/module/amneziawg/version"
+        else
+            modver "$v"
+        fi
+        warns "version='$v'" "kernel.unprivileged_userns_clone=0"
+        for lib in "$COMMON" "$COMMON_EN"; do
+            run lines "$lib"
+            [[ "$output" != *"only-upgrade"* ]] || { echo "$lib version='$v' upgrade advice: $output"; return 1; }
+            [[ "$output" != *'$(id)'* ]] || { echo "$lib echoes the raw version: $output"; return 1; }
+        done
+    done
+}
+
+@test "userns: a module that is not loaded is judged by modinfo of its file, both twins" {
+    debian; installed
+    stub_modinfo 3.1.20261113-02
+    quiet file-fixed
+    stub_modinfo 3.1.20260812
+    warns file-old "kernel.unprivileged_userns_clone=0"
+    local lib
+    for lib in "$COMMON" "$COMMON_EN"; do
+        run lines "$lib"
+        [[ "$output" == *"3.1.20260812"* && "$output" == *"only-upgrade"* ]] || { echo "$lib file-old: $output"; return 1; }
+    done
+    stub_modinfo fail
+    warns file-unknown "kernel.unprivileged_userns_clone=0"
+}
+
+@test "userns: the loaded module decides even when the file on disk is already fixed (before a reboot), both twins" {
+    debian; installed; stub_modinfo 3.1.20261113-02
+    modver 3.1.20260812
+    warns pending-reboot "kernel.unprivileged_userns_clone=0"
+    modver 3.1.20261113-02; stub_modinfo 3.1.20260812
+    quiet loaded-fixed
+}
+
 @test "userns: the anchor the advice points to exists in both ADVANCED files" {
     grep -q '<a id="userns-module-adv"></a>' "${BATS_TEST_DIRNAME}/../ADVANCED.md"
     grep -q '<a id="userns-module-adv"></a>' "${BATS_TEST_DIRNAME}/../ADVANCED.en.md"

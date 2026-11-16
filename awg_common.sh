@@ -2752,6 +2752,14 @@ _awg_sysctl_num() {
     return 0
 }
 
+# _awg_kmod_has_233_fix <версия модуля> : 0, если в модуле amneziawg этой версии
+# есть исправление вендора для amneziawg-linux-kernel-module#233 (линия 3.x и
+# новее, дата в версии не раньше 20261113); 1 - если нет или версия неизвестна.
+_awg_kmod_has_233_fix() {
+    [[ "${1:-}" =~ ^([0-9]+)\.[0-9]+\.([0-9]{8}) ]] || return 1
+    (( 10#${BASH_REMATCH[1]} >= 3 && 10#${BASH_REMATCH[2]} >= 20261113 ))
+}
+
 # awg_userns_module_lines : для check и diagnose - строка «сообщение<TAB>как
 # закрыть», когда модуль ядра amneziawg есть в системе, а непривилегированные
 # пространства имён пользователей (user namespaces) разрешены без ограничений.
@@ -2790,20 +2798,33 @@ _awg_sysctl_num() {
 # Совет: unprivileged_userns_clone = 0 (патч Debian; в Ubuntu он есть, проверено
 # на 24.04), без него - max_user_namespaces = 0, он дороже.
 # Проверить сам модуль на ошибку нельзя: проба отрицательной длиной и есть дыра.
-# 🔴 Пересмотр: когда исправление вендора (#237/#247) выйдет в
-# PPA, для сборок PPA текст «неисправленная ошибка» станет ложным - различать
-# сборку по srcversion или сузить предупреждение до пинового 2.0 и ARM.
+# Зато ошибку отличает версия модуля: вендор исправил её в 3.1.20261113 (PR
+# #237 и #247, сборка PPA 63ed35d от 13 ноября 2026). Загруженный модуль
+# называет версию в /sys/module/amneziawg/version, незагруженный - modinfo его
+# файла. С исправлением (_awg_kmod_has_233_fix) функция молчит. Решает
+# загруженный модуль: после обновления пакета до перезагрузки в ядре старый.
+# Линия 2.0 (1.0.x, закреплённый исходник и пребилты ARM) исправленного выпуска
+# не имеет; неизвестная версия - прежнее предупреждение, без догадок о сборке.
 #
 # AWG_USERNS_ROOT переопределяется только тестами (bats): префикс к /proc, /sys
 # и /lib/modules.
 awg_userns_module_lines() {
-    local root="${AWG_USERNS_ROOT:-}" loaded=1 clone maxns netns aa aac md aa_on="" f kver key="" val="" price="" pre=""
-    if [[ ! -d "$root/sys/module/amneziawg" ]]; then
+    local root="${AWG_USERNS_ROOT:-}" loaded=1 clone maxns netns aa aac md aa_on="" f kver key="" val="" price="" pre="" kofile="" kmver="" note=""
+    if [[ -d "$root/sys/module/amneziawg" ]]; then
+        if [[ -r "$root/sys/module/amneziawg/version" ]]; then
+            IFS= read -r kmver 2>/dev/null < "$root/sys/module/amneziawg/version" || true
+        fi
+    else
         loaded=0
         kver=$(uname -r 2>/dev/null) || return 0
         [[ -n "$kver" && -d "$root/lib/modules/$kver" ]] || return 0
-        [[ -n "$(find "$root/lib/modules/$kver" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)" ]] || return 0
+        kofile=$(find "$root/lib/modules/$kver" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)
+        [[ -n "$kofile" ]] || return 0
+        kmver=$(modinfo -F version "$kofile" 2>/dev/null | head -n 1) || kmver=""
     fi
+    kmver="${kmver//[[:space:]]/}"
+    [[ "$kmver" =~ ^[0-9]+\.[0-9]+\.[0-9]{8}([-.+~][0-9A-Za-z.+~-]{0,32})?$ ]] || kmver=""
+    _awg_kmod_has_233_fix "$kmver" && return 0
     # Параметр, который есть, но не прочитан (или в нём не число), - это «не
     # знаю», а не «разрешено»: иначе закрытый хост с одним нечитаемым файлом
     # получал бы предупреждение «может любой пользователь».
@@ -2840,8 +2861,13 @@ awg_userns_module_lines() {
         pre="Сначала запишите прежнее значение (sysctl user.max_user_namespaces), чтобы было что вернуть. "
         price="user namespaces перестанут создаваться совсем, в том числе от root: перестанут работать rootless-контейнеры, песочницы приложений, службы systemd с PrivateUsers= и Docker с userns-remap."
     fi
+    if [[ "$kmver" == [0-2].* ]]; then
+        note=" У этого модуля версия ${kmver}: это линия 2.0, а исправленного выпуска 2.0 у вендора нет."
+    elif [[ -n "$kmver" ]]; then
+        note=" У этого модуля версия ${kmver}, исправление есть с 3.1.20261113: sudo apt-get update && sudo apt-get install --only-upgrade amneziawg-dkms, затем перезагрузка, и это предупреждение пропадёт."
+    fi
     printf '%s\t%s\n' \
-        "Модуль ядра amneziawg есть в системе (загружен или может подгрузиться по первому запросу), а создавать пространства имён пользователей (user namespaces) может любой пользователь. Тогда и непривилегированный процесс способен завести свой интерфейс AmneziaWG и передать модулю параметры I1-I5. В модуле вендора есть неисправленная ошибка разбора тегов <r>/<rc>/<rd> с отрицательной длиной (amneziawg-linux-kernel-module#233): в некоторых сочетаниях она пишет за границу буфера в ядре. Наши команды такие значения отвергают; риск - от других пользователей и программ на этом сервере." \
+        "Модуль ядра amneziawg есть в системе (загружен или может подгрузиться по первому запросу), а создавать пространства имён пользователей (user namespaces) может любой пользователь. Тогда и непривилегированный процесс способен завести свой интерфейс AmneziaWG и передать модулю параметры I1-I5. В модулях вендора до версии 3.1.20261113 есть ошибка разбора тегов <r>/<rc>/<rd> с отрицательной длиной (amneziawg-linux-kernel-module#233): в некоторых сочетаниях она пишет за границу буфера в ядре.${note} Наши команды такие значения отвергают; риск - от других пользователей и программ на этом сервере." \
         "${pre}Закрыть этот путь: sudo sysctl -w ${key}=${val}, а чтобы пережило перезагрузку: echo '${key} = ${val}' | sudo tee /etc/sysctl.d/99-userns.conf. Цена: ${price} Уже созданные пространства настройка не трогает: после неё надёжнее перезагрузиться. Подробнее: ADVANCED.md#userns-module-adv"
     return 0
 }
