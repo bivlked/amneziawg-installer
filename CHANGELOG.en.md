@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.2] - 2026-11-16
+
+**v6.3.2** - `check` and `diagnose` follow the port the server really uses and stay quiet about user namespaces once the fixed kernel module is loaded; the vendor fixes of 13 November are in the PPA.
+
 ### Changed
 
 - **`check` and `diagnose` no longer warn about user namespaces when the kernel runs the fixed module.** The warning about the module bug amneziawg-linux-kernel-module#233 now looks at the module version: for a loaded module it is in `/sys/module/amneziawg/version`, for one that is not loaded it comes from its file through `modinfo`. From version `3.1.20261113` (the vendor fix, in the PPA since 13 November) there is no warning. For an older 3.1 module it names the version and the command `sudo apt-get update && sudo apt-get install --only-upgrade amneziawg-dkms` with a reboot; for a 2.0 line module (the pinned source and the ARM packages) it says there is no fixed release. If the version cannot be read, the warning stays as it was. The loaded module decides: after a package upgrade the warning stays until the reboot.
@@ -2279,7 +2283,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.2...HEAD
+[6.3.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.1...v6.3.2
 [6.3.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.0...v6.3.1
 [6.3.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.2...v6.3.0
 [6.2.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...v6.2.2

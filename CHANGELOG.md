@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [6.3.2] - 2026-11-16
+
+**v6.3.2** - `check` и `diagnose` сверяют порт, на котором сервер работает на самом деле, и не предупреждают про пространства имён пользователей, когда в ядре исправленный модуль; исправления вендора от 13 ноября вышли в PPA.
+
 ### Изменено
 
 - **`check` и `diagnose` не предупреждают про пространства имён пользователей, когда в ядре исправленный модуль.** Предупреждение об ошибке модуля amneziawg-linux-kernel-module#233 теперь смотрит на версию модуля: у загруженного она в `/sys/module/amneziawg/version`, у незагруженного берётся из его файла через `modinfo`. С версии `3.1.20261113` (исправление вендора, в PPA с 13 ноября) предупреждения нет. Для более старого модуля 3.1 оно называет его версию и команду `sudo apt-get update && sudo apt-get install --only-upgrade amneziawg-dkms` с перезагрузкой, для модуля линии 2.0 (закреплённый исходник и пакеты для ARM) говорит, что исправленного выпуска нет. Если версию прочитать не удалось, предупреждение остаётся прежним. Решает загруженный модуль: после обновления пакета и до перезагрузки предупреждение остаётся.
@@ -2279,7 +2283,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.2...HEAD
+[6.3.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.1...v6.3.2
 [6.3.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.0...v6.3.1
 [6.3.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.2...v6.3.0
 [6.2.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...v6.2.2
