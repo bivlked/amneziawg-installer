@@ -2819,12 +2819,28 @@ _awg_sysctl_num() {
 }
 
 # _awg_kmod_has_233_fix <module version> : 0 when an amneziawg module of this
-# version carries the vendor fix for amneziawg-linux-kernel-module#233 (the 3.x
-# line or newer, the date in the version 20261113 or later); 1 when it does not
-# or the version is unknown.
+# version carries the vendor fix for amneziawg-linux-kernel-module#233; 1 when
+# it does not or the version is unknown. The fix (PRs #237 and #247) went into
+# tag v3.1.20261113-02 (63ed35d), while tag v3.1.20261113 (6879e27) does not
+# carry it yet, although it reports almost the same version "3.1.20261113".
+# So a module counts as fixed on the 3.x line or newer with a date after
+# 20261113, or with the date 20261113 and a suffix of -02 or higher; a bare
+# 3.1.20261113 does not.
 _awg_kmod_has_233_fix() {
-    [[ "${1:-}" =~ ^([0-9]+)\.[0-9]+\.([0-9]{8}) ]] || return 1
-    (( 10#${BASH_REMATCH[1]} >= 3 && 10#${BASH_REMATCH[2]} >= 20261113 ))
+    [[ "${1:-}" =~ ^([0-9]+)\.[0-9]+\.([0-9]{8})(-([0-9]{1,4}))?([^0-9]|$) ]] || return 1
+    local maj=$((10#${BASH_REMATCH[1]})) day=$((10#${BASH_REMATCH[2]})) suf="${BASH_REMATCH[4]}"
+    (( maj >= 3 )) || return 1
+    (( day > 20261113 )) && return 0
+    (( day == 20261113 )) && [[ -n "$suf" ]] && (( 10#$suf >= 2 ))
+}
+
+# _awg_kmod_version_clean <string> : the module version without whitespace when
+# it looks like a vendor version (X.Y.YYYYMMDD with an optional suffix);
+# otherwise empty, so that no arbitrary string reaches the message.
+_awg_kmod_version_clean() {
+    local v="${1//[[:space:]]/}"
+    [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]{8}([-.+~][0-9A-Za-z.+~-]{0,32})?$ ]] && printf '%s' "$v"
+    return 0
 }
 
 # awg_userns_module_lines : for check and diagnose - a "message<TAB>how to close
@@ -2870,10 +2886,12 @@ _awg_kmod_has_233_fix() {
 # The module itself cannot be checked for the bug: a probe with a negative
 # length is the bug.
 # The module version does tell the fix apart: the vendor fixed the bug in
-# 3.1.20261113 (PRs #237 and #247, PPA build 63ed35d of 13 Nov 2026). A loaded
-# module names its version in /sys/module/amneziawg/version, one that is not
-# loaded through modinfo of its file. With the fix (_awg_kmod_has_233_fix) the
-# function is quiet. The loaded module decides: after a package upgrade the old
+# 3.1.20261113-02 (PRs #237 and #247, PPA build 63ed35d of 13 Nov 2026). A
+# loaded module names its version in /sys/module/amneziawg/version, one that is
+# not loaded through modinfo of its files (all of them: which one modprobe loads
+# is up to its index). With the fix (_awg_kmod_has_233_fix) the function is
+# quiet. The apt advice is given only when the amneziawg-dkms package is
+# installed. The loaded module decides: after a package upgrade the old
 # one stays in the kernel until a reboot. The 2.0 line (1.0.x, the pinned
 # source and the ARM prebuilts) has no fixed release; an unknown version keeps
 # the warning as it was, with no guess about the build.
@@ -2881,21 +2899,38 @@ _awg_kmod_has_233_fix() {
 # AWG_USERNS_ROOT is overridden only by tests (bats): a prefix for /proc, /sys
 # and /lib/modules.
 awg_userns_module_lines() {
-    local root="${AWG_USERNS_ROOT:-}" loaded=1 clone maxns netns aa aac md aa_on="" f kver key="" val="" price="" pre="" kofile="" kmver="" note=""
+    local root="${AWG_USERNS_ROOT:-}" loaded=1 clone maxns netns aa aac md aa_on="" f kver key="" val="" price="" pre="" kofile="" kmver="" note="" raw="" one="" unknown=0 worst="" any=0
     if [[ -d "$root/sys/module/amneziawg" ]]; then
         if [[ -r "$root/sys/module/amneziawg/version" ]]; then
-            IFS= read -r kmver 2>/dev/null < "$root/sys/module/amneziawg/version" || true
+            IFS= read -r raw 2>/dev/null < "$root/sys/module/amneziawg/version" || true
         fi
+        kmver=$(_awg_kmod_version_clean "$raw")
     else
         loaded=0
         kver=$(uname -r 2>/dev/null) || return 0
         [[ -n "$kver" && -d "$root/lib/modules/$kver" ]] || return 0
-        kofile=$(find "$root/lib/modules/$kver" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)
-        [[ -n "$kofile" ]] || return 0
-        kmver=$(modinfo -F version "$kofile" 2>/dev/null | head -n 1) || kmver=""
+        # Which of the files modprobe loads is up to its index, so look at all
+        # of them: quiet only when every one is fixed, and an unknown version of
+        # any one is "do not know", that is, the warning as before.
+        while IFS= read -r -d '' kofile; do
+            any=1
+            raw=$(modinfo -F version "$kofile" 2>/dev/null | head -n 1) || raw=""
+            one=$(_awg_kmod_version_clean "$raw")
+            if [[ -z "$one" ]]; then
+                unknown=1
+            elif ! _awg_kmod_has_233_fix "$one"; then
+                worst="$one"
+            else
+                kmver="$one"
+            fi
+        done < <(find "$root/lib/modules/$kver" -name 'amneziawg.ko*' -type f -size +0c -print0 2>/dev/null)
+        [[ "$any" == 1 ]] || return 0
+        if [[ "$unknown" == 1 ]]; then
+            kmver=""
+        elif [[ -n "$worst" ]]; then
+            kmver="$worst"
+        fi
     fi
-    kmver="${kmver//[[:space:]]/}"
-    [[ "$kmver" =~ ^[0-9]+\.[0-9]+\.[0-9]{8}([-.+~][0-9A-Za-z.+~-]{0,32})?$ ]] || kmver=""
     _awg_kmod_has_233_fix "$kmver" && return 0
     # A setting that exists but was not read (or holds no number) is "do not
     # know", not "allowed": otherwise a closed host with one unreadable file
@@ -2935,11 +2970,13 @@ awg_userns_module_lines() {
     fi
     if [[ "$kmver" == [0-2].* ]]; then
         note=" This module is version ${kmver}: that is the 2.0 line, and the vendor has no fixed 2.0 release."
+    elif [[ -n "$kmver" && -e "$root/var/lib/dpkg/info/amneziawg-dkms.list" ]]; then
+        note=" This module is version ${kmver}, the fix is in 3.1.20261113-02 and newer: sudo apt-get update && sudo apt-get install --only-upgrade amneziawg-dkms, then a reboot, and this warning goes away."
     elif [[ -n "$kmver" ]]; then
-        note=" This module is version ${kmver}, the fix is in 3.1.20261113 and newer: sudo apt-get update && sudo apt-get install --only-upgrade amneziawg-dkms, then a reboot, and this warning goes away."
+        note=" This module is version ${kmver}, the fix is in 3.1.20261113-02 and newer. The amneziawg-dkms package is not installed on this server: rebuild the module from the vendor source of that version or newer and reboot."
     fi
     printf '%s\t%s\n' \
-        "The amneziawg kernel module is on the system (loaded, or it may load on the first request), and any user may create user namespaces. That lets an unprivileged process set up its own AmneziaWG interface and hand the module I1-I5 values. Vendor modules older than 3.1.20261113 have a bug in parsing <r>/<rc>/<rd> tags with a negative length (amneziawg-linux-kernel-module#233): in some combinations it writes past a kernel buffer.${note} Our commands refuse such values; the risk comes from other users and programs on this server." \
+        "The amneziawg kernel module is on the system (loaded, or it may load on the first request), and any user may create user namespaces. That lets an unprivileged process set up its own AmneziaWG interface and hand the module I1-I5 values. Vendor modules older than 3.1.20261113-02 have a bug in parsing <r>/<rc>/<rd> tags with a negative length (amneziawg-linux-kernel-module#233): in some combinations it writes past a kernel buffer.${note} This script's commands refuse such values; the risk comes from other users and programs on this server." \
         "${pre}To close this path: sudo sysctl -w ${key}=${val}, and to keep it after a reboot: echo '${key} = ${val}' | sudo tee /etc/sysctl.d/99-userns.conf. The cost: ${price} Namespaces that already exist are not affected: reboot after it to be sure. Details: ADVANCED.en.md#userns-module-adv"
     return 0
 }

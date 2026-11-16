@@ -2753,11 +2753,27 @@ _awg_sysctl_num() {
 }
 
 # _awg_kmod_has_233_fix <версия модуля> : 0, если в модуле amneziawg этой версии
-# есть исправление вендора для amneziawg-linux-kernel-module#233 (линия 3.x и
-# новее, дата в версии не раньше 20261113); 1 - если нет или версия неизвестна.
+# есть исправление вендора для amneziawg-linux-kernel-module#233; 1 - если нет
+# или версия неизвестна. Исправление (PR #237 и #247) вошло в тег
+# v3.1.20261113-02 (63ed35d), а тег v3.1.20261113 (6879e27) его ещё не содержит,
+# хотя пишет почти ту же версию «3.1.20261113». Поэтому исправленной считается
+# линия 3.x и новее с датой позже 20261113 или с датой 20261113 и суффиксом -02
+# и выше; голая 3.1.20261113 - нет.
 _awg_kmod_has_233_fix() {
-    [[ "${1:-}" =~ ^([0-9]+)\.[0-9]+\.([0-9]{8}) ]] || return 1
-    (( 10#${BASH_REMATCH[1]} >= 3 && 10#${BASH_REMATCH[2]} >= 20261113 ))
+    [[ "${1:-}" =~ ^([0-9]+)\.[0-9]+\.([0-9]{8})(-([0-9]{1,4}))?([^0-9]|$) ]] || return 1
+    local maj=$((10#${BASH_REMATCH[1]})) day=$((10#${BASH_REMATCH[2]})) suf="${BASH_REMATCH[4]}"
+    (( maj >= 3 )) || return 1
+    (( day > 20261113 )) && return 0
+    (( day == 20261113 )) && [[ -n "$suf" ]] && (( 10#$suf >= 2 ))
+}
+
+# _awg_kmod_version_clean <строка> : версия модуля без пробелов, если она похожа
+# на версию вендора (X.Y.ГГГГММДД с необязательным суффиксом); иначе пусто, чтобы
+# в сообщение не попала произвольная строка.
+_awg_kmod_version_clean() {
+    local v="${1//[[:space:]]/}"
+    [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]{8}([-.+~][0-9A-Za-z.+~-]{0,32})?$ ]] && printf '%s' "$v"
+    return 0
 }
 
 # awg_userns_module_lines : для check и diagnose - строка «сообщение<TAB>как
@@ -2798,10 +2814,12 @@ _awg_kmod_has_233_fix() {
 # Совет: unprivileged_userns_clone = 0 (патч Debian; в Ubuntu он есть, проверено
 # на 24.04), без него - max_user_namespaces = 0, он дороже.
 # Проверить сам модуль на ошибку нельзя: проба отрицательной длиной и есть дыра.
-# Зато ошибку отличает версия модуля: вендор исправил её в 3.1.20261113 (PR
+# Зато ошибку отличает версия модуля: вендор исправил её в 3.1.20261113-02 (PR
 # #237 и #247, сборка PPA 63ed35d от 13 ноября 2026). Загруженный модуль
 # называет версию в /sys/module/amneziawg/version, незагруженный - modinfo его
-# файла. С исправлением (_awg_kmod_has_233_fix) функция молчит. Решает
+# файлов (всех: какой загрузит modprobe, решает его индекс). С исправлением
+# (_awg_kmod_has_233_fix) функция молчит. Совет apt даётся, только если стоит
+# пакет amneziawg-dkms. Решает
 # загруженный модуль: после обновления пакета до перезагрузки в ядре старый.
 # Линия 2.0 (1.0.x, закреплённый исходник и пребилты ARM) исправленного выпуска
 # не имеет; неизвестная версия - прежнее предупреждение, без догадок о сборке.
@@ -2809,21 +2827,38 @@ _awg_kmod_has_233_fix() {
 # AWG_USERNS_ROOT переопределяется только тестами (bats): префикс к /proc, /sys
 # и /lib/modules.
 awg_userns_module_lines() {
-    local root="${AWG_USERNS_ROOT:-}" loaded=1 clone maxns netns aa aac md aa_on="" f kver key="" val="" price="" pre="" kofile="" kmver="" note=""
+    local root="${AWG_USERNS_ROOT:-}" loaded=1 clone maxns netns aa aac md aa_on="" f kver key="" val="" price="" pre="" kofile="" kmver="" note="" raw="" one="" unknown=0 worst="" any=0
     if [[ -d "$root/sys/module/amneziawg" ]]; then
         if [[ -r "$root/sys/module/amneziawg/version" ]]; then
-            IFS= read -r kmver 2>/dev/null < "$root/sys/module/amneziawg/version" || true
+            IFS= read -r raw 2>/dev/null < "$root/sys/module/amneziawg/version" || true
         fi
+        kmver=$(_awg_kmod_version_clean "$raw")
     else
         loaded=0
         kver=$(uname -r 2>/dev/null) || return 0
         [[ -n "$kver" && -d "$root/lib/modules/$kver" ]] || return 0
-        kofile=$(find "$root/lib/modules/$kver" -name 'amneziawg.ko*' -type f -size +0c -print -quit 2>/dev/null)
-        [[ -n "$kofile" ]] || return 0
-        kmver=$(modinfo -F version "$kofile" 2>/dev/null | head -n 1) || kmver=""
+        # Какой из файлов загрузит modprobe, решает его индекс, поэтому смотрим
+        # все: молчим, только если исправлен каждый, а неизвестная версия хоть
+        # одного - это «не знаю», то есть прежнее предупреждение.
+        while IFS= read -r -d '' kofile; do
+            any=1
+            raw=$(modinfo -F version "$kofile" 2>/dev/null | head -n 1) || raw=""
+            one=$(_awg_kmod_version_clean "$raw")
+            if [[ -z "$one" ]]; then
+                unknown=1
+            elif ! _awg_kmod_has_233_fix "$one"; then
+                worst="$one"
+            else
+                kmver="$one"
+            fi
+        done < <(find "$root/lib/modules/$kver" -name 'amneziawg.ko*' -type f -size +0c -print0 2>/dev/null)
+        [[ "$any" == 1 ]] || return 0
+        if [[ "$unknown" == 1 ]]; then
+            kmver=""
+        elif [[ -n "$worst" ]]; then
+            kmver="$worst"
+        fi
     fi
-    kmver="${kmver//[[:space:]]/}"
-    [[ "$kmver" =~ ^[0-9]+\.[0-9]+\.[0-9]{8}([-.+~][0-9A-Za-z.+~-]{0,32})?$ ]] || kmver=""
     _awg_kmod_has_233_fix "$kmver" && return 0
     # Параметр, который есть, но не прочитан (или в нём не число), - это «не
     # знаю», а не «разрешено»: иначе закрытый хост с одним нечитаемым файлом
@@ -2863,11 +2898,13 @@ awg_userns_module_lines() {
     fi
     if [[ "$kmver" == [0-2].* ]]; then
         note=" У этого модуля версия ${kmver}: это линия 2.0, а исправленного выпуска 2.0 у вендора нет."
+    elif [[ -n "$kmver" && -e "$root/var/lib/dpkg/info/amneziawg-dkms.list" ]]; then
+        note=" У этого модуля версия ${kmver}, исправление есть с 3.1.20261113-02: sudo apt-get update && sudo apt-get install --only-upgrade amneziawg-dkms, затем перезагрузка, и это предупреждение пропадёт."
     elif [[ -n "$kmver" ]]; then
-        note=" У этого модуля версия ${kmver}, исправление есть с 3.1.20261113: sudo apt-get update && sudo apt-get install --only-upgrade amneziawg-dkms, затем перезагрузка, и это предупреждение пропадёт."
+        note=" У этого модуля версия ${kmver}, исправление есть с 3.1.20261113-02. Пакета amneziawg-dkms на сервере нет: модуль нужно пересобрать из исходника вендора этой версии или новее и перезагрузиться."
     fi
     printf '%s\t%s\n' \
-        "Модуль ядра amneziawg есть в системе (загружен или может подгрузиться по первому запросу), а создавать пространства имён пользователей (user namespaces) может любой пользователь. Тогда и непривилегированный процесс способен завести свой интерфейс AmneziaWG и передать модулю параметры I1-I5. В модулях вендора до версии 3.1.20261113 есть ошибка разбора тегов <r>/<rc>/<rd> с отрицательной длиной (amneziawg-linux-kernel-module#233): в некоторых сочетаниях она пишет за границу буфера в ядре.${note} Наши команды такие значения отвергают; риск - от других пользователей и программ на этом сервере." \
+        "Модуль ядра amneziawg есть в системе (загружен или может подгрузиться по первому запросу), а создавать пространства имён пользователей (user namespaces) может любой пользователь. Тогда и непривилегированный процесс способен завести свой интерфейс AmneziaWG и передать модулю параметры I1-I5. В модулях вендора до версии 3.1.20261113-02 есть ошибка разбора тегов <r>/<rc>/<rd> с отрицательной длиной (amneziawg-linux-kernel-module#233): в некоторых сочетаниях она пишет за границу буфера в ядре.${note} Команды этого скрипта такие значения отвергают; риск - от других пользователей и программ на этом сервере." \
         "${pre}Закрыть этот путь: sudo sysctl -w ${key}=${val}, а чтобы пережило перезагрузку: echo '${key} = ${val}' | sudo tee /etc/sysctl.d/99-userns.conf. Цена: ${price} Уже созданные пространства настройка не трогает: после неё надёжнее перезагрузиться. Подробнее: ADVANCED.md#userns-module-adv"
     return 0
 }
