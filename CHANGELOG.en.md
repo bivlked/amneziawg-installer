@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **Client table as of 16 November 2026.** Hiddify understands the 3.1 profile in the v5.9.8 pre-release: its `.conf` and link import reads `HeaderProtectionKey` and `ContentPaddingAddition` there, while stable v5.5.5 still does not, so the table now lists it as development channel only. New versions: mihomo v1.19.34, Throne 1.4.2, L×Box v2.25.21, AWG Manager v2.20.4, amneziawg-mikrotik-c v1.4.6 and the AmneziaWG-MikroTik containers rebuilt on 6 November. Every changed row was re-checked against the project's code or page on the day of the edit.
+- **Client table as of 16 November 2026.** Hiddify understands the 3.1 profile in the v5.9.8 pre-release: its `.conf` and link import reads `HeaderProtectionKey` and `ContentPaddingAddition` there, while stable v5.5.5 still does not, so the table now lists it as development channel only. New versions: mihomo v1.19.34, Throne 1.4.2, L×Box v2.25.21, AWG Manager v2.20.4, amneziawg-mikrotik-c v1.4.6 and the AmneziaWG-MikroTik containers rebuilt on 6 November. Every changed row was re-checked against the project's code or page on the day of the edit. Where README, INSTALL_VPS, ADVANCED and the installer hints advised `--protocol=2.0` for Hiddify, they now say stable Hiddify.
 
 ### Fixed
 

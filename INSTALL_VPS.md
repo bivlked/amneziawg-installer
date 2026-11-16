@@ -6,7 +6,7 @@ A step-by-step guide for deploying an AmneziaWG VPN server (3.1 by default, 2.0 
 
 ## TL;DR
 
-- A fresh install gets **AmneziaWG 3.1**: header encryption and extra padding on top of the usual obfuscation. Routers on stock firmware, Hiddify and apps that have not been updated need `--protocol=2.0`.
+- A fresh install gets **AmneziaWG 3.1**: header encryption and extra padding on top of the usual obfuscation. Routers on stock firmware, stable Hiddify and apps that have not been updated need `--protocol=2.0`.
 - One command, MIT-licensed, fully self-hosted: no third-party service carries your traffic or holds your keys. During install and updates the server downloads packages (your distribution's mirrors, the Amnezia PPA on Launchpad) and the installer's own scripts from GitHub, plus ARM prebuilt modules or the pinned 2.0 module source where they are needed. When a client config is made without `--endpoint`, it asks a public-IP lookup service (api.ipify.org and fallbacks) for its address.
 - 3.1 out of the box on x86_64 with Ubuntu 24.04 LTS, Ubuntu 26.04 LTS or Debian 13 (trixie). A stock Debian 12 (bookworm, kernel 6.1) works too, on 2.0, but it is past regular support; Ubuntu 25.10 is not supported since v6.0.0. Details below.
 - Built for cheap VPS budgets: $3 to $5 a month, 1 vCPU, 512 MB RAM minimum (1 GB recommended), 2 GB disk minimum (3+ GB recommended). It needs a full virtual machine (KVM or similar) or bare metal: in a container (OpenVZ, LXC, Docker) the installer stops.
@@ -46,7 +46,7 @@ Connect as root (or as a sudo-capable user and prepend `sudo`). The installer us
 sudo ufw allow <your-ssh-port>/tcp
 ```
 
-Then run the installer. It sets up AmneziaWG 3.1; if one of your devices is a router on stock firmware or uses Hiddify, read **Protocol generation** below first, because changing the generation later means a reinstall and new profiles for every client.
+Then run the installer. It sets up AmneziaWG 3.1; if one of your devices is a router on stock firmware or uses stable Hiddify, read **Protocol generation** below first, because changing the generation later means a reinstall and new profiles for every client.
 
 ```bash
 wget -O install_amneziawg_en.sh https://github.com/bivlked/amneziawg-installer/releases/latest/download/install_amneziawg_en.sh
@@ -213,7 +213,7 @@ Re-installing later starts from a clean slate. Already uninstalled and need it b
 
 ## Troubleshooting
 
-- **A client does not connect to a new server, and shows no error.** Most often the client does not support AmneziaWG 3.1: check the app version against the [client table](ADVANCED.en.md#client-gen-adv), and `manage_amneziawg.sh check` for the server's generation. For a router or Hiddify that cannot be updated, the server has to be reinstalled with `--protocol=2.0`.
+- **A client does not connect to a new server, and shows no error.** Most often the client does not support AmneziaWG 3.1: check the app version against the [client table](ADVANCED.en.md#client-gen-adv), and `manage_amneziawg.sh check` for the server's generation. For a router or stable Hiddify that cannot be updated, the server has to be reinstalled with `--protocol=2.0`.
 - **PPA 404 on an Ubuntu release the PPA publishes nothing for.** The installer checks whether the PPA answers for the codename and switches to `noble` itself when it does not.
 - **DKMS build fails on stale kernel headers** (typical after a `do-release-upgrade`, for example 24.04 to 26.04). The installer detects stale headers (kernel version differs from the running kernel) and installs gcc-13 as a fallback compiler so DKMS autoinstall succeeds across the version mismatch. If DKMS still fails, `sudo bash /root/awg/manage_amneziawg.sh repair-module` forces a rebuild. If the module is on disk but does not load after such an upgrade (`dmesg` shows `disagrees about version of symbol module_layout`; it happens when the old and the new release share a kernel name, such as 7.0.0-43 on 24.04 HWE and on 26.04), the boot helper builds it again by itself, and `repair-module` does the same by hand.
 - **Mobile carrier unstable or only connects on the third attempt.** On a new server, install with `--mobile` - it enables the mobile obfuscation preset and moves the port to 443/udp in one flag (carriers often drop unfamiliar UDP ports; an explicit `--port` wins if you pass both). On a running server that is a `--force --mobile` reinstall, after which every client config has to be reissued with `regen`; if the handshake never completes at all, read [the walkthrough](ADVANCED.en.md#no-hs-mobile-adv) first. Tested carriers (Russia): Yota (Moscow), Tele2 (Moscow), Tattelecom / Letai (Tatarstan), Beeline (default preset). Tele2 (Krasnoyarsk) needed `I1 = <r 48>` in May 2026, and Megafon (regional networks) needed I1 removed. Full per-carrier table and the underlying Jc / Jmin / Jmax mechanics are in [ADVANCED.en.md FAQ](ADVANCED.en.md#faq-mobile-unstable-adv).

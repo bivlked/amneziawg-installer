@@ -1065,7 +1065,7 @@ Options:
                         stops. If the awg tools are older than a third-line
                         module, the install stops and asks to upgrade them.
                         --protocol=2.0 is needed if the clients are routers on
-                        stock firmware, Hiddify or apps that are not updated.
+                        stock firmware, stable Hiddify or apps that are not updated.
                         An explicit --protocol=3.1 on an unsuitable machine ends
                         the install and names the reason. On an already
                         configured server a flag naming a DIFFERENT generation
@@ -2243,7 +2243,7 @@ A client has to understand your server's generation: a new install gives the 3.1
 | [WG Tunnel Desktop](https://github.com/wgtunnel/desktop) | Windows, Linux, macOS | ✅ (v2 line) | ✅ | Same engine as the Android version |
 | `awg-quick` ([amneziawg-tools](https://github.com/amnezia-vpn/amneziawg-tools) + a module or amneziawg-go) | Linux | ✅ (third-line module and tools) | ✅ | For servers and machines without a desktop, see [Connecting a Linux machine as a client](#linux-client-adv) |
 | [WireSock VPN Client](https://www.ntkernel.com) | Windows | not claimed | ❌ (no `S3`/`S4`) | Commercial, its own engine. By the vendor's documentation (wiresock.net, October 2026) `I1`-`I5` are silently dropped and `S3`/`S4` are not supported; both our profiles set `S3`/`S4`, so do not expect it to connect |
-| Hiddify | all | ❌ | - | AmneziaWG arrived in 5.5.5 (4 November 2026), but the `.conf` and link import drops `HeaderProtectionKey`, so a 3.1 profile will not connect: for Hiddify install the server with `--protocol=2.0` |
+| Hiddify | all | ❌ | - | AmneziaWG arrived in stable 5.5.5 (4 November 2026), but the `.conf` and link import drops `HeaderProtectionKey`, so a 3.1 profile will not connect: for stable Hiddify install the server with `--protocol=2.0`. The v5.9.8 pre-release (15 November 2026) already reads the key on import, as its code shows; I have not tested it on a profile from this installer |
 | Standard WireGuard | All | ❌ | ❌ | Does not support AWG parameters |
 
 > If a client shows an error about an unknown parameter (`HeaderProtectionKey`, `ContentPaddingAddition`, S3, S4, I1, or H1 as a range), it does not understand the server generation: update it or take a client from the first rows of the table. A client that does not know 3.1 may show no error at all - then there is simply no handshake.

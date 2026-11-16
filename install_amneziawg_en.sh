@@ -799,7 +799,7 @@ Options:
                         stops. If the awg tools are older than a third-line
                         module, the install stops and asks to upgrade them.
                         --protocol=2.0 is needed if the clients are routers on
-                        stock firmware, Hiddify or apps that are not updated.
+                        stock firmware, stable Hiddify or apps that are not updated.
                         An explicit --protocol=3.1 on an unsuitable machine ends
                         the install and names the reason. On an already
                         configured server a flag naming a DIFFERENT generation
@@ -2218,7 +2218,7 @@ _awg31_resolve_protocol() {
     # step 1, with no question and no pause (owner decision 27 sep): whoever has
     # a router or an old client can stop before the system is changed.
     if [[ "$install_state" -eq 0 && "$AWG_PROTOCOL" == "3.1" && "${AWG_PROTOCOL_SOURCE:-}" == "default" ]]; then
-        log_warn "The default generation is AmneziaWG 3.1 (if the tools or the module turn out unable to run it, the installer installs 2.0 or stops and explains why). If your clients include a router without 3.1 support in its firmware (stock Keenetic, OpenWrt with an old amneziawg package), Hiddify or apps that are not updated - stop now (Ctrl+C) and run with --protocol=2.0."
+        log_warn "The default generation is AmneziaWG 3.1 (if the tools or the module turn out unable to run it, the installer installs 2.0 or stops and explains why). If your clients include a router without 3.1 support in its firmware (stock Keenetic, OpenWrt with an old amneziawg package), stable Hiddify or apps that are not updated - stop now (Ctrl+C) and run with --protocol=2.0."
     fi
 
     if (( AWG_GEN_SWITCHED )); then
@@ -9621,7 +9621,7 @@ step99_finish() {
         log "IMPORTANT: third-line (3.1) profiles. You need a client with AmneziaWG 3.1 support"
         log "           (recent AmneziaVPN, AmneziaWG, WG Tunnel; see the section \"Which AmneziaWG generation"
         log "           a client speaks\": https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.en.md#client-gen-adv)."
-        log "           Routers without 3.1 support in their firmware and Hiddify need a 2.0 server."
+        log "           Routers without 3.1 support in their firmware and stable Hiddify need a 2.0 server."
         log "           Back to 2.0: sudo bash $0 --uninstall (removes the server and its 3.1 profiles, keeping a backup copy by default),"
         log "           then a new install with --protocol=2.0 and new profiles for every client."
     else
