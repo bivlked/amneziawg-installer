@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [6.3.2] - 2026-11-16
+## [6.3.2] - 2026-11-17
 
 **v6.3.2** - `check` and `diagnose` follow the port the server really uses and stay quiet about user namespaces once the fixed kernel module is loaded; the vendor fixes of 13 November are in the PPA.
 
