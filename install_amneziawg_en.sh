@@ -9130,9 +9130,11 @@ _awg31_step3_gate() {
 # by service" both for an unsigned module and for one signed with a key that is
 # not enrolled, so the words cannot tell them apart: the signature is checked
 # here (modinfo -F signer). Empty - the module is not signed and enrolling a key
-# will not help; the check itself failed - both ways out are given. "Required key
-# not available" comes from kernels that do not enforce signatures, "Operation
-# not permitted" from lockdown; the latter gets a hint only when mokutil confirms
+# will not help; the check itself failed - both ways out are given. Whether there
+# is a signature is decided by sig_id (any signature has one); signer is only for
+# the text, kmod built without libcrypto does not show it. "Required key not
+# available" came from kernels before 5.4, "Operation not permitted" comes from
+# lockdown; the latter gets a hint only when mokutil confirms
 # Secure Boot is on, since EPERM has other causes too. The DKMS key is
 # /var/lib/dkms/mok.pub on Debian and /var/lib/shim-signed/mok/MOK.der on Ubuntu;
 # a path is named only when the file exists. Other failures get no hint.
@@ -9148,23 +9150,26 @@ _awg_modprobe_hint() {
             ;;
         *) return 0 ;;
     esac
-    if ! signer=$(modinfo -F signer amneziawg 2>/dev/null); then
+    local sigid=""
+    if ! sigid=$(modinfo -F sig_id amneziawg 2>/dev/null); then
         printf '%s' " The kernel did not let the module in: this happens with Secure Boot on (check: mokutil --sb-state). Turn Secure Boot off in the UEFI settings or enroll in MOK the key the module is signed with (whether it is signed: modinfo -F signer amneziawg).$tail"
         return 0
     fi
-    if [[ -z "$signer" ]]; then
+    if [[ -z "$sigid" ]]; then
         printf '%s' " The module is not signed (modinfo -F signer amneziawg prints nothing), and with Secure Boot on the kernel lets in only signed modules (check: mokutil --sb-state). Enrolling a key will not help here: turn Secure Boot off in the UEFI settings or set up module signing in DKMS and rebuild the module.$tail"
         return 0
     fi
+    signer=$(modinfo -F signer amneziawg 2>/dev/null) || signer=""
+    signer="${signer:+ \"${signer}\"}"
     if [[ -e "$root/var/lib/dkms/mok.pub" ]]; then
         key=/var/lib/dkms/mok.pub
     elif [[ -e "$root/var/lib/shim-signed/mok/MOK.der" ]]; then
         key=/var/lib/shim-signed/mok/MOK.der
     fi
     if [[ -n "$key" ]]; then
-        printf '%s' " The module is signed with the key \"${signer}\", but the kernel does not trust it: the key is not enrolled in MOK and Secure Boot is on (check: mokutil --sb-state). Turn Secure Boot off in the UEFI settings or enroll the DKMS key: sudo mokutil --import $key (it asks you to set a password), reboot, and on the blue MOK Manager screen choose Enroll MOK and enter that password. The screen shows only on the machine's monitor or the hoster's console, this step cannot be done over ssh.$tail"
+        printf '%s' " The module is signed with the key${signer}, but the kernel does not trust it: the key is not enrolled in MOK and Secure Boot is on (check: mokutil --sb-state). Turn Secure Boot off in the UEFI settings or enroll the DKMS key: sudo mokutil --import $key (it asks you to set a password), reboot, and on the blue MOK Manager screen choose Enroll MOK and enter that password. The screen shows only on the machine's monitor or the hoster's console, this step cannot be done over ssh.$tail"
     else
-        printf '%s' " The module is signed with the key \"${signer}\", but the kernel does not trust it: the key is not enrolled in MOK and Secure Boot is on (check: mokutil --sb-state). Turn Secure Boot off in the UEFI settings or enroll that key in MOK (mokutil --import).$tail"
+        printf '%s' " The module is signed with the key${signer}, but the kernel does not trust it: the key is not enrolled in MOK and Secure Boot is on (check: mokutil --sb-state). Turn Secure Boot off in the UEFI settings or enroll that key in MOK (mokutil --import).$tail"
     fi
 }
 

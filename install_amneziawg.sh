@@ -8975,8 +8975,10 @@ _awg31_step3_gate() {
 # и на неподписанный модуль, и на модуль с незарегистрированным ключом, поэтому
 # по словам их не различить: подпись проверяем сами (modinfo -F signer). Пусто -
 # модуль не подписан, регистрация ключа не поможет; не удалось спросить - даём оба
-# выхода. "Required key not available" бывает на ядрах без принудительной
-# проверки, "Operation not permitted" - при lockdown; на последний подсказку даём,
+# выхода. Есть ли подпись, решает sig_id (он есть у любой подписи), а signer нужен
+# только для текста: kmod без libcrypto его не показывает. "Required key not
+# available" выдавали ядра до 5.4, "Operation not permitted" - lockdown; на него
+# подсказку даём,
 # только если mokutil подтверждает включённый Secure Boot: EPERM бывает и не от него.
 # Ключ DKMS на Debian лежит в /var/lib/dkms/mok.pub, на Ubuntu в
 # /var/lib/shim-signed/mok/MOK.der; путь называем, только если файл есть.
@@ -8992,23 +8994,26 @@ _awg_modprobe_hint() {
             ;;
         *) return 0 ;;
     esac
-    if ! signer=$(modinfo -F signer amneziawg 2>/dev/null); then
+    local sigid=""
+    if ! sigid=$(modinfo -F sig_id amneziawg 2>/dev/null); then
         printf '%s' " Ядро не пропустило модуль: так бывает при включённом Secure Boot (проверка: mokutil --sb-state). Выключите Secure Boot в настройках UEFI либо зарегистрируйте в MOK ключ, которым подписан модуль (подписан ли он: modinfo -F signer amneziawg).$tail"
         return 0
     fi
-    if [[ -z "$signer" ]]; then
+    if [[ -z "$sigid" ]]; then
         printf '%s' " Модуль не подписан (modinfo -F signer amneziawg ничего не выводит), а при включённом Secure Boot ядро пропускает только подписанные (проверка: mokutil --sb-state). Регистрация ключа тут не поможет: выключите Secure Boot в настройках UEFI либо настройте подпись модулей в DKMS и пересоберите модуль.$tail"
         return 0
     fi
+    signer=$(modinfo -F signer amneziawg 2>/dev/null) || signer=""
+    signer="${signer:+ «${signer}»}"
     if [[ -e "$root/var/lib/dkms/mok.pub" ]]; then
         key=/var/lib/dkms/mok.pub
     elif [[ -e "$root/var/lib/shim-signed/mok/MOK.der" ]]; then
         key=/var/lib/shim-signed/mok/MOK.der
     fi
     if [[ -n "$key" ]]; then
-        printf '%s' " Модуль подписан ключом «${signer}», но ядро этому ключу не доверяет: он не зарегистрирован в MOK, а Secure Boot включён (проверка: mokutil --sb-state). Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ DKMS: sudo mokutil --import $key (попросит придумать пароль), перезагрузка, на синем экране MOK Manager выберите Enroll MOK и введите этот пароль. Экран виден только на мониторе машины или в консоли хостера, по ssh этот шаг не пройти.$tail"
+        printf '%s' " Модуль подписан ключом${signer}, но ядро этому ключу не доверяет: он не зарегистрирован в MOK, а Secure Boot включён (проверка: mokutil --sb-state). Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ DKMS: sudo mokutil --import $key (попросит придумать пароль), перезагрузка, на синем экране MOK Manager выберите Enroll MOK и введите этот пароль. Экран виден только на мониторе машины или в консоли хостера, по ssh этот шаг не пройти.$tail"
     else
-        printf '%s' " Модуль подписан ключом «${signer}», но ядро этому ключу не доверяет: он не зарегистрирован в MOK, а Secure Boot включён (проверка: mokutil --sb-state). Выключите Secure Boot в настройках UEFI либо зарегистрируйте этот ключ в MOK (mokutil --import).$tail"
+        printf '%s' " Модуль подписан ключом${signer}, но ядро этому ключу не доверяет: он не зарегистрирован в MOK, а Secure Boot включён (проверка: mokutil --sb-state). Выключите Secure Boot в настройках UEFI либо зарегистрируйте этот ключ в MOK (mokutil --import).$tail"
     fi
 }
 

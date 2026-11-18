@@ -7,8 +7,8 @@
 #
 # A kernel that enforces module signatures answers "Key was rejected by service"
 # both for an unsigned module and for one signed with a key that is not enrolled,
-# so the hint asks modinfo for the signer instead of guessing from the words:
-# no signer - enrolling a key cannot help; a signer - enroll the DKMS key.
+# so the hint asks modinfo for sig_id instead of guessing from the words:
+# no signature - enrolling a key cannot help; a signature - enroll the DKMS key.
 
 load test_helper
 
@@ -17,8 +17,8 @@ INSTALL_EN="$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"
 
 func_from() { sed -n "/^$2()/,/^}/p" "$1"; }
 
-# MODPROBE_OUT / MODPROBE_RC drive the modprobe stub, MODINFO_SIGNER /
-# MODINFO_RC the signer check, SB_STATE / MOKUTIL_RC the mokutil stub; files
+# MODPROBE_OUT / MODPROBE_RC drive the modprobe stub, MODINFO_SIGID /
+# MODINFO_RC the signature check, MODINFO_SIGNER the name in the text, SB_STATE / MOKUTIL_RC the mokutil stub; files
 # under $TEST_DIR/root stand for the DKMS key locations.
 run_step3_load() {
     local script="${1:-$INSTALL_RU}"
@@ -29,7 +29,7 @@ run_step3_load() {
         echo 'update_state() { echo "$1" >> "$STATE_LOG"; }'
         echo 'lsmod() { echo "wireguard 100000 0"; }'
         echo 'modprobe() { echo "LC_ALL=${LC_ALL-}" > "$TEST_DIR/modprobe.env"; [ -n "${MODPROBE_OUT-}" ] && echo "$MODPROBE_OUT" >&2; return ${MODPROBE_RC:-1}; }'
-        echo 'modinfo() { [ "$1 $2 $3" = "-F signer amneziawg" ] || return 9; [ -n "${MODINFO_SIGNER-}" ] && echo "$MODINFO_SIGNER"; return ${MODINFO_RC:-0}; }'
+        echo 'modinfo() { [ "$1" = -F ] && [ "$3" = amneziawg ] || return 9; case "$2" in sig_id) [ -n "${MODINFO_SIGID-}" ] && echo "$MODINFO_SIGID"; return ${MODINFO_RC:-0} ;; signer) [ -n "${MODINFO_SIGNER-}" ] && echo "$MODINFO_SIGNER"; return 0 ;; esac; return 9; }'
         echo 'mokutil() { [ -n "${SB_STATE-}" ] && echo "$SB_STATE"; return ${MOKUTIL_RC:-0}; }'
         echo 'mkdir() { :; }'
         echo 'grep() { if [ "$1" = "-qxF" ]; then return 0; fi; command grep "$@"; }'
@@ -59,7 +59,7 @@ SIGNER="DKMS module signing key"
 
 @test "a signed module with the Debian DKMS key on disk: Secure Boot, the signer and that key" {
     dkms_key
-    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="$SIGNER" run_step3_load
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGNER="$SIGNER" run_step3_load
     [ "$status" -eq 1 ]
     [[ "$output" == *"DIE: "* ]]
     [[ "$output" == *"Key was rejected by service"* ]]
@@ -73,7 +73,7 @@ SIGNER="DKMS module signing key"
 
 @test "a signed module with only the Ubuntu shim key names MOK.der" {
     ubuntu_key
-    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="$SIGNER" run_step3_load
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGNER="$SIGNER" run_step3_load
     [ "$status" -eq 1 ]
     [[ "$output" == *"sudo mokutil --import /var/lib/shim-signed/mok/MOK.der"* ]]
     [[ "$output" != *"/var/lib/dkms/mok.pub"* ]]
@@ -82,12 +82,12 @@ SIGNER="DKMS module signing key"
 @test "the Debian DKMS key wins when both keys are on disk" {
     dkms_key
     ubuntu_key
-    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="$SIGNER" run_step3_load
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGNER="$SIGNER" run_step3_load
     [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]]
 }
 
 @test "a signed module with no key file found: enroll advice without a made-up path" {
-    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="$SIGNER" run_step3_load
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGNER="$SIGNER" run_step3_load
     [ "$status" -eq 1 ]
     [[ "$output" == *"Secure Boot"* ]]
     [[ "$output" == *"(mokutil --import)"* ]]
@@ -116,7 +116,7 @@ SIGNER="DKMS module signing key"
 
 @test "Required key not available is treated as Secure Boot too" {
     dkms_key
-    MODPROBE_OUT="$NOKEY" MODINFO_SIGNER="$SIGNER" run_step3_load
+    MODPROBE_OUT="$NOKEY" MODINFO_SIGID=PKCS#7 MODINFO_SIGNER="$SIGNER" run_step3_load
     [ "$status" -eq 1 ]
     [[ "$output" == *"Required key not available"* ]]
     [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]]
@@ -141,7 +141,7 @@ SIGNER="DKMS module signing key"
 
 @test "any other modprobe failure keeps its own reason and does not blame Secure Boot" {
     dkms_key
-    MODPROBE_OUT="modprobe: ERROR: could not insert 'amneziawg': Exec format error" MODINFO_SIGNER="$SIGNER" run_step3_load
+    MODPROBE_OUT="modprobe: ERROR: could not insert 'amneziawg': Exec format error" MODINFO_SIGID=PKCS#7 MODINFO_SIGNER="$SIGNER" run_step3_load
     [ "$status" -eq 1 ]
     [[ "$output" == *"DIE: "*"Exec format error"* ]]
     [[ "$output" != *"Secure Boot"* ]]
@@ -155,20 +155,20 @@ SIGNER="DKMS module signing key"
 }
 
 @test "modprobe runs in the C locale, so its words can be matched" {
-    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="$SIGNER" run_step3_load
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGNER="$SIGNER" run_step3_load
     [ "$(cat "$TEST_DIR/modprobe.env")" = "LC_ALL=C" ]
 }
 
 @test "a stopped step 3 leaves the state at 3, so a rerun resumes there" {
     dkms_key
-    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="$SIGNER" run_step3_load
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGNER="$SIGNER" run_step3_load
     [ "$status" -eq 1 ]
     [ "$(cat "$STATE_LOG")" = "3" ]
     [[ "$output" != *"LOG: Модуль загружен."* ]]
 }
 
 @test "a multi-line modprobe answer is kept on the one stop line" {
-    MODPROBE_OUT=$'modprobe: ERROR: could not insert \'amneziawg\': Key was rejected by service\nsecond line' MODINFO_SIGNER="$SIGNER" run_step3_load
+    MODPROBE_OUT=$'modprobe: ERROR: could not insert \'amneziawg\': Key was rejected by service\nsecond line' MODINFO_SIGID=PKCS#7 MODINFO_SIGNER="$SIGNER" run_step3_load
     [ "$status" -eq 1 ]
     line=$(printf '%s\n' "$output" | grep '^DIE: ')
     [[ "$line" == *"Key was rejected by service second line"* ]]
@@ -184,7 +184,7 @@ SIGNER="DKMS module signing key"
 
 @test "the English installer gives the same Secure Boot hint" {
     dkms_key
-    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="$SIGNER" run_step3_load "$INSTALL_EN"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGNER="$SIGNER" run_step3_load "$INSTALL_EN"
     [ "$status" -eq 1 ]
     [[ "$output" == *"Key was rejected by service"* ]]
     [[ "$output" == *"\"DKMS module signing key\""* ]]
@@ -207,4 +207,13 @@ SIGNER="DKMS module signing key"
     MODPROBE_OUT="modprobe: WARNING: x" MODPROBE_RC=0 run_step3_load "$INSTALL_EN"
     [[ "$output" == *"WARN: modprobe: modprobe: WARNING: x"* ]]
     [[ "$output" == *"LOG: Module loaded."* ]]
+}
+
+@test "a signature without a signer name (kmod without libcrypto) is still a signature" {
+    dkms_key
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGNER="" run_step3_load
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Модуль подписан ключом, но"* ]]
+    [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]]
+    [[ "$output" != *"Модуль не подписан"* ]]
 }
