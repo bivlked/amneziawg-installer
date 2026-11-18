@@ -1,12 +1,14 @@
 #!/usr/bin/env bats
 # Step 3 of the installer loads the kernel module with modprobe. When Secure
-# Boot rejects the module, modprobe says why in its own words, and step 3 used
-# to stop with a bare "modprobe amneziawg error." (#403: Debian 12, a DKMS
-# module signed by a key that was never enrolled). Now the reason is kept and,
-# for the two Secure Boot answers, the stop names the way out.
+# Boot rejects the module, modprobe says so in its own words, and step 3 used
+# to stop with a bare "modprobe amneziawg error." (#403: Debian 12, "Key was
+# rejected by service"). Now the reason is kept, and for the Secure Boot answers
+# the stop names the way out.
 #
-# "Key was rejected by service" = signed, but the key is not trusted (EKEYREJECTED).
-# "Required key not available"  = not signed at all (ENOKEY).
+# A kernel that enforces module signatures answers "Key was rejected by service"
+# both for an unsigned module and for one signed with a key that is not enrolled,
+# so the hint asks modinfo for the signer instead of guessing from the words:
+# no signer - enrolling a key cannot help; a signer - enroll the DKMS key.
 
 load test_helper
 
@@ -15,8 +17,9 @@ INSTALL_EN="$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"
 
 func_from() { sed -n "/^$2()/,/^}/p" "$1"; }
 
-# MODPROBE_OUT / MODPROBE_RC drive the modprobe stub; files under
-# $TEST_DIR/root stand for the DKMS key locations.
+# MODPROBE_OUT / MODPROBE_RC drive the modprobe stub, MODINFO_SIGNER /
+# MODINFO_RC the signer check, SB_STATE / MOKUTIL_RC the mokutil stub; files
+# under $TEST_DIR/root stand for the DKMS key locations.
 run_step3_load() {
     local script="${1:-$INSTALL_RU}"
     {
@@ -25,16 +28,24 @@ run_step3_load() {
         echo 'log_warn() { echo "WARN: $*"; }'
         echo 'update_state() { echo "$1" >> "$STATE_LOG"; }'
         echo 'lsmod() { echo "wireguard 100000 0"; }'
-        echo 'modprobe() { [ -n "${MODPROBE_OUT-}" ] && echo "$MODPROBE_OUT" >&2; return ${MODPROBE_RC:-1}; }'
+        echo 'modprobe() { echo "LC_ALL=${LC_ALL-}" > "$TEST_DIR/modprobe.env"; [ -n "${MODPROBE_OUT-}" ] && echo "$MODPROBE_OUT" >&2; return ${MODPROBE_RC:-1}; }'
+        echo 'modinfo() { [ "$1 $2 $3" = "-F signer amneziawg" ] || return 9; [ -n "${MODINFO_SIGNER-}" ] && echo "$MODINFO_SIGNER"; return ${MODINFO_RC:-0}; }'
+        echo 'mokutil() { [ -n "${SB_STATE-}" ] && echo "$SB_STATE"; return ${MOKUTIL_RC:-0}; }'
+        echo 'mkdir() { :; }'
+        echo 'grep() { if [ "$1" = "-qxF" ]; then return 0; fi; command grep "$@"; }'
         echo 'sleep() { :; }'
         func_from "$script" _awg_modprobe_hint
-        func_from "$script" step3_check_module
+        # step 3 up to "module loaded": what follows (modinfo, vermagic, the 3.1
+        # gate) is covered by test_awg31_protocol_flag.bats
+        sed -n '/^step3_check_module()/,/log "\(Модуль загружен\|Module loaded\)\."/p' "$script"
+        echo 'fi; }'
         echo 'step3_check_module'
     } > "$TEST_DIR/step3.sh"
     export STATE_LOG="$TEST_DIR/state.log"
     export AWG_SB_ROOT="$TEST_DIR/root"
+    export TEST_DIR
     : > "$STATE_LOG"
-    mkdir -p "$AWG_SB_ROOT"
+    command mkdir -p "$AWG_SB_ROOT"
     run bash "$TEST_DIR/step3.sh"
 }
 
@@ -42,24 +53,27 @@ dkms_key() { mkdir -p "$TEST_DIR/root/var/lib/dkms" && : > "$TEST_DIR/root/var/l
 ubuntu_key() { mkdir -p "$TEST_DIR/root/var/lib/shim-signed/mok" && : > "$TEST_DIR/root/var/lib/shim-signed/mok/MOK.der"; }
 
 REJECTED="modprobe: ERROR: could not insert 'amneziawg': Key was rejected by service"
-UNSIGNED="modprobe: ERROR: could not insert 'amneziawg': Required key not available"
+NOKEY="modprobe: ERROR: could not insert 'amneziawg': Required key not available"
+EPERM="modprobe: ERROR: could not insert 'amneziawg': Operation not permitted"
+SIGNER="DKMS module signing key"
 
-@test "a rejected key with the Debian DKMS key on disk names Secure Boot and that key" {
+@test "a signed module with the Debian DKMS key on disk: Secure Boot, the signer and that key" {
     dkms_key
-    MODPROBE_OUT="$REJECTED" run_step3_load
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="$SIGNER" run_step3_load
     [ "$status" -eq 1 ]
     [[ "$output" == *"DIE: "* ]]
     [[ "$output" == *"Key was rejected by service"* ]]
     [[ "$output" == *"Secure Boot"* ]]
     [[ "$output" == *"mokutil --sb-state"* ]]
+    [[ "$output" == *"«DKMS module signing key»"* ]]
     [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]]
     [[ "$output" == *"MOK Manager"* ]]
     [[ "$output" == *"шага 3"* ]]
 }
 
-@test "a rejected key with only the Ubuntu shim key names MOK.der" {
+@test "a signed module with only the Ubuntu shim key names MOK.der" {
     ubuntu_key
-    MODPROBE_OUT="$REJECTED" run_step3_load
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="$SIGNER" run_step3_load
     [ "$status" -eq 1 ]
     [[ "$output" == *"sudo mokutil --import /var/lib/shim-signed/mok/MOK.der"* ]]
     [[ "$output" != *"/var/lib/dkms/mok.pub"* ]]
@@ -68,30 +82,66 @@ UNSIGNED="modprobe: ERROR: could not insert 'amneziawg': Required key not availa
 @test "the Debian DKMS key wins when both keys are on disk" {
     dkms_key
     ubuntu_key
-    MODPROBE_OUT="$REJECTED" run_step3_load
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="$SIGNER" run_step3_load
     [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]]
 }
 
-@test "a rejected key with no key file found still names Secure Boot, without a made-up path" {
-    MODPROBE_OUT="$REJECTED" run_step3_load
+@test "a signed module with no key file found: enroll advice without a made-up path" {
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="$SIGNER" run_step3_load
     [ "$status" -eq 1 ]
     [[ "$output" == *"Secure Boot"* ]]
-    [[ "$output" == *"mokutil --sb-state"* ]]
+    [[ "$output" == *"(mokutil --import)"* ]]
     [[ "$output" != *"--import /"* ]]
 }
 
-@test "an unsigned module under Secure Boot names Secure Boot" {
+@test "an unsigned module gets no enroll advice even with a key on disk" {
     dkms_key
-    MODPROBE_OUT="$UNSIGNED" run_step3_load
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="" run_step3_load
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Secure Boot"* ]]
+    [[ "$output" == *"Модуль не подписан"* ]]
+    [[ "$output" == *"Регистрация ключа тут не поможет"* ]]
+    [[ "$output" != *"--import /"* ]]
+}
+
+@test "a failed signer check gives both ways out and claims nothing about the signature" {
+    dkms_key
+    MODPROBE_OUT="$REJECTED" MODINFO_RC=1 run_step3_load
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Secure Boot"* ]]
+    [[ "$output" == *"modinfo -F signer amneziawg"* ]]
+    [[ "$output" != *"Модуль не подписан"* ]]
+    [[ "$output" != *"Модуль подписан"* ]]
+}
+
+@test "Required key not available is treated as Secure Boot too" {
+    dkms_key
+    MODPROBE_OUT="$NOKEY" MODINFO_SIGNER="$SIGNER" run_step3_load
     [ "$status" -eq 1 ]
     [[ "$output" == *"Required key not available"* ]]
-    [[ "$output" == *"Secure Boot"* ]]
-    [[ "$output" == *"mokutil --sb-state"* ]]
+    [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]]
+}
+
+@test "Operation not permitted gets the hint when mokutil confirms Secure Boot" {
+    MODPROBE_OUT="$EPERM" MODINFO_SIGNER="" SB_STATE="SecureBoot enabled" run_step3_load
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Operation not permitted"* ]]
+    [[ "$output" == *"Модуль не подписан"* ]]
+}
+
+@test "Operation not permitted gets no hint when Secure Boot is off or unknown" {
+    MODPROBE_OUT="$EPERM" SB_STATE="SecureBoot disabled" run_step3_load
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"DIE: "*"Operation not permitted"* ]]
+    [[ "$output" != *"Secure Boot"* ]]
+    MODPROBE_OUT="$EPERM" SB_STATE="" MOKUTIL_RC=127 run_step3_load
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"Secure Boot"* ]]
 }
 
 @test "any other modprobe failure keeps its own reason and does not blame Secure Boot" {
     dkms_key
-    MODPROBE_OUT="modprobe: ERROR: could not insert 'amneziawg': Exec format error" run_step3_load
+    MODPROBE_OUT="modprobe: ERROR: could not insert 'amneziawg': Exec format error" MODINFO_SIGNER="$SIGNER" run_step3_load
     [ "$status" -eq 1 ]
     [[ "$output" == *"DIE: "*"Exec format error"* ]]
     [[ "$output" != *"Secure Boot"* ]]
@@ -104,37 +154,57 @@ UNSIGNED="modprobe: ERROR: could not insert 'amneziawg': Required key not availa
     [[ "$output" != *"Secure Boot"* ]]
 }
 
+@test "modprobe runs in the C locale, so its words can be matched" {
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="$SIGNER" run_step3_load
+    [ "$(cat "$TEST_DIR/modprobe.env")" = "LC_ALL=C" ]
+}
+
 @test "a stopped step 3 leaves the state at 3, so a rerun resumes there" {
     dkms_key
-    MODPROBE_OUT="$REJECTED" run_step3_load
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="$SIGNER" run_step3_load
     [ "$status" -eq 1 ]
     [ "$(cat "$STATE_LOG")" = "3" ]
     [[ "$output" != *"LOG: Модуль загружен."* ]]
 }
 
-@test "the English installer gives the same Secure Boot hint" {
-    dkms_key
-    MODPROBE_OUT="$REJECTED" run_step3_load "$INSTALL_EN"
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"Key was rejected by service"* ]]
-    [[ "$output" == *"Secure Boot"* ]]
-    [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]]
-    [[ "$output" == *"step 3"* ]]
-}
-
-@test "the English installer names Secure Boot for an unsigned module and not for other errors" {
-    MODPROBE_OUT="$UNSIGNED" run_step3_load "$INSTALL_EN"
-    [[ "$output" == *"Secure Boot"* ]]
-    MODPROBE_OUT="modprobe: FATAL: Module amneziawg not found" run_step3_load "$INSTALL_EN"
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"not found"* ]]
-    [[ "$output" != *"Secure Boot"* ]]
-}
-
 @test "a multi-line modprobe answer is kept on the one stop line" {
-    MODPROBE_OUT=$'modprobe: ERROR: could not insert \'amneziawg\': Key was rejected by service\nsecond line' run_step3_load
+    MODPROBE_OUT=$'modprobe: ERROR: could not insert \'amneziawg\': Key was rejected by service\nsecond line' MODINFO_SIGNER="$SIGNER" run_step3_load
     [ "$status" -eq 1 ]
     line=$(printf '%s\n' "$output" | grep '^DIE: ')
     [[ "$line" == *"Key was rejected by service second line"* ]]
     [[ "$line" == *"Secure Boot"* ]]
+}
+
+@test "a warning from a successful modprobe is shown, not swallowed" {
+    MODPROBE_OUT="modprobe: WARNING: /etc/modprobe.d/x.conf line 3: ignoring bad line" MODPROBE_RC=0 run_step3_load
+    [[ "$output" == *"WARN: modprobe: modprobe: WARNING: /etc/modprobe.d/x.conf line 3: ignoring bad line"* ]]
+    [[ "$output" == *"LOG: Модуль загружен."* ]]
+    [[ "$output" != *"DIE: "* ]]
+}
+
+@test "the English installer gives the same Secure Boot hint" {
+    dkms_key
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="$SIGNER" run_step3_load "$INSTALL_EN"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Key was rejected by service"* ]]
+    [[ "$output" == *"\"DKMS module signing key\""* ]]
+    [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]]
+    [[ "$output" == *"step 3"* ]]
+}
+
+@test "the English installer: unsigned, failed check, other errors and warnings" {
+    dkms_key
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGNER="" run_step3_load "$INSTALL_EN"
+    [[ "$output" == *"The module is not signed"* ]]
+    [[ "$output" != *"--import /"* ]]
+    MODPROBE_OUT="$REJECTED" MODINFO_RC=1 run_step3_load "$INSTALL_EN"
+    [[ "$output" == *"modinfo -F signer amneziawg"* ]]
+    [[ "$output" != *"The module is signed"* ]]
+    MODPROBE_OUT="modprobe: FATAL: Module amneziawg not found" run_step3_load "$INSTALL_EN"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not found"* ]]
+    [[ "$output" != *"Secure Boot"* ]]
+    MODPROBE_OUT="modprobe: WARNING: x" MODPROBE_RC=0 run_step3_load "$INSTALL_EN"
+    [[ "$output" == *"WARN: modprobe: modprobe: WARNING: x"* ]]
+    [[ "$output" == *"LOG: Module loaded."* ]]
 }
