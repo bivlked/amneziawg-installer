@@ -12,6 +12,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.3] - 2026-11-18
+
+**v6.3.3** - the installer names Secure Boot when it blocks the kernel module at step 3 and gives the way out: turn Secure Boot off or enroll the DKMS key.
+
+### Fixed
+
+- **Step 3 of the installer names Secure Boot when it blocks the module.** A failed `modprobe amneziawg` used to stop the install with a bare "modprobe amneziawg error." Now the message carries `modprobe`'s own answer. On `Key was rejected by service` and `Required key not available`, and on `Operation not permitted` only when `mokutil --sb-state` confirms Secure Boot, the installer checks whether the module is signed (`modinfo`) and names the way out: for an unsigned module, turn Secure Boot off or set up module signing in DKMS and rebuild the module, enrolling a key will not help; for a signed one, turn Secure Boot off or enroll the key with `sudo mokutil --import` and the path to the DKMS key when it finds one (`/var/lib/dkms/mok.pub` on Debian, `/var/lib/shim-signed/mok/MOK.der` on Ubuntu). A rerun resumes at step 3 (#403). Warnings from a successful `modprobe` now show in the install log. The same answer is in the ADVANCED FAQ.
+
 ## [6.3.2] - 2026-11-18
 
 **v6.3.2** - `check` and `diagnose` follow the port the server really uses and stay quiet about user namespaces once the fixed kernel module is loaded; the vendor fixes of 13 November are in the PPA.
@@ -2283,7 +2291,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.2...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.3...HEAD
+[6.3.3]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.2...v6.3.3
 [6.3.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.1...v6.3.2
 [6.3.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.0...v6.3.1
 [6.3.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.2...v6.3.0

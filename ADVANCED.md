@@ -1294,7 +1294,7 @@ graph TD
 Инсталлятор скачивает `awg_common.sh` и `manage_amneziawg.sh` с URL, привязанных к конкретному тегу версии:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.2/awg_common.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.3/awg_common.sh
 ```
 
 Это даёт **supply chain pinning**: скачиваемые скрипты соответствуют версии инсталлятора, даже если `main` уже обновлён.
@@ -1482,6 +1482,17 @@ done
 <details>
   <summary><strong>В: Ошибка DKMS при обновлении ядра — что делать?</strong></summary>
   <b>О:</b> 1. Проверьте статус: <code>dkms status</code>. 2. Попробуйте пересобрать: <code>sudo dkms install amneziawg/$(dkms status | grep amneziawg | head -1 | awk -F'[,/ ]+' '{print $2}')</code>. 3. Убедитесь, что установлены заголовки ядра: <code>sudo apt install linux-headers-$(uname -r)</code>. 4. При неустранимой ошибке запустите диагностику: <code>sudo bash ./install_amneziawg.sh --diagnostic</code>.
+</details>
+
+<a id="faq-secure-boot-adv"></a>
+<details>
+  <summary><strong>В: Установка AmneziaWG падает на шаге 3: «modprobe: ERROR: could not insert 'amneziawg': Key was rejected by service» - что делать?</strong></summary>
+  <b>О:</b> Это Secure Boot: ядро пропускает только модули, подписанные зарегистрированным в MOK ключом. С принудительной проверкой подписи оно отвечает «Key was rejected by service» и на неподписанный модуль, и на модуль с незарегистрированным ключом, на старых ядрах бывает <code>Required key not available</code>. Проверить, включён ли Secure Boot: <code>mokutil --sb-state</code> (пакет <code>mokutil</code>). Подписан ли модуль: <code>modinfo -F signer amneziawg</code>.
+  <ol>
+    <li>Выключить Secure Boot в настройках UEFI. Это помогает в обоих случаях, а если команда <code>modinfo</code> ничего не вывела (модуль не подписан), это самый простой путь: регистрация ключа тогда не поможет. Другой выход для неподписанного модуля - настроить подпись модулей в DKMS и пересобрать модуль.</li>
+    <li>Если модуль подписан ключом DKMS, зарегистрировать этот ключ: на Debian <code>sudo mokutil --import /var/lib/dkms/mok.pub</code>, на Ubuntu <code>sudo mokutil --import /var/lib/shim-signed/mok/MOK.der</code>. Команда попросит придумать пароль. После перезагрузки на синем экране MOK Manager выберите Enroll MOK, Continue, Yes, введите этот пароль и перезагрузитесь. Экран виден только на мониторе машины или в консоли хостера (IPMI, VNC), по ssh этот шаг не пройти. Не успели - повторите <code>mokutil --import</code> и перезагрузку.</li>
+  </ol>
+  Затем проверьте <code>sudo modprobe amneziawg</code> и запустите установщик ещё раз той же командой: он продолжит с шага 3, ключи сервера и конфиги клиентов к этому шагу ещё не созданы. Установщик сам проверяет подпись модуля и в сообщении об ошибке называет нужный выход, а если находит ключ DKMS, то и путь к нему. Под Secure Boot я установку не проверял, команды взяты из <a href="https://wiki.debian.org/SecureBoot#DKMS_and_Secure_Boot">Debian Wiki</a> (разобрано в <a href="https://github.com/bivlked/amneziawg-installer/issues/403">#403</a>).
 </details>
 
 <details>

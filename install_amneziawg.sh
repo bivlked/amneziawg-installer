@@ -8,7 +8,7 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 3.x (3.1 по умолчанию; 2.0 по флагу, а также на ядрах старее 6.7 и на 32-битном ARM) на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 6.3.2
+# Версия: 6.3.3
 # Дата: 2026-11-18
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
@@ -39,7 +39,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.2"
+SCRIPT_VERSION="6.3.3"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -69,8 +69,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="f1afc1b70e6d6c22e7c2e655cc231a02296349a44e70a090a8e4bdba35babf15"
-MANAGE_SCRIPT_SHA256="0c5a07b2951a7ddba3cf7857982df20fe3d5400c64a269e959789e0585130ce4"
+COMMON_SCRIPT_SHA256="25c82f7dc21134b52d7e4cab078f121e53f57a9debe3665160abfbf40eda1b3f"
+MANAGE_SCRIPT_SHA256="2f00928e73ed7d7f08f21ae65984d1fe54182ad3a1525aadaf2d9466ee5bd5c3"
 
 # AmneziaWG 2.0 пин (H0, 31 jul 2026). Upstream влил AmneziaWG 3.0 в default-ветку
 # amneziawg-linux-kernel-module, и PPA переключился на 3.0. Тогда на ядрах старее
@@ -8970,6 +8970,53 @@ _awg31_step3_gate() {
     die "Гейт окружения не смог проверить инструменты и модуль для профиля AmneziaWG 3.1 (код возврата ${_awg31_rc}, причина не названа). Установка остановлена: не зная ответа, третью линию не выпускаем.${_tail}"
 }
 
+# Подсказка к отказу modprobe по его собственным словам (#403). Под Secure Boot
+# ядро с принудительной проверкой подписи отвечает "Key was rejected by service"
+# и на неподписанный модуль, и на модуль с незарегистрированным ключом, поэтому
+# по словам их не различить: подпись проверяем сами (modinfo -F signer). Пусто -
+# модуль не подписан, регистрация ключа не поможет; не удалось спросить - даём оба
+# выхода. Есть ли подпись, решает sig_id (он есть у любой подписи), а signer нужен
+# только для текста: kmod без libcrypto его не показывает. "Required key not
+# available" выдавали ядра до 5.4, "Operation not permitted" - lockdown; на него
+# подсказку даём,
+# только если mokutil подтверждает включённый Secure Boot: EPERM бывает и не от него.
+# Ключ DKMS на Debian лежит в /var/lib/dkms/mok.pub, на Ubuntu в
+# /var/lib/shim-signed/mok/MOK.der; путь называем, только если файл есть.
+# Остальные отказы подсказки не получают. AWG_SB_ROOT - только для тестов (bats).
+_awg_modprobe_hint() {
+    local out="${1:-}" root="${AWG_SB_ROOT:-}" key="" signer="" sb=""
+    local tail=" Затем запустите установщик ещё раз той же командой: он продолжит с шага 3."
+    case "$out" in
+        *"Key was rejected"*|*"Required key not available"*) ;;
+        *"Operation not permitted"*)
+            sb=$(mokutil --sb-state 2>/dev/null) || return 0
+            [[ "$sb" == *"SecureBoot enabled"* ]] || return 0
+            ;;
+        *) return 0 ;;
+    esac
+    local sigid=""
+    if ! sigid=$(modinfo -F sig_id amneziawg 2>/dev/null); then
+        printf '%s' " Ядро не пропустило модуль: так бывает при включённом Secure Boot (проверка: mokutil --sb-state). Выключите Secure Boot в настройках UEFI либо зарегистрируйте в MOK ключ, которым подписан модуль (подписан ли он: modinfo -F signer amneziawg).$tail"
+        return 0
+    fi
+    if [[ -z "$sigid" ]]; then
+        printf '%s' " Модуль не подписан (modinfo -F signer amneziawg ничего не выводит), а при включённом Secure Boot ядро пропускает только подписанные (проверка: mokutil --sb-state). Регистрация ключа тут не поможет: выключите Secure Boot в настройках UEFI либо настройте подпись модулей в DKMS и пересоберите модуль.$tail"
+        return 0
+    fi
+    signer=$(modinfo -F signer amneziawg 2>/dev/null) || signer=""
+    signer="${signer:+ «${signer}»}"
+    if [[ -e "$root/var/lib/dkms/mok.pub" ]]; then
+        key=/var/lib/dkms/mok.pub
+    elif [[ -e "$root/var/lib/shim-signed/mok/MOK.der" ]]; then
+        key=/var/lib/shim-signed/mok/MOK.der
+    fi
+    if [[ -n "$key" ]]; then
+        printf '%s' " Модуль подписан ключом${signer}, но ядро этому ключу не доверяет: он не зарегистрирован в MOK, а Secure Boot включён (проверка: mokutil --sb-state). Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ DKMS: sudo mokutil --import $key (попросит придумать пароль), перезагрузка, на синем экране MOK Manager выберите Enroll MOK и введите этот пароль. Экран виден только на мониторе машины или в консоли хостера, по ssh этот шаг не пройти.$tail"
+    else
+        printf '%s' " Модуль подписан ключом${signer}, но ядро этому ключу не доверяет: он не зарегистрирован в MOK, а Secure Boot включён (проверка: mokutil --sb-state). Выключите Secure Boot в настройках UEFI либо зарегистрируйте этот ключ в MOK (mokutil --import).$tail"
+    fi
+}
+
 step3_check_module() {
     update_state 3
     log "### ШАГ 3: Проверка модуля ядра ###"
@@ -8977,7 +9024,11 @@ step3_check_module() {
 
     if ! lsmod | grep -q -w amneziawg; then
         log "Модуль не загружен. Загрузка..."
-        modprobe amneziawg || die "Ошибка modprobe amneziawg."
+        local mout=""
+        if ! mout=$(LC_ALL=C modprobe amneziawg 2>&1); then
+            die "Ошибка modprobe amneziawg${mout:+: ${mout//$'\n'/ }}.$(_awg_modprobe_hint "$mout")"
+        fi
+        [[ -n "$mout" ]] && log_warn "modprobe: ${mout//$'\n'/ }"
         log "Модуль загружен."
         local mf="/etc/modules-load.d/amneziawg.conf"
         mkdir -p "$(dirname "$mf")"

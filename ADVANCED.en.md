@@ -1298,7 +1298,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common_en.sh` and `manage_amneziawg_en.sh` (the Russian installer: `awg_common.sh` and `manage_amneziawg.sh`) from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.2/awg_common_en.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.3/awg_common_en.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -1486,6 +1486,17 @@ If the script printed "NOT VERIFIED", the working files are untouched; "NOT FULL
 <details>
   <summary><strong>Q: DKMS error after kernel update — what should I do?</strong></summary>
   <b>A:</b> 1. Check status: <code>dkms status</code>. 2. Try rebuilding: <code>sudo dkms install amneziawg/$(dkms status | grep amneziawg | head -1 | awk -F'[,/ ]+' '{print $2}')</code>. 3. Make sure kernel headers are installed: <code>sudo apt install linux-headers-$(uname -r)</code>. 4. If the error persists, run diagnostics: <code>sudo bash ./install_amneziawg_en.sh --diagnostic</code>.
+</details>
+
+<a id="faq-secure-boot-adv"></a>
+<details>
+  <summary><strong>Q: The AmneziaWG install stops at step 3 with "modprobe: ERROR: could not insert 'amneziawg': Key was rejected by service" - what do I do?</strong></summary>
+  <b>A:</b> That is Secure Boot: the kernel lets in only modules signed with a key enrolled in MOK. With signature enforcement it answers "Key was rejected by service" both for an unsigned module and for one signed with a key that is not enrolled; older kernels may say <code>Required key not available</code>. To see whether Secure Boot is on: <code>mokutil --sb-state</code> (package <code>mokutil</code>). Whether the module is signed: <code>modinfo -F signer amneziawg</code>.
+  <ol>
+    <li>Turn Secure Boot off in the UEFI settings. This works in both cases, and when <code>modinfo</code> prints nothing (the module is not signed) it is the simplest way: enrolling a key will not help then. The other way out for an unsigned module is to set up module signing in DKMS and rebuild the module.</li>
+    <li>If the module is signed with the DKMS key, enroll that key: on Debian <code>sudo mokutil --import /var/lib/dkms/mok.pub</code>, on Ubuntu <code>sudo mokutil --import /var/lib/shim-signed/mok/MOK.der</code>. The command asks you to set a password. After a reboot, on the blue MOK Manager screen choose Enroll MOK, Continue, Yes, enter that password and reboot. The screen shows only on the machine's monitor or the hoster's console (IPMI, VNC), this step cannot be done over ssh. Missed it - run <code>mokutil --import</code> and reboot again.</li>
+  </ol>
+  Then check <code>sudo modprobe amneziawg</code> and run the installer again with the same command: it resumes at step 3, the server keys and client configs are not created yet at that point. The installer checks the module signature itself and its error message names the way out, and the path to the DKMS key when it finds one. I have not tested the install under Secure Boot; the commands come from the <a href="https://wiki.debian.org/SecureBoot#DKMS_and_Secure_Boot">Debian Wiki</a> (worked out in <a href="https://github.com/bivlked/amneziawg-installer/issues/403">#403</a>).
 </details>
 
 <details>

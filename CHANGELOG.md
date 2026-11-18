@@ -12,6 +12,14 @@
 
 ## [Unreleased]
 
+## [6.3.3] - 2026-11-18
+
+**v6.3.3** - установщик называет Secure Boot, когда тот не пропускает модуль ядра на шаге 3, и подсказывает выход: выключить Secure Boot или зарегистрировать ключ DKMS.
+
+### Исправлено
+
+- **Шаг 3 установщика называет Secure Boot, когда тот не пропускает модуль.** Раньше при отказе `modprobe amneziawg` установка останавливалась с одним «Ошибка modprobe amneziawg». Теперь в сообщении стоит ответ самого `modprobe`. На `Key was rejected by service` и `Required key not available`, а на `Operation not permitted` только при подтверждённом `mokutil --sb-state` Secure Boot, установщик проверяет, подписан ли модуль (`modinfo`), и называет выход: модулю без подписи - выключить Secure Boot или настроить подпись модулей в DKMS и пересобрать модуль, регистрация ключа тут не поможет; подписанному - выключить Secure Boot или зарегистрировать ключ командой `sudo mokutil --import` с путём к ключу DKMS, если нашёл его (`/var/lib/dkms/mok.pub` на Debian, `/var/lib/shim-signed/mok/MOK.der` на Ubuntu). Повторный запуск продолжает с шага 3 (#403). Предупреждения `modprobe` при успешной загрузке модуля теперь видны в журнале установки. Ответ на тот же вопрос - в FAQ ADVANCED.
+
 ## [6.3.2] - 2026-11-18
 
 **v6.3.2** - `check` и `diagnose` сверяют порт, на котором сервер работает на самом деле, и не предупреждают про пространства имён пользователей, когда в ядре исправленный модуль; исправления вендора от 13 ноября вышли в PPA.
@@ -2283,7 +2291,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.2...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.3...HEAD
+[6.3.3]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.2...v6.3.3
 [6.3.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.1...v6.3.2
 [6.3.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.0...v6.3.1
 [6.3.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.2...v6.3.0

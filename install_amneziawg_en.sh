@@ -8,7 +8,7 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on 32-bit ARM) installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 6.3.2
+# Version: 6.3.3
 # Date: 2026-11-18
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
@@ -40,7 +40,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.2"
+SCRIPT_VERSION="6.3.3"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -71,8 +71,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="ed2bd0c93a97b7dca0bc8a9a0d2a64a6014e8bcf119ea8ab49a3db2afe42deb7"
-MANAGE_SCRIPT_SHA256="87e1cda10509960b3b997bfaef1658829ed8dadbdd53e264787314f956ebd61b"
+COMMON_SCRIPT_SHA256="83c0e51bd67b462021e6715350c580d17f733277f3a46898b4e617525d17a565"
+MANAGE_SCRIPT_SHA256="1bacd54ff393d315ba3926b2995bfab53bfaa7c316978a2f1f16c30d5c8d2a1f"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back
@@ -9125,6 +9125,54 @@ _awg31_step3_gate() {
     die "The environment gate could not check the tools and the module for the AmneziaWG 3.1 profile (exit code ${_awg31_rc}, no reason given). The installation stops: without an answer we do not ship the third line.${_tail}"
 }
 
+# A hint for a modprobe failure, keyed on modprobe's own words (#403). Under
+# Secure Boot a kernel that enforces module signatures answers "Key was rejected
+# by service" both for an unsigned module and for one signed with a key that is
+# not enrolled, so the words cannot tell them apart: the signature is checked
+# here (modinfo -F signer). Empty - the module is not signed and enrolling a key
+# will not help; the check itself failed - both ways out are given. Whether there
+# is a signature is decided by sig_id (any signature has one); signer is only for
+# the text, kmod built without libcrypto does not show it. "Required key not
+# available" came from kernels before 5.4, "Operation not permitted" comes from
+# lockdown; the latter gets a hint only when mokutil confirms
+# Secure Boot is on, since EPERM has other causes too. The DKMS key is
+# /var/lib/dkms/mok.pub on Debian and /var/lib/shim-signed/mok/MOK.der on Ubuntu;
+# a path is named only when the file exists. Other failures get no hint.
+# AWG_SB_ROOT is overridden by tests (bats) only.
+_awg_modprobe_hint() {
+    local out="${1:-}" root="${AWG_SB_ROOT:-}" key="" signer="" sb=""
+    local tail=" Then run the installer again with the same command: it resumes at step 3."
+    case "$out" in
+        *"Key was rejected"*|*"Required key not available"*) ;;
+        *"Operation not permitted"*)
+            sb=$(mokutil --sb-state 2>/dev/null) || return 0
+            [[ "$sb" == *"SecureBoot enabled"* ]] || return 0
+            ;;
+        *) return 0 ;;
+    esac
+    local sigid=""
+    if ! sigid=$(modinfo -F sig_id amneziawg 2>/dev/null); then
+        printf '%s' " The kernel did not let the module in: this happens with Secure Boot on (check: mokutil --sb-state). Turn Secure Boot off in the UEFI settings or enroll in MOK the key the module is signed with (whether it is signed: modinfo -F signer amneziawg).$tail"
+        return 0
+    fi
+    if [[ -z "$sigid" ]]; then
+        printf '%s' " The module is not signed (modinfo -F signer amneziawg prints nothing), and with Secure Boot on the kernel lets in only signed modules (check: mokutil --sb-state). Enrolling a key will not help here: turn Secure Boot off in the UEFI settings or set up module signing in DKMS and rebuild the module.$tail"
+        return 0
+    fi
+    signer=$(modinfo -F signer amneziawg 2>/dev/null) || signer=""
+    signer="${signer:+ \"${signer}\"}"
+    if [[ -e "$root/var/lib/dkms/mok.pub" ]]; then
+        key=/var/lib/dkms/mok.pub
+    elif [[ -e "$root/var/lib/shim-signed/mok/MOK.der" ]]; then
+        key=/var/lib/shim-signed/mok/MOK.der
+    fi
+    if [[ -n "$key" ]]; then
+        printf '%s' " The module is signed with the key${signer}, but the kernel does not trust it: the key is not enrolled in MOK and Secure Boot is on (check: mokutil --sb-state). Turn Secure Boot off in the UEFI settings or enroll the DKMS key: sudo mokutil --import $key (it asks you to set a password), reboot, and on the blue MOK Manager screen choose Enroll MOK and enter that password. The screen shows only on the machine's monitor or the hoster's console, this step cannot be done over ssh.$tail"
+    else
+        printf '%s' " The module is signed with the key${signer}, but the kernel does not trust it: the key is not enrolled in MOK and Secure Boot is on (check: mokutil --sb-state). Turn Secure Boot off in the UEFI settings or enroll that key in MOK (mokutil --import).$tail"
+    fi
+}
+
 step3_check_module() {
     update_state 3
     log "### STEP 3: Kernel module check ###"
@@ -9132,7 +9180,11 @@ step3_check_module() {
 
     if ! lsmod | grep -q -w amneziawg; then
         log "Module not loaded. Loading..."
-        modprobe amneziawg || die "modprobe amneziawg error."
+        local mout=""
+        if ! mout=$(LC_ALL=C modprobe amneziawg 2>&1); then
+            die "modprobe amneziawg error${mout:+: ${mout//$'\n'/ }}.$(_awg_modprobe_hint "$mout")"
+        fi
+        [[ -n "$mout" ]] && log_warn "modprobe: ${mout//$'\n'/ }"
         log "Module loaded."
         local mf="/etc/modules-load.d/amneziawg.conf"
         mkdir -p "$(dirname "$mf")"
