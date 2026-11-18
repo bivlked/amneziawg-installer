@@ -626,7 +626,7 @@ The vendor's AmneziaWG kernel module has a bug: its `I1`-`I5` parser accepts a n
 
 If the server has no other users and no unrelated programs, the risk is small. It appears when the machine has other accounts or services through which an outsider could get onto it.
 
-**What the script does.** Our commands never write negative lengths, overlong numbers or a total above 65535 bytes, and refuse them on install, `add`, `regen`, `modify` and `restore`. `manage check` and `manage diagnose` warn when the module is on the system and unprivileged user namespaces are allowed without any restriction, and name the command that closes this path on your machine. Under the AppArmor restriction (stock Ubuntu) they stay quiet: that was decided so the warning does not sit on every Ubuntu server, although the restriction does not close the path. To close it there as well, use the same command as below. The script does not change this setting itself: the cost of such a measure depends on what else runs on the server.
+**What the script does.** The script's commands never write negative lengths, overlong numbers or a total above 65535 bytes, and refuse them on install, `add`, `regen`, `modify` and `restore`. `manage check` and `manage diagnose` warn when the module is on the system and unprivileged user namespaces are allowed without any restriction, and name the command that closes this path on your machine. When the kernel runs a module with the vendor fix (version `3.1.20261113-02` or newer; the tag `v3.1.20261113` without the suffix does not have the fix yet), they stay quiet: it does not have the bug. For an older module they name its version and the upgrade command from the PPA (or, when the `amneziawg-dkms` package is not installed, advise rebuilding the module), and for a 2.0 line module they say there is no fixed release. The loaded module decides, so after a package upgrade the warning goes away only after a reboot. For a module that is not loaded they look at all its files for the running kernel and stay quiet only when every one is fixed. Under the AppArmor restriction (stock Ubuntu) they stay quiet: that was decided so the warning does not sit on every Ubuntu server, although the restriction does not close the path. To close it there as well, use the same command as below. The script does not change this setting itself: the cost of such a measure depends on what else runs on the server.
 
 **How to close it by hand.** On the stock Debian and Ubuntu kernels (both carry the kernel patch with this setting; on Ubuntu checked on 24.04):
 
@@ -1298,7 +1298,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common_en.sh` and `manage_amneziawg_en.sh` (the Russian installer: `awg_common.sh` and `manage_amneziawg.sh`) from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.1/awg_common_en.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.2/awg_common_en.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.

@@ -341,6 +341,170 @@ warns() {
     done
 }
 
+# The vendor fixed #233 in module 3.1.20261113-02 (PRs #237 and #247, tag
+# v3.1.20261113-02 = 63ed35d, PPA build of 13 Nov 2026). Tag v3.1.20261113
+# (6879e27) predates the merges and already reports "3.1.20261113", so a bare
+# 3.1.20261113 is NOT fixed. The module version tells the fix apart: a loaded
+# module from /sys/module/amneziawg/version, one that is not loaded from modinfo
+# of every module file (which one modprobe picks is up to its index). The 2.0
+# line (1.0.x) has no fixed release; an unknown version keeps the warning as it
+# was. The apt advice needs the amneziawg-dkms package to be installed.
+
+# modver <version> : the loaded module reports this version.
+modver() { module; printf '%s\n' "$1" > "$AWG_USERNS_ROOT/sys/module/amneziawg/version"; }
+
+# dkms_pkg : the amneziawg-dkms package is installed (dpkg's file list exists).
+dkms_pkg() { mkdir -p "$AWG_USERNS_ROOT/var/lib/dpkg/info" && : > "$AWG_USERNS_ROOT/var/lib/dpkg/info/amneziawg-dkms.list"; }
+
+# stub_modinfo <version|fail> : modinfo on PATH for "-F version <file>": prints the
+# content of <file>.ver when that exists (the word fail there means exit 1),
+# otherwise the given default.
+stub_modinfo() {
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    cat > "$BATS_TEST_TMPDIR/bin/modinfo" <<EOF
+#!/bin/sh
+[ "\$1" = -F ] && [ "\$2" = version ] && [ -n "\$3" ] || exit 2
+v="$1"
+[ -f "\$3.ver" ] && v=\$(cat "\$3.ver")
+[ "\$v" = fail ] && exit 1
+printf '%s\n' "\$v"
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/modinfo"
+    export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+}
+
+@test "userns: a loaded module with the vendor fix (3.1.20261113-02 and newer) stays quiet, both twins" {
+    debian
+    local v
+    for v in 3.1.20261113-02 3.1.20261113-10 3.1.20261114 3.1.20261201 4.0.20270101; do
+        modver "$v"; quiet "fixed $v"
+    done
+}
+
+@test "userns: versions right at the boundary without the fix keep the warning, both twins" {
+    debian
+    local v
+    # 3.1.20261113 is the tag before the fix was merged; -01 and other suffixes are not -02
+    for v in 3.1.20261112 3.1.20261113 3.1.20261113-01 3.1.20261113-00 3.1.20261113-rc1 3.1.20261113.1; do
+        modver "$v"; warns "unfixed $v" "kernel.unprivileged_userns_clone=0"
+    done
+}
+
+@test "userns: a loaded 3.1 module older than the fix warns, names its version and the PPA upgrade with a reboot, both twins" {
+    debian; dkms_pkg; modver 3.1.20260812
+    warns old31 "kernel.unprivileged_userns_clone=0"
+    local lib
+    for lib in "$COMMON" "$COMMON_EN"; do
+        run lines "$lib"
+        [[ "$output" == *"3.1.20260812"* ]] || { echo "$lib version: $output"; return 1; }
+        [[ "$output" == *"3.1.20261113-02"* ]] || { echo "$lib fixed version: $output"; return 1; }
+        [[ "$output" == *"sudo apt-get update && sudo apt-get install --only-upgrade amneziawg-dkms"* ]] || { echo "$lib upgrade: $output"; return 1; }
+        [[ "$output" == *"перезагруз"* || "$output" == *"reboot"* ]] || { echo "$lib reboot: $output"; return 1; }
+    done
+}
+
+@test "userns: without the amneziawg-dkms package an old 3.1 module gets the rebuild advice, not apt, both twins" {
+    debian; modver 3.1.20260812
+    warns nopkg "kernel.unprivileged_userns_clone=0"
+    local lib
+    for lib in "$COMMON" "$COMMON_EN"; do
+        run lines "$lib"
+        [[ "$output" != *"only-upgrade"* ]] || { echo "$lib apt without the package: $output"; return 1; }
+        [[ "$output" == *"3.1.20260812"* && "$output" == *"3.1.20261113-02"* ]] || { echo "$lib versions: $output"; return 1; }
+        [[ "$output" == *"пересобрать"* || "$output" == *"rebuild"* ]] || { echo "$lib rebuild: $output"; return 1; }
+    done
+}
+
+@test "userns: a loaded 2.0 line module warns without the PPA upgrade, which has no 2.0 fix, both twins" {
+    debian; dkms_pkg; modver 1.0.20260725
+    warns twozero "kernel.unprivileged_userns_clone=0"
+    local lib
+    for lib in "$COMMON" "$COMMON_EN"; do
+        run lines "$lib"
+        [[ "$output" == *"1.0.20260725"* ]] || { echo "$lib version: $output"; return 1; }
+        [[ "$output" != *"only-upgrade"* ]] || { echo "$lib advises the PPA for 2.0: $output"; return 1; }
+        [[ "$output" == *"2.0"* ]] || { echo "$lib 2.0: $output"; return 1; }
+    done
+    # a later date does not make a 2.0 line module fixed: the fix is in 3.1 only
+    modver 1.0.20261201
+    warns twozero-late "kernel.unprivileged_userns_clone=0"
+}
+
+@test "userns: an unknown or odd module version keeps the warning without a version claim, both twins" {
+    debian; dkms_pkg
+    local v lib
+    for v in "" "garbage" "3.1.2026111" "3.1.20261113-02\$(id)" missing; do
+        if [[ "$v" == missing ]]; then
+            module; rm -f "$AWG_USERNS_ROOT/sys/module/amneziawg/version"
+        else
+            modver "$v"
+        fi
+        warns "version='$v'" "kernel.unprivileged_userns_clone=0"
+        for lib in "$COMMON" "$COMMON_EN"; do
+            run lines "$lib"
+            [[ "$output" != *"only-upgrade"* ]] || { echo "$lib version='$v' upgrade advice: $output"; return 1; }
+            [[ "$output" != *'$(id)'* ]] || { echo "$lib echoes the raw version: $output"; return 1; }
+        done
+    done
+}
+
+@test "userns: a module that is not loaded is judged by modinfo of its file, both twins" {
+    debian; dkms_pkg; installed
+    stub_modinfo 3.1.20261113-02
+    quiet file-fixed
+    stub_modinfo 3.1.20260812
+    warns file-old "kernel.unprivileged_userns_clone=0"
+    local lib
+    for lib in "$COMMON" "$COMMON_EN"; do
+        run lines "$lib"
+        [[ "$output" == *"3.1.20260812"* && "$output" == *"only-upgrade"* ]] || { echo "$lib file-old: $output"; return 1; }
+    done
+    stub_modinfo fail
+    warns file-unknown "kernel.unprivileged_userns_clone=0"
+}
+
+@test "userns: with several module files every one must be fixed, an unknown one keeps the warning, both twins" {
+    debian; dkms_pkg; installed
+    local d k
+    k="$AWG_USERNS_ROOT/lib/modules/$(uname -r)"
+    d="$k/updates/dkms"
+    mkdir -p "$k/extra" "$k/kernel/drivers/net"
+    printf 'ELF' > "$k/extra/amneziawg.ko"
+    stub_modinfo 3.1.20261113-02
+    quiet both-fixed
+    # whichever order find walks in, one unfixed file is enough to warn
+    printf '%s\n' 3.1.20260812 > "$k/extra/amneziawg.ko.ver"
+    warns extra-old "kernel.unprivileged_userns_clone=0"
+    local lib
+    for lib in "$COMMON" "$COMMON_EN"; do
+        run lines "$lib"
+        [[ "$output" == *"3.1.20260812"* ]] || { echo "$lib names the unfixed file: $output"; return 1; }
+    done
+    rm -f "$k/extra/amneziawg.ko.ver"
+    printf '%s\n' 3.1.20260812 > "$d/amneziawg.ko.zst.ver"
+    warns dkms-old "kernel.unprivileged_userns_clone=0"
+    rm -f "$d/amneziawg.ko.zst.ver"
+    printf 'ELF' > "$k/kernel/drivers/net/amneziawg.ko.xz"
+    printf '%s\n' fail > "$k/kernel/drivers/net/amneziawg.ko.xz.ver"
+    warns one-unknown "kernel.unprivileged_userns_clone=0"
+    for lib in "$COMMON" "$COMMON_EN"; do
+        run lines "$lib"
+        [[ "$output" != *"only-upgrade"* ]] || { echo "$lib unknown file still gets a version claim: $output"; return 1; }
+    done
+}
+
+@test "userns: the loaded module decides even when the file on disk is already fixed (before a reboot), both twins" {
+    debian; installed; stub_modinfo 3.1.20261113-02
+    modver 3.1.20260812
+    warns pending-reboot "kernel.unprivileged_userns_clone=0"
+    modver 3.1.20261113-02; stub_modinfo 3.1.20260812
+    quiet loaded-fixed
+    # a loaded module without a readable version is "do not know": the fixed file
+    # on disk says nothing about what runs in the kernel
+    rm -f "$AWG_USERNS_ROOT/sys/module/amneziawg/version"; stub_modinfo 3.1.20261113-02
+    warns loaded-noversion "kernel.unprivileged_userns_clone=0"
+}
+
 @test "userns: the anchor the advice points to exists in both ADVANCED files" {
     grep -q '<a id="userns-module-adv"></a>' "${BATS_TEST_DIRNAME}/../ADVANCED.md"
     grep -q '<a id="userns-module-adv"></a>' "${BATS_TEST_DIRNAME}/../ADVANCED.en.md"

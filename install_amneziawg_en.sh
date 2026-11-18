@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on 32-bit ARM) installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 6.3.1
-# Date: 2026-11-11
+# Version: 6.3.2
+# Date: 2026-11-18
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -40,7 +40,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.1"
+SCRIPT_VERSION="6.3.2"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -71,8 +71,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="84e612844c22c2f7c3188f01cb5b5ed16da323d277efeda59f54879a55171369"
-MANAGE_SCRIPT_SHA256="9da6f3df109074d33c3b02796bcfe4b29d619fbcb599aa1e78c525b6a3909221"
+COMMON_SCRIPT_SHA256="ed2bd0c93a97b7dca0bc8a9a0d2a64a6014e8bcf119ea8ab49a3db2afe42deb7"
+MANAGE_SCRIPT_SHA256="87e1cda10509960b3b997bfaef1658829ed8dadbdd53e264787314f956ebd61b"
 
 # AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
 # amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back

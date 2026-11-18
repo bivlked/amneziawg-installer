@@ -12,8 +12,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.2] - 2026-11-18
+
+**v6.3.2** - `check` and `diagnose` follow the port the server really uses and stay quiet about user namespaces once the fixed kernel module is loaded; the vendor fixes of 13 November are in the PPA.
+
 ### Changed
 
+- **`check` and `diagnose` no longer warn about user namespaces when the kernel runs the fixed module.** The warning about the module bug amneziawg-linux-kernel-module#233 now looks at the module version: for a loaded module it is in `/sys/module/amneziawg/version`, for one that is not loaded it comes from its files through `modinfo`, and it stays quiet only when every one is fixed. From version `3.1.20261113-02` (the vendor fix, in the PPA since 13 November; the tag `v3.1.20261113` without the suffix does not carry it yet) there is no warning. For an older 3.1 module it names the version and the command `sudo apt-get update && sudo apt-get install --only-upgrade amneziawg-dkms` with a reboot (or, when the `amneziawg-dkms` package is not installed, advises rebuilding the module); for a 2.0 line module (the pinned source and the ARM packages) it says there is no fixed release. If the version cannot be read, the warning stays as it was. The loaded module decides: after a package upgrade the warning stays until the reboot.
 - **Client table as of 16 November 2026.** Hiddify understands the 3.1 profile in the v5.9.8 pre-release: its `.conf` and link import reads `HeaderProtectionKey` and `ContentPaddingAddition` there, while stable v5.5.5 still does not, so the table now lists it as development channel only. New versions: mihomo v1.19.34, Throne 1.4.2, L×Box v2.25.21, AWG Manager v2.20.4, amneziawg-mikrotik-c v1.4.6 and the AmneziaWG-MikroTik containers rebuilt on 6 November. Every changed row was re-checked against the project's code or page on the day of the edit. Where README, INSTALL_VPS, ADVANCED and the installer hints advised `--protocol=2.0` for Hiddify, they now say stable Hiddify.
 
 ### Fixed
@@ -2278,7 +2283,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.1...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.2...HEAD
+[6.3.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.1...v6.3.2
 [6.3.1]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.0...v6.3.1
 [6.3.0]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.2...v6.3.0
 [6.2.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.2.1...v6.2.2
