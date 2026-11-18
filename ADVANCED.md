@@ -1484,6 +1484,17 @@ done
   <b>О:</b> 1. Проверьте статус: <code>dkms status</code>. 2. Попробуйте пересобрать: <code>sudo dkms install amneziawg/$(dkms status | grep amneziawg | head -1 | awk -F'[,/ ]+' '{print $2}')</code>. 3. Убедитесь, что установлены заголовки ядра: <code>sudo apt install linux-headers-$(uname -r)</code>. 4. При неустранимой ошибке запустите диагностику: <code>sudo bash ./install_amneziawg.sh --diagnostic</code>.
 </details>
 
+<a id="faq-secure-boot-adv"></a>
+<details>
+  <summary><strong>В: Установка AmneziaWG падает на шаге 3: «modprobe: ERROR: could not insert 'amneziawg': Key was rejected by service» - что делать?</strong></summary>
+  <b>О:</b> Это Secure Boot. Модуль собран и подписан ключом DKMS, но этот ключ не зарегистрирован в MOK, и ядро подпись не принимает. Ошибка <code>Required key not available</code> значит, что модуль не подписан вовсе: тогда проще выключить Secure Boot. Проверить, включён ли он: <code>mokutil --sb-state</code> (пакет <code>mokutil</code>). Путей два:
+  <ol>
+    <li>Выключить Secure Boot в настройках UEFI.</li>
+    <li>Зарегистрировать ключ DKMS: на Debian <code>sudo mokutil --import /var/lib/dkms/mok.pub</code>, на Ubuntu <code>sudo mokutil --import /var/lib/shim-signed/mok/MOK.der</code>. Команда попросит придумать пароль. После перезагрузки на синем экране MOK Manager выберите Enroll MOK, Continue, Yes, введите этот пароль и перезагрузитесь. Экран виден только на мониторе машины или в консоли хостера (IPMI, VNC), по ssh этот шаг не пройти. Не успели - повторите <code>mokutil --import</code> и перезагрузку.</li>
+  </ol>
+  Затем проверьте <code>sudo modprobe amneziawg</code> и запустите установщик ещё раз той же командой: он продолжит с шага 3, ключи сервера и конфиги клиентов к этому шагу ещё не созданы. Установщик сам называет эту причину в сообщении об ошибке и, если находит ключ DKMS, путь к нему. Под Secure Boot я установку не проверял, команды взяты из <a href="https://wiki.debian.org/SecureBoot#DKMS_and_Secure_Boot">Debian Wiki</a> (разобрано в <a href="https://github.com/bivlked/amneziawg-installer/issues/403">#403</a>).
+</details>
+
 <details>
   <summary><strong>В: Что меняется для меня после установки v5.12.0+ при обновлении ядра?</strong></summary>
   <b>О:</b> До v5.12.0 после <code>apt upgrade</code> ядра DKMS не всегда успевал пересобрать модуль <code>amneziawg</code> к моменту следующего <code>reboot</code>. Симптом: <code>awg-quick@awg0</code> падает с <code>modprobe: FATAL: Module amneziawg not found</code>, и VPN лежит до ручной правки.

@@ -9125,6 +9125,35 @@ _awg31_step3_gate() {
     die "The environment gate could not check the tools and the module for the AmneziaWG 3.1 profile (exit code ${_awg31_rc}, no reason given). The installation stops: without an answer we do not ship the third line.${_tail}"
 }
 
+# A hint for a modprobe failure, keyed on modprobe's own words (#403). Secure
+# Boot answers in two ways: "Key was rejected by service" - the module is signed,
+# but the DKMS key is not enrolled in MOK; "Required key not available" - the
+# module is not signed at all. The DKMS key is /var/lib/dkms/mok.pub on Debian
+# and /var/lib/shim-signed/mok/MOK.der on Ubuntu; a path is named only when the
+# file exists. Other failures get no hint: modprobe names their cause itself.
+# AWG_SB_ROOT is overridden by tests (bats) only.
+_awg_modprobe_hint() {
+    local out="${1:-}" root="${AWG_SB_ROOT:-}" key=""
+    local tail=" Then run the installer again with the same command: it resumes at step 3."
+    case "$out" in
+        *"Key was rejected"*)
+            if [[ -e "$root/var/lib/dkms/mok.pub" ]]; then
+                key=/var/lib/dkms/mok.pub
+            elif [[ -e "$root/var/lib/shim-signed/mok/MOK.der" ]]; then
+                key=/var/lib/shim-signed/mok/MOK.der
+            fi
+            if [[ -n "$key" ]]; then
+                printf '%s' " The module is built and signed with the DKMS key, but the kernel does not trust that key: this happens with Secure Boot on (check: mokutil --sb-state). Turn Secure Boot off in the UEFI settings or enroll the key: sudo mokutil --import $key (it asks you to set a password), reboot, and on the blue MOK Manager screen choose Enroll MOK and enter that password. The screen shows only on the machine's monitor or the hoster's console, this step cannot be done over ssh.$tail"
+            else
+                printf '%s' " The kernel did not accept the module's signature: this happens with Secure Boot on (check: mokutil --sb-state). Turn Secure Boot off in the UEFI settings or enroll in MOK the key DKMS signs modules with (mokutil --import).$tail"
+            fi
+            ;;
+        *"Required key not available"*)
+            printf '%s' " The module is not signed and Secure Boot blocks it (check: mokutil --sb-state). Turn Secure Boot off in the UEFI settings or sign the module with a key enrolled in MOK.$tail"
+            ;;
+    esac
+}
+
 step3_check_module() {
     update_state 3
     log "### STEP 3: Kernel module check ###"
@@ -9132,7 +9161,10 @@ step3_check_module() {
 
     if ! lsmod | grep -q -w amneziawg; then
         log "Module not loaded. Loading..."
-        modprobe amneziawg || die "modprobe amneziawg error."
+        local mout=""
+        if ! mout=$(modprobe amneziawg 2>&1); then
+            die "modprobe amneziawg error${mout:+: ${mout//$'\n'/ }}.$(_awg_modprobe_hint "$mout")"
+        fi
         log "Module loaded."
         local mf="/etc/modules-load.d/amneziawg.conf"
         mkdir -p "$(dirname "$mf")"

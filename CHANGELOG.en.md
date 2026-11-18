@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Step 3 of the installer names Secure Boot when it blocks the module.** A failed `modprobe amneziawg` used to stop the install with a bare "modprobe amneziawg error." Now the message carries `modprobe`'s own answer, and for `Key was rejected by service` (the module is signed with a DKMS key that is not enrolled in MOK) and `Required key not available` (the module is not signed) the installer names Secure Boot, the `mokutil --sb-state` check and both ways out: turn Secure Boot off or enroll the key with `sudo mokutil --import` and the path to the DKMS key when it finds one (`/var/lib/dkms/mok.pub` on Debian, `/var/lib/shim-signed/mok/MOK.der` on Ubuntu). A rerun resumes at step 3 (#403). The same answer is in the ADVANCED FAQ.
+
 ## [6.3.2] - 2026-11-18
 
 **v6.3.2** - `check` and `diagnose` follow the port the server really uses and stay quiet about user namespaces once the fixed kernel module is loaded; the vendor fixes of 13 November are in the PPA.

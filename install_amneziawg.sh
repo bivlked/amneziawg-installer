@@ -8970,6 +8970,35 @@ _awg31_step3_gate() {
     die "Гейт окружения не смог проверить инструменты и модуль для профиля AmneziaWG 3.1 (код возврата ${_awg31_rc}, причина не названа). Установка остановлена: не зная ответа, третью линию не выпускаем.${_tail}"
 }
 
+# Подсказка к отказу modprobe по его собственным словам (#403). Secure Boot
+# отвечает двумя способами: "Key was rejected by service" - модуль подписан, но
+# ключ DKMS не зарегистрирован в MOK; "Required key not available" - модуль не
+# подписан вовсе. Ключ DKMS на Debian лежит в /var/lib/dkms/mok.pub, на Ubuntu в
+# /var/lib/shim-signed/mok/MOK.der; путь называем, только если файл есть.
+# Остальные отказы подсказки не получают: их причину называет сам modprobe.
+# AWG_SB_ROOT переопределяется только тестами (bats).
+_awg_modprobe_hint() {
+    local out="${1:-}" root="${AWG_SB_ROOT:-}" key=""
+    local tail=" Затем запустите установщик ещё раз той же командой: он продолжит с шага 3."
+    case "$out" in
+        *"Key was rejected"*)
+            if [[ -e "$root/var/lib/dkms/mok.pub" ]]; then
+                key=/var/lib/dkms/mok.pub
+            elif [[ -e "$root/var/lib/shim-signed/mok/MOK.der" ]]; then
+                key=/var/lib/shim-signed/mok/MOK.der
+            fi
+            if [[ -n "$key" ]]; then
+                printf '%s' " Модуль собран и подписан ключом DKMS, но ядро этому ключу не доверяет: так бывает при включённом Secure Boot (проверка: mokutil --sb-state). Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ: sudo mokutil --import $key (попросит придумать пароль), перезагрузка, на синем экране MOK Manager выберите Enroll MOK и введите этот пароль. Экран виден только на мониторе машины или в консоли хостера, по ssh этот шаг не пройти.$tail"
+            else
+                printf '%s' " Ядро не приняло подпись модуля: так бывает при включённом Secure Boot (проверка: mokutil --sb-state). Выключите Secure Boot в настройках UEFI либо зарегистрируйте в MOK ключ, которым DKMS подписывает модули (mokutil --import).$tail"
+            fi
+            ;;
+        *"Required key not available"*)
+            printf '%s' " Модуль не подписан, а Secure Boot его не пропускает (проверка: mokutil --sb-state). Выключите Secure Boot в настройках UEFI либо подпишите модуль ключом, зарегистрированным в MOK.$tail"
+            ;;
+    esac
+}
+
 step3_check_module() {
     update_state 3
     log "### ШАГ 3: Проверка модуля ядра ###"
@@ -8977,7 +9006,10 @@ step3_check_module() {
 
     if ! lsmod | grep -q -w amneziawg; then
         log "Модуль не загружен. Загрузка..."
-        modprobe amneziawg || die "Ошибка modprobe amneziawg."
+        local mout=""
+        if ! mout=$(modprobe amneziawg 2>&1); then
+            die "Ошибка modprobe amneziawg${mout:+: ${mout//$'\n'/ }}.$(_awg_modprobe_hint "$mout")"
+        fi
         log "Модуль загружен."
         local mf="/etc/modules-load.d/amneziawg.conf"
         mkdir -p "$(dirname "$mf")"
