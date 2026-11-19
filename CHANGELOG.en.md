@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.5] - 2026-11-19
+
+**v6.3.5** - on Debian 12 and other kernels older than 6.7 the AmneziaWG module is built from the 3.1 tag with the fix for bug #233; the profile stays 2.0, and a rerun with `--force` updates a running server. The CASCADE guide starts the routing unit right away.
+
 ### Changed
 
 - **Debian 12 and other kernels older than 6.7: the module is built from the 3.1 tag with the fix for bug #233.** Where no prebuilt package fits, the installer built the 2.0 tag `v1.0.20260725`, which has the `I1`-`I5` parser bug ([amneziawg-linux-kernel-module#233](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/233)); the vendor fixed it only in 3.1. Now it builds `v3.1.20261113-02`, the tag the ARM prebuilts use. The profile stays 2.0, client configs do not change. On a server set up earlier, run the installer again with `--force`: it removes the old module source and its DKMS build first (otherwise DKMS would put the old module back) and checks the version of the new module after the build. `check` and `diagnose` suggest this rerun when they see a 2.0 line module.
@@ -2307,7 +2311,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.4...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...HEAD
+[6.3.5]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.4...v6.3.5
 [6.3.4]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.3...v6.3.4
 [6.3.3]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.2...v6.3.3
 [6.3.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.1...v6.3.2

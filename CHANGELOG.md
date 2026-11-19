@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [6.3.5] - 2026-11-19
+
+**v6.3.5** - на Debian 12 и других ядрах старее 6.7 модуль AmneziaWG собирается из тега 3.1 с исправлением ошибки #233; профиль остаётся 2.0, а работающий сервер обновляет повторный запуск с `--force`. В руководстве CASCADE юнит маршрутизации запускается сразу.
+
 ### Изменено
 
 - **Debian 12 и другие ядра старее 6.7: модуль собирается из тега 3.1 с исправлением ошибки #233.** Там, где готовый пакет не подходит, установщик собирал тег 2.0 `v1.0.20260725`, в котором есть ошибка разбора `I1`-`I5` ([amneziawg-linux-kernel-module#233](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/233)); вендор исправил её только в 3.1. Теперь он собирает `v3.1.20261113-02`, тот же тег, что у готовых пакетов для ARM. Профиль остаётся 2.0, конфиги клиентов не меняются. На сервере, настроенном раньше, запустите установщик ещё раз с `--force`: он сначала уберёт старый исходник модуля и его сборку в DKMS (иначе DKMS вернул бы старый модуль), а после сборки сверит версию нового. `check` и `diagnose` советуют такой запуск, когда видят модуль линии 2.0.
@@ -2307,7 +2311,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.4...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...HEAD
+[6.3.5]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.4...v6.3.5
 [6.3.4]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.3...v6.3.4
 [6.3.3]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.2...v6.3.3
 [6.3.2]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.1...v6.3.2
