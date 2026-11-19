@@ -126,9 +126,9 @@ _load_en_predicate() {
 @test "both installers define AWG2_PIN_TAG and AWG2_PIN_COMMIT with same values" {
     local f
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
-        run grep -q 'AWG2_PIN_TAG="v1.0.20260725"' "${BATS_TEST_DIRNAME}/../$f"
+        run grep -q 'AWG2_PIN_TAG="v3.1.20261113-02"' "${BATS_TEST_DIRNAME}/../$f"
         [ "$status" -eq 0 ]
-        run grep -q 'AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"' "${BATS_TEST_DIRNAME}/../$f"
+        run grep -q 'AWG2_PIN_COMMIT="63ed35de3d3f135b17e8eae0b84949e7700303be"' "${BATS_TEST_DIRNAME}/../$f"
         [ "$status" -eq 0 ]
     done
 }

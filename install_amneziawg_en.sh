@@ -8,7 +8,7 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on 32-bit ARM) installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 6.3.4
+# Version: 6.3.5
 # Date: 2026-11-19
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
@@ -40,7 +40,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.4"
+SCRIPT_VERSION="6.3.5"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -71,20 +71,20 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="81be703e764a675f46af08dc59024cebc67277aeca31c32b96b5dc2918e4b304"
-MANAGE_SCRIPT_SHA256="d3f171558a3e3c2a415ac3bc914f8d95d337ea56562ddd5ad5edcaa1a91d2b22"
+COMMON_SCRIPT_SHA256="4b0464c3b8472b8d0128bae1b587f526a88ddd44b05918be0bc85fcb65601dc2"
+MANAGE_SCRIPT_SHA256="0949bdf33287d1a9e88be9bb3523db689ed3d0bf5234bb253475c3bcd82bd2f1"
 
-# AmneziaWG 2.0 pin (H0, 31 jul 2026). Upstream merged AmneziaWG 3.0 into the
-# amneziawg-linux-kernel-module default branch, and the PPA switched to it. Back
-# then the PPA DKMS build failed on nla_put_uint on kernels older than 6.7
-# (Debian 12 = 6.1). Upstream fixed that the same evening on 31 jul
-# (v3.0.20260731-04; verified by us on Debian 12 / 6.1.0-51 on 1 aug), so the pin
-# went from FORCED to DELIBERATE: on older kernels we keep the module we have
-# tested until 3.0 is validated separately. AWG2_PIN_COMMIT is checked after clone
-# (integrity: more robust than a fragile tarball SHA - a tag can be moved, an
-# immutable commit cannot).
-AWG2_PIN_TAG="v1.0.20260725"
-AWG2_PIN_COMMIT="ae0924ca700520ca34c5bdbcfd05b2f683ea9353"
+# Module pin for kernels older than 6.7 with no prebuilt (H0, 31 jul 2026). The
+# PPA module is not used there (see _kernel_supports_awg3); the module is built
+# from this vendor tag, and the profile on such a server is 2.0. Until 19 nov
+# 2026 the pin was the 2.0 tag v1.0.20260725 (commit ae0924c), which has no fix
+# for amneziawg-linux-kernel-module#233; the vendor fixed it only in 3.1, so the
+# pin moved to v3.1.20261113-02, the same tag as the ARM prebuilts. A 3.x module
+# runs a 2.0 config, and this tag builds on Debian 12 (6.1). AWG2_PIN_COMMIT is
+# checked after clone (integrity: more robust than a fragile tarball SHA - a tag
+# can be moved, an immutable commit cannot).
+AWG2_PIN_TAG="v3.1.20261113-02"
+AWG2_PIN_COMMIT="63ed35de3d3f135b17e8eae0b84949e7700303be"
 
 # CLI flags
 UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PSK=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
@@ -1009,21 +1009,21 @@ check_kernel_version() {
 # shellcheck disable=SC2120  # called both with an argument (from awg31_environment_blocker) and without (uses uname -r); bats passes versions
 _kernel_supports_awg3() {
     # Returns 0 if the kernel version is >= 6.7 - there we take the module from the
-    # PPA as is. Returns 1 if the kernel is older than 6.7 - there we go the pinned
-    # 2.0 route.
+    # PPA as is. Returns 1 if the kernel is older than 6.7 - there the profile is 2.0
+    # and the module is built from the pinned tag (_install_pinned_awg2_module).
     # ⚠️ The name is historical, do not read it literally. The 6.7 threshold comes
     # from 30-31 jul 2026: the 3.0 code called nla_put_uint, absent before mainline
     # v6.7, and on 6.1 (Debian 12) the build died with 'implicit declaration of
-    # nla_put_uint'. Upstream fixed that on 31 jul (v3.0.20260731-04), and the 3.0
-    # module DOES build on 6.1 now - verified on a stand on 1 aug. The threshold is
-    # kept deliberately: within a day the 3.0 line managed to break and fix the
-    # build on old kernels specifically, so that is where it is least proven, while
-    # the pinned 2.0 is checked against an immutable commit. Drop the threshold
-    # after validating 3.0, not because the build passes again.
+    # nla_put_uint'. Upstream fixed that on 31 jul (v3.0.20260731-04), and the
+    # third-line module DOES build on 6.1 now. The threshold is kept deliberately:
+    # the 3.x profile has had the least mileage on old kernels, and the PPA module
+    # there would change with every vendor build, while the pinned tag (3.1 with the
+    # #233 fix since v6.3.5, the 2.0 tag before it) is checked against an immutable
+    # commit. Drop the threshold after validating the 3.1 profile on old kernels,
+    # not because the build passes again.
     # Arg $1: kernel release (default uname -r). An unparseable version is treated
-    # as "NOT supported" -> pinned 2.0 (it builds on ANY of our kernels, so the
-    # conservative choice never breaks connectivity, it only withholds 3.0 features
-    # which H0 does not ship anyway).
+    # as "NOT supported" -> the pinned path with the 2.0 profile (the conservative
+    # choice: it never breaks connectivity, it only withholds 3.1 features).
     # Pure function with no external deps (bats: extracted via sed-range + source).
     local kver="${1:-$(uname -r)}" kmaj kmin
     local min_maj=6 min_min=7
@@ -1665,7 +1665,7 @@ awg31_environment_blocker() {
     #
     # 64-bit ARM (arm64, aarch64) is on the allow list since v6.2.0: at step 2,
     # for generation 3.1, it gets the module from the PPA through DKMS rather
-    # than the pinned 2.0 prebuilt. The module probe at step 3 stays as the
+    # than the ARM prebuilt. The module probe at step 3 stays as the
     # safety net: if a second-line module gets loaded, the post stage sees it.
     # The arm code now means all OTHER ARM: there is nothing to measure 32-bit
     # ARM (armhf, armel, armv7l) on, and the PPA does not build aarch64_be
@@ -5828,13 +5828,13 @@ repair_module_cmd() {
             log_error "The amneziawg-dkms package is not installed: nothing to repair this way (the module did not come from the PPA, or AmneziaWG is not installed)."; exit 1 ;;
     esac
     if [[ "${_q%% *}" == hold ]]; then
-        log_error "amneziawg-dkms is on hold: that is how the installer sets up the pinned AmneziaWG 2.0 module and the ARM prebuilt; this path does not repair them."; exit 1
+        log_error "amneziawg-dkms is on hold: that is how the installer sets up the module from the pinned source (kernels older than 6.7) and the ARM prebuilt; this path does not repair them."; exit 1
     fi
     if ! _e=$(apt-mark showhold 2>/dev/null); then
         log_error "Could not get the list of held packages (apt-mark showhold). Nothing changed."; exit 1
     fi
     if grep -qxF amneziawg-dkms <<<"$_e"; then
-        log_error "amneziawg-dkms is on hold: that is how the installer sets up the pinned AmneziaWG 2.0 module and the ARM prebuilt; this path does not repair them."; exit 1
+        log_error "amneziawg-dkms is on hold: that is how the installer sets up the module from the pinned source (kernels older than 6.7) and the ARM prebuilt; this path does not repair them."; exit 1
     fi
     if ! command -v dkms >/dev/null 2>&1; then log_error "dkms is not installed."; exit 1; fi
     shopt -s nullglob; reg=("$DKMS_STATE_DIR"/amneziawg/*/source); shopt -u nullglob
@@ -6828,23 +6828,129 @@ _try_install_prebuilt_arm() {
     fi
 }
 
-# H0 (AWG 3.0, 31 jul 2026): on kernels < 6.7 the current PPA module is AmneziaWG
-# 3.0, and we deliberately keep it out of there (why exactly - see
-# _kernel_supports_awg3). We install the last pinned 2.0 module (the 1.0.x line)
-# from source via DKMS:
+# _awg_module_src_version <version.h> : prints the WIREGUARD_VERSION of a module
+# source (vendor format X.Y.Z with an optional date and suffix); 1 with empty
+# output when there is no file, no define or an odd value.
+_awg_module_src_version() {
+    local line v="" re='^[[:space:]]*#[[:space:]]*define[[:space:]]+WIREGUARD_VERSION[[:space:]]+"([^"]*)"'
+    [[ -r "$1" ]] || return 1
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ $re ]]; then
+            v="${BASH_REMATCH[1]}"; break
+        fi
+    done < "$1"
+    [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+~][0-9A-Za-z.+~-]{0,32})?$ ]] || return 1
+    printf '%s\n' "$v"
+}
+
+# _awg_pin_drop_stale <source dir> <wanted version> <dkms version> : every line of
+# the vendor module lays out into the same /usr/src/amneziawg-1.0.0, so a server
+# built from another tag (the 2.0 one before v6.3.5) would keep its module on a
+# rerun: DKMS reports it as already built for this kernel. A source of another
+# version (or one whose version cannot be read), and a DKMS registration left
+# without its source, are therefore removed before the new source is laid out.
+# Returns 0 when there was nothing to do, 2 when an old build was removed (its
+# version is left in _AWG_PIN_DROPPED for the error text of the caller), 1 when
+# the old build stays registered in DKMS or the source could not be removed.
+_awg_pin_drop_stale() {
+    local dir="$1" pin_ver="$2" dver="$3" src_ver="" tree="/var/lib/dkms/amneziawg/$3"
+    if [[ -e "$dir" ]]; then
+        src_ver=$(_awg_module_src_version "$dir/version.h") || src_ver=""
+        [[ "$src_ver" == "$pin_ver" ]] && return 0
+        log "The module source in $dir is version ${src_ver:-unknown}, the pinned one is $pin_ver: removing the old build first."
+    else
+        [[ -z "$(dkms status -m amneziawg -v "$dver" 2>/dev/null)" && ! -e "$tree" ]] && return 0
+        log "An amneziawg $dver build is registered in DKMS without its source in $dir: removing it first."
+    fi
+    # dkms remove also fails when nothing is registered, so the outcome is judged
+    # by dkms status. A build still registered stops here, before the source is
+    # touched: with the new version.h in place the next run would skip this
+    # cleanup, DKMS would report the old build as built, and the old module would
+    # be installed again.
+    _AWG_PIN_DROPPED="${src_ver:-unknown}"
+    dkms remove -m amneziawg -v "$dver" --all >/dev/null 2>&1 || true
+    # Without its source dkms can neither list nor remove a registration (it needs
+    # dkms.conf, checked with dkms 3.0.10): the leftover tree of that version and
+    # the links to it are removed directly.
+    if [[ ! -e "$dir/dkms.conf" && -e "$tree" ]]; then
+        rm -rf "$tree"
+        find "${tree%/*}" -maxdepth 1 -xtype l -delete 2>/dev/null || true
+    fi
+    if [[ -n "$(dkms status -m amneziawg -v "$dver" 2>/dev/null)" || -e "$tree" ]]; then
+        # A partial remove can take the build of the running kernel and keep
+        # another one: the mark stays unless the module for this kernel is still there.
+        modinfo -k "$(uname -r)" -F version amneziawg >/dev/null 2>&1 && _AWG_PIN_DROPPED=""
+        log_error "dkms remove -m amneziawg -v $dver --all did not unregister the old build: dkms status or /var/lib/dkms still has it."
+        log_error "Remove it by hand (dkms status amneziawg; dkms remove -m amneziawg -v $dver --all) and run the installer again."
+        return 1
+    fi
+    if ! rm -rf "$dir" || [[ -e "$dir" ]]; then
+        log_error "Could not remove the old module source $dir."
+        return 1
+    fi
+    return 2
+}
+
+# _awg_pin_trial_build <source dir> <scratch dir> <kernel> : builds a copy of the
+# pinned source against the headers of the kernel, before the installed module is
+# touched. On a server that already runs an older build, _awg_pin_drop_stale
+# removes it, so a source that does not build for this kernel would otherwise
+# leave the server with no module after the next reboot. The copy keeps build
+# products out of the source that dkms-install lays out. 0 builds, 1 does not.
+_awg_pin_trial_build() {
+    local log_file="/var/log/amneziawg-pin-trial-build.log"
+    rm -rf "$2"
+    if ! cp -a "$1" "$2"; then
+        log_error "Could not copy the pinned source for a test build ($2)."
+        return 1
+    fi
+    log "Test build of the pinned module for kernel $3 before anything installed is changed..."
+    if ! make -C "$2" KERNELDIR="/lib/modules/$3/build" module >"$log_file" 2>&1; then
+        log_error "The pinned module does not build for kernel $3; nothing installed was changed. Details: $log_file"
+        rm -rf "$2"
+        return 1
+    fi
+    rm -rf "$2"
+    return 0
+}
+
+# _awg_pin_check_built <kernel> <wanted version> : the amneziawg module that
+# modprobe will take for this kernel reports the pinned version. Catches a module
+# left over from an earlier build that DKMS did not replace. 0 yes, 1 no (logged).
+_awg_pin_check_built() {
+    local built_ver
+    built_ver=$(modinfo -k "$1" -F version amneziawg 2>/dev/null | head -n 1) || built_ver=""
+    built_ver="${built_ver//[[:space:]]/}"
+    [[ "$built_ver" == "$2" ]] && return 0
+    log_error "The amneziawg module for kernel $1 reports version '${built_ver:-none}', expected $2 from the pinned source."
+    log_error "Check: dkms status amneziawg; find /lib/modules/$1 -name 'amneziawg.ko*'"
+    return 1
+}
+
+# H0 (31 jul 2026): on kernels < 6.7 the PPA module is not used (why exactly - see
+# _kernel_supports_awg3). We build the module from the pinned vendor tag via DKMS
+# (since 19 nov 2026 the 3.1 tag with the #233 fix; the profile stays 2.0):
 #   1. git clone the pinned tag --depth=1;
 #   2. VERIFY the commit against AWG2_PIN_COMMIT (integrity: an immutable commit is
 #      more robust than the GitHub auto-tarball SHA, which changes on recompression);
-#   3. the upstream `make dkms-install` mechanism (lays it into /usr/src/amneziawg-1.0.0);
-#   4. dkms add/build/install for the current kernel;
-#   5. a modprobe check (built != loadable: Secure Boot may block it).
+#   3. a test build of a copy for the running kernel (_awg_pin_trial_build): nothing
+#      installed is touched before the new source is known to build;
+#   4. drop a source of another version left by an earlier build (_awg_pin_drop_stale);
+#   5. the upstream `make dkms-install` mechanism (lays it into /usr/src/amneziawg-1.0.0);
+#   6. dkms add/build/install for the current kernel, then check the version the
+#      built module reports (_awg_pin_check_built);
+#   7. a modprobe check (built != loadable: Secure Boot may block it), unless an
+#      older module is still loaded: then the new one loads after the reboot.
 # The source dkms.conf carries AUTOINSTALL=yes, so our amneziawg-ensure-module helper
 # (apt hook + systemd) rebuilds the pinned module on a kernel upgrade by itself - no
 # separate maintenance code is needed. Returns: 0 success, 1 failure (logged to ERROR).
 _install_pinned_awg2_module() {
     local repo="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git"
-    local kver work got_commit
-    local dkms_ver="1.0.0"   # WIREGUARD_VERSION in the upstream Makefile (name of /usr/src/amneziawg-<ver>)
+    local kver work got_commit want_ver
+    # dkms_ver is the WIREGUARD_VERSION of the upstream Makefile, the same 1.0.0 on
+    # every line: it names /usr/src/amneziawg-<ver> and the DKMS version. The module
+    # version itself (want_ver) comes from src/version.h.
+    local dkms_ver="1.0.0"
     kver="$(uname -r)"
 
     if ! command -v git >/dev/null 2>&1; then
@@ -6854,7 +6960,7 @@ _install_pinned_awg2_module() {
 
     work="$(mktemp -d /tmp/awg2-pin-XXXXXX)" || { log_error "mktemp -d failed."; return 1; }
 
-    log "Cloning the pinned AmneziaWG 2.0 source ($AWG2_PIN_TAG)..."
+    log "Cloning the pinned AmneziaWG module source ($AWG2_PIN_TAG)..."
     # GIT_TERMINAL_PROMPT=0: a public repository needs no password, and a login
     # prompt on /dev/tty on a server nobody watches hangs the install (D#255).
     # GIT_ASKPASS=/bin/true closes an external prompt program too (GIT_ASKPASS,
@@ -6880,6 +6986,19 @@ _install_pinned_awg2_module() {
     fi
     log "Pinned commit confirmed: $got_commit"
 
+    if ! want_ver=$(_awg_module_src_version "$work/src/src/version.h"); then
+        log_error "The pinned source has no readable WIREGUARD_VERSION in src/version.h."
+        rm -rf "$work"; return 1
+    fi
+    if ! _awg_pin_trial_build "$work/src/src" "$work/trial" "$kver"; then
+        rm -rf "$work"; return 1
+    fi
+    local _drop_rc=0
+    _awg_pin_drop_stale "/usr/src/amneziawg-${dkms_ver}" "$want_ver" "$dkms_ver" || _drop_rc=$?
+    if [[ "$_drop_rc" -eq 1 ]]; then
+        rm -rf "$work"; return 1
+    fi
+
     # Lay out the DKMS source via the upstream mechanism (the Makefile is in src/).
     # Save make output to a log: otherwise the real cause of a failure (environment /
     # coreutils) is invisible - unlike the dkms build path, no make.log is created here.
@@ -6895,23 +7014,44 @@ _install_pinned_awg2_module() {
         return 1
     fi
 
-    # add is idempotent: on a re-run it is already added -> not fatal.
-    dkms add -m amneziawg -v "$dkms_ver" >/dev/null 2>&1 || true
+    # add on a re-run says "already added" and fails, so its result is judged by
+    # dkms status: the source has to be registered after it, whatever add said.
+    local _addout _al
+    _addout=$(dkms add -m amneziawg -v "$dkms_ver" 2>&1) || true
+    if [[ -z "$(dkms status -m amneziawg -v "$dkms_ver" 2>/dev/null)" ]]; then
+        log_error "dkms add did not register the module source /usr/src/amneziawg-${dkms_ver}. dkms said:"
+        while IFS= read -r _al; do
+            [[ -n "$_al" ]] && log_error "  dkms: $_al"
+        done < <(printf '%s\n' "$_addout" | tail -n 10)
+        return 1
+    fi
     # Idempotency (the installer is a resumable state machine): dkms build errors
     # with "already built" for a kernel already done -> build ONLY if there is no
     # build for this kernel yet. install --force below is idempotent by itself.
     if dkms status -m amneziawg -v "$dkms_ver" -k "$kver" 2>/dev/null | grep -qE ': (built|installed)'; then
-        log "The pinned 2.0 module is already built for kernel $kver - skipping dkms build."
+        log "The pinned module $want_ver is already built for kernel $kver - skipping dkms build."
     else
-        log "Building the pinned 2.0 module via DKMS (kernel $kver)..."
+        log "Building the pinned module $want_ver via DKMS (kernel $kver)..."
         if ! dkms build -m amneziawg -v "$dkms_ver" -k "$kver" >/dev/null 2>&1; then
-            log_error "DKMS build of the pinned 2.0 module failed. See /var/lib/dkms/amneziawg/${dkms_ver}/${kver}/*/log/make.log"
+            log_error "DKMS build of the pinned module failed. See /var/lib/dkms/amneziawg/${dkms_ver}/${kver}/*/log/make.log"
             return 1
         fi
     fi
     if ! dkms install -m amneziawg -v "$dkms_ver" -k "$kver" --force >/dev/null 2>&1; then
-        log_error "DKMS install of the pinned 2.0 module failed."
+        log_error "DKMS install of the pinned module failed."
         return 1
+    fi
+    _awg_pin_check_built "$kver" "$want_ver" || return 1
+
+    # A module that is already loaded is not replaced by modprobe: on a rerun over a
+    # working server the old one stays in the kernel until the reboot that step 2
+    # asks for, and step 3 checks the new one after it.
+    local _loaded=""
+    [[ -r /sys/module/amneziawg/version ]] && IFS= read -r _loaded < /sys/module/amneziawg/version
+    _loaded="${_loaded//[[:space:]]/}"
+    if [[ -n "$_loaded" && "$_loaded" != "$want_ver" ]]; then
+        log "The pinned AmneziaWG module $want_ver is built and installed (DKMS $dkms_ver, kernel $kver, profile 2.0); the kernel runs $_loaded until the reboot."
+        return 0
     fi
 
     # Built != loadable: with Secure Boot enabled an unsigned module will not load.
@@ -6921,7 +7061,7 @@ _install_pinned_awg2_module() {
         log_error "Disable Secure Boot in the VPS BIOS/UEFI or enroll a MOK key."
         return 1
     fi
-    log "The pinned AmneziaWG 2.0 module is built and loaded (DKMS $dkms_ver, kernel $kver)."
+    log "The pinned AmneziaWG module $want_ver is built and loaded (DKMS $dkms_ver, kernel $kver, profile 2.0)."
     return 0
 }
 
@@ -7220,18 +7360,18 @@ PPASRC
     # AmneziaWG + qrencode packages (NO Python!)
     log "Installing AmneziaWG packages..."
 
-    # H0 (AWG 3.0, 31 jul 2026): decide the pinned 2.0 module path BEFORE installing
+    # H0 (AWG 3.0, 31 jul 2026): decide the pinned module path BEFORE installing
     # any package - the hold must be in place before even the ARM prebuilt path, where
     # install_packages installs amneziawg-tools whose Recommends would otherwise pull
     # in the 3.0 module behind the gate. On kernels < 6.7 the PPA module is AmneziaWG
     # 3.0; we do not install it here (deliberately, see _kernel_supports_awg3) and
-    # build the pinned 2.0 from source instead; only tools come from the PPA
+    # build the module from the pinned source instead; only tools come from the PPA
     # (version-aware, they do work with 2.0 - verified).
     local use_pinned_awg2=0
     if ! _kernel_supports_awg3; then
         use_pinned_awg2=1
-        log "Kernel $(uname -r) is older than 6.7 - installing the tested AmneziaWG 2.0 module here, not 3.0 from the PPA."
-        log "Activated the pinned AmneziaWG 2.0 module path from source ($AWG2_PIN_TAG)."
+        log "Kernel $(uname -r) is older than 6.7 - the profile here is 2.0, and the module is built from the pinned source, not taken from the PPA."
+        log "Activated the pinned module path from source ($AWG2_PIN_TAG)."
         # Re-entry: if a prior run / the stock installer already installed (or left
         # half-configured) the 3.0 package - remove it and its source, otherwise its
         # failing postinst and /usr/src/amneziawg-* ownership conflict with the build.
@@ -7246,7 +7386,7 @@ PPASRC
         # ⚠️ Hold BEFORE any install: amneziawg-tools RECOMMENDS amneziawg-dkms, apt
         # installs recommends by default -> without a hold, installing tools (incl. on
         # the ARM path) would drag in the 3.0 dkms, leaving TWO DKMS trees under the
-        # same module name amneziawg - the pinned 2.0 one and the packaged 3.0 one.
+        # same module name amneziawg - the pinned one and the packaged one from the PPA.
         # This is a safety mechanism, so its failure is fatal (we verify the hold took
         # effect).
         local _hold_out=""
@@ -7279,7 +7419,7 @@ PPASRC
     # source without the #233 fix. Packages installed earlier stay second line until
     # the installer is run again for a new kernel. On no match
     # _try_install_prebuilt_arm returns 1 and we fall through to the source build
-    # below (on a kernel < 6.7 that is the pinned 2.0 source, AWG2_PIN_TAG). The hold
+    # below (on a kernel < 6.7 that is the source of the pinned tag AWG2_PIN_TAG). The hold
     # set above also applies here (keeps tools from pulling amneziawg-dkms via
     # Recommends).
     local arch
@@ -7397,7 +7537,7 @@ PPASRC
     _awg_deploy_ensure_helper
     if [[ "$use_pinned_awg2" -eq 0 ]]; then
         # The install_packages fallback (T1) is enabled only here, on the
-        # PPA/DKMS path: not on the ARM prebuilt and not on the pinned 2.0.
+        # PPA/DKMS path: not on the ARM prebuilt and not on the pinned path.
         _AWG_KMOD_T1=1
         # The module package was already unpacked by an earlier attempt: fix
         # the source BEFORE the first apt transaction (the gcc-13 install
@@ -7409,7 +7549,7 @@ PPASRC
     fi
 
     # Packages: on the pinned path (kernel < 6.7) we do NOT install amneziawg-dkms
-    # (it would be the 3.0 module); git is added instead to build the pinned 2.0
+    # (it would be the 3.0 module); git is added instead to build the pinned
     # source. The gate, hold and cleanup of a previously installed 3.0 were done
     # above (before the ARM block).
     local packages
@@ -7487,12 +7627,15 @@ PPASRC
     fi
     _AWG_KMOD_T1=0
 
-    # H0: pinned path - build the 2.0 module from source INSTEAD of PPA amneziawg-dkms.
+    # H0: pinned path - build the module from the pinned source INSTEAD of PPA amneziawg-dkms.
     # Headers for the current kernel are already installed above (in packages); the
     # hold was set earlier.
     if [[ "$use_pinned_awg2" -eq 1 ]]; then
         if ! _install_pinned_awg2_module; then
-            log_error "Failed to install the pinned AmneziaWG 2.0 module."
+            log_error "Failed to install the AmneziaWG module from the pinned source."
+            if [[ -n "${_AWG_PIN_DROPPED:-}" ]]; then
+                log_error "The previous module (version ${_AWG_PIN_DROPPED}) was already removed: the VPN keeps running until the next reboot and will not come up after it. Fix the cause and run the installer again, it carries on from step 2."
+            fi
             log_error "On kernels older than 6.7 (yours is $(uname -r)) the installer does not take"
             log_error "the module from the PPA but builds it from source, and that step did not go"
             log_error "through. The exact reason is in the lines above; usually it is missing kernel"
@@ -7500,9 +7643,9 @@ PPASRC
             log_error "not load (Secure Boot). Fallback option: deploy the server on Ubuntu"
             log_error "24.04 LTS, Ubuntu 26.04 or Debian 13, where the module comes from the PPA."
             log_error "See README/INSTALL_VPS for details."
-            die "The pinned AmneziaWG 2.0 module was not installed."
+            die "The AmneziaWG module from the pinned source was not installed."
         fi
-        log "The pinned AmneziaWG 2.0 module is installed; PPA dkms is held (3.0 protection)."
+        log "The AmneziaWG module from the pinned source is installed; the PPA dkms is held."
     fi
 
     # v5.12.0: install a kernel-headers meta-package so apt automatically
@@ -8651,7 +8794,7 @@ mode_finish() {
 #   status complete=<0|1> time=<epoch>
 # kind repeats the installer's --repair-module admission: an installed
 # prebuilt module package is prebuilt; no amneziawg-dkms is none; a held one
-# is pinned (the pinned 2.0 path and the ARM prebuilt hold it); no dkms,
+# is pinned (the pinned path and the ARM prebuilt hold it); no dkms,
 # not exactly one canonical registration, or a dkms.conf another package
 # owns is refused; any failed query is refused reason=query.
 mode_status() {

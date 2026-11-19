@@ -3,7 +3,7 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 3.x and 2.0
 # Author: @bivlked
-# Version: 6.3.4
+# Version: 6.3.5
 # Date: 2026-11-19
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
@@ -24,7 +24,7 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # drifted apart (one file updated, the other not) - otherwise the mismatch shows
 # up as a "command not found" somewhere random. Bumped with the other versions.
 # shellcheck disable=SC2034  # used by the manage script after sourcing
-AWG_COMMON_VERSION="6.3.4"
+AWG_COMMON_VERSION="6.3.5"
 
 # --- Auto-cleanup of temporary files ---
 # NOTE: trap is NOT set here to avoid overwriting the caller's trap handler.
@@ -1150,7 +1150,7 @@ _sanitize_awg_dkms_conf() {
 # function identifies the module source by the exact SHA-256 of
 # compat/compat.h and applies the upstream PR #218 fix
 # (amneziawg-linux-kernel-module, commit 62189503fa51) only to the known base;
-# any other source (someone else's edit, the pinned 2.0 source on kernels
+# any other source (someone else's edit, the pinned source on kernels
 # < 6.7, a source fixed in the PPA - that one is patched or foreign) is left
 # alone.
 # Usage: awg_kmod_compat_fix check|apply|revert <DKMS source dir> [diff]
@@ -1782,21 +1782,21 @@ awg_restore_generation_notice() {
 
 _kernel_supports_awg3() {
     # Returns 0 if the kernel version is >= 6.7 - there we take the module from the
-    # PPA as is. Returns 1 if the kernel is older than 6.7 - there we go the pinned
-    # 2.0 route.
+    # PPA as is. Returns 1 if the kernel is older than 6.7 - there the profile is 2.0
+    # and the module is built from the pinned tag (_install_pinned_awg2_module).
     # ⚠️ The name is historical, do not read it literally. The 6.7 threshold comes
     # from 30-31 jul 2026: the 3.0 code called nla_put_uint, absent before mainline
     # v6.7, and on 6.1 (Debian 12) the build died with 'implicit declaration of
-    # nla_put_uint'. Upstream fixed that on 31 jul (v3.0.20260731-04), and the 3.0
-    # module DOES build on 6.1 now - verified on a stand on 1 aug. The threshold is
-    # kept deliberately: within a day the 3.0 line managed to break and fix the
-    # build on old kernels specifically, so that is where it is least proven, while
-    # the pinned 2.0 is checked against an immutable commit. Drop the threshold
-    # after validating 3.0, not because the build passes again.
+    # nla_put_uint'. Upstream fixed that on 31 jul (v3.0.20260731-04), and the
+    # third-line module DOES build on 6.1 now. The threshold is kept deliberately:
+    # the 3.x profile has had the least mileage on old kernels, and the PPA module
+    # there would change with every vendor build, while the pinned tag (3.1 with the
+    # #233 fix since v6.3.5, the 2.0 tag before it) is checked against an immutable
+    # commit. Drop the threshold after validating the 3.1 profile on old kernels,
+    # not because the build passes again.
     # Arg $1: kernel release (default uname -r). An unparseable version is treated
-    # as "NOT supported" -> pinned 2.0 (it builds on ANY of our kernels, so the
-    # conservative choice never breaks connectivity, it only withholds 3.0 features
-    # which H0 does not ship anyway).
+    # as "NOT supported" -> the pinned path with the 2.0 profile (the conservative
+    # choice: it never breaks connectivity, it only withholds 3.1 features).
     # Pure function with no external deps (bats: extracted via sed-range + source).
     local kver="${1:-$(uname -r)}" kmaj kmin
     local min_maj=6 min_min=7
@@ -2852,8 +2852,8 @@ _awg_kmod_version_clean() {
 # create an amneziawg interface in its own network namespace and set I1-I5 on
 # it. The module's I1-I5 parser reads the length in <r>/<rc>/<rd> as a signed int
 # and never rejects a negative one (amneziawg-linux-kernel-module#233,
-# src/junk.c; the same code is in the pinned 2.0 source; the ARM prebuilts come
-# from 3.1 since 19 nov 2026), which in some tag combinations writes past a kernel buffer. Our
+# src/junk.c; the same code is in the 2.0 line; since 19 nov 2026 the ARM
+# prebuilts and the pinned source on kernels < 6.7 come from 3.1), which in some tag combinations writes past a kernel buffer. Our
 # commands refuse such values (awg_cps_check_safe); the warning is about the
 # other users and programs on the host. The module declares
 # MODULE_ALIAS_RTNL_LINK and MODULE_ALIAS_GENL_FAMILY, so once installed but not
@@ -2893,7 +2893,8 @@ _awg_kmod_version_clean() {
 # quiet. The apt advice is given only when the amneziawg-dkms package is
 # installed. The loaded module decides: after a package upgrade the old
 # one stays in the kernel until a reboot. The 2.0 line (1.0.x, the pinned
-# source and the ARM packages before 19 nov 2026) has no fixed release; an unknown version keeps
+# source and the ARM packages before 19 nov 2026) has no fixed release, and a
+# rerun of the current installer with --force replaces it; an unknown version keeps
 # the warning as it was, with no guess about the build.
 #
 # AWG_USERNS_ROOT is overridden only by tests (bats): a prefix for /proc, /sys
@@ -2969,7 +2970,7 @@ awg_userns_module_lines() {
         price="user namespaces can no longer be created at all, root included: rootless containers, application sandboxes, systemd services with PrivateUsers= and Docker with userns-remap stop working."
     fi
     if [[ "$kmver" == [0-2].* ]]; then
-        note=" This module is version ${kmver}: that is the 2.0 line, and the vendor has no fixed 2.0 release."
+        note=" This module is version ${kmver}: that is the 2.0 line, and the vendor has no fixed 2.0 release. Installer v6.3.5 and newer puts a fixed 3.1 line module on this server and keeps the 2.0 profile: download it again and run it with --force (keys and client configs stay; it asks for two reboots, run the same command after each)."
     elif [[ -n "$kmver" && -e "$root/var/lib/dpkg/info/amneziawg-dkms.list" ]]; then
         note=" This module is version ${kmver}, the fix is in 3.1.20261113-02 and newer: sudo apt-get update && sudo apt-get install --only-upgrade amneziawg-dkms, then a reboot, and this warning goes away."
     elif [[ -n "$kmver" ]]; then

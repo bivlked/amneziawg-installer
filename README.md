@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/Architecture-x86__64_|_ARM64_|_ARMv7-green" alt="x86_64 | ARM64 | ARMv7">
   <img src="https://img.shields.io/badge/AmneziaWG-3.1_&#124;_2.0-blueviolet" alt="AmneziaWG 3.1 and 2.0">
   <a href="https://github.com/bivlked/amneziawg-installer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
-  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-6.3.4-blue" alt="Version"></a>
+  <a href="https://github.com/bivlked/amneziawg-installer/releases"><img src="https://img.shields.io/badge/Installer_Version-6.3.5-blue" alt="Version"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml"><img src="https://github.com/bivlked/amneziawg-installer/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/bivlked/amneziawg-installer/stargazers"><img src="https://img.shields.io/github/stars/bivlked/amneziawg-installer?style=flat" alt="Stars"></a>
   <img src="https://img.shields.io/github/last-commit/bivlked/amneziawg-installer" alt="Last commit">
@@ -34,7 +34,7 @@
 <!-- facts:begin -->
 <!-- Собирается scripts/update-facts-block.sh из данных репозитория.
      Руками не править: check-docs-consistency.sh сверит блок с источниками. -->
-**Факты на 2026-11-19.** Установщик 6.3.4. Сроки поддержки ОС проверены по данным вендоров на 2026-08-29.
+**Факты на 2026-11-19.** Установщик 6.3.5. Сроки поддержки ОС проверены по данным вендоров на 2026-08-29.
 
 | | |
 |---|---|
@@ -42,7 +42,7 @@
 | **Тоже поддерживается** | Ubuntu 26.04 |
 | **Не для новых серверов** | Debian 12 - вне обычной поддержки вендора |
 | **Архитектуры** | x86_64, ARM64, ARMv7 |
-| **Модуль ядра** | DKMS из PPA Amnezia; на ядрах старее 6.7 (штатный Debian 12) - проверенный модуль 2.0 из исходников; на ARM для поколения 2.0 - готовые сборки |
+| **Модуль ядра** | DKMS из PPA Amnezia; на ядрах старее 6.7 (штатный Debian 12) - модуль из исходников закреплённого тега 3.1 с профилем 2.0; на ARM для поколения 2.0 - готовые сборки |
 | **Профиль конфигурации** | AmneziaWG 3.1 для новой установки, в том числе на ARM64; 2.0 - флагом `--protocol=2.0` или автоматически там, где установщик 3.1 не выдаёт (ядро старее 6.7, 32-битный ARM); уже работающий сервер остаётся на своём поколении |
 <!-- facts:end -->
 

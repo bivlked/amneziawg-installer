@@ -331,7 +331,7 @@ TEXT = {
         # утверждала неправду ровно того класса, ради которого блок и заведён.
         'module': ('Модуль ядра',
                    'DKMS из PPA Amnezia; на ядрах старее 6.7 (штатный Debian 12) - '
-                   'проверенный модуль 2.0 из исходников; на ARM для поколения 2.0 - готовые сборки'),
+                   'модуль из исходников закреплённого тега 3.1 с профилем 2.0; на ARM для поколения 2.0 - готовые сборки'),
         'profile': ('Профиль конфигурации',
                     'AmneziaWG 3.1 для новой установки, в том числе на ARM64; 2.0 - флагом `--protocol=2.0` или '
                     'автоматически там, где установщик 3.1 не выдаёт (ядро старее 6.7, 32-битный ARM); '
@@ -350,7 +350,7 @@ TEXT = {
         'arch': ('Architectures', arch_line),
         'module': ('Kernel module',
                    'DKMS from the Amnezia PPA; on kernels older than 6.7 (a stock Debian 12) '
-                   'a pinned 2.0 module built from source; on ARM, prebuilt packages for generation 2.0'),
+                   'a module built from source, from the pinned 3.1 tag with the 2.0 profile; on ARM, prebuilt packages for generation 2.0'),
         'profile': ('Config profile',
                     'AmneziaWG 3.1 for a new install, ARM64 included; 2.0 with `--protocol=2.0`, or '
                     'automatically where the installer does not issue 3.1 (kernel older than 6.7, 32-bit ARM); '
