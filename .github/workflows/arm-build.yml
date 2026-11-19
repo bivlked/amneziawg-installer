@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       module_version:
-        description: 'Upstream module tag/branch. Blank = use scripts/arm-module-version.txt pin, then default-branch HEAD.'
+        description: 'Upstream module tag/branch. Blank = use scripts/arm-module-version.txt pin, then default-branch HEAD. A ref without the fix for amneziawg-linux-kernel-module#233 (older than 3.1.20261113-02) is refused by scripts/build-arm-deb.sh.'
         required: false
         default: ''
   push:
