@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **CASCADE: the routing unit now starts right away, plus three fixes from a test run.** Step 5 uses `systemctl enable --now awg-quick@awg1 awg-routing`. Without `--now` the unit stayed inactive until the first reboot, and restarting `awg-quick@awg1` in that window left the clients with no sites opening at all. If you set up a cascade earlier, run `systemctl start awg-routing` once. Step 3 no longer suggests pinging `172.16.61.1` from the entry, which never works there; it gives `ping -I awg1 172.16.61.1` instead. The `iperf3` speed test in troubleshooting now installs the tool and opens port 5201 on the exit for the entry only, then closes it. The entry server should be in Russia, not "in or near" it.
+
 ## [6.3.4] - 2026-11-19
 
 **v6.3.4** - the prebuilt ARM packages of the AmneziaWG module come from the 3.1 line with the fix for bug #233 and report the real module version; the profile on ARM stays 2.0.
