@@ -56,7 +56,8 @@ case "$pkg" in
         exit 1
         ;;
     netplan.io|netplan-generator|systemd-networkd|systemd-resolved)
-        echo "install ok installed"
+        # MOCK_DPKG_HELD: packages whose dpkg selection is hold
+        if [[ " ${MOCK_DPKG_HELD:-} " == *" $pkg "* ]]; then echo "hold ok installed"; else echo "install ok installed"; fi
         exit 0
         ;;
     *)
@@ -100,7 +101,7 @@ SHIM
 #!/bin/bash
 echo "apt-mark $*" >> "$TRACE"
 case "$1" in
-    showhold) printf '%s\n' "${MOCK_PREEXISTING_HOLDS:-}" ;;
+    showhold) printf '%s\n' "${MOCK_PREEXISTING_HOLDS:-}"; exit "${MOCK_SHOWHOLD_RC:-0}" ;;
 esac
 exit 0
 SHIM
@@ -157,6 +158,9 @@ SHIM
     # Extract cleanup_system from install_amneziawg.sh into a sourceable file.
     awk '/^cleanup_system\(\) \{/,/^}$/' "$BATS_TEST_DIRNAME/../install_amneziawg.sh" \
         > "$TEST_DIR/cleanup_system.bash"
+    # the hold helper cleanup_system asks about a user's own holds
+    awk '/^_awg_pkg_held\(\) \{/,/^}$/' "$BATS_TEST_DIRNAME/../install_amneziawg.sh" \
+        >> "$TEST_DIR/cleanup_system.bash"
     # Stub the logger and die so the function does not need awg_common.sh.
     cat > "$TEST_DIR/loader.bash" <<'LOADER'
 log()       { echo "LOG: $*" >> "$TRACE"; }
@@ -277,6 +281,18 @@ call_cleanup() {
     run ! grep -qE '^apt-mark unhold netplan\.io$'      "$TRACE"
     run ! grep -qE '^apt-mark unhold systemd-resolved$' "$TRACE"
     # netplan-generator was NOT in user's holds - we still hold/unhold it.
+    grep -qE '^apt-mark hold netplan-generator$'   "$TRACE"
+    grep -qE '^apt-mark unhold netplan-generator$' "$TRACE"
+}
+
+@test "a user hold stays when showhold fails: dpkg selection is asked first" {
+    # A failing showhold used to leave the snapshot of the user's holds empty,
+    # so cleanup took the user's hold for its own and released it at the end.
+    export MOCK_SHOWHOLD_RC=1
+    export MOCK_DPKG_HELD="netplan.io"
+    call_cleanup
+    run ! grep -qE '^apt-mark hold netplan\.io$'   "$TRACE"
+    run ! grep -qE '^apt-mark unhold netplan\.io$' "$TRACE"
     grep -qE '^apt-mark hold netplan-generator$'   "$TRACE"
     grep -qE '^apt-mark unhold netplan-generator$' "$TRACE"
 }

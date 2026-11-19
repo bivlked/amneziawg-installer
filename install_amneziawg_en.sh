@@ -3843,6 +3843,17 @@ _awg_pkg_held() {
     grep -qxF -- "$pkg" <<< "$holds"
 }
 
+# _awg_apt_ignores_hold : 0 when APT::Ignore-Hold is enabled in the apt
+# settings. With it apt looks at no hold at all, and the step 2 guard against a
+# second module (the hold on amneziawg-dkms) holds nothing, although the hold
+# check passes. An apt-config that does not answer does not count as enabled:
+# such an apt would not install the packages below either, and fail loudly.
+_awg_apt_ignores_hold() {
+    local out
+    out=$(apt-config shell v APT::Ignore-Hold/b 2>/dev/null) || return 1
+    [[ "$out" == "v='true'" ]]
+}
+
 # _awg_hold_refusal_log <apt-mark hold output> : before refusing, show what
 # apt-mark and dpkg answered. Without it the reason (a lock, a package with no
 # candidate, a damaged dpkg database) stayed in /dev/null, and the hint in the
@@ -4395,17 +4406,17 @@ cleanup_system() {
     # variants (netplan.io on 24.04, netplan-generator on 25.10/26.04) plus
     # systemd-resolved and netcfg/ifupdown legacy. There is no standalone
     # systemd-networkd package - the binary lives inside systemd, nothing to hold.
-    # Before holding we snapshot the user's existing holds so we never strip
-    # holds we did not place (e.g. on linux-image-* held by the user).
+    # Before holding we check whether the user holds the package already, so the
+    # unhold below never releases a hold we did not place.
     local _hold_pkgs="netplan.io netplan-generator systemd-resolved netcfg ifupdown"
-    local _preexisting_holds=""
-    _preexisting_holds="$(apt-mark showhold 2>/dev/null || true)"
     local _held_actual=()
     local _hpkg
     for _hpkg in $_hold_pkgs; do
         if dpkg-query -W -f='${Status}' "$_hpkg" 2>/dev/null | grep -q "ok installed"; then
             # Skip if user already held - that hold is not ours to release.
-            if grep -qxF "$_hpkg" <<<"$_preexisting_holds"; then
+            # Ask the dpkg selection, not only showhold: a failing showhold left an
+            # empty snapshot, and a user's hold was taken for ours and released.
+            if _awg_pkg_held "$_hpkg"; then
                 continue
             fi
             apt-mark hold "$_hpkg" >/dev/null 2>&1 && _held_actual+=("$_hpkg")
@@ -7379,7 +7390,13 @@ PPASRC
             log "Found a previously installed amneziawg-dkms (AmneziaWG 3.0) - removing it before the pinned build."
             DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg >/dev/null 2>&1 \
                 || dpkg --purge --force-all amneziawg-dkms amneziawg >/dev/null 2>&1 \
-                || log_warn "Could not fully remove the previously installed amneziawg-dkms - the install below may fail."
+                || true
+            # A package that survives the purge would stay under the hold below:
+            # the hold check would pass while the 3.0 module stayed next to the
+            # pinned build.
+            if _pkg_present amneziawg-dkms; then
+                die "Could not remove the previously installed amneziawg-dkms (AmneziaWG 3.0), and it would leave a second amneziawg module next to the pinned build. Remove it by hand: sudo dpkg --purge --force-all amneziawg-dkms amneziawg, check: dpkg -l amneziawg-dkms, then run the installer again."
+            fi
             command -v dkms >/dev/null 2>&1 && dkms remove -m amneziawg -v 1.0.0 --all >/dev/null 2>&1 || true
             rm -rf /var/lib/dkms/amneziawg* /usr/src/amneziawg-* 2>/dev/null || true
         fi
@@ -7389,6 +7406,9 @@ PPASRC
         # same module name amneziawg - the pinned one and the packaged one from the PPA.
         # This is a safety mechanism, so its failure is fatal (we verify the hold took
         # effect).
+        if _awg_apt_ignores_hold; then
+            die "APT::Ignore-Hold is enabled in the apt settings: apt ignores holds, and installing amneziawg-tools could pull a second amneziawg module from the PPA. Find and remove that setting (grep -r Ignore-Hold /etc/apt/apt.conf /etc/apt/apt.conf.d/), then run the installer again."
+        fi
         local _hold_out=""
         _hold_out=$(apt-mark hold amneziawg-dkms amneziawg 2>&1) || true
         # We verify amneziawg-dkms specifically - it is the load-bearing package: it
@@ -7481,6 +7501,9 @@ PPASRC
             # extra/. Two trees carrying a module of the SAME name is exactly what
             # the hold exists to prevent. Reachable: the ubuntu-2404-arm64 and
             # debian-trixie-arm64 prebuilt targets ship kernels 6.7+.
+            if _awg_apt_ignores_hold; then
+                die "APT::Ignore-Hold is enabled in the apt settings: apt ignores holds, and installing amneziawg-tools could pull a second amneziawg module from the PPA. Find and remove that setting (grep -r Ignore-Hold /etc/apt/apt.conf /etc/apt/apt.conf.d/), then run the installer again."
+            fi
             local _hold_out=""
             _hold_out=$(apt-mark hold amneziawg-dkms amneziawg 2>&1) || true
             if ! _awg_pkg_held amneziawg-dkms; then
@@ -7500,7 +7523,9 @@ PPASRC
             # no path to a fix leaves the person with nothing. Hence a loud
             # warning with the exact command. Tightening this to a die is a
             # separate task.
-            if dpkg-query -W -f='${Status}' amneziawg-dkms 2>/dev/null | grep -q "ok installed"; then
+            # _pkg_present rather than "ok installed": a package left unpacked or
+            # half-configured lies next to the prebuilt module too.
+            if _pkg_present amneziawg-dkms; then
                 log_warn "WARNING: the amneziawg-dkms package is installed next to the prebuilt module."
                 log_warn "  How that ends was measured on a bench rather than guessed: as soon as kernel"
                 log_warn "  headers are present, DKMS builds, DISPLACES the prebuilt file from extra/, and"
