@@ -317,6 +317,16 @@ call_cleanup() {
 
 # --- Structural / RU+EN parity ---
 
+@test "structural: both cleanup_system twins ask _awg_pkg_held and keep no showhold snapshot" {
+    local f body
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        body=$(awk '/^cleanup_system\(\) \{/,/^}$/' "$BATS_TEST_DIRNAME/../$f")
+        grep -qxF '            if _awg_pkg_held "$_hpkg"; then' <<< "$body" || { echo "$f: no _awg_pkg_held"; return 1; }
+        run grep -c '_preexisting_holds' <<< "$body"
+        [ "$output" = "0" ] || { echo "$f: snapshot still there"; return 1; }
+    done
+}
+
 @test "structural: install_amneziawg.sh + _en.sh cleanup_system functions are line-equal" {
     local RU EN
     RU=$(awk '/^cleanup_system\(\) \{/,/^}$/' "$BATS_TEST_DIRNAME/../install_amneziawg.sh" | wc -l)

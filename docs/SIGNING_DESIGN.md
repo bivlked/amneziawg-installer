@@ -7,7 +7,7 @@ not verify.
 Public key: `RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN` (key ID `3E598A1C01907E17`; the ID is not a fingerprint,
 another key can carry the same ID, so compare the whole key). Publishing it through a channel that is
 not this repository is what makes it worth anything to a first-time visitor;
-that is tracked separately and is not done by this document.
+since 1 October 2026 the whole key is also in [post #28 on ntc.party](https://ntc.party/t/22685/28).
 
 ## Why
 

@@ -434,6 +434,8 @@ _regen_20_failed_qr_leaves_no_stale_files() {
     _nope '[ -e "$A/alice.png" ]'
     _nope '[ -e "$A/alice.vpnuri.png" ]'
     [[ "$output" == *'"status":"regenerated"'* && "$output" == *'"qr":null'* ]] || { echo "json: $output" >&2; return 1; }
+    [[ "$output$stderr" == *"прежние файлы удалены"* || "$output$stderr" == *"the old files are removed"* ]] \
+        || { echo "no warning: $stderr" >&2; return 1; }
 }
 @test "regen on 2.0 whose QR fails leaves no stale QR files behind" { _both _regen_20_failed_qr_leaves_no_stale_files; }
 
@@ -454,3 +456,47 @@ _regen_20_undeletable_qr_keeps_conf() {
     [ "$(cksum < "$A/alice.conf")" = "$conf" ]
 }
 @test "regen on 2.0 stops with the .conf untouched when an old QR cannot be removed" { _both _regen_20_undeletable_qr_keeps_conf; }
+
+# Only the link QR fails: the config QR and the link are fresh, the link QR is
+# absent rather than the old one.
+_regen_20_failed_link_qr() {
+    local s="$1" uri_before
+    _gen 2.0
+    _m "$s" add alice
+    _ok
+    uri_before=$(cksum < "$A/alice.vpnuri")
+    sed -i "s/^export AWG_ENDPOINT=.*/export AWG_ENDPOINT='203.0.113.9'/" "$A/awgsetup_cfg.init"
+    : > "$TEST_DIR/qr_fail_uri"
+    _m "$s" regen alice
+    _ok
+    [ -s "$A/alice.png" ]
+    [ -s "$A/alice.vpnuri" ]
+    [ "$(cksum < "$A/alice.vpnuri")" != "$uri_before" ] || { echo "the link was not rebuilt" >&2; return 1; }
+    _nope '[ -e "$A/alice.vpnuri.png" ]'
+}
+@test "regen on 2.0 whose link QR fails keeps the fresh files and leaves no old link QR" { _both _regen_20_failed_link_qr; }
+
+# 3.1: a removal that fails half way through must bring back what was already
+# removed. rm fails only on the link QR, so the config QR and the link are gone
+# by then.
+_regen_31_removal_fails_set_back() {
+    local s="$1" before
+    _gen 3.1
+    _m "$s" add alice
+    _ok
+    before=$(_files alice)
+    sed -i "s/^export AWG_ENDPOINT=.*/export AWG_ENDPOINT='203.0.113.9'/" "$A/awgsetup_cfg.init"
+    cat > "$TEST_DIR/bin/rm" << STUB
+#!/bin/bash
+for a in "\$@"; do [[ "\$a" == */alice.vpnuri.png ]] && { echo "rm: cannot remove '\$a': Operation not permitted" >&2; exit 1; }; done
+exec /bin/rm "\$@"
+STUB
+    chmod +x "$TEST_DIR/bin/rm"
+    _m "$s" regen alice
+    _fail
+    [[ "$output$stderr" == *"Operation not permitted"* ]] || { echo "no reason: $stderr" >&2; return 1; }
+    [ "$(_files alice)" = "$before" ] || { diff <(echo "$before") <(_files alice) >&2; return 1; }
+    run grep -c -e 'прежние файлы удалены' -e 'the old files are removed' <<< "$output$stderr"
+    [ "$output" = "0" ]
+}
+@test "regen on 3.1 whose removal fails half way puts the whole previous set back" { _both _regen_31_removal_fails_set_back; }

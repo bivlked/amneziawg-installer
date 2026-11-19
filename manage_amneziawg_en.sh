@@ -413,8 +413,10 @@ validate_client_name() {
 }
 
 # JSON entry for a successful regen (v5.21.0). qr/vpnuri are paths if the
-# file exists at response time (regenerate_client refreshes them best-effort;
-# the contract makes no freshness promise - see the races note in the docs).
+# file exists at response time. regenerate_client removes the old ones before
+# it rewrites the .conf and rebuilds them best-effort: a file that was not
+# built gives null, not a path to an old copy; the contract gives no freshness
+# guarantee against a parallel operation.
 _regen_json_entry() {
     local name="$1" _jqr="null" _juri="null"
     [[ -f "$AWG_DIR/${name}.png" ]] && _jqr="\"$(json_escape "$AWG_DIR/${name}.png")\""

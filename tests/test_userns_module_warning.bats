@@ -385,7 +385,8 @@ EOF
     debian
     local v
     # 3.1.20261113 is the tag before the fix was merged; -01 and other suffixes are not -02
-    for v in 3.1.20261112 3.1.20261113 3.1.20261113-01 3.1.20261113-00 3.1.20261113-rc1 3.1.20261113.1; do
+    # a 3.0 version dated after the fix is not fixed either: the fix is only on the 3.1 line
+    for v in 3.1.20261112 3.1.20261113 3.1.20261113-01 3.1.20261113-00 3.1.20261113-rc1 3.1.20261113.1 3.0.20261201 3.0.20261113-02; do
         modver "$v"; warns "unfixed $v" "kernel.unprivileged_userns_clone=0"
     done
 }

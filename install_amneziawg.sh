@@ -3757,15 +3757,18 @@ _awg_pkg_held() {
 # настройка прошла бы молча. Причину функция пишет сама.
 _awg_apt_hold_honoured() {
     local out
-    if ! out=$(apt-config shell v APT::Ignore-Hold/b 2>/dev/null); then
-        log_error "Не удалось прочитать настройки apt (apt-config shell): не проверить, соблюдает ли apt hold (APT::Ignore-Hold)."
+    if ! out=$(apt-config shell v APT::Ignore-Hold/b 2>&1); then
+        log_error "Не удалось прочитать настройки apt (apt-config shell): не проверить, соблюдает ли apt hold (APT::Ignore-Hold). Ответ: $(printf '%s' "$out" | tr '\n' ' ' | tail -c 300)"
         return 1
     fi
-    if [[ "$out" == "v='true'" ]]; then
-        log_error "В настройках apt включено APT::Ignore-Hold: apt не соблюдает hold."
-        return 1
-    fi
-    return 0
+    # Пусто - настройка не задана; v='false' - задана и выключена. Всё прочее,
+    # включая v='true' и непонятный ответ, - отказ.
+    case "$out" in
+        ""|"v='false'") return 0 ;;
+        "v='true'") log_error "В настройках apt включено APT::Ignore-Hold: apt не соблюдает hold (проверка: apt-config dump | grep -i ignore-hold)." ;;
+        *) log_error "Непонятный ответ apt-config про APT::Ignore-Hold: $(printf '%s' "$out" | tr '\n' ' ' | tail -c 300)" ;;
+    esac
+    return 1
 }
 
 # _awg_hold_refusal_log <вывод apt-mark hold> : перед отказом показать, что
@@ -3804,6 +3807,23 @@ _pkgs_installed_ok() {
     local p
     for p in "$@"; do _pkg_installed_ok "$p" || return 1; done
     return 0
+}
+
+# _awg_pkg_state <пакет> : третье поле Status пакета (installed, unpacked,
+# half-configured, config-files...), без учёта выбора hold; для пакета, которого
+# dpkg не знает, - not-installed. Код 2, если dpkg спросить не удалось: «не смог»
+# не должно читаться как «пакета нет».
+_awg_pkg_state() {
+    local q e
+    [[ -n "${1:-}" ]] || return 2
+    if ! q=$(LC_ALL=C dpkg-query -W -f='${Status}' "$1" 2>/dev/null); then
+        e=$(LC_ALL=C dpkg-query -W -f='${Status}' "$1" 2>&1 >/dev/null || true)
+        [[ "$e" == *"no packages found matching"* ]] || return 2
+        q="unknown ok not-installed"
+    fi
+    q="${q##* }"
+    [[ -n "$q" ]] || return 2
+    printf '%s' "$q"
 }
 
 # _awg_kmod_prebuilt_present : 0, если стоит предсобранный пакет модуля ARM;
@@ -4320,8 +4340,8 @@ cleanup_system() {
     for _hpkg in $_hold_pkgs; do
         if dpkg-query -W -f='${Status}' "$_hpkg" 2>/dev/null | grep -q "ok installed"; then
             # Пропускаем уже залоченные пользователем - их hold не наш и снимать его нельзя.
-            # Спрашиваем выбор dpkg, а не только showhold: при упавшем showhold
-            # снимок был пуст, чужой hold принимался за наш и в конце снимался.
+            # Спрашиваем выбор dpkg, а не только showhold: упавший showhold не
+            # должен выдать чужой hold за наш, который в конце снимается.
             if _awg_pkg_held "$_hpkg"; then
                 continue
             fi
@@ -7257,15 +7277,23 @@ PPASRC
         # Re-entry: если прошлый прогон/стоковый установщик успел поставить (или
         # оставить полу-настроенным) 3.0-пакет - убрать его и его исходник, иначе
         # его failing postinst и владение /usr/src/amneziawg-* конфликтуют со сборкой.
-        if dpkg -l amneziawg-dkms 2>/dev/null | grep -qE '^(ii|iU|iF|iH|rc)'; then
+        # Вход по состоянию пакета, а не по колонке dpkg -l: пакет под hold
+        # (hi, hU, hF) тоже стоит, и его тоже нужно убрать.
+        local _dkms_st="" _purge_out=""
+        _dkms_st=$(_awg_pkg_state amneziawg-dkms) \
+            || die "Не удалось спросить dpkg о пакете amneziawg-dkms: без ответа нельзя понять, не останется ли рядом со сборкой из пинового исходника модуль AmneziaWG 3.0. Проверьте: dpkg -l amneziawg-dkms, затем запустите установщик снова."
+        if [[ "$_dkms_st" != not-installed ]]; then
             log "Обнаружен ранее установленный amneziawg-dkms (AmneziaWG 3.0) - удаляю перед пиновой сборкой."
-            DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg >/dev/null 2>&1 \
-                || dpkg --purge --force-all amneziawg-dkms amneziawg >/dev/null 2>&1 \
-                || true
+            # apt-get откажет пакету под hold, dpkg --force-all его снимет.
+            if ! _purge_out=$(DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg 2>&1); then
+                _purge_out+=" | $(dpkg --purge --force-all amneziawg-dkms amneziawg 2>&1)" || true
+            fi
             # Пакет, переживший purge, остался бы под hold ниже: проверка hold
             # прошла бы, а модуль 3.0 так и стоял бы рядом со сборкой из пина.
-            if _pkg_present amneziawg-dkms; then
-                die "Не удалось удалить ранее установленный amneziawg-dkms (AmneziaWG 3.0), а с ним рядом со сборкой из пинового исходника остался бы второй модуль amneziawg. Удалите его вручную: sudo dpkg --purge --force-all amneziawg-dkms amneziawg, проверьте: dpkg -l amneziawg-dkms, затем запустите установщик снова."
+            _dkms_st=$(_awg_pkg_state amneziawg-dkms) || _dkms_st="unknown"
+            if [[ "$_dkms_st" != not-installed && "$_dkms_st" != config-files ]]; then
+                log_error "Ответ apt и dpkg на удаление: $(printf '%s' "$_purge_out" | tr '\n' ' ' | tail -c 300)"
+                die "Не удалось удалить ранее установленный amneziawg-dkms (AmneziaWG 3.0, состояние: $_dkms_st), а с ним рядом со сборкой из пинового исходника остался бы второй модуль amneziawg. Удалите его вручную: sudo dpkg --purge --force-all amneziawg-dkms amneziawg, проверьте: dpkg -l amneziawg-dkms, затем запустите установщик снова."
             fi
             command -v dkms >/dev/null 2>&1 && dkms remove -m amneziawg -v 1.0.0 --all >/dev/null 2>&1 || true
             rm -rf /var/lib/dkms/amneziawg* /usr/src/amneziawg-* 2>/dev/null || true
@@ -7276,7 +7304,7 @@ PPASRC
         # одним именем модуля amneziawg - пиновое и пакетное из PPA. Это защитный
         # механизм, поэтому провал фатален (проверяем, что hold реально встал).
         if ! _awg_apt_hold_honoured; then
-            die "Без соблюдения hold установка amneziawg-tools может подтянуть из PPA второй модуль amneziawg. Уберите APT::Ignore-Hold (grep -r Ignore-Hold /etc/apt/apt.conf /etc/apt/apt.conf.d/) или почините apt-config, затем запустите установщик снова."
+            die "Без соблюдения hold установка amneziawg-tools может подтянуть из PPA второй модуль amneziawg. Уберите APT::Ignore-Hold (где она задана: grep -r Ignore-Hold /etc/apt/apt.conf /etc/apt/apt.conf.d/) или почините apt-config, затем запустите установщик снова."
         fi
         local _hold_out=""
         _hold_out=$(apt-mark hold amneziawg-dkms amneziawg 2>&1) || true
@@ -7368,7 +7396,8 @@ PPASRC
             # Достижимо: target-ы пребилдов ubuntu-2404-arm64 и
             # debian-trixie-arm64 - это ядра 6.7+.
             if ! _awg_apt_hold_honoured; then
-                die "Без соблюдения hold установка amneziawg-tools может подтянуть из PPA второй модуль amneziawg. Уберите APT::Ignore-Hold (grep -r Ignore-Hold /etc/apt/apt.conf /etc/apt/apt.conf.d/) или почините apt-config, затем запустите установщик снова."
+                _awg_rehold_for_prebuilt
+                die "Без соблюдения hold установка amneziawg-tools может подтянуть из PPA второй модуль amneziawg рядом с готовым. Предсобранный пакет уже установлен, hold на amneziawg-dkms возвращён; пакеты amneziawg вручную не ставьте. Уберите APT::Ignore-Hold (где она задана: grep -r Ignore-Hold /etc/apt/apt.conf /etc/apt/apt.conf.d/) или почините apt-config, затем запустите установщик снова: шаг выполнится заново."
             fi
             local _hold_out=""
             _hold_out=$(apt-mark hold amneziawg-dkms amneziawg 2>&1) || true

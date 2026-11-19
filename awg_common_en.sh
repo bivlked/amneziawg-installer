@@ -6310,12 +6310,13 @@ regenerate_client() {
     # modify). On 2.0 there is no copy of the previous set, and a build step
     # that fails below would leave the previous file with the previous config,
     # handed out as current. A failed removal stops the regen with the .conf
-    # untouched; on 3.1 what was removed comes back from the copy.
-    local _df
+    # untouched; on 3.1 what was removed comes back from the copy, on 2.0 files
+    # already removed stay removed and the next regen rebuilds them.
+    local _df _rm_err
     for _df in "$AWG_DIR/${name}.png" "$AWG_DIR/${name}.vpnuri" "$AWG_DIR/${name}.vpnuri.png"; do
         [[ -e "$_df" || -L "$_df" ]] || continue
-        if ! rm -f "$_df" 2>/dev/null || [[ -e "$_df" || -L "$_df" ]]; then
-            log_error "Could not remove $_df before regenerating client '$name' - the config is unchanged. Fix the cause and run regen '$name' again: it rebuilds the QR and vpn:// files."
+        if ! _rm_err=$(rm -f -- "$_df" 2>&1) || [[ -e "$_df" || -L "$_df" ]]; then
+            log_error "Could not remove $_df before regenerating client '$name' - the config is unchanged${_rm_err:+ ($_rm_err)}. Fix the cause and run regen '$name' again: it rebuilds the QR and vpn:// files."
             _awg31_set_restore_noted "$name"
             exec {lock_fd}>&-
             unset CLIENT_PSK

@@ -199,7 +199,7 @@ fi
 WG_VERSION="$(_arm_module_version_h "$WORK_DIR/src/src")"
 echo "Module version (version.h): $WG_VERSION"
 if ! _arm_version_has_233_fix "$WG_VERSION"; then
-    echo "ERROR: module $WG_VERSION has no fix for amneziawg-linux-kernel-module#233 (needs 3.1.20261113-02 or newer); refusing to build packages that would replace fixed ones" >&2
+    echo "ERROR: module $WG_VERSION has no fix for amneziawg-linux-kernel-module#233 (needs the 3.1 line or later, 3.1.20261113-02 or newer); refusing to build packages that would replace fixed ones" >&2
     exit 1
 fi
 

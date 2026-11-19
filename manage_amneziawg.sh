@@ -408,8 +408,9 @@ validate_client_name() {
 }
 
 # JSON-запись успешной перегенерации (v5.21.0). qr/vpnuri - пути, если файл
-# существует на момент ответа (regenerate_client обновляет их best-effort;
-# гарантий свежести контракт не даёт - см. доку про гонки).
+# существует на момент ответа. regenerate_client удаляет прежние до перезаписи
+# .conf и пересобирает их best-effort: несобранный файл даёт null, а не путь к
+# старой копии; гарантий свежести при параллельной операции контракт не даёт.
 _regen_json_entry() {
     local name="$1" _jqr="null" _juri="null"
     [[ -f "$AWG_DIR/${name}.png" ]] && _jqr="\"$(json_escape "$AWG_DIR/${name}.png")\""
