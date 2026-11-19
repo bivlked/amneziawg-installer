@@ -6853,13 +6853,13 @@ _awg_module_src_version() {
 # version is left in _AWG_PIN_DROPPED for the error text of the caller), 1 when
 # the old build stays registered in DKMS or the source could not be removed.
 _awg_pin_drop_stale() {
-    local dir="$1" pin_ver="$2" dver="$3" src_ver=""
+    local dir="$1" pin_ver="$2" dver="$3" src_ver="" tree="/var/lib/dkms/amneziawg/$3"
     if [[ -e "$dir" ]]; then
         src_ver=$(_awg_module_src_version "$dir/version.h") || src_ver=""
         [[ "$src_ver" == "$pin_ver" ]] && return 0
         log "The module source in $dir is version ${src_ver:-unknown}, the pinned one is $pin_ver: removing the old build first."
     else
-        [[ -z "$(dkms status -m amneziawg -v "$dver" 2>/dev/null)" ]] && return 0
+        [[ -z "$(dkms status -m amneziawg -v "$dver" 2>/dev/null)" && ! -e "$tree" ]] && return 0
         log "An amneziawg $dver build is registered in DKMS without its source in $dir: removing it first."
     fi
     # dkms remove also fails when nothing is registered, so the outcome is judged
@@ -6867,13 +6867,23 @@ _awg_pin_drop_stale() {
     # touched: with the new version.h in place the next run would skip this
     # cleanup, DKMS would report the old build as built, and the old module would
     # be installed again.
+    _AWG_PIN_DROPPED="${src_ver:-unknown}"
     dkms remove -m amneziawg -v "$dver" --all >/dev/null 2>&1 || true
-    if [[ -n "$(dkms status -m amneziawg -v "$dver" 2>/dev/null)" ]]; then
-        log_error "dkms remove -m amneziawg -v $dver --all did not unregister the old build: dkms status still lists it."
+    # Without its source dkms can neither list nor remove a registration (it needs
+    # dkms.conf, checked with dkms 3.0.10): the leftover tree of that version and
+    # the links to it are removed directly.
+    if [[ ! -e "$dir/dkms.conf" && -e "$tree" ]]; then
+        rm -rf "$tree"
+        find "${tree%/*}" -maxdepth 1 -xtype l -delete 2>/dev/null || true
+    fi
+    if [[ -n "$(dkms status -m amneziawg -v "$dver" 2>/dev/null)" || -e "$tree" ]]; then
+        # A partial remove can take the build of the running kernel and keep
+        # another one: the mark stays unless the module for this kernel is still there.
+        modinfo -k "$(uname -r)" -F version amneziawg >/dev/null 2>&1 && _AWG_PIN_DROPPED=""
+        log_error "dkms remove -m amneziawg -v $dver --all did not unregister the old build: dkms status or /var/lib/dkms still has it."
         log_error "Remove it by hand (dkms status amneziawg; dkms remove -m amneziawg -v $dver --all) and run the installer again."
         return 1
     fi
-    _AWG_PIN_DROPPED="${src_ver:-unknown}"
     if ! rm -rf "$dir" || [[ -e "$dir" ]]; then
         log_error "Could not remove the old module source $dir."
         return 1
@@ -6896,7 +6906,7 @@ _awg_pin_trial_build() {
     fi
     log "Test build of the pinned module for kernel $3 before anything installed is changed..."
     if ! make -C "$2" KERNELDIR="/lib/modules/$3/build" module >"$log_file" 2>&1; then
-        log_error "The pinned module does not build for kernel $3; the installed module was left as it is. Details: $log_file"
+        log_error "The pinned module does not build for kernel $3; nothing installed was changed. Details: $log_file"
         rm -rf "$2"
         return 1
     fi

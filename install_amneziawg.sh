@@ -70,7 +70,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="dd8898cdea68b5221c23fd71f4c7a63641d668df379176122d7e86bf24fe97b4"
-MANAGE_SCRIPT_SHA256="a5611041b650d2f619d1e568c894ab15701f92f0baed52ec0e460b2c93309489"
+MANAGE_SCRIPT_SHA256="61a51022e7fab7e7d64ccad15147c101fdc3f0d5fbc65f10eba04190b543816e"
 
 # Пин модуля для ядер старее 6.7 без готового пакета (H0, 31 jul 2026). Модуль
 # из PPA там не используется (см. _kernel_supports_awg3): модуль собирается из
@@ -1608,8 +1608,8 @@ awg31_environment_blocker() {
     # такая машина получила бы 3.1-профиль на платформе, которую никто не мерил.
     #
     # 64-битный ARM (arm64, aarch64) с v6.2.0 в белом списке: шаг 2 при
-    # поколении 3.1 ставит на нём модуль из PPA через DKMS, а не закреплённый
-    # пребилт 2.0. Проба модуля на
+    # поколении 3.1 ставит на нём модуль из PPA через DKMS, а не
+    # ARM-пребилт. Проба модуля на
     # шаге 3 остаётся страховкой: если загрузится модуль второй линии, стадия
     # post это увидит. Код arm теперь означает весь ОСТАЛЬНОЙ ARM: 32-битный
     # (armhf, armel, armv7l) мерить не на чем, а aarch64_be (big-endian) PPA
@@ -6718,13 +6718,13 @@ _awg_module_src_version() {
 # _AWG_PIN_DROPPED для текста ошибки вызывающего кода), 1 - старая сборка
 # осталась зарегистрированной в DKMS или исходник удалить не удалось.
 _awg_pin_drop_stale() {
-    local dir="$1" pin_ver="$2" dver="$3" src_ver=""
+    local dir="$1" pin_ver="$2" dver="$3" src_ver="" tree="/var/lib/dkms/amneziawg/$3"
     if [[ -e "$dir" ]]; then
         src_ver=$(_awg_module_src_version "$dir/version.h") || src_ver=""
         [[ "$src_ver" == "$pin_ver" ]] && return 0
         log "Исходник модуля в $dir версии ${src_ver:-неизвестной}, а пин - $pin_ver: сначала убираю старую сборку."
     else
-        [[ -z "$(dkms status -m amneziawg -v "$dver" 2>/dev/null)" ]] && return 0
+        [[ -z "$(dkms status -m amneziawg -v "$dver" 2>/dev/null)" && ! -e "$tree" ]] && return 0
         log "Сборка amneziawg $dver зарегистрирована в DKMS без исходника в $dir: сначала убираю её."
     fi
     # dkms remove падает и тогда, когда регистрировать нечего, поэтому итог
@@ -6732,13 +6732,23 @@ _awg_pin_drop_stale() {
     # как тронут исходник: с новым version.h следующий запуск пропустил бы эту
     # чистку, DKMS назвал бы старую сборку собранной, и старый модуль встал бы
     # снова.
+    _AWG_PIN_DROPPED="${src_ver:-unknown}"
     dkms remove -m amneziawg -v "$dver" --all >/dev/null 2>&1 || true
-    if [[ -n "$(dkms status -m amneziawg -v "$dver" 2>/dev/null)" ]]; then
-        log_error "dkms remove -m amneziawg -v $dver --all не снял старую сборку: dkms status её всё ещё показывает."
+    # Без исходника dkms не может ни показать, ни снять регистрацию (ему нужен
+    # dkms.conf, проверено на dkms 3.0.10): оставшееся дерево этой версии и
+    # ссылки на него удаляются напрямую.
+    if [[ ! -e "$dir/dkms.conf" && -e "$tree" ]]; then
+        rm -rf "$tree"
+        find "${tree%/*}" -maxdepth 1 -xtype l -delete 2>/dev/null || true
+    fi
+    if [[ -n "$(dkms status -m amneziawg -v "$dver" 2>/dev/null)" || -e "$tree" ]]; then
+        # Частичный remove может снять сборку работающего ядра и оставить другую:
+        # пометка остаётся, если модуля для этого ядра на диске больше нет.
+        modinfo -k "$(uname -r)" -F version amneziawg >/dev/null 2>&1 && _AWG_PIN_DROPPED=""
+        log_error "dkms remove -m amneziawg -v $dver --all не снял старую сборку: она всё ещё есть в dkms status или в /var/lib/dkms."
         log_error "Уберите её вручную (dkms status amneziawg; dkms remove -m amneziawg -v $dver --all) и запустите установщик снова."
         return 1
     fi
-    _AWG_PIN_DROPPED="${src_ver:-unknown}"
     if ! rm -rf "$dir" || [[ -e "$dir" ]]; then
         log_error "Не удалось удалить старый исходник модуля $dir."
         return 1
@@ -6761,7 +6771,7 @@ _awg_pin_trial_build() {
     fi
     log "Пробная сборка пинового модуля под ядро $3 до любых изменений в установленном..."
     if ! make -C "$2" KERNELDIR="/lib/modules/$3/build" module >"$log_file" 2>&1; then
-        log_error "Пиновый модуль не собирается под ядро $3; установленный модуль оставлен как есть. Подробности: $log_file"
+        log_error "Пиновый модуль не собирается под ядро $3; ничего установленного не тронуто. Подробности: $log_file"
         rm -rf "$2"
         return 1
     fi
@@ -7384,7 +7394,7 @@ PPASRC
     _awg_deploy_ensure_helper
     if [[ "$use_pinned_awg2" -eq 0 ]]; then
         # Запасной путь install_packages (T1) включается только здесь, на пути
-        # PPA/DKMS: не на ARM-пребилте и не на пиновом 2.0.
+        # PPA/DKMS: не на ARM-пребилте и не на пиновом пути.
         _AWG_KMOD_T1=1
         # Пакет модуля уже распакован прошлой попыткой: правим исходник ДО
         # первой транзакции apt (установка gcc-13 ниже - тоже транзакция).
@@ -7477,7 +7487,7 @@ PPASRC
         if ! _install_pinned_awg2_module; then
             log_error "Не удалось установить модуль AmneziaWG из пинового исходника."
             if [[ -n "${_AWG_PIN_DROPPED:-}" ]]; then
-                log_error "Прежний модуль (версия ${_AWG_PIN_DROPPED}) уже снят: VPN работает до ближайшей перезагрузки, а после неё не поднимется. Устраните причину и запустите установщик снова, он продолжит с шага 2."
+                log_error "Прежний модуль (версия ${_AWG_PIN_DROPPED/#unknown/неизвестна}) уже снят: VPN работает до ближайшей перезагрузки, а после неё не поднимется. Устраните причину и запустите установщик снова, он продолжит с шага 2."
             fi
             log_error "На ядрах старее 6.7 (у вас $(uname -r)) установщик берёт модуль не из"
             log_error "PPA, а собирает из исходника, и этот шаг не прошёл. Конкретная причина -"
@@ -8635,7 +8645,7 @@ mode_finish() {
 #   status complete=<0|1> time=<epoch>
 # kind repeats the installer's --repair-module admission: an installed
 # prebuilt module package is prebuilt; no amneziawg-dkms is none; a held one
-# is pinned (the pinned 2.0 path and the ARM prebuilt hold it); no dkms,
+# is pinned (the pinned path and the ARM prebuilt hold it); no dkms,
 # not exactly one canonical registration, or a dkms.conf another package
 # owns is refused; any failed query is refused reason=query.
 mode_status() {

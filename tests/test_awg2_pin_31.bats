@@ -35,8 +35,7 @@ _drv() {
     local f="$1" fn="$2" h; shift 2
     {
         echo 'log() { echo "LOG: $*"; }; log_warn() { echo "WARN: $*"; }; log_error() { echo "ERR: $*"; }'
-        for h in "$@"; do _fn "$f" "$h"; done
-        _fn "$f" "$fn"
+        { for h in "$@"; do _fn "$f" "$h"; done; _fn "$f" "$fn"; } | sed -e "s#/var/lib/dkms/#$T/var-dkms/#g"
         echo "$fn"' "$@"; rc=$?; [ -n "${_AWG_PIN_DROPPED:-}" ] && echo "DROPPED=$_AWG_PIN_DROPPED"; exit $rc'
     } > "$T/drv.sh"
 }
@@ -45,7 +44,9 @@ _vh() { printf '#ifndef WIREGUARD_VERSION\n#define WIREGUARD_VERSION "%s"\n#endi
 
 # dkms stub. "status" answers only to "-m amneziawg -v 1.0.0" (with or without
 # -k <kernel>) and prints the registration kept in $T/dkms.reg; "remove" clears
-# it unless $T/dkms.stuck exists (then it fails and the build stays); "add"
+# it and the DKMS tree $T/var-dkms/amneziawg unless $T/dkms.stuck exists (then it
+# fails and the build stays) or $T/dkms.nosrc exists (then, like dkms without the
+# source's dkms.conf, it complains and leaves the tree); "add"
 # registers the source unless $T/dkms.noadd exists; "build" and "install" mark it
 # installed. Every command except status is recorded in $T/dkms.calls.
 _dkms_stub() { _stub dkms 'if [ "$1" = status ]; then
@@ -54,12 +55,20 @@ _dkms_stub() { _stub dkms 'if [ "$1" = status ]; then
 fi
 echo "$*" >> "$T/dkms.calls"
 case "$1" in
-remove) [ -f "$T/dkms.stuck" ] && exit 3; : > "$T/dkms.reg"; exit 0 ;;
+remove) [ -f "$T/dkms.stuck" ] && exit 3
+    if [ -f "$T/dkms.nosrc" ]; then echo "Error! Could not locate dkms.conf file."; exit 0; fi
+    : > "$T/dkms.reg"; rm -rf "$T/var-dkms/amneziawg"; exit 0 ;;
 add) if [ -f "$T/dkms.noadd" ]; then echo "Error! Bad conf file."; exit 4; fi
      [ -s "$T/dkms.reg" ] || echo "amneziawg/1.0.0: added" > "$T/dkms.reg"; exit 0 ;;
 build|install) echo "amneziawg/1.0.0, 6.1.0-test, x86_64: installed" > "$T/dkms.reg"; exit 0 ;;
 esac
 exit 0'; }
+
+# modinfo stub: "-k <kver> -F version amneziawg" prints $T/modver; anything else fails.
+_modinfo_stub() { _stub modinfo '[ "$1" = -k ] && [ "$3" = -F ] && [ "$4" = version ] && [ "$5" = amneziawg ] || exit 2
+echo "$2" > "$T/modinfo.k"
+[ -f "$T/modver" ] || exit 1
+cat "$T/modver"'; }
 
 @test "pin: both installers point at the 3.1 tag with the #233 fix and its commit" {
     local f
@@ -182,6 +191,26 @@ exit 0'; }
     done
 }
 
+@test "stale source: a DKMS tree left without its source is removed directly, both installers" {
+    # dkms 3.0.10 without the source's dkms.conf lists nothing and its remove
+    # fails while the tree stays (checked on a Debian 12 stand); the next dkms add
+    # and build would then put the old module back.
+    local f
+    _dkms_stub; : > "$T/dkms.nosrc"
+    for f in "${INSTALLERS[@]}"; do
+        rm -f "$T/dkms.calls" "$T/dkms.reg"; rm -rf "$T/src"
+        mkdir -p "$T/var-dkms/amneziawg/1.0.0/6.1.0-test"
+        ln -sfn 1.0.0/6.1.0-test/x86_64 "$T/var-dkms/amneziawg/kernel-6.1.0-test-x86_64"
+        _drv "$f" _awg_pin_drop_stale _awg_module_src_version
+        run bash "$T/drv.sh" "$T/src/amneziawg-1.0.0" 3.1.20261113-02 1.0.0
+        [ "$status" -eq 2 ] || { echo "$f: rc=$status $output"; return 1; }
+        [ ! -e "$T/var-dkms/amneziawg/1.0.0" ] || { echo "$f: the tree stayed"; return 1; }
+        [ ! -L "$T/var-dkms/amneziawg/kernel-6.1.0-test-x86_64" ] || { echo "$f: the link stayed"; return 1; }
+        grep -qxF 'DROPPED=unknown' <<<"$output" || { echo "$f: $output"; return 1; }
+    done
+    rm -f "$T/dkms.nosrc"
+}
+
 @test "stale source: a source without a readable version counts as another version, both installers" {
     local f
     _dkms_stub
@@ -215,16 +244,23 @@ exit 0'; }
     # the cleanup would be skipped, DKMS would report the old build as built,
     # and the old module would be installed again.
     local f
-    _dkms_stub; : > "$T/dkms.stuck"
+    _dkms_stub; _modinfo_stub; : > "$T/dkms.stuck"
     for f in "${INSTALLERS[@]}"; do
         echo 'amneziawg/1.0.0, 6.1.0-56-amd64, x86_64: installed' > "$T/dkms.reg"
         mkdir -p "$T/src/amneziawg-1.0.0"; _vh "$T/src/amneziawg-1.0.0/version.h" 1.0.20260725
         _drv "$f" _awg_pin_drop_stale _awg_module_src_version
+        # the module of the running kernel is still on disk: no claim of a drop
+        echo 1.0.20260725 > "$T/modver"
         run bash "$T/drv.sh" "$T/src/amneziawg-1.0.0" 3.1.20261113-02 1.0.0
         [ "$status" -eq 1 ] || { echo "$f: rc=$status $output"; return 1; }
         grep -qF '1.0.20260725' "$T/src/amneziawg-1.0.0/version.h" || { echo "$f: the old source was touched"; return 1; }
         [[ "$output" == *ERR:*"dkms"* ]] || { echo "$f: not loud: $output"; return 1; }
         [[ "$output" != *DROPPED=* ]] || { echo "$f: claims a drop: $output"; return 1; }
+        # a partial remove took the module of the running kernel: the drop is reported
+        rm -f "$T/modver"
+        run bash "$T/drv.sh" "$T/src/amneziawg-1.0.0" 3.1.20261113-02 1.0.0
+        [ "$status" -eq 1 ] || { echo "$f partial: rc=$status $output"; return 1; }
+        grep -qxF 'DROPPED=1.0.20260725' <<<"$output" || { echo "$f partial: $output"; return 1; }
     done
 }
 
@@ -240,12 +276,6 @@ exit 0'; }
         [[ "$output" == *ERR:* && "$output" == *"$T/src/amneziawg-1.0.0"* ]] || { echo "$f: $output"; return 1; }
     done
 }
-
-# modinfo stub: "-k <kver> -F version amneziawg" prints $T/modver; anything else fails.
-_modinfo_stub() { _stub modinfo '[ "$1" = -k ] && [ "$3" = -F ] && [ "$4" = version ] && [ "$5" = amneziawg ] || exit 2
-echo "$2" > "$T/modinfo.k"
-[ -f "$T/modver" ] || exit 1
-cat "$T/modver"'; }
 
 @test "built check: the module for the kernel reports the expected version, both installers" {
     local f
@@ -286,7 +316,7 @@ _pin_drv() {
         echo 'AWG2_PIN_TAG=v3.1.test; AWG2_PIN_COMMIT=c0ffee'
         for fn in _awg_module_src_version _awg_pin_drop_stale _awg_pin_trial_build _awg_pin_check_built _install_pinned_awg2_module; do
             _fn "$1" "$fn"
-        done | sed -e "s#/usr/src/#$T/usr/src/#g" -e "s#/var/log/#$T/log/#g" \
+        done | sed -e "s#/usr/src/#$T/usr/src/#g" -e "s#/var/log/#$T/log/#g" -e "s#/var/lib/dkms/#$T/var-dkms/#g" \
                    -e "s#/sys/module/#$T/sys/module/#g" -e "s#mktemp -d /tmp/#mktemp -d $T/tmp/#g"
         echo '_install_pinned_awg2_module; rc=$?; echo "RC=$rc DROPPED=${_AWG_PIN_DROPPED:-}"; exit $rc'
     } > "$T/drv.sh"
@@ -315,9 +345,10 @@ esac'
 _old_server() {
     mkdir -p "$T/usr/src/amneziawg-1.0.0"; _vh "$T/usr/src/amneziawg-1.0.0/version.h" 1.0.20260611
     echo "amneziawg/1.0.0, 6.1.0-test, x86_64: installed" > "$T/dkms.reg"
+    mkdir -p "$T/var-dkms/amneziawg/1.0.0/6.1.0-test"
 }
 
-_reset() { /bin/rm -rf "${T:?}/usr" "${T:?}/sys" "${T:?}/tmp" "${T:?}/log" "$T/dkms.calls" "$T/dkms.reg" "$T/dkms.noadd" "$T/dkms.stuck" "$T/make.rc" "$T/modver"; }
+_reset() { /bin/rm -rf "${T:?}/usr" "${T:?}/sys" "${T:?}/tmp" "${T:?}/log" "$T/dkms.calls" "$T/dkms.reg" "$T/dkms.noadd" "$T/dkms.stuck" "$T/dkms.nosrc" "$T/make.rc" "$T/modver" "${T:?}/var-dkms"; }
 
 _line() { grep -n -m1 -xF "$1" "$T/dkms.calls" | cut -d: -f1; }
 
@@ -431,7 +462,7 @@ _line() { grep -n -m1 -xF "$1" "$T/dkms.calls" | cut -d: -f1; }
         grep -qF 'if [[ -n "${_AWG_PIN_DROPPED:-}" ]]; then' <<<"$body" || { echo "$f: no check"; return 1; }
         if _ru "$f"; then
             # shellcheck disable=SC2016
-            grep -qF 'Прежний модуль (версия ${_AWG_PIN_DROPPED}) уже снят' <<<"$body" || { echo "$f: text"; return 1; }
+            grep -qF 'Прежний модуль (версия ${_AWG_PIN_DROPPED/#unknown/неизвестна}) уже снят' <<<"$body" || { echo "$f: text"; return 1; }
         else
             # shellcheck disable=SC2016
             grep -qF 'The previous module (version ${_AWG_PIN_DROPPED}) was already removed' <<<"$body" || { echo "$f: text"; return 1; }
