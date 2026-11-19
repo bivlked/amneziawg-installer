@@ -6712,15 +6712,24 @@ _awg_module_src_version() {
 # повторном запуске оставил бы свой модуль: DKMS считает его уже собранным для
 # этого ядра. Исходник другой версии (или с нечитаемой версией) поэтому снимается
 # с регистрации в DKMS и удаляется до раскладки нового. 0, если делать нечего или
-# старый исходник убран; 1, если удалить его не удалось.
+# старый исходник убран; 1, если старая сборка осталась зарегистрированной в
+# DKMS или исходник удалить не удалось.
 _awg_pin_drop_stale() {
     local dir="$1" pin_ver="$2" dver="$3" src_ver
     [[ -e "$dir" ]] || return 0
     src_ver=$(_awg_module_src_version "$dir/version.h") || src_ver=""
     [[ "$src_ver" == "$pin_ver" ]] && return 0
     log "Исходник модуля в $dir версии ${src_ver:-неизвестной}, а пин - $pin_ver: сначала убираю старую сборку."
-    if ! dkms remove -m amneziawg -v "$dver" --all >/dev/null 2>&1; then
-        log_warn "dkms remove -m amneziawg -v $dver --all не прошёл; старый модуль может остаться зарегистрированным (это покажет проверка версии после сборки)."
+    # dkms remove падает и тогда, когда регистрировать нечего, поэтому итог
+    # проверяется по dkms status. Оставшаяся сборка останавливает здесь, до того,
+    # как тронут исходник: с новым version.h следующий запуск пропустил бы эту
+    # чистку, DKMS назвал бы старую сборку собранной, и старый модуль встал бы
+    # снова.
+    dkms remove -m amneziawg -v "$dver" --all >/dev/null 2>&1 || true
+    if [[ -n "$(dkms status -m amneziawg -v "$dver" 2>/dev/null)" ]]; then
+        log_error "dkms remove -m amneziawg -v $dver --all не снял старую сборку: dkms status её всё ещё показывает."
+        log_error "Уберите её вручную (dkms status amneziawg; dkms remove -m amneziawg -v $dver --all) и запустите установщик снова."
+        return 1
     fi
     if ! rm -rf "$dir" || [[ -e "$dir" ]]; then
         log_error "Не удалось удалить старый исходник модуля $dir."

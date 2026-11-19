@@ -95,8 +95,10 @@ _vh() { printf '#ifndef WIREGUARD_VERSION\n#define WIREGUARD_VERSION "%s"\n#endi
     done
 }
 
-# dkms stub: records its arguments; exits with $T/dkms.rc.
-_dkms_stub() { _stub dkms 'echo "$*" >> "$T/dkms.calls"; exit "$(cat "$T/dkms.rc" 2>/dev/null || echo 0)"'; }
+# dkms stub: "status" prints $T/dkms.status (empty when there is none); any
+# other command is recorded in $T/dkms.calls and exits with $T/dkms.rc.
+_dkms_stub() { _stub dkms 'if [ "$1" = status ]; then cat "$T/dkms.status" 2>/dev/null; exit 0; fi
+echo "$*" >> "$T/dkms.calls"; exit "$(cat "$T/dkms.rc" 2>/dev/null || echo 0)"'; }
 
 @test "stale source: a source of another version is unregistered and removed, both installers" {
     local f
@@ -152,7 +154,9 @@ _dkms_stub() { _stub dkms 'echo "$*" >> "$T/dkms.calls"; exit "$(cat "$T/dkms.rc
     done
 }
 
-@test "stale source: a failed dkms remove does not stop the cleanup, the version check catches leftovers, both installers" {
+@test "stale source: a failed dkms remove with nothing left registered still goes on, both installers" {
+    # dkms remove also fails when the module was never registered; what matters
+    # is whether a build is still registered afterwards.
     local f
     _dkms_stub; echo 3 > "$T/dkms.rc"
     for f in "${INSTALLERS[@]}"; do
@@ -161,7 +165,24 @@ _dkms_stub() { _stub dkms 'echo "$*" >> "$T/dkms.calls"; exit "$(cat "$T/dkms.rc
         run bash "$T/drv.sh" "$T/src/amneziawg-1.0.0" 3.1.20261113-02 1.0.0
         [ "$status" -eq 0 ] || { echo "$f: rc=$status $output"; return 1; }
         [ ! -e "$T/src/amneziawg-1.0.0" ] || { echo "$f: stayed"; return 1; }
-        [[ "$output" == *"WARN: "*"--all"* ]] || { echo "$f: the dkms failure is not reported: $output"; return 1; }
+        [[ "$output" != *ERR:* ]] || { echo "$f: $output"; return 1; }
+    done
+}
+
+@test "stale source: an old build still registered after dkms remove stops before the source is touched, both installers" {
+    # Otherwise the new version.h would hide the old build from the next run:
+    # the cleanup would be skipped, DKMS would report the old build as built,
+    # and the old module would be installed again.
+    local f
+    _dkms_stub; echo 3 > "$T/dkms.rc"
+    echo 'amneziawg/1.0.0, 6.1.0-56-amd64, x86_64: installed' > "$T/dkms.status"
+    for f in "${INSTALLERS[@]}"; do
+        mkdir -p "$T/src/amneziawg-1.0.0"; _vh "$T/src/amneziawg-1.0.0/version.h" 1.0.20260725
+        _drv "$f" _awg_pin_drop_stale _awg_module_src_version
+        run bash "$T/drv.sh" "$T/src/amneziawg-1.0.0" 3.1.20261113-02 1.0.0
+        [ "$status" -eq 1 ] || { echo "$f: rc=$status $output"; return 1; }
+        grep -qF '1.0.20260725' "$T/src/amneziawg-1.0.0/version.h" || { echo "$f: the old source was touched"; return 1; }
+        [[ "$output" == *ERR:*"dkms"* ]] || { echo "$f: not loud: $output"; return 1; }
     done
 }
 

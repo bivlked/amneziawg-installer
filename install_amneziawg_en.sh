@@ -6849,15 +6849,24 @@ _awg_module_src_version() {
 # a rerun: DKMS reports it as already built for this kernel. A source of another
 # version (or one whose version cannot be read) is therefore unregistered from
 # DKMS and removed before the new one is laid out. 0 when there was nothing to do
-# or the old source is gone; 1 when it could not be removed.
+# or the old source is gone; 1 when the old build stays registered in DKMS or
+# the source could not be removed.
 _awg_pin_drop_stale() {
     local dir="$1" pin_ver="$2" dver="$3" src_ver
     [[ -e "$dir" ]] || return 0
     src_ver=$(_awg_module_src_version "$dir/version.h") || src_ver=""
     [[ "$src_ver" == "$pin_ver" ]] && return 0
     log "The module source in $dir is version ${src_ver:-unknown}, the pinned one is $pin_ver: removing the old build first."
-    if ! dkms remove -m amneziawg -v "$dver" --all >/dev/null 2>&1; then
-        log_warn "dkms remove -m amneziawg -v $dver --all failed; the old module may stay registered (the version check after the build will tell)."
+    # dkms remove also fails when nothing is registered, so the outcome is judged
+    # by dkms status. A build still registered stops here, before the source is
+    # touched: with the new version.h in place the next run would skip this
+    # cleanup, DKMS would report the old build as built, and the old module would
+    # be installed again.
+    dkms remove -m amneziawg -v "$dver" --all >/dev/null 2>&1 || true
+    if [[ -n "$(dkms status -m amneziawg -v "$dver" 2>/dev/null)" ]]; then
+        log_error "dkms remove -m amneziawg -v $dver --all did not unregister the old build: dkms status still lists it."
+        log_error "Remove it by hand (dkms status amneziawg; dkms remove -m amneziawg -v $dver --all) and run the installer again."
+        return 1
     fi
     if ! rm -rf "$dir" || [[ -e "$dir" ]]; then
         log_error "Could not remove the old module source $dir."
