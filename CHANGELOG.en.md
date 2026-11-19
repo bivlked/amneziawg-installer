@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`check` and `diagnose` count only a module of the 3.1 line or later as fixed.** The vendor fix for bug #233 exists only on the 3.1 line, while the check accepted any 3.x version dated after 13 November 2026, including a hypothetical 3.0 one. The vendor has no such tag (the 3.0 line was merged into 3.1), so live servers were not affected. The build of the prebuilt ARM packages uses the same boundary.
+
 ## [6.3.5] - 2026-11-19
 
 **v6.3.5** - on Debian 12 and other kernels older than 6.7 the AmneziaWG module is built from the 3.1 tag with the fix for bug #233; the profile stays 2.0, and a rerun with `--force` updates a running server. The CASCADE guide starts the routing unit right away.

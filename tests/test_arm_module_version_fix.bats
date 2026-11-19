@@ -87,7 +87,9 @@ version_h() {
         run _arm_version_has_233_fix "$v"
         [ "$status" -eq 0 ] || { echo "refused fixed $v"; false; }
     done
-    for v in 3.1.20261113 3.1.20261113-01 3.1.20260906 3.0.20260731-04 1.0.20260725 1.0.0 "" garbage; do
+    # The fix exists only on the 3.1 line and later: a 3.0 version with a later
+    # date must not pass (the vendor merged 3.0 into 3.1).
+    for v in 3.1.20261113 3.1.20261113-01 3.1.20260906 3.0.20260731-04 3.0.20261201 3.0.20261113-02 2.9.20270101 1.0.20260725 1.0.0 "" garbage; do
         run _arm_version_has_233_fix "$v"
         [ "$status" -ne 0 ] || { echo "accepted unfixed $v"; false; }
     done
@@ -99,11 +101,25 @@ version_h() {
     # shellcheck source=../awg_common.sh
     eval "$(sed -n '/^_awg_kmod_has_233_fix()/,/^}/p' "$BATS_TEST_DIRNAME/../awg_common.sh")"
     declare -F _awg_kmod_has_233_fix >/dev/null
-    for v in 3.1.20261113-02 3.1.20261113-01 3.1.20261113 3.1.20261114 3.0.20261201 2.9.20270101 4.0.20261113-03 1.0.0; do
+    for v in 3.1.20261113-02 3.1.20261113-01 3.1.20261113 3.1.20261114 3.0.20261201 3.0.20261113-02 3.2.20261113-02 2.9.20270101 4.0.20261113-03 1.0.0; do
         a=0; b=0
         _arm_version_has_233_fix "$v" || a=1
         _awg_kmod_has_233_fix "$v" || b=1
         [ "$a" = "$b" ] || { echo "disagree on $v: build=$a check=$b"; false; }
+    done
+}
+
+@test "check and diagnose refuse a 3.0 version dated after the fix, both languages" {
+    local f
+    for f in awg_common.sh awg_common_en.sh; do
+        eval "$(sed -n '/^_awg_kmod_has_233_fix()/,/^}/p' "$BATS_TEST_DIRNAME/../$f")"
+        declare -F _awg_kmod_has_233_fix >/dev/null || { echo "$f: no function"; return 1; }
+        _awg_kmod_has_233_fix 3.0.20261201 && { echo "$f: accepted 3.0.20261201"; return 1; }
+        _awg_kmod_has_233_fix 3.0.20261113-02 && { echo "$f: accepted 3.0.20261113-02"; return 1; }
+        _awg_kmod_has_233_fix 3.1.20261113-02 || { echo "$f: refused 3.1.20261113-02"; return 1; }
+        _awg_kmod_has_233_fix 3.2.20261201 || { echo "$f: refused 3.2.20261201"; return 1; }
+        _awg_kmod_has_233_fix 4.0.20270101 || { echo "$f: refused 4.0.20270101"; return 1; }
+        unset -f _awg_kmod_has_233_fix
     done
 }
 

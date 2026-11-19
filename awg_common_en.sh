@@ -2823,13 +2823,13 @@ _awg_sysctl_num() {
 # it does not or the version is unknown. The fix (PRs #237 and #247) went into
 # tag v3.1.20261113-02 (63ed35d), while tag v3.1.20261113 (6879e27) does not
 # carry it yet, although it reports almost the same version "3.1.20261113".
-# So a module counts as fixed on the 3.x line or newer with a date after
-# 20261113, or with the date 20261113 and a suffix of -02 or higher; a bare
-# 3.1.20261113 does not.
+# So a module counts as fixed on the 3.1 line or newer (the vendor merged 3.0
+# into 3.1, and 3.0 has no fix) with a date after 20261113, or with the date
+# 20261113 and a suffix of -02 or higher; a bare 3.1.20261113 does not.
 _awg_kmod_has_233_fix() {
-    [[ "${1:-}" =~ ^([0-9]+)\.[0-9]+\.([0-9]{8})(-([0-9]{1,4}))?([^0-9]|$) ]] || return 1
-    local maj=$((10#${BASH_REMATCH[1]})) day=$((10#${BASH_REMATCH[2]})) suf="${BASH_REMATCH[4]}"
-    (( maj >= 3 )) || return 1
+    [[ "${1:-}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]{8})(-([0-9]{1,4}))?([^0-9]|$) ]] || return 1
+    local maj=$((10#${BASH_REMATCH[1]})) mnr=$((10#${BASH_REMATCH[2]})) day=$((10#${BASH_REMATCH[3]})) suf="${BASH_REMATCH[5]}"
+    (( maj > 3 || (maj == 3 && mnr >= 1) )) || return 1
     (( day > 20261113 )) && return 0
     (( day == 20261113 )) && [[ -n "$suf" ]] && (( 10#$suf >= 2 ))
 }
