@@ -7302,10 +7302,9 @@ PPASRC
                 die "A prebuilt module package is already installed: $_kmod. With --no-prebuilt a second module would be built next to it. Remove the prebuilt one: sudo apt-get purge -y $_kmod, then run the installer again."
             fi
         elif [[ "${AWG_PROTOCOL:-}" == "3.1" ]]; then
-            # v6.2.0: the arm-packages prebuilts are built from the pinned
-            # second-line source, and a 3.1 profile cannot come up on such a
-            # module (the step 3 probe would fall a new install back to 2.0).
-            # So for 3.1 the module comes from the PPA through DKMS, as on
+            # Since v6.2.0 the prebuilt is not taken for 3.1. Back then it was
+            # second line; since 19 nov 2026 the packages are 3.1, but the reason
+            # stays: for 3.1 the module comes from the PPA through DKMS, as on
             # x86_64, and with it the ensure-module helper and the apt hook get
             # installed: the module is rebuilt when the kernel changes, which
             # the prebuilt path does not do.
@@ -7338,7 +7337,7 @@ PPASRC
             # (>= ...)"), and amneziawg-modules itself is absent from the PPA.
             # install_packages installs via apt install -y WITH recommends, so
             # without the hold apt would pull amneziawg-dkms from the PPA, and a
-            # 3.0 tree in updates/dkms/ would land next to our 2.0 module in
+            # second tree in updates/dkms/ would land next to the prebuilt module in
             # extra/. Two trees carrying a module of the SAME name is exactly what
             # the hold exists to prevent. Reachable: the ubuntu-2404-arm64 and
             # debian-trixie-arm64 prebuilt targets ship kernels 6.7+.

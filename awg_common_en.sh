@@ -2286,7 +2286,7 @@ _awg31_restore_blocker_reason() {
         arch_unknown)        printf '%s' "the machine architecture could not be determined, and not knowing it is not the same as knowing it fits" ;;
         arm)                 printf '%s' "the third line is not issued on the '$(_awg31_host_arch)' architecture: of ARM, it has been checked only on arm64 (little-endian aarch64)" ;;
         arch_unsupported)    printf '%s' "architecture '$(_awg31_host_arch)' has not been measured for the third line, the 3.1 profile needs x86_64 or arm64" ;;
-        kernel)              printf '%s' "kernel $(uname -r) is older than 6.7, a second-line module is installed on it" ;;
+        kernel)              printf '%s' "kernel $(uname -r) is older than 6.7, the 3.1 profile is not handed out on such kernels" ;;
         tools_old)           printf '%s' "the awg tools are missing or do not understand the third-line parameters (the awg and timeout commands are needed); the fix: apt-get update && apt-get install amneziawg-tools, then apt-get install --only-upgrade amneziawg-tools" ;;
         module_line2)        printf '%s' "the loaded kernel module does not understand the third-line parameters; the fix: apt-get update && apt-get install --only-upgrade amneziawg-dkms, then a reboot" ;;
         module_probe_failed) printf '%s' "could not check whether the loaded module understands the third line (where the probe stopped is in the log with --verbose)" ;;
@@ -2852,8 +2852,8 @@ _awg_kmod_version_clean() {
 # create an amneziawg interface in its own network namespace and set I1-I5 on
 # it. The module's I1-I5 parser reads the length in <r>/<rc>/<rd> as a signed int
 # and never rejects a negative one (amneziawg-linux-kernel-module#233,
-# src/junk.c; the same code is in the pinned 2.0 source the ARM prebuilts are
-# built from), which in some tag combinations writes past a kernel buffer. Our
+# src/junk.c; the same code is in the pinned 2.0 source; the ARM prebuilts come
+# from 3.1 since 19 nov 2026), which in some tag combinations writes past a kernel buffer. Our
 # commands refuse such values (awg_cps_check_safe); the warning is about the
 # other users and programs on the host. The module declares
 # MODULE_ALIAS_RTNL_LINK and MODULE_ALIAS_GENL_FAMILY, so once installed but not
@@ -2893,7 +2893,7 @@ _awg_kmod_version_clean() {
 # quiet. The apt advice is given only when the amneziawg-dkms package is
 # installed. The loaded module decides: after a package upgrade the old
 # one stays in the kernel until a reboot. The 2.0 line (1.0.x, the pinned
-# source and the ARM prebuilts) has no fixed release; an unknown version keeps
+# source and the ARM packages before 19 nov 2026) has no fixed release; an unknown version keeps
 # the warning as it was, with no guess about the build.
 #
 # AWG_USERNS_ROOT is overridden only by tests (bats): a prefix for /proc, /sys

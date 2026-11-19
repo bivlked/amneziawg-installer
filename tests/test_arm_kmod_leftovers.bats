@@ -324,7 +324,7 @@ HOLD_LINE='APT-MARK hold amneziawg-dkms amneziawg'
 }
 
 # The ARM block of step2_install_amnezia as a whole: which way it goes. Since
-# v6.2.0 generation 3.1 must not even try the prebuilt (it is second line) and
+# v6.2.0 generation 3.1 must not even try the prebuilt (DKMS brings the rebuild on a kernel change) and
 # must go on to the PPA/DKMS path; 2.0 keeps trying the prebuilt first. Cut from
 # `arch="$(uname -m)"` to the block's closing `    fi`; everything it calls is
 # stubbed and recorded.
