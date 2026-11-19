@@ -309,6 +309,8 @@ module and on amneziawg-go. This does not explain the drop in speed, it is a dif
 With this installer's 3.1 profile (`H1`-`H4` = 1-4 and a header protection key) the share is
 negligible. Analysis and measurements: [amneziawg-linux-kernel-module#226](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/226).
 
+If you turn the flag on anyway, set `S1`-`S4` to the same value: the vendor recommends that in the [amneziawg-go README](https://github.com/amnezia-vpn/amneziawg-go/blob/876c2437e48528ec951529e4c13baf01b5b4776b/README.md#random-trailers-awg-31), because packet sizes become random and the packet type is easier to mistake.
+
 <a id="awg3-gotchas-adv"></a>
 ### Three things that can cost you an evening
 
@@ -347,7 +349,7 @@ Since version 6.0.0 a new install without a flag gets the 3.1 profile. It differ
 What the profile leaves out, and why:
 
 - **`RandomTrailers`** is two-sided, and together with the rest of the obfuscation it cuts throughput by tens of times (measurement in [What has to match](#awg3-must-match-adv)). It stays off until a fix ships.
-- **`DisableCookies`** takes away, together with the cookie-reply signature, the protection against handshake floods from spoofed addresses (see [What 3.1 added](#awg3-31-adv)).
+- **`DisableCookies`** takes away, together with the cookie-reply signature, the protection against handshake floods from spoofed addresses (see [What 3.1 added](#awg3-31-adv)). According to the [vendor README](https://github.com/amnezia-vpn/amneziawg-go/blob/876c2437e48528ec951529e4c13baf01b5b4776b/README.md#disable-cookies-awg-31), the flag turns off the whole under-load logic: the MAC2 check, cookie replies and handshake rate limiting.
 - **The timer parameters** are one-sided and safe, but without a separate measurement they buy little, so the installer does not set them.
 
 The configs carry no `RandomTrailers` or `DisableCookies` line at all, not even with the value `off`.
@@ -1662,7 +1664,7 @@ sudo ufw reload</pre>
 <a id="faq-first-packet-adv"></a>
 <details>
   <summary><strong>Q: The tunnel is up, but the first request opens with a delay</strong></summary>
-  <b>A:</b> Clients built on the amneziawg-go engine (the lightweight AmneziaWG for Android, iOS, macOS and Windows, Amnezia VPN) have a known race: the very first data packet after the tunnel comes up can leave with the default <code>S4</code> padding (0) instead of the configured one, and the server drops it (<a href="https://github.com/amnezia-vpn/amneziawg-go/issues/168">amneziawg-go#168</a>; a fix is proposed in <a href="https://github.com/amnezia-vpn/amneziawg-go/pull/184">#184</a> and is not merged as of 13 October 2026). Losing the first packet usually means a TCP or DNS retry, so a delay; if the application does not retry, the request can time out. WG Tunnel is built on its own fork of that engine; whether the fork has this race we did not check. On its own this race does not point to a problem in the config or on the server.
+  <b>A:</b> Clients built on the amneziawg-go engine (the lightweight AmneziaWG for Android, iOS, macOS and Windows, Amnezia VPN) have a known race: the very first data packet after the tunnel comes up can leave with the default <code>S4</code> padding (0) instead of the configured one, and the server drops it (<a href="https://github.com/amnezia-vpn/amneziawg-go/issues/168">amneziawg-go#168</a>; on 16 November 2026 the vendor merged its own change of that code into amneziawg-go, <a href="https://github.com/amnezia-vpn/amneziawg-go/pull/216">#216</a> (tag <code>v3.1.20261116</code>), and closed the earlier proposals, <a href="https://github.com/amnezia-vpn/amneziawg-go/pull/184">#184</a> among them; #168 itself is still open as of 19 November 2026, and no vendor client is built on that tag yet). Losing the first packet usually means a TCP or DNS retry, so a delay; if the application does not retry, the request can time out. WG Tunnel is built on its own fork of that engine; whether the fork has this race I did not check. On its own this race does not point to a problem in the config or on the server.
   <br><br>
   In our check on 13 October 2026 with a 3.1 profile there was no delay attributable to this race: AmneziaWG 3.1.4 on Android opened the page in under a second in 10 reconnects out of 10, WG Tunnel 5.8.1 just as fast. On Windows, AmneziaWG 3.1.0 opened the first page after about 3 seconds, but the 2.0 profile behaved the same way: that is the time Windows spends checking the address of the tunnel adapter (DAD), and the protocol itself accounts for about 0.2 seconds. The result applies to these devices and networks; others can differ.
 </details>
