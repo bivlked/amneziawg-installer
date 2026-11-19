@@ -98,6 +98,53 @@ _arm_module_ref() {
     printf ''
 }
 
+# The module version as the vendor sets it in src/version.h. The upstream
+# src/Makefile hardcodes WIREGUARD_VERSION = 1.0.0 and passes it to Kbuild, which
+# overrides version.h, so a plain `make -C src` reported "1.0.0" for every line
+# (DKMS from the PPA builds through Kbuild and reports the real version).
+# check/diagnose judge the #233 fix by this version, hence it is read here and
+# passed to make explicitly. Arg $1: the src/ directory. Stdout: the version.
+_arm_module_version_h() {
+    local f="${1:?src dir}/version.h" v
+    [[ -f "$f" ]] || { echo "ERROR: $f not found" >&2; return 1; }
+    v="$(sed -nE 's/^[[:space:]]*#[[:space:]]*define[[:space:]]+WIREGUARD_VERSION[[:space:]]+"([^"]+)".*/\1/p' "$f" | head -n1)"
+    [[ -n "$v" ]] || { echo "ERROR: no WIREGUARD_VERSION define in $f" >&2; return 1; }
+    printf '%s' "$v"
+}
+
+# 0 when the version carries the vendor fix for amneziawg-linux-kernel-module#233
+# (3.1.20261113-02 and newer). The same boundary as _awg_kmod_has_233_fix in
+# awg_common.sh, kept in step by a test: a prebuilt that check/diagnose would
+# still call unfixed must not be published.
+_arm_version_has_233_fix() {
+    [[ "${1:-}" =~ ^([0-9]+)\.[0-9]+\.([0-9]{8})(-([0-9]{1,4}))?([^0-9]|$) ]] || return 1
+    local maj=$((10#${BASH_REMATCH[1]})) day=$((10#${BASH_REMATCH[2]})) suf="${BASH_REMATCH[4]}"
+    (( maj >= 3 )) || return 1
+    (( day > 20261113 )) && return 0
+    (( day == 20261113 )) && [[ -n "$suf" ]] && (( 10#$suf >= 2 ))
+}
+
+# Build the module from src/ with the version.h value. Args: src dir, kernel
+# release, version.
+_arm_build_module() {
+    make -C "$1" \
+        KERNELRELEASE="$2" \
+        KERNELDIR="/lib/modules/$2/build" \
+        WIREGUARD_VERSION="$3" \
+        module
+}
+
+# The built module must report exactly the version.h value: anything else means
+# the override above did not reach Kbuild. Args: expected version, modinfo output.
+_arm_check_built_version() {
+    local want="$1" got
+    got="$(printf '%s\n' "$2" | awk '/^version:/{print $2; exit}')"
+    if [[ "$got" != "$want" ]]; then
+        echo "ERROR: the built module reports version '${got:-<none>}', expected '$want' from version.h" >&2
+        return 1
+    fi
+}
+
 # When sourced (e.g. by bats tests), expose helpers and skip the main body.
 # When executed directly (./build-arm-deb.sh), continue with the build flow.
 # `set -euo pipefail` is moved BELOW the source guard so it does not leak into
@@ -146,12 +193,19 @@ if [[ ! -d "/lib/modules/${KERNEL_VERSION}/build" ]]; then
     exit 1
 fi
 
+# The version from version.h, and no publishing of a source without the #233
+# fix: a manual module_version input wins over the pin, and the assets are
+# shared by name, so an older ref would replace fixed packages for everyone.
+WG_VERSION="$(_arm_module_version_h "$WORK_DIR/src/src")"
+echo "Module version (version.h): $WG_VERSION"
+if ! _arm_version_has_233_fix "$WG_VERSION"; then
+    echo "ERROR: module $WG_VERSION has no fix for amneziawg-linux-kernel-module#233 (needs 3.1.20261113-02 or newer); refusing to build packages that would replace fixed ones" >&2
+    exit 1
+fi
+
 # Build (upstream Makefile lives in src/ subdir of the cloned repo)
 echo "--- Building kernel module ---"
-make -C "$WORK_DIR/src/src" \
-    KERNELRELEASE="$KERNEL_VERSION" \
-    KERNELDIR="/lib/modules/${KERNEL_VERSION}/build" \
-    module
+_arm_build_module "$WORK_DIR/src/src" "$KERNEL_VERSION" "$WG_VERSION"
 
 KO_PATH="$WORK_DIR/src/src/amneziawg.ko"
 if [[ ! -f "$KO_PATH" ]]; then
@@ -175,6 +229,7 @@ if [[ -z "$MODULE_VER" ]]; then
     echo "$MODINFO_OUT" >&2
     exit 1
 fi
+_arm_check_built_version "$WG_VERSION" "$MODINFO_OUT"
 echo "Module version: $MODULE_VER"
 
 # Package as .deb

@@ -276,6 +276,25 @@ _reason() { # file function code
     done
     [ "$n" -eq 6 ]
 }
+@test "kernel reason texts name the 6.7 threshold and no module line (RU + EN)" {
+    # Since 19 nov 2026 the ARM prebuilts on a kernel older than 6.7 carry a
+    # third-line module, so "a second-line module is installed here" became false
+    # there. The refusal explains the threshold, not which module the box has.
+    local f n=0
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        run _reason "$ROOT/$f" _awg31_blocker_message kernel
+        [[ "$output" == *"6.7"* ]] || { echo "$f kernel: $output"; return 1; }
+        [[ "$output" != *"второй линии"* && "$output" != *"second-line"* ]] || { echo "$f kernel names a line: $output"; return 1; }
+        n=$((n + 1))
+    done
+    for f in awg_common.sh awg_common_en.sh; do
+        run _reason "$ROOT/$f" _awg31_restore_blocker_reason kernel
+        [[ "$output" == *"6.7"* ]] || { echo "$f restore kernel: $output"; return 1; }
+        [[ "$output" != *"второй линии"* && "$output" != *"second-line"* ]] || { echo "$f restore kernel names a line: $output"; return 1; }
+        n=$((n + 1))
+    done
+    [ "$n" -eq 4 ]
+}
 @test "needs rerun: 'no packages' is not logged as a dpkg failure, a real failure is (RU + EN)" {
     local l
     for l in "${LIBS[@]}"; do
