@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Prebuilt ARM module packages come from the 3.1 line with the fix for bug #233.** The packages in the `arm-packages` release (Raspberry Pi on Raspberry Pi OS bookworm and trixie, 32-bit armhf and Raspberry Pi 5 included, Ubuntu 24.04 ARM64, Debian 12 and 13 ARM64) are now built from the vendor tag `v3.1.20261113-02` instead of the pinned 2.0 tag `v1.0.20260725`. The 2.0 line has the `I1`-`I5` parser bug (amneziawg-linux-kernel-module#233) unfixed, and it will not be fixed there. A 3.x module runs a 2.0 config as well, so the profile on these servers stays 2.0 and only the module changes. A package installed earlier stays until the installer installs the module again, for example after a kernel change. The build refuses to publish a package from a source without the fix, and the module now reports its real version: because of the vendor's `Makefile` the old packages called themselves `1.0.0`, so `check` and `diagnose` could not tell whether they had the fix. On kernels older than 6.7 with no prebuilt the installer still builds the pinned 2.0 module.
+
 ## [6.3.3] - 2026-11-18
 
 **v6.3.3** - the installer names Secure Boot when it blocks the kernel module at step 3 and gives the way out: turn Secure Boot off or enroll the DKMS key.

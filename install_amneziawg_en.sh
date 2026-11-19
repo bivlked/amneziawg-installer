@@ -1729,7 +1729,7 @@ _awg31_blocker_message() {
     local code="${1-}"
     case "$code" in
         kernel)
-            printf '%s' "The AmneziaWG 3.1 profile will not run on this server: kernel $(uname -r) is older than 6.7. On such kernels the installer deliberately builds the proven second-line module, and the third line will not work here. Way out: install with --protocol=2.0, which is a working and supported path. If you need the third line on this very machine, it takes a system with kernel 6.7 or newer."
+            printf '%s' "The AmneziaWG 3.1 profile will not run on this server: kernel $(uname -r) is older than 6.7. On such kernels the installer deliberately does not hand out the third-line profile: that is where it is tested least. Way out: install with --protocol=2.0, which is a working and supported path. If you need the third line on this very machine, it takes a system with kernel 6.7 or newer."
             ;;
         arm)
             # 🔴 The text makes NO claim about which module gets installed here,
@@ -7269,16 +7269,19 @@ PPASRC
     # older than 6.7): try prebuilt .deb first (no build tools or headers required).
     # With generation 3.1 the prebuilt is not installed at all, see the AWG_PROTOCOL branch below.
     # Falls back to DKMS if no matching prebuilt is available or download fails.
-    # ⚠️ On a kernel < 6.7 (use_pinned_awg2=1) using the prebuilt .deb is SAFE: our ARM
-    # prebuilts are built from scripts/arm-module-version.txt, pinned to the same 2.0
-    # tag (v1.0.20260725) and locked by a test, so it is a KNOWN 2.0 module, not 3.0.
-    # ⚠️ That is the ONLY guarantee, and it is enough. The former second argument -
-    # "3.0 cannot compile for a kernel < 6.7 anyway, so a 3.0 asset for a target like
-    # debian-bookworm-arm64 cannot exist in the release" - is WRONG as of 31 jul 2026
-    # (upstream fixed the build, v3.0.20260731-04); do not lean on it. On no match
-    # _try_install_prebuilt_arm returns 1 and we fall through to the verified source
-    # build below. The hold set above also applies here (keeps tools from pulling the
-    # 3.0 dkms via Recommends).
+    # Since 19 nov 2026 the prebuilts are built from the third-line tag
+    # v3.1.20261113-02 (it carries the fix for amneziawg-linux-kernel-module#233,
+    # which the second line lacks), not from the pinned 2.0 tag. A 3.x module runs a
+    # 2.0 config as well, so the profile here stays 2.0 and only the module changes.
+    # That holds on a kernel < 6.7 (use_pinned_awg2=1) too: the module from this tag
+    # builds on 6.1, and the 6.7 threshold decides which PROFILE to hand out, not
+    # which module to install. build-arm-deb.sh does not publish a package from a
+    # source without the #233 fix. Packages installed earlier stay second line until
+    # the installer is run again for a new kernel. On no match
+    # _try_install_prebuilt_arm returns 1 and we fall through to the source build
+    # below (on a kernel < 6.7 that is the pinned 2.0 source, AWG2_PIN_TAG). The hold
+    # set above also applies here (keeps tools from pulling amneziawg-dkms via
+    # Recommends).
     local arch
     arch="$(uname -m)"
     if [[ "$arch" == "aarch64" || "$arch" == "armv7l" ]]; then
@@ -7306,7 +7309,7 @@ PPASRC
             # x86_64, and with it the ensure-module helper and the apt hook get
             # installed: the module is rebuilt when the kernel changes, which
             # the prebuilt path does not do.
-            log "Generation 3.1: not installing the prebuilt module package (it is second line), the module will be built from the PPA through DKMS."
+            log "Generation 3.1: not installing the prebuilt module package, the module will be built from the PPA through DKMS, together with the helper that rebuilds it on a kernel change."
             # A prebuilt package from an earlier run gets in the way for ANY
             # kernel, as with --no-prebuilt (hence _awg_installed_kmod_pkgs, not
             # a check of the running kernel only): for this kernel it would give a
@@ -7321,7 +7324,7 @@ PPASRC
                 die "Could not ask dpkg about prebuilt module packages (amneziawg-kmod-*), and without the answer there is no telling whether a DKMS build would land next to a prebuilt module. Check: dpkg -l 'amneziawg-kmod-*', then run the installer again."
             elif [[ -n "$_kmod31" ]]; then
                 _awg_rehold_for_prebuilt
-                die "A second-line prebuilt module package is already installed: $_kmod31. For generation 3.1 the module is built through DKMS, and a prebuilt package next to it would give a second module or mislead repair and diagnostics. Remove the prebuilt one: sudo apt-get purge -y $_kmod31, then run the installer again."
+                die "A prebuilt module package is already installed: $_kmod31. For generation 3.1 the module is built through DKMS, and a prebuilt package next to it would give a second module or mislead repair and diagnostics. Remove the prebuilt one: sudo apt-get purge -y $_kmod31, then run the installer again."
             fi
         elif _try_install_prebuilt_arm; then
             log "Prebuilt kernel module installed. Installing userspace tools from PPA..."

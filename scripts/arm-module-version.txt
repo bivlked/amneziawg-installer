@@ -26,4 +26,13 @@
 # HEAD is a moving 3.0 target, while ARM users must get the same 2.0 module as
 # everyone else. Revisit when 3.0 support is a deliberate decision rather than a
 # side effect of tracking HEAD.
-v1.0.20260725
+#
+# Update 2026-11-19: the deliberate decision. The 2.0 line (v1.0.x) carries an
+# upstream bug the vendor fixed only in the 3.1 line: negative tag lengths in the
+# I1-I5 parser, amneziawg-linux-kernel-module#233 (fixes #237 and #247, tag
+# v3.1.20261113-02). The ARM prebuilts now come from that tag. A 3.x module runs
+# 2.0 configs too, so servers on the 2.0 profile keep working. All nine targets
+# built from it on 2026-11-19, including kernel 6.1 and armhf. build-arm-deb.sh
+# refuses a source without the fix and passes the version.h value to make, so
+# the packages report the real module version instead of the Makefile's 1.0.0.
+v3.1.20261113-02
