@@ -43,6 +43,7 @@ version_h() {
     run --separate-stderr _arm_module_version_h "$TEST_DIR/src"
     [ "$status" -ne 0 ]
     [ -z "$output" ]
+    # shellcheck disable=SC2154  # bats sets $stderr with run --separate-stderr
     [[ "$stderr" == *"version.h not found"* ]]
 }
 
