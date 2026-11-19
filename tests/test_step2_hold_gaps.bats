@@ -4,7 +4,8 @@
 # found on review of the #285 fix and closed together:
 #   1. a failed purge of an earlier amneziawg-dkms was only a warning, and the
 #      hold then "protected" a package that was still installed;
-#   2. APT::Ignore-Hold makes apt ignore every hold, so the protection is void;
+#   2. APT::Ignore-Hold makes apt ignore every hold, so the protection is void
+#      (and a setting that cannot be read must not pass as "off");
 #   3. the ARM postcondition looked for "ok installed" and missed a package
 #      left unpacked or half-configured.
 # The step-2 body is one long function, so the order of the guards is pinned
@@ -30,35 +31,48 @@ stub_apt_config() {
     chmod +x "$BIN/apt-config"
 }
 
-ignores() {
+honoured() {
     local body
-    body=$(awk '/^_awg_apt_ignores_hold\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$1")
+    body=$(awk '/^_awg_apt_hold_honoured\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../$1")
     [[ -n "$body" ]] || { echo "NO_HELPER in $1"; return 3; }
-    PATH="$BIN:$PATH" timeout 30 bash -c 'set -o pipefail; eval "$1"; _awg_apt_ignores_hold' _ "$body"
+    PATH="$BIN:$PATH" timeout 30 bash -c 'set -o pipefail; log_error() { echo "ERR: $*"; }; eval "$1"; _awg_apt_hold_honoured' _ "$body"
 }
 
-@test "Ignore-Hold: an enabled setting is detected, both installers" {
+@test "Ignore-Hold: holds count as honoured only when the setting is read and off, both installers" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        stub_apt_config 0 "v='false'"; run honoured "$f"; [ "$status" -eq 0 ] || { echo "$f false: $status $output"; return 1; }
+        stub_apt_config 0 "";          run honoured "$f"; [ "$status" -eq 0 ] || { echo "$f unset: $status $output"; return 1; }
+    done
+}
+
+@test "Ignore-Hold: an enabled setting is a refusal with a reason, both installers" {
     stub_apt_config 0 "v='true'"
     local f
     for f in "${INSTALLERS[@]}"; do
-        run ignores "$f"
-        [ "$status" -eq 0 ] || { echo "$f: rc $status $output"; return 1; }
+        run honoured "$f"
+        [ "$status" -eq 1 ] && [[ "$output" == ERR:*Ignore-Hold* ]] || { echo "$f: rc $status $output"; return 1; }
     done
 }
 
-@test "Ignore-Hold: off, unset or an unreadable apt-config is not reported as enabled" {
+@test "Ignore-Hold: an apt-config that fails or is missing is a refusal, not 'off'" {
     local f
     for f in "${INSTALLERS[@]}"; do
-        stub_apt_config 0 "v='false'"; run ignores "$f"; [ "$status" -eq 1 ] || { echo "$f false: $status"; return 1; }
-        stub_apt_config 0 "";          run ignores "$f"; [ "$status" -eq 1 ] || { echo "$f unset: $status"; return 1; }
-        stub_apt_config 1 "v='true'";  run ignores "$f"; [ "$status" -eq 1 ] || { echo "$f failed: $status"; return 1; }
+        stub_apt_config 1 "v='false'"; run honoured "$f"
+        [ "$status" -eq 1 ] && [[ "$output" == ERR:*apt-config* ]] || { echo "$f failed: $status $output"; return 1; }
+        rm -f "$BIN/apt-config"
+        # no apt-config anywhere on PATH: only the stub directory and bash itself
+        run env PATH="$BIN" "$BASH" -c "$(declare -f honoured); INSTALLERS=(); BATS_TEST_DIRNAME='$BATS_TEST_DIRNAME'; BIN='$BIN'; PATH='$BIN'; body=\$(/usr/bin/awk '/^_awg_apt_hold_honoured\\(\\) \\{/,/^\\}/' '$BATS_TEST_DIRNAME/../$f'); log_error() { echo \"ERR: \$*\"; }; eval \"\$body\"; _awg_apt_hold_honoured"
+        [ "$status" -eq 1 ] && [[ "$output" == ERR:*apt-config* ]] || { echo "$f missing: $status $output"; return 1; }
     done
 }
 
-@test "Ignore-Hold: the helper body is the same in both installers" {
-    [ -n "$(awk '/^_awg_apt_ignores_hold\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../install_amneziawg.sh")" ]
-    diff <(awk '/^_awg_apt_ignores_hold\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../install_amneziawg.sh") \
-         <(awk '/^_awg_apt_ignores_hold\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh")
+@test "Ignore-Hold: the helper body is the same in both installers apart from the messages" {
+    local ru en
+    ru=$(awk '/^_awg_apt_hold_honoured\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../install_amneziawg.sh" | grep -v 'log_error')
+    en=$(awk '/^_awg_apt_hold_honoured\(\) \{/,/^\}/' "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh" | grep -v 'log_error')
+    [ -n "$ru" ]
+    [ "$ru" = "$en" ]
 }
 
 @test "Ignore-Hold: each amneziawg-dkms hold site refuses first when apt ignores holds" {
@@ -68,7 +82,7 @@ ignores() {
         holds=$(grep -nE '^[[:space:]]*_hold_out=\$\(apt-mark hold amneziawg-dkms amneziawg 2>&1\) \|\| true$' "$src" | cut -d: -f1)
         [ "$(wc -l <<< "$holds")" -eq 2 ] || { echo "$f: holds: $holds"; return 1; }
         for h in $holds; do
-            g=$(awk -v s="$h" 'NR<s && NR>=s-6 && /^[[:space:]]*if _awg_apt_ignores_hold; then$/ {print NR}' "$src" | tail -n1)
+            g=$(awk -v s="$h" 'NR<s && NR>=s-6 && /^[[:space:]]*if ! _awg_apt_hold_honoured; then$/ {print NR}' "$src" | tail -n1)
             [ -n "$g" ] || { echo "$f: no Ignore-Hold guard before the hold at $h"; return 1; }
             sed -n "$((g + 1))p" "$src" | grep -qE '^[[:space:]]*die ' || { echo "$f: guard at $g is not followed by die"; return 1; }
         done

@@ -3843,15 +3843,23 @@ _awg_pkg_held() {
     grep -qxF -- "$pkg" <<< "$holds"
 }
 
-# _awg_apt_ignores_hold : 0 when APT::Ignore-Hold is enabled in the apt
-# settings. With it apt looks at no hold at all, and the step 2 guard against a
-# second module (the hold on amneziawg-dkms) holds nothing, although the hold
-# check passes. An apt-config that does not answer does not count as enabled:
-# such an apt would not install the packages below either, and fail loudly.
-_awg_apt_ignores_hold() {
+# _awg_apt_hold_honoured : 0 only when apt honours holds: the APT::Ignore-Hold
+# setting was read and is not enabled. With it apt looks at no hold at all, and
+# the step 2 guard against a second module (the hold on amneziawg-dkms) holds
+# nothing, although the hold check passes. A setting that could not be read is
+# a refusal too, not "off": apt-get can work without apt-config, and an enabled
+# setting would then pass silently. The function logs the reason itself.
+_awg_apt_hold_honoured() {
     local out
-    out=$(apt-config shell v APT::Ignore-Hold/b 2>/dev/null) || return 1
-    [[ "$out" == "v='true'" ]]
+    if ! out=$(apt-config shell v APT::Ignore-Hold/b 2>/dev/null); then
+        log_error "Could not read the apt settings (apt-config shell): cannot check whether apt honours holds (APT::Ignore-Hold)."
+        return 1
+    fi
+    if [[ "$out" == "v='true'" ]]; then
+        log_error "APT::Ignore-Hold is enabled in the apt settings: apt ignores holds."
+        return 1
+    fi
+    return 0
 }
 
 # _awg_hold_refusal_log <apt-mark hold output> : before refusing, show what
@@ -7406,8 +7414,8 @@ PPASRC
         # same module name amneziawg - the pinned one and the packaged one from the PPA.
         # This is a safety mechanism, so its failure is fatal (we verify the hold took
         # effect).
-        if _awg_apt_ignores_hold; then
-            die "APT::Ignore-Hold is enabled in the apt settings: apt ignores holds, and installing amneziawg-tools could pull a second amneziawg module from the PPA. Find and remove that setting (grep -r Ignore-Hold /etc/apt/apt.conf /etc/apt/apt.conf.d/), then run the installer again."
+        if ! _awg_apt_hold_honoured; then
+            die "Without holds being honoured, installing amneziawg-tools could pull a second amneziawg module from the PPA. Remove APT::Ignore-Hold (grep -r Ignore-Hold /etc/apt/apt.conf /etc/apt/apt.conf.d/) or fix apt-config, then run the installer again."
         fi
         local _hold_out=""
         _hold_out=$(apt-mark hold amneziawg-dkms amneziawg 2>&1) || true
@@ -7501,8 +7509,8 @@ PPASRC
             # extra/. Two trees carrying a module of the SAME name is exactly what
             # the hold exists to prevent. Reachable: the ubuntu-2404-arm64 and
             # debian-trixie-arm64 prebuilt targets ship kernels 6.7+.
-            if _awg_apt_ignores_hold; then
-                die "APT::Ignore-Hold is enabled in the apt settings: apt ignores holds, and installing amneziawg-tools could pull a second amneziawg module from the PPA. Find and remove that setting (grep -r Ignore-Hold /etc/apt/apt.conf /etc/apt/apt.conf.d/), then run the installer again."
+            if ! _awg_apt_hold_honoured; then
+                die "Without holds being honoured, installing amneziawg-tools could pull a second amneziawg module from the PPA. Remove APT::Ignore-Hold (grep -r Ignore-Hold /etc/apt/apt.conf /etc/apt/apt.conf.d/) or fix apt-config, then run the installer again."
             fi
             local _hold_out=""
             _hold_out=$(apt-mark hold amneziawg-dkms amneziawg 2>&1) || true
