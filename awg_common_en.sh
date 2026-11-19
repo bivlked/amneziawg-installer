@@ -1150,7 +1150,7 @@ _sanitize_awg_dkms_conf() {
 # function identifies the module source by the exact SHA-256 of
 # compat/compat.h and applies the upstream PR #218 fix
 # (amneziawg-linux-kernel-module, commit 62189503fa51) only to the known base;
-# any other source (someone else's edit, the pinned 2.0 source on kernels
+# any other source (someone else's edit, the pinned source on kernels
 # < 6.7, a source fixed in the PPA - that one is patched or foreign) is left
 # alone.
 # Usage: awg_kmod_compat_fix check|apply|revert <DKMS source dir> [diff]
@@ -2852,8 +2852,8 @@ _awg_kmod_version_clean() {
 # create an amneziawg interface in its own network namespace and set I1-I5 on
 # it. The module's I1-I5 parser reads the length in <r>/<rc>/<rd> as a signed int
 # and never rejects a negative one (amneziawg-linux-kernel-module#233,
-# src/junk.c; the same code is in the pinned 2.0 source; the ARM prebuilts come
-# from 3.1 since 19 nov 2026), which in some tag combinations writes past a kernel buffer. Our
+# src/junk.c; the same code is in the 2.0 line; since 19 nov 2026 the ARM
+# prebuilts and the pinned source on kernels < 6.7 come from 3.1), which in some tag combinations writes past a kernel buffer. Our
 # commands refuse such values (awg_cps_check_safe); the warning is about the
 # other users and programs on the host. The module declares
 # MODULE_ALIAS_RTNL_LINK and MODULE_ALIAS_GENL_FAMILY, so once installed but not
@@ -2893,7 +2893,8 @@ _awg_kmod_version_clean() {
 # quiet. The apt advice is given only when the amneziawg-dkms package is
 # installed. The loaded module decides: after a package upgrade the old
 # one stays in the kernel until a reboot. The 2.0 line (1.0.x, the pinned
-# source and the ARM packages before 19 nov 2026) has no fixed release; an unknown version keeps
+# source and the ARM packages before 19 nov 2026) has no fixed release, and a
+# rerun of the current installer with --force replaces it; an unknown version keeps
 # the warning as it was, with no guess about the build.
 #
 # AWG_USERNS_ROOT is overridden only by tests (bats): a prefix for /proc, /sys
@@ -2969,7 +2970,7 @@ awg_userns_module_lines() {
         price="user namespaces can no longer be created at all, root included: rootless containers, application sandboxes, systemd services with PrivateUsers= and Docker with userns-remap stop working."
     fi
     if [[ "$kmver" == [0-2].* ]]; then
-        note=" This module is version ${kmver}: that is the 2.0 line, and the vendor has no fixed 2.0 release."
+        note=" This module is version ${kmver}: that is the 2.0 line, and the vendor has no fixed 2.0 release. The current installer puts a 3.1 line module with the fix here and keeps the 2.0 profile: run it again with --force (keys and client configs stay; the server reboots)."
     elif [[ -n "$kmver" && -e "$root/var/lib/dpkg/info/amneziawg-dkms.list" ]]; then
         note=" This module is version ${kmver}, the fix is in 3.1.20261113-02 and newer: sudo apt-get update && sudo apt-get install --only-upgrade amneziawg-dkms, then a reboot, and this warning goes away."
     elif [[ -n "$kmver" ]]; then

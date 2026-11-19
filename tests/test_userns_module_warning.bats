@@ -430,6 +430,25 @@ EOF
     warns twozero-late "kernel.unprivileged_userns_clone=0"
 }
 
+@test "userns: a 2.0 line module points to a rerun of the installer with --force, both twins" {
+    # Since 19 nov 2026 the installer puts a 3.1 line module with the fix under the
+    # 2.0 profile both on ARM (prebuilts) and on kernels older than 6.7 (the pinned
+    # source), and a rerun with --force replaces the old module.
+    debian; modver 1.0.20260725
+    local lib
+    for lib in "$COMMON" "$COMMON_EN"; do
+        run lines "$lib"
+        [[ "$output" == *"--force"* ]] || { echo "$lib no --force: $output"; return 1; }
+        [[ "$output" == *"3.1"* ]] || { echo "$lib no 3.1: $output"; return 1; }
+    done
+    # the advice is for the 2.0 line only: an old 3.1 module keeps its own advice
+    modver 3.1.20260812
+    for lib in "$COMMON" "$COMMON_EN"; do
+        run lines "$lib"
+        [[ "$output" != *"--force"* ]] || { echo "$lib --force for 3.1: $output"; return 1; }
+    done
+}
+
 @test "userns: an unknown or odd module version keeps the warning without a version claim, both twins" {
     debian; dkms_pkg
     local v lib

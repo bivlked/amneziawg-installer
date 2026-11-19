@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **On kernels older than 6.7 the module is built from the 3.1 tag with the fix for bug #233.** Where no prebuilt package fits (Debian 12 on its stock 6.1 kernel, on any architecture), the installer used to build the 2.0 tag `v1.0.20260725`, which has the `I1`-`I5` parser bug ([amneziawg-linux-kernel-module#233](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/233)); the vendor fixed it only in 3.1. Now that path builds `v3.1.20261113-02`, the same tag as the prebuilt ARM packages, checked against its commit. The profile stays 2.0, and client configs do not change. A server set up earlier gets the new module when the installer is run again with `--force`: the installer now removes a module source of another version before the build (both lines lay out into `/usr/src/amneziawg-1.0.0`, and DKMS would otherwise keep the old module), and after the build checks the version the module reports. For a 2.0 line module `check` and `diagnose` now point to that rerun.
+
 ### Documentation
 
 - **CASCADE: the routing unit now starts right away, plus three fixes from a test run.** Step 5 uses `systemctl enable --now awg-quick@awg1 awg-routing`. Without `--now` the unit stayed inactive until the first reboot, and restarting `awg-quick@awg1` in that window left the clients with no sites opening at all. If you set up a cascade earlier, run `systemctl start awg-routing` once. Step 3 no longer suggests pinging `172.16.61.1` from the entry, which never works there; it gives `ping -I awg1 172.16.61.1` instead. The `iperf3` speed test in troubleshooting now installs the tool and opens port 5201 on the exit for the entry only, then closes it. The entry server should be in Russia, not "in or near" it.
