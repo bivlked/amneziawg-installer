@@ -6306,6 +6306,22 @@ regenerate_client() {
         fi
     fi
     _awg31_set_snapshot "$name" || { exec {lock_fd}>&-; unset CLIENT_PSK; return 1; }
+    # The QR and vpn:// files are removed BEFORE the .conf is rewritten (as in
+    # modify). On 2.0 there is no copy of the previous set, and a build step
+    # that fails below would leave the previous file with the previous config,
+    # handed out as current. A failed removal stops the regen with the .conf
+    # untouched; on 3.1 what was removed comes back from the copy.
+    local _df
+    for _df in "$AWG_DIR/${name}.png" "$AWG_DIR/${name}.vpnuri" "$AWG_DIR/${name}.vpnuri.png"; do
+        [[ -e "$_df" || -L "$_df" ]] || continue
+        if ! rm -f "$_df" 2>/dev/null || [[ -e "$_df" || -L "$_df" ]]; then
+            log_error "Could not remove $_df before regenerating client '$name' - the config is unchanged. Fix the cause and run regen '$name' again: it rebuilds the QR and vpn:// files."
+            _awg31_set_restore_noted "$name"
+            exec {lock_fd}>&-
+            unset CLIENT_PSK
+            return 1
+        fi
+    done
     # When the client's list is going to be restored, render keeps quiet about a
     # non-IPv4 Endpoint: its list is intermediate, the warning goes on the final one below.
     local _AWG_EP_WARN_LATER=0
@@ -6514,6 +6530,11 @@ regenerate_client() {
 
     # Hygiene: do not let PSK leak into later operations in the same shell
     unset CLIENT_PSK
+    # On 2.0 (and on 3.1 without a copy) a failed file is simply absent: the old
+    # one was removed before the .conf was rewritten. Say so plainly.
+    if (( _set_fail )) && (( ${#_AWG31_SET_SNAP[@]} == 0 )); then
+        log_warn "Client '$name': the config is regenerated, but not every QR and vpn:// file was built; the old files are removed so the old config is not handed out. Fix the cause (details above) and run regen '$name' again."
+    fi
 
     # On 3.1 the set is all or nothing: an incomplete set after the regen is
     # replaced with the previous one, under the config lock.

@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`regen` on 2.0 no longer leaves old QR and `vpn://` files behind.** When a regen could not build a QR or the `vpn://` link (a long route list that does not fit into a QR, for example), the previous file with the old config stayed next to the new `.conf`, and `--json` returned its path. Now `regen`, like `modify`, removes these files before it rewrites the `.conf`: a file that was not built is missing, its `--json` field is `null`, and the log says what to repeat. On 3.1 nothing changes: an incomplete set is replaced by the previous one as a whole.
 - **`check` and `diagnose` count only a module of the 3.1 line or later as fixed.** The vendor fix for bug #233 exists only on the 3.1 line, while the check accepted any 3.x version dated after 13 November 2026, including a hypothetical 3.0 one. The vendor has no such tag (the 3.0 line was merged into 3.1), so live servers were not affected. The build of the prebuilt ARM packages uses the same boundary.
 
 ## [6.3.5] - 2026-11-19

@@ -415,3 +415,42 @@ _regen_ok() {
     [ "$(_files alice | grep -c ' absent$')" -eq 0 ]
 }
 @test "regen on 3.1 with the tools in place succeeds" { _both _regen_ok; }
+
+# On 2.0 there is no copy of the previous set, so a QR or vpn:// step that fails
+# must leave the file absent rather than the old copy with the old config: the
+# old QR would still be handed out as current. The regen itself stays a success
+# (the .conf is the deliverable on 2.0), and --json reports the QR as null.
+_regen_20_failed_qr_leaves_no_stale_files() {
+    local s="$1"
+    _gen 2.0
+    _m "$s" add alice
+    _ok
+    [ -f "$A/alice.png" ] && [ -f "$A/alice.vpnuri.png" ]
+    sed -i "s/^export AWG_ENDPOINT=.*/export AWG_ENDPOINT='203.0.113.9'/" "$A/awgsetup_cfg.init"
+    : > "$TEST_DIR/qr_fail_all"
+    _m "$s" regen alice --json
+    _ok
+    grep -qxF 'Endpoint = 203.0.113.9:39743' "$A/alice.conf"
+    _nope '[ -e "$A/alice.png" ]'
+    _nope '[ -e "$A/alice.vpnuri.png" ]'
+    [[ "$output" == *'"status":"regenerated"'* && "$output" == *'"qr":null'* ]] || { echo "json: $output" >&2; return 1; }
+}
+@test "regen on 2.0 whose QR fails leaves no stale QR files behind" { _both _regen_20_failed_qr_leaves_no_stale_files; }
+
+# The files are removed before the .conf is rewritten: when that removal fails,
+# the regen stops with the .conf untouched.
+_regen_20_undeletable_qr_keeps_conf() {
+    local s="$1" conf
+    _gen 2.0
+    _m "$s" add alice
+    _ok
+    conf=$(cksum < "$A/alice.conf")
+    sed -i "s/^export AWG_ENDPOINT=.*/export AWG_ENDPOINT='203.0.113.9'/" "$A/awgsetup_cfg.init"
+    # a directory in place of the QR: rm -f cannot remove it
+    /bin/rm -f "$A/alice.png"; mkdir "$A/alice.png"; : > "$A/alice.png/x"
+    _m "$s" regen alice
+    _fail
+    [[ "$output$stderr" == *"$A/alice.png"* ]] || { echo "no named file: $stderr" >&2; return 1; }
+    [ "$(cksum < "$A/alice.conf")" = "$conf" ]
+}
+@test "regen on 2.0 stops with the .conf untouched when an old QR cannot be removed" { _both _regen_20_undeletable_qr_keeps_conf; }
