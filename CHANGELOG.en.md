@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Documentation
 
+- **The 3.1 client table in ADVANCED: versions as of 19 November 2026.** FlClash v0.9.4, L×Box v2.25.22, AWG Manager v2.20.6, KeeneticOS 5.2 Beta 4 and the Hiddify v5.9.15 pre-release (its import now understands `on` and `off` for `RandomTrailers` and `DisableCookies`). The 3.1 support was checked in the code of each build and did not change for any of them.
 - **The signing public key published outside GitHub.** SECURITY.md and docs/SIGNING_DESIGN.md now link [post #28 on ntc.party](https://ntc.party/t/22685/28), which has held the whole key since 1 October 2026: compare the key from a release with it instead of trusting the same GitHub account.
 - **ADVANCED: `RandomTrailers`, `DisableCookies` and the `S4` race in amneziawg-go.** If you turn `RandomTrailers` on anyway, the vendor recommends equal `S1`-`S4`; according to the vendor README, `DisableCookies` turns off the whole under-load logic, handshake rate limiting included. The answer about the lost first packet on amneziawg-go clients is updated: the vendor merged its own change on 16 November 2026 (tag `v3.1.20261116`), but no client is built on that tag yet.
 
