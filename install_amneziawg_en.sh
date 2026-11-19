@@ -3850,9 +3850,14 @@ _awg_pkg_held() {
 # a refusal too, not "off": apt-get can work without apt-config, and an enabled
 # setting would then pass silently. The function logs the reason itself.
 _awg_apt_hold_honoured() {
-    local out
-    if ! out=$(apt-config shell v APT::Ignore-Hold/b 2>&1); then
-        log_error "Could not read the apt settings (apt-config shell): cannot check whether apt honours holds (APT::Ignore-Hold). Answer: $(printf '%s' "$out" | tr '\n' ' ' | tail -c 300)"
+    local out err
+    # Only stdout is parsed: apt-config writes notices to stderr even with code
+    # 0 (for example "N: Ignoring file ..." about a stray file in apt.conf.d),
+    # and they must not turn the answer into nonsense. stderr is read by a
+    # second run and serves only the refusal text.
+    if ! out=$(apt-config shell v APT::Ignore-Hold/b 2>/dev/null); then
+        err=$(apt-config shell v APT::Ignore-Hold/b 2>&1 >/dev/null || true)
+        log_error "Could not read the apt settings (apt-config shell): cannot check whether apt honours holds (APT::Ignore-Hold). Answer: $(printf '%s' "$err" | tr '\n' ' ' | tail -c 300)"
         return 1
     fi
     # Empty means the setting is not set; v='false' means set and off. Anything
@@ -7428,7 +7433,8 @@ PPASRC
             # A package that survives the purge would stay under the hold below:
             # the hold check would pass while the 3.0 module stayed next to the
             # pinned build.
-            _dkms_st=$(_awg_pkg_state amneziawg-dkms) || _dkms_st="unknown"
+            _dkms_st=$(_awg_pkg_state amneziawg-dkms) \
+                || die "Could not ask dpkg about the amneziawg-dkms package after the removal: without an answer there is no telling whether the AmneziaWG 3.0 module is gone. Check: dpkg -l amneziawg-dkms, then run the installer again."
             if [[ "$_dkms_st" != not-installed && "$_dkms_st" != config-files ]]; then
                 log_error "What apt and dpkg answered to the removal: $(printf '%s' "$_purge_out" | tr '\n' ' ' | tail -c 300)"
                 die "Could not remove the previously installed amneziawg-dkms (AmneziaWG 3.0, state: $_dkms_st), and it would leave a second amneziawg module next to the pinned build. Remove it by hand: sudo dpkg --purge --force-all amneziawg-dkms amneziawg, check: dpkg -l amneziawg-dkms, then run the installer again."
@@ -7539,7 +7545,7 @@ PPASRC
             # debian-trixie-arm64 prebuilt targets ship kernels 6.7+.
             if ! _awg_apt_hold_honoured; then
                 _awg_rehold_for_prebuilt
-                die "Without holds being honoured, installing amneziawg-tools could pull a second amneziawg module from the PPA next to the prebuilt one. The prebuilt package is already installed and the hold on amneziawg-dkms is back; do not install amneziawg packages by hand. Remove APT::Ignore-Hold (where it is set: grep -r Ignore-Hold /etc/apt/apt.conf /etc/apt/apt.conf.d/) or fix apt-config, then run the installer again: the step runs again."
+                die "Without holds being honoured, installing amneziawg-tools could pull a second amneziawg module from the PPA next to the prebuilt one. The prebuilt package is already installed; do not install amneziawg packages by hand. Remove APT::Ignore-Hold (where it is set: grep -r Ignore-Hold /etc/apt/apt.conf /etc/apt/apt.conf.d/) or fix apt-config, then run the installer again: the step runs again."
             fi
             local _hold_out=""
             _hold_out=$(apt-mark hold amneziawg-dkms amneziawg 2>&1) || true

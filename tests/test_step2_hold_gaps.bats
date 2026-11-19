@@ -20,11 +20,13 @@ setup() {
     mkdir -p "$BIN"
 }
 
-# stub_apt_config <exit code> <output> : answers only `shell v APT::Ignore-Hold/b`
+# stub_apt_config <exit code> <output> [stderr notice] : answers only
+# `shell v APT::Ignore-Hold/b`
 stub_apt_config() {
     {
         echo '#!/usr/bin/env bash'
         echo '[ "$1 $2 $3" = "shell v APT::Ignore-Hold/b" ] || { echo "unexpected: $*" >&2; exit 99; }'
+        [ -n "${3:-}" ] && printf 'echo "%s" >&2\n' "$3"
         printf 'printf "%%s" "%s"\n' "$2"
         echo "exit $1"
     } > "$BIN/apt-config"
@@ -43,6 +45,15 @@ honoured() {
     for f in "${INSTALLERS[@]}"; do
         stub_apt_config 0 "v='false'"; run honoured "$f"; [ "$status" -eq 0 ] || { echo "$f false: $status $output"; return 1; }
         stub_apt_config 0 "";          run honoured "$f"; [ "$status" -eq 0 ] || { echo "$f unset: $status $output"; return 1; }
+    done
+}
+
+@test "Ignore-Hold: a notice on stderr does not spoil an answer that is off or unset, both installers" {
+    local f n="N: Ignoring file '99custom.txt' in directory '/etc/apt/apt.conf.d/' as it has an invalid filename extension"
+    for f in "${INSTALLERS[@]}"; do
+        stub_apt_config 0 "v='false'" "$n"; run honoured "$f"; [ "$status" -eq 0 ] || { echo "$f false: $status $output"; return 1; }
+        stub_apt_config 0 "" "$n";          run honoured "$f"; [ "$status" -eq 0 ] || { echo "$f unset: $status $output"; return 1; }
+        stub_apt_config 0 "v='true'" "$n";  run honoured "$f"; [ "$status" -eq 1 ] || { echo "$f true: $status $output"; return 1; }
     done
 }
 
@@ -120,6 +131,7 @@ STUB
     cat > "$BIN/apt-get" << 'STUB'
 #!/usr/bin/env bash
 echo "apt-get $*" >> "$T"
+[ -e "$APT_BREAKS_DPKG" ] && { echo FAIL > "$STATE"; exit 0; }
 [ -e "$APT_OK" ] && { echo "unknown ok not-installed" > "$STATE"; exit 0; }
 echo "E: Held packages were changed and -y was used without --allow-change-held-packages." >&2; exit 100
 STUB
@@ -131,6 +143,7 @@ echo "dpkg: error processing package amneziawg-dkms (--purge): locked" >&2; exit
 STUB
     chmod +x "$BIN/dpkg-query" "$BIN/apt-get" "$BIN/dpkg"
     PATH="$BIN:$PATH" timeout 30 bash -c '
+        set -euo pipefail
         log() { echo "LOG: $*" >> "$T"; }
         log_error() { echo "ERR: $*" >> "$T"; }
         die() { echo "DIE: $*" >> "$T"; exit 1; }
@@ -144,8 +157,8 @@ STUB
 
 purge_env() {
     export T="$BATS_TEST_TMPDIR/trace" STATE="$BATS_TEST_TMPDIR/state"
-    export APT_OK="$BATS_TEST_TMPDIR/apt_ok" DPKG_OK="$BATS_TEST_TMPDIR/dpkg_ok"
-    : > "$T"; rm -f "$APT_OK" "$DPKG_OK"
+    export APT_OK="$BATS_TEST_TMPDIR/apt_ok" DPKG_OK="$BATS_TEST_TMPDIR/dpkg_ok" APT_BREAKS_DPKG="$BATS_TEST_TMPDIR/apt_breaks"
+    : > "$T"; rm -f "$APT_OK" "$DPKG_OK" "$APT_BREAKS_DPKG"
     printf '%s' "$1" > "$STATE"
 }
 
@@ -201,6 +214,17 @@ purge_env() {
         [ "$status" -ne 0 ] || { echo "$f: rc 0"; cat "$T"; return 1; }
         grep -q '^DIE: .*dpkg -l amneziawg-dkms' "$T" || { echo "$f: no die"; cat "$T"; return 1; }
         run grep -cE '^(apt-get|dpkg) ' "$T"; [ "$output" = "0" ] || { echo "$f: purged blind"; return 1; }
+    done
+}
+
+@test "purge: a dpkg that cannot be asked after the purge stops with that reason, both installers" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        purge_env "install ok installed"; : > "$APT_BREAKS_DPKG"
+        run purge_block "$f"
+        [ "$status" -ne 0 ] || { echo "$f: rc 0"; cat "$T"; return 1; }
+        grep -qE '^DIE: .*(после удаления|after the removal)' "$T" || { echo "$f: wrong reason"; cat "$T"; return 1; }
+        run grep -c '^rm -rf' "$T"; [ "$output" = "0" ] || { echo "$f: cleaned up"; return 1; }
     done
 }
 
