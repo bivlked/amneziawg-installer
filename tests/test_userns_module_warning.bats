@@ -438,8 +438,17 @@ EOF
     local lib
     for lib in "$COMMON" "$COMMON_EN"; do
         run lines "$lib"
-        [[ "$output" == *"--force"* ]] || { echo "$lib no --force: $output"; return 1; }
-        [[ "$output" == *"3.1"* ]] || { echo "$lib no 3.1: $output"; return 1; }
+        if [[ "$lib" == *_en.sh ]]; then
+            [[ "$output" == *"Installer v6.3.5 and newer puts a fixed 3.1 line module on this server and keeps the 2.0 profile: download it again and run it with --force"* ]] || { echo "$lib advice: $output"; return 1; }
+        else
+            [[ "$output" == *"Установщик v6.3.5 и новее ставит на такой сервер исправленный модуль линии 3.1 и сохраняет профиль 2.0: скачайте его заново и запустите с --force"* ]] || { echo "$lib advice: $output"; return 1; }
+        fi
+    done
+    # the edge of the 2.0 line pattern
+    modver 2.9.20270101
+    for lib in "$COMMON" "$COMMON_EN"; do
+        run lines "$lib"
+        [[ "$output" == *"--force"* ]] || { echo "$lib 2.x: $output"; return 1; }
     done
     # the advice is for the 2.0 line only: an old 3.1 module keeps its own advice
     modver 3.1.20260812

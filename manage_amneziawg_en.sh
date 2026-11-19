@@ -2058,7 +2058,7 @@ check_server() {
 # 0 - install --repair-module admits this server by its packages:
 # amneziawg-dkms is installed and not on hold, and no amneziawg-kmod-*
 # package (the ARM prebuilt) is installed. 1 - otherwise, and when dpkg
-# could not answer. A held package is the pinned 2.0 module or the ARM
+# could not answer. A held package is the pinned module or the ARM
 # prebuilt; the installer also refuses any installed prebuilt (the same
 # parsing as _awg_kmod_prebuilt_present).
 _kmod_installer_repair_admits() {
@@ -2203,7 +2203,7 @@ _kmod_json_list() {
 }
 
 # repair-module through the helper. Exit: 0 - success; 1 - failure or
-# refusal; 10 - the helper reported the prebuilt, the pinned 2.0 or "no
+# refusal; 10 - the helper reported the prebuilt, the pinned path or "no
 # package" path (their usual previous path; the caller decides).
 _kmod_repair_via_helper() {
     local hrc=0 frc="" mrc=1 cur k rel run mod hdr pkg rmod="null" rhdr="null" ok=0 other=0 pend_mod=0

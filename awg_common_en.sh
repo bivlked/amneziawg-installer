@@ -1782,21 +1782,21 @@ awg_restore_generation_notice() {
 
 _kernel_supports_awg3() {
     # Returns 0 if the kernel version is >= 6.7 - there we take the module from the
-    # PPA as is. Returns 1 if the kernel is older than 6.7 - there we go the pinned
-    # 2.0 route.
+    # PPA as is. Returns 1 if the kernel is older than 6.7 - there the profile is 2.0
+    # and the module is built from the pinned tag (_install_pinned_awg2_module).
     # ⚠️ The name is historical, do not read it literally. The 6.7 threshold comes
     # from 30-31 jul 2026: the 3.0 code called nla_put_uint, absent before mainline
     # v6.7, and on 6.1 (Debian 12) the build died with 'implicit declaration of
-    # nla_put_uint'. Upstream fixed that on 31 jul (v3.0.20260731-04), and the 3.0
-    # module DOES build on 6.1 now - verified on a stand on 1 aug. The threshold is
-    # kept deliberately: within a day the 3.0 line managed to break and fix the
-    # build on old kernels specifically, so that is where it is least proven, while
-    # the pinned 2.0 is checked against an immutable commit. Drop the threshold
-    # after validating 3.0, not because the build passes again.
+    # nla_put_uint'. Upstream fixed that on 31 jul (v3.0.20260731-04), and the
+    # third-line module DOES build on 6.1 now. The threshold is kept deliberately:
+    # the 3.x profile has had the least mileage on old kernels, and the PPA module
+    # there would change with every vendor build, while the pinned tag (3.1 with the
+    # #233 fix since v6.3.5, the 2.0 tag before it) is checked against an immutable
+    # commit. Drop the threshold after validating the 3.1 profile on old kernels,
+    # not because the build passes again.
     # Arg $1: kernel release (default uname -r). An unparseable version is treated
-    # as "NOT supported" -> pinned 2.0 (it builds on ANY of our kernels, so the
-    # conservative choice never breaks connectivity, it only withholds 3.0 features
-    # which H0 does not ship anyway).
+    # as "NOT supported" -> the pinned path with the 2.0 profile (the conservative
+    # choice: it never breaks connectivity, it only withholds 3.1 features).
     # Pure function with no external deps (bats: extracted via sed-range + source).
     local kver="${1:-$(uname -r)}" kmaj kmin
     local min_maj=6 min_min=7
@@ -2970,7 +2970,7 @@ awg_userns_module_lines() {
         price="user namespaces can no longer be created at all, root included: rootless containers, application sandboxes, systemd services with PrivateUsers= and Docker with userns-remap stop working."
     fi
     if [[ "$kmver" == [0-2].* ]]; then
-        note=" This module is version ${kmver}: that is the 2.0 line, and the vendor has no fixed 2.0 release. A current installer puts a fixed 3.1 line module on this server and keeps the 2.0 profile: run it again with --force (keys and client configs stay, the server reboots)."
+        note=" This module is version ${kmver}: that is the 2.0 line, and the vendor has no fixed 2.0 release. Installer v6.3.5 and newer puts a fixed 3.1 line module on this server and keeps the 2.0 profile: download it again and run it with --force (keys and client configs stay; it asks for two reboots, run the same command after each)."
     elif [[ -n "$kmver" && -e "$root/var/lib/dpkg/info/amneziawg-dkms.list" ]]; then
         note=" This module is version ${kmver}, the fix is in 3.1.20261113-02 and newer: sudo apt-get update && sudo apt-get install --only-upgrade amneziawg-dkms, then a reboot, and this warning goes away."
     elif [[ -n "$kmver" ]]; then

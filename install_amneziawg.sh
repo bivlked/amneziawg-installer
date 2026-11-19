@@ -69,8 +69,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="64645bdcfc6007482854a82f10539600720a3d5b3a8a064d63ba33cc95686568"
-MANAGE_SCRIPT_SHA256="e8c76907823961f8922ac303c4815eb06756ec3d70ae967338274a0a0b99c3cd"
+COMMON_SCRIPT_SHA256="dd8898cdea68b5221c23fd71f4c7a63641d668df379176122d7e86bf24fe97b4"
+MANAGE_SCRIPT_SHA256="a5611041b650d2f619d1e568c894ab15701f92f0baed52ec0e460b2c93309489"
 
 # Пин модуля для ядер старее 6.7 без готового пакета (H0, 31 jul 2026). Модуль
 # из PPA там не используется (см. _kernel_supports_awg3): модуль собирается из
@@ -985,18 +985,20 @@ check_kernel_version() {
 # shellcheck disable=SC2120  # зовётся и с аргументом (из awg31_environment_blocker), и без него (берёт uname -r); bats передаёт версии
 _kernel_supports_awg3() {
     # Возвращает 0, если версия ядра >= 6.7 - там модуль берём из PPA как есть.
-    # Возвращает 1, если ядро старее 6.7 - там идём пиновым 2.0-путём.
+    # Возвращает 1, если ядро старее 6.7 - там профиль 2.0, а модуль собирается из
+    # пинового тега (_install_pinned_awg2_module).
     # ⚠️ Имя историческое, читать его буквально НЕЛЬЗЯ. Порог 6.7 появился 30-31 jul
     # 2026: 3.0-код звал nla_put_uint, которой до mainline v6.7 не было, и на 6.1
     # (Debian 12) сборка падала с 'implicit declaration of nla_put_uint'. 31 jul
-    # upstream это починил (v3.0.20260731-04), и на 6.1 3.0-модуль СОБИРАЕТСЯ -
-    # проверено на стенде 1 aug. Порог оставлен сознательно: линия 3.0 за сутки
-    # успела сломать и починить сборку именно на старых ядрах, то есть там она
-    # обкатана меньше всего, а пиновый 2.0 сверяется по immutable-коммиту. Снимать
-    # порог после отдельной валидации 3.0, а не потому, что сборка снова проходит.
+    # upstream это починил (v3.0.20260731-04), и модуль третьей линии на 6.1 теперь
+    # СОБИРАЕТСЯ. Порог оставлен сознательно: профиль 3.x на старых ядрах обкатан
+    # меньше всего, а модуль из PPA там менялся бы с каждой сборкой вендора, тогда
+    # как пиновый тег (с v6.3.5 - тег 3.1 с исправлением #233, раньше - тег 2.0)
+    # сверяется по immutable-коммиту. Снимать порог после проверки профиля 3.1 на
+    # старых ядрах, а не потому, что сборка снова проходит.
     # Arg $1: kernel release (default uname -r). Неразбираемую версию считаем
-    # "НЕ поддерживает" -> пиновый 2.0 (он собирается на ЛЮБОМ нашем ядре, так что
-    # консервативный выбор не ломает связь, лишь не даёт 3.0-фич, которых в H0 нет).
+    # "НЕ поддерживает" -> пиновый путь с профилем 2.0 (консервативный выбор не
+    # ломает связь, лишь не даёт фич 3.1).
     # Чистая функция без внешних зависимостей (bats: извлекается sed-range + source).
     local kver="${1:-$(uname -r)}" kmaj kmin
     local min_maj=6 min_min=7
@@ -5679,7 +5681,7 @@ _awg_kmod_status_warn() {
 # недонастроенное ядро без модуля). Модуль не загружает, туннель не
 # перезапускает, не перезагружает.
 # Допуск положительный: пакет amneziawg-dkms есть, не в hold (hold ставят
-# пиновый 2.0 и ARM-пребилт), регистрация в DKMS одна и указывает на исходник
+# пиновый путь и ARM-пребилт), регистрация в DKMS одна и указывает на исходник
 # пакета, apt не работает. Любой отказ - до каких-либо изменений.
 repair_module_cmd() {
     local rc=0 hrc=0 frc=0 ver owner src out
@@ -5711,13 +5713,13 @@ repair_module_cmd() {
             log_error "Пакет amneziawg-dkms не установлен: чинить этим путём нечего (модуль ставился не из PPA или AmneziaWG не установлен)."; exit 1 ;;
     esac
     if [[ "${_q%% *}" == hold ]]; then
-        log_error "amneziawg-dkms зафиксирован (hold): так установщик ставит пиновый модуль AmneziaWG 2.0 и предсобранный модуль ARM, этот путь их не чинит."; exit 1
+        log_error "amneziawg-dkms зафиксирован (hold): так установщик ставит модуль из пинового исходника (ядра старее 6.7) и предсобранный модуль ARM, этот путь их не чинит."; exit 1
     fi
     if ! _e=$(apt-mark showhold 2>/dev/null); then
         log_error "Не удалось получить список зафиксированных пакетов (apt-mark showhold). Ничего не меняю."; exit 1
     fi
     if grep -qxF amneziawg-dkms <<<"$_e"; then
-        log_error "amneziawg-dkms зафиксирован (hold): так установщик ставит пиновый модуль AmneziaWG 2.0 и предсобранный модуль ARM, этот путь их не чинит."; exit 1
+        log_error "amneziawg-dkms зафиксирован (hold): так установщик ставит модуль из пинового исходника (ядра старее 6.7) и предсобранный модуль ARM, этот путь их не чинит."; exit 1
     fi
     if ! command -v dkms >/dev/null 2>&1; then log_error "dkms не установлен."; exit 1; fi
     shopt -s nullglob; reg=("$DKMS_STATE_DIR"/amneziawg/*/source); shopt -u nullglob
@@ -6708,18 +6710,23 @@ _awg_module_src_version() {
 
 # _awg_pin_drop_stale <каталог исходника> <нужная версия> <версия dkms> : любая
 # линия модуля вендора раскладывается в один и тот же /usr/src/amneziawg-1.0.0,
-# поэтому сервер, собранный из другого тега (до 19 nov 2026 - из тега 2.0), при
+# поэтому сервер, собранный из другого тега (до v6.3.5 - из тега 2.0), при
 # повторном запуске оставил бы свой модуль: DKMS считает его уже собранным для
-# этого ядра. Исходник другой версии (или с нечитаемой версией) поэтому снимается
-# с регистрации в DKMS и удаляется до раскладки нового. 0, если делать нечего или
-# старый исходник убран; 1, если старая сборка осталась зарегистрированной в
-# DKMS или исходник удалить не удалось.
+# этого ядра. Исходник другой версии (или с нечитаемой версией) и регистрация в
+# DKMS, оставшаяся без исходника, поэтому убираются до раскладки нового исходника.
+# Возврат: 0 - делать нечего, 2 - старая сборка убрана (её версия остаётся в
+# _AWG_PIN_DROPPED для текста ошибки вызывающего кода), 1 - старая сборка
+# осталась зарегистрированной в DKMS или исходник удалить не удалось.
 _awg_pin_drop_stale() {
-    local dir="$1" pin_ver="$2" dver="$3" src_ver
-    [[ -e "$dir" ]] || return 0
-    src_ver=$(_awg_module_src_version "$dir/version.h") || src_ver=""
-    [[ "$src_ver" == "$pin_ver" ]] && return 0
-    log "Исходник модуля в $dir версии ${src_ver:-неизвестной}, а пин - $pin_ver: сначала убираю старую сборку."
+    local dir="$1" pin_ver="$2" dver="$3" src_ver=""
+    if [[ -e "$dir" ]]; then
+        src_ver=$(_awg_module_src_version "$dir/version.h") || src_ver=""
+        [[ "$src_ver" == "$pin_ver" ]] && return 0
+        log "Исходник модуля в $dir версии ${src_ver:-неизвестной}, а пин - $pin_ver: сначала убираю старую сборку."
+    else
+        [[ -z "$(dkms status -m amneziawg -v "$dver" 2>/dev/null)" ]] && return 0
+        log "Сборка amneziawg $dver зарегистрирована в DKMS без исходника в $dir: сначала убираю её."
+    fi
     # dkms remove падает и тогда, когда регистрировать нечего, поэтому итог
     # проверяется по dkms status. Оставшаяся сборка останавливает здесь, до того,
     # как тронут исходник: с новым version.h следующий запуск пропустил бы эту
@@ -6731,10 +6738,34 @@ _awg_pin_drop_stale() {
         log_error "Уберите её вручную (dkms status amneziawg; dkms remove -m amneziawg -v $dver --all) и запустите установщик снова."
         return 1
     fi
+    _AWG_PIN_DROPPED="${src_ver:-unknown}"
     if ! rm -rf "$dir" || [[ -e "$dir" ]]; then
         log_error "Не удалось удалить старый исходник модуля $dir."
         return 1
     fi
+    return 2
+}
+
+# _awg_pin_trial_build <каталог исходника> <рабочий каталог> <ядро> : собирает копию
+# пинового исходника под заголовки ядра до того, как тронут установленный модуль.
+# На сервере, где уже стоит прежняя сборка, _awg_pin_drop_stale её убирает, и
+# исходник, который не собирается под это ядро, иначе оставил бы сервер без модуля
+# после следующей перезагрузки. Копия не пускает продукты сборки в исходник,
+# который раскладывает dkms-install. 0 - собирается, 1 - нет.
+_awg_pin_trial_build() {
+    local log_file="/var/log/amneziawg-pin-trial-build.log"
+    rm -rf "$2"
+    if ! cp -a "$1" "$2"; then
+        log_error "Не удалось скопировать пиновый исходник для пробной сборки ($2)."
+        return 1
+    fi
+    log "Пробная сборка пинового модуля под ядро $3 до любых изменений в установленном..."
+    if ! make -C "$2" KERNELDIR="/lib/modules/$3/build" module >"$log_file" 2>&1; then
+        log_error "Пиновый модуль не собирается под ядро $3; установленный модуль оставлен как есть. Подробности: $log_file"
+        rm -rf "$2"
+        return 1
+    fi
+    rm -rf "$2"
     return 0
 }
 
@@ -6757,18 +6788,25 @@ _awg_pin_check_built() {
 #   1. git clone пинового тега --depth=1;
 #   2. СВЕРКА commit с AWG2_PIN_COMMIT (integrity: immutable-коммит надёжнее, чем
 #      SHA авто-tarball GitHub, который меняется при смене компрессии);
-#   3. убрать исходник другой версии от прежней сборки (_awg_pin_drop_stale);
-#   4. upstream-механизм `make dkms-install` (кладёт в /usr/src/amneziawg-1.0.0);
-#   5. dkms add/build/install под текущее ядро, затем сверка версии, которую
+#   3. пробная сборка копии под работающее ядро (_awg_pin_trial_build): ничего
+#      установленного не трогаем, пока не ясно, что новый исходник собирается;
+#   4. убрать исходник другой версии от прежней сборки (_awg_pin_drop_stale);
+#   5. upstream-механизм `make dkms-install` (кладёт в /usr/src/amneziawg-1.0.0);
+#   6. dkms add/build/install под текущее ядро, затем сверка версии, которую
 #      сообщает собранный модуль (_awg_pin_check_built);
-#   6. modprobe-проверка (собран != загружаем: Secure Boot может блокировать).
+#   7. modprobe-проверка (собран != загружаем: Secure Boot может блокировать), если
+#      только в ядре не загружен прежний модуль: тогда новый загрузится после
+#      перезагрузки.
 # dkms.conf исходника несёт AUTOINSTALL=yes, поэтому наш helper amneziawg-ensure-
 # module (apt-hook + systemd) пересоберёт пиновый модуль при апгрейде ядра сам -
 # отдельный maintenance-код не нужен. Возврат: 0 успех, 1 провал (лог в ERROR).
 _install_pinned_awg2_module() {
     local repo="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git"
     local kver work got_commit want_ver
-    local dkms_ver="1.0.0"   # WIREGUARD_VERSION в upstream Makefile (имя /usr/src/amneziawg-<ver>)
+    # dkms_ver - это WIREGUARD_VERSION из upstream Makefile, на всех линиях одно и то
+    # же 1.0.0: имя /usr/src/amneziawg-<ver> и версия в DKMS. Версия самого модуля
+    # (want_ver) берётся из src/version.h.
+    local dkms_ver="1.0.0"
     kver="$(uname -r)"
 
     if ! command -v git >/dev/null 2>&1; then
@@ -6808,7 +6846,12 @@ _install_pinned_awg2_module() {
         log_error "В пиновом исходнике нет читаемой WIREGUARD_VERSION в src/version.h."
         rm -rf "$work"; return 1
     fi
-    if ! _awg_pin_drop_stale "/usr/src/amneziawg-${dkms_ver}" "$want_ver" "$dkms_ver"; then
+    if ! _awg_pin_trial_build "$work/src/src" "$work/trial" "$kver"; then
+        rm -rf "$work"; return 1
+    fi
+    local _drop_rc=0
+    _awg_pin_drop_stale "/usr/src/amneziawg-${dkms_ver}" "$want_ver" "$dkms_ver" || _drop_rc=$?
+    if [[ "$_drop_rc" -eq 1 ]]; then
         rm -rf "$work"; return 1
     fi
 
@@ -6827,8 +6870,18 @@ _install_pinned_awg2_module() {
         return 1
     fi
 
-    # add идемпотентен: при повторном запуске уже добавлен -> не фатально.
-    dkms add -m amneziawg -v "$dkms_ver" >/dev/null 2>&1 || true
+    # add при повторном запуске отвечает "already added" и падает, поэтому его итог
+    # проверяется по dkms status: после него исходник обязан быть зарегистрирован,
+    # что бы ни ответил add.
+    local _addout _al
+    _addout=$(dkms add -m amneziawg -v "$dkms_ver" 2>&1) || true
+    if [[ -z "$(dkms status -m amneziawg -v "$dkms_ver" 2>/dev/null)" ]]; then
+        log_error "dkms add не зарегистрировал исходник модуля /usr/src/amneziawg-${dkms_ver}. Ответ dkms:"
+        while IFS= read -r _al; do
+            [[ -n "$_al" ]] && log_error "  dkms: $_al"
+        done < <(printf '%s\n' "$_addout" | tail -n 10)
+        return 1
+    fi
     # Идемпотентность (установщик - возобновляемая машина состояний): dkms build на
     # уже собранном ядре возвращает ошибку "already built" -> собираем ТОЛЬКО если
     # для этого ядра сборки ещё нет. install --force ниже идемпотентен сам по себе.
@@ -6846,6 +6899,17 @@ _install_pinned_awg2_module() {
         return 1
     fi
     _awg_pin_check_built "$kver" "$want_ver" || return 1
+
+    # Уже загруженный модуль modprobe не заменяет: при повторном запуске на
+    # работающем сервере старый остаётся в ядре до перезагрузки, которую просит
+    # шаг 2, а новый после неё проверяет шаг 3.
+    local _loaded=""
+    [[ -r /sys/module/amneziawg/version ]] && IFS= read -r _loaded < /sys/module/amneziawg/version
+    _loaded="${_loaded//[[:space:]]/}"
+    if [[ -n "$_loaded" && "$_loaded" != "$want_ver" ]]; then
+        log "Пиновый модуль AmneziaWG $want_ver собран и установлен (DKMS $dkms_ver, ядро $kver, профиль 2.0); до перезагрузки в ядре работает $_loaded."
+        return 0
+    fi
 
     # Собран != загружаем: при включённом Secure Boot неподписанный модуль не грузится.
     if ! modprobe amneziawg 2>/dev/null; then
@@ -7149,12 +7213,12 @@ PPASRC
     # Пакеты AmneziaWG + qrencode (БЕЗ Python!)
     log "Установка пакетов AmneziaWG..."
 
-    # H0 (AWG 3.0, 31 jul 2026): путь пинового 2.0-модуля определяем ДО любой
+    # H0 (AWG 3.0, 31 jul 2026): пиновый путь модуля определяем ДО любой
     # установки пакетов - hold обязан стоять раньше даже ARM-пути с предсобранным
     # .deb, где install_packages ставит amneziawg-tools, чьи Recommends иначе
     # подтянут 3.0-модуль в обход гейта. На ядрах < 6.7 PPA-модуль = AmneziaWG 3.0,
     # его здесь не ставим (сознательно, см. _kernel_supports_awg3), а собираем
-    # пиновый 2.0 из исходника; из PPA берём только tools (version-aware, с 2.0
+    # модуль из пинового исходника; из PPA берём только tools (version-aware, с 2.0
     # работают - проверено).
     local use_pinned_awg2=0
     if ! _kernel_supports_awg3; then
@@ -7175,7 +7239,7 @@ PPASRC
         # ⚠️ Hold ДО любой установки: amneziawg-tools РЕКОМЕНДУЕТ amneziawg-dkms, apt
         # по умолчанию ставит recommends -> без hold установка tools (в т.ч. на ARM-
         # пути) притащила бы 3.0-dkms, и в системе оказались бы ДВА DKMS-дерева с
-        # одним именем модуля amneziawg - пиновое 2.0 и пакетное 3.0. Это защитный
+        # одним именем модуля amneziawg - пиновое и пакетное из PPA. Это защитный
         # механизм, поэтому провал фатален (проверяем, что hold реально встал).
         local _hold_out=""
         _hold_out=$(apt-mark hold amneziawg-dkms amneziawg 2>&1) || true
@@ -7206,8 +7270,8 @@ PPASRC
     # build-arm-deb.sh не публикует пакет из исходника без исправления #233.
     # Пакеты, поставленные раньше, остаются второй линии до повторного запуска
     # установщика под новое ядро. При отсутствии совпадения _try_install_prebuilt_arm
-    # вернёт 1 и мы уйдём в сборку из исходника ниже (на ядре < 6.7 это закреплённый
-    # 2.0-исходник, AWG2_PIN_TAG). hold, выставленный выше, здесь тоже в силе (не даёт
+    # вернёт 1 и мы уйдём в сборку из исходника ниже (на ядре < 6.7 это исходник
+    # пинового тега AWG2_PIN_TAG). hold, выставленный выше, здесь тоже в силе (не даёт
     # tools подтянуть amneziawg-dkms через Recommends).
     local arch
     arch="$(uname -m)"
@@ -7331,7 +7395,7 @@ PPASRC
     fi
 
     # Пакеты: на пиновом пути (ядро < 6.7) amneziawg-dkms НЕ ставим (это был бы
-    # 3.0-модуль), вместо него git для сборки пинового 2.0-исходника. Гейт, hold и
+    # 3.0-модуль), вместо него git для сборки пинового исходника. Гейт, hold и
     # очистка ранее установленного 3.0 выполнены выше (до ARM-блока).
     local packages
     if [[ "$use_pinned_awg2" -eq 1 ]]; then
@@ -7407,11 +7471,14 @@ PPASRC
     fi
     _AWG_KMOD_T1=0
 
-    # H0: пиновый путь - собрать 2.0-модуль из исходника ВМЕСТО PPA-amneziawg-dkms.
+    # H0: пиновый путь - собрать модуль из пинового исходника ВМЕСТО PPA-amneziawg-dkms.
     # Headers текущего ядра уже установлены выше (в packages); hold выставлен ранее.
     if [[ "$use_pinned_awg2" -eq 1 ]]; then
         if ! _install_pinned_awg2_module; then
             log_error "Не удалось установить модуль AmneziaWG из пинового исходника."
+            if [[ -n "${_AWG_PIN_DROPPED:-}" ]]; then
+                log_error "Прежний модуль (версия ${_AWG_PIN_DROPPED}) уже снят: VPN работает до ближайшей перезагрузки, а после неё не поднимется. Устраните причину и запустите установщик снова, он продолжит с шага 2."
+            fi
             log_error "На ядрах старее 6.7 (у вас $(uname -r)) установщик берёт модуль не из"
             log_error "PPA, а собирает из исходника, и этот шаг не прошёл. Конкретная причина -"
             log_error "в строках выше; чаще всего это отсутствующие kernel headers, нехватка"
