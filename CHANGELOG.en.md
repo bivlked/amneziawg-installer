@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.6] - 2026-11-19
+
+**v6.3.6** - `regen` on 2.0 no longer leaves old QR and `vpn://` files behind, and step 2 guards harder against a second kernel module: an `amneziawg-dkms` on hold, `APT::Ignore-Hold` and unreadable apt and dpkg answers now stop the install with a clear reason. Docs: the signing key outside GitHub and the client table as of 19 November.
+
 ### Fixed
 
 - **Step 2: the guard against a second kernel module is stricter.** On kernels older than 6.7 and on the prebuilt ARM path the installer holds `amneziawg-dkms` so that `amneziawg-tools` cannot pull a second module from the PPA next to the pinned build. It now stops with a clear message when an earlier `amneziawg-dkms` cannot be removed, a package on hold included, which the old check did not see (it used to be a warning only, and the hold then sat on a package that was still there); it shows the cause from what apt and dpkg answered and when `APT::Ignore-Hold` is enabled in the apt settings, which makes every hold void (or those settings cannot be read). The warning about an `amneziawg-dkms` package next to a prebuilt ARM package now also sees a half-installed package. System cleanup no longer releases the user's own hold on network stack packages when `apt-mark showhold` fails.
@@ -2323,7 +2327,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...HEAD
+[6.3.6]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...v6.3.6
 [6.3.5]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.4...v6.3.5
 [6.3.4]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.3...v6.3.4
 [6.3.3]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.2...v6.3.3

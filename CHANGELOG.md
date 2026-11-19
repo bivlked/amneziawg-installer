@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [6.3.6] - 2026-11-19
+
+**v6.3.6** - `regen` на 2.0 больше не оставляет старые QR и `vpn://`, а шаг 2 строже защищает от второго модуля ядра: пакет `amneziawg-dkms` под hold, `APT::Ignore-Hold` и нечитаемые ответы apt и dpkg теперь останавливают установку с понятной причиной. В документации - ключ подписи вне GitHub и таблица клиентов на 19 ноября.
+
 ### Исправлено
 
 - **Шаг 2: защита от второго модуля ядра стала строже.** На ядрах старее 6.7 и на пути готового ARM-пакета установщик ставит hold на `amneziawg-dkms`, чтобы `amneziawg-tools` не подтянул из PPA второй модуль рядом со сборкой из пинового исходника. Теперь он останавливается с понятным сообщением, если ранее установленный `amneziawg-dkms` не удаётся удалить, в том числе пакет под hold, который прежняя проверка не видела (раньше было только предупреждение, и hold вставал на пакет, который так и оставался); причину он показывает из ответа apt и dpkg и если в настройках apt включено `APT::Ignore-Hold`, при котором hold ничего не держит (или эти настройки не удаётся прочитать). Предупреждение о пакете `amneziawg-dkms` рядом с готовым ARM-пакетом теперь видит и недоустановленный пакет. При очистке системы собственный hold пользователя на пакетах сетевого стека больше не снимается, даже если `apt-mark showhold` не ответил.
@@ -2323,7 +2327,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...HEAD
+[6.3.6]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...v6.3.6
 [6.3.5]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.4...v6.3.5
 [6.3.4]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.3...v6.3.4
 [6.3.3]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.2...v6.3.3
