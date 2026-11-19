@@ -2970,7 +2970,7 @@ awg_userns_module_lines() {
         price="user namespaces can no longer be created at all, root included: rootless containers, application sandboxes, systemd services with PrivateUsers= and Docker with userns-remap stop working."
     fi
     if [[ "$kmver" == [0-2].* ]]; then
-        note=" This module is version ${kmver}: that is the 2.0 line, and the vendor has no fixed 2.0 release. The current installer puts a 3.1 line module with the fix here and keeps the 2.0 profile: run it again with --force (keys and client configs stay; the server reboots)."
+        note=" This module is version ${kmver}: that is the 2.0 line, and the vendor has no fixed 2.0 release. A current installer puts a fixed 3.1 line module on this server and keeps the 2.0 profile: run it again with --force (keys and client configs stay, the server reboots)."
     elif [[ -n "$kmver" && -e "$root/var/lib/dpkg/info/amneziawg-dkms.list" ]]; then
         note=" This module is version ${kmver}, the fix is in 3.1.20261113-02 and newer: sudo apt-get update && sudo apt-get install --only-upgrade amneziawg-dkms, then a reboot, and this warning goes away."
     elif [[ -n "$kmver" ]]; then
