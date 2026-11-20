@@ -24,7 +24,8 @@ setup() {
 }
 
 # The one question the helper asks, all three keys in one call.
-HOLD_ASK="shell a APT::Ignore-Hold/b b Binary::apt::APT::Ignore-Hold/b c Binary::apt-get::APT::Ignore-Hold/b"
+HOLD_ASK_KEYS="a APT::Ignore-Hold/b b Binary::apt::APT::Ignore-Hold/b c Binary::apt-get::APT::Ignore-Hold/b"
+HOLD_ASK="shell $HOLD_ASK_KEYS"
 
 # stub_apt_config <exit code> <output, \n for new lines> [stderr notice] :
 # answers only $HOLD_ASK
@@ -116,7 +117,7 @@ honoured() {
     rm -f "$BIN/apt-config"
     local f conf="$BATS_TEST_TMPDIR/apt.conf"
     # The host's own apt.conf.d is still read; it must not enable the setting.
-    if APT_CONFIG=/dev/null apt-config dump 2>/dev/null | grep -qi 'ignore-hold "true"'; then
+    if [[ "$(APT_CONFIG=/dev/null apt-config shell $HOLD_ASK_KEYS 2>/dev/null)" == *"'true'"* ]]; then
         skip "Ignore-Hold is enabled on this host"
     fi
     for f in "${INSTALLERS[@]}"; do
@@ -237,7 +238,7 @@ purge_env() {
         purge_env "deinstall ok config-files"
         run purge_block "$f"
         [ "$status" -eq 0 ] || { echo "$f: rc $status"; cat "$T"; return 1; }
-        grep -q '^apt-get purge -y amneziawg-dkms amneziawg$' "$T" || { echo "$f: config files not purged"; cat "$T"; return 1; }
+        grep -qxF -- 'apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y amneziawg-dkms amneziawg' "$T" || { echo "$f: config files not purged"; cat "$T"; return 1; }
     done
 }
 

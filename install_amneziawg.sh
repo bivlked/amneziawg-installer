@@ -3751,8 +3751,8 @@ _awg_pkg_held() {
 
 # _awg_apt_hold_honoured : 0, только если apt соблюдает hold: настройка
 # APT::Ignore-Hold прочитана и не включена ни для всех программ apt, ни
-# отдельно для apt или apt-get. С ней apt не смотрит ни на один hold,
-# и защита шага 2 от второго модуля (hold на amneziawg-dkms) ничего не держит,
+# отдельно для apt или apt-get. Программа, для которой она включена, не
+# смотрит ни на один hold, и защита шага 2 от второго модуля (hold на amneziawg-dkms) ничего не держит,
 # хотя проверка hold проходит. Не прочитанная настройка - тоже отказ, а не
 # «выключено»: apt-get может работать и без apt-config, и тогда включённая
 # настройка прошла бы молча. Причину функция пишет сама.
@@ -3761,7 +3761,12 @@ _awg_apt_hold_honoured() {
     # Настройка спрашивается трижды: общая и в разделах Binary::apt и
     # Binary::apt-get. Раздел действует только на свою программу, и apt-config
     # (сам он программа apt-config) общей настройке его не подставляет, а
-    # install_packages ставит пакеты через apt, остальные вызовы - через apt-get.
+    # пакеты ставятся и через apt, и через apt-get.
+    # Граница: раздел Binary::apt-config apt-config применяет к себе сам и из
+    # ответа убирает. Общая "true" вместе с Binary::apt-config::APT::Ignore-Hold
+    # "false" читается как выключенная, и увидеть это через apt-config нельзя.
+    # Такую настройку надо собрать нарочно; разбирать файлы apt.conf руками
+    # ради неё я не стал.
     local -a ask=(a APT::Ignore-Hold/b b Binary::apt::APT::Ignore-Hold/b c Binary::apt-get::APT::Ignore-Hold/b)
     # Разбирается только stdout: в stderr apt-config и при коде 0 пишет
     # уведомления (например, «N: Ignoring file ...» про лишний файл в
@@ -3788,7 +3793,12 @@ _awg_apt_hold_honoured() {
         esac
         log_error "В настройках apt включено $key: apt не соблюдает hold (проверка: apt-config dump | grep -i ignore-hold)."
         return 1
-    done <<< "$out"
+    done <<< "$out" || {
+        # Цикл не выполнился вовсе (не открылся here-string: нет места во
+        # временном каталоге или дескрипторов). Это «не проверил», а не «выключено».
+        log_error "Не удалось разобрать ответ apt-config про APT::Ignore-Hold: не проверить, соблюдает ли apt hold."
+        return 1
+    }
     return 0
 }
 
@@ -4385,7 +4395,7 @@ cleanup_system() {
 
     if [ ${#packages_to_remove[@]} -gt 0 ]; then
         log "Удаление: ${packages_to_remove[*]}"
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y "${packages_to_remove[@]}" || log_warn "Ошибка удаления некоторых пакетов"
+        DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y "${packages_to_remove[@]}" || log_warn "Ошибка удаления некоторых пакетов"
     fi
 
     # Очистка snap артефактов (только Ubuntu)
@@ -4399,13 +4409,19 @@ cleanup_system() {
     if dpkg-query -W -f='${Status}' cloud-init 2>/dev/null | grep -q "ok installed"; then
         if _cloud_init_removable; then
             log "Удаление cloud-init (сеть не зависит от него)..."
-            # Каталоги - только после удаления пакета. Иначе недоудалённый
-            # cloud-init оставался без своих файлов, и следующее обновление
-            # спрашивало про cloud.cfg (Issue #409).
-            if DEBIAN_FRONTEND=noninteractive apt-get purge -y cloud-init 2>/dev/null; then
+            # Каталоги - только когда пакета точно нет: apt ответил успехом И
+            # dpkg его больше не знает. Иначе недоудалённый cloud-init
+            # оставался без своих файлов, и следующее обновление спрашивало
+            # про cloud.cfg (Issue #409). Код apt один ничего не доказывает:
+            # например, с APT::Get::Simulate он равен 0, а не удалено при этом
+            # ничего.
+            local _ci_out _ci_rc=0 _ci_st
+            _ci_out=$(DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y cloud-init 2>&1) || _ci_rc=$?
+            _ci_st=$(LC_ALL=C dpkg-query -W -f='${Status}' cloud-init 2>&1) || true
+            if [[ "$_ci_rc" -eq 0 && ( "$_ci_st" == *not-installed || "$_ci_st" == *"no packages found"* ) ]]; then
                 rm -rf /etc/cloud /var/lib/cloud 2>/dev/null
             else
-                log_warn "Ошибка удаления cloud-init: /etc/cloud и /var/lib/cloud оставлены на месте."
+                log_warn "cloud-init не удалён (код apt $_ci_rc, статус в dpkg: ${_ci_st:-пусто}): он остаётся и отработает при следующей загрузке, /etc/cloud и /var/lib/cloud оставлены на месте. Ответ apt: $(printf '%s' "$_ci_out" | tail -n 3 | tr '\n' ' ')"
             fi
         else
             log_warn "cloud-init управляет сетью — пропускаем удаление."
@@ -5557,9 +5573,9 @@ step_uninstall() {
         else
             log "fail2ban оставлен установленным (стоял до установщика или старая версия инсталлятора)."
         fi
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y "${_purge_pkgs[@]}" 2>/dev/null || log_warn "Ошибка purge."
+        DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y "${_purge_pkgs[@]}" 2>/dev/null || log_warn "Ошибка purge."
     else
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg-tools qrencode 2>/dev/null || log_warn "Ошибка purge."
+        DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y amneziawg-dkms amneziawg-tools qrencode 2>/dev/null || log_warn "Ошибка purge."
     fi
     # Отдельно, чтобы сбой этих пакетов не оставлял остальные; hold, если его
     # поставили руками, apt-get purge -y не даст снять.
@@ -5572,7 +5588,7 @@ step_uninstall() {
         for _kp in "${_kmod_pkgs[@]}"; do
             apt-mark unhold "$_kp" >/dev/null 2>&1 || true
         done
-        if ! _kout=$(DEBIAN_FRONTEND=noninteractive apt-get purge -y "${_kmod_pkgs[@]}" 2>&1); then
+        if ! _kout=$(DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y "${_kmod_pkgs[@]}" 2>&1); then
             log_warn "Не удалось удалить готовый пакет модуля: ${_kmods}. Ответ apt: $(printf '%s' "$_kout" | tr '\n' ' ' | tail -c 300)"
             log_warn "Удалите вручную: sudo apt-mark unhold ${_kmods} && sudo apt-get purge -y ${_kmods}"
         fi
@@ -6578,12 +6594,14 @@ step1_update_and_optimize() {
     # Размен осознанный: VPN-серверу нужно не то, чтобы systemd был
     # непременно свежим, а то, чтобы машина загрузилась. Проверка
     # перед перезагрузкой остаётся вторым рубежом.
-    # --force-confdef --force-confold (здесь, в dpkg --configure -a и в
-    # остальных установках пакетов): DEBIAN_FRONTEND=noninteractive и -y не
-    # отвечают на вопрос dpkg о конфигурационном файле, который правили на
-    # сервере. С открытым stdin обновление ждало ответа вечно, с закрытым
-    # dpkg падал, и повтор падал так же (Issue #409). Теперь dpkg берёт ответ
-    # по умолчанию, а без него оставляет текущий файл, в том числе удалённый.
+    # --force-confdef --force-confold (здесь, в dpkg --configure -a и во всех
+    # остальных вызовах apt, которые ставят или удаляют пакеты: при удалении
+    # apt тоже донастраивает отложенные пакеты): DEBIAN_FRONTEND=noninteractive
+    # и -y не отвечают на вопрос dpkg о конфигурационном файле, который правили
+    # или удалили на сервере. С открытым stdin обновление ждало ответа вечно, с
+    # закрытым dpkg падал, и повтор падал так же (Issue #409). Теперь dpkg берёт
+    # ответ по умолчанию, а без него оставляет текущий файл, в том числе
+    # удалённый.
     if ! DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y --with-new-pkgs; then
         local _lock_holder
         _lock_holder="$(fuser /var/lib/dpkg/lock-frontend 2>/dev/null | tr -s ' ' || true)"
@@ -7318,7 +7336,7 @@ PPASRC
         if [[ "$_dkms_st" != not-installed ]]; then
             log "Обнаружен ранее установленный amneziawg-dkms (AmneziaWG 3.0) - удаляю перед пиновой сборкой."
             # apt-get откажет пакету под hold, dpkg --force-all его снимет.
-            if ! _purge_out=$(DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg 2>&1); then
+            if ! _purge_out=$(DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y amneziawg-dkms amneziawg 2>&1); then
                 _purge_out+=" | $(dpkg --purge --force-all amneziawg-dkms amneziawg 2>&1)" || true
             fi
             # Пакет, переживший purge, остался бы под hold ниже: проверка hold

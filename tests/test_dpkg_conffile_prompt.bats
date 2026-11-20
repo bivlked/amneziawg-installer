@@ -2,73 +2,129 @@
 # Issue #409: DEBIAN_FRONTEND=noninteractive and -y do not answer dpkg's
 # conffile prompt ("*** cloud.cfg (Y/I/N/O/D/Z) [default=N] ?"). With stdin
 # open, step 1 waited on it forever; with stdin closed, dpkg failed on it and
-# the `dpkg --configure -a` retry failed the same way. Every apt call that can
-# install or upgrade a package now passes --force-confdef --force-confold
+# the `dpkg --configure -a` retry failed the same way. Every apt call in the
+# six scripts that installs, upgrades or removes packages (a removal also makes
+# apt configure pending packages) now passes --force-confdef --force-confold
 # (take the default answer, otherwise keep the current file), and so does
 # every `dpkg --configure -a`.
+#
+# The calls are found by their verb, not by their prefix, so a new call
+# written without DEBIAN_FRONTEND or with the options in the wrong place is
+# found and fails; text inside messages (log, die, fix hints) is cut out first.
 
 bats_require_minimum_version 1.5.0
 
-INSTALLERS=(install_amneziawg.sh install_amneziawg_en.sh)
+SCRIPTS=(install_amneziawg.sh install_amneziawg_en.sh awg_common.sh awg_common_en.sh manage_amneziawg.sh manage_amneziawg_en.sh)
 APT_KEEP='-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold'
-DPKG_KEEP='--force-confdef --force-confold'
+APT_RE='(DEBIAN_FRONTEND=noninteractive +)?\bapt(-get)?( +-o +[^ ]+| +-[a-zA-Z-]+)* +(install|upgrade|dist-upgrade|full-upgrade|reinstall|purge|remove|autoremove)( +-s( |$))?'
+DPKG_RE='(DEBIAN_FRONTEND=noninteractive +)?\bdpkg( +-[^ ]+)* +--configure( +-[^ ;|)]+)*'
 
-# Executed apt and apt-get calls that install or upgrade, comments excluded.
-# Every such call in the installers runs with DEBIAN_FRONTEND=noninteractive,
-# which is what tells it apart from the same words inside a message.
-live_apt_calls() {
+# code_of <script> : the script without comment lines and without the text of
+# double-quoted strings, except strings that open a command substitution
+# ("$(...)"), which hold real calls.
+code_of() {
     grep -vE '^[[:space:]]*#' "$BATS_TEST_DIRNAME/../$1" \
-        | grep -E 'DEBIAN_FRONTEND=noninteractive apt(-get)? ' \
-        | grep -E ' (install|upgrade) ' \
-        | grep -vE 'upgrade -s '
+        | sed -E 's/"([^"$]|\$[^("])[^"]*"//g'
 }
 
-@test "conffile: every executed apt install or upgrade keeps current config files, both installers" {
-    local f n line
-    for f in "${INSTALLERS[@]}"; do
+@test "conffile: every apt call that installs, upgrades or removes keeps current config files, all six scripts" {
+    local f n call min
+    for f in "${SCRIPTS[@]}"; do
         n=0
-        while IFS= read -r line; do
+        while IFS= read -r call; do
+            [ -n "$call" ] || continue
+            # a dry run (-s) changes nothing and asks nothing
+            [[ "$call" =~ \ -s\ ?$ ]] && continue
             n=$((n + 1))
-            [[ "$line" =~ apt(-get)?\ $APT_KEEP(\ -o\ [^ ]+)*\ (install|upgrade)\  ]] \
-                || { echo "$f: apt call without the conffile options: $line"; return 1; }
-        done < <(live_apt_calls "$f")
-        # step 1 (2 upgrades), install_packages, two restore passes, two
-        # netplan restores, gcc-13, kernel meta package
-        [ "$n" -ge 9 ] || { echo "$f: only $n apt calls found"; return 1; }
+            case "$call" in
+                "DEBIAN_FRONTEND=noninteractive apt-get $APT_KEEP install"|\
+                "DEBIAN_FRONTEND=noninteractive apt-get $APT_KEEP upgrade"|\
+                "DEBIAN_FRONTEND=noninteractive apt-get $APT_KEEP purge"|\
+                "DEBIAN_FRONTEND=noninteractive apt $APT_KEEP install"|\
+                "DEBIAN_FRONTEND=noninteractive apt $APT_KEEP -o Apt::Cmd::Disable-Script-Warning=true install") ;;
+                *) echo "$f: apt call not in the allowed form: [$call]"; return 1 ;;
+            esac
+        done < <(code_of "$f" | grep -oE "$APT_RE")
+        # installers: 2 upgrades, install_packages, 2 restore passes, 2 netplan
+        # restores, gcc-13, kernel meta package, 6 purges; awg_common: headers
+        case "$f" in
+            install_*) min=15 ;;
+            awg_common*) min=1 ;;
+            *) min=0 ;;
+        esac
+        [ "$n" -ge "$min" ] || { echo "$f: only $n apt calls found, expected at least $min"; return 1; }
     done
 }
 
-@test "conffile: every dpkg --configure -a keeps current config files, both installers" {
-    local f n line
-    for f in "${INSTALLERS[@]}"; do
+@test "conffile: every dpkg --configure keeps current config files, all six scripts" {
+    local f n call min
+    for f in "${SCRIPTS[@]}"; do
         n=0
-        while IFS= read -r line; do
+        while IFS= read -r call; do
+            [ -n "$call" ] || continue
             n=$((n + 1))
-            [[ "$line" == *"dpkg --configure -a $DPKG_KEEP"* ]] \
-                || { echo "$f: dpkg --configure -a without the conffile options: $line"; return 1; }
-        done < <(grep -vE '^[[:space:]]*#' "$BATS_TEST_DIRNAME/../$f" | grep -E 'noninteractive dpkg ')
+            [ "$call" = "DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold" ] \
+                || { echo "$f: dpkg call not in the allowed form: [$call]"; return 1; }
+        done < <(code_of "$f" | grep -oE "$DPKG_RE")
         # step 1: the repair before the upgrade and the retry; helper --finish
-        [ "$n" -ge 3 ] || { echo "$f: only $n dpkg calls found"; return 1; }
-        # and no dpkg --configure runs without the noninteractive prefix
-        run grep -cE '^[[:space:]]*(if ! )?dpkg [^"]*--configure' "$BATS_TEST_DIRNAME/../$f"
-        [ "$output" = "0" ] || { echo "$f: a bare dpkg --configure call"; return 1; }
+        case "$f" in install_*) min=3 ;; *) min=0 ;; esac
+        [ "$n" -ge "$min" ] || { echo "$f: only $n dpkg calls found, expected at least $min"; return 1; }
     done
 }
 
-@test "conffile: install_packages passes the options to apt, both installers" {
+@test "conffile: the call finder sees the shapes it must judge" {
+    # The two tests above are only as good as their finder: each of these must
+    # be found (and would then fail the allowed-form check).
+    local s
+    for s in 'apt-get install -y x' \
+             'DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y x' \
+             'out=$(apt-get -o Dpkg::Options::=--force-confask install -y x)' \
+             'apt-get dist-upgrade -y' 'apt full-upgrade -y' 'apt-get purge -y x' \
+             'true || DEBIAN_FRONTEND=noninteractive apt install -y x'; do
+        [ -n "$(printf '%s\n' "$s" | grep -oE "$APT_RE")" ] || { echo "not found: $s"; return 1; }
+    done
+    for s in 'if dpkg --configure -a; then' 'out=$(dpkg --configure -a 2>&1)' \
+             'timeout 600 dpkg --configure -a' 'x || dpkg --force-confold --configure -a'; do
+        [ -n "$(printf '%s\n' "$s" | grep -oE "$DPKG_RE")" ] || { echo "not found: $s"; return 1; }
+    done
+    # and message text is cut out, while a call inside "$(...)" is kept
+    run bash -c "printf '%s\n' 'log_warn \"run: apt-get install -y x\"' | sed -E 's/\"([^\"\$]|\\\$[^(\"])[^\"]*\"//g' | grep -cE 'apt-get install'"
+    [ "$output" = "0" ]
+    run bash -c "printf '%s\n' 'r=\"\$(DEBIAN_FRONTEND=noninteractive apt-get install -y \"\$p\")\"' | sed -E 's/\"([^\"\$]|\\\$[^(\"])[^\"]*\"//g' | grep -cE 'apt-get install'"
+    [ "$output" = "1" ]
+}
+
+@test "conffile: install_packages runs apt noninteractive with the options, both installers" {
     local f body
-    for f in "${INSTALLERS[@]}"; do
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
         body=$(awk '/^install_packages\(\) \{/,/^\}$/' "$BATS_TEST_DIRNAME/../$f")
         [ -n "$body" ]
         mkdir -p "$BATS_TEST_TMPDIR/bin"
         printf '#!/bin/bash\nexit 1\n' > "$BATS_TEST_TMPDIR/bin/dpkg-query"
-        printf '#!/bin/bash\necho "$*" > "%s/apt-args"\nexit 0\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/bin/apt"
+        printf '#!/bin/bash\necho "${DEBIAN_FRONTEND:-UNSET} $*" > "%s/apt-args"\nexit 0\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/bin/apt"
         chmod +x "$BATS_TEST_TMPDIR/bin/dpkg-query" "$BATS_TEST_TMPDIR/bin/apt"
         rm -f "$BATS_TEST_TMPDIR/apt-args"
         run env PATH="$BATS_TEST_TMPDIR/bin:$PATH" LOG_FILE=/dev/null timeout 30 bash -c \
             'log() { :; }; log_warn() { :; }; die() { echo "DIE $*"; exit 1; }; _APT_UPDATED=1; _install_temp_files=(); eval "$1"; install_packages curl' _ "$body"
         [ "$status" -eq 0 ] || { echo "$f: $status $output"; return 1; }
-        [[ "$(cat "$BATS_TEST_TMPDIR/apt-args")" == "$APT_KEEP "*"install -y curl" ]] \
+        [ "$(cat "$BATS_TEST_TMPDIR/apt-args")" = "noninteractive $APT_KEEP -o Apt::Cmd::Disable-Script-Warning=true install -y curl" ] \
             || { echo "$f: apt got: $(cat "$BATS_TEST_TMPDIR/apt-args")"; return 1; }
+    done
+}
+
+@test "conffile: the kernel headers install in the library runs noninteractive with the options, both libraries" {
+    local f body
+    for f in awg_common.sh awg_common_en.sh; do
+        body=$(awk '/^_install_kernel_headers\(\) \{/,/^\}$/' "$BATS_TEST_DIRNAME/../$f")
+        [ -n "$body" ]
+        mkdir -p "$BATS_TEST_TMPDIR/bin"
+        printf '#!/bin/bash\necho "${DEBIAN_FRONTEND:-UNSET} $*" >> "%s/apt-get-args"\nexit 0\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/bin/apt-get"
+        chmod +x "$BATS_TEST_TMPDIR/bin/apt-get"
+        rm -f "$BATS_TEST_TMPDIR/apt-get-args"
+        run env PATH="$BATS_TEST_TMPDIR/bin:$PATH" AWG_ALLOW_APT_IN_ENSURE=1 OS_ID=ubuntu timeout 30 bash -c \
+            'log() { :; }; log_warn() { :; }; log_error() { echo "ERR $*"; }; eval "$1"; _install_kernel_headers 6.8.0-151-generic' _ "$body"
+        [ "$status" -eq 0 ] || { echo "$f: $status $output"; return 1; }
+        [ "$(head -1 "$BATS_TEST_TMPDIR/apt-get-args")" = "noninteractive $APT_KEEP install -y linux-headers-6.8.0-151-generic" ] \
+            || { echo "$f: apt-get got: $(cat "$BATS_TEST_TMPDIR/apt-get-args")"; return 1; }
     done
 }

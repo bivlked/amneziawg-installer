@@ -1384,7 +1384,7 @@ _install_kernel_headers() {
 
     local pkg
     for pkg in "${candidates[@]}"; do
-        if apt-get install -y "$pkg" >/dev/null 2>&1; then
+        if DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y "$pkg" >/dev/null 2>&1; then
             log "Installed kernel headers: $pkg"
             return 0
         fi

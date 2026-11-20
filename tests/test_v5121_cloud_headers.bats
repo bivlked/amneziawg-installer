@@ -34,7 +34,9 @@ setup() {
     # any real apt repository.
     cat > "$MOCK_BIN/apt-get" << 'STUB'
 #!/bin/bash
-# Args: install -y <pkg>  → log pkg, exit 1 (simulate "not found")
+# Args: [-o OPTION]... install -y <pkg>  → log pkg, exit 1 (simulate "not found")
+# The -o pairs are the dpkg conffile options (Issue #409), pinned elsewhere.
+while [[ "$1" == "-o" ]]; do shift 2; done
 if [[ "$1" == "install" ]]; then
     shift
     while [[ $# -gt 0 ]]; do
