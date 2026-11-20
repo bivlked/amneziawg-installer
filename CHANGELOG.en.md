@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [6.3.6] - 2026-11-19
+## [6.3.6] - 2026-11-20
 
 **v6.3.6** - `regen` on 2.0 no longer leaves old QR and `vpn://` files behind, and step 2 guards harder against a second kernel module: an `amneziawg-dkms` on hold, `APT::Ignore-Hold` and unreadable apt and dpkg answers now stop the install with a clear reason. Docs: the signing key outside GitHub and the client table as of 19 November.
 
