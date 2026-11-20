@@ -475,7 +475,7 @@ You can send only some of a phone's apps through the VPN, or take some apps out 
 
 **In short:**
 
-- to send only the apps you need through the VPN, pick "Include only" (AmneziaWG) or "Via VPN" (Amnezia VPN) and tick them, the rest goes directly (unless "Block connections without VPN" is on in the phone, more on it below);
+- to send only the apps you need through the VPN, pick "Include only" (AmneziaWG) or "Via VPN" (Amnezia VPN) and tick them, the rest should go directly (unless "Block connections without VPN" is on in the phone, more on it below);
 - if Wi-Fi calls (VoWiFi) or some apps stop working with the VPN on, try the "everything except these" mode: everything goes into the tunnel except the apps you tick. On the phone from [D#215](https://github.com/bivlked/amneziawg-installer/discussions/215) it brought back Wi-Fi calls and the other apps;
 - you removed an app that was on the list, and the tunnel no longer comes up: open the list and save it again (details below);
 - in the light AmneziaWG the selection lives in the tunnel itself, and a fresh import of the profile from the server resets it. How to carry the list over is described below.
@@ -516,7 +516,7 @@ A separate word about the Android setting "Block connections without VPN" (in th
 - **One removed app keeps the tunnel from coming up.** Before connecting, both clients hand Android every name from the list one by one without checking that the app is installed, and Android answers an unknown name with an error. In AmneziaWG this looks like "Error bringing up tunnel: ..."; what Amnezia VPN shows, I have not checked. The fix is the same: open the list and save it; in AmneziaWG apps that are no longer installed drop out on save by themselves. This hits your own list after you remove an app and someone else's list carried over to another phone: a shared list only makes sense if it holds apps that everyone has.
 - **A fresh import of the profile resets the selection in AmneziaWG.** After `manage modify` and `regen` the client gets a new profile, and on the phone it is imported again, without the list (`regen` does not change the keys, the import itself is the reason). To avoid ticking everything again, export the tunnels to zip, open the old `.conf` in a text editor, copy the `ExcludedApplications = ...` line (or `IncludedApplications = ...`) into the `[Interface]` section of the new one and import that. Before you do, remove the apps that are no longer on the phone from the line.
 - **A config with an app list does not import into AmneziaWG for iOS, macOS and Windows** (from the source code as of 20 November 2026). Their parsers do not know these keys and reject the whole file. For another device take the config from the server, not an export from the phone, or delete the line.
-- **Amnezia VPN keeps the lists in the app settings**, shared by all servers (one per mode), and puts them into the settings backup. When the backup is restored on another platform, the lists are cleared.
+- **Amnezia VPN keeps the lists in the app settings**, shared by all servers (one per mode), and puts them into the settings backup. When the backup is restored on another platform, the app list is cleared.
 
 #### How this relates to the server
 
