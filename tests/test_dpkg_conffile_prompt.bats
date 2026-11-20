@@ -11,9 +11,13 @@
 # The calls are found by their verb, not by their prefix, so a new call
 # written without DEBIAN_FRONTEND or with the options in the wrong place is
 # found and fails. Message text is cut out by its caller (log*, die, printf,
-# echo, the fix= and note= hints), not by parsing quotes: a quote parser
-# loses the pairing after "$(...)" and would hide the code that follows. The
-# counts are exact, so a call that does disappear from the finder shows up.
+# echo at the start of a command, the fix=/note= hints), not by parsing
+# quotes: a quote parser loses the pairing after "$(...)" and would hide the
+# code that follows. Cutting to the end of the line still hides a call written
+# after a message on the same line (`echo "x"; apt-get ...`), so a second,
+# independent guard counts every mention of an apt or dpkg call in each
+# script without cutting anything: any new mention, hidden or not, changes
+# that count and has to be looked at.
 
 bats_require_minimum_version 1.5.0
 
@@ -29,7 +33,7 @@ code_of() {
     grep -vE '^[[:space:]]*#' "$BATS_TEST_DIRNAME/../$1" | strip_messages
 }
 strip_messages() {
-    sed -E 's/(^|[^[:alnum:]_])(log|log_warn|log_error|log_debug|log_line|die|printf|echo)( .*|$)/\1/; s/(^|[ ;])(local +)?[[:alnum:]_]*(fix|note)="[^"]*"/\1/g'
+    sed -E 's/(^[[:space:]]*|[;&|({)][[:space:]]*|[[:space:]](then|else|do)[[:space:]]+)(log|log_warn|log_error|log_debug|log_line|die|printf|echo)( .*|$)/\1/; s/(^|[[:space:];)])(local +)?(fix|note|_dfix)="[^"]*"/\1/g'
 }
 
 @test "conffile: every apt call that installs, upgrades or removes keeps current config files, all six scripts" {
@@ -78,6 +82,25 @@ strip_messages() {
     done
 }
 
+@test "conffile: every mention of an apt or dpkg call is counted, nothing cut, all six scripts" {
+    # Calls plus the same words inside messages and hints. A change here means
+    # a call or a message was added or removed: check it is not a call hidden
+    # behind a message on the same line, then update the number.
+    local f raw a d want
+    for f in "${SCRIPTS[@]}"; do
+        raw=$(grep -vE '^[[:space:]]*#' "$BATS_TEST_DIRNAME/../$f")
+        a=$(grep -oE "$APT_RE" <<< "$raw" | wc -l)
+        d=$(grep -oE "$DPKG_RE" <<< "$raw" | wc -l)
+        case "$f" in
+            install_amneziawg.sh) want="35 20" ;;
+            install_amneziawg_en.sh) want="34 20" ;;
+            awg_common.sh|awg_common_en.sh) want="6 0" ;;
+            manage_amneziawg.sh|manage_amneziawg_en.sh) want="4 3" ;;
+        esac
+        [ "$a $d" = "$want" ] || { echo "$f: apt/dpkg mentions $a $d, expected $want"; return 1; }
+    done
+}
+
 @test "conffile: the call finder sees the shapes it must judge" {
     # The two tests above are only as good as their finder: each of these must
     # be found (and would then fail the allowed-form check).
@@ -104,6 +127,15 @@ strip_messages() {
         [ -z "$(printf '%s\n' "$s" | strip_messages | grep -oE "$APT_RE")" ] || { echo "message seen as a call: $s"; return 1; }
     done
     [ -n "$(printf '%s\n' 'apt-get purge -y x || log_warn "purge failed"' | strip_messages | grep -oE "$APT_RE")" ]
+    # names that only end like a caller or a hint are code, not messages
+    for s in 'mkdir -p /var/log && apt-get install -y x' 'prefix="$(apt-get install -y x)"' \
+             '_die_upgrade_failed; apt-get install -y x'; do
+        [ -n "$(printf '%s\n' "$s" | strip_messages | grep -oE "$APT_RE")" ] || { echo "code cut as a message: $s"; return 1; }
+    done
+    # the known boundary: a call after a message on the same line is cut here,
+    # and only the uncut count above sees it
+    [ -z "$(printf '%s\n' 'echo "x"; apt-get install -y y' | strip_messages | grep -oE "$APT_RE")" ]
+    [ -n "$(printf '%s\n' 'echo "x"; apt-get install -y y' | grep -oE "$APT_RE")" ]
 }
 
 @test "conffile: install_packages runs apt noninteractive with the options, both installers" {
