@@ -509,7 +509,7 @@ Traffic is split by the owner of the connection, not by the app's name:
 
 Wi-Fi calls are usually handled by a system service of the phone, not by an app from your list. I have not measured why a VPN gets in their way, and one phone cannot tell. If the call traffic ends up in the tunnel, the carrier may refuse a connection from a foreign address; if it goes around the tunnel, the cause is something else. The check is simple: turn the VPN off and make a call. If the call goes through, try the "everything except these" mode.
 
-The Android setting "Block connections without VPN" (in the phone's VPN settings, next to "Always-on VPN") keeps off the network whatever goes around the tunnel. With it on, in the "only these" mode everything that is not on the list stays offline, and in the "everything except these" mode the excluded apps do. If you split traffic by app, it is better to turn this setting off.
+The Android setting "Block connections without VPN" (in the phone's VPN settings, next to "Always-on VPN") is meant to keep off the network whatever goes around the tunnel: in the "only these" mode everything that is not on the list, in the "everything except these" mode the excluded apps. Do not rely on it as leak protection with a per-app split: in the report [amnezia-client#2757](https://github.com/amnezia-vpn/amnezia-client/issues/2757) a browser outside the list stayed online with the setting on. If you split traffic by app, it is better to turn this setting off.
 
 #### Pitfalls
 
