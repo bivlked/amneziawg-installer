@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.7] - 2026-11-20
+
+**v6.3.7** - step 1 gets past dpkg's config file questions even when the files were changed or deleted on the server (#409), and step 2 notices `APT::Ignore-Hold` enabled only for `apt` or `apt-get`. The docs bring the client table up to 20 November.
+
 ### Fixed
 
 - **Step 1 no longer stops at dpkg's config file question ([#409](https://github.com/bivlked/amneziawg-installer/issues/409), thanks to @HoangHashimoto for the analysis and the reproduction).** When a package's config file was changed or deleted on the server (for example cloud-init's `/etc/cloud/cloud.cfg`), dpkg asks during the upgrade which version to keep, and `DEBIAN_FRONTEND=noninteractive` and `-y` do not answer that question. With a terminal attached step 1 waited for an answer forever, without one it failed, and the `dpkg --configure -a` retry failed the same way. Now `--force-confdef --force-confold` go to the system upgrade, to `dpkg --configure -a` and to every other apt call that installs or removes packages (a removal also makes apt configure pending packages), the kernel headers install in `manage repair-module` included: dpkg takes the default answer, and when there is none it keeps the current file (a deleted one stays deleted). The system cleanup removes `/etc/cloud` and `/var/lib/cloud` only when cloud-init is really gone: apt reported success and dpkg no longer knows the package. Otherwise the directories stay and the log has a warning with apt's code and answer.
@@ -2336,7 +2340,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...HEAD
+[6.3.7]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...v6.3.7
 [6.3.6]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...v6.3.6
 [6.3.5]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.4...v6.3.5
 [6.3.4]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.3...v6.3.4
