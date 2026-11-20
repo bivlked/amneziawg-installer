@@ -56,7 +56,8 @@ case "$pkg" in
         exit 1
         ;;
     netplan.io|netplan-generator|systemd-networkd|systemd-resolved)
-        echo "install ok installed"
+        # MOCK_DPKG_HELD: packages whose dpkg selection is hold
+        if [[ " ${MOCK_DPKG_HELD:-} " == *" $pkg "* ]]; then echo "hold ok installed"; else echo "install ok installed"; fi
         exit 0
         ;;
     *)
@@ -100,7 +101,7 @@ SHIM
 #!/bin/bash
 echo "apt-mark $*" >> "$TRACE"
 case "$1" in
-    showhold) printf '%s\n' "${MOCK_PREEXISTING_HOLDS:-}" ;;
+    showhold) printf '%s\n' "${MOCK_PREEXISTING_HOLDS:-}"; exit "${MOCK_SHOWHOLD_RC:-0}" ;;
 esac
 exit 0
 SHIM
@@ -157,6 +158,9 @@ SHIM
     # Extract cleanup_system from install_amneziawg.sh into a sourceable file.
     awk '/^cleanup_system\(\) \{/,/^}$/' "$BATS_TEST_DIRNAME/../install_amneziawg.sh" \
         > "$TEST_DIR/cleanup_system.bash"
+    # the hold helper cleanup_system asks about a user's own holds
+    awk '/^_awg_pkg_held\(\) \{/,/^}$/' "$BATS_TEST_DIRNAME/../install_amneziawg.sh" \
+        >> "$TEST_DIR/cleanup_system.bash"
     # Stub the logger and die so the function does not need awg_common.sh.
     cat > "$TEST_DIR/loader.bash" <<'LOADER'
 log()       { echo "LOG: $*" >> "$TRACE"; }
@@ -281,6 +285,18 @@ call_cleanup() {
     grep -qE '^apt-mark unhold netplan-generator$' "$TRACE"
 }
 
+@test "a user hold stays when showhold fails: dpkg selection is asked first" {
+    # A failing showhold used to leave the snapshot of the user's holds empty,
+    # so cleanup took the user's hold for its own and released it at the end.
+    export MOCK_SHOWHOLD_RC=1
+    export MOCK_DPKG_HELD="netplan.io"
+    call_cleanup
+    run ! grep -qE '^apt-mark hold netplan\.io$'   "$TRACE"
+    run ! grep -qE '^apt-mark unhold netplan\.io$' "$TRACE"
+    grep -qE '^apt-mark hold netplan-generator$'   "$TRACE"
+    grep -qE '^apt-mark unhold netplan-generator$' "$TRACE"
+}
+
 @test "v5.14.3: recovery FAILS to restore route ->die() called with --no-tweaks advice" {
     export MOCK_PRE_ROUTE="default via 10.0.0.1 dev eth0"
     export MOCK_POST_ROUTE=""
@@ -300,6 +316,16 @@ call_cleanup() {
 }
 
 # --- Structural / RU+EN parity ---
+
+@test "structural: both cleanup_system twins ask _awg_pkg_held and keep no showhold snapshot" {
+    local f body
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        body=$(awk '/^cleanup_system\(\) \{/,/^}$/' "$BATS_TEST_DIRNAME/../$f")
+        grep -qxF '            if _awg_pkg_held "$_hpkg"; then' <<< "$body" || { echo "$f: no _awg_pkg_held"; return 1; }
+        run grep -c '_preexisting_holds' <<< "$body"
+        [ "$output" = "0" ] || { echo "$f: snapshot still there"; return 1; }
+    done
+}
 
 @test "structural: install_amneziawg.sh + _en.sh cleanup_system functions are line-equal" {
     local RU EN

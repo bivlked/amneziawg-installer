@@ -113,13 +113,13 @@ _arm_module_version_h() {
 }
 
 # 0 when the version carries the vendor fix for amneziawg-linux-kernel-module#233
-# (3.1.20261113-02 and newer). The same boundary as _awg_kmod_has_233_fix in
-# awg_common.sh, kept in step by a test: a prebuilt that check/diagnose would
-# still call unfixed must not be published.
+# (3.1.20261113-02 and newer, on the 3.1 line or later). The same boundary as
+# _awg_kmod_has_233_fix in awg_common.sh, kept in step by a test: a prebuilt
+# that check/diagnose would still call unfixed must not be published.
 _arm_version_has_233_fix() {
-    [[ "${1:-}" =~ ^([0-9]+)\.[0-9]+\.([0-9]{8})(-([0-9]{1,4}))?([^0-9]|$) ]] || return 1
-    local maj=$((10#${BASH_REMATCH[1]})) day=$((10#${BASH_REMATCH[2]})) suf="${BASH_REMATCH[4]}"
-    (( maj >= 3 )) || return 1
+    [[ "${1:-}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]{8})(-([0-9]{1,4}))?([^0-9]|$) ]] || return 1
+    local maj=$((10#${BASH_REMATCH[1]})) mnr=$((10#${BASH_REMATCH[2]})) day=$((10#${BASH_REMATCH[3]})) suf="${BASH_REMATCH[5]}"
+    (( maj > 3 || (maj == 3 && mnr >= 1) )) || return 1
     (( day > 20261113 )) && return 0
     (( day == 20261113 )) && [[ -n "$suf" ]] && (( 10#$suf >= 2 ))
 }
@@ -199,7 +199,7 @@ fi
 WG_VERSION="$(_arm_module_version_h "$WORK_DIR/src/src")"
 echo "Module version (version.h): $WG_VERSION"
 if ! _arm_version_has_233_fix "$WG_VERSION"; then
-    echo "ERROR: module $WG_VERSION has no fix for amneziawg-linux-kernel-module#233 (needs 3.1.20261113-02 or newer); refusing to build packages that would replace fixed ones" >&2
+    echo "ERROR: module $WG_VERSION has no fix for amneziawg-linux-kernel-module#233 (needs the 3.1 line or later, 3.1.20261113-02 or newer); refusing to build packages that would replace fixed ones" >&2
     exit 1
 fi
 

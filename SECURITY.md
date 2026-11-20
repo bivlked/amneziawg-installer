@@ -57,4 +57,4 @@ Not covered by the signatures: the prebuilt ARM kernel-module packages in the `a
 
 Signatures start with v5.29.0 (30 August 2026). Earlier releases have no `.minisig` assets, and for those the protection is what it always was: HTTPS from `raw.githubusercontent.com` at a pinned tag.
 
-One limit worth stating plainly. Fetching the script, its signature and `KEYS.txt` from the same release in one go proves the three agree with each other, not who produced them: whoever could replace the script could replace the key beside it. The check starts to mean something once the key is one you saved earlier or obtained from an independent source.
+One limit worth stating plainly. Fetching the script, its signature and `KEYS.txt` from the same release in one go proves the three agree with each other, not who produced them: whoever could replace the script could replace the key beside it. The check starts to mean something once the key is one you saved earlier or obtained from an independent source. I posted the whole key outside GitHub on 1 October 2026, in [post #28 on ntc.party](https://ntc.party/t/22685/28): compare the key you use with that post.

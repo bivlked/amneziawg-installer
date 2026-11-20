@@ -309,6 +309,8 @@ module and on amneziawg-go. This does not explain the drop in speed, it is a dif
 With this installer's 3.1 profile (`H1`-`H4` = 1-4 and a header protection key) the share is
 negligible. Analysis and measurements: [amneziawg-linux-kernel-module#226](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/226).
 
+If you turn the flag on anyway, set `S1`-`S4` to the same value: the vendor recommends that in the [amneziawg-go README](https://github.com/amnezia-vpn/amneziawg-go/blob/876c2437e48528ec951529e4c13baf01b5b4776b/README.md#random-trailers-awg-31), because packet sizes become random and the packet type is easier to mistake.
+
 <a id="awg3-gotchas-adv"></a>
 ### Three things that can cost you an evening
 
@@ -347,7 +349,7 @@ Since version 6.0.0 a new install without a flag gets the 3.1 profile. It differ
 What the profile leaves out, and why:
 
 - **`RandomTrailers`** is two-sided, and together with the rest of the obfuscation it cuts throughput by tens of times (measurement in [What has to match](#awg3-must-match-adv)). It stays off until a fix ships.
-- **`DisableCookies`** takes away, together with the cookie-reply signature, the protection against handshake floods from spoofed addresses (see [What 3.1 added](#awg3-31-adv)).
+- **`DisableCookies`** takes away, together with the cookie-reply signature, the protection against handshake floods from spoofed addresses (see [What 3.1 added](#awg3-31-adv)). According to the [amneziawg-go README](https://github.com/amnezia-vpn/amneziawg-go/blob/876c2437e48528ec951529e4c13baf01b5b4776b/README.md#disable-cookies-awg-31), the flag turns off the whole under-load logic: the MAC2 check, cookie replies and handshake rate limiting.
 - **The timer parameters** are one-sided and safe, but without a separate measurement they buy little, so the installer does not set them.
 
 The configs carry no `RandomTrailers` or `DisableCookies` line at all, not even with the value `off`.
@@ -1209,7 +1211,7 @@ The form of any emergency exit (die, bad option, confirmation refusal, signal):
 Field notes:
 
 - `applied` - whether the config was applied to the live interface. `regen` and `modify` have no such field: they do not change server state (keys and IPs are reused). Always `false` under `AWG_SKIP_APPLY=1`.
-- `qr`/`vpnuri` - a path if the file existed at response time. For `add` and `regen`, QR and URI are generated outside the config lock: a parallel operation can remove the file, no freshness guarantee. For `modify` the previous copies are removed before the edit and the rebuild runs under the same lock: a file that could not be built is missing and the field is `null`. Without a parallel operation on the same client, a path leads to a copy built from the new `.conf`.
+- `qr`/`vpnuri` - a path if the file existed at response time. For `add` and `regen`, QR and URI are generated outside the config lock: a parallel operation can remove the file, no freshness guarantee. For `modify` the previous copies are removed before the edit and the rebuild runs under the same lock: a file that could not be built is missing and the field is `null`. `regen` also removes the previous copies before it rewrites the `.conf`, so on 2.0 a file that could not be built is missing rather than left over from the old config; on 3.1 such a regen fails and, unless another operation changed the client meanwhile, puts the whole previous set back. Without a parallel operation on the same client, a path leads to a copy built from the new `.conf`.
 - `results[].allowed_ips` (`add`, entries with status `created`) - the client's applied routes, read from the just-created `.conf`. May differ from the `--allowed-ips` argument: a full-tunnel IPv4 list gets an IPv6 route added (`::/0`, `2000::/3` or the tunnel ULA, the iOS rule). `null` means the value could not be read - the reason goes to the log as an error, like `qr`/`vpnuri`. For an external consumer (a bot) the field removes the verification call after creation (Issue #253).
 - `restore` returns an envelope on failure too (with `error` and `rolled_back` - the bot needs to know whether a rollback happened). With `rolled_back: true` it also carries `rollback_complete`: `false` means the rollback could not return some files, the reasons and the snapshot path are on stderr. `restored.clients` is the number of `[Peer]` blocks in the restored server config, not files in the working directory.
 - `repair-module.rc` - the internal module-check code (0 - module and service OK, 1 - module failed, 2 - module OK, service down), not the process exit code.
@@ -1298,7 +1300,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common_en.sh` and `manage_amneziawg_en.sh` (the Russian installer: `awg_common.sh` and `manage_amneziawg.sh`) from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.5/awg_common_en.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.6/awg_common_en.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -1662,9 +1664,9 @@ sudo ufw reload</pre>
 <a id="faq-first-packet-adv"></a>
 <details>
   <summary><strong>Q: The tunnel is up, but the first request opens with a delay</strong></summary>
-  <b>A:</b> Clients built on the amneziawg-go engine (the lightweight AmneziaWG for Android, iOS, macOS and Windows, Amnezia VPN) have a known race: the very first data packet after the tunnel comes up can leave with the default <code>S4</code> padding (0) instead of the configured one, and the server drops it (<a href="https://github.com/amnezia-vpn/amneziawg-go/issues/168">amneziawg-go#168</a>; a fix is proposed in <a href="https://github.com/amnezia-vpn/amneziawg-go/pull/184">#184</a> and is not merged as of 13 October 2026). Losing the first packet usually means a TCP or DNS retry, so a delay; if the application does not retry, the request can time out. WG Tunnel is built on its own fork of that engine; whether the fork has this race we did not check. On its own this race does not point to a problem in the config or on the server.
+  <b>A:</b> Clients built on the amneziawg-go engine (the lightweight AmneziaWG for Android, iOS, macOS and Windows, Amnezia VPN) have a known race: the very first data packet after the tunnel comes up can leave with the default <code>S4</code> padding (0) instead of the configured one, and the server drops it (<a href="https://github.com/amnezia-vpn/amneziawg-go/issues/168">amneziawg-go#168</a>; on 16 November 2026 the vendor merged its own change of that code into amneziawg-go, <a href="https://github.com/amnezia-vpn/amneziawg-go/pull/216">#216</a> (tag <code>v3.1.20261116</code>), and closed the earlier proposals, <a href="https://github.com/amnezia-vpn/amneziawg-go/pull/184">#184</a> among them; #168 itself is still open as of 19 November 2026, and no vendor client is built on that tag yet). Losing the first packet usually means a TCP or DNS retry, so a delay; if the application does not retry, the request can time out. WG Tunnel is built on its own fork of that engine; whether the fork has this race I did not check. On its own this race does not point to a problem in the config or on the server.
   <br><br>
-  In our check on 13 October 2026 with a 3.1 profile there was no delay attributable to this race: AmneziaWG 3.1.4 on Android opened the page in under a second in 10 reconnects out of 10, WG Tunnel 5.8.1 just as fast. On Windows, AmneziaWG 3.1.0 opened the first page after about 3 seconds, but the 2.0 profile behaved the same way: that is the time Windows spends checking the address of the tunnel adapter (DAD), and the protocol itself accounts for about 0.2 seconds. The result applies to these devices and networks; others can differ.
+  In my check on 13 October 2026 with a 3.1 profile there was no delay attributable to this race: AmneziaWG 3.1.4 on Android opened the page in under a second in 10 reconnects out of 10, WG Tunnel 5.8.1 just as fast. On Windows, AmneziaWG 3.1.0 opened the first page after about 3 seconds, but the 2.0 profile behaved the same way: that is the time Windows spends checking the address of the tunnel adapter (DAD), and the protocol itself accounts for about 0.2 seconds. The result applies to these devices and networks; others can differ.
 </details>
 
 <details>
@@ -2278,15 +2280,15 @@ Recorded 5 November 2026 from the release pages, the app stores and the projects
 | WG Tunnel (Android, third-party) | yes | 5.8.2 (19 Oct 2026) | 5.6.0 | Google Play, IzzyOnDroid, APK | project code |
 | WG Tunnel Desktop (third-party) | yes | v2.4.1 (17 Oct 2026) | 2.0.0 (13 Sep 2026) | project releases page, choco, apt, AUR | project code |
 | mihomo (core for Clash Verge Rev and others) | yes | v1.19.34 (11 Nov 2026) | v1.19.30; 3.1 is on only with `version: 3` in `amnezia-wg-option` | project releases page | project code, 16 Nov 2026 |
-| FlClash (Android, Windows, macOS, Linux, third-party) | yes | v0.9.3 (4 Nov 2026) | v0.8.97 (10 Sep 2026); mihomo core: needs `version: 3` in `amnezia-wg-option` | project releases page | project code |
+| FlClash (Android, Windows, macOS, Linux, third-party) | yes | v0.9.4 (19 Nov 2026) | v0.8.97 (10 Sep 2026); mihomo core: needs `version: 3` in `amnezia-wg-option` | project releases page | project code, 19 Nov 2026 |
 | Throne (Windows, Linux, macOS, third-party) | yes | 1.4.2 (14 Nov 2026) | 1.3.0 (17 Sep 2026); in 1.3.x the padding of some packets is cut to the room left in the buffer; fixed in 1.4.0 | project releases page | project code, 16 Nov 2026 |
-| L×Box (Android, third-party) | yes | v2.25.21 (12 Nov 2026) | v2.23.0 (5 Sep 2026) | project releases page | project code, 16 Nov 2026 |
+| L×Box (Android, third-party) | yes | v2.25.22 (16 Nov 2026) | v2.23.0 (5 Sep 2026) | project releases page | project code, 19 Nov 2026 |
 | ZedSecure (Android, third-party) | yes | v3.1.8 (2 Nov 2026) | v3.1.8 (2 Nov 2026); earlier versions did not connect 3.1 profiles: a base64 HeaderProtectionKey is converted to hex only since v3.1.8 | project releases page | project code |
 | network-manager-amneziawg (Linux, third-party) | yes | v0.9.12 (13 Oct 2026) | v0.9.12; no engine of its own: needs a third-line kernel module, and in external mode third-line awg tools as well | project releases page | project pages |
 | gluetun (Docker, third-party) | in the daily feed, no tag | latest image from master; tag v3.41.3 has no AmneziaWG | master (26 Sep 2026); a 3.0 engine: it does not read RandomTrailers and DisableCookies lines, and this installer's profile does not write them; it expects HeaderProtectionKey as 64 hex characters, while this installer's profile writes base64: the key has to be converted | Docker Hub, tag latest | project code |
-| Hiddify | development channel only | v5.9.8, pre-release; in stable v5.5.5 the .conf and link import does not read HeaderProtectionKey and ContentPaddingAddition (15 Nov 2026) | v5.9.8; read in the code of this release, earlier pre-releases not checked; not tested on this installer's profile | project releases page, pre-releases | project code, 16 Nov 2026 |
-| KeeneticOS (stock firmware) | development channel only | 5.2 Beta 3 (5 Nov 2026) | 5.2 Alpha 11 (25 Sep 2026); not in stable 5.1 | Keenetic development channel | project pages, 9 Nov 2026 |
-| AWG Manager (Keenetic, third-party) | yes | v2.20.4 (15 Nov 2026) | with the stock module on KeeneticOS 5.2 Alpha 11 and newer; on other firmware with its own kernel module or its bundled sing-box (needs Entware and the WireGuard component) | project releases page | project code, 16 Nov 2026 |
+| Hiddify | development channel only | v5.9.15, pre-release; in stable v5.5.5 the .conf and link import does not read HeaderProtectionKey and ContentPaddingAddition (19 Nov 2026) | v5.9.8; read in the code of this release, earlier pre-releases not checked; not tested on this installer's profile | project releases page, pre-releases | project code, 19 Nov 2026 |
+| KeeneticOS (stock firmware) | development channel only | 5.2 Beta 4 (18 Nov 2026) | 5.2 Alpha 11 (25 Sep 2026); not in stable 5.1 | Keenetic development channel | project pages, 19 Nov 2026 |
+| AWG Manager (Keenetic, third-party) | yes | v2.20.6 (18 Nov 2026) | with the stock module on KeeneticOS 5.2 Alpha 11 and newer; on other firmware with its own kernel module or its bundled sing-box (needs Entware and the WireGuard component) | project releases page | project code, 19 Nov 2026 |
 | OpenWrt (official packages) | no | no package; openwrt/packages PRs #30492 and #30493 are open, without maintainer approval | - | - | project pages |
 | awg-openwrt (OpenWrt, third-party) | yes | v25.12.6, v24.10.8 | v25.12.5, v24.10.8 (22 Sep 2026); the packages of these releases were replaced under the same tags; ones downloaded earlier and packages for older OpenWrt have no 3.1 | project releases page, project feed | project code |
 | GL.iNet (stock firmware) | no | AmneziaWG 2.0 since firmware 4.9; no date for 3.x | - | - | project pages |

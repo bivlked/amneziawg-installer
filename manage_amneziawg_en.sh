@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x and 2.0 peer management script
 # Author: @bivlked
-# Version: 6.3.5
-# Date: 2026-11-19
+# Version: 6.3.6
+# Date: 2026-11-20
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="6.3.5"
+SCRIPT_VERSION="6.3.6"
 set -o pipefail
 # awg show colours its labels when WG_COLOR_MODE=always is in the environment,
 # even into a pipe. The secrets filter then does not recognise "header
@@ -413,8 +413,10 @@ validate_client_name() {
 }
 
 # JSON entry for a successful regen (v5.21.0). qr/vpnuri are paths if the
-# file exists at response time (regenerate_client refreshes them best-effort;
-# the contract makes no freshness promise - see the races note in the docs).
+# file exists at response time. regenerate_client removes the old ones before
+# it rewrites the .conf and rebuilds them best-effort: a file that was not
+# built gives null, not a path to an old copy; the contract gives no freshness
+# guarantee against a parallel operation.
 _regen_json_entry() {
     local name="$1" _jqr="null" _juri="null"
     [[ -f "$AWG_DIR/${name}.png" ]] && _jqr="\"$(json_escape "$AWG_DIR/${name}.png")\""

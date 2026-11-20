@@ -7,14 +7,14 @@ not verify.
 Public key: `RWQXfpABHIpZPttqrwYrQNHRTk/iLIz4cVh9KkRwAElHP+CoW/NPEysN` (key ID `3E598A1C01907E17`; the ID is not a fingerprint,
 another key can carry the same ID, so compare the whole key). Publishing it through a channel that is
 not this repository is what makes it worth anything to a first-time visitor;
-that is tracked separately and is not done by this document.
+since 1 October 2026 the whole key is also in [post #28 on ntc.party](https://ntc.party/t/22685/28).
 
 ## Why
 
 Modern open-source security practice (NixOS, signify-based tools, libsodium ecosystem) ships releases with detached cryptographic signatures so users can verify a downloaded script has not been tampered with on the path from GitHub to their server. Without a signature, trust in a script fetched over HTTPS from the latest GitHub release assets rests on GitHub's TLS chain and GitHub's account security alone. Adding a maintainer-controlled signature gives an independent verification path - with the important caveat below.
 
 - TLS only proves "the bytes came from GitHub". A signature proves "the bytes were signed by the holder of the private key", which lives offline on the maintainer's machine and is never exposed to GitHub Actions.
-- The protection is asymmetric. If a user already has the correct maintainer public key pinned (e.g. saved from an earlier verified release, or fetched from an out-of-band channel - personal blog post, mastodon profile, signed git tag predating the compromise), then a malicious replacement script fails verification because the attacker cannot forge a signature without the offline secret key. **However**, a first-time user who fetches `KEYS.txt` and the installer from the same compromised GitHub account in the same session is exposed to a TOFU window: the attacker can atomically replace `KEYS.txt`, the script, and the signature, and the verification will succeed against the attacker's key. This is not a flaw of minisign - it is the general TOFU limitation of any public-key-on-the-same-domain scheme. To narrow the window, the maintainer should also publish the whole public key via at least one independent out-of-band channel.
+- The protection is asymmetric. If a user already has the correct maintainer public key pinned (e.g. saved from an earlier verified release, or fetched from an out-of-band channel - personal blog post, mastodon profile, signed git tag predating the compromise), then a malicious replacement script fails verification because the attacker cannot forge a signature without the offline secret key. **However**, a first-time user who fetches `KEYS.txt` and the installer from the same compromised GitHub account in the same session is exposed to a TOFU window: the attacker can atomically replace `KEYS.txt`, the script, and the signature, and the verification will succeed against the attacker's key. This is not a flaw of minisign - it is the general TOFU limitation of any public-key-on-the-same-domain scheme. To narrow the window, the maintainer should also publish the whole public key via at least one independent out-of-band channel. Done on 1 October 2026: the whole key is in [post #28 on ntc.party](https://ntc.party/t/22685/28).
 
 ## Tool choice: minisign
 
@@ -33,7 +33,7 @@ Covered:
 - Compromise of GitHub Actions specifically: signatures are never produced by Actions, so a compromised CI cannot forge them.
 
 Partially covered:
-- Compromise of the GitHub account leading to a malicious replacement upload. Returning users with a pinned public key detect this; first-time users fetching `KEYS.txt` from the same compromised repository in the same session do not (TOFU). Mitigated by publishing the public key via at least one independent channel.
+- Compromise of the GitHub account leading to a malicious replacement upload. Returning users with a pinned public key detect this; first-time users fetching `KEYS.txt` from the same compromised repository in the same session do not (TOFU). Mitigated by publishing the public key via at least one independent channel ([ntc.party post #28](https://ntc.party/t/22685/28), since 1 October 2026).
 
 NOT covered:
 - Rollback / misbinding: an old valid script paired with its old valid `.minisig` will verify successfully if a user accepts whatever pair they happened to download. Mitigated by trusted comments tying the signature to a specific tag and filename (see signing flow below) and by users checking the comment line on verify.

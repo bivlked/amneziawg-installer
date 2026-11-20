@@ -3,8 +3,8 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 3.x and 2.0
 # Author: @bivlked
-# Version: 6.3.5
-# Date: 2026-11-19
+# Version: 6.3.6
+# Date: 2026-11-20
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 #
@@ -24,7 +24,7 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # drifted apart (one file updated, the other not) - otherwise the mismatch shows
 # up as a "command not found" somewhere random. Bumped with the other versions.
 # shellcheck disable=SC2034  # used by the manage script after sourcing
-AWG_COMMON_VERSION="6.3.5"
+AWG_COMMON_VERSION="6.3.6"
 
 # --- Auto-cleanup of temporary files ---
 # NOTE: trap is NOT set here to avoid overwriting the caller's trap handler.
@@ -2823,13 +2823,13 @@ _awg_sysctl_num() {
 # it does not or the version is unknown. The fix (PRs #237 and #247) went into
 # tag v3.1.20261113-02 (63ed35d), while tag v3.1.20261113 (6879e27) does not
 # carry it yet, although it reports almost the same version "3.1.20261113".
-# So a module counts as fixed on the 3.x line or newer with a date after
-# 20261113, or with the date 20261113 and a suffix of -02 or higher; a bare
-# 3.1.20261113 does not.
+# So a module counts as fixed on the 3.1 line or newer (the vendor merged 3.0
+# into 3.1, and 3.0 has no fix) with a date after 20261113, or with the date
+# 20261113 and a suffix of -02 or higher; a bare 3.1.20261113 does not.
 _awg_kmod_has_233_fix() {
-    [[ "${1:-}" =~ ^([0-9]+)\.[0-9]+\.([0-9]{8})(-([0-9]{1,4}))?([^0-9]|$) ]] || return 1
-    local maj=$((10#${BASH_REMATCH[1]})) day=$((10#${BASH_REMATCH[2]})) suf="${BASH_REMATCH[4]}"
-    (( maj >= 3 )) || return 1
+    [[ "${1:-}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]{8})(-([0-9]{1,4}))?([^0-9]|$) ]] || return 1
+    local maj=$((10#${BASH_REMATCH[1]})) mnr=$((10#${BASH_REMATCH[2]})) day=$((10#${BASH_REMATCH[3]})) suf="${BASH_REMATCH[5]}"
+    (( maj > 3 || (maj == 3 && mnr >= 1) )) || return 1
     (( day > 20261113 )) && return 0
     (( day == 20261113 )) && [[ -n "$suf" ]] && (( 10#$suf >= 2 ))
 }
@@ -6306,6 +6306,23 @@ regenerate_client() {
         fi
     fi
     _awg31_set_snapshot "$name" || { exec {lock_fd}>&-; unset CLIENT_PSK; return 1; }
+    # The QR and vpn:// files are removed BEFORE the .conf is rewritten (as in
+    # modify). On 2.0 there is no copy of the previous set, and a build step
+    # that fails below would leave the previous file with the previous config,
+    # handed out as current. A failed removal stops the regen with the .conf
+    # untouched; on 3.1 what was removed comes back from the copy, on 2.0 files
+    # already removed stay removed and the next regen rebuilds them.
+    local _df _rm_err
+    for _df in "$AWG_DIR/${name}.png" "$AWG_DIR/${name}.vpnuri" "$AWG_DIR/${name}.vpnuri.png"; do
+        [[ -e "$_df" || -L "$_df" ]] || continue
+        if ! _rm_err=$(rm -f -- "$_df" 2>&1) || [[ -e "$_df" || -L "$_df" ]]; then
+            log_error "Could not remove $_df before regenerating client '$name' - the config is unchanged${_rm_err:+ ($_rm_err)}. Fix the cause and run regen '$name' again: it rebuilds the QR and vpn:// files."
+            _awg31_set_restore_noted "$name"
+            exec {lock_fd}>&-
+            unset CLIENT_PSK
+            return 1
+        fi
+    done
     # When the client's list is going to be restored, render keeps quiet about a
     # non-IPv4 Endpoint: its list is intermediate, the warning goes on the final one below.
     local _AWG_EP_WARN_LATER=0
@@ -6514,6 +6531,11 @@ regenerate_client() {
 
     # Hygiene: do not let PSK leak into later operations in the same shell
     unset CLIENT_PSK
+    # On 2.0 (and on 3.1 without a copy) a failed file is simply absent: the old
+    # one was removed before the .conf was rewritten. Say so plainly.
+    if (( _set_fail )) && (( ${#_AWG31_SET_SNAP[@]} == 0 )); then
+        log_warn "Client '$name': the config is regenerated, but not every QR and vpn:// file was built; the old files are removed so the old config is not handed out. Fix the cause (details above) and run regen '$name' again."
+    fi
 
     # On 3.1 the set is all or nothing: an incomplete set after the regen is
     # replaced with the previous one, under the config lock.

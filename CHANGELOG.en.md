@@ -12,6 +12,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.6] - 2026-11-20
+
+**v6.3.6** - `regen` on 2.0 no longer leaves old QR and `vpn://` files behind, and step 2 guards harder against a second kernel module: an `amneziawg-dkms` on hold, `APT::Ignore-Hold` and unreadable apt and dpkg answers now stop the install with a clear reason. Docs: the signing key outside GitHub and the client table as of 19 November.
+
+### Fixed
+
+- **Step 2: the guard against a second kernel module is stricter.** On kernels older than 6.7 and on the prebuilt ARM path the installer holds `amneziawg-dkms` so that `amneziawg-tools` cannot pull a second module from the PPA next to the pinned build. It now stops with a clear message when an earlier `amneziawg-dkms` cannot be removed, a package on hold included, which the old check did not see (it used to be a warning only, and the hold then sat on a package that was still there); it shows the cause from what apt and dpkg answered and when `APT::Ignore-Hold` is enabled in the apt settings, which makes every hold void (or those settings cannot be read). The warning about an `amneziawg-dkms` package next to a prebuilt ARM package now also sees a half-installed package. System cleanup no longer releases the user's own hold on network stack packages when `apt-mark showhold` fails.
+- **`regen` on 2.0 no longer leaves old QR and `vpn://` files behind.** When a regen could not build a QR or the `vpn://` link (a long route list that does not fit into a QR, for example), the previous file with the old config stayed next to the new `.conf`, and `--json` returned its path. Now `regen`, like `modify`, removes these files before it rewrites the `.conf`: a file that was not built is missing, its `--json` field is `null`, and the log says what to repeat. On 3.1 nothing changes: an incomplete set is replaced by the previous one as a whole.
+- **`check` and `diagnose` count only a module of the 3.1 line or later as fixed.** The vendor fix for bug #233 exists only on the 3.1 line, while the check accepted any 3.x version dated after 13 November 2026, including a hypothetical 3.0 one. The vendor has no such tag (the 3.0 line was merged into 3.1), so live servers were not affected. The build of the prebuilt ARM packages uses the same boundary.
+
+### Documentation
+
+- **The 3.1 client table in ADVANCED: versions as of 19 November 2026.** FlClash v0.9.4, L×Box v2.25.22, AWG Manager v2.20.6, KeeneticOS 5.2 Beta 4 and the Hiddify v5.9.15 pre-release (going by the code of that build, its import understands `on` and `off` for `RandomTrailers` and `DisableCookies`). The 3.1 support was checked in the code of each build and did not change for any of them.
+- **The signing public key published outside GitHub.** SECURITY.md and docs/SIGNING_DESIGN.md now link [post #28 on ntc.party](https://ntc.party/t/22685/28), which has held the whole key since 1 October 2026: compare the key from a release with it instead of trusting the same GitHub account.
+- **ADVANCED: `RandomTrailers`, `DisableCookies` and the `S4` race in amneziawg-go.** If you turn `RandomTrailers` on anyway, the vendor recommends equal `S1`-`S4`; according to the vendor README, `DisableCookies` turns off the whole under-load logic, handshake rate limiting included. The answer about the lost first packet on amneziawg-go clients is updated: the vendor merged its own change on 16 November 2026 (tag `v3.1.20261116`), but no vendor client is built on that tag yet.
+
 ## [6.3.5] - 2026-11-19
 
 **v6.3.5** - on Debian 12 and other kernels older than 6.7 the AmneziaWG module is built from the 3.1 tag with the fix for bug #233; the profile stays 2.0, and a rerun with `--force` updates a running server. The CASCADE guide starts the routing unit right away.
@@ -2311,7 +2327,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...HEAD
+[6.3.6]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...v6.3.6
 [6.3.5]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.4...v6.3.5
 [6.3.4]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.3...v6.3.4
 [6.3.3]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.2...v6.3.3
