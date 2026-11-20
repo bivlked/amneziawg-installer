@@ -491,7 +491,7 @@ In AmneziaWG and Amnezia VPN for Android you can send only some apps through the
 | How to carry it over | "Export tunnels to zip file" in the settings, the archive goes to Downloads | "Settings" -> "Backup" |
 | Platforms | Android | Android; on Windows only "Directly" |
 
-In AmneziaWG choosing one tab clears the other list, and a config with both lines does not import. In Amnezia VPN each mode has its own list, so after switching modes you see a different one.
+In AmneziaWG the ticks stay when you switch tabs; confirming applies them to the chosen mode and clears the other mode's list. A config with both lines does not import. In Amnezia VPN each mode has its own list, so after switching modes you see a different one.
 
 #### Which mode to pick
 
@@ -522,7 +522,7 @@ The Android setting "Block connections without VPN" (in the phone's VPN settings
 
 The server does not care which apps went into the tunnel: it only sees what arrives. An app in the tunnel still sends into the VPN only the addresses from its profile's `AllowedIPs`, so the per-app split and [`AllowedIPs`](#allowedips-adv) add up. In Amnezia VPN the per-app split also works without a full tunnel in the profile, unlike the site-based split.
 
-The address mismatch from [the previous section](#split-detect-adv) usually does not arise with a per-app split alone and a full tunnel: the page and the script that looks up the address belong to one app and go one way. It does arise when part of the work is done by another owner of connections, a browser tab or Google services, for example.
+The address mismatch from [the previous section](#split-detect-adv) usually does not arise with a per-app split alone and a full tunnel: the page and the script that looks up the address belong to one app and go one way. It can occur if some requests are made by another app that is routed differently, such as a browser or Google services.
 
 On the iPhone and in the desktop AmneziaWG clients there is no app selection; the desktop Amnezia VPN has it only on Windows. On those devices traffic is split by destination: your own [`AllowedIPs`](#allowedips-adv) list, the site-based split in Amnezia VPN, or the [cascade](CASCADE.en.md).
 
