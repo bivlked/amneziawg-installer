@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Documentation
 
-- **ADVANCED: per-app split tunneling on Android and Wi-Fi calling.** A new section on where the setting is in AmneziaWG for Android and in Amnezia VPN and what the "everything except these" and "only these" modes are called, which one to pick if Wi-Fi calls (VoWiFi) drop with the VPN on, why the tunnel does not come up after an app on the list is removed, and how to carry the list over to a new profile. Checked against the clients' source code as of 20 November 2026. The README gets a question linking to the section.
+- **ADVANCED: per-app split tunneling on Android and Wi-Fi calling.** Where the setting is in AmneziaWG for Android and in Amnezia VPN and which mode to pick, what to do if the tunnel stops coming up after an app on the list is removed, and how to carry the list over to a new profile. Checked against the clients' source code as of 20 November 2026; the README gets a question linking to the section.
 
 ## [6.3.7] - 2026-11-20
 
