@@ -646,6 +646,11 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 </details>
 
 <details>
+  <summary><strong>Q: How do I send only some apps through the VPN on Android?</strong></summary>
+  <b>A:</b> Per-app split tunneling is set up in the app on the phone; the server needs no change. In AmneziaWG for Android: the tunnel editor, the "All Applications" row at the bottom of the Interface section, the "Include only" tab, tick the apps and save. In Amnezia VPN: with the VPN disconnected, "Settings" -> "Connection" -> "App-based split tunneling", the "Via VPN" mode. If Wi-Fi calls (VoWiFi) stop with the VPN on, try the opposite mode, "everything except these". What to do if the tunnel does not come up after you remove an app, and how to carry the list over to a new profile, is in <a href="ADVANCED.en.md#per-app-adv">ADVANCED.en.md → Per-app split tunneling</a>.
+</details>
+
+<details>
   <summary><strong>Q: Can I use this with AWG 1.x clients?</strong></summary>
   <b>A:</b> No. AWG 1.x clients understand neither the 3.1 profile nor the 2.0 one: a client has to support the server generation - 3.1 by default, or 2.0 if the server was installed on it. For AWG 1.x, use the <a href="https://github.com/bivlked/amneziawg-installer/tree/legacy/v4">legacy/v4</a> branch.
 </details>

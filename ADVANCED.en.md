@@ -27,6 +27,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
   - [AllowedIPs](#allowedips-adv)
   - [Device IPv6, `::/0` and the local network](#client-ipv6-adv)
   - [What a site can see when traffic is split by destination](#split-detect-adv)
+  - [Per-app split tunneling (Android) and Wi-Fi calling](#per-app-adv)
   - [Client Isolation](#client-isolation-adv)
   - [IPv6 Dual-Stack Tunnel (v5.15.0+)](#ipv6-tunnel-adv)
   - [PersistentKeepalive](#persistentkeepalive-adv)
@@ -466,6 +467,64 @@ If a site has to see one and the same address, splitting by destination cannot g
 > **Profiles issued before v5.31.0 keep the old list.** The "Amnezia" mode, the default back then, gained `::/0` in v5.31.0; before that only "All traffic" got it, and the device's IPv6 went around the tunnel. Re-issuing delivers the fix to already issued clients: `sudo bash /root/awg/manage_amneziawg.sh regen`, then re-import the profiles on the devices. Individual `AllowedIPs` set through `modify` are preserved. A client issued with `--allow-ipv6-tunnel` will not get `::/0` from a plain re-issue - its IPv6 part counts as an individual setting too; such a client needs `regen --reset-routes`, and the installer prints that hint itself. "Amnezia" mode profiles issued with `::/0` are moved by the same `regen` to `2000::/3` with a service address: with `::/0` the AmneziaWG Windows client cut off the LAN. The `::/0` is replaced on a list whose IPv4 part matches the server's current list (exactly how the installer wrote it), however that list was set. With any other list, and for a client issued with `--allow-ipv6-tunnel`, `::/0` stays as it is; when a full tunnel keeps `::/0`, `regen` warns and says how to move to `2000::/3`: `regen --reset-routes <name>` on a server in the "Amnezia" mode, `modify` in the other modes.
 
 To check from a connected device: `curl -6 ifconfig.co`. Look at the address rather than at the fact that an answer arrived - with IPv6 working inside the tunnel an answer comes back too. If it is your home address, IPv6 is going around the tunnel. If you want a guarantee that nothing does, turn IPv6 off on the device itself: a server-side filter does not help here, because that direct IPv6 traffic never reaches the server.
+
+<a id="per-app-adv"></a>
+### Per-app split tunneling (Android) and Wi-Fi calling
+
+In AmneziaWG and Amnezia VPN for Android you can send only some apps through the VPN, or take some apps out of the tunnel. This is a setting of the app on the phone, and nothing has to change on the server for it. Amnezia VPN on Windows has only the "everything except these" mode.
+
+**In short:**
+
+- **Only the apps you need through the VPN:** the "Include only" mode in AmneziaWG or "Via VPN" in Amnezia VPN, tick the apps and save. The rest should go directly unless "Block connections without VPN" is on in the phone (see below). An empty list in this mode means "everything through the VPN".
+- **Wi-Fi calls (VoWiFi) stopped or some apps hang:** try the "everything except these" mode and tick what should go directly. In [D#215](https://github.com/bivlked/amneziawg-installer/discussions/215) this brought back both the calls and the other apps.
+- **You removed an app that was on the list, and the tunnel no longer comes up:** take it off the list, see below.
+- **In AmneziaWG a new profile from the server comes without the app list.** You can carry it over from the old tunnel instead of ticking everything again.
+
+**Where the setting is and what the modes are called** (from the source code as of 20 November 2026: AmneziaWG for Android `v3.1.20260814`, Amnezia VPN 5.1.1.10):
+
+| | AmneziaWG for Android | Amnezia VPN |
+|---|---|---|
+| Where | tap the tunnel, the pencil, at the very bottom of the Interface section the row "All Applications" (once a list is set it shows the number of excluded or included apps); save the tunnel after choosing | with the VPN disconnected: "Settings" -> "Connection" -> "App-based split tunneling", where a switch also turns the split on |
+| Everything except these | the "Exclude" tab | "Directly": "Apps from the list should not have access via VPN" |
+| Only these | the "Include only" tab | "Via VPN": "Only the apps from the list should have access via VPN" |
+| Where the list is stored | in the tunnel, as an `ExcludedApplications` or `IncludedApplications` line of its config | in the app settings, shared by all servers; each mode has its own |
+| How to carry it over | "Export tunnels to zip file" in the settings, the archive goes to Downloads | "Settings" -> "Backup" |
+| Platforms | Android | Android; on Windows only "Directly" |
+
+In AmneziaWG the ticks stay when you switch tabs; confirming applies them to the chosen mode and clears the other mode's list. A config with both lines does not import. In Amnezia VPN each mode has its own list, so after switching modes you see a different one.
+
+#### Which mode to pick
+
+By the Android documentation the modes mirror each other: an app outside the tunnel uses the network as if the VPN were not running. In practice it can differ. Shontonn in [D#215](https://github.com/bivlked/amneziawg-installer/discussions/215) ran the "only these" mode with 15 apps, and Wi-Fi calls and the support chat in one of the apps often hung until the VPN was off; "Block connections without VPN" was off. In the "everything except these" mode with 415 exclusions everything worked and kept working for a week. I have not established why: the mode and the routing of hundreds of apps changed in one step, and there is no way to tell the two apart. Similar behaviour, but with "Block connections without VPN" on, is described in a report to the app's developers, [amnezia-client#2757](https://github.com/amnezia-vpn/amnezia-client/issues/2757) (open as of 20 November 2026).
+
+The price of "everything except these": the list is long, and apps installed later are not added to it by themselves and go into the tunnel. The list needs a cleanup now and then.
+
+Traffic is split by the owner of the connection, not by the app's name:
+
+- a support chat inside an app often opens in a browser tab, and then its traffic belongs to the browser;
+- some network requests are made by Google services, which are a separate owner;
+- a version of an app with a different package name (another build of the same service, for example) is a separate app to Android: it is not on the list, and the entry for the old package gets in the way of connecting once that package is removed (more on this below).
+
+#### Wi-Fi calling and "Block connections without VPN"
+
+Wi-Fi calls are usually handled by a system service of the phone, not by an app from your list. I have not measured why a VPN gets in their way, and one phone cannot tell. If the call traffic ends up in the tunnel, the carrier may refuse a connection from a foreign address; if it goes around the tunnel, the cause is something else. The check is simple: turn the VPN off and make a call. If the call goes through, try the "everything except these" mode.
+
+The Android setting "Block connections without VPN" (in the phone's VPN settings, next to "Always-on VPN") is meant to keep off the network whatever goes around the tunnel: in the "only these" mode everything that is not on the list, in the "everything except these" mode the excluded apps. Do not rely on it as leak protection with a per-app split: in the report [amnezia-client#2757](https://github.com/amnezia-vpn/amnezia-client/issues/2757) a browser outside the list stayed online with the setting on. If you split traffic by app, it is better to turn this setting off.
+
+#### Pitfalls
+
+- **One removed app keeps the tunnel from coming up.** Before connecting, both clients hand Android every name from the list without checking that the app is installed, and Android answers an unknown name with an error. In AmneziaWG this is "Error bringing up tunnel: ...": open the list and confirm it, apps that are no longer installed drop out by themselves, then save the tunnel. In Amnezia VPN remove such an app from the list by hand, with the trash icon; what Amnezia VPN shows on this error, I have not checked. This applies both to your own list after you remove an app and to someone else's list carried over to another phone: a shared list only makes sense if it holds apps that everyone has.
+- **A new profile from the server comes without the app list.** After `manage modify` or `regen` the client gets a new `.conf`, and the choice made in the old AmneziaWG tunnel does not get into it (`regen` keeps the keys, the file itself is the reason). To carry the list over, export the tunnels to zip, copy the `ExcludedApplications = ...` line (or `IncludedApplications = ...`) from the old `.conf` into the `[Interface]` section of the new one and remove the apps that are no longer on the phone from it. Import it under another name or delete the old tunnel first: AmneziaWG does not keep two tunnels with the same name.
+- **A config with an app list does not import into AmneziaWG for iOS, macOS and Windows** (from the source code as of 20 November 2026). Their parsers do not know these keys and reject the whole file. For another device take the config from the server, not an export from the phone, or delete the line.
+- **Amnezia VPN keeps the lists in the app settings**, shared by all servers, and puts them into its backup. When the backup is restored on another platform, the app list is cleared.
+
+#### How this relates to the server
+
+The server does not care which apps went into the tunnel: it only sees what arrives. An app in the tunnel still sends into the VPN only the addresses from its profile's `AllowedIPs`, so the per-app split and [`AllowedIPs`](#allowedips-adv) add up. In Amnezia VPN the per-app split also works without a full tunnel in the profile, unlike the site-based split.
+
+The address mismatch from [the previous section](#split-detect-adv) usually does not arise with a per-app split alone and a full tunnel: the page and the script that looks up the address belong to one app and go one way. It can occur if some requests are made by another app that is routed differently, such as a browser or Google services.
+
+On the iPhone and in the desktop AmneziaWG clients there is no app selection; the desktop Amnezia VPN has it only on Windows. On those devices traffic is split by destination: your own [`AllowedIPs`](#allowedips-adv) list, the site-based split in Amnezia VPN, or the [cascade](CASCADE.en.md).
 
 <a id="client-isolation-adv"></a>
 ### Client Isolation
