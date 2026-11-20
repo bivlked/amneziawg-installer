@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **ADVANCED: per-app split tunneling on Android and Wi-Fi calling.** A new section on where the setting is in AmneziaWG for Android and in Amnezia VPN and what the "everything except these" and "only these" modes are called, which one to pick if Wi-Fi calls (VoWiFi) drop with the VPN on, why the tunnel does not come up after an app on the list is removed, and how to carry the list over to a new profile. Checked against the clients' source code as of 20 November 2026. The README gets a question linking to the section.
+
 ## [6.3.7] - 2026-11-20
 
 **v6.3.7** - step 1 gets past dpkg's config file questions even when the files were changed or deleted on the server (#409), and step 2 notices `APT::Ignore-Hold` enabled only for `apt` or `apt-get`. The docs bring the client table up to 20 November.
