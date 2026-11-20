@@ -813,7 +813,7 @@ EOF
         [ "$status" -eq 0 ] || { echo "$s: $output"; return 1; }
         [ -s "$(_ko "$OLD")" ]; [ -s "$(_ko "$NEW")" ]
         # The rebuild of $NEW comes after the configure, not from the first --repair.
-        sed -n '/^dpkg --configure -a$/,$p' "$T/calls" | grep -qx "dkms install -m amneziawg -v 1.0.0 -k $NEW" \
+        sed -n '/^dpkg --configure -a --force-confdef --force-confold$/,$p' "$T/calls" | grep -qx "dkms install -m amneziawg -v 1.0.0 -k $NEW" \
             || { echo "$s: no rebuild of $NEW after configure"; cat "$T/calls"; return 1; }
         [[ "$output" == *"building it again"* ]]
         [[ "$output" == *"packages: configured"* ]]

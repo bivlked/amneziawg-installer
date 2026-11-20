@@ -22,13 +22,13 @@
       "id": "amnezia-vpn",
       "name": {"ru": "Amnezia VPN (флагман, все платформы)", "en": "Amnezia VPN (flagship, all platforms)"},
       "support": "yes",
-      "version": "5.1.0.6 (GitHub, Google Play), 5.1.0 (App Store)",
+      "version": "5.1.1.10 (GitHub, Google Play), 5.1.0 (App Store)",
       "since": "5.0.1.5",
       "since_date": "2026-08-21",
       "where": {"ru": "GitHub, магазины; в российском App Store нет; Windows - по прямой ссылке со страницы релизов", "en": "GitHub, app stores; not in the Russian App Store; on Windows use the direct link from the releases page"},
       "basis": "vendor-docs",
       "evidence": {"url": "https://github.com/amnezia-vpn/amnezia-client/releases"},
-      "checked_at": "2026-11-05"
+      "checked_at": "2026-11-20"
     },
     {
       "id": "amneziawg-android",
@@ -174,15 +174,15 @@
       "id": "zedsecure",
       "name": {"ru": "ZedSecure (Android, сторонний)", "en": "ZedSecure (Android, third-party)"},
       "support": "yes",
-      "version": "v3.1.8",
-      "version_date": "2026-11-02",
+      "version": "v3.2.0",
+      "version_date": "2026-11-19",
       "since": "v3.1.8",
       "since_date": "2026-11-02",
       "since_note": {"ru": "в более ранних версиях профили 3.1 не подключались: ключ HeaderProtectionKey из base64 в hex переводится только с v3.1.8", "en": "earlier versions did not connect 3.1 profiles: a base64 HeaderProtectionKey is converted to hex only since v3.1.8"},
       "where": {"ru": "страница релизов проекта", "en": "project releases page"},
       "basis": "build-pin",
-      "evidence": {"url": "https://github.com/CluvexStudio/ZedSecure/releases/tag/v3.1.8", "ref": "tools/cores.txt at v3.1.8: zedcore-r6 and xray-r5, both built from ZedSecure-Cores c2c5581, whose pins.txt pins CluvexStudio/Xray-core 7b4c3ceb (contains b1831b2, proxy/wireguard/awg.go converts a base64 header_protection_key to hex) and amnezia-vpn/amneziawg-go b5928efb6ca1 (v3.1.20260828); v3.1.6 used zedcore-r2 and xray-r2 (Xray-core dfc848c5, without b1831b2)"},
-      "checked_at": "2026-11-05"
+      "evidence": {"url": "https://github.com/CluvexStudio/ZedSecure/releases/tag/v3.2.0", "ref": "tools/cores.txt at v3.2.0: zedcore-r9 and xray-r9, both built from ZedSecure-Cores dabc104, whose pins.txt pins CluvexStudio/Xray-core 4b8fb20f (38 commits ahead of b1831b2, proxy/wireguard/awg.go converts a base64 header_protection_key to hex) and amnezia-vpn/amneziawg-go b5928efb6ca1 (v3.1.20260828); v3.1.8 used zedcore-r6 and xray-r5 (Xray-core 7b4c3ceb, with b1831b2); v3.1.6 used zedcore-r2 and xray-r2 (Xray-core dfc848c5, without b1831b2)"},
+      "checked_at": "2026-11-20"
     },
     {
       "id": "nm-amneziawg",

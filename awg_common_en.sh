@@ -3,7 +3,7 @@
 # ==============================================================================
 # Shared function library for AmneziaWG 3.x and 2.0
 # Author: @bivlked
-# Version: 6.3.6
+# Version: 6.3.7
 # Date: 2026-11-20
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
@@ -24,7 +24,7 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # drifted apart (one file updated, the other not) - otherwise the mismatch shows
 # up as a "command not found" somewhere random. Bumped with the other versions.
 # shellcheck disable=SC2034  # used by the manage script after sourcing
-AWG_COMMON_VERSION="6.3.6"
+AWG_COMMON_VERSION="6.3.7"
 
 # --- Auto-cleanup of temporary files ---
 # NOTE: trap is NOT set here to avoid overwriting the caller's trap handler.
@@ -1384,7 +1384,7 @@ _install_kernel_headers() {
 
     local pkg
     for pkg in "${candidates[@]}"; do
-        if apt-get install -y "$pkg" >/dev/null 2>&1; then
+        if DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y "$pkg" >/dev/null 2>&1; then
             log "Installed kernel headers: $pkg"
             return 0
         fi

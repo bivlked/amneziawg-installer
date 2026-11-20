@@ -147,13 +147,13 @@ amneziawg-kmod-old|hold ok installed"
         for nt in 0 1; do
             run _run_uninstall_purge "$ROOT/$f" "$nt"
             [ "$status" -eq 0 ] || { echo "$f nt=$nt: rc=$status $output"; false; }
-            grep -qxF 'APT <purge> <-y> <amneziawg-dkms> <amneziawg-tools> <qrencode>' <<<"$output" \
+            grep -qxF 'APT <-o> <Dpkg::Options::=--force-confdef> <-o> <Dpkg::Options::=--force-confold> <purge> <-y> <amneziawg-dkms> <amneziawg-tools> <qrencode>' <<<"$output" \
                 || { echo "$f nt=$nt: usual purge changed: $output"; false; }
-            grep -qxF 'APT <purge> <-y> <amneziawg-kmod-ubuntu-2404-arm64> <amneziawg-kmod-old>' <<<"$output" \
+            grep -qxF 'APT <-o> <Dpkg::Options::=--force-confdef> <-o> <Dpkg::Options::=--force-confold> <purge> <-y> <amneziawg-kmod-ubuntu-2404-arm64> <amneziawg-kmod-old>' <<<"$output" \
                 || { echo "$f nt=$nt: prebuilt purge missing or malformed: $output"; false; }
             # each unheld, before its purge
             awk '/^MARK unhold amneziawg-kmod-ubuntu-2404-arm64$/{a=NR} /^MARK unhold amneziawg-kmod-old$/{b=NR}
-                 /^APT <purge> <-y> <amneziawg-kmod-/{p=NR} END{exit !(a && b && p && a < p && b < p)}' <<<"$output" \
+                 /^APT <-o> <Dpkg::Options::=--force-confdef> <-o> <Dpkg::Options::=--force-confold> <purge> <-y> <amneziawg-kmod-/{p=NR} END{exit !(a && b && p && a < p && b < p)}' <<<"$output" \
                 || { echo "$f nt=$nt: unhold missing or after the purge: $output"; false; }
             [[ "$output" != *"<>"* && "$output" != *WARN* ]] || { echo "$f nt=$nt: $output"; false; }
         done
@@ -192,7 +192,7 @@ amneziawg-kmod-old|hold ok installed"
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         for nt in 0 1; do
             run _run_uninstall_purge "$ROOT/$f" "$nt"
-            grep -qxF 'APT <purge> <-y> <amneziawg-dkms> <amneziawg-tools> <qrencode>' <<<"$output" \
+            grep -qxF 'APT <-o> <Dpkg::Options::=--force-confdef> <-o> <Dpkg::Options::=--force-confold> <purge> <-y> <amneziawg-dkms> <amneziawg-tools> <qrencode>' <<<"$output" \
                 && grep -q '^WARN .*sub-process returned an error code' <<<"$output" \
                 && grep -q '^WARN .*sudo apt-mark unhold amneziawg-kmod-ubuntu-2404-arm64 && sudo apt-get purge -y amneziawg-kmod-ubuntu-2404-arm64' <<<"$output" \
                 && [[ "$output" != *"<>"* ]] \
@@ -207,7 +207,7 @@ amneziawg-kmod-old|hold ok installed"
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
         for nt in 0 1; do
             run _run_uninstall_purge "$ROOT/$f" "$nt"
-            grep -qxF 'APT <purge> <-y> <amneziawg-kmod-ubuntu-2404-arm64>' <<<"$output" \
+            grep -qxF 'APT <-o> <Dpkg::Options::=--force-confdef> <-o> <Dpkg::Options::=--force-confold> <purge> <-y> <amneziawg-kmod-ubuntu-2404-arm64>' <<<"$output" \
                 || { echo "$f nt=$nt: $output"; false; }
         done
     done

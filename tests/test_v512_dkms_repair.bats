@@ -226,6 +226,10 @@ _mode_body() { echo "$1" | awk -v f="^$2\\\\(\\\\) \\\\{\$" '$0 ~ f {p=1} p {pri
     code=$(echo "$helper" | grep -vE '^[[:space:]]*#' || true)
     [[ "$code" != *'apt-get install'* ]]
     [[ "$code" != *'apt install'* ]]
+    # The installer's own calls carry -o options before the verb (Issue #409),
+    # so look through them too: `apt-get -o X install` is still an install.
+    run grep -cE 'apt(-get)?( +-o +[^ ]+)+ +install' <<< "$code"
+    [ "$output" = "0" ]
 }
 
 @test "v5.12: systemd unit has all required directives and ordering" {

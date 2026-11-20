@@ -13,6 +13,10 @@
 #   3. Default route snapshot pre/post + recovery attempt + die on failure
 #
 # Reporter: @jay0x in issue #84 (21 may 2026).
+#
+# Do not run this file as root: the Issue #409 tests take cleanup_system up to
+# its rm of /etc/cloud. A guard function catches that rm, but a guard can only
+# catch the spellings it knows, and without root a miss cannot delete anything.
 
 load test_helper
 
@@ -52,6 +56,8 @@ echo "dpkg-query $*" >> "$TRACE"
 pkg="${@: -1}"
 case "$pkg" in
     cloud-init)
+        # after a purge that really removed it (see the apt-get shim below)
+        [[ -e "$TRACE.ci_gone" ]] && { echo "unknown ok not-installed"; exit 0; }
         [[ "${MOCK_CLOUD_INIT_INSTALLED:-1}" -eq 1 ]] && { echo "install ok installed"; exit 0; }
         exit 1
         ;;
@@ -139,6 +145,23 @@ SHIM
         chmod +x "$BIN/$cmd"
     done
 
+    # apt-get again, now with a purge of cloud-init for the Issue #409 order
+    # below: MOCK_CLOUD_PURGE_RC is its exit code, and a successful purge
+    # removes the package unless MOCK_CLOUD_PURGE_KEEPS=1 (apt says 0, dpkg
+    # still has it, as with APT::Get::Simulate).
+    cat > "$BIN/apt-get" <<'SHIM'
+#!/bin/bash
+echo "${DEBIAN_FRONTEND:-UNSET} apt-get $*" | sed 's/^noninteractive //' >> "$TRACE"
+if [[ "$*" == *"purge -y cloud-init" ]]; then
+    rc="${MOCK_CLOUD_PURGE_RC:-0}"
+    [[ "$rc" -eq 0 && "${MOCK_CLOUD_PURGE_KEEPS:-0}" -ne 1 ]] && : > "$TRACE.ci_gone"
+    [[ "$rc" -ne 0 ]] && echo "E: Sub-process /usr/bin/dpkg returned an error code (1)"
+    exit "$rc"
+fi
+exit 0
+SHIM
+    chmod +x "$BIN/apt-get"
+
     # ls: used by cleanup_system inside cloud-init guard for /etc/netplan/*cloud-init*.
     # Forward everything else to the real ls.
     cat > "$BIN/ls" <<'SHIM'
@@ -168,6 +191,25 @@ log_debug() { echo "DEBUG: $*" >> "$TRACE"; }
 log_warn()  { echo "WARN: $*" >> "$TRACE"; }
 log_error() { echo "ERROR: $*" >> "$TRACE"; }
 die()       { echo "DIE: $*" >> "$TRACE"; exit 1; }
+# Never let cleanup_system remove real system directories of the machine
+# running the suite: system paths are traced and not removed, temp paths are
+# passed on, anything else is refused loudly. A function, not a PATH shim, so
+# it lives only inside call_cleanup.
+rm() {
+    local a
+    for a in "$@"; do
+        case "$a" in
+            /etc/cloud*|/var/lib/cloud*|/snap*|/var/snap*|/var/lib/snapd*) echo "rm $*" >> "$TRACE"; return 0 ;;
+        esac
+    done
+    for a in "$@"; do
+        case "$a" in
+            -*|/tmp/*|"${TRACE%/*}"/*) ;;
+            *) echo "UNEXPECTED rm $*" >> "$TRACE"; return 1 ;;
+        esac
+    done
+    command rm "$@"
+}
 OS_ID="ubuntu"
 LOADER
 }
@@ -226,7 +268,7 @@ call_cleanup() {
     call_cleanup
     run ! grep -qE '^DIE:'                                                  "$TRACE"
     run ! grep -qE 'Default route потерян|Default route lost'               "$TRACE"
-    run ! grep -qE '^apt-get install .*--no-install-recommends netplan\.io' "$TRACE"
+    run ! grep -qE '^apt-get .*install .*--no-install-recommends netplan\.io' "$TRACE"
 }
 
 @test "v5.14.3: default route lost ->recovery attempt (apt install + netplan apply)" {
@@ -238,9 +280,9 @@ call_cleanup() {
     # Recovery installs netplan.io unconditionally, then gates netplan-generator
     # behind apt-cache show (so Debian 12 with no netplan-generator does not
     # abort the apt transaction).
-    grep -qE '^apt-get install -y --no-install-recommends netplan\.io$'     "$TRACE"
+    grep -qxF -- 'apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-install-recommends netplan.io' "$TRACE"
     grep -qE '^apt-cache show netplan-generator'                            "$TRACE"
-    grep -qE '^apt-get install -y --no-install-recommends netplan-generator$' "$TRACE"
+    grep -qxF -- 'apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-install-recommends netplan-generator' "$TRACE"
     grep -qE '^systemctl restart systemd-networkd'                          "$TRACE"
     grep -qE '^netplan apply'                                               "$TRACE"
 }
@@ -310,7 +352,7 @@ call_cleanup() {
     export MOCK_CLOUD_INIT_INSTALLED=0
     call_cleanup
     # No cloud-init purge.
-    run ! grep -qE '^apt-get purge -y cloud-init' "$TRACE"
+    run ! grep -qE '^apt-get .*purge -y cloud-init' "$TRACE"
     # apt-mark hold still runs (defensive on critical pkgs regardless of cloud-init state).
     grep -qE '^apt-mark hold netplan\.io$' "$TRACE"
 }
@@ -325,6 +367,73 @@ call_cleanup() {
         run grep -c '_preexisting_holds' <<< "$body"
         [ "$output" = "0" ] || { echo "$f: snapshot still there"; return 1; }
     done
+}
+
+# The cloud-init branch needs its two helpers; the rest of the harness runs
+# without them, so they are added only for the Issue #409 tests.
+reach_cloud_init() {
+    echo '_cloud_init_removable() { return 0; }; _cleanup_package_list() { :; }' >> "$TEST_DIR/loader.bash"
+}
+
+# After the cloud-init block the cleanup must go on: exit 0, no die, the
+# default route checked again after the cleanup (second ip route query), and
+# no rm outside the guard's known paths.
+cleanup_went_on() {
+    [ "$status" -eq 0 ] || { echo "status $status: $output"; return 1; }
+    run grep -c '^DIE:' "$TRACE"
+    [ "$output" = "0" ] || { echo "died: $(grep '^DIE:' "$TRACE")"; return 1; }
+    [ "$(cat "$TRACE.ipcount" 2>/dev/null || echo 0)" -ge 2 ] || { echo "the cleanup stopped before the route check"; return 1; }
+    run grep -c '^UNEXPECTED rm' "$TRACE"
+    [ "$output" = "0" ] || { echo "$(grep '^UNEXPECTED rm' "$TRACE")"; return 1; }
+}
+
+@test "Issue #409: /etc/cloud and /var/lib/cloud go only after cloud-init is purged" {
+    reach_cloud_init
+    MOCK_CLOUD_PURGE_RC=0 run call_cleanup
+    cleanup_went_on
+    grep -qxF "apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y cloud-init" "$TRACE"
+    grep -qx "rm -rf /etc/cloud /var/lib/cloud" "$TRACE"
+}
+
+@test "Issue #409: a failed cloud-init purge keeps /etc/cloud, says why, and the cleanup goes on" {
+    reach_cloud_init
+    MOCK_CLOUD_PURGE_RC=100 run call_cleanup
+    cleanup_went_on
+    grep -qxF "apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y cloud-init" "$TRACE"
+    run grep -c "^rm .*/etc/cloud" "$TRACE"
+    [ "$output" = "0" ]
+    # the warning names the apt code and carries apt's own words
+    grep -q "^WARN: .*100.*/etc/cloud.*returned an error code" "$TRACE"
+}
+
+@test "Issue #409: a purge that reports success while dpkg still has cloud-init keeps /etc/cloud" {
+    reach_cloud_init
+    MOCK_CLOUD_PURGE_RC=0 MOCK_CLOUD_PURGE_KEEPS=1 run call_cleanup
+    cleanup_went_on
+    grep -qxF "apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y cloud-init" "$TRACE"
+    run grep -c "^rm .*/etc/cloud" "$TRACE"
+    [ "$output" = "0" ]
+    grep -q "^WARN: .*ok installed.*/etc/cloud" "$TRACE"
+}
+
+@test "Issue #409: the purge guard behaves the same in the EN installer" {
+    reach_cloud_init
+    awk '/^cleanup_system\(\) \{/,/^}$/' "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh" > "$TEST_DIR/cleanup_system.bash"
+    awk '/^_awg_pkg_held\(\) \{/,/^}$/' "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh" >> "$TEST_DIR/cleanup_system.bash"
+    MOCK_CLOUD_PURGE_RC=100 run call_cleanup
+    cleanup_went_on
+    run grep -c "^rm .*/etc/cloud" "$TRACE"
+    [ "$output" = "0" ]
+    grep -q "^WARN: .*100.*/etc/cloud.*returned an error code" "$TRACE"
+    : > "$TRACE"; rm -f "$TRACE.ipcount" "$TRACE.ci_gone"
+    MOCK_CLOUD_PURGE_RC=0 MOCK_CLOUD_PURGE_KEEPS=1 run call_cleanup
+    cleanup_went_on
+    run grep -c "^rm .*/etc/cloud" "$TRACE"
+    [ "$output" = "0" ]
+    : > "$TRACE"; rm -f "$TRACE.ipcount" "$TRACE.ci_gone"
+    MOCK_CLOUD_PURGE_RC=0 run call_cleanup
+    cleanup_went_on
+    grep -qx "rm -rf /etc/cloud /var/lib/cloud" "$TRACE"
 }
 
 @test "structural: install_amneziawg.sh + _en.sh cleanup_system functions are line-equal" {

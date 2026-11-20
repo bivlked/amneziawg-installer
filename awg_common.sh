@@ -3,7 +3,7 @@
 # ==============================================================================
 # Общая библиотека функций для AmneziaWG 3.x и 2.0
 # Автор: @bivlked
-# Версия: 6.3.6
+# Версия: 6.3.7
 # Дата: 2026-11-20
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
@@ -24,7 +24,7 @@ KEYS_DIR="${KEYS_DIR:-$AWG_DIR/keys}"
 # (обновили один файл, забыли второй) - иначе рассинхрон всплывает как
 # "command not found" в случайном месте. Бампается вместе с остальными версиями.
 # shellcheck disable=SC2034  # используется в manage-скрипте после source
-AWG_COMMON_VERSION="6.3.6"
+AWG_COMMON_VERSION="6.3.7"
 
 # --- Автоочистка временных файлов ---
 # ВАЖНО: trap НЕ устанавливается здесь, чтобы не перезаписать trap вызывающего скрипта.
@@ -1356,7 +1356,7 @@ _install_kernel_headers() {
 
     local pkg
     for pkg in "${candidates[@]}"; do
-        if apt-get install -y "$pkg" >/dev/null 2>&1; then
+        if DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y "$pkg" >/dev/null 2>&1; then
             log "Установлены kernel headers: $pkg"
             return 0
         fi

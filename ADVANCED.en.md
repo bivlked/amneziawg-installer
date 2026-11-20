@@ -1300,7 +1300,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common_en.sh` and `manage_amneziawg_en.sh` (the Russian installer: `awg_common.sh` and `manage_amneziawg.sh`) from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.6/awg_common_en.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.7/awg_common_en.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -2271,7 +2271,7 @@ Recorded 5 November 2026 from the release pages, the app stores and the projects
 
 | Client | 3.1 | Version on 5 Nov 2026 | 3.1 since | Where to get it | Basis |
 |---|---|---|---|---|---|
-| Amnezia VPN (flagship, all platforms) | yes | 5.1.0.6 (GitHub, Google Play), 5.1.0 (App Store) | 5.0.1.5 (21 Aug 2026) | GitHub, app stores; not in the Russian App Store; on Windows use the direct link from the releases page | project pages |
+| Amnezia VPN (flagship, all platforms) | yes | 5.1.1.10 (GitHub, Google Play), 5.1.0 (App Store) | 5.0.1.5 (21 Aug 2026) | GitHub, app stores; not in the Russian App Store; on Windows use the direct link from the releases page | project pages, 20 Nov 2026 |
 | AmneziaWG for Android (light) | yes | 3.1.4, Google Play (21 Sep 2026) | 3.1.4 on Google Play, v3.1.20260814 as APK | Google Play, releases page | project pages |
 | AmneziaWG for iOS and macOS (light) | yes | 3.1.4 (24 Aug 2026) | 3.1.4 | App Store, the Russian one included | project pages |
 | DefaultVPN (iOS, by the Amnezia authors) | yes | 2.0.2 (21 Sep 2026) | 2.0.1 (24 Aug 2026) | App Store, the Russian one included | project pages |
@@ -2283,7 +2283,7 @@ Recorded 5 November 2026 from the release pages, the app stores and the projects
 | FlClash (Android, Windows, macOS, Linux, third-party) | yes | v0.9.4 (19 Nov 2026) | v0.8.97 (10 Sep 2026); mihomo core: needs `version: 3` in `amnezia-wg-option` | project releases page | project code, 19 Nov 2026 |
 | Throne (Windows, Linux, macOS, third-party) | yes | 1.4.2 (14 Nov 2026) | 1.3.0 (17 Sep 2026); in 1.3.x the padding of some packets is cut to the room left in the buffer; fixed in 1.4.0 | project releases page | project code, 16 Nov 2026 |
 | L×Box (Android, third-party) | yes | v2.25.22 (16 Nov 2026) | v2.23.0 (5 Sep 2026) | project releases page | project code, 19 Nov 2026 |
-| ZedSecure (Android, third-party) | yes | v3.1.8 (2 Nov 2026) | v3.1.8 (2 Nov 2026); earlier versions did not connect 3.1 profiles: a base64 HeaderProtectionKey is converted to hex only since v3.1.8 | project releases page | project code |
+| ZedSecure (Android, third-party) | yes | v3.2.0 (19 Nov 2026) | v3.1.8 (2 Nov 2026); earlier versions did not connect 3.1 profiles: a base64 HeaderProtectionKey is converted to hex only since v3.1.8 | project releases page | project code, 20 Nov 2026 |
 | network-manager-amneziawg (Linux, third-party) | yes | v0.9.12 (13 Oct 2026) | v0.9.12; no engine of its own: needs a third-line kernel module, and in external mode third-line awg tools as well | project releases page | project pages |
 | gluetun (Docker, third-party) | in the daily feed, no tag | latest image from master; tag v3.41.3 has no AmneziaWG | master (26 Sep 2026); a 3.0 engine: it does not read RandomTrailers and DisableCookies lines, and this installer's profile does not write them; it expects HeaderProtectionKey as 64 hex characters, while this installer's profile writes base64: the key has to be converted | Docker Hub, tag latest | project code |
 | Hiddify | development channel only | v5.9.15, pre-release; in stable v5.5.5 the .conf and link import does not read HeaderProtectionKey and ContentPaddingAddition (19 Nov 2026) | v5.9.8; read in the code of this release, earlier pre-releases not checked; not tested on this installer's profile | project releases page, pre-releases | project code, 19 Nov 2026 |

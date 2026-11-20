@@ -8,7 +8,7 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on 32-bit ARM) installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 6.3.6
+# Version: 6.3.7
 # Date: 2026-11-20
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
@@ -40,7 +40,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.6"
+SCRIPT_VERSION="6.3.7"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -71,8 +71,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="fff5d935db94d99300b8ef70d2c1a57a75251516d2987c0f15495af3e40ece82"
-MANAGE_SCRIPT_SHA256="12468e4d788b8c7615e62338efe92e41692434867fff4c591c3c734b01d01569"
+COMMON_SCRIPT_SHA256="8e9c3d172bdfac68b9f72715c99e839e521d84bb693d59ea0a32ac9145c66ee6"
+MANAGE_SCRIPT_SHA256="87d5ce9f10d861ff4eab8d787803768e50d1c0f90bcc14c8ead217d0b5bda2af"
 
 # Module pin for kernels older than 6.7 with no prebuilt (H0, 31 jul 2026). The
 # PPA module is not used there (see _kernel_supports_awg3); the module is built
@@ -2297,7 +2297,7 @@ install_packages() {
     else
         _aout=/dev/null
     fi
-    DEBIAN_FRONTEND=noninteractive apt -o Apt::Cmd::Disable-Script-Warning=true install -y "${to_install[@]}" 2>&1 | tee "$_aout"
+    DEBIAN_FRONTEND=noninteractive apt -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o Apt::Cmd::Disable-Script-Warning=true install -y "${to_install[@]}" 2>&1 | tee "$_aout"
     _arc=${PIPESTATUS[0]}
     if [[ "$_arc" -ne 0 ]]; then
         if [[ "$_aout" != /dev/null ]]; then
@@ -3844,30 +3844,58 @@ _awg_pkg_held() {
 }
 
 # _awg_apt_hold_honoured : 0 only when apt honours holds: the APT::Ignore-Hold
-# setting was read and is not enabled. With it apt looks at no hold at all, and
+# setting was read and is enabled neither for every apt program nor for apt or
+# apt-get alone. A program it is enabled for looks at no hold at all, and
 # the step 2 guard against a second module (the hold on amneziawg-dkms) holds
 # nothing, although the hold check passes. A setting that could not be read is
 # a refusal too, not "off": apt-get can work without apt-config, and an enabled
 # setting would then pass silently. The function logs the reason itself.
 _awg_apt_hold_honoured() {
-    local out err
+    local out err line key
+    # The setting is asked three times: the general one and the ones in the
+    # Binary::apt and Binary::apt-get sections. A section applies only to its
+    # own program, and apt-config (itself the program apt-config) does not put
+    # it in place of the general setting, and packages are installed with both
+    # apt and apt-get.
+    # Limit: apt-config applies the Binary::apt-config section to itself and
+    # drops it from the answer. A general "true" together with
+    # Binary::apt-config::APT::Ignore-Hold "false" reads as off, and apt-config
+    # cannot show that. Such a setting has to be built on purpose; I did not
+    # parse the apt.conf files by hand for it.
+    local -a ask=(a APT::Ignore-Hold/b b Binary::apt::APT::Ignore-Hold/b c Binary::apt-get::APT::Ignore-Hold/b)
     # Only stdout is parsed: apt-config writes notices to stderr even with code
     # 0 (for example "N: Ignoring file ..." about a stray file in apt.conf.d),
     # and they must not turn the answer into nonsense. stderr is read by a
     # second run and serves only the refusal text.
-    if ! out=$(apt-config shell v APT::Ignore-Hold/b 2>/dev/null); then
-        err=$(apt-config shell v APT::Ignore-Hold/b 2>&1 >/dev/null || true)
+    if ! out=$(apt-config shell "${ask[@]}" 2>/dev/null); then
+        err=$(apt-config shell "${ask[@]}" 2>&1 >/dev/null || true)
         log_error "Could not read the apt settings (apt-config shell): cannot check whether apt honours holds (APT::Ignore-Hold). Answer: $(printf '%s' "$err" | tr '\n' ' ' | tail -c 300)"
         return 1
     fi
-    # Empty means the setting is not set; v='false' means set and off. Anything
-    # else, v='true' or an answer that makes no sense, is a refusal.
-    case "$out" in
-        ""|"v='false'") return 0 ;;
-        "v='true'") log_error "APT::Ignore-Hold is enabled in the apt settings: apt ignores holds (check: apt-config dump | grep -i ignore-hold)." ;;
-        *) log_error "An answer from apt-config about APT::Ignore-Hold that makes no sense: $(printf '%s' "$out" | tr '\n' ' ' | tail -c 300)" ;;
-    esac
-    return 1
+    # One line for each setting that is set: a='false' means set and off. An
+    # empty answer means none is set. Anything else, 'true' or an answer that
+    # makes no sense, is a refusal.
+    while IFS= read -r line; do
+        case "$line" in
+            ""|"a='false'"|"b='false'"|"c='false'") continue ;;
+            "a='true'") key="APT::Ignore-Hold" ;;
+            "b='true'") key="Binary::apt::APT::Ignore-Hold" ;;
+            "c='true'") key="Binary::apt-get::APT::Ignore-Hold" ;;
+            *)
+                log_error "An answer from apt-config about APT::Ignore-Hold that makes no sense: $(printf '%s' "$out" | tr '\n' ' ' | tail -c 300)"
+                return 1
+                ;;
+        esac
+        log_error "$key is enabled in the apt settings: apt ignores holds (check: apt-config dump | grep -i ignore-hold)."
+        return 1
+    done <<< "$out" || {
+        # The loop did not run at all (the here-string did not open: out of
+        # descriptors, or a long answer goes through a temp file and there is no
+        # room for it). That is "not checked", not "off".
+        log_error "Could not read back the apt-config answer about APT::Ignore-Hold: cannot check whether apt honours holds."
+        return 1
+    }
+    return 0
 }
 
 # _awg_hold_refusal_log <apt-mark hold output> : before refusing, show what
@@ -4045,7 +4073,7 @@ _verify_boot_critical() {
     # package in the way and install the group" is rejected outright.
     # Hence stage 2 below, and the final verdict from the full-set re-check. The
     # flag is still needed: restoring one package must not cost another.
-    restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove $critical_lost 2>&1)"
+    restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove $critical_lost 2>&1)"
     restore_rc=$?
     # The wording is cautious on purpose: a zero from apt means "there was
     # nothing to do" just as much as "done". Whether the packages are back is
@@ -4067,7 +4095,7 @@ _verify_boot_critical() {
     # 12 the latter does not exist and it kills the whole transaction.
     for pkg in $critical_lost; do
         _pkg_installed_ok "$pkg" && continue
-        restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove "$pkg" 2>&1)"
+        restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove "$pkg" 2>&1)"
         restore_rc=$?
         if [[ "$restore_rc" -eq 0 ]] && _pkg_installed_ok "$pkg"; then
             log "Restored: $pkg"
@@ -4471,7 +4499,7 @@ cleanup_system() {
 
     if [ ${#packages_to_remove[@]} -gt 0 ]; then
         log "Removing: ${packages_to_remove[*]}"
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y "${packages_to_remove[@]}" || log_warn "Error removing some packages"
+        DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y "${packages_to_remove[@]}" || log_warn "Error removing some packages"
     fi
 
     # Cleaning snap artifacts (Ubuntu only)
@@ -4485,8 +4513,20 @@ cleanup_system() {
     if dpkg-query -W -f='${Status}' cloud-init 2>/dev/null | grep -q "ok installed"; then
         if _cloud_init_removable; then
             log "Removing cloud-init (network doesn't depend on it)..."
-            DEBIAN_FRONTEND=noninteractive apt-get purge -y cloud-init 2>/dev/null || log_warn "cloud-init removal error"
-            rm -rf /etc/cloud /var/lib/cloud 2>/dev/null
+            # The directories go only when the package is surely gone: apt
+            # reported success AND dpkg no longer knows it. Otherwise a
+            # half-removed cloud-init was left without its files, and the next
+            # upgrade asked about cloud.cfg (Issue #409). The apt code alone
+            # proves nothing: with APT::Get::Simulate, for example, it is 0 and
+            # nothing is removed.
+            local _ci_out _ci_rc=0 _ci_st
+            _ci_out=$(DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y cloud-init 2>&1) || _ci_rc=$?
+            _ci_st=$(LC_ALL=C dpkg-query -W -f='${Status}' cloud-init 2>&1) || true
+            if [[ "$_ci_rc" -eq 0 && ( "$_ci_st" == *not-installed || "$_ci_st" == *"no packages found"* ) ]]; then
+                rm -rf /etc/cloud /var/lib/cloud 2>/dev/null
+            else
+                log_warn "cloud-init was not removed (apt code $_ci_rc, dpkg status: ${_ci_st:-empty}): it stays and runs on the next boot, /etc/cloud and /var/lib/cloud left in place. apt said: $(printf '%s' "$_ci_out" | tail -n 3 | tr '\n' ' ')"
+            fi
         else
             log_warn "cloud-init manages network — skipping removal."
         fi
@@ -4512,10 +4552,10 @@ cleanup_system() {
     post_default_route="$(ip -4 route show default 2>/dev/null | head -1 || true)"
     if [[ -n "$pre_default_route" && -z "$post_default_route" ]]; then
         log_error "Default route lost after cleanup. Attempting recovery..."
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-install-recommends \
             netplan.io 2>/dev/null || true
         if apt-cache show netplan-generator &>/dev/null; then
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-install-recommends \
                 netplan-generator 2>/dev/null || true
         fi
         systemctl restart systemd-networkd 2>/dev/null || true
@@ -5650,9 +5690,9 @@ step_uninstall() {
         else
             log "fail2ban left installed (was present before the installer or an older installer version)."
         fi
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y "${_purge_pkgs[@]}" 2>/dev/null || log_warn "Purge error."
+        DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y "${_purge_pkgs[@]}" 2>/dev/null || log_warn "Purge error."
     else
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg-tools qrencode 2>/dev/null || log_warn "Purge error."
+        DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y amneziawg-dkms amneziawg-tools qrencode 2>/dev/null || log_warn "Purge error."
     fi
     # Separately, so a failure of these packages does not keep the others; a
     # hold set by hand would make apt-get purge -y refuse.
@@ -5665,7 +5705,7 @@ step_uninstall() {
         for _kp in "${_kmod_pkgs[@]}"; do
             apt-mark unhold "$_kp" >/dev/null 2>&1 || true
         done
-        if ! _kout=$(DEBIAN_FRONTEND=noninteractive apt-get purge -y "${_kmod_pkgs[@]}" 2>&1); then
+        if ! _kout=$(DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y "${_kmod_pkgs[@]}" 2>&1); then
             log_warn "Could not remove the prebuilt module package: ${_kmods}. apt said: $(printf '%s' "$_kout" | tr '\n' ' ' | tail -c 300)"
             log_warn "Remove it by hand: sudo apt-mark unhold ${_kmods} && sudo apt-get purge -y ${_kmods}"
         fi
@@ -6620,7 +6660,7 @@ step1_update_and_optimize() {
     log "Unlocking dpkg..."
     if ! apt-get check &>/dev/null; then
         log_warn "dpkg locked or corrupted, fixing..."
-        DEBIAN_FRONTEND=noninteractive dpkg --configure -a || log_warn "dpkg --configure -a."
+        DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold || log_warn "dpkg --configure -a."
     fi
 
     # The meta-packages that udev, initramfs-tools and the network stack hang
@@ -6681,15 +6721,23 @@ step1_update_and_optimize() {
     # The trade is deliberate: a VPN server does not need systemd to be the
     # freshest, it needs the machine to boot. The pre-reboot verification below
     # stays as the second line of defence.
-    if ! DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs; then
+    # --force-confdef --force-confold (here, in dpkg --configure -a and in every
+    # other apt call that installs or removes packages: a removal also makes
+    # apt configure pending packages): DEBIAN_FRONTEND=noninteractive and -y do
+    # not answer dpkg's question about a config file changed or deleted on the
+    # server. With stdin open the upgrade waited for an answer forever, with
+    # stdin closed dpkg failed and so did the retry (Issue #409). Now dpkg takes
+    # the default answer, and without one keeps the current file, a deleted one
+    # included.
+    if ! DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y --with-new-pkgs; then
         local _lock_holder
         _lock_holder="$(fuser /var/lib/dpkg/lock-frontend 2>/dev/null | tr -s ' ' || true)"
         if [[ -n "$_lock_holder" ]]; then
             log_warn "dpkg-lock is held by:${_lock_holder} (usually first-boot unattended-upgrades)."
         fi
         log_warn "Update failed, fixing dpkg and retrying..."
-        DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
-        DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs || _die_upgrade_failed
+        DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold || true
+        DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y --with-new-pkgs || _die_upgrade_failed
     fi
     _warn_kept_back
     log "System updated."
@@ -7427,7 +7475,7 @@ PPASRC
         if [[ "$_dkms_st" != not-installed ]]; then
             log "Found a previously installed amneziawg-dkms (AmneziaWG 3.0) - removing it before the pinned build."
             # apt-get refuses a package on hold, dpkg --force-all takes it off.
-            if ! _purge_out=$(DEBIAN_FRONTEND=noninteractive apt-get purge -y amneziawg-dkms amneziawg 2>&1); then
+            if ! _purge_out=$(DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold purge -y amneziawg-dkms amneziawg 2>&1); then
                 _purge_out+=" | $(dpkg --purge --force-all amneziawg-dkms amneziawg 2>&1)" || true
             fi
             # A package that survives the purge would stay under the hold below:
@@ -7676,7 +7724,7 @@ PPASRC
     if [[ "$_has_stale" -eq 1 ]] && ! command -v gcc-13 >/dev/null 2>&1; then
         if apt-cache madison gcc-13 2>/dev/null | grep -q .; then
             log "Stale kernel headers detected (other than $_running_kernel) — installing gcc-13 for DKMS autoinstall compatibility."
-            DEBIAN_FRONTEND=noninteractive apt install -y gcc-13 \
+            DEBIAN_FRONTEND=noninteractive apt -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y gcc-13 \
                 || log_warn "gcc-13 install failed — DKMS autoinstall may fail on stale kernels."
         else
             log_warn "Stale kernel headers detected, but gcc-13 is not in the repo — DKMS autoinstall may fail."
@@ -7754,7 +7802,7 @@ PPASRC
             break
         fi
         log "Installing meta-package $meta..."
-        if DEBIAN_FRONTEND=noninteractive apt install -y "$meta" 2>/dev/null; then
+        if DEBIAN_FRONTEND=noninteractive apt -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y "$meta" 2>/dev/null; then
             log "$meta installed."
             meta_installed=1
             break
@@ -8789,7 +8837,7 @@ mode_finish() {
     collect_targets 2>/dev/null
     for k in "${TARGETS[@]}"; do if has_module "$k"; then had+=("$k"); else never+=("$k"); fi; done
     log_line "dpkg --configure -a"
-    if ! DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then
+    if ! DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold; then
         log_line "ERROR: dpkg --configure -a failed; see the messages above" >&2; exit 1
     fi
     if ! audit=$(dpkg --audit 2>/dev/null); then

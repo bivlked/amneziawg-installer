@@ -270,7 +270,7 @@ _depth() { sed -n "1,$(( $2 - 1 ))p" <<<"$1" | awk '/^    if .*then$/ {d++} /^  
     for f in "${INSTALLERS[@]}"; do
         s=$(_step2 "$f")
         dep=$(_line "$s" '    _awg_deploy_ensure_helper')
-        gcc=$(grep -n -m1 -F 'apt install -y gcc-13' <<<"$s" | cut -d: -f1)
+        gcc=$(grep -n -m1 -F 'apt -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y gcc-13' <<<"$s" | cut -d: -f1)
         pk=$(_line "$s" '    install_packages "${packages[@]}"')
         arm=$(grep -n -m1 -F 'request_reboot 3' <<<"$s" | cut -d: -f1)
         [ -n "$dep" ] && [ -n "$gcc" ] && [ -n "$pk" ] && [ -n "$arm" ] || { echo "$f: dep=$dep gcc=$gcc pk=$pk arm=$arm"; return 1; }
