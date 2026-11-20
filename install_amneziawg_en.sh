@@ -3889,8 +3889,9 @@ _awg_apt_hold_honoured() {
         log_error "$key is enabled in the apt settings: apt ignores holds (check: apt-config dump | grep -i ignore-hold)."
         return 1
     done <<< "$out" || {
-        # The loop did not run at all (the here-string did not open: no space in
-        # the temp directory or no descriptors). That is "not checked", not "off".
+        # The loop did not run at all (the here-string did not open: out of
+        # descriptors, or a long answer goes through a temp file and there is no
+        # room for it). That is "not checked", not "off".
         log_error "Could not read back the apt-config answer about APT::Ignore-Hold: cannot check whether apt honours holds."
         return 1
     }

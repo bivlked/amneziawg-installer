@@ -10,7 +10,10 @@
 #
 # The calls are found by their verb, not by their prefix, so a new call
 # written without DEBIAN_FRONTEND or with the options in the wrong place is
-# found and fails; text inside messages (log, die, fix hints) is cut out first.
+# found and fails. Message text is cut out by its caller (log*, die, printf,
+# echo, the fix= and note= hints), not by parsing quotes: a quote parser
+# loses the pairing after "$(...)" and would hide the code that follows. The
+# counts are exact, so a call that does disappear from the finder shows up.
 
 bats_require_minimum_version 1.5.0
 
@@ -19,12 +22,14 @@ APT_KEEP='-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold'
 APT_RE='(DEBIAN_FRONTEND=noninteractive +)?\bapt(-get)?( +-o +[^ ]+| +-[a-zA-Z-]+)* +(install|upgrade|dist-upgrade|full-upgrade|reinstall|purge|remove|autoremove)( +-s( |$))?'
 DPKG_RE='(DEBIAN_FRONTEND=noninteractive +)?\bdpkg( +-[^ ]+)* +--configure( +-[^ ;|)]+)*'
 
-# code_of <script> : the script without comment lines and without the text of
-# double-quoted strings, except strings that open a command substitution
-# ("$(...)"), which hold real calls.
+# code_of <script> : the script without comment lines and without message
+# text: from a message call to the end of its line, and the fix=/note= hint
+# strings.
 code_of() {
-    grep -vE '^[[:space:]]*#' "$BATS_TEST_DIRNAME/../$1" \
-        | sed -E 's/"([^"$]|\$[^("])[^"]*"//g'
+    grep -vE '^[[:space:]]*#' "$BATS_TEST_DIRNAME/../$1" | strip_messages
+}
+strip_messages() {
+    sed -E 's/(^|[^[:alnum:]_])(log|log_warn|log_error|log_debug|log_line|die|printf|echo)( .*|$)/\1/; s/(^|[ ;])(local +)?[[:alnum:]_]*(fix|note)="[^"]*"/\1/g'
 }
 
 @test "conffile: every apt call that installs, upgrades or removes keeps current config files, all six scripts" {
@@ -46,13 +51,14 @@ code_of() {
             esac
         done < <(code_of "$f" | grep -oE "$APT_RE")
         # installers: 2 upgrades, install_packages, 2 restore passes, 2 netplan
-        # restores, gcc-13, kernel meta package, 6 purges; awg_common: headers
+        # restores, gcc-13, kernel meta package, 6 purges; awg_common: headers.
+        # Exact: a new call means updating this number on purpose.
         case "$f" in
             install_*) min=15 ;;
             awg_common*) min=1 ;;
             *) min=0 ;;
         esac
-        [ "$n" -ge "$min" ] || { echo "$f: only $n apt calls found, expected at least $min"; return 1; }
+        [ "$n" -eq "$min" ] || { echo "$f: $n apt calls found, expected $min"; return 1; }
     done
 }
 
@@ -68,7 +74,7 @@ code_of() {
         done < <(code_of "$f" | grep -oE "$DPKG_RE")
         # step 1: the repair before the upgrade and the retry; helper --finish
         case "$f" in install_*) min=3 ;; *) min=0 ;; esac
-        [ "$n" -ge "$min" ] || { echo "$f: only $n dpkg calls found, expected at least $min"; return 1; }
+        [ "$n" -eq "$min" ] || { echo "$f: $n dpkg calls found, expected $min"; return 1; }
     done
 }
 
@@ -80,18 +86,24 @@ code_of() {
              'DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y x' \
              'out=$(apt-get -o Dpkg::Options::=--force-confask install -y x)' \
              'apt-get dist-upgrade -y' 'apt full-upgrade -y' 'apt-get purge -y x' \
-             'true || DEBIAN_FRONTEND=noninteractive apt install -y x'; do
-        [ -n "$(printf '%s\n' "$s" | grep -oE "$APT_RE")" ] || { echo "not found: $s"; return 1; }
+             'true || DEBIAN_FRONTEND=noninteractive apt install -y x' \
+             'r="$(id -u)"; apt-get install -y x "$p"' 'x=""; apt-get purge -y foo "$p"' \
+             'eval "apt-get install -y $p"' 'bash -c "apt-get install -y x"' \
+             'restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" 2>&1)"'; do
+        [ -n "$(printf '%s\n' "$s" | strip_messages | grep -oE "$APT_RE")" ] || { echo "not found: $s"; return 1; }
     done
     for s in 'if dpkg --configure -a; then' 'out=$(dpkg --configure -a 2>&1)' \
              'timeout 600 dpkg --configure -a' 'x || dpkg --force-confold --configure -a'; do
-        [ -n "$(printf '%s\n' "$s" | grep -oE "$DPKG_RE")" ] || { echo "not found: $s"; return 1; }
+        [ -n "$(printf '%s\n' "$s" | strip_messages | grep -oE "$DPKG_RE")" ] || { echo "not found: $s"; return 1; }
     done
-    # and message text is cut out, while a call inside "$(...)" is kept
-    run bash -c "printf '%s\n' 'log_warn \"run: apt-get install -y x\"' | sed -E 's/\"([^\"\$]|\\\$[^(\"])[^\"]*\"//g' | grep -cE 'apt-get install'"
-    [ "$output" = "0" ]
-    run bash -c "printf '%s\n' 'r=\"\$(DEBIAN_FRONTEND=noninteractive apt-get install -y \"\$p\")\"' | sed -E 's/\"([^\"\$]|\\\$[^(\"])[^\"]*\"//g' | grep -cE 'apt-get install'"
-    [ "$output" = "1" ]
+    # message text is cut out, the call before a message on the same line stays
+    for s in 'log_warn "run: apt-get install -y x"' 'die "do: sudo apt-get purge -y x"' \
+             '        tools_old) fix="apt-get install --only-upgrade x" ;;' \
+             'local _dfix="sudo apt install linux-headers-$rel"' \
+             'printf '"'%s'"' "apt-get update && apt-get install x"'; do
+        [ -z "$(printf '%s\n' "$s" | strip_messages | grep -oE "$APT_RE")" ] || { echo "message seen as a call: $s"; return 1; }
+    done
+    [ -n "$(printf '%s\n' 'apt-get purge -y x || log_warn "purge failed"' | strip_messages | grep -oE "$APT_RE")" ]
 }
 
 @test "conffile: install_packages runs apt noninteractive with the options, both installers" {
