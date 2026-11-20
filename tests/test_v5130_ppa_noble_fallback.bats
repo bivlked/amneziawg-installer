@@ -89,7 +89,7 @@
         "$BATS_TEST_DIRNAME/../install_amneziawg.sh"
     grep -q 'apt-cache madison gcc-13' \
         "$BATS_TEST_DIRNAME/../install_amneziawg.sh"
-    grep -q 'apt install -y gcc-13' \
+    grep -q 'apt -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y gcc-13' \
         "$BATS_TEST_DIRNAME/../install_amneziawg.sh"
 }
 
@@ -98,7 +98,7 @@
         "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"
     grep -q 'apt-cache madison gcc-13' \
         "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"
-    grep -q 'apt install -y gcc-13' \
+    grep -q 'apt -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y gcc-13' \
         "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"
 }
 

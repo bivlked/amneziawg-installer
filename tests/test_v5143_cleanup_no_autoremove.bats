@@ -139,6 +139,16 @@ SHIM
         chmod +x "$BIN/$cmd"
     done
 
+    # apt-get again, now with a purge of cloud-init that can fail
+    # (MOCK_CLOUD_PURGE_RC), for the Issue #409 order below.
+    cat > "$BIN/apt-get" <<'SHIM'
+#!/bin/bash
+echo "apt-get $*" >> "$TRACE"
+[[ "$*" == "purge -y cloud-init" ]] && exit "${MOCK_CLOUD_PURGE_RC:-0}"
+exit 0
+SHIM
+    chmod +x "$BIN/apt-get"
+
     # ls: used by cleanup_system inside cloud-init guard for /etc/netplan/*cloud-init*.
     # Forward everything else to the real ls.
     cat > "$BIN/ls" <<'SHIM'
@@ -168,6 +178,15 @@ log_debug() { echo "DEBUG: $*" >> "$TRACE"; }
 log_warn()  { echo "WARN: $*" >> "$TRACE"; }
 log_error() { echo "ERROR: $*" >> "$TRACE"; }
 die()       { echo "DIE: $*" >> "$TRACE"; exit 1; }
+# Never let cleanup_system remove the real /etc/cloud, /var/lib/cloud or snap
+# directories of the machine running the suite: trace those, pass the rest.
+# A function, not a PATH shim, so it lives only inside call_cleanup.
+rm() {
+    case " $* " in
+        *" /etc/cloud "*|*" /var/lib/cloud "*|*" /snap "*) echo "rm $*" >> "$TRACE"; return 0 ;;
+    esac
+    command rm "$@"
+}
 OS_ID="ubuntu"
 LOADER
 }
@@ -226,7 +245,7 @@ call_cleanup() {
     call_cleanup
     run ! grep -qE '^DIE:'                                                  "$TRACE"
     run ! grep -qE 'Default route потерян|Default route lost'               "$TRACE"
-    run ! grep -qE '^apt-get install .*--no-install-recommends netplan\.io' "$TRACE"
+    run ! grep -qE '^apt-get .*install .*--no-install-recommends netplan\.io' "$TRACE"
 }
 
 @test "v5.14.3: default route lost ->recovery attempt (apt install + netplan apply)" {
@@ -238,9 +257,9 @@ call_cleanup() {
     # Recovery installs netplan.io unconditionally, then gates netplan-generator
     # behind apt-cache show (so Debian 12 with no netplan-generator does not
     # abort the apt transaction).
-    grep -qE '^apt-get install -y --no-install-recommends netplan\.io$'     "$TRACE"
+    grep -qxF -- 'apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-install-recommends netplan.io' "$TRACE"
     grep -qE '^apt-cache show netplan-generator'                            "$TRACE"
-    grep -qE '^apt-get install -y --no-install-recommends netplan-generator$' "$TRACE"
+    grep -qxF -- 'apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-install-recommends netplan-generator' "$TRACE"
     grep -qE '^systemctl restart systemd-networkd'                          "$TRACE"
     grep -qE '^netplan apply'                                               "$TRACE"
 }
@@ -325,6 +344,41 @@ call_cleanup() {
         run grep -c '_preexisting_holds' <<< "$body"
         [ "$output" = "0" ] || { echo "$f: snapshot still there"; return 1; }
     done
+}
+
+# The cloud-init branch needs its two helpers; the rest of the harness runs
+# without them, so they are added only for the Issue #409 tests.
+reach_cloud_init() {
+    echo '_cloud_init_removable() { return 0; }; _cleanup_package_list() { :; }' >> "$TEST_DIR/loader.bash"
+}
+
+@test "Issue #409: /etc/cloud and /var/lib/cloud go only after cloud-init is purged" {
+    reach_cloud_init
+    MOCK_CLOUD_PURGE_RC=0 run call_cleanup
+    grep -qx "apt-get purge -y cloud-init" "$TRACE"
+    grep -qx "rm -rf /etc/cloud /var/lib/cloud" "$TRACE"
+}
+
+@test "Issue #409: a failed cloud-init purge keeps /etc/cloud and says so" {
+    reach_cloud_init
+    MOCK_CLOUD_PURGE_RC=100 run call_cleanup
+    grep -qx "apt-get purge -y cloud-init" "$TRACE"
+    run grep -c "^rm .*/etc/cloud" "$TRACE"
+    [ "$output" = "0" ]
+    grep -q "^WARN: .*/etc/cloud" "$TRACE"
+}
+
+@test "Issue #409: the purge guard behaves the same in the EN installer" {
+    reach_cloud_init
+    awk '/^cleanup_system\(\) \{/,/^}$/' "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh" > "$TEST_DIR/cleanup_system.bash"
+    awk '/^_awg_pkg_held\(\) \{/,/^}$/' "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh" >> "$TEST_DIR/cleanup_system.bash"
+    MOCK_CLOUD_PURGE_RC=100 run call_cleanup
+    run grep -c "^rm .*/etc/cloud" "$TRACE"
+    [ "$output" = "0" ]
+    grep -q "^WARN: .*/etc/cloud" "$TRACE"
+    : > "$TRACE"
+    MOCK_CLOUD_PURGE_RC=0 run call_cleanup
+    grep -qx "rm -rf /etc/cloud /var/lib/cloud" "$TRACE"
 }
 
 @test "structural: install_amneziawg.sh + _en.sh cleanup_system functions are line-equal" {

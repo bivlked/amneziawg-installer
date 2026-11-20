@@ -5,7 +5,10 @@
 #   1. a failed purge of an earlier amneziawg-dkms was only a warning, and the
 #      hold then "protected" a package that was still installed;
 #   2. APT::Ignore-Hold makes apt ignore every hold, so the protection is void
-#      (and a setting that cannot be read must not pass as "off");
+#      (and a setting that cannot be read must not pass as "off"); the same
+#      setting scoped to one binary (Binary::apt::APT::Ignore-Hold, and the
+#      apt-get twin) does it only for that binary, and apt-config does not
+#      apply such a scope to the plain key, so both are asked by name;
 #   3. the ARM postcondition looked for "ok installed" and missed a package
 #      left unpacked or half-configured.
 # The step-2 body is one long function, so the order of the guards is pinned
@@ -20,14 +23,18 @@ setup() {
     mkdir -p "$BIN"
 }
 
-# stub_apt_config <exit code> <output> [stderr notice] : answers only
-# `shell v APT::Ignore-Hold/b`
+# The one question the helper asks, all three keys in one call.
+HOLD_ASK="shell a APT::Ignore-Hold/b b Binary::apt::APT::Ignore-Hold/b c Binary::apt-get::APT::Ignore-Hold/b"
+
+# stub_apt_config <exit code> <output, \n for new lines> [stderr notice] :
+# answers only $HOLD_ASK
 stub_apt_config() {
+    printf '%b' "$2" > "$BIN/apt-config.out"
     {
         echo '#!/usr/bin/env bash'
-        echo '[ "$1 $2 $3" = "shell v APT::Ignore-Hold/b" ] || { echo "unexpected: $*" >&2; exit 99; }'
+        printf '[ "$*" = "%s" ] || { echo "unexpected: $*" >&2; exit 99; }\n' "$HOLD_ASK"
         [ -n "${3:-}" ] && printf 'echo "%s" >&2\n' "$3"
-        printf 'printf "%%s" "%s"\n' "$2"
+        printf 'cat "%s"\n' "$BIN/apt-config.out"
         echo "exit $1"
     } > "$BIN/apt-config"
     chmod +x "$BIN/apt-config"
@@ -43,22 +50,23 @@ honoured() {
 @test "Ignore-Hold: holds count as honoured only when the setting is read and off, both installers" {
     local f
     for f in "${INSTALLERS[@]}"; do
-        stub_apt_config 0 "v='false'"; run honoured "$f"; [ "$status" -eq 0 ] || { echo "$f false: $status $output"; return 1; }
+        stub_apt_config 0 "a='false'"; run honoured "$f"; [ "$status" -eq 0 ] || { echo "$f false: $status $output"; return 1; }
         stub_apt_config 0 "";          run honoured "$f"; [ "$status" -eq 0 ] || { echo "$f unset: $status $output"; return 1; }
+        stub_apt_config 0 "a='false'\nb='false'\nc='false'\n"; run honoured "$f"; [ "$status" -eq 0 ] || { echo "$f all false: $status $output"; return 1; }
     done
 }
 
 @test "Ignore-Hold: a notice on stderr does not spoil an answer that is off or unset, both installers" {
     local f n="N: Ignoring file '99custom.txt' in directory '/etc/apt/apt.conf.d/' as it has an invalid filename extension"
     for f in "${INSTALLERS[@]}"; do
-        stub_apt_config 0 "v='false'" "$n"; run honoured "$f"; [ "$status" -eq 0 ] || { echo "$f false: $status $output"; return 1; }
+        stub_apt_config 0 "a='false'" "$n"; run honoured "$f"; [ "$status" -eq 0 ] || { echo "$f false: $status $output"; return 1; }
         stub_apt_config 0 "" "$n";          run honoured "$f"; [ "$status" -eq 0 ] || { echo "$f unset: $status $output"; return 1; }
-        stub_apt_config 0 "v='true'" "$n";  run honoured "$f"; [ "$status" -eq 1 ] || { echo "$f true: $status $output"; return 1; }
+        stub_apt_config 0 "a='true'" "$n";  run honoured "$f"; [ "$status" -eq 1 ] || { echo "$f true: $status $output"; return 1; }
     done
 }
 
 @test "Ignore-Hold: an enabled setting is a refusal with a reason, both installers" {
-    stub_apt_config 0 "v='true'"
+    stub_apt_config 0 "a='true'"
     local f
     for f in "${INSTALLERS[@]}"; do
         run honoured "$f"
@@ -67,7 +75,7 @@ honoured() {
 }
 
 @test "Ignore-Hold: an answer that is neither empty nor true or false is a refusal, both installers" {
-    stub_apt_config 0 "v='maybe'"
+    stub_apt_config 0 "a='maybe'"
     local f
     for f in "${INSTALLERS[@]}"; do
         run honoured "$f"
@@ -78,12 +86,49 @@ honoured() {
 @test "Ignore-Hold: an apt-config that fails or is missing is a refusal, not 'off'" {
     local f
     for f in "${INSTALLERS[@]}"; do
-        stub_apt_config 1 "v='false'"; run honoured "$f"
+        stub_apt_config 1 "a='false'"; run honoured "$f"
         [ "$status" -eq 1 ] && [[ "$output" == ERR:*apt-config* ]] || { echo "$f failed: $status $output"; return 1; }
         rm -f "$BIN/apt-config"
         # no apt-config anywhere on PATH: only the stub directory and bash itself
         run env PATH="$BIN" "$BASH" -c "$(declare -f honoured); INSTALLERS=(); BATS_TEST_DIRNAME='$BATS_TEST_DIRNAME'; BIN='$BIN'; PATH='$BIN'; body=\$(/usr/bin/awk '/^_awg_apt_hold_honoured\\(\\) \\{/,/^\\}/' '$BATS_TEST_DIRNAME/../$f'); log_error() { echo \"ERR: \$*\"; }; eval \"\$body\"; _awg_apt_hold_honoured"
         [ "$status" -eq 1 ] && [[ "$output" == *ERR:*apt-config* ]] || { echo "$f missing: $status $output"; return 1; }
+    done
+}
+
+@test "Ignore-Hold: the setting scoped to apt or apt-get is a refusal that names it, both installers" {
+    local f
+    for f in "${INSTALLERS[@]}"; do
+        stub_apt_config 0 "b='true'\n"; run honoured "$f"
+        [ "$status" -eq 1 ] && [[ "$output" == ERR:*Binary::apt::APT::Ignore-Hold* ]] || { echo "$f apt: $status $output"; return 1; }
+        stub_apt_config 0 "c='true'\n"; run honoured "$f"
+        [ "$status" -eq 1 ] && [[ "$output" == ERR:*Binary::apt-get::APT::Ignore-Hold* ]] || { echo "$f apt-get: $status $output"; return 1; }
+        # off for everyone, on for apt only: still a refusal
+        stub_apt_config 0 "a='false'\nb='true'\nc='false'\n"; run honoured "$f"
+        [ "$status" -eq 1 ] && [[ "$output" == ERR:*Binary::apt::APT::Ignore-Hold* ]] || { echo "$f mixed: $status $output"; return 1; }
+        # a strange line after good ones is not skipped
+        stub_apt_config 0 "a='false'\nc='yes'\n"; run honoured "$f"
+        [ "$status" -eq 1 ] && [[ "$output" == ERR:*Ignore-Hold* ]] || { echo "$f strange: $status $output"; return 1; }
+    done
+}
+
+@test "Ignore-Hold: the real apt-config reports the apt-scoped setting to the helper, both installers" {
+    command -v apt-config >/dev/null 2>&1 || skip "no apt-config on this machine"
+    rm -f "$BIN/apt-config"
+    local f conf="$BATS_TEST_TMPDIR/apt.conf"
+    # The host's own apt.conf.d is still read; it must not enable the setting.
+    if APT_CONFIG=/dev/null apt-config dump 2>/dev/null | grep -qi 'ignore-hold "true"'; then
+        skip "Ignore-Hold is enabled on this host"
+    fi
+    for f in "${INSTALLERS[@]}"; do
+        printf '%s\n' 'Binary::apt::APT::Ignore-Hold "true";' > "$conf"
+        APT_CONFIG="$conf" run honoured "$f"
+        [ "$status" -eq 1 ] && [[ "$output" == ERR:*Binary::apt::APT::Ignore-Hold* ]] || { echo "$f apt: $status $output"; return 1; }
+        printf '%s\n' 'Binary::apt-get::APT::Ignore-Hold "1";' > "$conf"
+        APT_CONFIG="$conf" run honoured "$f"
+        [ "$status" -eq 1 ] && [[ "$output" == ERR:*Binary::apt-get::APT::Ignore-Hold* ]] || { echo "$f apt-get: $status $output"; return 1; }
+        printf '%s\n' 'Binary::apt::APT::Ignore-Hold "false";' > "$conf"
+        APT_CONFIG="$conf" run honoured "$f"
+        [ "$status" -eq 0 ] || { echo "$f off: $status $output"; return 1; }
     done
 }
 

@@ -12,6 +12,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Step 1 no longer stops at dpkg's config file question ([#409](https://github.com/bivlked/amneziawg-installer/issues/409), thanks to @HoangHashimoto for the analysis and the reproduction).** When a package's config file was changed or deleted on the server (for example cloud-init's `/etc/cloud/cloud.cfg`), dpkg asks during the upgrade which version to keep, and `DEBIAN_FRONTEND=noninteractive` and `-y` do not answer that question. With a terminal attached step 1 waited for an answer forever, without one it failed, and the `dpkg --configure -a` retry failed the same way. Now the system upgrade, `dpkg --configure -a` and the other package installs run with `--force-confdef --force-confold`: dpkg takes the default answer, and when there is none it keeps the current file (a deleted one stays deleted). The system cleanup removes `/etc/cloud` and `/var/lib/cloud` only after cloud-init itself is gone; if it could not be removed, the directories stay and the log has a warning.
+- **Step 2 notices `APT::Ignore-Hold` enabled only for `apt` or `apt-get`.** The settings `Binary::apt::APT::Ignore-Hold` and `Binary::apt-get::APT::Ignore-Hold` switch holds off for one program, and the old check did not see them, although step 2 installs packages with `apt`. Now the installer stops and names the setting it found.
+
+### Documentation
+
+- **3.1 client table in ADVANCED: versions as of 20 November 2026.** Amnezia VPN 5.1.1.10 (GitHub, Google Play; the App Store still has 5.1.0) and ZedSecure v3.2.0, which still converts `HeaderProtectionKey` from base64 to hex and supports the 3.1 profile.
+
 ## [6.3.6] - 2026-11-20
 
 **v6.3.6** - `regen` on 2.0 no longer leaves old QR and `vpn://` files behind, and step 2 guards harder against a second kernel module: an `amneziawg-dkms` on hold, `APT::Ignore-Hold` and unreadable apt and dpkg answers now stop the install with a clear reason. Docs: the signing key outside GitHub and the client table as of 19 November.

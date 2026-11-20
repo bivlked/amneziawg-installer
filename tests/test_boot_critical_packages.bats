@@ -163,7 +163,7 @@ line_of() {
     for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
         local mark upgrade
         mark=$(line_of "$f" 'apt-mark manual \$critical_before')
-        upgrade=$(line_of "$f" 'apt-get upgrade -y --with-new-pkgs')
+        upgrade=$(line_of "$f" 'apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y --with-new-pkgs')
         [ -n "$mark" ] && [ -n "$upgrade" ]
         [ "$mark" -lt "$upgrade" ]
     done
@@ -273,11 +273,11 @@ line_of() {
     for f in "$(RU_INSTALL)" "$(EN_INSTALL)"; do
         local block bulk loop
         block=$(extract_func "$f" _verify_boot_critical)
-        bulk=$(echo "$block" | grep -n -m1 'apt-get install -y --no-remove \$critical_lost' | cut -d: -f1)
+        bulk=$(echo "$block" | grep -n -m1 'apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove \$critical_lost' | cut -d: -f1)
         loop=$(echo "$block" | grep -n -m1 'for pkg in \$critical_lost' | cut -d: -f1)
         [ -n "$bulk" ] && [ -n "$loop" ]
         [ "$bulk" -lt "$loop" ]
-        echo "$block" | grep -q 'apt-get install -y --no-remove "\$pkg"'
+        echo "$block" | grep -q 'apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove "\$pkg"'
         # The per-package pass must skip what the bulk call already restored,
         # otherwise apt is invoked a second time for every name for nothing.
         echo "$block" | grep -q '_pkg_installed_ok "\$pkg" && continue'
@@ -306,22 +306,22 @@ line_of() {
         while IFS= read -r line; do
             [ -z "$line" ] && continue
             n=$((n + 1))
-            call=$(echo "$line" | grep -oE 'apt(-get)?( +-{1,2}[a-zA-Z-]+)* +[a-z-]*upgrade[a-z-]*( +-{1,2}[a-zA-Z-]+)*')
+            call=$(echo "$line" | grep -oE 'apt(-get)?( +(-o +[^ ;|]+|-{1,2}[a-zA-Z-]+))* +[a-z-]*upgrade[a-z-]*( +(-o +[^ ;|]+|-{1,2}[a-zA-Z-]+))*')
             case "$call" in
-                "apt-get upgrade -y --with-new-pkgs") ;;
+                "apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y --with-new-pkgs") ;;
                 "apt-get upgrade -s --with-new-pkgs") ;;
                 *)
                     echo "unexpected upgrade invocation: [$call] in: $line" >&2
                     return 1
                     ;;
             esac
-        done < <(echo "$live" | grep -E 'apt(-get)?( +-{1,2}[a-zA-Z-]+)* +[a-z-]*upgrade')
+        done < <(echo "$live" | grep -E 'apt(-get)?( +(-o +[^ ;|]+|-{1,2}[a-zA-Z-]+))* +[a-z-]*upgrade')
         [ "$n" -ge 2 ]
         # And nothing else in this function may remove packages. The regex
         # above only sees upgrade verbs, so a plain `apt-get autoremove` added
         # here would be invisible to it - and autoremove is exactly what made
         # udev disposable in Issue #223 in the first place.
-        if echo "$live" | grep -qE 'apt(-get)? +(-[^ ]+ +)*(autoremove|remove|purge)'; then
+        if echo "$live" | grep -qE 'apt(-get)?( +(-o +[^ ;|]+|-[^ ]+))* +(autoremove|remove|purge)'; then
             echo "a package-removing apt call appeared in step 1" >&2
             return 1
         fi
@@ -773,11 +773,11 @@ setup_stubs() {
     [ "$(grep -c . "$BATS_TEST_TMPDIR/apt-args")" -eq 3 ]
     # The bulk call comes FIRST. Order is the whole point of the two stages:
     # co-dependent packages only converge when every name is a resolver goal.
-    head -1 "$BATS_TEST_TMPDIR/apt-args" | grep -qx "noninteractive install -y --no-remove udev initramfs-tools"
+    head -1 "$BATS_TEST_TMPDIR/apt-args" | grep -qx "noninteractive -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove udev initramfs-tools"
     # The environment prefix is recorded too: a conffile prompt in an unattended
     # run would block the installer at the worst possible moment.
-    grep -qx "noninteractive install -y --no-remove udev" "$BATS_TEST_TMPDIR/apt-args"
-    grep -qx "noninteractive install -y --no-remove initramfs-tools" "$BATS_TEST_TMPDIR/apt-args"
+    grep -qx "noninteractive -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove udev" "$BATS_TEST_TMPDIR/apt-args"
+    grep -qx "noninteractive -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove initramfs-tools" "$BATS_TEST_TMPDIR/apt-args"
 }
 
 @test "boot-critical: the per-package pass skips what the bulk call restored" {
@@ -803,7 +803,7 @@ setup_stubs() {
     # Bulk call plus one per-package call for initramfs-tools only.
     [ "$(grep -c . "$BATS_TEST_TMPDIR/apt-args")" -eq 2 ]
     [ "$(grep -c "no-remove udev$" "$BATS_TEST_TMPDIR/apt-args")" -eq 0 ]
-    grep -qx "noninteractive install -y --no-remove initramfs-tools" "$BATS_TEST_TMPDIR/apt-args"
+    grep -qx "noninteractive -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove initramfs-tools" "$BATS_TEST_TMPDIR/apt-args"
 }
 
 @test "boot-critical (EN): the restore asks apt for the whole set, then per package" {
@@ -816,13 +816,13 @@ setup_stubs() {
     run _verify_boot_critical "udev initramfs-tools"
     [ "$status" -eq 42 ]
     [ "$(grep -c . "$BATS_TEST_TMPDIR/apt-args")" -eq 3 ]
-    head -1 "$BATS_TEST_TMPDIR/apt-args" | grep -qx "noninteractive install -y --no-remove udev initramfs-tools"
+    head -1 "$BATS_TEST_TMPDIR/apt-args" | grep -qx "noninteractive -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove udev initramfs-tools"
     # The environment prefix matters here as much as in the RU twin: without it
     # an unattended run stops at a conffile prompt. Losing it in the EN file
     # only used to go unnoticed, because this twin checked less than its
     # original.
-    grep -qx "noninteractive install -y --no-remove udev" "$BATS_TEST_TMPDIR/apt-args"
-    grep -qx "noninteractive install -y --no-remove initramfs-tools" "$BATS_TEST_TMPDIR/apt-args"
+    grep -qx "noninteractive -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove udev" "$BATS_TEST_TMPDIR/apt-args"
+    grep -qx "noninteractive -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove initramfs-tools" "$BATS_TEST_TMPDIR/apt-args"
 }
 
 @test "boot-critical (EN): the per-package pass skips what the bulk call restored" {
@@ -845,7 +845,7 @@ setup_stubs() {
     [ "$status" -eq 42 ]
     [ "$(grep -c . "$BATS_TEST_TMPDIR/apt-args")" -eq 2 ]
     [ "$(grep -c "no-remove udev$" "$BATS_TEST_TMPDIR/apt-args")" -eq 0 ]
-    grep -qx "noninteractive install -y --no-remove initramfs-tools" "$BATS_TEST_TMPDIR/apt-args"
+    grep -qx "noninteractive -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove initramfs-tools" "$BATS_TEST_TMPDIR/apt-args"
 }
 
 @test "boot-critical: a failed bulk transaction is reported, then retried per package" {

@@ -2231,7 +2231,7 @@ install_packages() {
     else
         _aout=/dev/null
     fi
-    DEBIAN_FRONTEND=noninteractive apt -o Apt::Cmd::Disable-Script-Warning=true install -y "${to_install[@]}" 2>&1 | tee "$_aout"
+    DEBIAN_FRONTEND=noninteractive apt -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o Apt::Cmd::Disable-Script-Warning=true install -y "${to_install[@]}" 2>&1 | tee "$_aout"
     _arc=${PIPESTATUS[0]}
     if [[ "$_arc" -ne 0 ]]; then
         if [[ "$_aout" != /dev/null ]]; then
@@ -3750,30 +3750,46 @@ _awg_pkg_held() {
 }
 
 # _awg_apt_hold_honoured : 0, только если apt соблюдает hold: настройка
-# APT::Ignore-Hold прочитана и не включена. С ней apt не смотрит ни на один hold,
+# APT::Ignore-Hold прочитана и не включена ни для всех программ apt, ни
+# отдельно для apt или apt-get. С ней apt не смотрит ни на один hold,
 # и защита шага 2 от второго модуля (hold на amneziawg-dkms) ничего не держит,
 # хотя проверка hold проходит. Не прочитанная настройка - тоже отказ, а не
 # «выключено»: apt-get может работать и без apt-config, и тогда включённая
 # настройка прошла бы молча. Причину функция пишет сама.
 _awg_apt_hold_honoured() {
-    local out err
+    local out err line key
+    # Настройка спрашивается трижды: общая и в разделах Binary::apt и
+    # Binary::apt-get. Раздел действует только на свою программу, и apt-config
+    # (сам он программа apt-config) общей настройке его не подставляет, а
+    # install_packages ставит пакеты через apt, остальные вызовы - через apt-get.
+    local -a ask=(a APT::Ignore-Hold/b b Binary::apt::APT::Ignore-Hold/b c Binary::apt-get::APT::Ignore-Hold/b)
     # Разбирается только stdout: в stderr apt-config и при коде 0 пишет
     # уведомления (например, «N: Ignoring file ...» про лишний файл в
     # apt.conf.d), и они не должны превращать ответ в непонятный. stderr
     # читается вторым запуском и нужен только для текста отказа.
-    if ! out=$(apt-config shell v APT::Ignore-Hold/b 2>/dev/null); then
-        err=$(apt-config shell v APT::Ignore-Hold/b 2>&1 >/dev/null || true)
+    if ! out=$(apt-config shell "${ask[@]}" 2>/dev/null); then
+        err=$(apt-config shell "${ask[@]}" 2>&1 >/dev/null || true)
         log_error "Не удалось прочитать настройки apt (apt-config shell): не проверить, соблюдает ли apt hold (APT::Ignore-Hold). Ответ: $(printf '%s' "$err" | tr '\n' ' ' | tail -c 300)"
         return 1
     fi
-    # Пусто - настройка не задана; v='false' - задана и выключена. Всё прочее,
-    # включая v='true' и непонятный ответ, - отказ.
-    case "$out" in
-        ""|"v='false'") return 0 ;;
-        "v='true'") log_error "В настройках apt включено APT::Ignore-Hold: apt не соблюдает hold (проверка: apt-config dump | grep -i ignore-hold)." ;;
-        *) log_error "Непонятный ответ apt-config про APT::Ignore-Hold: $(printf '%s' "$out" | tr '\n' ' ' | tail -c 300)" ;;
-    esac
-    return 1
+    # По строке на каждую заданную настройку: a='false' - задана и выключена.
+    # Пустой ответ - не задана ни одна. Всё прочее, включая 'true' и
+    # непонятный ответ, - отказ.
+    while IFS= read -r line; do
+        case "$line" in
+            ""|"a='false'"|"b='false'"|"c='false'") continue ;;
+            "a='true'") key="APT::Ignore-Hold" ;;
+            "b='true'") key="Binary::apt::APT::Ignore-Hold" ;;
+            "c='true'") key="Binary::apt-get::APT::Ignore-Hold" ;;
+            *)
+                log_error "Непонятный ответ apt-config про APT::Ignore-Hold: $(printf '%s' "$out" | tr '\n' ' ' | tail -c 300)"
+                return 1
+                ;;
+        esac
+        log_error "В настройках apt включено $key: apt не соблюдает hold (проверка: apt-config dump | grep -i ignore-hold)."
+        return 1
+    done <<< "$out"
+    return 0
 }
 
 # _awg_hold_refusal_log <вывод apt-mark hold> : перед отказом показать, что
@@ -3948,7 +3964,7 @@ _verify_boot_critical() {
     # поставить группу" будет отвергнуто целиком.
     # Поэтому ступень 2 сохранена, а окончательный вердикт выносит сверка всего
     # набора. Флаг всё равно нужен: восстанавливать одно, теряя другое, нельзя.
-    restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove $critical_lost 2>&1)"
+    restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove $critical_lost 2>&1)"
     restore_rc=$?
     # Формулировка осторожная намеренно: нулевой код у apt означает "делать было
     # нечего" ровно так же, как "сделано". Что пакеты на месте, решает не эта
@@ -3970,7 +3986,7 @@ _verify_boot_critical() {
     # нет и он валит всю транзакцию.
     for pkg in $critical_lost; do
         _pkg_installed_ok "$pkg" && continue
-        restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove "$pkg" 2>&1)"
+        restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove "$pkg" 2>&1)"
         restore_rc=$?
         if [[ "$restore_rc" -eq 0 ]] && _pkg_installed_ok "$pkg"; then
             log "Восстановлен: $pkg"
@@ -4383,8 +4399,14 @@ cleanup_system() {
     if dpkg-query -W -f='${Status}' cloud-init 2>/dev/null | grep -q "ok installed"; then
         if _cloud_init_removable; then
             log "Удаление cloud-init (сеть не зависит от него)..."
-            DEBIAN_FRONTEND=noninteractive apt-get purge -y cloud-init 2>/dev/null || log_warn "Ошибка удаления cloud-init"
-            rm -rf /etc/cloud /var/lib/cloud 2>/dev/null
+            # Каталоги - только после удаления пакета. Иначе недоудалённый
+            # cloud-init оставался без своих файлов, и следующее обновление
+            # спрашивало про cloud.cfg (Issue #409).
+            if DEBIAN_FRONTEND=noninteractive apt-get purge -y cloud-init 2>/dev/null; then
+                rm -rf /etc/cloud /var/lib/cloud 2>/dev/null
+            else
+                log_warn "Ошибка удаления cloud-init: /etc/cloud и /var/lib/cloud оставлены на месте."
+            fi
         else
             log_warn "cloud-init управляет сетью — пропускаем удаление."
         fi
@@ -4410,10 +4432,10 @@ cleanup_system() {
     post_default_route="$(ip -4 route show default 2>/dev/null | head -1 || true)"
     if [[ -n "$pre_default_route" && -z "$post_default_route" ]]; then
         log_error "Маршрут по умолчанию потерян после очистки. Попытка восстановления..."
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-install-recommends \
             netplan.io 2>/dev/null || true
         if apt-cache show netplan-generator &>/dev/null; then
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-install-recommends \
                 netplan-generator 2>/dev/null || true
         fi
         systemctl restart systemd-networkd 2>/dev/null || true
@@ -6497,7 +6519,7 @@ step1_update_and_optimize() {
     log "Разблокировка dpkg..."
     if ! apt-get check &>/dev/null; then
         log_warn "dpkg заблокирован или повреждён, исправление..."
-        DEBIAN_FRONTEND=noninteractive dpkg --configure -a || log_warn "dpkg --configure -a."
+        DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold || log_warn "dpkg --configure -a."
     fi
 
     # Метапакеты, под которыми висят udev, initramfs-tools и сетевой стек,
@@ -6556,15 +6578,21 @@ step1_update_and_optimize() {
     # Размен осознанный: VPN-серверу нужно не то, чтобы systemd был
     # непременно свежим, а то, чтобы машина загрузилась. Проверка
     # перед перезагрузкой остаётся вторым рубежом.
-    if ! DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs; then
+    # --force-confdef --force-confold (здесь, в dpkg --configure -a и в
+    # остальных установках пакетов): DEBIAN_FRONTEND=noninteractive и -y не
+    # отвечают на вопрос dpkg о конфигурационном файле, который правили на
+    # сервере. С открытым stdin обновление ждало ответа вечно, с закрытым
+    # dpkg падал, и повтор падал так же (Issue #409). Теперь dpkg берёт ответ
+    # по умолчанию, а без него оставляет текущий файл, в том числе удалённый.
+    if ! DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y --with-new-pkgs; then
         local _lock_holder
         _lock_holder="$(fuser /var/lib/dpkg/lock-frontend 2>/dev/null | tr -s ' ' || true)"
         if [[ -n "$_lock_holder" ]]; then
             log_warn "dpkg-lock занят процессами:${_lock_holder} (обычно first-boot unattended-upgrades)."
         fi
         log_warn "Обновление не прошло, чиню dpkg и повторяю..."
-        DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
-        DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs || _die_upgrade_failed
+        DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold || true
+        DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y --with-new-pkgs || _die_upgrade_failed
     fi
     _warn_kept_back
     log "Система обновлена."
@@ -7530,7 +7558,7 @@ PPASRC
     if [[ "$_has_stale" -eq 1 ]] && ! command -v gcc-13 >/dev/null 2>&1; then
         if apt-cache madison gcc-13 2>/dev/null | grep -q .; then
             log "Обнаружены устаревшие kernel headers (≠ $_running_kernel) — устанавливаю gcc-13 для совместимости DKMS autoinstall."
-            DEBIAN_FRONTEND=noninteractive apt install -y gcc-13 \
+            DEBIAN_FRONTEND=noninteractive apt -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y gcc-13 \
                 || log_warn "Не удалось установить gcc-13 — DKMS autoinstall может падать на устаревших ядрах."
         else
             log_warn "Обнаружены устаревшие kernel headers, но gcc-13 недоступен в repo — DKMS autoinstall может падать."
@@ -7605,7 +7633,7 @@ PPASRC
             break
         fi
         log "Установка мета-пакета $meta..."
-        if DEBIAN_FRONTEND=noninteractive apt install -y "$meta" 2>/dev/null; then
+        if DEBIAN_FRONTEND=noninteractive apt -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y "$meta" 2>/dev/null; then
             log "$meta установлен."
             meta_installed=1
             break
@@ -8639,7 +8667,7 @@ mode_finish() {
     collect_targets 2>/dev/null
     for k in "${TARGETS[@]}"; do if has_module "$k"; then had+=("$k"); else never+=("$k"); fi; done
     log_line "dpkg --configure -a"
-    if ! DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then
+    if ! DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold; then
         log_line "ERROR: dpkg --configure -a failed; see the messages above" >&2; exit 1
     fi
     if ! audit=$(dpkg --audit 2>/dev/null); then

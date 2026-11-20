@@ -2297,7 +2297,7 @@ install_packages() {
     else
         _aout=/dev/null
     fi
-    DEBIAN_FRONTEND=noninteractive apt -o Apt::Cmd::Disable-Script-Warning=true install -y "${to_install[@]}" 2>&1 | tee "$_aout"
+    DEBIAN_FRONTEND=noninteractive apt -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o Apt::Cmd::Disable-Script-Warning=true install -y "${to_install[@]}" 2>&1 | tee "$_aout"
     _arc=${PIPESTATUS[0]}
     if [[ "$_arc" -ne 0 ]]; then
         if [[ "$_aout" != /dev/null ]]; then
@@ -3844,30 +3844,47 @@ _awg_pkg_held() {
 }
 
 # _awg_apt_hold_honoured : 0 only when apt honours holds: the APT::Ignore-Hold
-# setting was read and is not enabled. With it apt looks at no hold at all, and
+# setting was read and is enabled neither for every apt program nor for apt or
+# apt-get alone. With it apt looks at no hold at all, and
 # the step 2 guard against a second module (the hold on amneziawg-dkms) holds
 # nothing, although the hold check passes. A setting that could not be read is
 # a refusal too, not "off": apt-get can work without apt-config, and an enabled
 # setting would then pass silently. The function logs the reason itself.
 _awg_apt_hold_honoured() {
-    local out err
+    local out err line key
+    # The setting is asked three times: the general one and the ones in the
+    # Binary::apt and Binary::apt-get sections. A section applies only to its
+    # own program, and apt-config (itself the program apt-config) does not put
+    # it in place of the general setting, while install_packages installs with
+    # apt and the other calls use apt-get.
+    local -a ask=(a APT::Ignore-Hold/b b Binary::apt::APT::Ignore-Hold/b c Binary::apt-get::APT::Ignore-Hold/b)
     # Only stdout is parsed: apt-config writes notices to stderr even with code
     # 0 (for example "N: Ignoring file ..." about a stray file in apt.conf.d),
     # and they must not turn the answer into nonsense. stderr is read by a
     # second run and serves only the refusal text.
-    if ! out=$(apt-config shell v APT::Ignore-Hold/b 2>/dev/null); then
-        err=$(apt-config shell v APT::Ignore-Hold/b 2>&1 >/dev/null || true)
+    if ! out=$(apt-config shell "${ask[@]}" 2>/dev/null); then
+        err=$(apt-config shell "${ask[@]}" 2>&1 >/dev/null || true)
         log_error "Could not read the apt settings (apt-config shell): cannot check whether apt honours holds (APT::Ignore-Hold). Answer: $(printf '%s' "$err" | tr '\n' ' ' | tail -c 300)"
         return 1
     fi
-    # Empty means the setting is not set; v='false' means set and off. Anything
-    # else, v='true' or an answer that makes no sense, is a refusal.
-    case "$out" in
-        ""|"v='false'") return 0 ;;
-        "v='true'") log_error "APT::Ignore-Hold is enabled in the apt settings: apt ignores holds (check: apt-config dump | grep -i ignore-hold)." ;;
-        *) log_error "An answer from apt-config about APT::Ignore-Hold that makes no sense: $(printf '%s' "$out" | tr '\n' ' ' | tail -c 300)" ;;
-    esac
-    return 1
+    # One line for each setting that is set: a='false' means set and off. An
+    # empty answer means none is set. Anything else, 'true' or an answer that
+    # makes no sense, is a refusal.
+    while IFS= read -r line; do
+        case "$line" in
+            ""|"a='false'"|"b='false'"|"c='false'") continue ;;
+            "a='true'") key="APT::Ignore-Hold" ;;
+            "b='true'") key="Binary::apt::APT::Ignore-Hold" ;;
+            "c='true'") key="Binary::apt-get::APT::Ignore-Hold" ;;
+            *)
+                log_error "An answer from apt-config about APT::Ignore-Hold that makes no sense: $(printf '%s' "$out" | tr '\n' ' ' | tail -c 300)"
+                return 1
+                ;;
+        esac
+        log_error "$key is enabled in the apt settings: apt ignores holds (check: apt-config dump | grep -i ignore-hold)."
+        return 1
+    done <<< "$out"
+    return 0
 }
 
 # _awg_hold_refusal_log <apt-mark hold output> : before refusing, show what
@@ -4045,7 +4062,7 @@ _verify_boot_critical() {
     # package in the way and install the group" is rejected outright.
     # Hence stage 2 below, and the final verdict from the full-set re-check. The
     # flag is still needed: restoring one package must not cost another.
-    restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove $critical_lost 2>&1)"
+    restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove $critical_lost 2>&1)"
     restore_rc=$?
     # The wording is cautious on purpose: a zero from apt means "there was
     # nothing to do" just as much as "done". Whether the packages are back is
@@ -4067,7 +4084,7 @@ _verify_boot_critical() {
     # 12 the latter does not exist and it kills the whole transaction.
     for pkg in $critical_lost; do
         _pkg_installed_ok "$pkg" && continue
-        restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove "$pkg" 2>&1)"
+        restore_out="$(DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-remove "$pkg" 2>&1)"
         restore_rc=$?
         if [[ "$restore_rc" -eq 0 ]] && _pkg_installed_ok "$pkg"; then
             log "Restored: $pkg"
@@ -4485,8 +4502,14 @@ cleanup_system() {
     if dpkg-query -W -f='${Status}' cloud-init 2>/dev/null | grep -q "ok installed"; then
         if _cloud_init_removable; then
             log "Removing cloud-init (network doesn't depend on it)..."
-            DEBIAN_FRONTEND=noninteractive apt-get purge -y cloud-init 2>/dev/null || log_warn "cloud-init removal error"
-            rm -rf /etc/cloud /var/lib/cloud 2>/dev/null
+            # The directories go only after the package is gone. Otherwise a
+            # half-removed cloud-init was left without its files, and the next
+            # upgrade asked about cloud.cfg (Issue #409).
+            if DEBIAN_FRONTEND=noninteractive apt-get purge -y cloud-init 2>/dev/null; then
+                rm -rf /etc/cloud /var/lib/cloud 2>/dev/null
+            else
+                log_warn "cloud-init removal error: /etc/cloud and /var/lib/cloud left in place."
+            fi
         else
             log_warn "cloud-init manages network — skipping removal."
         fi
@@ -4512,10 +4535,10 @@ cleanup_system() {
     post_default_route="$(ip -4 route show default 2>/dev/null | head -1 || true)"
     if [[ -n "$pre_default_route" && -z "$post_default_route" ]]; then
         log_error "Default route lost after cleanup. Attempting recovery..."
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-install-recommends \
             netplan.io 2>/dev/null || true
         if apt-cache show netplan-generator &>/dev/null; then
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-install-recommends \
                 netplan-generator 2>/dev/null || true
         fi
         systemctl restart systemd-networkd 2>/dev/null || true
@@ -6620,7 +6643,7 @@ step1_update_and_optimize() {
     log "Unlocking dpkg..."
     if ! apt-get check &>/dev/null; then
         log_warn "dpkg locked or corrupted, fixing..."
-        DEBIAN_FRONTEND=noninteractive dpkg --configure -a || log_warn "dpkg --configure -a."
+        DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold || log_warn "dpkg --configure -a."
     fi
 
     # The meta-packages that udev, initramfs-tools and the network stack hang
@@ -6681,15 +6704,21 @@ step1_update_and_optimize() {
     # The trade is deliberate: a VPN server does not need systemd to be the
     # freshest, it needs the machine to boot. The pre-reboot verification below
     # stays as the second line of defence.
-    if ! DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs; then
+    # --force-confdef --force-confold (here, in dpkg --configure -a and in the
+    # other package installs): DEBIAN_FRONTEND=noninteractive and -y do not
+    # answer dpkg's question about a config file changed on the server. With
+    # stdin open the upgrade waited for an answer forever, with stdin closed
+    # dpkg failed and so did the retry (Issue #409). Now dpkg takes the default
+    # answer, and without one keeps the current file, a deleted one included.
+    if ! DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y --with-new-pkgs; then
         local _lock_holder
         _lock_holder="$(fuser /var/lib/dpkg/lock-frontend 2>/dev/null | tr -s ' ' || true)"
         if [[ -n "$_lock_holder" ]]; then
             log_warn "dpkg-lock is held by:${_lock_holder} (usually first-boot unattended-upgrades)."
         fi
         log_warn "Update failed, fixing dpkg and retrying..."
-        DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
-        DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs || _die_upgrade_failed
+        DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold || true
+        DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y --with-new-pkgs || _die_upgrade_failed
     fi
     _warn_kept_back
     log "System updated."
@@ -7676,7 +7705,7 @@ PPASRC
     if [[ "$_has_stale" -eq 1 ]] && ! command -v gcc-13 >/dev/null 2>&1; then
         if apt-cache madison gcc-13 2>/dev/null | grep -q .; then
             log "Stale kernel headers detected (other than $_running_kernel) — installing gcc-13 for DKMS autoinstall compatibility."
-            DEBIAN_FRONTEND=noninteractive apt install -y gcc-13 \
+            DEBIAN_FRONTEND=noninteractive apt -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y gcc-13 \
                 || log_warn "gcc-13 install failed — DKMS autoinstall may fail on stale kernels."
         else
             log_warn "Stale kernel headers detected, but gcc-13 is not in the repo — DKMS autoinstall may fail."
@@ -7754,7 +7783,7 @@ PPASRC
             break
         fi
         log "Installing meta-package $meta..."
-        if DEBIAN_FRONTEND=noninteractive apt install -y "$meta" 2>/dev/null; then
+        if DEBIAN_FRONTEND=noninteractive apt -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y "$meta" 2>/dev/null; then
             log "$meta installed."
             meta_installed=1
             break
@@ -8789,7 +8818,7 @@ mode_finish() {
     collect_targets 2>/dev/null
     for k in "${TARGETS[@]}"; do if has_module "$k"; then had+=("$k"); else never+=("$k"); fi; done
     log_line "dpkg --configure -a"
-    if ! DEBIAN_FRONTEND=noninteractive dpkg --configure -a; then
+    if ! DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold; then
         log_line "ERROR: dpkg --configure -a failed; see the messages above" >&2; exit 1
     fi
     if ! audit=$(dpkg --audit 2>/dev/null); then
