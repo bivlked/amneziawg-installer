@@ -179,31 +179,48 @@ _sysctl_fixture() {
     done
 }
 
-@test "ifupdown IPv6: relative source glob resolves under the network dir, not the current dir; names with spaces stay whole" {
-    _load_fn install_amneziawg.sh
-    mkdir -p "$TEST_DIR/cwd/rel" "$NETDIR/rel" "$TEST_DIR/sp"
-    printf 'iface eth9 inet dhcp
-' > "$TEST_DIR/cwd/rel/decoy"
-    printf 'iface eth0 inet6 static
-' > "$NETDIR/rel/real"
-    printf 'source rel/*
-' > "$NETDIR/interfaces"
-    DISABLE_IPV6=1
-    ( cd "$TEST_DIR/cwd" && _guard )
-    run grep -c "$NETDIR/rel/real" "$WARN_LOG"
-    [ "$output" = "1" ]
+@test "ifupdown IPv6: relative source glob resolves under the network dir, not the current dir; names with spaces stay whole (RU and EN)" {
+    local f
+    for f in $INSTALLERS; do
+        _load_fn "$f"
+        rm -rf "$TEST_DIR/cwd" "$NETDIR/rel" "$TEST_DIR/sp"
+        mkdir -p "$TEST_DIR/cwd/rel" "$NETDIR/rel" "$TEST_DIR/sp"
+        printf 'iface eth9 inet dhcp\n' > "$TEST_DIR/cwd/rel/decoy"
+        printf 'iface eth0 inet6 static\n' > "$NETDIR/rel/real"
+        printf 'source rel/*\n' > "$NETDIR/interfaces"
+        : > "$WARN_LOG"
+        DISABLE_IPV6=1
+        ( cd "$TEST_DIR/cwd" && _guard )
+        run grep -c "$NETDIR/rel/real" "$WARN_LOG"
+        [ "$output" = "1" ]
 
-    : > "$WARN_LOG"
-    rm -f "$NETDIR/rel/real"
-    printf 'iface eth0 inet6 static
-' > "$TEST_DIR/sp/my v6 file"
-    printf 'source %s/sp/*
-' "$TEST_DIR" > "$NETDIR/interfaces"
-    DISABLE_IPV6=1
-    _guard
-    [ "$DISABLE_IPV6" = "0" ]
-    run grep -c 'sp/my v6 file' "$WARN_LOG"
-    [ "$output" = "1" ]
+        : > "$WARN_LOG"
+        rm -f "$NETDIR/rel/real"
+        printf 'iface eth0 inet6 static\n' > "$TEST_DIR/sp/my v6 file"
+        printf 'source %s/sp/*\n' "$TEST_DIR" > "$NETDIR/interfaces"
+        DISABLE_IPV6=1
+        _guard
+        [ "$DISABLE_IPV6" = "0" ]
+        run grep -c 'sp/my v6 file' "$WARN_LOG"
+        [ "$output" = "1" ]
+    done
+}
+
+@test "ifupdown IPv6: source-directory with a wildcard in the directory path is followed (RU and EN)" {
+    local f
+    for f in $INSTALLERS; do
+        _load_fn "$f"
+        rm -rf "$TEST_DIR/net-extra.d"
+        mkdir -p "$TEST_DIR/net-extra.d"
+        printf 'iface eth0 inet6 static\n' > "$TEST_DIR/net-extra.d/v6"
+        printf 'source-directory %s/net-ex*.d\n' "$TEST_DIR" > "$NETDIR/interfaces"
+        : > "$WARN_LOG"
+        DISABLE_IPV6=1
+        _guard
+        [ "$DISABLE_IPV6" = "0" ]
+        run grep -c 'net-extra.d/v6' "$WARN_LOG"
+        [ "$output" = "1" ]
+    done
 }
 
 @test "ifupdown IPv6: nested source inside an included file is followed" {

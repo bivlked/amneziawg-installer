@@ -2460,7 +2460,7 @@ guard_ifupdown_ipv6() {
             for arg in "$@"; do
                 case "$kw" in
                     source) for sf in $arg; do files+=("$sf"); done ;;
-                    source-directory) files+=("$arg"/*) ;;
+                    source-directory) for sf in $arg; do files+=("$sf"/*); done ;;
                 esac
             done
         done < <(grep -E '^[[:space:]]*(source|source-directory)[[:space:]]' "$f" 2>/dev/null)
