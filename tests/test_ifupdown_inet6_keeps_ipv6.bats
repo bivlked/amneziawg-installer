@@ -179,6 +179,33 @@ _sysctl_fixture() {
     done
 }
 
+@test "ifupdown IPv6: relative source glob resolves under the network dir, not the current dir; names with spaces stay whole" {
+    _load_fn install_amneziawg.sh
+    mkdir -p "$TEST_DIR/cwd/rel" "$NETDIR/rel" "$TEST_DIR/sp"
+    printf 'iface eth9 inet dhcp
+' > "$TEST_DIR/cwd/rel/decoy"
+    printf 'iface eth0 inet6 static
+' > "$NETDIR/rel/real"
+    printf 'source rel/*
+' > "$NETDIR/interfaces"
+    DISABLE_IPV6=1
+    ( cd "$TEST_DIR/cwd" && _guard )
+    run grep -c "$NETDIR/rel/real" "$WARN_LOG"
+    [ "$output" = "1" ]
+
+    : > "$WARN_LOG"
+    rm -f "$NETDIR/rel/real"
+    printf 'iface eth0 inet6 static
+' > "$TEST_DIR/sp/my v6 file"
+    printf 'source %s/sp/*
+' "$TEST_DIR" > "$NETDIR/interfaces"
+    DISABLE_IPV6=1
+    _guard
+    [ "$DISABLE_IPV6" = "0" ]
+    run grep -c 'sp/my v6 file' "$WARN_LOG"
+    [ "$output" = "1" ]
+}
+
 @test "ifupdown IPv6: nested source inside an included file is followed" {
     _load_fn install_amneziawg.sh
     mkdir -p "$TEST_DIR/deep"

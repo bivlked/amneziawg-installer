@@ -2420,7 +2420,7 @@ configure_ipv6() {
 guard_ifupdown_ipv6() {
     local netdir="${1:-/etc/network}" sysdir="${2:-/etc/sysctl.d}" sysconf="${3:-/etc/sysctl.conf}"
     local f hit="" kw arg rest sf cleaned="" i=0 n=0 rc
-    local -a files=()
+    local -a files=() words=()
     local -A seen=()
     [[ "${DISABLE_IPV6:-1}" -eq 1 ]] || return 0
     files=("$netdir/interfaces" "$netdir"/interfaces.d/*)
@@ -2448,8 +2448,9 @@ guard_ifupdown_ipv6() {
             break
         fi
         while read -r kw rest; do
+            read -r -a words <<< "$rest"
             set --
-            for arg in $rest; do
+            for arg in "${words[@]}"; do
                 if [[ "$arg" == /* ]]; then
                     set -- "$@" "$arg"
                 else
