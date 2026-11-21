@@ -2419,7 +2419,7 @@ configure_ipv6() {
 # Arguments (for tests): the network config directory, the sysctl.d directory and the sysctl.conf file.
 guard_ifupdown_ipv6() {
     local netdir="${1:-/etc/network}" sysdir="${2:-/etc/sysctl.d}" sysconf="${3:-/etc/sysctl.conf}"
-    local f hit="" kw arg sf cleaned="" i=0 n=0 rc
+    local f hit="" kw arg rest sf cleaned="" i=0 n=0 rc
     local -a files=()
     local -A seen=()
     [[ "${DISABLE_IPV6:-1}" -eq 1 ]] || return 0
@@ -2437,7 +2437,7 @@ guard_ifupdown_ipv6() {
         seen[$f]=1
         n=$((n + 1))
         rc=0
-        grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[[:space:]/"])?ip([[:space:]]+-[[:alnum:]-]+)*[[:space:]]+(-6|-f(amily)?[[:space:]]+inet6|--family[[:space:]]+inet6)([[:space:]]|$))' "$f" || rc=$?
+        grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[^[:alnum:]_.-])?ip[[:space:]]+([^[:space:]]+[[:space:]]+)*(-6|-f[a-z]*[[:space:]]+inet6|--family[[:space:]]+inet6)([[:space:]]|$)|(pre-up|up|post-up)[[:space:]].*(::|([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}))' "$f" || rc=$?
         if [[ "$rc" -eq 0 ]]; then
             hit="$f"
             break
@@ -2447,13 +2447,15 @@ guard_ifupdown_ipv6() {
             log_warn "Could not read $f while looking for IPv6 settings, assuming IPv6 is configured there."
             break
         fi
-        while read -r kw arg _; do
-            [[ -n "$arg" ]] || continue
-            if [[ "$arg" == /* ]]; then
-                set -- "$arg"
-            else
-                set -- "$netdir/$arg" "${f%/*}/$arg"
-            fi
+        while read -r kw rest; do
+            set --
+            for arg in $rest; do
+                if [[ "$arg" == /* ]]; then
+                    set -- "$@" "$arg"
+                else
+                    set -- "$@" "$netdir/$arg" "${f%/*}/$arg"
+                fi
+            done
             for arg in "$@"; do
                 case "$kw" in
                     source) for sf in $arg; do files+=("$sf"); done ;;

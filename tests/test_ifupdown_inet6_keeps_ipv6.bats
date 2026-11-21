@@ -74,15 +74,43 @@ _sysctl_fixture() {
     [ "$DISABLE_IPV6" = "0" ]
 }
 
-@test "ifupdown IPv6: IPv6 address, gateway or ip -6 hook without an inet6 stanza counts" {
-    local line
-    _load_fn install_amneziawg.sh
-    for line in '    address 2a01:4f8:1c18:d30c::1/64' '    gateway fe80::1' '    up ip -6 addr add 2a01::1/64 dev eth0' '    post-up /sbin/ip -6 route add default via fe80::1 dev eth0' '    post-up /sbin/ip -f inet6 route add default via fe80::1' '    up ip --family inet6 addr add 2a01::1/64 dev eth0' '    up ip -o -6 addr show' '    up sh -c "ip -6 route add default via fe80::1"'; do
+@test "ifupdown IPv6: IPv6 address, gateway or ip -6 hook without an inet6 stanza counts (RU and EN)" {
+    local line f
+    for f in $INSTALLERS; do
+    _load_fn "$f"
+    for line in '    address 2a01:4f8:1c18:d30c::1/64' '    gateway fe80::1' '    up ip -6 addr add 2a01::1/64 dev eth0' '    post-up /sbin/ip -6 route add default via fe80::1 dev eth0' '    post-up /sbin/ip -f inet6 route add default via fe80::1' '    up ip --family inet6 addr add 2a01::1/64 dev eth0' '    up ip -o -6 addr show' '    up sh -c "ip -6 route add default via fe80::1"' "    up sh -c 'ip -6 route add default via fe80::1'" '    up ip -n ns1 -6 addr add 2a01::1/64 dev eth0' '    up ip -fa inet6 route add default via fe80::1' '    up ip addr add 2001:db8::1/64 dev eth0' '    post-up ip addr add 2001:0db8:0000:0000:0000:0000:0000:0001/64 dev eth0'; do
         printf 'auto eth0\niface eth0 inet dhcp\n%s\n' "$line" > "$NETDIR/interfaces"
         DISABLE_IPV6=1
         _guard
-        [ "$DISABLE_IPV6" = "0" ]
+        [ "$DISABLE_IPV6" = "0" ] || { echo "missed: $line ($f)"; false; }
     done
+    done
+}
+
+@test "ifupdown IPv6: IPv4-only hooks are not mistaken for IPv6 (RU and EN)" {
+    local line f
+    for f in $INSTALLERS; do
+    _load_fn "$f"
+    for line in '    up ip -f inet addr add 1.2.3.4/32 dev eth0' '    up ip -o link' '    up ip link set dev eth0 address aa:bb:cc:dd:ee:ff' '    up ip -4 route add 10.0.0.0/8 via 10.0.0.1' '    up ping -c1 1.1.1.1' '    up ip6tables-restore < /etc/iptables/rules.v6'; do
+        printf 'auto eth0\niface eth0 inet dhcp\n%s\n' "$line" > "$NETDIR/interfaces"
+        DISABLE_IPV6=1
+        _guard
+        [ "$DISABLE_IPV6" = "1" ] || { echo "false hit: $line ($f)"; false; }
+    done
+    done
+}
+
+@test "ifupdown IPv6: source with several paths checks every path" {
+    _load_fn install_amneziawg.sh
+    mkdir -p "$TEST_DIR/c"
+    printf 'iface eth0 inet dhcp\n' > "$TEST_DIR/c/ipv4"
+    printf 'iface eth0 inet6 static\n' > "$TEST_DIR/c/ipv6"
+    printf 'source %s/c/ipv4 %s/c/ipv6\n' "$TEST_DIR" "$TEST_DIR" > "$NETDIR/interfaces"
+    DISABLE_IPV6=1
+    _guard
+    [ "$DISABLE_IPV6" = "0" ]
+    run grep -c 'c/ipv6' "$WARN_LOG"
+    [ "$output" = "1" ]
 }
 
 @test "ifupdown IPv6: IPv4-only config leaves DISABLE_IPV6=1, sysctl files untouched, no warning (RU and EN)" {
