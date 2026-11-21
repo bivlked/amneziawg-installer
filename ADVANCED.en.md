@@ -422,7 +422,7 @@ Defines which traffic the **client** routes through the VPN tunnel.
 <a id="client-ipv6-adv"></a>
 ### Device IPv6, `::/0` and the local network
 
-`--disallow-ipv6` and the `DISABLE_IPV6` key in `awgsetup_cfg.init` turn IPv6 off on the server itself (the host sysctl). They do not touch your device's IPv6 and do not decide whether a `::/0` route goes into the client's `AllowedIPs`. The routing mode decides that:
+`--disallow-ipv6` and the `DISABLE_IPV6` key in `awgsetup_cfg.init` turn IPv6 off on the server itself (the host sysctl, with the caveats below). They do not touch your device's IPv6 and do not decide whether a `::/0` route goes into the client's `AllowedIPs`. The routing mode decides that:
 
 - **a full tunnel** without `--allow-ipv6-tunnel`: mode 1 gets `::/0`, mode 2 gets `2000::/3` and a service IPv6 address. The device's IPv6 goes into the tunnel, gets no further, and the device falls back to IPv4. While the VPN is on, resources reachable only over IPv6 do not open; in mode 1 the home network's local IPv6 is out of reach too, in mode 2 it stays reachable;
 - **your own network list** (mode 3, `--route-custom`) does not get `::/0` unless it covers all public IPv4. The device's IPv6 goes around the tunnel with its own address;
@@ -433,11 +433,11 @@ Defines which traffic the **client** routes through the VPN tunnel.
 
 **How completely IPv6 is turned off on the server itself.** The installer writes `disable_ipv6 = 1` to sysctl for `all`, `default` and `lo`, and the rest depends on what manages the network:
 
-- **Ubuntu (netplan and systemd-networkd).** networkd turns IPv6 back on for the main interface at boot. The interface keeps its link-local address and, when the hoster provides IPv6, its global address and route. From outside, IPv6 reaches only the ports UFW allows for IPv4 too: SSH and the VPN port.
-- **Debian with ifupdown and no IPv6 in `/etc/network/interfaces`.** IPv6 is off completely.
-- **Debian with ifupdown and an `iface ... inet6` stanza** in `/etc/network/interfaces` or `/etc/network/interfaces.d/`. That is how cloud-init sets up the network when the hoster provides IPv6, Hetzner for one. With IPv6 off, such a network breaks: `networking.service` fails with "IPv6 is disabled on this device", the DHCP client stops along with it, and once the address lease runs out the server drops off the network. So on such a server the installer does not turn IPv6 off, even with `--disallow-ipv6`, and logs why. If step 1 has already written the IPv6 switch-off, the installer removes those lines from its own sysctl files. The installer's UFW closes inbound IPv6; with `--no-tweaks` that is up to your own firewall. To turn IPv6 off completely, remove the `inet6` stanzas from the network config first and run the installer again. cloud-init rewrites `50-cloud-init` on every boot; the header of that file says how to stop it.
+- **Ubuntu (netplan and systemd-networkd).** networkd turns IPv6 back on for the main interface at boot. The interface keeps its link-local address and, when the hoster provides IPv6, its global address and route. If the installer set up the firewall, the same ports are open from outside over IPv6 as over IPv4: SSH and the VPN port. With `--no-tweaks` or without UFW that is up to your own firewall.
+- **Debian with ifupdown and no IPv6 in the network config.** IPv6 is off completely.
+- **Debian with ifupdown and IPv6 in the network config:** an `iface ... inet6` stanza, an IPv6 address or an `ip -6` command in `/etc/network/interfaces`, in `/etc/network/interfaces.d/` or in a file pulled in by `source`. That is how cloud-init sets up the network when the hoster provides IPv6, Hetzner for one. With IPv6 off, such a network breaks: `ifup` prints "IPv6 is disabled on this device", `networking.service` fails and stops the DHCP client. Then the server loses the network, either at boot when the `inet6` stanza comes before `inet`, or when the DHCP address lease runs out. So on such a server the installer does not turn IPv6 off, even with `--disallow-ipv6`, and logs why. The server is set up the same way as with `--allow-ipv6`. If step 1 of an earlier run has already written the IPv6 switch-off, the installer removes those lines from its own sysctl files and from `/etc/sysctl.conf` and asks you to reboot the server after the install. To turn IPv6 off completely, remove IPv6 from the network config and run the installer with `--force --disallow-ipv6`. cloud-init rewrites `/etc/network/interfaces.d/50-cloud-init` on every boot; the header of that file says how to stop it.
 
-  On such a server installed with version 6.3.7 or earlier, remove the three `net.ipv6.conf.*.disable_ipv6 = 1` lines from `/etc/sysctl.d/99-amneziawg-security.conf` (with `--no-tweaks`, from `/etc/sysctl.d/99-amneziawg-forwarding.conf`) and reboot. Check: after boot `systemctl is-active networking` prints `active`.
+  On such a server installed with version 6.3.7 or earlier, remove the three `net.ipv6.conf.*.disable_ipv6 = 1` lines from `/etc/sysctl.d/99-amneziawg-security.conf` (with `--no-tweaks`, from `/etc/sysctl.d/99-amneziawg-forwarding.conf`) and reboot. If SSH no longer answers, do it from the hoster's console. Check after boot: `systemctl is-active networking` prints `active` and `sysctl net.ipv6.conf.all.disable_ipv6` prints `0`.
 
 <a id="split-detect-adv"></a>
 ### What a site can see when traffic is split by destination
@@ -1114,7 +1114,7 @@ Options:
   --ssh-port=PORT       SSH port for the UFW rule (auto-detected; comma-separated list)
   --subnet=SUBNET       Tunnel subnet, CIDR /16-/30 (e.g. 10.9.0.0/16)
   --allow-ipv6          Keep IPv6 enabled
-  --disallow-ipv6       Force-disable IPv6
+  --disallow-ipv6       Disable IPv6 (except Debian with IPv6 in ifupdown)
   --allow-ipv6-tunnel   Enable dual-stack IPv6 inside the tunnel (ULA, opt-in)
   --route-all           Mode: All traffic (0.0.0.0/0) (default)
   --route-amnezia       Mode: Amnezia List + DNS (private networks stay outside)
