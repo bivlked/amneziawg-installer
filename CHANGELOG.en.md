@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.8] - 2026-11-22
+
+**v6.3.8** - on Debian with IPv6 set up in ifupdown (Hetzner, for one), the installer keeps IPv6 on, so the server network comes up after every reboot.
+
 ### Fixed
 
 - **On Debian with IPv6 configured in ifupdown, the installer no longer turns IPv6 off on the server.** When `/etc/network/interfaces` or `/etc/network/interfaces.d/` has an `iface ... inet6` stanza (cloud-init writes one when the hoster provides IPv6, Hetzner for one), turning IPv6 off broke the network at boot: `networking.service` failed, the DHCP client stopped with it, and the server dropped off the network once the address lease ran out. Now IPv6 stays on in this case, even with `--disallow-ipv6`, and the install log explains why; the installer's UFW closes inbound IPv6 (with `--no-tweaks` that is up to your own firewall). If step 1 has already written the IPv6 switch-off, the installer removes those lines from its own sysctl files, so resuming a started install is safe too. A server installed earlier is fixed by hand, ADVANCED says how. ADVANCED now describes how completely IPv6 is turned off on Ubuntu and on Debian (the investigation started in [#299](https://github.com/bivlked/amneziawg-installer/issues/299)).
@@ -2348,7 +2352,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...HEAD
+[6.3.8]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...v6.3.8
 [6.3.7]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...v6.3.7
 [6.3.6]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...v6.3.6
 [6.3.5]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.4...v6.3.5

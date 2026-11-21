@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [6.3.8] - 2026-11-22
+
+**v6.3.8** - на Debian, где IPv6 настроен в ifupdown (так, например, у Hetzner), установщик больше не выключает IPv6, и сеть сервера поднимается после каждой перезагрузки.
+
 ### Исправлено
 
 - **На Debian, где IPv6 настроен в ifupdown, установщик больше не выключает IPv6 на сервере.** Если в `/etc/network/interfaces` или `/etc/network/interfaces.d/` есть секция `iface ... inet6` (так cloud-init настраивает сеть, когда хостер выдаёт IPv6, например Hetzner), выключенный IPv6 ломал сеть при загрузке: `networking.service` падал, вместе с ним останавливался DHCP-клиент, и после окончания аренды адреса сервер пропадал из сети. Теперь в этом случае IPv6 остаётся включённым даже с `--disallow-ipv6`, а в логе установки объясняется почему; входящие по IPv6 закрывает UFW установщика (с `--no-tweaks` это задача вашего файрвола). Если шаг 1 уже записал выключение IPv6, установщик убирает эти строки из своих файлов sysctl, так что продолжение начатой установки тоже безопасно. Сервер, поставленный раньше, чинится вручную, как это сделать, написано в ADVANCED. В ADVANCED описано, насколько полно IPv6 выключается на Ubuntu и на Debian (разбор начался в [#299](https://github.com/bivlked/amneziawg-installer/issues/299)).
@@ -2348,7 +2352,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...HEAD
+[6.3.8]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...v6.3.8
 [6.3.7]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...v6.3.7
 [6.3.6]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...v6.3.6
 [6.3.5]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.4...v6.3.5
