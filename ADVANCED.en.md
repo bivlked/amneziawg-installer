@@ -95,7 +95,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
     * Hardware-aware swap and network buffer tuning
 * **Secure by default:**
     * `UFW`: Policy `deny incoming`, SSH rate-limiting, VPN port allowed.
-    * `IPv6`: Disabled by default via `sysctl` (the prompt defaults to yes, `--yes` disables it without asking; keep it with `--allow-ipv6`).
+    * `IPv6`: Disabled by default via `sysctl` (the prompt defaults to yes, `--yes` disables it without asking; keep it with `--allow-ipv6`). How completely depends on what manages the server's network, see [Device IPv6, `::/0` and the local network](#client-ipv6-adv).
     * `File permissions`: Strict permissions (600/700) on all keys and configs.
     * `Sysctl`: BBR congestion control, anti-spoofing, TCP optimization.
     * `Fail2Ban`: Automatic installation and SSH protection.
@@ -430,6 +430,12 @@ Defines which traffic the **client** routes through the VPN tunnel.
 - **mode 2 with `--client-ipv6-direct`** (the `CLIENT_IPV6_DIRECT=1` key in `awgsetup_cfg.init`): no IPv6 route and no service address. IPv4 goes through the tunnel, the device's IPv6 goes directly through the provider, and the local network stays reachable. The cost: sites opened over IPv6 see the device's real address, and a resource blocked by the provider and reachable over IPv6 stays blocked. The key is not allowed in mode 1 (without `::/0` iOS AmneziaVPN does not bring the tunnel up) or together with `--allow-ipv6-tunnel`, and in mode 3 it changes nothing. A plain `manage regen` takes the route away from clients already issued and leaves hand-made routes alone; import the profiles again after it. To switch it off: the line `CLIENT_IPV6_DIRECT=0` in `awgsetup_cfg.init` and `regen` again.
 
 `manage regen` also adds an IPv6 route to already issued full-tunnel profiles whose `AllowedIPs` hold no IPv6 route, including lists edited through `modify`, and replaces `::/0` with `2000::/3` in mode-2 profiles issued with `::/0`. How this looks from a site's side and how to check from the device is covered in [What a site can see when traffic is split by destination](#split-detect-adv).
+
+**How completely IPv6 is turned off on the server itself.** The installer writes `disable_ipv6 = 1` to sysctl for `all`, `default` and `lo`, and the rest depends on what manages the network:
+
+- **Ubuntu (netplan and systemd-networkd).** networkd turns IPv6 back on for the main interface at boot. The interface keeps its link-local address and, when the hoster provides IPv6, its global address and route. From outside, IPv6 reaches only the ports UFW allows for IPv4 too: SSH and the VPN port.
+- **Debian with ifupdown and no IPv6 in `/etc/network/interfaces`.** IPv6 is off completely.
+- **Debian with ifupdown and an `iface ... inet6` stanza** in `/etc/network/interfaces` or `/etc/network/interfaces.d/`. That is how cloud-init sets up the network when the hoster provides IPv6, Hetzner for one. With IPv6 off, such a network breaks: `networking.service` fails with "IPv6 is disabled on this device", the DHCP client stops along with it, and once the address lease runs out the server drops off the network. So on such a server the installer does not turn IPv6 off, even with `--disallow-ipv6`, and logs why. To turn IPv6 off completely, remove the `inet6` stanzas from the network config first and run the installer again. cloud-init rewrites `50-cloud-init` on every boot; the header of that file says how to stop it.
 
 <a id="split-detect-adv"></a>
 ### What a site can see when traffic is split by destination

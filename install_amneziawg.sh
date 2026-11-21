@@ -2338,6 +2338,31 @@ configure_ipv6() {
     log "Отключение IPv6: $(if [ "$DISABLE_IPV6" -eq 1 ]; then echo 'Да'; else echo 'Нет'; fi)"
 }
 
+# Debian с ifupdown: если в /etc/network/interfaces или interfaces.d есть
+# секция `iface ... inet6` (её пишет cloud-init или хостер, у Hetzner и
+# других с родным IPv6), то disable_ipv6=1 ломает сеть при загрузке: ifup
+# падает на «IPv6 is disabled on this device», networking.service уходит в
+# failed, а при секции inet6 перед inet сервер на замере Debian 13 загрузился
+# без SSH. Поэтому здесь IPv6 на хосте оставляю включённым даже при
+# --disallow-ipv6: входящие по IPv6 закрывает UFW. Netplan и systemd-networkd
+# сюда не относятся, их файлов функция не читает.
+# Аргумент - каталог настроек сети (для тестов), по умолчанию /etc/network.
+guard_ifupdown_ipv6() {
+    local netdir="${1:-/etc/network}" f hit=""
+    [[ "${DISABLE_IPV6:-1}" -eq 1 ]] || return 0
+    for f in "$netdir/interfaces" "$netdir"/interfaces.d/*; do
+        [[ -f "$f" ]] || continue
+        if grep -qE '^[[:space:]]*iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)' "$f" 2>/dev/null; then
+            hit="$f"
+            break
+        fi
+    done
+    [[ -n "$hit" ]] || return 0
+    DISABLE_IPV6=0
+    export DISABLE_IPV6
+    log_warn "В $hit настроен IPv6 (секция iface ... inet6). Если выключить IPv6 на хосте, сеть сервера при загрузке не поднимется и SSH может пропасть, поэтому IPv6 остаётся включённым; входящие по IPv6 закрывает UFW. Чтобы выключить IPv6 совсем, сначала уберите секции inet6 из настроек сети и запустите установку заново."
+}
+
 # Определение наличия native IPv6 на VPS.
 # Native IPv6 = глобально маршрутизируемый адрес (НЕ ULA fc00::/7, НЕ link-local
 # fe80::) И наличие IPv6 default-маршрута. Любого из условий по отдельности мало:
@@ -6271,6 +6296,7 @@ initialize_setup() {
 
     # Значения по умолчанию
     if [[ "$DISABLE_IPV6" == "default" ]]; then DISABLE_IPV6=1; fi
+    guard_ifupdown_ipv6 /etc/network
     configure_ipv6_tunnel
     # Конфиг БЕЗ ключа ALLOWED_IPS_MODE, но СО списком - это установка старше самого
     # ключа. Чей именно это список, мы не знаем: он мог быть и пользовательским. Но

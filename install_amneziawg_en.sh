@@ -2407,6 +2407,31 @@ configure_ipv6() {
     log "IPv6 disable: $(if [ "$DISABLE_IPV6" -eq 1 ]; then echo 'Yes'; else echo 'No'; fi)"
 }
 
+# Debian with ifupdown: when /etc/network/interfaces or interfaces.d has an
+# `iface ... inet6` stanza (written by cloud-init or the hoster, Hetzner and
+# others with native IPv6), disable_ipv6=1 breaks the network at boot: ifup
+# fails with "IPv6 is disabled on this device", networking.service fails, and
+# with the inet6 stanza before inet a Debian 13 test server booted without
+# SSH. So host IPv6 stays on here even with --disallow-ipv6: UFW closes
+# inbound IPv6. Netplan and systemd-networkd are out of scope, the function
+# does not read their files.
+# Argument: the network config directory (for tests), default /etc/network.
+guard_ifupdown_ipv6() {
+    local netdir="${1:-/etc/network}" f hit=""
+    [[ "${DISABLE_IPV6:-1}" -eq 1 ]] || return 0
+    for f in "$netdir/interfaces" "$netdir"/interfaces.d/*; do
+        [[ -f "$f" ]] || continue
+        if grep -qE '^[[:space:]]*iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)' "$f" 2>/dev/null; then
+            hit="$f"
+            break
+        fi
+    done
+    [[ -n "$hit" ]] || return 0
+    DISABLE_IPV6=0
+    export DISABLE_IPV6
+    log_warn "$hit configures IPv6 (an iface ... inet6 stanza). Disabling IPv6 on the host would keep the server's network from coming up at boot and SSH could be lost, so IPv6 stays enabled; UFW closes inbound IPv6. To disable IPv6 completely, remove the inet6 stanzas from the network config first and run the installer again."
+}
+
 # Detect whether the VPS has native IPv6.
 # Native IPv6 = a globally routable address (NOT ULA fc00::/7, NOT link-local
 # fe80::) AND a default IPv6 route. Either condition alone is insufficient:
@@ -6395,6 +6420,7 @@ initialize_setup() {
 
     # Default values
     if [[ "$DISABLE_IPV6" == "default" ]]; then DISABLE_IPV6=1; fi
+    guard_ifupdown_ipv6 /etc/network
     configure_ipv6_tunnel
     # A config WITHOUT the ALLOWED_IPS_MODE key but WITH a list is an install older
     # than the key itself. Whose list it is we do not know - it may well be a custom
