@@ -77,7 +77,7 @@ _sysctl_fixture() {
 @test "ifupdown IPv6: IPv6 address, gateway or ip -6 hook without an inet6 stanza counts" {
     local line
     _load_fn install_amneziawg.sh
-    for line in '    address 2a01:4f8:1c18:d30c::1/64' '    gateway fe80::1' '    up ip -6 addr add 2a01::1/64 dev eth0' '    post-up /sbin/ip -6 route add default via fe80::1 dev eth0'; do
+    for line in '    address 2a01:4f8:1c18:d30c::1/64' '    gateway fe80::1' '    up ip -6 addr add 2a01::1/64 dev eth0' '    post-up /sbin/ip -6 route add default via fe80::1 dev eth0' '    post-up /sbin/ip -f inet6 route add default via fe80::1' '    up ip --family inet6 addr add 2a01::1/64 dev eth0' '    up ip -o -6 addr show' '    up sh -c "ip -6 route add default via fe80::1"'; do
         printf 'auto eth0\niface eth0 inet dhcp\n%s\n' "$line" > "$NETDIR/interfaces"
         DISABLE_IPV6=1
         _guard
@@ -169,6 +169,30 @@ _sysctl_fixture() {
     run timeout 10 bash -c "$(declare -f guard_ifupdown_ipv6 log_warn log_debug die); DISABLE_IPV6=1; guard_ifupdown_ipv6 '$NETDIR' '$SYSDIR' '$SYSCONF'; echo \"D=\$DISABLE_IPV6\""
     [ "$status" -eq 0 ]
     [ "$output" = "D=1" ]
+}
+
+@test "ifupdown IPv6: hitting the file cap counts as IPv6 configured, repeats do not count" {
+    local k
+    _load_fn install_amneziawg.sh
+    for k in $(seq 1 300); do printf 'iface e%s inet dhcp
+' "$k" > "$NETDIR/interfaces.d/f$k"; done
+    DISABLE_IPV6=1
+    _guard
+    [ "$DISABLE_IPV6" = "0" ]
+    run grep -c '256' "$WARN_LOG"
+    [ "$output" = "1" ]
+
+    rm -f "$NETDIR"/interfaces.d/f*
+    : > "$WARN_LOG"
+    printf 'iface eth0 inet dhcp
+' > "$NETDIR/interfaces.d/only"
+    : > "$NETDIR/interfaces"
+    for k in $(seq 1 300); do printf 'source %s/interfaces.d/*
+' "$NETDIR" >> "$NETDIR/interfaces"; done
+    DISABLE_IPV6=1
+    _guard
+    [ "$DISABLE_IPV6" = "1" ]
+    [ ! -s "$WARN_LOG" ]
 }
 
 @test "ifupdown IPv6: switch-off from an earlier step 1 is removed from the installer's files and sysctl.conf only (RU and EN)" {

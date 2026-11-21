@@ -2419,20 +2419,25 @@ configure_ipv6() {
 # Arguments (for tests): the network config directory, the sysctl.d directory and the sysctl.conf file.
 guard_ifupdown_ipv6() {
     local netdir="${1:-/etc/network}" sysdir="${2:-/etc/sysctl.d}" sysconf="${3:-/etc/sysctl.conf}"
-    local f hit="" kw arg sf cleaned="" i=0 rc
+    local f hit="" kw arg sf cleaned="" i=0 n=0 rc
     local -a files=()
+    local -A seen=()
     [[ "${DISABLE_IPV6:-1}" -eq 1 ]] || return 0
     files=("$netdir/interfaces" "$netdir"/interfaces.d/*)
     # Walk the files, following source and source-directory, nested ones
     # included. A relative path is tried from the network config directory and
     # from the including file's directory: an extra file is harmless, a missed
-    # one is not. The cap of 256 files stops a file that includes itself.
-    while (( i < ${#files[@]} && i < 256 )); do
+    # one is not. Repeats are skipped; the cap of 256 files stops the queue
+    # from growing without end.
+    while (( i < ${#files[@]} && n < 256 )); do
         f="${files[i]}"
         i=$((i + 1))
         [[ -f "$f" ]] || continue
+        [[ -z "${seen[$f]:-}" ]] || continue
+        seen[$f]=1
+        n=$((n + 1))
         rc=0
-        grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[[:space:]/])?ip[[:space:]]+(-6|-family[[:space:]]+inet6)([[:space:]]|$))' "$f" || rc=$?
+        grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[[:space:]/"])?ip([[:space:]]+-[[:alnum:]-]+)*[[:space:]]+(-6|-f(amily)?[[:space:]]+inet6|--family[[:space:]]+inet6)([[:space:]]|$))' "$f" || rc=$?
         if [[ "$rc" -eq 0 ]]; then
             hit="$f"
             break
@@ -2457,10 +2462,16 @@ guard_ifupdown_ipv6() {
             done
         done < <(grep -E '^[[:space:]]*(source|source-directory)[[:space:]]' "$f" 2>/dev/null)
     done
-    [[ -n "$hit" ]] || { log_debug "ifupdown: no IPv6 settings found, files checked: $i"; return 0; }
+    # Hit the cap before reading everything - assume IPv6 is configured: an
+    # error in that direction is safe, the other way the server loses the network.
+    if [[ -z "$hit" && "$n" -ge 256 && "$i" -lt "${#files[@]}" ]]; then
+        hit="$netdir"
+        log_warn "Too many network config files (over 256), not all were checked for IPv6, assuming IPv6 is configured."
+    fi
+    [[ -n "$hit" ]] || { log_debug "ifupdown: no IPv6 settings found, files checked: $n"; return 0; }
     DISABLE_IPV6=0
     export DISABLE_IPV6
-    log_warn "$hit configures IPv6 (an iface ... inet6 stanza, an IPv6 address or an ip -6 command). With IPv6 disabled, networking.service fails at boot and the server loses the network, either at once or when the DHCP address lease runs out. So IPv6 stays enabled, as with --allow-ipv6. The installer's UFW closes inbound IPv6 except SSH and the VPN port; with --no-tweaks that is up to your own firewall. To disable IPv6 completely, remove the inet6 stanzas from the network config and run the installer with --force --disallow-ipv6."
+    log_warn "$hit configures IPv6 (an iface ... inet6 stanza, an IPv6 address or an ip -6 command). With IPv6 disabled, networking.service fails at boot and the server loses the network, either at once or when the DHCP address lease runs out. So IPv6 stays enabled, as with --allow-ipv6. The installer's UFW closes inbound IPv6 except SSH and the VPN port; with --no-tweaks that is up to your own firewall. To disable IPv6 completely, remove IPv6 (inet6 stanzas, IPv6 addresses, ip -6 commands) from the network config and run the installer with --force --disallow-ipv6."
     # Step 1 of an earlier run may have written the IPv6 switch-off already
     # (old versions wrote it to /etc/sysctl.conf too). A resumed install does
     # not repeat step 1, so the lines go here.

@@ -2349,20 +2349,24 @@ configure_ipv6() {
 # Аргументы (для тестов): каталог настроек сети, каталог sysctl.d и файл sysctl.conf.
 guard_ifupdown_ipv6() {
     local netdir="${1:-/etc/network}" sysdir="${2:-/etc/sysctl.d}" sysconf="${3:-/etc/sysctl.conf}"
-    local f hit="" kw arg sf cleaned="" i=0 rc
+    local f hit="" kw arg sf cleaned="" i=0 n=0 rc
     local -a files=()
+    local -A seen=()
     [[ "${DISABLE_IPV6:-1}" -eq 1 ]] || return 0
     files=("$netdir/interfaces" "$netdir"/interfaces.d/*)
     # Обход файлов с подключёнными через source и source-directory, в том
     # числе вложенными. Относительный путь пробую от каталога настроек сети и от
     # каталога подключающего файла: лишний файл безопасен, пропущенный нет.
-    # Предел 256 файлов защищает от файла, подключающего сам себя.
-    while (( i < ${#files[@]} && i < 256 )); do
+    # Повторы пропускаю; предел 256 файлов защищает от разрастания очереди.
+    while (( i < ${#files[@]} && n < 256 )); do
         f="${files[i]}"
         i=$((i + 1))
         [[ -f "$f" ]] || continue
+        [[ -z "${seen[$f]:-}" ]] || continue
+        seen[$f]=1
+        n=$((n + 1))
         rc=0
-        grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[[:space:]/])?ip[[:space:]]+(-6|-family[[:space:]]+inet6)([[:space:]]|$))' "$f" || rc=$?
+        grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[[:space:]/"])?ip([[:space:]]+-[[:alnum:]-]+)*[[:space:]]+(-6|-f(amily)?[[:space:]]+inet6|--family[[:space:]]+inet6)([[:space:]]|$))' "$f" || rc=$?
         if [[ "$rc" -eq 0 ]]; then
             hit="$f"
             break
@@ -2387,10 +2391,16 @@ guard_ifupdown_ipv6() {
             done
         done < <(grep -E '^[[:space:]]*(source|source-directory)[[:space:]]' "$f" 2>/dev/null)
     done
-    [[ -n "$hit" ]] || { log_debug "ifupdown: настроек IPv6 не нашёл, просмотрено файлов: $i"; return 0; }
+    # Упёрся в предел и не дочитал - считаю, что IPv6 настроен: ошибка в эту
+    # сторону безопасна, в обратную сервер теряет сеть.
+    if [[ -z "$hit" && "$n" -ge 256 && "$i" -lt "${#files[@]}" ]]; then
+        hit="$netdir"
+        log_warn "Настроек сети слишком много (больше 256 файлов), не все просмотрены при поиске IPv6, считаю, что IPv6 настроен."
+    fi
+    [[ -n "$hit" ]] || { log_debug "ifupdown: настроек IPv6 не нашёл, просмотрено файлов: $n"; return 0; }
     DISABLE_IPV6=0
     export DISABLE_IPV6
-    log_warn "В $hit настроен IPv6 (секция iface ... inet6, IPv6-адрес или команда ip -6). С выключенным IPv6 networking.service при загрузке падает, и сервер теряет сеть: сразу или когда кончится аренда адреса DHCP. Поэтому IPv6 остаётся включённым, как с --allow-ipv6. Входящие по IPv6, кроме SSH и порта VPN, закрывает UFW установщика, с --no-tweaks это задача вашего файрвола. Чтобы выключить IPv6 совсем, уберите секции inet6 из настроек сети и запустите установщик с --force --disallow-ipv6."
+    log_warn "В $hit настроен IPv6 (секция iface ... inet6, IPv6-адрес или команда ip -6). С выключенным IPv6 networking.service при загрузке падает, и сервер теряет сеть: сразу или когда кончится аренда адреса DHCP. Поэтому IPv6 остаётся включённым, как с --allow-ipv6. Входящие по IPv6, кроме SSH и порта VPN, закрывает UFW установщика, с --no-tweaks это задача вашего файрвола. Чтобы выключить IPv6 совсем, уберите из настроек сети IPv6 (секции inet6, IPv6-адреса, команды ip -6) и запустите установщик с --force --disallow-ipv6."
     # Шаг 1 прошлого запуска мог уже записать выключение IPv6 (старые версии
     # писали его и в /etc/sysctl.conf). При продолжении установки шаг 1 не
     # повторится, поэтому строки убираю здесь.
