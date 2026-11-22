@@ -12,6 +12,14 @@
 
 ## [Unreleased]
 
+## [6.3.8] - 2026-11-22
+
+**v6.3.8** - на Debian, где IPv6 настроен в ifupdown (так, например, у Hetzner), установщик больше не выключает IPv6, и сеть сервера поднимается после каждой перезагрузки.
+
+### Исправлено
+
+- **На Debian, где IPv6 настроен в ifupdown, установщик больше не выключает IPv6 на сервере.** Речь о секции `iface ... inet6`, IPv6-адресе или команде `ip -6` в `/etc/network/interfaces`, `/etc/network/interfaces.d/` или файлах, подключённых через `source` и `source-directory`; так cloud-init настраивает сеть, когда хостер выдаёт IPv6, например Hetzner. Выключенный IPv6 ломал такую сеть: `networking.service` падал, вместе с ним останавливался DHCP-клиент, и сервер пропадал из сети, сразу при загрузке или после окончания аренды адреса. Теперь IPv6 в этом случае остаётся включённым даже с `--disallow-ipv6`, как с `--allow-ipv6`, а в логе установки объясняется почему. Если шаг 1 прошлого запуска уже записал выключение IPv6, установщик убирает эти строки из своих файлов sysctl и `/etc/sysctl.conf` и просит перезагрузить сервер после установки; если убрать не удалось, установка останавливается с подсказкой. Сервер, поставленный раньше, чинится вручную: как это сделать, написано в ADVANCED, там же описано, насколько полно IPv6 выключается на Ubuntu и на Debian (разбор начался в [#299](https://github.com/bivlked/amneziawg-installer/issues/299)).
+
 ### Документация
 
 - **ADVANCED: раздельное туннелирование по приложениям на Android и звонки по Wi-Fi.** Где настройка в AmneziaWG для Android и в Amnezia VPN и какой режим выбрать, что делать, если туннель перестал подниматься после удаления приложения из списка, и как перенести список в новый профиль. Сверено с исходниками клиентов на 20 ноября 2026; в README добавлен вопрос со ссылкой на раздел.
@@ -2344,7 +2352,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...HEAD
+[6.3.8]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...v6.3.8
 [6.3.7]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...v6.3.7
 [6.3.6]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...v6.3.6
 [6.3.5]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.4...v6.3.5

@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on 32-bit ARM) installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 6.3.7
-# Date: 2026-11-20
+# Version: 6.3.8
+# Date: 2026-11-22
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -40,7 +40,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.7"
+SCRIPT_VERSION="6.3.8"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -71,8 +71,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="8e9c3d172bdfac68b9f72715c99e839e521d84bb693d59ea0a32ac9145c66ee6"
-MANAGE_SCRIPT_SHA256="87d5ce9f10d861ff4eab8d787803768e50d1c0f90bcc14c8ead217d0b5bda2af"
+COMMON_SCRIPT_SHA256="a7d76eadcfe122c5b85502c2ac4a00c98daf34e8ceec7e4998cf6fc1124d6a7d"
+MANAGE_SCRIPT_SHA256="c8bd13030f71da26d38843866717c70d18a8151088f46e1a6d63534a5ead3560"
 
 # Module pin for kernels older than 6.7 with no prebuilt (H0, 31 jul 2026). The
 # PPA module is not used there (see _kernel_supports_awg3); the module is built
@@ -771,7 +771,7 @@ Options:
                         port and auto-detection is unavailable
   --subnet=SUBNET       Tunnel subnet, CIDR /16-/30 (e.g. 10.9.0.0/16) non-interactively
   --allow-ipv6          Keep IPv6 enabled non-interactively
-  --disallow-ipv6       Force-disable IPv6 non-interactively
+  --disallow-ipv6       Disable IPv6 non-interactively (except Debian with IPv6 in ifupdown)
   --allow-ipv6-tunnel   Enable dual-stack IPv6 inside the tunnel (ULA, opt-in)
   --route-all           'All traffic' mode (0.0.0.0/0) - chosen by default
   --route-amnezia       'Amnezia' mode - public IPv4 into the tunnel, private networks outside
@@ -2405,6 +2405,89 @@ configure_ipv6() {
     fi
     export DISABLE_IPV6
     log "IPv6 disable: $(if [ "$DISABLE_IPV6" -eq 1 ]; then echo 'Yes'; else echo 'No'; fi)"
+}
+
+# Debian with ifupdown: when /etc/network/interfaces, interfaces.d or a file
+# pulled in by source or source-directory has an `iface ... inet6` stanza
+# (cloud-init writes one when the hoster provides IPv6, Hetzner for one),
+# disable_ipv6=1 breaks the network at boot: ifup fails with "IPv6 is disabled
+# on this device", networking.service fails and stops dhcpcd, and the server
+# drops off the network once the DHCP lease runs out (measured on Hetzner
+# Debian 13). So host IPv6 stays on here even with --disallow-ipv6.
+# Netplan and systemd-networkd are out of scope, the function does not read
+# their files.
+# Arguments (for tests): the network config directory, the sysctl.d directory and the sysctl.conf file.
+guard_ifupdown_ipv6() {
+    local netdir="${1:-/etc/network}" sysdir="${2:-/etc/sysctl.d}" sysconf="${3:-/etc/sysctl.conf}"
+    local f hit="" kw arg rest sf cleaned="" i=0 n=0 rc
+    local -a files=() words=()
+    local -A seen=()
+    [[ "${DISABLE_IPV6:-1}" -eq 1 ]] || return 0
+    files=("$netdir/interfaces" "$netdir"/interfaces.d/*)
+    # Walk the files, following source and source-directory, nested ones
+    # included. A relative path is tried from the network config directory and
+    # from the including file's directory: an extra file is harmless, a missed
+    # one is not. Repeats are skipped; the cap of 256 files stops the queue
+    # from growing without end.
+    while (( i < ${#files[@]} && n < 256 )); do
+        f="${files[i]}"
+        i=$((i + 1))
+        [[ -f "$f" ]] || continue
+        [[ -z "${seen[$f]:-}" ]] || continue
+        seen[$f]=1
+        n=$((n + 1))
+        rc=0
+        grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[^[:alnum:]_.-])?ip[[:space:]]+([^[:space:]]+[[:space:]]+)*(-6|-f[a-z]*[[:space:]]+inet6|--family[[:space:]]+inet6)([[:space:]]|$)|(pre-up|up|post-up)[[:space:]].*(::|([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}))' "$f" || rc=$?
+        if [[ "$rc" -eq 0 ]]; then
+            hit="$f"
+            break
+        elif [[ "$rc" -gt 1 ]]; then
+            # Could not read it - assume IPv6 is there: an error in that direction is safe.
+            hit="$f"
+            log_warn "Could not read $f while looking for IPv6 settings, assuming IPv6 is configured there."
+            break
+        fi
+        while read -r kw rest; do
+            read -r -a words <<< "$rest"
+            set --
+            for arg in "${words[@]}"; do
+                if [[ "$arg" == /* ]]; then
+                    set -- "$@" "$arg"
+                else
+                    set -- "$@" "$netdir/$arg" "${f%/*}/$arg"
+                fi
+            done
+            for arg in "$@"; do
+                case "$kw" in
+                    source) for sf in $arg; do files+=("$sf"); done ;;
+                    source-directory) for sf in $arg; do files+=("$sf"/*); done ;;
+                esac
+            done
+        done < <(grep -E '^[[:space:]]*(source|source-directory)[[:space:]]' "$f" 2>/dev/null)
+    done
+    # Hit the cap before reading everything - assume IPv6 is configured: an
+    # error in that direction is safe, the other way the server loses the network.
+    if [[ -z "$hit" && "$n" -ge 256 && "$i" -lt "${#files[@]}" ]]; then
+        hit="$netdir"
+        log_warn "Too many network config files (over 256), not all were checked for IPv6, assuming IPv6 is configured."
+    fi
+    [[ -n "$hit" ]] || { log_debug "ifupdown: no IPv6 settings found, files checked: $n"; return 0; }
+    DISABLE_IPV6=0
+    export DISABLE_IPV6
+    log_warn "$hit configures IPv6 (an iface ... inet6 stanza, an IPv6 address or an ip -6 command). With IPv6 disabled, networking.service fails at boot and the server loses the network, either at once or when the DHCP address lease runs out. So IPv6 stays enabled, as with --allow-ipv6. The installer's UFW closes inbound IPv6 except SSH and the VPN port; with --no-tweaks that is up to your own firewall. To disable IPv6 completely, remove IPv6 (inet6 stanzas, IPv6 addresses, ip -6 commands) from the network config and run the installer with --force --disallow-ipv6."
+    # Step 1 of an earlier run may have written the IPv6 switch-off already
+    # (old versions wrote it to /etc/sysctl.conf too). A resumed install does
+    # not repeat step 1, so the lines go here.
+    for sf in "$sysdir/99-amneziawg-security.conf" "$sysdir/99-amneziawg-forwarding.conf" "$sysconf"; do
+        [[ -f "$sf" ]] || continue
+        grep -qE '^net\.ipv6\.conf\.(all|default|lo)\.disable_ipv6[[:space:]]*=[[:space:]]*1[[:space:]]*$' "$sf" || continue
+        if sed -i --follow-symlinks -E '/^net\.ipv6\.conf\.(all|default|lo)\.disable_ipv6[[:space:]]*=[[:space:]]*1[[:space:]]*$/d' "$sf"; then
+            cleaned+="${cleaned:+, }$sf"
+        else
+            die "Could not remove the IPv6 switch-off from $sf: with it the server loses the network after a reboot. Delete the net.ipv6.conf.*.disable_ipv6 = 1 lines from the file and run the installer again."
+        fi
+    done
+    [[ -z "$cleaned" ]] || log_warn "Removed the IPv6 switch-off left by an earlier run from: $cleaned. Reboot the server after the install: until then the network runs degraded and the DHCP client may be stopped."
 }
 
 # Detect whether the VPS has native IPv6.
@@ -6395,6 +6478,7 @@ initialize_setup() {
 
     # Default values
     if [[ "$DISABLE_IPV6" == "default" ]]; then DISABLE_IPV6=1; fi
+    guard_ifupdown_ipv6 /etc/network /etc/sysctl.d /etc/sysctl.conf
     configure_ipv6_tunnel
     # A config WITHOUT the ALLOWED_IPS_MODE key but WITH a list is an install older
     # than the key itself. Whose list it is we do not know - it may well be a custom

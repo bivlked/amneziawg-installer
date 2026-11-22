@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 3.x (3.1 по умолчанию; 2.0 по флагу, а также на ядрах старее 6.7 и на 32-битном ARM) на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 6.3.7
-# Дата: 2026-11-20
+# Версия: 6.3.8
+# Дата: 2026-11-22
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -39,7 +39,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.7"
+SCRIPT_VERSION="6.3.8"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -69,8 +69,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="e21082711555487a1de9f01d53338635b69a27f5514a00732876d346116b2bc0"
-MANAGE_SCRIPT_SHA256="f4e58283a83fc1e19975492f07e59ad494030cb65fd508e8254e42c569b34a17"
+COMMON_SCRIPT_SHA256="d1f90cd352fb781cb62ffef7628b7c78b37dea9765c5d9f71bdc70ccede9a124"
+MANAGE_SCRIPT_SHA256="cb5b7d18f0cd6138caf7d5957050ebb7f88b49284789c270276472670a6cf59b"
 
 # Пин модуля для ядер старее 6.7 без готового пакета (H0, 31 jul 2026). Модуль
 # из PPA там не используется (см. _kernel_supports_awg3): модуль собирается из
@@ -750,7 +750,7 @@ show_help() {
                         SSH на нестандартном порту и автодетект недоступен
   --subnet=ПОДСЕТЬ      Подсеть туннеля, CIDR /16-/30 (напр. 10.9.0.0/16) неинтерактивно
   --allow-ipv6          Оставить IPv6 включенным неинтерактивно
-  --disallow-ipv6       Принудительно отключить IPv6 неинтерактивно
+  --disallow-ipv6       Отключить IPv6 неинтерактивно (кроме Debian с IPv6 в ifupdown)
   --allow-ipv6-tunnel   Включить dual-stack IPv6 внутри туннеля (ULA, opt-in)
   --route-all           Режим 'Весь трафик' (0.0.0.0/0) - выбирается по умолчанию
   --route-amnezia       Режим 'Amnezia' - публичный IPv4 в туннель, частные сети мимо
@@ -2336,6 +2336,87 @@ configure_ipv6() {
     fi
     export DISABLE_IPV6
     log "Отключение IPv6: $(if [ "$DISABLE_IPV6" -eq 1 ]; then echo 'Да'; else echo 'Нет'; fi)"
+}
+
+# Debian с ifupdown: если в /etc/network/interfaces, interfaces.d или в файлах,
+# подключённых через source и source-directory, есть секция `iface ... inet6`
+# (её пишет cloud-init, когда хостер выдаёт IPv6, например Hetzner), то
+# disable_ipv6=1 ломает сеть при загрузке: ifup падает на «IPv6 is disabled on
+# this device», networking.service уходит в failed и останавливает dhcpcd, и
+# когда истечёт аренда DHCP, сервер пропадает из сети (замер Hetzner Debian 13).
+# Поэтому здесь IPv6 на хосте оставляю включённым даже при --disallow-ipv6.
+# Netplan и systemd-networkd сюда не относятся, их файлов функция не читает.
+# Аргументы (для тестов): каталог настроек сети, каталог sysctl.d и файл sysctl.conf.
+guard_ifupdown_ipv6() {
+    local netdir="${1:-/etc/network}" sysdir="${2:-/etc/sysctl.d}" sysconf="${3:-/etc/sysctl.conf}"
+    local f hit="" kw arg rest sf cleaned="" i=0 n=0 rc
+    local -a files=() words=()
+    local -A seen=()
+    [[ "${DISABLE_IPV6:-1}" -eq 1 ]] || return 0
+    files=("$netdir/interfaces" "$netdir"/interfaces.d/*)
+    # Обход файлов с подключёнными через source и source-directory, в том
+    # числе вложенными. Относительный путь пробую от каталога настроек сети и от
+    # каталога подключающего файла: лишний файл безопасен, пропущенный нет.
+    # Повторы пропускаю; предел 256 файлов защищает от разрастания очереди.
+    while (( i < ${#files[@]} && n < 256 )); do
+        f="${files[i]}"
+        i=$((i + 1))
+        [[ -f "$f" ]] || continue
+        [[ -z "${seen[$f]:-}" ]] || continue
+        seen[$f]=1
+        n=$((n + 1))
+        rc=0
+        grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[^[:alnum:]_.-])?ip[[:space:]]+([^[:space:]]+[[:space:]]+)*(-6|-f[a-z]*[[:space:]]+inet6|--family[[:space:]]+inet6)([[:space:]]|$)|(pre-up|up|post-up)[[:space:]].*(::|([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}))' "$f" || rc=$?
+        if [[ "$rc" -eq 0 ]]; then
+            hit="$f"
+            break
+        elif [[ "$rc" -gt 1 ]]; then
+            # Не смог прочитать - считаю, что IPv6 там есть: ошибка в эту сторону безопасна.
+            hit="$f"
+            log_warn "Не удалось прочитать $f при поиске настроек IPv6, считаю, что IPv6 там настроен."
+            break
+        fi
+        while read -r kw rest; do
+            read -r -a words <<< "$rest"
+            set --
+            for arg in "${words[@]}"; do
+                if [[ "$arg" == /* ]]; then
+                    set -- "$@" "$arg"
+                else
+                    set -- "$@" "$netdir/$arg" "${f%/*}/$arg"
+                fi
+            done
+            for arg in "$@"; do
+                case "$kw" in
+                    source) for sf in $arg; do files+=("$sf"); done ;;
+                    source-directory) for sf in $arg; do files+=("$sf"/*); done ;;
+                esac
+            done
+        done < <(grep -E '^[[:space:]]*(source|source-directory)[[:space:]]' "$f" 2>/dev/null)
+    done
+    # Упёрся в предел и не дочитал - считаю, что IPv6 настроен: ошибка в эту
+    # сторону безопасна, в обратную сервер теряет сеть.
+    if [[ -z "$hit" && "$n" -ge 256 && "$i" -lt "${#files[@]}" ]]; then
+        hit="$netdir"
+        log_warn "Настроек сети слишком много (больше 256 файлов), не все просмотрены при поиске IPv6, считаю, что IPv6 настроен."
+    fi
+    [[ -n "$hit" ]] || { log_debug "ifupdown: настроек IPv6 не нашёл, просмотрено файлов: $n"; return 0; }
+    DISABLE_IPV6=0
+    export DISABLE_IPV6
+    log_warn "В $hit настроен IPv6 (секция iface ... inet6, IPv6-адрес или команда ip -6). С выключенным IPv6 networking.service при загрузке падает, и сервер теряет сеть: сразу или когда кончится аренда адреса DHCP. Поэтому IPv6 остаётся включённым, как с --allow-ipv6. Входящие по IPv6, кроме SSH и порта VPN, закрывает UFW установщика, с --no-tweaks это задача вашего файрвола. Чтобы выключить IPv6 совсем, уберите из настроек сети IPv6 (секции inet6, IPv6-адреса, команды ip -6) и запустите установщик с --force --disallow-ipv6."
+    # Шаг 1 прошлого запуска мог уже записать выключение IPv6 (старые версии
+    # писали его и в /etc/sysctl.conf). При продолжении установки шаг 1 не
+    # повторится, поэтому строки убираю здесь.
+    for sf in "$sysdir/99-amneziawg-security.conf" "$sysdir/99-amneziawg-forwarding.conf" "$sysconf"; do
+        [[ -f "$sf" ]] || continue
+        grep -qE '^net\.ipv6\.conf\.(all|default|lo)\.disable_ipv6[[:space:]]*=[[:space:]]*1[[:space:]]*$' "$sf" || continue
+        if sed -i --follow-symlinks -E '/^net\.ipv6\.conf\.(all|default|lo)\.disable_ipv6[[:space:]]*=[[:space:]]*1[[:space:]]*$/d' "$sf"; then
+            cleaned+="${cleaned:+, }$sf"
+        else
+            die "Не удалось убрать выключение IPv6 из $sf: с ним сервер после перезагрузки потеряет сеть. Удалите из файла строки net.ipv6.conf.*.disable_ipv6 = 1 и запустите установщик снова."
+        fi
+    done
+    [[ -z "$cleaned" ]] || log_warn "Убрал выключение IPv6, оставшееся от прошлого запуска, из: $cleaned. Перезагрузите сервер после установки: до перезагрузки сеть работает в урезанном виде, DHCP-клиент мог быть остановлен."
 }
 
 # Определение наличия native IPv6 на VPS.
@@ -6271,6 +6352,7 @@ initialize_setup() {
 
     # Значения по умолчанию
     if [[ "$DISABLE_IPV6" == "default" ]]; then DISABLE_IPV6=1; fi
+    guard_ifupdown_ipv6 /etc/network /etc/sysctl.d /etc/sysctl.conf
     configure_ipv6_tunnel
     # Конфиг БЕЗ ключа ALLOWED_IPS_MODE, но СО списком - это установка старше самого
     # ключа. Чей именно это список, мы не знаем: он мог быть и пользовательским. Но

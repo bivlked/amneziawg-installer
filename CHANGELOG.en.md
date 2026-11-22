@@ -12,6 +12,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.8] - 2026-11-22
+
+**v6.3.8** - on Debian with IPv6 set up in ifupdown (Hetzner, for one), the installer keeps IPv6 on, so the server network comes up after every reboot.
+
+### Fixed
+
+- **On Debian with IPv6 configured in ifupdown, the installer no longer turns IPv6 off on the server.** This covers an `iface ... inet6` stanza, an IPv6 address or an `ip -6` command in `/etc/network/interfaces`, `/etc/network/interfaces.d/` or a file pulled in by `source` or `source-directory`; cloud-init writes such a config when the hoster provides IPv6, Hetzner for one. Turning IPv6 off broke that network: `networking.service` failed, the DHCP client stopped with it, and the server dropped off the network, at boot or once the address lease ran out. Now IPv6 stays on in this case, even with `--disallow-ipv6`, as with `--allow-ipv6`, and the install log explains why. If step 1 of an earlier run has already written the IPv6 switch-off, the installer removes those lines from its own sysctl files and `/etc/sysctl.conf` and asks for a reboot after the install; if it cannot remove them, the install stops with a hint. A server installed earlier is fixed by hand: ADVANCED says how and also describes how completely IPv6 is turned off on Ubuntu and on Debian (the investigation started in [#299](https://github.com/bivlked/amneziawg-installer/issues/299)).
+
 ### Documentation
 
 - **ADVANCED: per-app split tunneling on Android and Wi-Fi calling.** Where the setting is in AmneziaWG for Android and in Amnezia VPN and which mode to pick, what to do if the tunnel stops coming up after an app on the list is removed, and how to carry the list over to a new profile. Checked against the clients' source code as of 20 November 2026; the README gets a question linking to the section.
@@ -2344,7 +2352,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...HEAD
+[6.3.8]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...v6.3.8
 [6.3.7]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...v6.3.7
 [6.3.6]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...v6.3.6
 [6.3.5]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.4...v6.3.5
