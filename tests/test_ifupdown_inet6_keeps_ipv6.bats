@@ -113,6 +113,56 @@ _sysctl_fixture() {
     [ "$output" = "1" ]
 }
 
+# interfaces(5): a line ending in a backslash goes on in the next line. The
+# guard has to read the joined line, or the IPv6 part on the next physical line
+# is missed and IPv6 gets switched off (the dangerous side).
+@test "ifupdown IPv6: source continued with a backslash follows the path on the next line (RU and EN)" {
+    local f
+    mkdir -p "$TEST_DIR/c"
+    printf 'iface eth0 inet dhcp\n' > "$TEST_DIR/c/ipv4"
+    printf 'iface eth0 inet6 static\n' > "$TEST_DIR/c/ipv6"
+    printf 'source %s/c/ipv4 \\\n    %s/c/ipv6\n' "$TEST_DIR" "$TEST_DIR" > "$NETDIR/interfaces"
+    for f in $INSTALLERS; do
+        _load_fn "$f"
+        : > "$WARN_LOG"
+        DISABLE_IPV6=1
+        _guard
+        [ "$DISABLE_IPV6" = "0" ]
+        run grep -c 'c/ipv6' "$WARN_LOG"
+        [ "$output" = "1" ]
+    done
+}
+
+@test "ifupdown IPv6: iface stanza and address split by a backslash count (RU and EN)" {
+    local f body
+    for body in 'iface eth0 \\\n    inet6 static\n' 'iface eth0 inet6 \\\n  static\n' 'iface eth0 inet static\n    address \\\n      2001:db8::2/64\n'; do
+        for f in $INSTALLERS; do
+            _load_fn "$f"
+            : > "$WARN_LOG"
+            printf "$body" > "$NETDIR/interfaces"
+            DISABLE_IPV6=1
+            _guard
+            [ "$DISABLE_IPV6" = "0" ]
+            run grep -c "$NETDIR/interfaces" "$WARN_LOG"
+            [ "$output" = "1" ]
+        done
+    done
+}
+
+@test "ifupdown IPv6: IPv4-only lines continued with a backslash stay IPv4 (RU and EN)" {
+    local f
+    printf 'auto eth0\niface eth0 \\\n    inet static\n    address \\\n      192.0.2.10/24\n    up ip route add \\\n      198.51.100.0/24 via 192.0.2.1\n' > "$NETDIR/interfaces"
+    for f in $INSTALLERS; do
+        _load_fn "$f"
+        : > "$WARN_LOG"
+        DISABLE_IPV6=1
+        _guard
+        [ "$DISABLE_IPV6" = "1" ]
+        run grep -c . "$WARN_LOG"
+        [ "$output" = "0" ]
+    done
+}
+
 @test "ifupdown IPv6: IPv4-only config leaves DISABLE_IPV6=1, sysctl files untouched, no warning (RU and EN)" {
     local f
     for f in $INSTALLERS; do

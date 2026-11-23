@@ -2349,7 +2349,7 @@ configure_ipv6() {
 # Аргументы (для тестов): каталог настроек сети, каталог sysctl.d и файл sysctl.conf.
 guard_ifupdown_ipv6() {
     local netdir="${1:-/etc/network}" sysdir="${2:-/etc/sysctl.d}" sysconf="${3:-/etc/sysctl.conf}"
-    local f hit="" kw arg rest sf cleaned="" i=0 n=0 rc
+    local f hit="" kw arg rest sf cleaned="" i=0 n=0 rc joined
     local -a files=() words=()
     local -A seen=()
     [[ "${DISABLE_IPV6:-1}" -eq 1 ]] || return 0
@@ -2366,7 +2366,11 @@ guard_ifupdown_ipv6() {
         seen[$f]=1
         n=$((n + 1))
         rc=0
-        grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[^[:alnum:]_.-])?ip[[:space:]]+([^[:space:]]+[[:space:]]+)*(-6|-f[a-z]*[[:space:]]+inet6|--family[[:space:]]+inet6)([[:space:]]|$)|(pre-up|up|post-up)[[:space:]].*(::|([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}))' "$f" || rc=$?
+        # interfaces(5): строка, которая кончается обратной косой чертой,
+        # продолжается следующей. Склеиваю такие строки до разбора, иначе IPv6
+        # во второй физической строке (source, iface, address) остался бы незамеченным.
+        joined=$(sed ':a;/\\$/{N;s/\\\n/ /;ba}' "$f" 2>/dev/null) || rc=2
+        [[ "$rc" -ne 0 ]] || grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[^[:alnum:]_.-])?ip[[:space:]]+([^[:space:]]+[[:space:]]+)*(-6|-f[a-z]*[[:space:]]+inet6|--family[[:space:]]+inet6)([[:space:]]|$)|(pre-up|up|post-up)[[:space:]].*(::|([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}))' <<< "$joined" || rc=$?
         if [[ "$rc" -eq 0 ]]; then
             hit="$f"
             break
@@ -2392,7 +2396,7 @@ guard_ifupdown_ipv6() {
                     source-directory) for sf in $arg; do files+=("$sf"/*); done ;;
                 esac
             done
-        done < <(grep -E '^[[:space:]]*(source|source-directory)[[:space:]]' "$f" 2>/dev/null)
+        done < <(grep -E '^[[:space:]]*(source|source-directory)[[:space:]]' <<< "$joined")
     done
     # Упёрся в предел и не дочитал - считаю, что IPv6 настроен: ошибка в эту
     # сторону безопасна, в обратную сервер теряет сеть.
@@ -7193,6 +7197,37 @@ install_amnezia_ppa_keyring() {
 # ШАГ 2: Установка AmneziaWG и зависимостей
 # ==============================================================================
 
+# Проба PPA для Ubuntu вне noble, jammy и focal: какой suite брать. Ответ пишет
+# в _PPA_SUITE, а не в stdout, потому что log печатает в stdout.
+# 2xx - у PPA есть сборка для этой версии, suite остаётся.
+# 404 - PPA эту версию не публикует, берётся noble: DKMS соберёт модуль под
+# текущее ядро (amneziawg-linux-kernel-module#118).
+# Любой другой ответ (5xx, нет ответа) - это сбой Launchpad, а не отсутствие
+# пакетов (I#68, 23 nov 2026: 503 на запросах к PPA). Подмена на noble тогда
+# поставила бы сборку для чужой версии Ubuntu, поэтому suite остаётся, а
+# недоступный PPA покажет обновление списков пакетов ниже.
+_ppa_probe_suite() {
+    local codename="$1" code
+    _PPA_SUITE="$codename"
+    log "Проверка доступности PPA Amnezia для Ubuntu '${codename}'..."
+    code=$(curl -sI -o /dev/null -w '%{http_code}' --max-time 15 --retry 2 --retry-delay 5 \
+        "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/${codename}/Release" 2>/dev/null) || true
+    case "$code" in
+        2??)
+            log "PPA Amnezia доступен для '${codename}'."
+            ;;
+        404)
+            log_warn "PPA Amnezia не публикует пакеты для Ubuntu '${codename}' (HTTP 404)."
+            log_warn "Переключаюсь на 'noble': DKMS соберёт модуль под текущее ядро."
+            log_warn "Контекст: https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/118"
+            _PPA_SUITE="noble"
+            ;;
+        *)
+            log_warn "PPA Amnezia не ответил на проверку для '${codename}' (код ${code:-нет}): это похоже на сбой Launchpad, а не на отсутствие пакетов. Оставляю '${codename}'; если PPA недоступен, это покажет обновление списков пакетов ниже."
+            ;;
+    esac
+}
+
 step2_install_amnezia() {
     update_state 2
 
@@ -7255,17 +7290,8 @@ step2_install_amnezia() {
                     # Known LTS — пропускаем pre-check (PPA точно опубликован)
                     ;;
                 *)
-                    log "Проверка доступности PPA Amnezia для Ubuntu '${ppa_codename}'..."
-                    if ! curl -fsI --max-time 15 --retry 2 --retry-delay 5 \
-                        "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/${ppa_codename}/Release" \
-                        >/dev/null 2>&1; then
-                        log_warn "PPA Amnezia не публикует пакеты для Ubuntu '${ppa_codename}' (HTTP 404 или host недоступен)."
-                        log_warn "Переключаюсь на 'noble' — DKMS соберёт модуль под текущее ядро."
-                        log_warn "Контекст: https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/118"
-                        ppa_codename="noble"
-                    else
-                        log "PPA Amnezia доступен для '${ppa_codename}'."
-                    fi
+                    _ppa_probe_suite "$ppa_codename"
+                    ppa_codename="$_PPA_SUITE"
                     ;;
             esac
             ;;

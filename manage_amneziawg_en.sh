@@ -3892,7 +3892,7 @@ change_exit_ip() {
     if command -v conntrack >/dev/null 2>&1; then
         conntrack -D -s "${subnet%/*}" --mask-src "$(_exit_prefix_mask "${subnet#*/}")" >/dev/null 2>&1 || true
     else
-        log_warn "No conntrack tool: client connections already open keep the previous address until they reconnect (apt install conntrack)."
+        log_warn "No conntrack tool: client connections already open keep the previous address until they reconnect (apt update && apt install conntrack)."
     fi
     _txn_write_file "$SERVER_CONF_FILE" awk -v re="$snat_re" -v up="$( [[ "$want" == off ]] || _exit_rule I "$subnet" "$nic" "$want")" \
         -v down="$( [[ "$want" == off ]] || _exit_rule D "$subnet" "$nic" "$want")" '
