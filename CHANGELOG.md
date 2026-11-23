@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [6.3.9] - 2026-11-23
+
+**v6.3.9** - на Ubuntu вне LTS источник пакетов остаётся своим даже во время сбоя Launchpad, проверка IPv6 на Debian понимает продолженные строки ifupdown, а подсказка про `conntrack` работает на установленном сервере.
+
 ### Исправлено
 
 - **Проверка IPv6 в ifupdown читает строки, продолженные обратной косой чертой.** В `/etc/network/interfaces` строка, которая кончается на `\`, продолжается следующей. Раньше установщик смотрел только первую физическую строку, и если `source`, секция `iface ... inet6` или IPv6-адрес переходили на следующую, IPv6 выключался, а на Debian это ломает сеть сервера. Теперь такие строки склеиваются до разбора.
@@ -2362,7 +2366,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.9...HEAD
+[6.3.9]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...v6.3.9
 [6.3.8]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...v6.3.8
 [6.3.7]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...v6.3.7
 [6.3.6]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...v6.3.6

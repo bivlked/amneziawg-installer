@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.9] - 2026-11-23
+
+**v6.3.9** - non-LTS Ubuntu keeps its own package source even during a Launchpad outage, the Debian IPv6 check reads continued ifupdown lines, and the `conntrack` hint works on an installed server.
+
 ### Fixed
 
 - **The ifupdown IPv6 check reads lines continued with a backslash.** In `/etc/network/interfaces` a line that ends in `\` goes on in the next line. The installer used to look only at the first physical line, so when `source`, an `iface ... inet6` stanza or an IPv6 address carried on to the next line, IPv6 was switched off, and on Debian that breaks the server network. Such lines are now joined before parsing.
@@ -2362,7 +2366,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.9...HEAD
+[6.3.9]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...v6.3.9
 [6.3.8]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...v6.3.8
 [6.3.7]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...v6.3.7
 [6.3.6]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...v6.3.6
