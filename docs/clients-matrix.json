@@ -92,6 +92,20 @@
       "checked_at": "2026-11-05"
     },
     {
+      "id": "wiresock-secure-connect",
+      "name": {"ru": "WireSock Secure Connect (Windows, коммерческий, бывший WireSock VPN Client)", "en": "WireSock Secure Connect (Windows, commercial, formerly WireSock VPN Client)"},
+      "support": "dev-channel",
+      "version": {"ru": "3.9.4.1, бета; стабильная 3.8.2.1 профили 3.x не понимает", "en": "3.9.4.1, beta; stable 3.8.2.1 does not understand 3.x profiles"},
+      "version_date": "2026-11-19",
+      "since": "3.9.4.1",
+      "since_date": "2026-11-19",
+      "since_note": {"ru": "I1-I5 принимает, но не отправляет; на профиле этого установщика не проверено", "en": "I1-I5 are accepted but not sent; not tested on this installer's profile"},
+      "where": {"ru": "сайт wiresock.net, бета-выпуски", "en": "wiresock.net, beta builds"},
+      "basis": "vendor-docs",
+      "evidence": {"url": "https://wiresock.net/documentation/wiresock-secure-connect/releases/3.9.4.1/"},
+      "checked_at": "2026-11-23"
+    },
+    {
       "id": "wg-tunnel-android",
       "name": {"ru": "WG Tunnel (Android, сторонний)", "en": "WG Tunnel (Android, third-party)"},
       "support": "yes",
