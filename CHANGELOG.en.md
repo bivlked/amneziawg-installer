@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **WireSock Secure Connect understands AmneziaWG 3.0 and 3.1 profiles, for now in the 3.9.4.1 beta.** The client's row in the ADVANCED compatibility table is updated: the new name and a link to wiresock.net, stable 3.8.2.1 does not understand 3.x profiles, `I1`-`I5` are accepted but not sent. For the 2.0 profile the vendor claims `S3`/`S4` and the `H1`-`H4` ranges. The client is also added to the full table. Vendor data as of 23 November 2026.
+
 ## [6.3.8] - 2026-11-22
 
 **v6.3.8** - on Debian with IPv6 set up in ifupdown (Hetzner, for one), the installer keeps IPv6 on, so the server network comes up after every reboot.
