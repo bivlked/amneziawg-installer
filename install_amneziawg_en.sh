@@ -71,8 +71,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="a7d76eadcfe122c5b85502c2ac4a00c98daf34e8ceec7e4998cf6fc1124d6a7d"
-MANAGE_SCRIPT_SHA256="c8bd13030f71da26d38843866717c70d18a8151088f46e1a6d63534a5ead3560"
+COMMON_SCRIPT_SHA256="973c8d3c25a6c195d06b6a6be13e414bbb2c282c8e18030d832377a40b197023"
+MANAGE_SCRIPT_SHA256="0e8ecdf07c39dc0dccfffdc1b51fb5ea2816251f59588a0d9497e482785d9de1"
 
 # Module pin for kernels older than 6.7 with no prebuilt (H0, 31 jul 2026). The
 # PPA module is not used there (see _kernel_supports_awg3); the module is built
