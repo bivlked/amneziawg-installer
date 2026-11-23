@@ -2369,7 +2369,11 @@ guard_ifupdown_ipv6() {
         # interfaces(5): строка, которая кончается обратной косой чертой,
         # продолжается следующей. Склеиваю такие строки до разбора, иначе IPv6
         # во второй физической строке (source, iface, address) остался бы незамеченным.
-        joined=$(sed ':a;/\\$/{N;s/\\\n/ /;ba}' "$f" 2>/dev/null) || rc=2
+        # Как в ifupdown (проверено ifquery на Debian 13): комментарий не
+        # продолжается, склейка идёт без пробела. $!N и ta вместо N и ba: на
+        # последней строке склеивать нечего, а с POSIXLY_CORRECT голый N в конце
+        # файла выбросил бы саму строку.
+        joined=$(sed ':a;/^[[:space:]]*#/b;/\\$/{$!N;s/\\\n//;ta}' "$f" 2>/dev/null) || rc=2
         [[ "$rc" -ne 0 ]] || grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[^[:alnum:]_.-])?ip[[:space:]]+([^[:space:]]+[[:space:]]+)*(-6|-f[a-z]*[[:space:]]+inet6|--family[[:space:]]+inet6)([[:space:]]|$)|(pre-up|up|post-up)[[:space:]].*(::|([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}))' <<< "$joined" || rc=$?
         if [[ "$rc" -eq 0 ]]; then
             hit="$f"
@@ -7200,12 +7204,15 @@ install_amnezia_ppa_keyring() {
 # Проба PPA для Ubuntu вне noble, jammy и focal: какой suite брать. Ответ пишет
 # в _PPA_SUITE, а не в stdout, потому что log печатает в stdout.
 # 2xx - у PPA есть сборка для этой версии, suite остаётся.
-# 404 - PPA эту версию не публикует, берётся noble: DKMS соберёт модуль под
-# текущее ядро (amneziawg-linux-kernel-module#118).
-# Любой другой ответ (5xx, нет ответа) - это сбой Launchpad, а не отсутствие
-# пакетов (I#68, 23 nov 2026: 503 на запросах к PPA). Подмена на noble тогда
-# поставила бы сборку для чужой версии Ubuntu, поэтому suite остаётся, а
-# недоступный PPA покажет обновление списков пакетов ниже.
+# 5xx - PPA ответил, но сам сломан: это сбой Launchpad, а не отсутствие пакетов
+# (I#68, 23 nov 2026: 503 на запросах к PPA). Подмена на noble тогда поставила
+# бы сборку для чужой версии Ubuntu, поэтому suite остаётся, а недоступный PPA
+# покажет обновление списков пакетов ниже.
+# 404 и всё прочее, в том числе нет ответа (000) - берётся noble: DKMS соберёт
+# модуль под текущее ядро (amneziawg-linux-kernel-module#118). Нет ответа
+# бывает и там, где apt ходит через свой прокси, а проба нет; на версии, которую
+# PPA не публикует, сохранённый suite тогда уронил бы установку с ложным советом
+# подождать.
 _ppa_probe_suite() {
     local codename="$1" code
     _PPA_SUITE="$codename"
@@ -7216,14 +7223,18 @@ _ppa_probe_suite() {
         2??)
             log "PPA Amnezia доступен для '${codename}'."
             ;;
-        404)
-            log_warn "PPA Amnezia не публикует пакеты для Ubuntu '${codename}' (HTTP 404)."
+        5??)
+            log_warn "PPA Amnezia ответил на проверку для '${codename}' кодом ${code}: это сбой Launchpad, а не отсутствие пакетов. Оставляю '${codename}'; если PPA недоступен, это покажет обновление списков пакетов ниже."
+            ;;
+        *)
+            if [[ "$code" == 404 ]]; then
+                log_warn "PPA Amnezia не публикует пакеты для Ubuntu '${codename}' (HTTP 404)."
+            else
+                log_warn "PPA Amnezia не ответил на проверку для '${codename}' (код ${code:-нет}), считаю, что сборки для этой версии нет."
+            fi
             log_warn "Переключаюсь на 'noble': DKMS соберёт модуль под текущее ядро."
             log_warn "Контекст: https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/118"
             _PPA_SUITE="noble"
-            ;;
-        *)
-            log_warn "PPA Amnezia не ответил на проверку для '${codename}' (код ${code:-нет}): это похоже на сбой Launchpad, а не на отсутствие пакетов. Оставляю '${codename}'; если PPA недоступен, это покажет обновление списков пакетов ниже."
             ;;
     esac
 }

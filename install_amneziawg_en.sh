@@ -2440,7 +2440,11 @@ guard_ifupdown_ipv6() {
         # interfaces(5): a line that ends in a backslash goes on in the next
         # line. Join such lines before parsing, or IPv6 on the second physical
         # line (source, iface, address) would go unnoticed.
-        joined=$(sed ':a;/\\$/{N;s/\\\n/ /;ba}' "$f" 2>/dev/null) || rc=2
+        # As in ifupdown (checked with ifquery on Debian 13): a comment does not
+        # go on, and the join adds no space. $!N and ta instead of N and ba: the
+        # last line has nothing to join, and with POSIXLY_CORRECT a bare N at the
+        # end of the file would drop the line itself.
+        joined=$(sed ':a;/^[[:space:]]*#/b;/\\$/{$!N;s/\\\n//;ta}' "$f" 2>/dev/null) || rc=2
         [[ "$rc" -ne 0 ]] || grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[^[:alnum:]_.-])?ip[[:space:]]+([^[:space:]]+[[:space:]]+)*(-6|-f[a-z]*[[:space:]]+inet6|--family[[:space:]]+inet6)([[:space:]]|$)|(pre-up|up|post-up)[[:space:]].*(::|([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}))' <<< "$joined" || rc=$?
         if [[ "$rc" -eq 0 ]]; then
             hit="$f"
@@ -7337,12 +7341,15 @@ install_amnezia_ppa_keyring() {
 # PPA probe for Ubuntu outside noble, jammy and focal: which suite to use. The
 # answer goes to _PPA_SUITE, not stdout, because log prints to stdout.
 # 2xx - the PPA has a build for this release, the suite stays.
-# 404 - the PPA does not publish this release, noble is used: DKMS builds the
-# module against the running kernel (amneziawg-linux-kernel-module#118).
-# Any other answer (5xx, no answer) is a Launchpad outage, not missing
+# 5xx - the PPA answered but is broken: a Launchpad outage, not missing
 # packages (I#68, 23 Nov 2026: 503 on PPA requests). Switching to noble then
 # would install a build for another Ubuntu release, so the suite stays, and an
 # unreachable PPA shows up in the package list update below.
+# 404 and anything else, including no answer (000) - noble is used: DKMS
+# builds the module against the running kernel
+# (amneziawg-linux-kernel-module#118). No answer also happens where apt goes
+# through its own proxy and the probe does not; on a release the PPA does not
+# publish, a kept suite would then fail the install with a false advice to wait.
 _ppa_probe_suite() {
     local codename="$1" code
     _PPA_SUITE="$codename"
@@ -7353,14 +7360,18 @@ _ppa_probe_suite() {
         2??)
             log "Amnezia PPA is available for '${codename}'."
             ;;
-        404)
-            log_warn "Amnezia PPA does not publish packages for Ubuntu '${codename}' (HTTP 404)."
+        5??)
+            log_warn "Amnezia PPA answered the check for '${codename}' with code ${code}: a Launchpad outage, not missing packages. Keeping '${codename}'; if the PPA is down, the package list update below will show it."
+            ;;
+        *)
+            if [[ "$code" == 404 ]]; then
+                log_warn "Amnezia PPA does not publish packages for Ubuntu '${codename}' (HTTP 404)."
+            else
+                log_warn "Amnezia PPA did not answer the check for '${codename}' (code ${code:-none}), assuming there is no build for this release."
+            fi
             log_warn "Falling back to 'noble': DKMS will build the module against the running kernel."
             log_warn "Context: https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/118"
             _PPA_SUITE="noble"
-            ;;
-        *)
-            log_warn "Amnezia PPA did not answer the check for '${codename}' (code ${code:-none}): this looks like a Launchpad outage, not missing packages. Keeping '${codename}'; if the PPA is down, the package list update below will show it."
             ;;
     esac
 }

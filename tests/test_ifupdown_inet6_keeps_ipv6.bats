@@ -149,6 +149,57 @@ _sysctl_fixture() {
     done
 }
 
+# ifupdown drops comment lines before it looks for a trailing backslash, so a
+# comment that ends in one does not swallow the next line (checked with
+# ifquery on Debian 13, 23 Nov 2026). The guard must not swallow it either.
+@test "ifupdown IPv6: a comment ending in a backslash does not hide the next stanza (RU and EN)" {
+    local f body
+    for body in '# IPv6 below \\\niface eth0 inet6 auto\n' '  # see \\\nsource %s/c/ipv6\n'; do
+        mkdir -p "$TEST_DIR/c"
+        printf 'iface eth0 inet6 static\n' > "$TEST_DIR/c/ipv6"
+        printf "auto eth0\niface eth0 inet dhcp\n$body" "$TEST_DIR" > "$NETDIR/interfaces"
+        for f in $INSTALLERS; do
+            _load_fn "$f"
+            : > "$WARN_LOG"
+            DISABLE_IPV6=1
+            _guard
+            [ "$DISABLE_IPV6" = "0" ] || { echo "$f missed IPv6 after: $body"; return 1; }
+        done
+    done
+}
+
+# ifupdown joins a continued line with no separator: "inet\" + "6 auto" is
+# inet6 (checked with ifquery on Debian 13, 23 Nov 2026).
+@test "ifupdown IPv6: a continuation inside a word is joined without a space (RU and EN)" {
+    local f body
+    mkdir -p "$TEST_DIR/c"
+    printf 'iface eth0 inet6 static\n' > "$TEST_DIR/c/ipv6"
+    for body in 'iface eth0 inet\\\n6 auto\n' 'source %s/\\\nc/ipv6\n'; do
+        printf "$body" "$TEST_DIR" > "$NETDIR/interfaces"
+        for f in $INSTALLERS; do
+            _load_fn "$f"
+            : > "$WARN_LOG"
+            DISABLE_IPV6=1
+            _guard
+            [ "$DISABLE_IPV6" = "0" ] || { echo "$f missed IPv6 in: $body"; return 1; }
+        done
+    done
+}
+
+# A backslash on the very last line has nothing to join. With POSIXLY_CORRECT
+# GNU sed drops the pattern space on N at the end of input, so the line itself
+# must still be read.
+@test "ifupdown IPv6: a backslash on the last line keeps that line, also with POSIXLY_CORRECT (RU and EN)" {
+    local f
+    printf 'iface eth0 inet static\n    address 2001:db8::2/64 \\\n' > "$NETDIR/interfaces"
+    for f in $INSTALLERS; do
+        _load_fn "$f"
+        DISABLE_IPV6=1
+        POSIXLY_CORRECT=1 _guard
+        [ "$DISABLE_IPV6" = "0" ] || { echo "$f missed IPv6 on the last line"; return 1; }
+    done
+}
+
 @test "ifupdown IPv6: IPv4-only lines continued with a backslash stay IPv4 (RU and EN)" {
     local f
     printf 'auto eth0\niface eth0 \\\n    inet static\n    address \\\n      192.0.2.10/24\n    up ip route add \\\n      198.51.100.0/24 via 192.0.2.1\n' > "$NETDIR/interfaces"

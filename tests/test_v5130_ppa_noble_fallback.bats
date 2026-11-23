@@ -196,19 +196,37 @@ _probe_setup() {
     done
 }
 
-# 23 Nov 2026 (I#68): Launchpad answered 503 for hours. A 503 or no answer
-# at all is an outage, not a release the PPA skips; switching to noble then
-# would put a build for another Ubuntu release on the server.
-@test "PPA probe: 503 or no answer keeps the release and names the outage, both twins" {
+# 23 Nov 2026 (I#68): Launchpad answered 503 for hours. A 5xx is an outage,
+# not a release the PPA skips; switching to noble then would put a build for
+# another Ubuntu release on the server.
+@test "PPA probe: a 5xx keeps the release and names the outage, both twins" {
     local f code
     for f in install_amneziawg.sh install_amneziawg_en.sh; do
-        for code in 503:0 502:0 000:28 000:6; do
+        for code in 503 502 500; do
             _probe_setup
-            STUB_HTTP=${code%%:*} STUB_CURL_RC=${code#*:} _probe "$f" resolute
+            STUB_HTTP=$code STUB_CURL_RC=0 _probe "$f" resolute
             [ "$_PPA_SUITE" = "resolute" ] || { echo "$f $code -> '$_PPA_SUITE'"; return 1; }
             grep -q 'Launchpad' "$WARN_LOG"
-            grep -q "${code%%:*}" "$WARN_LOG"
-            run grep -c '404' "$WARN_LOG"
+            grep -q "$code" "$WARN_LOG"
+            run grep -c "noble" "$WARN_LOG"
+            [ "$output" = "0" ]
+        done
+    done
+}
+
+# No answer at all is not proof of an outage: apt may go through a proxy of
+# its own that the probe does not use. On a release the PPA does not publish,
+# keeping the suite would fail the install with "wait and retry", so no answer
+# falls back to noble as before, and the warning says it was no answer.
+@test "PPA probe: no answer falls back to noble and says it was no answer, both twins" {
+    local f rc
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        for rc in 28 6 7; do
+            _probe_setup
+            STUB_HTTP=000 STUB_CURL_RC=$rc _probe "$f" plucky
+            [ "$_PPA_SUITE" = "noble" ] || { echo "$f rc=$rc -> '$_PPA_SUITE'"; return 1; }
+            grep -q '000' "$WARN_LOG"
+            run grep -c 'HTTP 404' "$WARN_LOG"
             [ "$output" = "0" ]
         done
     done
