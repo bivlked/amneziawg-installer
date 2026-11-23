@@ -14,13 +14,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.3.9] - 2026-11-23
 
-**v6.3.9** - non-LTS Ubuntu keeps its own package source even during a Launchpad outage, the Debian IPv6 check reads continued ifupdown lines, and the `conntrack` hint works on an installed server.
+**v6.3.9** - Ubuntu releases other than 24.04, 22.04 and 20.04 keep their own package source even during a Launchpad outage, the Debian IPv6 check reads continued ifupdown lines, and the `conntrack` hint works on an installed server.
 
 ### Fixed
 
 - **The ifupdown IPv6 check reads lines continued with a backslash.** In `/etc/network/interfaces` a line that ends in `\` goes on in the next line. The installer used to look only at the first physical line, so when `source`, an `iface ... inet6` stanza or an IPv6 address carried on to the next line, IPv6 was switched off, and on Debian that breaks the server network. Such lines are now joined before parsing the way ifupdown itself reads them: with no space at the break, and a comment that ends in `\` does not go on into the next line.
 - **The `conntrack` hint in `manage exit-ip` now works on a server after the install.** The installer clears the apt package lists at the end, so the old advice `apt install conntrack` answered "Unable to locate package". The hint and ADVANCED now say `apt update && apt install conntrack`.
-- **A Launchpad outage no longer changes the package source on non-LTS Ubuntu.** On 26.04 and other releases except noble, jammy and focal, the installer checks whether the PPA has a build for that release. It used to take any failure, including a 503 during a Launchpad outage, as a missing build and use the 24.04 build. Now a 5xx keeps the release, and the installer says it is a Launchpad outage (as on 23 November 2026, [#68](https://github.com/bivlked/amneziawg-installer/issues/68)). A 404 and no answer at all still switch to noble.
+- **A Launchpad outage no longer changes the package source on Ubuntu other than 24.04, 22.04 and 20.04.** On 26.04 and other releases except noble, jammy and focal, the installer checks whether the PPA has a build for that release. It used to take any failure, including a 503 during a Launchpad outage, as a missing build and use the 24.04 build. Now a 5xx keeps the release, and the installer says it is a Launchpad outage (as on 23 November 2026, [#68](https://github.com/bivlked/amneziawg-installer/issues/68)). A 404 and no answer at all still switch to noble.
 
 ### Documentation
 
