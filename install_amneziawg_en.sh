@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on 32-bit ARM) installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 6.3.8
-# Date: 2026-11-22
+# Version: 6.3.9
+# Date: 2026-11-23
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -40,7 +40,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.8"
+SCRIPT_VERSION="6.3.9"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -71,8 +71,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="a7d76eadcfe122c5b85502c2ac4a00c98daf34e8ceec7e4998cf6fc1124d6a7d"
-MANAGE_SCRIPT_SHA256="c8bd13030f71da26d38843866717c70d18a8151088f46e1a6d63534a5ead3560"
+COMMON_SCRIPT_SHA256="973c8d3c25a6c195d06b6a6be13e414bbb2c282c8e18030d832377a40b197023"
+MANAGE_SCRIPT_SHA256="0e8ecdf07c39dc0dccfffdc1b51fb5ea2816251f59588a0d9497e482785d9de1"
 
 # Module pin for kernels older than 6.7 with no prebuilt (H0, 31 jul 2026). The
 # PPA module is not used there (see _kernel_supports_awg3); the module is built
@@ -2419,7 +2419,7 @@ configure_ipv6() {
 # Arguments (for tests): the network config directory, the sysctl.d directory and the sysctl.conf file.
 guard_ifupdown_ipv6() {
     local netdir="${1:-/etc/network}" sysdir="${2:-/etc/sysctl.d}" sysconf="${3:-/etc/sysctl.conf}"
-    local f hit="" kw arg rest sf cleaned="" i=0 n=0 rc
+    local f hit="" kw arg rest sf cleaned="" i=0 n=0 rc joined
     local -a files=() words=()
     local -A seen=()
     [[ "${DISABLE_IPV6:-1}" -eq 1 ]] || return 0
@@ -2437,7 +2437,15 @@ guard_ifupdown_ipv6() {
         seen[$f]=1
         n=$((n + 1))
         rc=0
-        grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[^[:alnum:]_.-])?ip[[:space:]]+([^[:space:]]+[[:space:]]+)*(-6|-f[a-z]*[[:space:]]+inet6|--family[[:space:]]+inet6)([[:space:]]|$)|(pre-up|up|post-up)[[:space:]].*(::|([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}))' "$f" || rc=$?
+        # interfaces(5): a line that ends in a backslash goes on in the next
+        # line. Join such lines before parsing, or IPv6 on the second physical
+        # line (source, iface, address) would go unnoticed.
+        # As in ifupdown (checked with ifquery on Debian 13): a comment does not
+        # go on, and the join adds no space. $!N and ta instead of N and ba: the
+        # last line has nothing to join, and with POSIXLY_CORRECT a bare N at the
+        # end of the file would drop the line itself.
+        joined=$(sed ':a;/^[[:space:]]*#/b;/\\$/{$!N;s/\\\n//;ta}' "$f" 2>/dev/null) || rc=2
+        [[ "$rc" -ne 0 ]] || grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[^[:alnum:]_.-])?ip[[:space:]]+([^[:space:]]+[[:space:]]+)*(-6|-f[a-z]*[[:space:]]+inet6|--family[[:space:]]+inet6)([[:space:]]|$)|(pre-up|up|post-up)[[:space:]].*(::|([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}))' <<< "$joined" || rc=$?
         if [[ "$rc" -eq 0 ]]; then
             hit="$f"
             break
@@ -2463,7 +2471,7 @@ guard_ifupdown_ipv6() {
                     source-directory) for sf in $arg; do files+=("$sf"/*); done ;;
                 esac
             done
-        done < <(grep -E '^[[:space:]]*(source|source-directory)[[:space:]]' "$f" 2>/dev/null)
+        done < <(grep -E '^[[:space:]]*(source|source-directory)[[:space:]]' <<< "$joined")
     done
     # Hit the cap before reading everything - assume IPv6 is configured: an
     # error in that direction is safe, the other way the server loses the network.
@@ -7330,6 +7338,44 @@ install_amnezia_ppa_keyring() {
 # STEP 2: Installing AmneziaWG and dependencies
 # ==============================================================================
 
+# PPA probe for Ubuntu outside noble, jammy and focal: which suite to use. The
+# answer goes to _PPA_SUITE, not stdout, because log prints to stdout.
+# 2xx - the PPA has a build for this release, the suite stays.
+# 5xx - the PPA answered but is broken: a Launchpad outage, not missing
+# packages (I#68, 23 Nov 2026: 503 on PPA requests). Switching to noble then
+# would install a build for another Ubuntu release, so the suite stays, and an
+# unreachable PPA shows up in the package list update below.
+# 404 and anything else, including no answer (000) - noble is used: DKMS
+# builds the module against the running kernel
+# (amneziawg-linux-kernel-module#118). No answer also happens where apt goes
+# through its own proxy and the probe does not; on a release the PPA does not
+# publish, a kept suite would then fail the install with a false advice to wait.
+_ppa_probe_suite() {
+    local codename="$1" code
+    _PPA_SUITE="$codename"
+    log "Checking Amnezia PPA availability for Ubuntu '${codename}'..."
+    code=$(curl -sI -o /dev/null -w '%{http_code}' --max-time 15 --retry 2 --retry-delay 5 \
+        "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/${codename}/Release" 2>/dev/null) || true
+    case "$code" in
+        2??)
+            log "Amnezia PPA is available for '${codename}'."
+            ;;
+        5??)
+            log_warn "Amnezia PPA answered the check for '${codename}' with code ${code}: a Launchpad outage, not missing packages. Keeping '${codename}'; if the PPA is down, the package list update below will show it."
+            ;;
+        *)
+            if [[ "$code" == 404 ]]; then
+                log_warn "Amnezia PPA does not publish packages for Ubuntu '${codename}' (HTTP 404)."
+            else
+                log_warn "Amnezia PPA did not answer the check for '${codename}' (code ${code:-none}), assuming there is no build for this release."
+            fi
+            log_warn "Falling back to 'noble': DKMS will build the module against the running kernel."
+            log_warn "Context: https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/118"
+            _PPA_SUITE="noble"
+            ;;
+    esac
+}
+
 step2_install_amnezia() {
     update_state 2
 
@@ -7392,17 +7438,8 @@ step2_install_amnezia() {
                     # Known LTS — skip pre-check (PPA is reliably published)
                     ;;
                 *)
-                    log "Checking Amnezia PPA availability for Ubuntu '${ppa_codename}'..."
-                    if ! curl -fsI --max-time 15 --retry 2 --retry-delay 5 \
-                        "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/${ppa_codename}/Release" \
-                        >/dev/null 2>&1; then
-                        log_warn "Amnezia PPA does not publish packages for Ubuntu '${ppa_codename}' (HTTP 404 or host unreachable)."
-                        log_warn "Falling back to 'noble' — DKMS will build the module against the running kernel."
-                        log_warn "Context: https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/118"
-                        ppa_codename="noble"
-                    else
-                        log "Amnezia PPA is available for '${ppa_codename}'."
-                    fi
+                    _ppa_probe_suite "$ppa_codename"
+                    ppa_codename="$_PPA_SUITE"
                     ;;
             esac
             ;;

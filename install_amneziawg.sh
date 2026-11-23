@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 3.x (3.1 по умолчанию; 2.0 по флагу, а также на ядрах старее 6.7 и на 32-битном ARM) на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 6.3.8
-# Дата: 2026-11-22
+# Версия: 6.3.9
+# Дата: 2026-11-23
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -39,7 +39,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.8"
+SCRIPT_VERSION="6.3.9"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -69,8 +69,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="d1f90cd352fb781cb62ffef7628b7c78b37dea9765c5d9f71bdc70ccede9a124"
-MANAGE_SCRIPT_SHA256="cb5b7d18f0cd6138caf7d5957050ebb7f88b49284789c270276472670a6cf59b"
+COMMON_SCRIPT_SHA256="bc9bb2af07104bd8a19da69ed73bd5bac06c2716fe7d19fabc0616b77b30dd9f"
+MANAGE_SCRIPT_SHA256="6d80c8a8057f9168aaad324160322098b8e406ada81d3b4656815fc11076cda4"
 
 # Пин модуля для ядер старее 6.7 без готового пакета (H0, 31 jul 2026). Модуль
 # из PPA там не используется (см. _kernel_supports_awg3): модуль собирается из
@@ -2349,7 +2349,7 @@ configure_ipv6() {
 # Аргументы (для тестов): каталог настроек сети, каталог sysctl.d и файл sysctl.conf.
 guard_ifupdown_ipv6() {
     local netdir="${1:-/etc/network}" sysdir="${2:-/etc/sysctl.d}" sysconf="${3:-/etc/sysctl.conf}"
-    local f hit="" kw arg rest sf cleaned="" i=0 n=0 rc
+    local f hit="" kw arg rest sf cleaned="" i=0 n=0 rc joined
     local -a files=() words=()
     local -A seen=()
     [[ "${DISABLE_IPV6:-1}" -eq 1 ]] || return 0
@@ -2366,7 +2366,15 @@ guard_ifupdown_ipv6() {
         seen[$f]=1
         n=$((n + 1))
         rc=0
-        grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[^[:alnum:]_.-])?ip[[:space:]]+([^[:space:]]+[[:space:]]+)*(-6|-f[a-z]*[[:space:]]+inet6|--family[[:space:]]+inet6)([[:space:]]|$)|(pre-up|up|post-up)[[:space:]].*(::|([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}))' "$f" || rc=$?
+        # interfaces(5): строка, которая кончается обратной косой чертой,
+        # продолжается следующей. Склеиваю такие строки до разбора, иначе IPv6
+        # во второй физической строке (source, iface, address) остался бы незамеченным.
+        # Как в ifupdown (проверено ifquery на Debian 13): комментарий не
+        # продолжается, склейка идёт без пробела. $!N и ta вместо N и ba: на
+        # последней строке склеивать нечего, а с POSIXLY_CORRECT голый N в конце
+        # файла выбросил бы саму строку.
+        joined=$(sed ':a;/^[[:space:]]*#/b;/\\$/{$!N;s/\\\n//;ta}' "$f" 2>/dev/null) || rc=2
+        [[ "$rc" -ne 0 ]] || grep -qE '^[[:space:]]*(iface[[:space:]]+[^[:space:]]+[[:space:]]+inet6([[:space:]]|$)|(address|gateway)[[:space:]]+[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(/[0-9]+)?([[:space:]]|$)|(pre-up|up|post-up)[[:space:]](.*[^[:alnum:]_.-])?ip[[:space:]]+([^[:space:]]+[[:space:]]+)*(-6|-f[a-z]*[[:space:]]+inet6|--family[[:space:]]+inet6)([[:space:]]|$)|(pre-up|up|post-up)[[:space:]].*(::|([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}))' <<< "$joined" || rc=$?
         if [[ "$rc" -eq 0 ]]; then
             hit="$f"
             break
@@ -2392,7 +2400,7 @@ guard_ifupdown_ipv6() {
                     source-directory) for sf in $arg; do files+=("$sf"/*); done ;;
                 esac
             done
-        done < <(grep -E '^[[:space:]]*(source|source-directory)[[:space:]]' "$f" 2>/dev/null)
+        done < <(grep -E '^[[:space:]]*(source|source-directory)[[:space:]]' <<< "$joined")
     done
     # Упёрся в предел и не дочитал - считаю, что IPv6 настроен: ошибка в эту
     # сторону безопасна, в обратную сервер теряет сеть.
@@ -7193,6 +7201,44 @@ install_amnezia_ppa_keyring() {
 # ШАГ 2: Установка AmneziaWG и зависимостей
 # ==============================================================================
 
+# Проба PPA для Ubuntu вне noble, jammy и focal: какой suite брать. Ответ пишет
+# в _PPA_SUITE, а не в stdout, потому что log печатает в stdout.
+# 2xx - у PPA есть сборка для этой версии, suite остаётся.
+# 5xx - PPA ответил, но сам сломан: это сбой Launchpad, а не отсутствие пакетов
+# (I#68, 23 nov 2026: 503 на запросах к PPA). Подмена на noble тогда поставила
+# бы сборку для чужой версии Ubuntu, поэтому suite остаётся, а недоступный PPA
+# покажет обновление списков пакетов ниже.
+# 404 и всё прочее, в том числе нет ответа (000) - берётся noble: DKMS соберёт
+# модуль под текущее ядро (amneziawg-linux-kernel-module#118). Нет ответа
+# бывает и там, где apt ходит через свой прокси, а проба нет; на версии, которую
+# PPA не публикует, сохранённый suite тогда уронил бы установку с ложным советом
+# подождать.
+_ppa_probe_suite() {
+    local codename="$1" code
+    _PPA_SUITE="$codename"
+    log "Проверка доступности PPA Amnezia для Ubuntu '${codename}'..."
+    code=$(curl -sI -o /dev/null -w '%{http_code}' --max-time 15 --retry 2 --retry-delay 5 \
+        "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/${codename}/Release" 2>/dev/null) || true
+    case "$code" in
+        2??)
+            log "PPA Amnezia доступен для '${codename}'."
+            ;;
+        5??)
+            log_warn "PPA Amnezia ответил на проверку для '${codename}' кодом ${code}: это сбой Launchpad, а не отсутствие пакетов. Оставляю '${codename}'; если PPA недоступен, это покажет обновление списков пакетов ниже."
+            ;;
+        *)
+            if [[ "$code" == 404 ]]; then
+                log_warn "PPA Amnezia не публикует пакеты для Ubuntu '${codename}' (HTTP 404)."
+            else
+                log_warn "PPA Amnezia не ответил на проверку для '${codename}' (код ${code:-нет}), считаю, что сборки для этой версии нет."
+            fi
+            log_warn "Переключаюсь на 'noble': DKMS соберёт модуль под текущее ядро."
+            log_warn "Контекст: https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/118"
+            _PPA_SUITE="noble"
+            ;;
+    esac
+}
+
 step2_install_amnezia() {
     update_state 2
 
@@ -7255,17 +7301,8 @@ step2_install_amnezia() {
                     # Known LTS — пропускаем pre-check (PPA точно опубликован)
                     ;;
                 *)
-                    log "Проверка доступности PPA Amnezia для Ubuntu '${ppa_codename}'..."
-                    if ! curl -fsI --max-time 15 --retry 2 --retry-delay 5 \
-                        "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/${ppa_codename}/Release" \
-                        >/dev/null 2>&1; then
-                        log_warn "PPA Amnezia не публикует пакеты для Ubuntu '${ppa_codename}' (HTTP 404 или host недоступен)."
-                        log_warn "Переключаюсь на 'noble' — DKMS соберёт модуль под текущее ядро."
-                        log_warn "Контекст: https://github.com/amnezia-vpn/amneziawg-linux-kernel-module/issues/118"
-                        ppa_codename="noble"
-                    else
-                        log "PPA Amnezia доступен для '${ppa_codename}'."
-                    fi
+                    _ppa_probe_suite "$ppa_codename"
+                    ppa_codename="$_PPA_SUITE"
                     ;;
             esac
             ;;

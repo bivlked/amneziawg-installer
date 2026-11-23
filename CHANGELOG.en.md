@@ -12,6 +12,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.9] - 2026-11-23
+
+**v6.3.9** - non-LTS Ubuntu keeps its own package source even during a Launchpad outage, the Debian IPv6 check reads continued ifupdown lines, and the `conntrack` hint works on an installed server.
+
+### Fixed
+
+- **The ifupdown IPv6 check reads lines continued with a backslash.** In `/etc/network/interfaces` a line that ends in `\` goes on in the next line. The installer used to look only at the first physical line, so when `source`, an `iface ... inet6` stanza or an IPv6 address carried on to the next line, IPv6 was switched off, and on Debian that breaks the server network. Such lines are now joined before parsing the way ifupdown itself reads them: with no space at the break, and a comment that ends in `\` does not go on into the next line.
+- **The `conntrack` hint in `manage exit-ip` now works on a server after the install.** The installer clears the apt package lists at the end, so the old advice `apt install conntrack` answered "Unable to locate package". The hint and ADVANCED now say `apt update && apt install conntrack`.
+- **A Launchpad outage no longer changes the package source on non-LTS Ubuntu.** On 26.04 and other releases except noble, jammy and focal, the installer checks whether the PPA has a build for that release. It used to take any failure, including a 503 during a Launchpad outage, as a missing build and use the 24.04 build. Now a 5xx keeps the release, and the installer says it is a Launchpad outage (as on 23 November 2026, [#68](https://github.com/bivlked/amneziawg-installer/issues/68)). A 404 and no answer at all still switch to noble.
+
 ### Documentation
 
 - **WireSock Secure Connect understands AmneziaWG 3.0 and 3.1 profiles, for now in the 3.9.4.1 beta.** The client's row in the ADVANCED compatibility table is updated: the new name and a link to wiresock.net, stable 3.8.2.1 does not understand 3.x profiles, `I1`-`I5` are accepted but not sent. For the 2.0 profile the vendor claims `S3`/`S4` and the `H1`-`H4` ranges. The client is also added to the full table. Vendor data as of 23 November 2026.
@@ -2356,7 +2366,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.9...HEAD
+[6.3.9]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...v6.3.9
 [6.3.8]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...v6.3.8
 [6.3.7]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...v6.3.7
 [6.3.6]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...v6.3.6

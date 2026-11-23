@@ -6,9 +6,10 @@
 # (questing/plucky/oracular/...) hit a 404 on dists/<codename>/Release.
 # Upstream: amnezia-vpn/amneziawg-linux-kernel-module#118
 #
-# v5.13.0 fix: pre-check PPA availability with `curl -fsI`. On 404 or host
-# unreachable, fall back to 'noble' (LTS) — DKMS builds the module against
-# the running kernel.
+# v5.13.0 fix: pre-check PPA availability. On 404, fall back to 'noble'
+# (LTS): DKMS builds the module against the running kernel. Since v6.3.9 the
+# check is _ppa_probe_suite, and only a 404 switches the suite: a 5xx or no
+# answer is a Launchpad outage and keeps the release.
 #
 # Also handles re-run: a previous (≤ v5.12.1) install on questing wrote
 # /etc/apt/sources.list.d/amnezia-ppa.sources with `Suites: questing`. On
@@ -16,25 +17,9 @@
 
 # ---------- structural: RU script contains pre-check ----------
 
-@test "v5.13.0: RU install has PPA pre-check for Ubuntu non-LTS" {
-    grep -q 'Проверка доступности PPA Amnezia для Ubuntu' \
-        "$BATS_TEST_DIRNAME/../install_amneziawg.sh"
-    grep -q 'curl -fsI --max-time 15 --retry 2 --retry-delay 5' \
-        "$BATS_TEST_DIRNAME/../install_amneziawg.sh"
-    grep -q 'dists/${ppa_codename}/Release' \
-        "$BATS_TEST_DIRNAME/../install_amneziawg.sh"
-}
-
 @test "v5.13.0: RU install whitelists LTS codenames (noble|jammy|focal)" {
     grep -q 'noble|jammy|focal)' \
         "$BATS_TEST_DIRNAME/../install_amneziawg.sh"
-}
-
-@test "v5.13.0: RU install falls back ppa_codename to noble on failure" {
-    block=$(awk '/Проверка доступности PPA Amnezia для Ubuntu/,/log "PPA Amnezia доступен/' \
-        "$BATS_TEST_DIRNAME/../install_amneziawg.sh")
-    [[ "$block" == *'ppa_codename="noble"'* ]]
-    [[ "$block" == *'kernel-module/issues/118'* ]]
 }
 
 @test "v5.13.0: RU install has suite-mismatch detection" {
@@ -142,25 +127,9 @@
 
 # ---------- structural: EN script mirror ----------
 
-@test "v5.13.0: EN install has PPA pre-check for Ubuntu non-LTS" {
-    grep -q 'Checking Amnezia PPA availability for Ubuntu' \
-        "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"
-    grep -q 'curl -fsI --max-time 15 --retry 2 --retry-delay 5' \
-        "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"
-    grep -q 'dists/${ppa_codename}/Release' \
-        "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"
-}
-
 @test "v5.13.0: EN install whitelists LTS codenames (noble|jammy|focal)" {
     grep -q 'noble|jammy|focal)' \
         "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh"
-}
-
-@test "v5.13.0: EN install falls back ppa_codename to noble on failure" {
-    block=$(awk '/Checking Amnezia PPA availability for Ubuntu/,/log "Amnezia PPA is available/' \
-        "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh")
-    [[ "$block" == *'ppa_codename="noble"'* ]]
-    [[ "$block" == *'kernel-module/issues/118'* ]]
 }
 
 @test "v5.13.0: EN install has suite-mismatch detection" {
@@ -184,95 +153,93 @@
 
 # ---------- structural: parity counts ----------
 
-@test "v5.13.0: RU/EN pre-check block parity (curl line count matches)" {
-    ru=$(grep -c 'curl -fsI --max-time 15 --retry 2 --retry-delay 5' \
-        "$BATS_TEST_DIRNAME/../install_amneziawg.sh")
-    en=$(grep -c 'curl -fsI --max-time 15 --retry 2 --retry-delay 5' \
-        "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh")
-    [ "$ru" -eq "$en" ]
-    [ "$ru" -eq 1 ]
+# ---------- functional: _ppa_probe_suite from both installers ----------
+
+# Loads the real _ppa_probe_suite from an installer. curl is a stub that
+# prints STUB_HTTP as the status code (what `-w '%{http_code}'` prints) and
+# exits with STUB_CURL_RC; CURL_LOG records the call.
+_probe() {
+    local installer="$1" codename="$2"
+    log() { :; }
+    log_warn() { printf '%s\n' "$*" >> "$WARN_LOG"; }
+    curl() { printf '%s\n' "$*" >> "$CURL_LOG"; printf '%s' "${STUB_HTTP:-}"; return "${STUB_CURL_RC:-0}"; }
+    eval "$(sed -n '/^_ppa_probe_suite()/,/^}/p' "$BATS_TEST_DIRNAME/../$installer")"
+    _PPA_SUITE=""
+    _ppa_probe_suite "$codename"
 }
 
-@test "v5.13.0: RU/EN noble fallback assignment count matches" {
-    # Both scripts must assign ppa_codename="noble" inside the pre-check
-    # exactly once. (Other "noble" mentions exist in Debian mapping above.)
-    ru_pre=$(awk '/case "\$ppa_codename" in/,/^            esac$/' \
-        "$BATS_TEST_DIRNAME/../install_amneziawg.sh" \
-        | grep -c 'ppa_codename="noble"')
-    en_pre=$(awk '/case "\$ppa_codename" in/,/^            esac$/' \
-        "$BATS_TEST_DIRNAME/../install_amneziawg_en.sh" \
-        | grep -c 'ppa_codename="noble"')
-    [ "$ru_pre" -eq "$en_pre" ]
-    [ "$ru_pre" -ge 1 ]
+_probe_setup() {
+    WARN_LOG="$BATS_TEST_TMPDIR/warn.log"; CURL_LOG="$BATS_TEST_TMPDIR/curl.log"
+    : > "$WARN_LOG"; : > "$CURL_LOG"
 }
 
-# ---------- functional: ppa_codename resolution under mocked curl ----------
-
-# Helper: extract a copy of the pre-check `case` and evaluate it with
-# whatever curl behaviour the test set up. We replicate the block here
-# instead of sourcing the installer (which would pull in side effects).
-run_pre_check() {
-    local ppa_codename="$1"
-    case "$ppa_codename" in
-        noble|jammy|focal) ;;
-        *)
-            if ! curl -fsI --max-time 15 --retry 2 --retry-delay 5 \
-                "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/${ppa_codename}/Release" \
-                >/dev/null 2>&1; then
-                ppa_codename="noble"
-            fi
-            ;;
-    esac
-    echo "$ppa_codename"
+@test "PPA probe: 404 switches a non-LTS release to noble and says why, both twins" {
+    local f
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        _probe_setup
+        STUB_HTTP=404 STUB_CURL_RC=0 _probe "$f" plucky
+        [ "$_PPA_SUITE" = "noble" ]
+        grep -q 'HTTP 404' "$WARN_LOG"
+        grep -q 'kernel-module/issues/118' "$WARN_LOG"
+        grep -q 'dists/plucky/Release' "$CURL_LOG"
+    done
 }
 
-@test "v5.13.0: questing + curl 404 -> noble" {
-    curl() { return 22; }   # curl's "HTTP error" exit code
-    export -f curl
-    result=$(run_pre_check questing)
-    [ "$result" = "noble" ]
+@test "PPA probe: 200 keeps the release, no warning, both twins" {
+    local f
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        _probe_setup
+        STUB_HTTP=200 STUB_CURL_RC=0 _probe "$f" resolute
+        [ "$_PPA_SUITE" = "resolute" ]
+        run grep -c . "$WARN_LOG"
+        [ "$output" = "0" ]
+    done
 }
 
-@test "v5.13.0: questing + curl timeout/network fail -> noble" {
-    curl() { return 28; }   # curl's "operation timeout" exit code
-    export -f curl
-    result=$(run_pre_check questing)
-    [ "$result" = "noble" ]
+# 23 Nov 2026 (I#68): Launchpad answered 503 for hours. A 5xx is an outage,
+# not a release the PPA skips; switching to noble then would put a build for
+# another Ubuntu release on the server.
+@test "PPA probe: a 5xx keeps the release and names the outage, both twins" {
+    local f code
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        for code in 503 502 500; do
+            _probe_setup
+            STUB_HTTP=$code STUB_CURL_RC=0 _probe "$f" resolute
+            [ "$_PPA_SUITE" = "resolute" ] || { echo "$f $code -> '$_PPA_SUITE'"; return 1; }
+            grep -q 'Launchpad' "$WARN_LOG"
+            grep -q "$code" "$WARN_LOG"
+            run grep -c "noble" "$WARN_LOG"
+            [ "$output" = "0" ]
+        done
+    done
 }
 
-@test "v5.13.0: questing + curl success -> questing (no fallback)" {
-    curl() { return 0; }
-    export -f curl
-    result=$(run_pre_check questing)
-    [ "$result" = "questing" ]
+# No answer at all is not proof of an outage: apt may go through a proxy of
+# its own that the probe does not use. On a release the PPA does not publish,
+# keeping the suite would fail the install with "wait and retry", so no answer
+# falls back to noble as before, and the warning says it was no answer.
+@test "PPA probe: no answer falls back to noble and says it was no answer, both twins" {
+    local f rc
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        for rc in 28 6 7; do
+            _probe_setup
+            STUB_HTTP=000 STUB_CURL_RC=$rc _probe "$f" plucky
+            [ "$_PPA_SUITE" = "noble" ] || { echo "$f rc=$rc -> '$_PPA_SUITE'"; return 1; }
+            grep -q '000' "$WARN_LOG"
+            run grep -c 'HTTP 404' "$WARN_LOG"
+            [ "$output" = "0" ]
+        done
+    done
 }
 
-@test "v5.13.0: noble skips pre-check entirely (curl never called)" {
-    curl() { echo "CURL SHOULD NOT BE CALLED" >&2; return 1; }
-    export -f curl
-    result=$(run_pre_check noble)
-    [ "$result" = "noble" ]
-}
-
-@test "v5.13.0: jammy skips pre-check entirely" {
-    curl() { return 1; }
-    export -f curl
-    result=$(run_pre_check jammy)
-    [ "$result" = "jammy" ]
-}
-
-@test "v5.13.0: focal skips pre-check entirely" {
-    curl() { return 1; }
-    export -f curl
-    result=$(run_pre_check focal)
-    [ "$result" = "focal" ]
-}
-
-@test "v5.13.0: plucky (future non-LTS) + curl 404 -> noble" {
-    curl() { return 22; }
-    export -f curl
-    result=$(run_pre_check plucky)
-    [ "$result" = "noble" ]
+@test "PPA probe: step 2 runs the probe only outside noble, jammy and focal, both twins" {
+    local f block
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        block=$(awk '/case "\$ppa_codename" in/,/^            esac$/' "$BATS_TEST_DIRNAME/../$f")
+        [[ "$block" == *'noble|jammy|focal)'* ]]
+        [[ "$block" == *'_ppa_probe_suite "$ppa_codename"'* ]]
+        [[ "$block" == *'ppa_codename="$_PPA_SUITE"'* ]]
+    done
 }
 
 # ---------- functional: suite-mismatch detection ----------

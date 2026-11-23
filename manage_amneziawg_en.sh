@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x and 2.0 peer management script
 # Author: @bivlked
-# Version: 6.3.8
-# Date: 2026-11-22
+# Version: 6.3.9
+# Date: 2026-11-23
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="6.3.8"
+SCRIPT_VERSION="6.3.9"
 set -o pipefail
 # awg show colours its labels when WG_COLOR_MODE=always is in the environment,
 # even into a pipe. The secrets filter then does not recognise "header
@@ -3892,7 +3892,7 @@ change_exit_ip() {
     if command -v conntrack >/dev/null 2>&1; then
         conntrack -D -s "${subnet%/*}" --mask-src "$(_exit_prefix_mask "${subnet#*/}")" >/dev/null 2>&1 || true
     else
-        log_warn "No conntrack tool: client connections already open keep the previous address until they reconnect (apt install conntrack)."
+        log_warn "No conntrack tool: client connections already open keep the previous address until they reconnect (apt update && apt install conntrack)."
     fi
     _txn_write_file "$SERVER_CONF_FILE" awk -v re="$snat_re" -v up="$( [[ "$want" == off ]] || _exit_rule I "$subnet" "$nic" "$want")" \
         -v down="$( [[ "$want" == off ]] || _exit_rule D "$subnet" "$nic" "$want")" '

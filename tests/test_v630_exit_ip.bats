@@ -838,3 +838,30 @@ _exit_endpoint_loopback() {
     [ -x /usr/bin/timeout ] || skip "no /usr/bin/timeout"
     each_manage _exit_endpoint_loopback
 }
+
+# The installer empties /var/lib/apt/lists at the end, so a bare
+# "apt install conntrack" fails there with "Unable to locate package"
+# (measured 22 Nov 2026 on a v6.3.8 server). The hint has to refresh the lists.
+_exit_conntrack_hint() {
+    manage "$1" exit-ip 203.0.113.7
+    [ "$status" -eq 0 ] || { echo "$1: set failed: $stderr"; return 1; }
+    [[ "$stderr" == *"(apt update && apt install conntrack)"* ]] || { echo "$1: no working install hint: $stderr"; return 1; }
+}
+@test "exit-ip without conntrack names an install command that works after the installer's apt cleanup, both twins" {
+    require_flock
+    ! command -v conntrack >/dev/null 2>&1 || skip "conntrack is installed on this machine"
+    each_manage _exit_conntrack_hint
+}
+
+_exit_conntrack_present() {
+    printf '#!/bin/bash\necho "conntrack $*" >> "$CALLS.ct"\n' > "$MGMT_DIR/bin/conntrack"
+    chmod +x "$MGMT_DIR/bin/conntrack"
+    manage "$1" exit-ip 203.0.113.7
+    [ "$status" -eq 0 ] || { echo "$1: set failed: $stderr"; return 1; }
+    [[ "$stderr" != *"apt install conntrack"* ]] || { echo "$1: install hint with conntrack present"; return 1; }
+    [ "$(cat "$CALLS.ct")" = "conntrack -D -s 10.9.9.1 --mask-src 255.255.255.0" ] || { echo "$1: conntrack call '$(cat "$CALLS.ct" 2>/dev/null)'"; return 1; }
+}
+@test "exit-ip with conntrack flushes the client subnet and prints no install hint, both twins" {
+    require_flock
+    each_manage _exit_conntrack_present
+}

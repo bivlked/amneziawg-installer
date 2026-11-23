@@ -1367,7 +1367,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common_en.sh` and `manage_amneziawg_en.sh` (the Russian installer: `awg_common.sh` and `manage_amneziawg.sh`) from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.8/awg_common_en.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.9/awg_common_en.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -2284,7 +2284,7 @@ sudo bash install_amneziawg_en.sh --endpoint=198.51.100.2 --exit-ip=203.0.113.7
 
 Better to give `--endpoint` explicitly here: with two addresses the installer may detect either of them.
 
-**On a running server:** `sudo bash /root/awg/manage_amneziawg.sh exit-ip 203.0.113.7`, to remove it `exit-ip off`. Client configs do not change, the service restarts, and clients lose the connection for a few seconds. To check from a client: `curl -s ifconfig.me` returns the exit address. Connections already open (a long download, a call) are flushed through `conntrack` if that tool is on the server (`apt install conntrack`); without it they keep the old address until they reconnect.
+**On a running server:** `sudo bash /root/awg/manage_amneziawg.sh exit-ip 203.0.113.7`, to remove it `exit-ip off`. Client configs do not change, the service restarts, and clients lose the connection for a few seconds. To check from a client: `curl -s ifconfig.me` returns the exit address. Connections already open (a long download, a call) are flushed through `conntrack` if that tool is on the server (`apt update && apt install conntrack`); without it they keep the old address until they reconnect.
 
 **How it works.** A `SNAT --to-source <exit address>` rule for the client subnet goes into the server's `PostUp`, above the usual MASQUERADE; the server's own traffic (updates, DNS) still leaves from the main address. If the exit address disappears from the interface, the rule still sets it as the source, so client traffic does not leave through the entry address. What happens next depends on the host. Usually its router finds the address by ARP: while it remembers the address the connection goes on, and when it asks again the server does not answer, replies stop coming back and the connection stops. On my stand this took 9 to 28 seconds in three measurements, not a single packet left from the entry address in that time, and once the address was back the connection returned within a second. If the host routes the address to the server without ARP, the connection may keep working. `manage check` shows a missing address.
 

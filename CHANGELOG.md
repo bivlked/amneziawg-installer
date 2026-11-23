@@ -12,6 +12,16 @@
 
 ## [Unreleased]
 
+## [6.3.9] - 2026-11-23
+
+**v6.3.9** - на Ubuntu вне LTS источник пакетов остаётся своим даже во время сбоя Launchpad, проверка IPv6 на Debian понимает продолженные строки ifupdown, а подсказка про `conntrack` работает на установленном сервере.
+
+### Исправлено
+
+- **Проверка IPv6 в ifupdown читает строки, продолженные обратной косой чертой.** В `/etc/network/interfaces` строка, которая кончается на `\`, продолжается следующей. Раньше установщик смотрел только первую физическую строку, и если `source`, секция `iface ... inet6` или IPv6-адрес переходили на следующую, IPv6 выключался, а на Debian это ломает сеть сервера. Теперь такие строки склеиваются до разбора так же, как их читает сам ifupdown: без пробела на месте переноса, а комментарий с `\` на конце следующую строку не продолжает.
+- **Подсказка про `conntrack` в `manage exit-ip` теперь работает на сервере после установки.** Установщик в конце очищает списки пакетов apt, поэтому прежний совет `apt install conntrack` отвечал «Unable to locate package». Теперь подсказка и ADVANCED советуют `apt update && apt install conntrack`.
+- **Сбой Launchpad больше не меняет источник пакетов на Ubuntu вне LTS.** На 26.04 и других версиях, кроме noble, jammy и focal, установщик проверяет, есть ли у PPA сборка для этой версии. Раньше любой отказ, в том числе 503 во время сбоя Launchpad, он принимал за отсутствие сборки и брал сборку для 24.04. Теперь ответ 5xx версию не меняет, и установщик пишет, что это сбой Launchpad (так было 23 ноября 2026, [#68](https://github.com/bivlked/amneziawg-installer/issues/68)). На noble, как и раньше, переключают ответ 404 и отсутствие ответа.
+
 ### Документация
 
 - **WireSock Secure Connect понимает профили AmneziaWG 3.0 и 3.1, пока в бете 3.9.4.1.** Строка клиента в таблице совместимости ADVANCED обновлена: новое имя и ссылка на wiresock.net, стабильная 3.8.2.1 профили 3.x не понимает, `I1`-`I5` клиент принимает, но не отправляет. Для профиля 2.0 вендор заявляет `S3`/`S4` и диапазоны `H1`-`H4`. Клиент добавлен и в полную таблицу. Данные вендора на 23 ноября 2026.
@@ -2356,7 +2366,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.9...HEAD
+[6.3.9]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...v6.3.9
 [6.3.8]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...v6.3.8
 [6.3.7]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...v6.3.7
 [6.3.6]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.5...v6.3.6

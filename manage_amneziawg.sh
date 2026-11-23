@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # Скрипт для управления пользователями (пирами) AmneziaWG 3.x и 2.0
 # Автор: @bivlked
-# Версия: 6.3.8
-# Дата: 2026-11-22
+# Версия: 6.3.9
+# Дата: 2026-11-23
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="6.3.8"
+SCRIPT_VERSION="6.3.9"
 set -o pipefail
 # awg show раскрашивает подписи, если в окружении WG_COLOR_MODE=always, даже при
 # выводе в канал. Тогда фильтр секретов не узнаёт «header protection key» и
@@ -3837,7 +3837,7 @@ change_exit_ip() {
     if command -v conntrack >/dev/null 2>&1; then
         conntrack -D -s "${subnet%/*}" --mask-src "$(_exit_prefix_mask "${subnet#*/}")" >/dev/null 2>&1 || true
     else
-        log_warn "Нет утилиты conntrack: уже открытые соединения клиентов сохранят прежний адрес до переподключения (apt install conntrack)."
+        log_warn "Нет утилиты conntrack: уже открытые соединения клиентов сохранят прежний адрес до переподключения (apt update && apt install conntrack)."
     fi
     _txn_write_file "$SERVER_CONF_FILE" awk -v re="$snat_re" -v up="$( [[ "$want" == off ]] || _exit_rule I "$subnet" "$nic" "$want")" \
         -v down="$( [[ "$want" == off ]] || _exit_rule D "$subnet" "$nic" "$want")" '
