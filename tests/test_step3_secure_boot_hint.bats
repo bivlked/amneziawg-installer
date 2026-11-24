@@ -316,3 +316,31 @@ _unread_named() {
 @test "one key differs and the other cannot be read: the caveat names the unread one" {
     each_installer _unread_named
 }
+
+# With no sig_key the file cannot be checked; when it reads as PEM it is still
+# converted for mokutil, and the caveat drops -inform DER.
+_no_sig_key_pem() {
+    key_file /var/lib/dkms/mok.pub "PEM:BEEF"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGKEY="" run_step3_load "$1"
+    [[ "$output" == *"sudo openssl x509 -in /var/lib/dkms/mok.pub -outform DER -out /root/dkms-mok.der"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" == *"sudo mokutil --import /root/dkms-mok.der"* ]] || return 1
+    [[ "$output" != *"--import /var/lib/dkms/mok.pub"* ]] || { echo "$1: mokutil given a PEM file"; return 1; }
+    [[ "$output" == *"openssl x509 -in /var/lib/dkms/mok.pub -noout -serial"* ]] || { echo "$1: caveat: $output"; return 1; }
+    [[ "$output" != *"-inform DER"* ]] || { echo "$1: -inform DER for a PEM file"; return 1; }
+}
+@test "no sig_key and a PEM key: the command converts it to DER, the caveat has no -inform DER" {
+    each_installer _no_sig_key_pem
+}
+
+# An unreadable file keeps the DER form and the note about PEM.
+_unread_keeps_der() {
+    key_file /var/lib/dkms/mok.pub "garbage"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGKEY="BE:EF" run_step3_load "$1"
+    [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" == *"openssl x509 -inform DER -in /var/lib/dkms/mok.pub -noout -serial"* ]] || return 1
+    [[ "$output" == *"PEM"* ]] || { echo "$1: no note about PEM"; return 1; }
+    [[ "$output" != *"dkms-mok.der"* ]] || return 1
+}
+@test "an unreadable key: the command and the caveat keep the DER form and mention PEM" {
+    each_installer _unread_keeps_der
+}

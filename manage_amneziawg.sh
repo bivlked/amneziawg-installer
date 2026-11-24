@@ -3906,7 +3906,7 @@ _br_helper_text() {
 # manage block-ru on. Свои сети и адреса - в block-ru.extra рядом, по одному на строку.
 # apply - список из кэша (скачать, только если кэша нет или он негоден) и правило
 # наверх FORWARD; update - скачать свежий список и применить; prefetch - только
-# скачать список, если его нет; stop - снять правило.
+# скачать список, если его нет или он негоден; stop - снять правило.
 # Коды: 0 - готово; 1 - ошибка; 3 - свежий список не скачался, действует прежний;
 # 4 - запрет выключен (manage block-ru off), ничего не сделано.
 set -u -o pipefail
@@ -3919,7 +3919,7 @@ SET=awg_block_ru
 RULE=(FORWARD -i "$IF" -m set --match-set "$SET" dst -j REJECT --reject-with icmp-admin-prohibited)
 # -w: на iptables-legacy занятая блокировка xtables без него читалась бы как
 # «правила нет».
-IPT=(iptables -w)
+IPT=(iptables -w 10)
 NET='^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$'
 ONE='^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$'
 
@@ -4077,6 +4077,7 @@ esac
 # Список прошёл проверку, но ipset его не принял: один раз взять свежий.
 if ! load; then
     if (( fetched == 0 )) && fetch; then
+        rc=0
         load || fail "набор $SET не загрузился"
     else
         fail "набор $SET не загрузился"
@@ -4166,9 +4167,9 @@ _br_rule_drain() {
     local n=0 r
     r=$(_br_rule)
     # shellcheck disable=SC2086  # правило намеренно делится на слова
-    while iptables -w -C $r 2> /dev/null; do
+    while iptables -w 10 -C $r 2> /dev/null; do
         # shellcheck disable=SC2086
-        if (( ++n > 16 )) || ! iptables -w -D $r; then
+        if (( ++n > 16 )) || ! iptables -w 10 -D $r; then
             log_error "Правило $_BR_SET не снимается из FORWARD: iptables -D $r"
             return 1
         fi
@@ -4198,9 +4199,9 @@ _br_state() {
     if [[ -f "$_BR_UNIT_FILE" ]] && systemctl is-enabled "$_BR_UNIT" > /dev/null 2>&1; then _br_en=true; fi
     if systemctl is-active --quiet "$_BR_UNIT" 2> /dev/null; then _br_act=true; fi
     # shellcheck disable=SC2046  # правило намеренно делится на слова
-    if command -v iptables > /dev/null 2>&1 && iptables -w -C $(_br_rule) 2> /dev/null; then _br_rule=true; fi
+    if command -v iptables > /dev/null 2>&1 && iptables -w 10 -C $(_br_rule) 2> /dev/null; then _br_rule=true; fi
     # Правило есть, но не первое: ACCEPT из PostUp выше него пропускает клиентов.
-    if [[ "$_br_rule" == true && "$(iptables -w -S FORWARD 2> /dev/null | sed -n 2p)" == "-A $(_br_rule)" ]]; then _br_first=true; fi
+    if [[ "$_br_rule" == true && "$(iptables -w 10 -S FORWARD 2> /dev/null | sed -n 2p)" == "-A $(_br_rule)" ]]; then _br_first=true; fi
     if command -v ipset > /dev/null 2>&1; then
         _br_n=$(ipset list "$_BR_SET" 2> /dev/null | awk -F': ' '/^Number of entries/ {print $2; exit}')
     fi
@@ -4209,6 +4210,8 @@ _br_state() {
         return 0
     elif ! systemctl is-active --quiet awg-quick@awg0 2> /dev/null; then
         _br_why="сервис awg-quick@awg0 остановлен, запрет встанет вместе с ним (sudo systemctl start awg-quick@awg0)"
+    elif [[ "$_br_act" != true && "$_br_rule" == true && "$_br_first" == true ]] && (( _br_n > 0 )); then
+        _br_why="прошлый запуск помощника не удался (journalctl -u awg-block-ru -n 30), правило пока держится на прежнем наборе, но юнит его после следующего старта awg0 может не вернуть. Поднять: sudo systemctl restart awg-block-ru"
     elif [[ "$_br_act" != true ]]; then
         _br_why="юнит awg-block-ru не запущен или его прошлый запуск не удался (journalctl -u awg-block-ru -n 30). Поднять: sudo systemctl restart awg-block-ru"
     elif [[ "$_br_rule" != true ]]; then
@@ -4269,7 +4272,11 @@ _block_ru_on() {
     if (( started )) && ! systemctl is-active --quiet awg-quick@awg0; then
         if ! "$_BR_HELPER" prefetch >&2; then
             _JSON_ERR="list of Russian networks not downloaded"
-            log_error "Список российских сетей не скачался, запрет не включён. Проверьте доступ сервера к ipdeny.com и raw.githubusercontent.com и повторите."
+            if (( was_on == 1 )); then
+                log_error "Список российских сетей не скачался. Запрет остаётся включённым и встанет с awg0, если к тому времени список скачается; проверьте доступ сервера к ipdeny.com и raw.githubusercontent.com и повторите."
+            else
+                log_error "Список российских сетей не скачался, запрет не включён. Проверьте доступ сервера к ipdeny.com и raw.githubusercontent.com и повторите."
+            fi
             (( was_on == 0 )) && _br_remove_files
             return 1
         fi
@@ -4317,7 +4324,7 @@ _block_ru_off() {
     # shellcheck disable=SC2046  # правило намеренно делится на слова
     if [[ ! -f "$_BR_UNIT_FILE" && ! -f "$_BR_CRON" && ! -f "$_BR_HELPER" ]] \
         && ! ipset list "$_BR_SET" > /dev/null 2>&1 \
-        && ! iptables -w -C $(_br_rule) 2> /dev/null; then
+        && ! iptables -w 10 -C $(_br_rule) 2> /dev/null; then
         log "Запрет выхода на российские адреса и так выключен."
         _br_state; _br_json false
         return 0

@@ -72,7 +72,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="b3be36174d5783effcd7360b94b76b7e3be4b767b599e71e4e8c422c4cba21d4"
-MANAGE_SCRIPT_SHA256="7a6eca5f0015bb9dac8a1f902fe0c8514d5b29bb50aaf827c140402dcbc41ba8"
+MANAGE_SCRIPT_SHA256="1c0ed340b2a2599c641b04a18a4448898b52a5e3fb87f17d4036f56a30386b64"
 
 # Module pin for kernels older than 6.7 with no prebuilt (H0, 31 jul 2026). The
 # PPA module is not used there (see _kernel_supports_awg3); the module is built
@@ -5566,7 +5566,7 @@ create_diagnostic_report() {
             _br_active=$(systemctl is-active awg-block-ru 2>/dev/null || true)
             _br_enabled=$(systemctl is-enabled awg-block-ru 2>/dev/null || true)
             echo "unit awg-block-ru: active=${_br_active:-N/A}, enabled=${_br_enabled:-N/A}"
-            if _br_out=$(iptables -w -S FORWARD 2>&1); then
+            if _br_out=$(iptables -w 10 -S FORWARD 2>&1); then
                 _br_pos=$(awk '/^-A / {n++} /match-set awg_block_ru/ {print n; exit}' <<< "$_br_out")
                 if [ -n "$_br_pos" ]; then echo "FORWARD rule: present, position ${_br_pos}"; else echo "FORWARD rule: absent"; fi
             else
@@ -5659,7 +5659,7 @@ _uninstall_block_ru() {
     fi
     rm -f "${AWG_CRON_DIR:-/etc/cron.d}/awg-block-ru"
     # shellcheck disable=SC2086  # the rule is split into words on purpose
-    while (( n++ < 16 )) && iptables -w -C $rule 2>/dev/null; do iptables -w -D $rule 2>/dev/null || break; done
+    while (( n++ < 16 )) && iptables -w 10 -C $rule 2>/dev/null; do iptables -w 10 -D $rule 2>/dev/null || break; done
     if command -v ipset >/dev/null 2>&1; then
         ipset destroy awg_block_ru >/dev/null 2>&1 || true
         ipset destroy awg_block_ru_new >/dev/null 2>&1 || true
@@ -9637,13 +9637,13 @@ _awg_modprobe_hint() {
     elif [[ -n "$check" ]]; then
         # The file format is known only when it was read (with no sig_key there is
         # nothing to compare): a PEM file is converted to DER as in the match branch.
-        local imp="$check" conv="" inform="-inform DER "
+        local imp="$check" conv="" inform="-inform DER " pemhint=" (for a PEM file - without -inform DER)"
         if [[ -z "$unread" ]] && ! openssl x509 -inform DER -in "$root$check" -noout >/dev/null 2>&1; then
             imp=/root/dkms-mok.der
             conv="sudo openssl x509 -in $check -outform DER -out $imp && "
-            inform=""
+            inform="" pemhint=""
         fi
-        printf '%s' "$head Turn Secure Boot off in the UEFI settings or enroll the DKMS key: ${conv}sudo mokutil --import $imp${how} This file could not be checked against the module signature, so before enrolling it make sure the number from openssl x509 ${inform}-in $check -noout -serial matches modinfo -F sig_key amneziawg (for a PEM file - without -inform DER): a foreign key widens what the kernel trusts, and the module still does not load.$tail"
+        printf '%s' "$head Turn Secure Boot off in the UEFI settings or enroll the DKMS key: ${conv}sudo mokutil --import $imp${how} This file could not be checked against the module signature, so before enrolling it make sure the number from openssl x509 ${inform}-in $check -noout -serial matches modinfo -F sig_key amneziawg${pemhint}: a foreign key widens what the kernel trusts, and the module still does not load.$tail"
     else
         printf '%s' "$head Turn Secure Boot off in the UEFI settings or enroll that key in MOK (mokutil --import).$tail"
     fi

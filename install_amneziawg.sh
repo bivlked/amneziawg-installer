@@ -70,7 +70,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="7866d877a44989d6fcdbbe6c1402c10af32b4fa22d8e6db550ba579483e26162"
-MANAGE_SCRIPT_SHA256="c277bd807e77700c72d3d474997d0897cb76bc61a3b3dd2134bc93dce04c9f53"
+MANAGE_SCRIPT_SHA256="6a421e80a3c595b6cdbc60a2876fb204342e2e4fadf1473161a9c60297add9f2"
 
 # Пин модуля для ядер старее 6.7 без готового пакета (H0, 31 jul 2026). Модуль
 # из PPA там не используется (см. _kernel_supports_awg3): модуль собирается из
@@ -5449,7 +5449,7 @@ create_diagnostic_report() {
             _br_active=$(systemctl is-active awg-block-ru 2>/dev/null || true)
             _br_enabled=$(systemctl is-enabled awg-block-ru 2>/dev/null || true)
             echo "unit awg-block-ru: active=${_br_active:-N/A}, enabled=${_br_enabled:-N/A}"
-            if _br_out=$(iptables -w -S FORWARD 2>&1); then
+            if _br_out=$(iptables -w 10 -S FORWARD 2>&1); then
                 _br_pos=$(awk '/^-A / {n++} /match-set awg_block_ru/ {print n; exit}' <<< "$_br_out")
                 if [ -n "$_br_pos" ]; then echo "правило FORWARD: есть, позиция ${_br_pos}"; else echo "правило FORWARD: нет"; fi
             else
@@ -5542,7 +5542,7 @@ _uninstall_block_ru() {
     fi
     rm -f "${AWG_CRON_DIR:-/etc/cron.d}/awg-block-ru"
     # shellcheck disable=SC2086  # правило намеренно делится на слова
-    while (( n++ < 16 )) && iptables -w -C $rule 2>/dev/null; do iptables -w -D $rule 2>/dev/null || break; done
+    while (( n++ < 16 )) && iptables -w 10 -C $rule 2>/dev/null; do iptables -w 10 -D $rule 2>/dev/null || break; done
     if command -v ipset >/dev/null 2>&1; then
         ipset destroy awg_block_ru >/dev/null 2>&1 || true
         ipset destroy awg_block_ru_new >/dev/null 2>&1 || true
@@ -9481,13 +9481,13 @@ _awg_modprobe_hint() {
     elif [[ -n "$check" ]]; then
         # Формат файла известен, только если он прочитался (без sig_key сверять
         # не с чем): PEM переводится в DER так же, как в ветке совпадения.
-        local imp="$check" conv="" inform="-inform DER "
+        local imp="$check" conv="" inform="-inform DER " pemhint=" (для файла в PEM - без -inform DER)"
         if [[ -z "$unread" ]] && ! openssl x509 -inform DER -in "$root$check" -noout >/dev/null 2>&1; then
             imp=/root/dkms-mok.der
             conv="sudo openssl x509 -in $check -outform DER -out $imp && "
-            inform=""
+            inform="" pemhint=""
         fi
-        printf '%s' "$head Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ DKMS: ${conv}sudo mokutil --import $imp${how} Сверить этот файл с подписью модуля не удалось, поэтому до регистрации проверьте, что номер из openssl x509 ${inform}-in $check -noout -serial совпадает с modinfo -F sig_key amneziawg (для файла в PEM - без -inform DER): чужой ключ расширит доверие ядра, а модуль так и не загрузится.$tail"
+        printf '%s' "$head Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ DKMS: ${conv}sudo mokutil --import $imp${how} Сверить этот файл с подписью модуля не удалось, поэтому до регистрации проверьте, что номер из openssl x509 ${inform}-in $check -noout -serial совпадает с modinfo -F sig_key amneziawg${pemhint}: чужой ключ расширит доверие ядра, а модуль так и не загрузится.$tail"
     else
         printf '%s' "$head Выключите Secure Boot в настройках UEFI либо зарегистрируйте этот ключ в MOK (mokutil --import).$tail"
     fi

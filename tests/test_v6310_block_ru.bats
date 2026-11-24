@@ -82,6 +82,7 @@ STUB
 echo "iptables $*" >> "$CALLS.ipt"
 F="$CALLS.fw"; touch "$F"
 [[ "$1" == -w ]] && shift
+[[ "$1" =~ ^[0-9]+$ ]] && shift
 op="$1"; shift
 case "$op" in
     -C) grep -qxF -- "$*" "$F" ;;

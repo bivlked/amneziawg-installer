@@ -3962,7 +3962,7 @@ _br_helper_text() {
 # manage block-ru on. Own networks and addresses go to block-ru.extra next to it, one per line.
 # apply - the cached list (downloaded only when there is none or it is unusable)
 # and the rule on top of FORWARD; update - download a fresh list and apply it;
-# prefetch - only download the list when there is none; stop - remove the rule.
+# prefetch - only download the list when there is none or it is unusable; stop - remove the rule.
 # Codes: 0 - done; 1 - error; 3 - a fresh list was not downloaded, the previous
 # one is in force; 4 - the block is off (manage block-ru off), nothing done.
 set -u -o pipefail
@@ -3974,7 +3974,7 @@ URLS="https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone https:/
 SET=awg_block_ru
 RULE=(FORWARD -i "$IF" -m set --match-set "$SET" dst -j REJECT --reject-with icmp-admin-prohibited)
 # -w: on iptables-legacy a busy xtables lock would otherwise read as "no rule".
-IPT=(iptables -w)
+IPT=(iptables -w 10)
 NET='^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$'
 ONE='^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$'
 
@@ -4132,6 +4132,7 @@ esac
 # The list passed the check but ipset did not take it: get a fresh one once.
 if ! load; then
     if (( fetched == 0 )) && fetch; then
+        rc=0
         load || fail "the $SET set did not load"
     else
         fail "the $SET set did not load"
@@ -4221,9 +4222,9 @@ _br_rule_drain() {
     local n=0 r
     r=$(_br_rule)
     # shellcheck disable=SC2086  # the rule is split into words on purpose
-    while iptables -w -C $r 2> /dev/null; do
+    while iptables -w 10 -C $r 2> /dev/null; do
         # shellcheck disable=SC2086
-        if (( ++n > 16 )) || ! iptables -w -D $r; then
+        if (( ++n > 16 )) || ! iptables -w 10 -D $r; then
             log_error "The $_BR_SET rule cannot be removed from FORWARD: iptables -D $r"
             return 1
         fi
@@ -4253,9 +4254,9 @@ _br_state() {
     if [[ -f "$_BR_UNIT_FILE" ]] && systemctl is-enabled "$_BR_UNIT" > /dev/null 2>&1; then _br_en=true; fi
     if systemctl is-active --quiet "$_BR_UNIT" 2> /dev/null; then _br_act=true; fi
     # shellcheck disable=SC2046  # the rule is split into words on purpose
-    if command -v iptables > /dev/null 2>&1 && iptables -w -C $(_br_rule) 2> /dev/null; then _br_rule=true; fi
+    if command -v iptables > /dev/null 2>&1 && iptables -w 10 -C $(_br_rule) 2> /dev/null; then _br_rule=true; fi
     # The rule is there but not first: the ACCEPT from PostUp above it lets clients through.
-    if [[ "$_br_rule" == true && "$(iptables -w -S FORWARD 2> /dev/null | sed -n 2p)" == "-A $(_br_rule)" ]]; then _br_first=true; fi
+    if [[ "$_br_rule" == true && "$(iptables -w 10 -S FORWARD 2> /dev/null | sed -n 2p)" == "-A $(_br_rule)" ]]; then _br_first=true; fi
     if command -v ipset > /dev/null 2>&1; then
         _br_n=$(ipset list "$_BR_SET" 2> /dev/null | awk -F': ' '/^Number of entries/ {print $2; exit}')
     fi
@@ -4264,6 +4265,8 @@ _br_state() {
         return 0
     elif ! systemctl is-active --quiet awg-quick@awg0 2> /dev/null; then
         _br_why="the awg-quick@awg0 service is stopped, the block comes up with it (sudo systemctl start awg-quick@awg0)"
+    elif [[ "$_br_act" != true && "$_br_rule" == true && "$_br_first" == true ]] && (( _br_n > 0 )); then
+        _br_why="the last helper run failed (journalctl -u awg-block-ru -n 30), the rule still holds on the previous set, but the unit may not put it back after the next start of awg0. To bring it up: sudo systemctl restart awg-block-ru"
     elif [[ "$_br_act" != true ]]; then
         _br_why="the awg-block-ru unit is not running or its last run failed (journalctl -u awg-block-ru -n 30). To bring it up: sudo systemctl restart awg-block-ru"
     elif [[ "$_br_rule" != true ]]; then
@@ -4325,7 +4328,11 @@ _block_ru_on() {
     if (( started )) && ! systemctl is-active --quiet awg-quick@awg0; then
         if ! "$_BR_HELPER" prefetch >&2; then
             _JSON_ERR="list of Russian networks not downloaded"
-            log_error "The list of Russian networks was not downloaded, the block is not on. Check that the server can reach ipdeny.com and raw.githubusercontent.com and try again."
+            if (( was_on == 1 )); then
+                log_error "The list of Russian networks was not downloaded. The block stays on and comes up with awg0 if the list downloads by then; check that the server can reach ipdeny.com and raw.githubusercontent.com and try again."
+            else
+                log_error "The list of Russian networks was not downloaded, the block is not on. Check that the server can reach ipdeny.com and raw.githubusercontent.com and try again."
+            fi
             (( was_on == 0 )) && _br_remove_files
             return 1
         fi
@@ -4373,7 +4380,7 @@ _block_ru_off() {
     # shellcheck disable=SC2046  # the rule is split into words on purpose
     if [[ ! -f "$_BR_UNIT_FILE" && ! -f "$_BR_CRON" && ! -f "$_BR_HELPER" ]] \
         && ! ipset list "$_BR_SET" > /dev/null 2>&1 \
-        && ! iptables -w -C $(_br_rule) 2> /dev/null; then
+        && ! iptables -w 10 -C $(_br_rule) 2> /dev/null; then
         log "The block of Russian addresses is already off."
         _br_state; _br_json false
         return 0
