@@ -357,3 +357,17 @@ _no_sig_key_prefers_readable() {
 @test "no sig_key, one key reads and one does not: the command names the readable one" {
     each_installer _no_sig_key_prefers_readable
 }
+
+# The same with the readable key in PEM: it is converted to DER for mokutil.
+_no_sig_key_readable_pem() {
+    key_file /var/lib/dkms/mok.pub "PEM:BEEF"
+    key_file /var/lib/shim-signed/mok/MOK.der "garbage"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGKEY="" run_step3_load "$1"
+    [[ "$output" == *"sudo openssl x509 -in /var/lib/dkms/mok.pub -outform DER -out /root/dkms-mok.der"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" == *"sudo mokutil --import /root/dkms-mok.der"* ]] || return 1
+    [[ "$output" != *"--import /var/lib/dkms/mok.pub"* ]] || { echo "$1: mokutil given a PEM file"; return 1; }
+    [[ "$output" != *"-inform DER"* ]] || { echo "$1: -inform DER for a PEM file"; return 1; }
+}
+@test "no sig_key, a readable PEM key and an unreadable one: the PEM key is converted to DER" {
+    each_installer _no_sig_key_readable_pem
+}

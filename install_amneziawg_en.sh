@@ -9640,7 +9640,7 @@ _awg_modprobe_hint() {
         # The file format is known only when it was read (with no sig_key there is
         # nothing to compare): a PEM file is converted to DER as in the match branch.
         local imp="$check" conv="" inform="-inform DER " pemhint=" (for a PEM file - without -inform DER)"
-        if [[ -z "$unread" ]] && ! openssl x509 -inform DER -in "$root$check" -noout >/dev/null 2>&1; then
+        if [[ -n "$readable" && "$check" == "$readable" ]] && ! openssl x509 -inform DER -in "$root$check" -noout >/dev/null 2>&1; then
             imp=/root/dkms-mok.der
             conv="sudo openssl x509 -in $check -outform DER -out $imp && "
             inform="" pemhint=""

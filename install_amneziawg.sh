@@ -9484,7 +9484,7 @@ _awg_modprobe_hint() {
         # Формат файла известен, только если он прочитался (без sig_key сверять
         # не с чем): PEM переводится в DER так же, как в ветке совпадения.
         local imp="$check" conv="" inform="-inform DER " pemhint=" (для файла в PEM - без -inform DER)"
-        if [[ -z "$unread" ]] && ! openssl x509 -inform DER -in "$root$check" -noout >/dev/null 2>&1; then
+        if [[ -n "$readable" && "$check" == "$readable" ]] && ! openssl x509 -inform DER -in "$root$check" -noout >/dev/null 2>&1; then
             imp=/root/dkms-mok.der
             conv="sudo openssl x509 -in $check -outform DER -out $imp && "
             inform="" pemhint=""
