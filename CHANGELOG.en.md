@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **The ADVANCED section on a separate exit address now links to a step-by-step Habr article (in Russian).** It covers a second IPv4 on the VPS with netplan and ifupdown, checking the exit address and replacing a blocked one.
+
 ## [6.3.9] - 2026-11-23
 
 **v6.3.9** - Ubuntu releases other than 24.04, 22.04 and 20.04 keep their own package source even during a Launchpad outage, the Debian IPv6 check reads continued ifupdown lines, and the `conntrack` hint works on an installed server.

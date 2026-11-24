@@ -2263,6 +2263,8 @@ Control: a tunnel to a server in a different AS (US) came up and held on all thr
 
 If the server has two public IPv4 addresses, clients can connect to one while their traffic leaves to the internet from the other. Sites and apps see only the exit address. According to [reports](https://github.com/net4people/bbs/issues/671), with two addresses it is the exit that gets blocked while the entry keeps working, and then it is enough to change the exit address without reissuing clients. The request came in [#384](https://github.com/bivlked/amneziawg-installer/issues/384).
 
+A step-by-step walkthrough, from adding a second IPv4 on the VPS (netplan and ifupdown) to checking the exit and replacing a blocked address, is in my Habr article (in Russian): [Entry and exit on different IPs in AmneziaWG: setting up a second IPv4](https://habr.com/ru/articles/1111468/).
+
 **What you need.** The second address has to be on an interface of the server permanently. The host assigns it, but sometimes you have to configure it yourself, for example with netplan (take the interface name from `ip -br addr`):
 
 ```yaml
