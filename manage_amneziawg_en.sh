@@ -4169,9 +4169,9 @@ _br_rule_drain() {
 _br_need_ipset() {
     command -v ipset > /dev/null 2>&1 && return 0
     log "Installing the ipset package..."
-    if ! DEBIAN_FRONTEND=noninteractive timeout 300 apt-get install -y ipset >> "$LOG_FILE" 2>&1; then
-        DEBIAN_FRONTEND=noninteractive timeout 300 apt-get update >> "$LOG_FILE" 2>&1
-        DEBIAN_FRONTEND=noninteractive timeout 300 apt-get install -y ipset >> "$LOG_FILE" 2>&1
+    if ! timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset >> "$LOG_FILE" 2>&1; then
+        timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get update >> "$LOG_FILE" 2>&1
+        timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset >> "$LOG_FILE" 2>&1
     fi
     hash -r
     command -v ipset > /dev/null 2>&1 && return 0

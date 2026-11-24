@@ -134,7 +134,7 @@ STUB
 #!/bin/bash
 echo "apt-get $*" >> "$CALLS.apt"
 [[ -n "${STUB_APT_FAIL:-}" ]] && exit 100
-[[ "$1" == install ]] && cp "$STUB_IPSET_REAL" "$(dirname "$0")/ipset"
+[[ " $* " == *" install "* ]] && cp "$STUB_IPSET_REAL" "$(dirname "$0")/ipset"
 exit 0
 STUB
     chmod +x "$MGMT_DIR/bin/"*
@@ -260,7 +260,7 @@ _on_installs_ipset() {
     export STUB_IPSET_REAL="$MGMT_DIR/ipset.real"
     manage "$1" block-ru on
     [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
-    grep -qE '^apt-get install .*ipset' "$CALLS.apt" || { echo "$1: no apt-get install: $(cat "$CALLS.apt" 2>&1)"; return 1; }
+    grep -qE '^apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset$' "$CALLS.apt" || { echo "$1: no apt-get install: $(cat "$CALLS.apt" 2>&1)"; return 1; }
     [ "$(fw | head -1)" = "$RULE" ] || return 1
 }
 @test "block-ru on: ipset is missing - it is installed with apt-get" {
