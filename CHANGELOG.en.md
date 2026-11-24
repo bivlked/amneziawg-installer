@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Documentation
 
 - **The ADVANCED section on a separate exit address now links to a step-by-step Habr article (in Russian).** It covers a second IPv4 on the VPS with netplan and ifupdown, checking the exit address and replacing a blocked one.
+- **CASCADE.md troubleshooting has a new item: video in the cascade freezes now and then for 10-60 seconds.** Such bursts of loss on the leg between the servers are caught by a long `mtr` from the exit to the entry outside the tunnel, and `ip -s link` counters before and after a burst show the direction and size of the loss. The item is based on the investigation in D#415.
 
 ## [6.3.9] - 2026-11-23
 
