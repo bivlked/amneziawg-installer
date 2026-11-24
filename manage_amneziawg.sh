@@ -3951,25 +3951,37 @@ list_ok() {
 }
 cache_ok() { [ -s "$LIST" ] && list_ok "$LIST"; }
 
+# Скачанный список лежит отдельно ($NEW) и становится кэшем (keep), только когда
+# ipset его принял: годный прежний кэш негодным не затирается. Прерванный запуск
+# (тайм-аут юнита) свой файл за собой убирает.
+NEW=""
+trap '[ -z "$NEW" ] || rm -f "$NEW"' EXIT
+trap 'exit 1' TERM INT
 fetch() {
-    local url tmp
-    tmp=$(mktemp "$DIR/.block-ru.XXXXXX") || return 1
+    local url
+    NEW=$(mktemp "$DIR/.block-ru.XXXXXX") || { NEW=""; return 1; }
     for url in $URLS; do
-        if curl -fsS --max-time 30 -o "$tmp" "$url"; then
-            sed -i 's/\r$//' "$tmp"
-            if ! list_ok "$tmp"; then
-                echo "Ответ $url не похож на список сетей, пропускаю." >&2
-            elif chmod 600 "$tmp" && mv -f "$tmp" "$LIST"; then
+        if curl -fsS --max-time 30 -o "$NEW" "$url"; then
+            sed -i 's/\r$//' "$NEW"
+            if list_ok "$NEW"; then
                 echo "Список российских сетей взят: $url"
                 return 0
-            else
-                echo "Список с $url не сохранился в $LIST." >&2
             fi
+            echo "Ответ $url не похож на список сетей, пропускаю." >&2
         else
             echo "Не скачалось: $url" >&2
         fi
     done
-    rm -f "$tmp"
+    rm -f "$NEW"
+    NEW=""
+    return 1
+}
+keep() {
+    if chmod 600 "$NEW" && mv -f "$NEW" "$LIST"; then
+        NEW=""
+        return 0
+    fi
+    echo "Список не сохранился в $LIST, после перезагрузки возьмётся прежний." >&2
     return 1
 }
 
@@ -3993,11 +4005,11 @@ extra_lines() {
 # Новый набор собирается рядом и подменяет старый целиком: пока он грузится,
 # действует прежний, а сбой загрузки старый не трогает.
 load() {
-    local tmpset="${SET}_new"
+    local src="$1" tmpset="${SET}_new"
     ipset create "$SET" hash:net maxelem 262144 -exist || return 1
     ipset destroy "$tmpset" 2> /dev/null
     ipset create "$tmpset" hash:net maxelem 262144 || return 1
-    if ! grep -E "$NET" "$LIST" | sed "s/^/add $tmpset /" | ipset restore -exist; then
+    if ! grep -E "$NET" "$src" | sed "s/^/add $tmpset /" | ipset restore -exist; then
         ipset destroy "$tmpset" 2> /dev/null
         return 1
     fi
@@ -4041,17 +4053,22 @@ fail() {
     exit 1
 }
 
-rc=0 fetched=0
+rc=0 fetched=0 src="$LIST"
 case "${1:-}" in
     apply)
+        # Набор ещё в памяти (рестарт awg0): правило встаёт сразу, до проверки
+        # списка, чтобы окно без запрета после старта awg0 было как можно короче.
+        if [ "$(count)" -gt 0 ] 2> /dev/null; then
+            rule_on || true
+        fi
         if ! cache_ok; then
             fetch || fail "списка российских сетей нет и он не скачался"
-            fetched=1
+            fetched=1 src="$NEW"
         fi
         ;;
     update)
         if fetch; then
-            fetched=1
+            fetched=1 src="$NEW"
         else
             cache_ok || fail "свежий список не скачался, а прежнего нет"
             echo "Свежий список не скачался, действует прежний." >&2
@@ -4059,10 +4076,12 @@ case "${1:-}" in
         fi
         ;;
     prefetch)
-        if ! cache_ok && ! fetch; then
+        cache_ok && exit 0
+        if ! fetch; then
             echo "ОШИБКА: списка российских сетей нет и он не скачался." >&2
             exit 1
         fi
+        keep || exit 1
         exit 0
         ;;
     stop)
@@ -4075,14 +4094,15 @@ case "${1:-}" in
         ;;
 esac
 # Список прошёл проверку, но ipset его не принял: один раз взять свежий.
-if ! load; then
+if ! load "$src"; then
     if (( fetched == 0 )) && fetch; then
-        rc=0
-        load || fail "набор $SET не загрузился"
+        rc=0 fetched=1
+        load "$NEW" || fail "набор $SET не загрузился"
     else
         fail "набор $SET не загрузился"
     fi
 fi
+(( fetched == 0 )) || keep || true
 if ! rule_on; then
     echo "ОШИБКА: правило в FORWARD не встало, запрет НЕ действует." >&2
     exit 1
@@ -4145,6 +4165,9 @@ _br_remove_files() {
     if [[ -f "$_BR_UNIT_FILE" ]]; then
         systemctl disable --now "$_BR_UNIT" >&2 || log_warn "systemctl disable --now $_BR_UNIT вернул ошибку."
     fi
+    # Cron снимается сразу: не взялась блокировка ниже - он не должен через
+    # неделю поднять выключенный юнит обратно.
+    rm -f "$_BR_CRON"
     # Файлы удаляются под блокировкой помощника: manage block-ru update, который
     # ждёт её, после неё помощника не найдёт и ничего не вернёт. Брать её только
     # после disable --now: ExecStop сам ждёт эту блокировку. Не взялась - ничего

@@ -9453,7 +9453,8 @@ _awg_modprobe_hint() {
     # все прочитались и ни один не совпал - отдельное сообщение «ключ на диске
     # другой» без команды, только номер подписи для поиска нужного сертификата;
     # сверить нечем (нет sig_key, openssl не прочитал файл) - команда с оговоркой,
-    # и называется в ней непрочитанный файл, а не тот, что уже не совпал.
+    # и называется в ней непрочитанный файл, а не тот, что уже не совпал; без
+    # sig_key опровергнуть нечего, и тогда берётся файл, который прочитался.
     local cand want serial unread="" readable=""
     want=$(modinfo -F sig_key amneziawg 2>/dev/null | _awg_serial_norm) || want=""
     for cand in /var/lib/dkms/mok.pub /var/lib/shim-signed/mok/MOK.der; do
@@ -9468,6 +9469,7 @@ _awg_modprobe_hint() {
     local how=" (попросит придумать пароль), перезагрузка, на синем экране MOK Manager выберите Enroll MOK и введите этот пароль. Экран виден только на мониторе машины или в консоли хостера, по ssh этот шаг не пройти."
     local head=" Модуль подписан ключом${signer}, но ядро этому ключу не доверяет: он не зарегистрирован в MOK, а Secure Boot включён (проверка: mokutil --sb-state)."
     local check="${unread:-$readable}"
+    [[ -n "$want" ]] || check="${readable:-$unread}"
     if [[ -n "$key" ]]; then
         # mokutil --import принимает только DER: ключ в PEM сначала переводится.
         local imp="$key" conv=""

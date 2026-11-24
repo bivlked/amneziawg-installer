@@ -4006,25 +4006,37 @@ list_ok() {
 }
 cache_ok() { [ -s "$LIST" ] && list_ok "$LIST"; }
 
+# The downloaded list stays aside ($NEW) and becomes the cache (keep) only once
+# ipset has taken it: a bad list does not overwrite a usable cache. A run cut off
+# (unit timeout) removes its own file.
+NEW=""
+trap '[ -z "$NEW" ] || rm -f "$NEW"' EXIT
+trap 'exit 1' TERM INT
 fetch() {
-    local url tmp
-    tmp=$(mktemp "$DIR/.block-ru.XXXXXX") || return 1
+    local url
+    NEW=$(mktemp "$DIR/.block-ru.XXXXXX") || { NEW=""; return 1; }
     for url in $URLS; do
-        if curl -fsS --max-time 30 -o "$tmp" "$url"; then
-            sed -i 's/\r$//' "$tmp"
-            if ! list_ok "$tmp"; then
-                echo "The answer from $url does not look like a list of networks, skipping." >&2
-            elif chmod 600 "$tmp" && mv -f "$tmp" "$LIST"; then
+        if curl -fsS --max-time 30 -o "$NEW" "$url"; then
+            sed -i 's/\r$//' "$NEW"
+            if list_ok "$NEW"; then
                 echo "List of Russian networks taken from: $url"
                 return 0
-            else
-                echo "The list from $url was not saved to $LIST." >&2
             fi
+            echo "The answer from $url does not look like a list of networks, skipping." >&2
         else
             echo "Download failed: $url" >&2
         fi
     done
-    rm -f "$tmp"
+    rm -f "$NEW"
+    NEW=""
+    return 1
+}
+keep() {
+    if chmod 600 "$NEW" && mv -f "$NEW" "$LIST"; then
+        NEW=""
+        return 0
+    fi
+    echo "The list was not saved to $LIST, the previous one is used after a reboot." >&2
     return 1
 }
 
@@ -4048,11 +4060,11 @@ extra_lines() {
 # The new set is built next to the old one and replaces it whole: while it
 # loads, the old one is in force, and a failed load leaves the old one alone.
 load() {
-    local tmpset="${SET}_new"
+    local src="$1" tmpset="${SET}_new"
     ipset create "$SET" hash:net maxelem 262144 -exist || return 1
     ipset destroy "$tmpset" 2> /dev/null
     ipset create "$tmpset" hash:net maxelem 262144 || return 1
-    if ! grep -E "$NET" "$LIST" | sed "s/^/add $tmpset /" | ipset restore -exist; then
+    if ! grep -E "$NET" "$src" | sed "s/^/add $tmpset /" | ipset restore -exist; then
         ipset destroy "$tmpset" 2> /dev/null
         return 1
     fi
@@ -4096,17 +4108,22 @@ fail() {
     exit 1
 }
 
-rc=0 fetched=0
+rc=0 fetched=0 src="$LIST"
 case "${1:-}" in
     apply)
+        # The set is still in memory (awg0 restart): the rule goes up at once, before the
+        # list check, so that the window without the block after awg0 starts is as short as possible.
+        if [ "$(count)" -gt 0 ] 2> /dev/null; then
+            rule_on || true
+        fi
         if ! cache_ok; then
             fetch || fail "there is no list of Russian networks and it could not be downloaded"
-            fetched=1
+            fetched=1 src="$NEW"
         fi
         ;;
     update)
         if fetch; then
-            fetched=1
+            fetched=1 src="$NEW"
         else
             cache_ok || fail "a fresh list could not be downloaded and there is no previous one"
             echo "A fresh list could not be downloaded, the previous one stays in force." >&2
@@ -4114,10 +4131,12 @@ case "${1:-}" in
         fi
         ;;
     prefetch)
-        if ! cache_ok && ! fetch; then
+        cache_ok && exit 0
+        if ! fetch; then
             echo "ERROR: there is no list of Russian networks and it could not be downloaded." >&2
             exit 1
         fi
+        keep || exit 1
         exit 0
         ;;
     stop)
@@ -4130,14 +4149,15 @@ case "${1:-}" in
         ;;
 esac
 # The list passed the check but ipset did not take it: get a fresh one once.
-if ! load; then
+if ! load "$src"; then
     if (( fetched == 0 )) && fetch; then
-        rc=0
-        load || fail "the $SET set did not load"
+        rc=0 fetched=1
+        load "$NEW" || fail "the $SET set did not load"
     else
         fail "the $SET set did not load"
     fi
 fi
+(( fetched == 0 )) || keep || true
 if ! rule_on; then
     echo "ERROR: the rule did not go into FORWARD, the block is NOT in force." >&2
     exit 1
@@ -4200,6 +4220,9 @@ _br_remove_files() {
     if [[ -f "$_BR_UNIT_FILE" ]]; then
         systemctl disable --now "$_BR_UNIT" >&2 || log_warn "systemctl disable --now $_BR_UNIT returned an error."
     fi
+    # The cron job goes at once: if the lock below is not taken, it must not bring
+    # the disabled unit back up a week later.
+    rm -f "$_BR_CRON"
     # The files are removed under the helper lock: a manage block-ru update
     # waiting for it finds no helper afterwards and puts nothing back. The lock
     # is taken only after disable --now: ExecStop waits for this same lock. No

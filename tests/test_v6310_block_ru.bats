@@ -29,7 +29,7 @@ make_list() {
 
 setup_block_env() {
     # each_manage runs both scripts in one test: no stub switch carries over.
-    unset STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE
+    unset STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE STUB_CURL_SNAP
     MGMT_DIR=$(mktemp -d)
     mkdir -p "$MGMT_DIR/bin" "$MGMT_DIR/awg/keys" "$MGMT_DIR/systemd" "$MGMT_DIR/cron" "$MGMT_DIR/web"
     export CALLS="$MGMT_DIR/calls"; : > "$CALLS"
@@ -128,6 +128,8 @@ STUB
     cat > "$MGMT_DIR/bin/curl" << 'STUB'
 #!/bin/bash
 echo "curl $*" >> "$CALLS.curl"
+# the FORWARD rules as they stand at the moment of the download
+[[ -n "${STUB_CURL_SNAP:-}" ]] && cat "$CALLS.fw" > "$CALLS.fw_at_curl" 2>/dev/null
 out="" url=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -713,9 +715,12 @@ _off_without_lock() {
     manage "$1" block-ru off
     [ "$status" -ne 0 ] || { echo "$1: off succeeded without the lock"; return 1; }
     [ -e "$MGMT_DIR/awg/awg-block-ru.sh" ] || { echo "$1: files removed without the lock"; return 1; }
+    [ -e "$AWG_SYSTEMD_DIR/awg-block-ru.service" ] || { echo "$1: unit removed without the lock"; return 1; }
+    # the weekly cron job would restart the disabled unit and bring the block back
+    [ ! -e "$AWG_CRON_DIR/awg-block-ru" ] || { echo "$1: cron job left after a failed off"; return 1; }
     [[ "$stderr" == *"block-ru off"* ]] || { echo "$1: no hint to repeat: $stderr"; return 1; }
 }
-@test "block-ru off cannot take the helper lock: it stops before removing anything and says to repeat" {
+@test "block-ru off cannot take the helper lock: only the cron job goes, the rest stays and it says to repeat" {
     each_manage _off_without_lock
 }
 
@@ -871,4 +876,76 @@ _extra_args() {
         r=$(sed -n 's/^    local rule="\(.*\)"$/\1/p' "$BATS_TEST_DIRNAME/../$f")
         [ "$r" = "$RULE" ] || { echo "$f: '$r'"; return 1; }
     done
+}
+
+# ---------- review round 5 ----------
+
+# A fresh list that ipset refuses must not overwrite the usable cache: otherwise
+# after a reboot the block would not come up and the good list would be lost.
+_update_bad_keeps_cache() {
+    on_then "$1" || return 1
+    make_list "$MGMT_DIR/awg/block-ru.zone" 1100
+    helper apply
+    [ "$status" -eq 0 ] || { echo "$1: apply: $stderr"; return 1; }
+    cp "$MGMT_DIR/awg/block-ru.zone" "$MGMT_DIR/good.zone"
+    make_list "$STUB_WEB/ru-aggregated.zone" 1300
+    export STUB_IPSET_RESTORE_FAIL=1
+    helper update
+    [ "$status" -ne 0 ] || { echo "$1: update succeeded with a set that did not load"; return 1; }
+    cmp -s "$MGMT_DIR/awg/block-ru.zone" "$MGMT_DIR/good.zone" || { echo "$1: the cache was overwritten by a list ipset refused"; return 1; }
+    [ "$(set_size $SET)" = "1100" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    [ "$(fw | head -1)" = "$RULE" ] || { echo "$1: rule: $(fw)"; return 1; }
+    run bash -c "ls -A '$MGMT_DIR/awg' | grep -E '^\.block-ru\.[A-Za-z0-9]{6}$'"
+    [ -z "$output" ] || { echo "$1: temporary file left: $output"; return 1; }
+}
+@test "helper update: a fresh list ipset refuses leaves the cache, the set and the rule as they were" {
+    each_manage _update_bad_keeps_cache
+}
+
+# The list that loaded becomes the cache.
+_update_good_saves() {
+    on_then "$1" || return 1
+    make_list "$MGMT_DIR/awg/block-ru.zone" 1100
+    make_list "$STUB_WEB/ru-aggregated.zone" 1300
+    helper update
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    cmp -s "$MGMT_DIR/awg/block-ru.zone" "$STUB_WEB/ru-aggregated.zone" || { echo "$1: the loaded list is not the cache"; return 1; }
+    [ "$(set_size $SET)" = "1300" ] || return 1
+}
+@test "helper update: the fresh list that loaded becomes the cache" {
+    each_manage _update_good_saves
+}
+
+# With the set still in memory (an awg0 restart) the rule goes up before the
+# helper goes to the network.
+_apply_rule_before_fetch() {
+    on_then "$1" || return 1
+    mkdir -p "$CALLS.sets"
+    make_list "$CALLS.sets/$SET" 1200
+    : > "$CALLS.fw"
+    make_list "$STUB_WEB/ru-aggregated.zone" 1250
+    export STUB_CURL_SNAP=1
+    helper apply
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ -e "$CALLS.fw_at_curl" ] || { echo "$1: no download"; return 1; }
+    [ "$(head -1 "$CALLS.fw_at_curl")" = "$RULE" ] || { echo "$1: no rule while downloading: $(cat "$CALLS.fw_at_curl")"; return 1; }
+    [ "$(set_size $SET)" = "1250" ] || return 1
+}
+@test "helper apply: the set is in memory - the rule is up before the download" {
+    each_manage _apply_rule_before_fetch
+}
+
+# An empty set in memory gets no rule before the list loads.
+_apply_empty_no_early_rule() {
+    on_then "$1" || return 1
+    : > "$CALLS.fw"
+    make_list "$STUB_WEB/ru-aggregated.zone" 1250
+    export STUB_CURL_SNAP=1
+    helper apply
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ ! -s "$CALLS.fw_at_curl" ] || { echo "$1: rule before the set loaded: $(cat "$CALLS.fw_at_curl")"; return 1; }
+    [ "$(fw | head -1)" = "$RULE" ] || return 1
+}
+@test "helper apply: no set in memory - no rule until the list loads" {
+    each_manage _apply_empty_no_early_rule
 }

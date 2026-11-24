@@ -9609,7 +9609,8 @@ _awg_modprobe_hint() {
     # different one" message with no command, only the signature number to look
     # the right certificate up by; nothing to check with (no sig_key, openssl cannot read a
     # file) - the command with a caveat that names the unread file, not one that
-    # already did not match.
+    # already did not match; with no sig_key there is nothing to rule out, and then
+    # the file that was read is taken.
     local cand want serial unread="" readable=""
     want=$(modinfo -F sig_key amneziawg 2>/dev/null | _awg_serial_norm) || want=""
     for cand in /var/lib/dkms/mok.pub /var/lib/shim-signed/mok/MOK.der; do
@@ -9624,6 +9625,7 @@ _awg_modprobe_hint() {
     local how=" (it asks you to set a password), reboot, and on the blue MOK Manager screen choose Enroll MOK and enter that password. The screen shows only on the machine's monitor or the hoster's console, this step cannot be done over ssh."
     local head=" The module is signed with the key${signer}, but the kernel does not trust it: the key is not enrolled in MOK and Secure Boot is on (check: mokutil --sb-state)."
     local check="${unread:-$readable}"
+    [[ -n "$want" ]] || check="${readable:-$unread}"
     if [[ -n "$key" ]]; then
         # mokutil --import takes DER only: a PEM key is converted first.
         local imp="$key" conv=""

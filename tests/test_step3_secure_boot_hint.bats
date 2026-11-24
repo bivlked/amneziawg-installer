@@ -344,3 +344,16 @@ _unread_keeps_der() {
 @test "an unreadable key: the command and the caveat keep the DER form and mention PEM" {
     each_installer _unread_keeps_der
 }
+
+# With no sig_key nothing rules a file out: the file openssl reads is named, not
+# the one it could not read.
+_no_sig_key_prefers_readable() {
+    key_file /var/lib/dkms/mok.pub "DER:BEEF"
+    key_file /var/lib/shim-signed/mok/MOK.der "garbage"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGKEY="" run_step3_load "$1"
+    [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" != *"--import /var/lib/shim-signed/mok/MOK.der"* ]] || { echo "$1: unread file offered"; return 1; }
+}
+@test "no sig_key, one key reads and one does not: the command names the readable one" {
+    each_installer _no_sig_key_prefers_readable
+}
