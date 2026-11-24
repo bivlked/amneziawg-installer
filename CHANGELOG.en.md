@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`manage add` and `manage regen` hold the config lock while they build QR and `vpn://`.** The lock used to be released right after the `.conf` was written, so a `manage modify` of the same client started in that fraction of a second could rewrite the config while the QR and `vpn://` next to it were built from the old one. Now the other command waits, and on 3.1 the put-back of the previous set after an incomplete build happens under the same lock.
 - **The Secure Boot hint offers to enroll the DKMS key only when the module is signed with it.** When the kernel refuses a signed module, the installer compares the certificate serial number in `/var/lib/dkms/mok.pub` or `/var/lib/shim-signed/mok/MOK.der` with the module signature (`modinfo -F sig_key`). A match gives the exact `mokutil --import` command for that file. A different key on disk gives no command: enrolling it would widen what the kernel trusts while the module still would not load. With nothing to compare (no `openssl` or no signature number) the command comes with a caveat on how to check the key yourself.
 
 ### Documentation

@@ -6008,8 +6008,8 @@ generate_client() {
         return 1
     fi
 
-    # Release lock — peer written, remaining operations are non-critical
-    exec {lock_fd}>&-
+    # The lock stays held while QR and vpn:// are built (see regenerate_client):
+    # otherwise a concurrent modify could rewrite the .conf in between.
 
     # QR code (optional, failure is non-fatal)
     local _set_fail=0
@@ -6031,10 +6031,14 @@ generate_client() {
     # On 3.1 the set is all or nothing: an incomplete set takes the client off
     # whole - the peer from the server config and all its files.
     if ! _awg31_client_set_ok "$name" "$_set_fail"; then
+        # _awg31_undo_client takes the lock itself: release it first, or flock
+        # on a second descriptor of the same file would wait for itself.
+        exec {lock_fd}>&-
         log_error "The set of client '$name' is incomplete (reason above): the client was not created."
         _awg31_undo_client "$name" "$client_pubkey"
         return 1
     fi
+    exec {lock_fd}>&-
 
     log "Client '$name' created (IP: $client_ip)."
     return 0
@@ -6048,18 +6052,11 @@ generate_client() {
 # checks the return code of each sed -i that restores user settings —
 # previously sed failures were silently ignored.
 #
-# Lock scope: held only while mutating $AWG_DIR/${name}.conf.
-# generate_qr / generate_vpn_uri / generate_qr_vpnuri are called OUTSIDE
-# the lock as best-effort derived artifacts — if a concurrent modify
-# changes the conf between our sed and QR generation, the QR may be
-# stale by one tick. A concurrent `manage remove <name>` may also delete
-# the client after we release the lock, and regen will "resurrect"
-# `.conf` / `.png` / `.vpnuri` / `.vpnuri.png` for an already-removed
-# peer (stale artefacts in $AWG_DIR). Acceptable: the user gets correct
-# state on the next operation (repeat `remove` or `regen`), and the
-# peer is already out of the server config — no traffic flows through
-# it. Including QR/URI in the lock is more expensive (holding the lock
-# for several seconds) with no server-state integrity gain.
+# Lock scope: the lock is held to the end, through building QR and vpn://
+# and the put-back of the previous 3.1 set. Released earlier, it let a
+# concurrent modify of the same client rewrite the .conf, and regen then put
+# next to it a PNG and vpn:// built from the old one. Building takes a fraction
+# of a second; the build functions take no lock (modify calls them under it).
 regenerate_client() {
     case $- in *x*) _awg_xtrace_guard regenerate_client "$@"; return ;; esac
     local name="$1"
@@ -6281,7 +6278,7 @@ regenerate_client() {
 
     # Config regeneration (pass client_ipv6 if dual-stack). A live client's DNS goes
     # to render directly (8th argument): it is restored below anyway.
-    local _keep_dns="" _regen_sum=""
+    local _keep_dns=""
     [[ "$_had_conf" -eq 1 && -n "$current_dns" ]] && _keep_dns="$current_dns"
     # On 3.1 the copy of the set is taken under the same lock the .conf is
     # rewritten under, and it comes back on any failure below.
@@ -6509,13 +6506,6 @@ regenerate_client() {
         return 1
     fi
 
-    # A fingerprint of our .conf: the final put-back must not overwrite a change
-    # another operation made after the lock was released.
-    _regen_sum=$(cksum < "$_client_conf" 2>/dev/null)
-
-    # Release lock — config written, remaining ops are non-critical
-    exec {lock_fd}>&-
-
     # QR code
     local _set_fail=0
     generate_qr "$name" || _set_fail=1
@@ -6538,18 +6528,9 @@ regenerate_client() {
     fi
 
     # On 3.1 the set is all or nothing: an incomplete set after the regen is
-    # replaced with the previous one, under the config lock.
+    # replaced with the previous one, under the same config lock.
     if ! _awg31_client_set_ok "$name" "$_set_fail"; then
-        # Put back only under the lock and only if the .conf has not changed since
-        # our write: otherwise it would overwrite a concurrent change (modify, remove).
-        exec {lock_fd}>"$lockfile"
-        if ! flock -x -w 30 "$lock_fd"; then
-            log_error "The set of client '$name' is incomplete after the regen, and the config lock was not acquired: the previous set was not put back, so as not to overwrite a concurrent operation. Run again: manage regen $name"
-            _awg31_set_drop
-        elif [[ "$(cksum < "$AWG_DIR/${name}.conf" 2>/dev/null)" != "$_regen_sum" ]]; then
-            log_error "The set of client '$name' is incomplete after the regen, but another operation has already changed its config: the previous set was not put back. Check the client and run again: manage regen $name"
-            _awg31_set_drop
-        elif (( ${#_AWG31_SET_SNAP[@]} == 0 )); then
+        if (( ${#_AWG31_SET_SNAP[@]} == 0 )); then
             log_error "The set of client '$name' is incomplete after the regen, and there is no copy of the previous set (the generation marker could not be read when the copy was due): nothing was put back. Run again: manage regen $name"
         elif _awg31_set_restore; then
             log_error "The set of client '$name' is incomplete after the regen (reason above): the previous set of files was put back."
@@ -6560,6 +6541,7 @@ regenerate_client() {
         return 1
     fi
     _awg31_set_drop
+    exec {lock_fd}>&-
 
     log "Client config for '$name' regenerated."
     return 0

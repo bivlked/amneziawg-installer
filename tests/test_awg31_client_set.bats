@@ -317,58 +317,79 @@ _regen_no_qrencode() {
     done
 }
 
-# A concurrent operation changes the client .conf in the window between the
-# regen releasing the lock and its final check (the qrencode stub does it, then
-# fails). The previous set must NOT come back over that change.
-_regen_concurrent_change_kept() {
+# add and regen keep the config lock until QR and vpn:// are built and the 3.1
+# set is checked: a concurrent modify of the same client then waits, instead of
+# rewriting the .conf in between and getting its fresh PNG replaced by one built
+# from the old config. The qrencode stub tries the lock at every call.
+_qr_records_lock() {
+    cat > "$TEST_DIR/bin/qrencode" << STUB
+#!/bin/bash
+if flock -n "$A/.awg_config.lock" true; then echo free >> "$TEST_DIR/lockstate"; else echo held >> "$TEST_DIR/lockstate"; fi
+out=""
+while [ \$# -gt 0 ]; do
+    case "\$1" in -o) out="\$2"; shift ;; esac
+    shift
+done
+cat >/dev/null
+[[ -e "$TEST_DIR/qr_fail_all" ]] && exit 1
+[ -n "\$out" ] && printf 'PNG' > "\$out"
+exit 0
+STUB
+    chmod +x "$TEST_DIR/bin/qrencode"
+    rm -f "$TEST_DIR/lockstate"
+}
+# every QR call saw the lock held, and there was at least one
+_lock_held_all_along() {
+    [ -s "$TEST_DIR/lockstate" ] || { echo "qrencode was not called" >&2; return 1; }
+    run grep -c free "$TEST_DIR/lockstate"
+    [ "$output" = "0" ] || { echo "QR built with the lock free: $(paste -sd' ' "$TEST_DIR/lockstate")" >&2; return 1; }
+}
+
+_regen_holds_lock() {
+    local s="$1" g
+    for g in 3.1 2.0; do
+        rm -f "$A"/alice.* "$A/keys"/alice.*
+        _gen "$g"
+        _m "$s" add alice
+        _ok
+        _qr_records_lock
+        _m "$s" regen alice
+        _ok
+        _lock_held_all_along || return 1
+    done
+}
+@test "regen keeps the config lock while it builds QR and vpn://, both generations" { _both _regen_holds_lock; }
+
+_add_holds_lock() {
+    local s="$1" g
+    for g in 3.1 2.0; do
+        rm -f "$A"/bob.* "$A/keys"/bob.*
+        _gen "$g"
+        _qr_records_lock
+        _m "$s" add bob
+        _ok
+        _lock_held_all_along || return 1
+    done
+}
+@test "add keeps the config lock while it builds QR and vpn://, both generations" { _both _add_holds_lock; }
+
+# 3.1, an incomplete set after regen: the previous set comes back under the same
+# lock, the regenerated .conf (new endpoint) does not stay.
+_regen_incomplete_back_under_lock() {
     local s="$1"
     _gen 3.1
     _m "$s" add alice
     _ok
-    cat > "$TEST_DIR/bin/qrencode" << STUB
-#!/bin/bash
-cat >/dev/null
-echo "# changed by another operation" >> "$A/alice.conf"
-exit 1
-STUB
-    chmod +x "$TEST_DIR/bin/qrencode"
+    _qr_records_lock
+    : > "$TEST_DIR/qr_fail_all"
     sed -i "s/^export AWG_ENDPOINT=.*/export AWG_ENDPOINT='203.0.113.9'/" "$A/awgsetup_cfg.init"
     _m "$s" regen alice
     _fail
-    grep -qxF "# changed by another operation" "$A/alice.conf"
-    # this branch of the three "not put back" messages, not just any of them
-    [[ "$output$stderr" == *"another operation has already changed its config"* || "$output$stderr" == *"уже изменила другая операция"* ]]
+    _lock_held_all_along || return 1
+    ! grep -q '203.0.113.9' "$A/alice.conf" || { echo "the new .conf stayed over an incomplete set" >&2; return 1; }
+    grep -q '203.0.113.5' "$A/alice.conf"
 }
-@test "regen does not put the previous set back over a concurrent change of the client config" { _both _regen_concurrent_change_kept; }
-
-# The config lock cannot be taken again for the final put-back: nothing is
-# restored without it (flock starts failing from the moment QR building begins).
-_regen_no_lock_no_restore() {
-    local s="$1" real_flock
-    _gen 3.1
-    _m "$s" add alice
-    _ok
-    real_flock=$(PATH=/usr/bin:/bin command -v flock)
-    cat > "$TEST_DIR/bin/flock" << STUB
-#!/bin/bash
-[[ -e "$TEST_DIR/flock_fail" ]] && exit 1
-exec "$real_flock" "\$@"
-STUB
-    cat > "$TEST_DIR/bin/qrencode" << STUB
-#!/bin/bash
-cat >/dev/null
-: > "$TEST_DIR/flock_fail"
-exit 1
-STUB
-    chmod +x "$TEST_DIR/bin/flock" "$TEST_DIR/bin/qrencode"
-    sed -i "s/^export AWG_ENDPOINT=.*/export AWG_ENDPOINT='203.0.113.9'/" "$A/awgsetup_cfg.init"
-    _m "$s" regen alice
-    _fail
-    # the regenerated .conf (new endpoint) stays: no put-back without the lock
-    grep -q '203.0.113.9' "$A/alice.conf"
-    [[ "$output$stderr" == *"the config lock was not acquired"* || "$output$stderr" == *"блокировка конфига не получена"* ]]
-}
-@test "regen does not put the previous set back without the config lock" { _both _regen_no_lock_no_restore; }
+@test "regen with an incomplete 3.1 set puts the previous set back, the lock held throughout" { _both _regen_incomplete_back_under_lock; }
 
 # ------------------------------------------------------------------ only our own client is undone
 
