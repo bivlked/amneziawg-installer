@@ -5443,6 +5443,28 @@ create_diagnostic_report() {
             echo "не настроен"
         fi
         echo ""
+        echo "--- Block RU (manage block-ru) ---"
+        if [ -f "${AWG_SYSTEMD_DIR:-/etc/systemd/system}/awg-block-ru.service" ]; then
+            local _br_active _br_enabled _br_out _br_pos
+            _br_active=$(systemctl is-active awg-block-ru 2>/dev/null || true)
+            _br_enabled=$(systemctl is-enabled awg-block-ru 2>/dev/null || true)
+            echo "unit awg-block-ru: active=${_br_active:-N/A}, enabled=${_br_enabled:-N/A}"
+            if _br_out=$(iptables -S FORWARD 2>&1); then
+                _br_pos=$(awk '/^-A / {n++} /match-set awg_block_ru/ {print n; exit}' <<< "$_br_out")
+                if [ -n "$_br_pos" ]; then echo "правило FORWARD: есть, позиция ${_br_pos}"; else echo "правило FORWARD: нет"; fi
+            else
+                echo "правило FORWARD: ПРОВЕРИТЬ НЕ УДАЛОСЬ: $(head -1 <<< "$_br_out")"
+            fi
+            if _br_out=$(ipset list awg_block_ru 2>&1); then
+                grep "Number of entries" <<< "$_br_out" || true
+            else
+                echo "ipset awg_block_ru: набора нет"
+            fi
+            echo "block-ru.zone: $(stat -c '%y, %s байт' "$AWG_DIR/block-ru.zone" 2>/dev/null || echo 'файла нет')"
+        else
+            echo "не включён"
+        fi
+        echo ""
         echo "--- Kernel Params ---"
         sysctl net.ipv4.ip_forward net.ipv6.conf.all.disable_ipv6 2>/dev/null
         echo ""
@@ -5503,6 +5525,23 @@ _awg_uninstall_ports() {
         out+="${out:+ }$p"
     done
     printf '%s\n' "$out"
+}
+
+# Запрет manage block-ru живёт вне $AWG_DIR: юнит, cron и набор ipset. Правило в
+# FORWARD снимает ExecStop юнита (помощник ещё на месте, $AWG_DIR удаляется позже),
+# остаток - здесь, иначе набор не удалится: на него ссылается правило.
+_uninstall_block_ru() {
+    local unit="${AWG_SYSTEMD_DIR:-/etc/systemd/system}/awg-block-ru.service" n=0
+    local rule="FORWARD -i awg0 -m set --match-set awg_block_ru dst -j REJECT --reject-with icmp-admin-prohibited"
+    if [[ -f "$unit" ]]; then
+        systemctl disable --now awg-block-ru.service >/dev/null 2>&1 || log_warn "Не удалось остановить awg-block-ru.service."
+        rm -f "$unit"
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    rm -f "${AWG_CRON_DIR:-/etc/cron.d}/awg-block-ru"
+    # shellcheck disable=SC2086  # правило намеренно делится на слова
+    while (( n++ < 16 )) && iptables -C $rule 2>/dev/null; do iptables -D $rule 2>/dev/null || break; done
+    if command -v ipset >/dev/null 2>&1; then ipset destroy awg_block_ru >/dev/null 2>&1 || true; fi
 }
 
 step_uninstall() {
@@ -5743,6 +5782,7 @@ step_uninstall() {
     sysctl -p --system 2>/dev/null
     rm -f /etc/apt/sources.list.d/*.bak-* "$AWG_DIR"/ubuntu.sources.bak-* 2>/dev/null || true
     log "Удаление cron и скриптов..."
+    _uninstall_block_ru
     rm -f /etc/cron.d/awg-expiry 2>/dev/null
     log "=== ДЕИНСТАЛЛЯЦИЯ ЗАВЕРШЕНА ==="
     # Копируем лог и удаляем рабочую директорию
