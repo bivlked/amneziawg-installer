@@ -9393,6 +9393,21 @@ _awg31_step3_gate() {
     die "Гейт окружения не смог проверить инструменты и модуль для профиля AmneziaWG 3.1 (код возврата ${_awg31_rc}, причина не названа). Установка остановлена: не зная ответа, третью линию не выпускаем.${_tail}"
 }
 
+# Серийный номер сертификата в одном виде: без двоеточий, заглавными, без
+# ведущих нулей (modinfo печатает байты через двоеточие, openssl - число).
+_awg_serial_norm() { tr -d ':[:space:]' | tr 'a-f' 'A-F' | sed 's/^0*//'; }
+# Серийный номер сертификата из файла: DER (так DKMS пишет mok.pub), иначе PEM.
+# Не прочитался или пустой - код 1.
+_awg_cert_serial() {
+    local s
+    command -v openssl >/dev/null 2>&1 || return 1
+    s=$(openssl x509 -inform DER -in "$1" -noout -serial 2>/dev/null) \
+        || s=$(openssl x509 -inform PEM -in "$1" -noout -serial 2>/dev/null) || return 1
+    s=$(printf '%s' "${s#serial=}" | _awg_serial_norm)
+    [[ -n "$s" ]] || return 1
+    printf '%s' "$s"
+}
+
 # Подсказка к отказу modprobe по его собственным словам (#403). Под Secure Boot
 # ядро с принудительной проверкой подписи отвечает "Key was rejected by service"
 # и на неподписанный модуль, и на модуль с незарегистрированным ключом, поэтому
@@ -9428,15 +9443,33 @@ _awg_modprobe_hint() {
     fi
     signer=$(modinfo -F signer amneziawg 2>/dev/null) || signer=""
     signer="${signer:+ «${signer}»}"
-    if [[ -e "$root/var/lib/dkms/mok.pub" ]]; then
-        key=/var/lib/dkms/mok.pub
-    elif [[ -e "$root/var/lib/shim-signed/mok/MOK.der" ]]; then
-        key=/var/lib/shim-signed/mok/MOK.der
-    fi
+    # Файл ключа на диске сверяется с подписью модуля по серийному номеру
+    # сертификата (sig_key у modinfo). Совпал - точная команда для этого файла;
+    # ни один не совпал - регистрация файла с диска не поможет, общий совет;
+    # сверить нечем (нет sig_key, openssl не прочитал файл) - команда с оговоркой,
+    # и называется в ней непрочитанный файл, а не тот, что уже не совпал.
+    local cand want serial unread="" readable=""
+    want=$(modinfo -F sig_key amneziawg 2>/dev/null | _awg_serial_norm) || want=""
+    for cand in /var/lib/dkms/mok.pub /var/lib/shim-signed/mok/MOK.der; do
+        [[ -e "$root$cand" ]] || continue
+        if serial=$(_awg_cert_serial "$root$cand"); then
+            [[ -n "$readable" ]] || readable="$cand"
+            if [[ -n "$want" && "$serial" == "$want" ]]; then key="$cand"; break; fi
+        else
+            [[ -n "$unread" ]] || unread="$cand"
+        fi
+    done
+    local how=" (попросит придумать пароль), перезагрузка, на синем экране MOK Manager выберите Enroll MOK и введите этот пароль. Экран виден только на мониторе машины или в консоли хостера, по ssh этот шаг не пройти."
+    local head=" Модуль подписан ключом${signer}, но ядро этому ключу не доверяет: он не зарегистрирован в MOK, а Secure Boot включён (проверка: mokutil --sb-state)."
+    local check="${unread:-$readable}"
     if [[ -n "$key" ]]; then
-        printf '%s' " Модуль подписан ключом${signer}, но ядро этому ключу не доверяет: он не зарегистрирован в MOK, а Secure Boot включён (проверка: mokutil --sb-state). Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ DKMS: sudo mokutil --import $key (попросит придумать пароль), перезагрузка, на синем экране MOK Manager выберите Enroll MOK и введите этот пароль. Экран виден только на мониторе машины или в консоли хостера, по ssh этот шаг не пройти.$tail"
+        printf '%s' "$head Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ DKMS: sudo mokutil --import $key${how}$tail"
+    elif [[ -n "$want" && -n "$readable" && -z "$unread" ]]; then
+        printf '%s' "$head Ключ DKMS на диске - другой, не тот, которым подписан модуль, поэтому его регистрация не поможет. Выключите Secure Boot в настройках UEFI либо зарегистрируйте в MOK сертификат того ключа, которым подписан модуль (его серийный номер: modinfo -F sig_key amneziawg).$tail"
+    elif [[ -n "$check" ]]; then
+        printf '%s' "$head Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ DKMS: sudo mokutil --import $check${how} Сверить этот файл с подписью модуля не удалось, поэтому до регистрации проверьте, что номер из openssl x509 -inform DER -in $check -noout -serial совпадает с modinfo -F sig_key amneziawg: чужой ключ расширит доверие ядра, а модуль так и не загрузится.$tail"
     else
-        printf '%s' " Модуль подписан ключом${signer}, но ядро этому ключу не доверяет: он не зарегистрирован в MOK, а Secure Boot включён (проверка: mokutil --sb-state). Выключите Secure Boot в настройках UEFI либо зарегистрируйте этот ключ в MOK (mokutil --import).$tail"
+        printf '%s' "$head Выключите Secure Boot в настройках UEFI либо зарегистрируйте этот ключ в MOK (mokutil --import).$tail"
     fi
 }
 

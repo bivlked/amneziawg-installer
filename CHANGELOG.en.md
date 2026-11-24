@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **New command `manage block-ru`: VPN clients can be kept away from Russian IPv4 addresses.** `block-ru on` turns the block on, `off` removes it, `update` downloads a fresh list right away, and with no argument the command shows the state. The list of Russian networks goes into an ipset and the REJECT rule sits first in FORWARD, so a client is refused at once. The block survives a service restart, a port change, `ufw reload` and a reboot. The list is refreshed weekly, own addresses (for example, sites behind a foreign CDN) go to `/root/awg/block-ru.extra`, and the command installs the `ipset` package itself. Requested in D#418, details in ADVANCED, section `#block-ru-adv`.
 
+### Fixed
+
+- **The Secure Boot hint offers to enroll the DKMS key only when the module is signed with it.** When the kernel refuses a signed module, the installer compares the certificate serial number in `/var/lib/dkms/mok.pub` or `/var/lib/shim-signed/mok/MOK.der` with the module signature (`modinfo -F sig_key`). A match gives the exact `mokutil --import` command for that file. A different key on disk gives no command: enrolling it would widen what the kernel trusts while the module still would not load. With nothing to compare (no `openssl` or no signature number) the command comes with a caveat on how to check the key yourself.
+
 ### Documentation
 
 - **The ADVANCED section on a separate exit address now links to a step-by-step Habr article (in Russian).** It covers a second IPv4 on the VPS with netplan and ifupdown, checking the exit address and replacing a blocked one.

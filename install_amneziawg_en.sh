@@ -9547,6 +9547,21 @@ _awg31_step3_gate() {
     die "The environment gate could not check the tools and the module for the AmneziaWG 3.1 profile (exit code ${_awg31_rc}, no reason given). The installation stops: without an answer we do not ship the third line.${_tail}"
 }
 
+# A certificate serial number in one form: no colons, upper case, no leading
+# zeros (modinfo prints bytes with colons, openssl prints a number).
+_awg_serial_norm() { tr -d ':[:space:]' | tr 'a-f' 'A-F' | sed 's/^0*//'; }
+# The certificate serial number from a file: DER (the form DKMS writes mok.pub
+# in), otherwise PEM. Unreadable or empty - code 1.
+_awg_cert_serial() {
+    local s
+    command -v openssl >/dev/null 2>&1 || return 1
+    s=$(openssl x509 -inform DER -in "$1" -noout -serial 2>/dev/null) \
+        || s=$(openssl x509 -inform PEM -in "$1" -noout -serial 2>/dev/null) || return 1
+    s=$(printf '%s' "${s#serial=}" | _awg_serial_norm)
+    [[ -n "$s" ]] || return 1
+    printf '%s' "$s"
+}
+
 # A hint for a modprobe failure, keyed on modprobe's own words (#403). Under
 # Secure Boot a kernel that enforces module signatures answers "Key was rejected
 # by service" both for an unsigned module and for one signed with a key that is
@@ -9583,15 +9598,34 @@ _awg_modprobe_hint() {
     fi
     signer=$(modinfo -F signer amneziawg 2>/dev/null) || signer=""
     signer="${signer:+ \"${signer}\"}"
-    if [[ -e "$root/var/lib/dkms/mok.pub" ]]; then
-        key=/var/lib/dkms/mok.pub
-    elif [[ -e "$root/var/lib/shim-signed/mok/MOK.der" ]]; then
-        key=/var/lib/shim-signed/mok/MOK.der
-    fi
+    # The key file on disk is checked against the module signature by the
+    # certificate serial number (sig_key in modinfo). A match - the exact command
+    # for that file; none matches - enrolling a file from the disk cannot help, a
+    # general advice; nothing to check with (no sig_key, openssl cannot read a
+    # file) - the command with a caveat that names the unread file, not one that
+    # already did not match.
+    local cand want serial unread="" readable=""
+    want=$(modinfo -F sig_key amneziawg 2>/dev/null | _awg_serial_norm) || want=""
+    for cand in /var/lib/dkms/mok.pub /var/lib/shim-signed/mok/MOK.der; do
+        [[ -e "$root$cand" ]] || continue
+        if serial=$(_awg_cert_serial "$root$cand"); then
+            [[ -n "$readable" ]] || readable="$cand"
+            if [[ -n "$want" && "$serial" == "$want" ]]; then key="$cand"; break; fi
+        else
+            [[ -n "$unread" ]] || unread="$cand"
+        fi
+    done
+    local how=" (it asks you to set a password), reboot, and on the blue MOK Manager screen choose Enroll MOK and enter that password. The screen shows only on the machine's monitor or the hoster's console, this step cannot be done over ssh."
+    local head=" The module is signed with the key${signer}, but the kernel does not trust it: the key is not enrolled in MOK and Secure Boot is on (check: mokutil --sb-state)."
+    local check="${unread:-$readable}"
     if [[ -n "$key" ]]; then
-        printf '%s' " The module is signed with the key${signer}, but the kernel does not trust it: the key is not enrolled in MOK and Secure Boot is on (check: mokutil --sb-state). Turn Secure Boot off in the UEFI settings or enroll the DKMS key: sudo mokutil --import $key (it asks you to set a password), reboot, and on the blue MOK Manager screen choose Enroll MOK and enter that password. The screen shows only on the machine's monitor or the hoster's console, this step cannot be done over ssh.$tail"
+        printf '%s' "$head Turn Secure Boot off in the UEFI settings or enroll the DKMS key: sudo mokutil --import $key${how}$tail"
+    elif [[ -n "$want" && -n "$readable" && -z "$unread" ]]; then
+        printf '%s' "$head The DKMS key on disk is a different one, not the key the module is signed with, so enrolling it will not help. Turn Secure Boot off in the UEFI settings or enroll in MOK the certificate of the key the module is signed with (its serial number: modinfo -F sig_key amneziawg).$tail"
+    elif [[ -n "$check" ]]; then
+        printf '%s' "$head Turn Secure Boot off in the UEFI settings or enroll the DKMS key: sudo mokutil --import $check${how} This file could not be checked against the module signature, so before enrolling it make sure the number from openssl x509 -inform DER -in $check -noout -serial matches modinfo -F sig_key amneziawg: a foreign key widens what the kernel trusts, and the module still does not load.$tail"
     else
-        printf '%s' " The module is signed with the key${signer}, but the kernel does not trust it: the key is not enrolled in MOK and Secure Boot is on (check: mokutil --sb-state). Turn Secure Boot off in the UEFI settings or enroll that key in MOK (mokutil --import).$tail"
+        printf '%s' "$head Turn Secure Boot off in the UEFI settings or enroll that key in MOK (mokutil --import).$tail"
     fi
 }
 
