@@ -770,6 +770,10 @@ _refetch_after_failed_load() {
     [ -s "$CALLS.curl" ] || { echo "$1: no fresh download after a failed load"; return 1; }
     [ "$(set_size $SET)" = "1200" ] || return 1
     [ "$(fw | head -1)" = "$RULE" ] || return 1
+    # the list that loaded replaces the cache ipset refused
+    cmp -s "$MGMT_DIR/awg/block-ru.zone" "$STUB_WEB/ru-aggregated.zone" || { echo "$1: the refused cache was kept"; return 1; }
+    run bash -c "ls -A '$MGMT_DIR/awg' | grep -E '^\.block-ru\.[A-Za-z0-9]{6}$'"
+    [ -z "$output" ] || { echo "$1: temporary file left: $output"; return 1; }
 }
 @test "helper apply: the cached list does not load - a fresh one is downloaded once and loaded" {
     each_manage _refetch_after_failed_load
@@ -943,6 +947,7 @@ _apply_empty_no_early_rule() {
     export STUB_CURL_SNAP=1
     helper apply
     [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ -e "$CALLS.fw_at_curl" ] || { echo "$1: no download"; return 1; }
     [ ! -s "$CALLS.fw_at_curl" ] || { echo "$1: rule before the set loaded: $(cat "$CALLS.fw_at_curl")"; return 1; }
     [ "$(fw | head -1)" = "$RULE" ] || return 1
 }
