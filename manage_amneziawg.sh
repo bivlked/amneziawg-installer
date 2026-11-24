@@ -4013,22 +4013,28 @@ rule_on() {
 
 count() { ipset list "$SET" 2> /dev/null | awk -F': ' '/^Number of entries/ {print $2; exit}'; }
 
+# Отказ не снимает запрет: restart юнита уже убрал правило (ExecStop), поэтому
+# при непустом наборе в памяти оно возвращается на нём, а запуск всё равно
+# завершается ошибкой.
+fail() {
+    if [ "$(count)" -gt 0 ] 2> /dev/null && rule_on; then
+        echo "ОШИБКА: $1, запрет держится на прежнем наборе." >&2
+    else
+        echo "ОШИБКА: $1, запрет НЕ действует." >&2
+    fi
+    exit 1
+}
+
 rc=0
 case "${1:-}" in
     apply)
         if ! { [ -s "$LIST" ] && list_ok "$LIST"; }; then
-            if ! fetch; then
-                echo "ОШИБКА: списка российских сетей нет и он не скачался, запрет НЕ включён." >&2
-                exit 1
-            fi
+            fetch || fail "списка российских сетей нет и он не скачался"
         fi
         ;;
     update)
         if ! fetch; then
-            if ! { [ -s "$LIST" ] && list_ok "$LIST"; }; then
-                echo "ОШИБКА: свежий список не скачался, а прежнего нет, запрет НЕ включён." >&2
-                exit 1
-            fi
+            { [ -s "$LIST" ] && list_ok "$LIST"; } || fail "свежий список не скачался, а прежнего нет"
             echo "Свежий список не скачался, действует прежний." >&2
             rc=3
         fi
@@ -4042,17 +4048,7 @@ case "${1:-}" in
         exit 2
         ;;
 esac
-# Неудачная загрузка не должна снимать запрет: restart юнита уже убрал правило
-# (ExecStop), поэтому оно возвращается на прежнем наборе, а запуск всё равно
-# завершается ошибкой.
-if ! load; then
-    if [ "$(count)" -gt 0 ] 2> /dev/null && rule_on; then
-        echo "ОШИБКА: набор $SET не обновился, запрет держится на прежнем списке." >&2
-    else
-        echo "ОШИБКА: набор $SET не загрузился, запрет НЕ действует." >&2
-    fi
-    exit 1
-fi
+load || fail "набор $SET не загрузился"
 if ! rule_on; then
     echo "ОШИБКА: правило в FORWARD не встало, запрет НЕ действует." >&2
     exit 1
@@ -4114,11 +4110,15 @@ _br_remove_files() {
     fi
     # Файлы удаляются под блокировкой помощника: manage block-ru update, который
     # ждёт её, после неё помощника не найдёт и ничего не вернёт. Брать её только
-    # после disable --now: ExecStop сам ждёт эту блокировку. Файл блокировки не
-    # удаляется: иначе следующий запуск взял бы блокировку на другом файле.
+    # после disable --now: ExecStop сам ждёт эту блокировку. Не взялась - ничего
+    # не удалять: запуск, который её держит, мог уже пройти проверку и вернул бы
+    # запрет после off. Файл блокировки не удаляется: иначе следующий запуск взял
+    # бы блокировку на другом файле.
     local fd=""
-    if exec {fd}>> "$AWG_DIR/.block-ru.lock"; then
-        flock -w 120 "$fd" || log_warn "Блокировку awg-block-ru за 120 с взять не удалось, удаляю без неё."
+    if ! exec {fd}>> "$AWG_DIR/.block-ru.lock" || ! flock -w 120 "$fd"; then
+        [[ -n "$fd" ]] && exec {fd}>&-
+        log_error "Блокировку awg-block-ru за 120 с взять не удалось, файлы запрета не удалены. Повторите: manage block-ru off"
+        return 1
     fi
     rm -f "$_BR_UNIT_FILE" "$_BR_CRON" "$_BR_HELPER" "$AWG_DIR/block-ru.zone"
     systemctl daemon-reload >&2 || true
@@ -4266,7 +4266,10 @@ _block_ru_off() {
     fi
     confirm_action "выключить" "запрет выхода клиентов VPN на российские адреса" || return 1
     local rc=0
-    _br_remove_files
+    if ! _br_remove_files; then
+        _JSON_ERR="block-ru lock busy"
+        return 1
+    fi
     _br_rule_drain || rc=1
     if ipset list "$_BR_SET" > /dev/null 2>&1 && ! ipset destroy "$_BR_SET"; then
         log_warn "Набор $_BR_SET не удалился (на него ещё ссылается правило?): ipset destroy $_BR_SET"

@@ -283,13 +283,15 @@ _second_key_matches() {
     each_installer _second_key_matches
 }
 
+# mokutil --import takes DER only: a PEM key is converted first.
 _pem_key() {
     key_file /var/lib/dkms/mok.pub "PEM:BEEF"
     MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGKEY="BE:EF" run_step3_load "$1"
-    [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]] || { echo "$1: $output"; return 1; }
-    [[ "$output" != *"openssl x509"* ]] || return 1
+    [[ "$output" == *"sudo openssl x509 -in /var/lib/dkms/mok.pub -outform DER -out /root/dkms-mok.der"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" == *"sudo mokutil --import /root/dkms-mok.der"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" != *"--import /var/lib/dkms/mok.pub"* ]] || { echo "$1: mokutil given a PEM file"; return 1; }
 }
-@test "a key file in PEM is read too" {
+@test "a key file in PEM is read too, and the hint converts it to DER for mokutil" {
     each_installer _pem_key
 }
 

@@ -29,7 +29,7 @@ make_list() {
 
 setup_block_env() {
     # each_manage runs both scripts in one test: no stub switch carries over.
-    unset STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN
+    unset STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL
     MGMT_DIR=$(mktemp -d)
     mkdir -p "$MGMT_DIR/bin" "$MGMT_DIR/awg/keys" "$MGMT_DIR/systemd" "$MGMT_DIR/cron" "$MGMT_DIR/web"
     export CALLS="$MGMT_DIR/calls"; : > "$CALLS"
@@ -141,6 +141,8 @@ echo "apt-get $*" >> "$CALLS.apt"
 [[ " $* " == *" install "* ]] && cp "$STUB_IPSET_REAL" "$(dirname "$0")/ipset"
 exit 0
 STUB
+    # flock: the real one, or a timeout when STUB_FLOCK_FAIL is set
+    printf '#!/bin/bash\n[[ -n "${STUB_FLOCK_FAIL:-}" ]] && exit 1\nexec %s "$@"\n' "$(command -v flock)" > "$MGMT_DIR/bin/flock"
     chmod +x "$MGMT_DIR/bin/"*
     export PATH="$MGMT_DIR/bin:$PATH"
     cat > "$MGMT_DIR/awg/awgsetup_cfg.init" << 'CONF'
@@ -166,7 +168,7 @@ CONF
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
     unset AWG_SKIP_APPLY CALLS STUB_WEB AWG_SYSTEMD_DIR AWG_CRON_DIR STUB_START_FAIL STUB_IPT_I_FAIL \
-        STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN
+        STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL
 }
 
 manage() {
@@ -559,10 +561,10 @@ _helper_reorders() {
 _helpers_same_code() {
     local a b
     setup_block_env; manage manage_amneziawg.sh block-ru on
-    a=$(grep -vE '^[[:space:]]*#|echo|printf|^DIR=' "$MGMT_DIR/awg/awg-block-ru.sh")
+    a=$(grep -vE '^[[:space:]]*#|echo|printf|^DIR=' "$MGMT_DIR/awg/awg-block-ru.sh" | sed -E 's/fail "[^"]*"/fail MSG/')
     rm -rf "$MGMT_DIR"
     setup_block_env; manage manage_amneziawg_en.sh block-ru on
-    b=$(grep -vE '^[[:space:]]*#|echo|printf|^DIR=' "$MGMT_DIR/awg/awg-block-ru.sh")
+    b=$(grep -vE '^[[:space:]]*#|echo|printf|^DIR=' "$MGMT_DIR/awg/awg-block-ru.sh" | sed -E 's/fail "[^"]*"/fail MSG/')
     [ -n "$a" ] && [ "$a" = "$b" ] || { diff <(echo "$a") <(echo "$b"); return 1; }
 }
 @test "the RU and EN helpers differ only in messages" {
@@ -664,4 +666,36 @@ _helper_after_off() {
 }
 @test "helper: a run that gets the lock after off (helper removed) changes nothing" {
     each_manage _helper_after_off
+}
+
+# ---------- review round 2: early exits keep the block, off without the lock ----------
+
+_no_list_keeps_block() {
+    on_then "$1" || return 1
+    mkdir -p "$CALLS.sets"; make_list "$CALLS.sets/$SET" 1100
+    printf 'FORWARD -i awg0 -j ACCEPT\n' > "$CALLS.fw"
+    rm -f "$STUB_WEB"/*
+    helper apply
+    [ "$status" -ne 0 ] || return 1
+    [ "$(fw | head -1)" = "$RULE" ] || { echo "$1: the set in memory is not enforced: $(fw)"; return 1; }
+    rm -f "$CALLS.fw"; printf 'FORWARD -i awg0 -j ACCEPT\n' > "$CALLS.fw"
+    helper update
+    [ "$status" -ne 0 ] || return 1
+    [ "$(fw | head -1)" = "$RULE" ] || { echo "$1: update: not enforced: $(fw)"; return 1; }
+}
+@test "helper: no list on disk and none downloaded - the set in memory keeps the block, the run fails" {
+    each_manage _no_list_keeps_block
+}
+
+_off_without_lock() {
+    manage "$1" block-ru on
+    [ "$status" -eq 0 ] || return 1
+    export STUB_FLOCK_FAIL=1
+    manage "$1" block-ru off
+    [ "$status" -ne 0 ] || { echo "$1: off succeeded without the lock"; return 1; }
+    [ -e "$MGMT_DIR/awg/awg-block-ru.sh" ] || { echo "$1: files removed without the lock"; return 1; }
+    [[ "$stderr" == *"block-ru off"* ]] || { echo "$1: no hint to repeat: $stderr"; return 1; }
+}
+@test "block-ru off cannot take the helper lock: it stops before removing anything and says to repeat" {
+    each_manage _off_without_lock
 }

@@ -9619,7 +9619,13 @@ _awg_modprobe_hint() {
     local head=" The module is signed with the key${signer}, but the kernel does not trust it: the key is not enrolled in MOK and Secure Boot is on (check: mokutil --sb-state)."
     local check="${unread:-$readable}"
     if [[ -n "$key" ]]; then
-        printf '%s' "$head Turn Secure Boot off in the UEFI settings or enroll the DKMS key: sudo mokutil --import $key${how}$tail"
+        # mokutil --import takes DER only: a PEM key is converted first.
+        local imp="$key" conv=""
+        if ! openssl x509 -inform DER -in "$root$key" -noout >/dev/null 2>&1; then
+            imp=/root/dkms-mok.der
+            conv="sudo openssl x509 -in $key -outform DER -out $imp && "
+        fi
+        printf '%s' "$head Turn Secure Boot off in the UEFI settings or enroll the DKMS key: ${conv}sudo mokutil --import $imp${how}$tail"
     elif [[ -n "$want" && -n "$readable" && -z "$unread" ]]; then
         printf '%s' "$head The DKMS key on disk is a different one, not the key the module is signed with, so enrolling it will not help. Turn Secure Boot off in the UEFI settings or enroll in MOK the certificate of the key the module is signed with (its serial number: modinfo -F sig_key amneziawg).$tail"
     elif [[ -n "$check" ]]; then

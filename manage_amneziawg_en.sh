@@ -4069,22 +4069,28 @@ rule_on() {
 
 count() { ipset list "$SET" 2> /dev/null | awk -F': ' '/^Number of entries/ {print $2; exit}'; }
 
+# A failure does not lift the block: a restart of the unit has already removed
+# the rule (ExecStop), so with a non-empty set in memory it goes back on that
+# set, and the run still ends with an error.
+fail() {
+    if [ "$(count)" -gt 0 ] 2> /dev/null && rule_on; then
+        echo "ERROR: $1, the block holds on the previous set." >&2
+    else
+        echo "ERROR: $1, the block is NOT in force." >&2
+    fi
+    exit 1
+}
+
 rc=0
 case "${1:-}" in
     apply)
         if ! { [ -s "$LIST" ] && list_ok "$LIST"; }; then
-            if ! fetch; then
-                echo "ERROR: there is no list of Russian networks and it could not be downloaded, the block is NOT on." >&2
-                exit 1
-            fi
+            fetch || fail "there is no list of Russian networks and it could not be downloaded"
         fi
         ;;
     update)
         if ! fetch; then
-            if ! { [ -s "$LIST" ] && list_ok "$LIST"; }; then
-                echo "ERROR: a fresh list could not be downloaded and there is no previous one, the block is NOT on." >&2
-                exit 1
-            fi
+            { [ -s "$LIST" ] && list_ok "$LIST"; } || fail "a fresh list could not be downloaded and there is no previous one"
             echo "A fresh list could not be downloaded, the previous one stays in force." >&2
             rc=3
         fi
@@ -4098,17 +4104,7 @@ case "${1:-}" in
         exit 2
         ;;
 esac
-# A failed load must not lift the block: a restart of the unit has already
-# removed the rule (ExecStop), so it goes back on the previous set, and the run
-# still ends with an error.
-if ! load; then
-    if [ "$(count)" -gt 0 ] 2> /dev/null && rule_on; then
-        echo "ERROR: the $SET set was not updated, the block holds on the previous list." >&2
-    else
-        echo "ERROR: the $SET set did not load, the block is NOT in force." >&2
-    fi
-    exit 1
-fi
+load || fail "the $SET set did not load"
 if ! rule_on; then
     echo "ERROR: the rule did not go into FORWARD, the block is NOT in force." >&2
     exit 1
@@ -4170,11 +4166,15 @@ _br_remove_files() {
     fi
     # The files are removed under the helper lock: a manage block-ru update
     # waiting for it finds no helper afterwards and puts nothing back. The lock
-    # is taken only after disable --now: ExecStop waits for this same lock. The
-    # lock file stays: otherwise the next run would lock a different file.
+    # is taken only after disable --now: ExecStop waits for this same lock. No
+    # lock - nothing is removed: the run holding it may have passed its check
+    # already and would put the block back after off. The lock file stays:
+    # otherwise the next run would lock a different file.
     local fd=""
-    if exec {fd}>> "$AWG_DIR/.block-ru.lock"; then
-        flock -w 120 "$fd" || log_warn "Could not take the awg-block-ru lock within 120 s, removing without it."
+    if ! exec {fd}>> "$AWG_DIR/.block-ru.lock" || ! flock -w 120 "$fd"; then
+        [[ -n "$fd" ]] && exec {fd}>&-
+        log_error "Could not take the awg-block-ru lock within 120 s, the block files are not removed. Run again: manage block-ru off"
+        return 1
     fi
     rm -f "$_BR_UNIT_FILE" "$_BR_CRON" "$_BR_HELPER" "$AWG_DIR/block-ru.zone"
     systemctl daemon-reload >&2 || true
@@ -4322,7 +4322,10 @@ _block_ru_off() {
     fi
     confirm_action "turn off" "the block of Russian addresses for VPN clients" || return 1
     local rc=0
-    _br_remove_files
+    if ! _br_remove_files; then
+        _JSON_ERR="block-ru lock busy"
+        return 1
+    fi
     _br_rule_drain || rc=1
     if ipset list "$_BR_SET" > /dev/null 2>&1 && ! ipset destroy "$_BR_SET"; then
         log_warn "The $_BR_SET set was not removed (a rule still refers to it?): ipset destroy $_BR_SET"

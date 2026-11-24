@@ -9463,7 +9463,13 @@ _awg_modprobe_hint() {
     local head=" Модуль подписан ключом${signer}, но ядро этому ключу не доверяет: он не зарегистрирован в MOK, а Secure Boot включён (проверка: mokutil --sb-state)."
     local check="${unread:-$readable}"
     if [[ -n "$key" ]]; then
-        printf '%s' "$head Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ DKMS: sudo mokutil --import $key${how}$tail"
+        # mokutil --import принимает только DER: ключ в PEM сначала переводится.
+        local imp="$key" conv=""
+        if ! openssl x509 -inform DER -in "$root$key" -noout >/dev/null 2>&1; then
+            imp=/root/dkms-mok.der
+            conv="sudo openssl x509 -in $key -outform DER -out $imp && "
+        fi
+        printf '%s' "$head Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ DKMS: ${conv}sudo mokutil --import $imp${how}$tail"
     elif [[ -n "$want" && -n "$readable" && -z "$unread" ]]; then
         printf '%s' "$head Ключ DKMS на диске - другой, не тот, которым подписан модуль, поэтому его регистрация не поможет. Выключите Secure Boot в настройках UEFI либо зарегистрируйте в MOK сертификат того ключа, которым подписан модуль (его серийный номер: modinfo -F sig_key amneziawg).$tail"
     elif [[ -n "$check" ]]; then
