@@ -29,7 +29,7 @@ make_list() {
 
 setup_block_env() {
     # each_manage runs both scripts in one test: no stub switch carries over.
-    unset STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL
+    unset STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN
     MGMT_DIR=$(mktemp -d)
     mkdir -p "$MGMT_DIR/bin" "$MGMT_DIR/awg/keys" "$MGMT_DIR/systemd" "$MGMT_DIR/cron" "$MGMT_DIR/web"
     export CALLS="$MGMT_DIR/calls"; : > "$CALLS"
@@ -53,7 +53,8 @@ run_exec() {
 }
 case "$1" in
     is-enabled) [[ -e "$CALLS.enabled" ]] && { echo enabled; exit 0; }; echo disabled; exit 1 ;;
-    is-active)  [[ "$*" == *awg-block-ru* ]] || exit 0
+    is-active)  if [[ "$*" == *awg-quick* ]]; then [[ -z "${STUB_AWG_DOWN:-}" ]]; exit; fi
+                [[ "$*" == *awg-block-ru* ]] || exit 0
                 q=0; [[ " $* " == *" --quiet "* ]] && q=1
                 if [[ -e "$CALLS.active" ]]; then (( q )) || echo active; exit 0; fi
                 (( q )) || echo inactive; exit 3 ;;
@@ -105,7 +106,10 @@ case "$1" in
                  [[ "$a" == add && -e "$S/$n" ]] || { echo "restore: bad line '$a $n $v'" >&2; exit 1; }
                  echo "$v" >> "$S/$n"
              done ;;
-    add)     [[ -e "$S/$2" ]] || exit 1; echo "$3" >> "$S/$2" ;;
+    add)     [[ -e "$S/$2" ]] || exit 1
+             # a prefix over 32 is refused, as ipset itself does
+             [[ "$3" == */* && "${3##*/}" -gt 32 ]] && { echo "ipset v7: Syntax error: '$3' is out of range" >&2; exit 1; }
+             echo "$3" >> "$S/$2" ;;
     list)    if [[ "$2" == -n ]]; then ls "$S"; exit 0; fi
              [[ -e "$S/$2" ]] || { echo "The set with the given name does not exist" >&2; exit 1; }
              echo "Name: $2"; echo "Number of entries: $(grep -c . "$S/$2")" ;;
@@ -162,7 +166,7 @@ CONF
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
     unset AWG_SKIP_APPLY CALLS STUB_WEB AWG_SYSTEMD_DIR AWG_CRON_DIR STUB_START_FAIL STUB_IPT_I_FAIL \
-        STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL
+        STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN
 }
 
 manage() {
@@ -200,6 +204,7 @@ _on_writes_and_applies() {
     unit | grep -qxF "ExecReload=$MGMT_DIR/awg/awg-block-ru.sh update" || { echo "$1: ExecReload"; return 1; }
     unit | grep -qxF "ExecStop=$MGMT_DIR/awg/awg-block-ru.sh stop" || { echo "$1: ExecStop"; return 1; }
     unit | grep -qxF "PartOf=awg-quick@awg0.service" || { echo "$1: PartOf"; return 1; }
+    unit | grep -qxF "Requisite=awg-quick@awg0.service" || { echo "$1: Requisite"; return 1; }
     unit | grep -qxF "WantedBy=awg-quick@awg0.service" || { echo "$1: WantedBy"; return 1; }
     unit | grep -qxF "After=awg-quick@awg0.service network-online.target" || { echo "$1: After"; return 1; }
     grep -qE '^[0-9]{1,2} 4 \* \* 1 root systemctl reload awg-block-ru\.service$' "$AWG_CRON_DIR/awg-block-ru" \
@@ -588,4 +593,75 @@ _uninstall_block_ru() {
 }
 @test "uninstall removes the block-ru unit, cron and set in both installers" {
     _uninstall_block_ru install_amneziawg.sh && _uninstall_block_ru install_amneziawg_en.sh
+}
+
+# ---------- review round: start order, failed reload, off against update ----------
+
+_on_awg_down() {
+    export STUB_AWG_DOWN=1
+    manage "$1" block-ru on --json
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ -e "$CALLS.enabled" ] || { echo "$1: not enabled"; return 1; }
+    run grep -c "systemctl restart awg-block-ru" "$CALLS"
+    [ "$output" = "0" ] || { echo "$1: started while awg0 is down"; return 1; }
+    [ "$(fw | grep -cF awg_block_ru)" = "0" ] || return 1
+    [[ "$stderr" == *"awg0"* ]] || { echo "$1: no word on awg0: $stderr"; return 1; }
+}
+@test "block-ru on while awg0 is stopped: enabled, not started, the block comes with awg0" {
+    command -v jq >/dev/null || skip "jq not available"
+    each_manage _on_awg_down
+}
+
+_status_not_first() {
+    manage "$1" block-ru on
+    [ "$status" -eq 0 ] || return 1
+    printf 'FORWARD -i awg0 -j ACCEPT\n%s\n' "$RULE" > "$CALLS.fw"
+    manage "$1" block-ru --json
+    [ "$status" -eq 0 ] || return 1
+    [ "$(jq -r '.rule' <<< "$output")" = "true" ] || return 1
+    [ "$(jq -r '.rule_first' <<< "$output")" = "false" ] || { echo "$1: '$output'"; return 1; }
+    [[ "$stderr" == *"systemctl restart awg-block-ru"* ]] || { echo "$1: no warning: $stderr"; return 1; }
+}
+@test "block-ru status: a rule pushed down is reported, the block does not look fine" {
+    command -v jq >/dev/null || skip "jq not available"
+    each_manage _status_not_first
+}
+
+_extra_out_of_range() {
+    on_then "$1" || return 1
+    printf '203.0.113.0/24\n203.0.113.7/99\n' > "$MGMT_DIR/awg/block-ru.extra"
+    helper apply
+    [ "$status" -eq 0 ] || { echo "$1: one bad extra line broke the load: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1201" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    [[ "$stderr" == *"203.0.113.7/99"* ]] || return 1
+    [ "$(fw | head -1)" = "$RULE" ] || return 1
+}
+@test "helper: an extra line ipset refuses is skipped, the rest loads" {
+    each_manage _extra_out_of_range
+}
+
+_failed_load_keeps_block() {
+    on_then "$1" || return 1
+    mkdir -p "$CALLS.sets"; echo "192.0.2.0/24" > "$CALLS.sets/$SET"
+    printf 'FORWARD -i awg0 -j ACCEPT\n' > "$CALLS.fw"
+    export STUB_IPSET_RESTORE_FAIL=1
+    helper apply
+    [ "$status" -ne 0 ] || return 1
+    [ "$(fw | head -1)" = "$RULE" ] || { echo "$1: the old set is not enforced: $(fw)"; return 1; }
+}
+@test "helper: the load fails - the rule goes back on the previous set and the run still fails" {
+    each_manage _failed_load_keeps_block
+}
+
+_helper_after_off() {
+    on_then "$1" || return 1
+    cp "$MGMT_DIR/awg/awg-block-ru.sh" "$MGMT_DIR/copy.sh"
+    rm -f "$MGMT_DIR/awg/awg-block-ru.sh"
+    run --separate-stderr "$MGMT_DIR/copy.sh" update
+    [ "$status" -eq 0 ] || { echo "$1: rc $status"; return 1; }
+    [ "$(fw | grep -cF awg_block_ru)" = "0" ] || { echo "$1: a run after off put the rule back"; return 1; }
+    [ ! -e "$CALLS.sets/$SET" ] || { echo "$1: a run after off created the set"; return 1; }
+}
+@test "helper: a run that gets the lock after off (helper removed) changes nothing" {
+    each_manage _helper_after_off
 }

@@ -3922,6 +3922,13 @@ if ! flock -w 120 9; then
     exit 1
 fi
 
+# После manage block-ru off помощника на месте нет: запуск, дождавшийся
+# блокировки уже после off, ничего не возвращает.
+if [ "${1:-}" != stop ] && [ ! -e "$DIR/awg-block-ru.sh" ]; then
+    echo "Запрет выключен (manage block-ru off), ничего не делаю."
+    exit 0
+fi
+
 # Не меньше 1000 сетей, и каждая непустая строка без # - сеть IPv4.
 list_ok() {
     local n bad
@@ -3974,10 +3981,15 @@ load() {
     ipset create "$SET" hash:net maxelem 262144 -exist || return 1
     ipset destroy "$tmpset" 2> /dev/null
     ipset create "$tmpset" hash:net maxelem 262144 || return 1
-    if ! { grep -E "$NET" "$LIST"; extra_lines; } | sed "s/^/add $tmpset /" | ipset restore -exist; then
+    if ! grep -E "$NET" "$LIST" | sed "s/^/add $tmpset /" | ipset restore -exist; then
         ipset destroy "$tmpset" 2> /dev/null
         return 1
     fi
+    # Свои сети - по одной: строку, которую ipset не примет, пропустить, а не
+    # сорвать из-за неё всю загрузку.
+    extra_lines | while IFS= read -r net; do
+        ipset add "$tmpset" "$net" -exist 2> /dev/null || echo "ipset не принял строку из $EXTRA, пропускаю: $net" >&2
+    done
     ipset swap "$tmpset" "$SET" && ipset destroy "$tmpset"
 }
 
@@ -4030,8 +4042,15 @@ case "${1:-}" in
         exit 2
         ;;
 esac
+# Неудачная загрузка не должна снимать запрет: restart юнита уже убрал правило
+# (ExecStop), поэтому оно возвращается на прежнем наборе, а запуск всё равно
+# завершается ошибкой.
 if ! load; then
-    echo "ОШИБКА: набор $SET не загрузился, запрет не обновлён." >&2
+    if [ "$(count)" -gt 0 ] 2> /dev/null && rule_on; then
+        echo "ОШИБКА: набор $SET не обновился, запрет держится на прежнем списке." >&2
+    else
+        echo "ОШИБКА: набор $SET не загрузился, запрет НЕ действует." >&2
+    fi
     exit 1
 fi
 if ! rule_on; then
@@ -4050,6 +4069,7 @@ Description=AmneziaWG: клиентам закрыт выход на росси�
 After=awg-quick@awg0.service network-online.target
 Wants=network-online.target
 PartOf=awg-quick@awg0.service
+Requisite=awg-quick@awg0.service
 
 [Service]
 Type=oneshot
@@ -4092,8 +4112,17 @@ _br_remove_files() {
     if [[ -f "$_BR_UNIT_FILE" ]]; then
         systemctl disable --now "$_BR_UNIT" >&2 || log_warn "systemctl disable --now $_BR_UNIT вернул ошибку."
     fi
-    rm -f "$_BR_UNIT_FILE" "$_BR_CRON" "$_BR_HELPER" "$AWG_DIR/block-ru.zone" "$AWG_DIR/.block-ru.lock"
+    # Файлы удаляются под блокировкой помощника: manage block-ru update, который
+    # ждёт её, после неё помощника не найдёт и ничего не вернёт. Брать её только
+    # после disable --now: ExecStop сам ждёт эту блокировку. Файл блокировки не
+    # удаляется: иначе следующий запуск взял бы блокировку на другом файле.
+    local fd=""
+    if exec {fd}>> "$AWG_DIR/.block-ru.lock"; then
+        flock -w 120 "$fd" || log_warn "Блокировку awg-block-ru за 120 с взять не удалось, удаляю без неё."
+    fi
+    rm -f "$_BR_UNIT_FILE" "$_BR_CRON" "$_BR_HELPER" "$AWG_DIR/block-ru.zone"
     systemctl daemon-reload >&2 || true
+    [[ -n "$fd" ]] && exec {fd}>&-
 }
 
 # Снимает правило без помощника (остаток после сбоя ExecStop или ручной правки).
@@ -4126,18 +4155,21 @@ _br_need_ipset() {
 
 # Заполняет _br_en, _br_act, _br_rule (true/false) и _br_n (число сетей в наборе).
 _br_state() {
-    _br_en=false; _br_act=false; _br_rule=false; _br_n=0
+    _br_en=false; _br_act=false; _br_rule=false; _br_first=false; _br_n=0
     if [[ -f "$_BR_UNIT_FILE" ]] && systemctl is-enabled "$_BR_UNIT" > /dev/null 2>&1; then _br_en=true; fi
     if systemctl is-active --quiet "$_BR_UNIT" 2> /dev/null; then _br_act=true; fi
     # shellcheck disable=SC2046  # правило намеренно делится на слова
     if command -v iptables > /dev/null 2>&1 && iptables -C $(_br_rule) 2> /dev/null; then _br_rule=true; fi
+    # Правило есть, но не первое: ACCEPT из PostUp выше него пропускает клиентов.
+    _br_first=false
+    if [[ "$_br_rule" == true && "$(iptables -S FORWARD 2> /dev/null | sed -n 2p)" == "-A $(_br_rule)" ]]; then _br_first=true; fi
     if command -v ipset > /dev/null 2>&1; then
         _br_n=$(ipset list "$_BR_SET" 2> /dev/null | awk -F': ' '/^Number of entries/ {print $2; exit}')
     fi
     [[ "$_br_n" =~ ^[0-9]+$ ]] || _br_n=0
 }
 _br_json() {
-    json_out "{\"command\":\"block-ru\",\"ok\":true,\"enabled\":${_br_en},\"active\":${_br_act},\"rule\":${_br_rule},\"networks\":${_br_n},\"changed\":$1}"
+    json_out "{\"command\":\"block-ru\",\"ok\":true,\"enabled\":${_br_en},\"active\":${_br_act},\"rule\":${_br_rule},\"rule_first\":${_br_first},\"networks\":${_br_n},\"changed\":$1}"
 }
 
 _block_ru_status() {
@@ -4146,6 +4178,8 @@ _block_ru_status() {
         log "Запрет выхода клиентов на российские адреса: включён, сетей в наборе: ${_br_n}."
         if [[ "$_br_rule" != true ]]; then
             log_warn "Правила в FORWARD нет, запрет не действует (обычно, когда awg0 остановлен): systemctl status awg-block-ru"
+        elif [[ "$_br_first" != true ]]; then
+            log_warn "Правило запрета стоит в FORWARD не первым, и правило выше него пропускает клиентов. Вернуть наверх: systemctl restart awg-block-ru"
         fi
     else
         log "Запрет выхода клиентов на российские адреса: выключен (включить: manage block-ru on)."
@@ -4175,7 +4209,19 @@ _block_ru_on() {
         return 1
     fi
     systemctl daemon-reload >&2 || true
-    if ! systemctl enable "$_BR_UNIT" >&2 || ! systemctl restart "$_BR_UNIT" >&2; then
+    local started=1
+    systemctl enable "$_BR_UNIT" >&2 || started=0
+    # awg0 остановлен: юнит, запущенный сейчас, при старте awg0 уже не
+    # перезапустится, и ACCEPT из PostUp встанет выше запрета. Поэтому только
+    # enable: запрет поднимется вместе с awg0 (Requisite и WantedBy в юните).
+    if (( started )) && ! systemctl is-active --quiet awg-quick@awg0; then
+        log_warn "Сервис awg-quick@awg0 сейчас остановлен: запрет включён и встанет вместе с ним (sudo systemctl start awg-quick@awg0)."
+        _br_state
+        _br_json "$([[ $was_on == 1 ]] && echo false || echo true)"
+        return 0
+    fi
+    (( started )) && { systemctl restart "$_BR_UNIT" >&2 || started=0; }
+    if (( ! started )); then
         _JSON_ERR="block-ru unit failed to start"
         log_error "Запрет не включился. Подробности: journalctl -u awg-block-ru -n 30"
         if (( was_on == 0 )); then
