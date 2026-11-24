@@ -70,7 +70,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="7866d877a44989d6fcdbbe6c1402c10af32b4fa22d8e6db550ba579483e26162"
-MANAGE_SCRIPT_SHA256="6a421e80a3c595b6cdbc60a2876fb204342e2e4fadf1473161a9c60297add9f2"
+MANAGE_SCRIPT_SHA256="526da133fd7b0a5c2e2cd6e7d89a5a337ccf604403633e4d345a753a78a91f05"
 
 # Пин модуля для ядер старее 6.7 без готового пакета (H0, 31 jul 2026). Модуль
 # из PPA там не используется (см. _kernel_supports_awg3): модуль собирается из
