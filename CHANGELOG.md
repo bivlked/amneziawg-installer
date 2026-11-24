@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [6.3.10] - 2026-11-24
+
+**v6.3.10** - новая команда `manage block-ru` закрывает клиентам выход на российские IPv4-адреса, подсказка про Secure Boot сверяет ключ DKMS с подписью модуля, а `manage add` и `manage regen` собирают QR и `vpn://` под блокировкой конфига.
+
 ### Добавлено
 
 - **Новая команда `manage block-ru`: клиентам VPN можно закрыть выход на российские IPv4-адреса.** `block-ru on` включает запрет, `off` снимает, `update` сразу скачивает свежий список, без аргумента команда показывает состояние. Список российских сетей грузится в набор ipset, а правило REJECT стоит первым в FORWARD, поэтому клиент получает отказ сразу. Запрет переживает перезапуск сервиса, смену порта, `ufw reload` и перезагрузку. Список обновляется раз в неделю, свои адреса (например, сайты за зарубежным CDN) добавляются в `/root/awg/block-ru.extra`, пакет `ipset` команда ставит сама. Запрос из D#418, подробно в ADVANCED, раздел `#block-ru-adv`.
@@ -2380,7 +2384,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.9...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.10...HEAD
+[6.3.10]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.9...v6.3.10
 [6.3.9]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...v6.3.9
 [6.3.8]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...v6.3.8
 [6.3.7]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...v6.3.7

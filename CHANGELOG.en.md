@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.10] - 2026-11-24
+
+**v6.3.10** - a new `manage block-ru` command keeps VPN clients away from Russian IPv4 addresses, the Secure Boot hint checks the DKMS key against the module signature, and `manage add` and `manage regen` build QR and `vpn://` under the config lock.
+
 ### Added
 
 - **New command `manage block-ru`: VPN clients can be kept away from Russian IPv4 addresses.** `block-ru on` turns the block on, `off` removes it, `update` downloads a fresh list right away, and with no argument the command shows the state. The list of Russian networks goes into an ipset and the REJECT rule sits first in FORWARD, so a client is refused at once. The block survives a service restart, a port change, `ufw reload` and a reboot. The list is refreshed weekly, own addresses (for example, sites behind a foreign CDN) go to `/root/awg/block-ru.extra`, and the command installs the `ipset` package itself. Requested in D#418, details in ADVANCED, section `#block-ru-adv`.
@@ -2380,7 +2384,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.9...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.10...HEAD
+[6.3.10]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.9...v6.3.10
 [6.3.9]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...v6.3.9
 [6.3.8]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...v6.3.8
 [6.3.7]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...v6.3.7

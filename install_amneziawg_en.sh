@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on 32-bit ARM) installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 6.3.9
-# Date: 2026-11-23
+# Version: 6.3.10
+# Date: 2026-11-24
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -40,7 +40,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.9"
+SCRIPT_VERSION="6.3.10"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -71,8 +71,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="973c8d3c25a6c195d06b6a6be13e414bbb2c282c8e18030d832377a40b197023"
-MANAGE_SCRIPT_SHA256="0e8ecdf07c39dc0dccfffdc1b51fb5ea2816251f59588a0d9497e482785d9de1"
+COMMON_SCRIPT_SHA256="b3be36174d5783effcd7360b94b76b7e3be4b767b599e71e4e8c422c4cba21d4"
+MANAGE_SCRIPT_SHA256="b9a72960e51fd3210d776de94c6d27096143e43bd1e867822c37b96074320f66"
 
 # Module pin for kernels older than 6.7 with no prebuilt (H0, 31 jul 2026). The
 # PPA module is not used there (see _kernel_supports_awg3); the module is built
