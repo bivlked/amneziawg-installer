@@ -72,7 +72,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="b3be36174d5783effcd7360b94b76b7e3be4b767b599e71e4e8c422c4cba21d4"
-MANAGE_SCRIPT_SHA256="b9a72960e51fd3210d776de94c6d27096143e43bd1e867822c37b96074320f66"
+MANAGE_SCRIPT_SHA256="7a6eca5f0015bb9dac8a1f902fe0c8514d5b29bb50aaf827c140402dcbc41ba8"
 
 # Module pin for kernels older than 6.7 with no prebuilt (H0, 31 jul 2026). The
 # PPA module is not used there (see _kernel_supports_awg3); the module is built
@@ -5566,13 +5566,15 @@ create_diagnostic_report() {
             _br_active=$(systemctl is-active awg-block-ru 2>/dev/null || true)
             _br_enabled=$(systemctl is-enabled awg-block-ru 2>/dev/null || true)
             echo "unit awg-block-ru: active=${_br_active:-N/A}, enabled=${_br_enabled:-N/A}"
-            if _br_out=$(iptables -S FORWARD 2>&1); then
+            if _br_out=$(iptables -w -S FORWARD 2>&1); then
                 _br_pos=$(awk '/^-A / {n++} /match-set awg_block_ru/ {print n; exit}' <<< "$_br_out")
                 if [ -n "$_br_pos" ]; then echo "FORWARD rule: present, position ${_br_pos}"; else echo "FORWARD rule: absent"; fi
             else
                 echo "FORWARD rule: COULD NOT CHECK: $(head -1 <<< "$_br_out")"
             fi
-            if _br_out=$(ipset list awg_block_ru 2>&1); then
+            if ! command -v ipset >/dev/null 2>&1; then
+                echo "ipset: no such command (the ipset package is not installed)"
+            elif _br_out=$(ipset list awg_block_ru 2>&1); then
                 grep "Number of entries" <<< "$_br_out" || true
             else
                 echo "ipset awg_block_ru: no such set"
@@ -5657,8 +5659,11 @@ _uninstall_block_ru() {
     fi
     rm -f "${AWG_CRON_DIR:-/etc/cron.d}/awg-block-ru"
     # shellcheck disable=SC2086  # the rule is split into words on purpose
-    while (( n++ < 16 )) && iptables -C $rule 2>/dev/null; do iptables -D $rule 2>/dev/null || break; done
-    if command -v ipset >/dev/null 2>&1; then ipset destroy awg_block_ru >/dev/null 2>&1 || true; fi
+    while (( n++ < 16 )) && iptables -w -C $rule 2>/dev/null; do iptables -w -D $rule 2>/dev/null || break; done
+    if command -v ipset >/dev/null 2>&1; then
+        ipset destroy awg_block_ru >/dev/null 2>&1 || true
+        ipset destroy awg_block_ru_new >/dev/null 2>&1 || true
+    fi
 }
 
 step_uninstall() {
@@ -9600,8 +9605,9 @@ _awg_modprobe_hint() {
     signer="${signer:+ \"${signer}\"}"
     # The key file on disk is checked against the module signature by the
     # certificate serial number (sig_key in modinfo). A match - the exact command
-    # for that file; none matches - enrolling a file from the disk cannot help, a
-    # general advice; nothing to check with (no sig_key, openssl cannot read a
+    # for that file; all read and none matches - a separate "the key on disk is a
+    # different one" message with no command, only the signature number to look
+    # the right certificate up by; nothing to check with (no sig_key, openssl cannot read a
     # file) - the command with a caveat that names the unread file, not one that
     # already did not match.
     local cand want serial unread="" readable=""
@@ -9629,7 +9635,15 @@ _awg_modprobe_hint() {
     elif [[ -n "$want" && -n "$readable" && -z "$unread" ]]; then
         printf '%s' "$head The DKMS key on disk is a different one, not the key the module is signed with, so enrolling it will not help. Turn Secure Boot off in the UEFI settings or enroll in MOK the certificate of the key the module is signed with (its serial number: modinfo -F sig_key amneziawg).$tail"
     elif [[ -n "$check" ]]; then
-        printf '%s' "$head Turn Secure Boot off in the UEFI settings or enroll the DKMS key: sudo mokutil --import $check${how} This file could not be checked against the module signature, so before enrolling it make sure the number from openssl x509 -inform DER -in $check -noout -serial matches modinfo -F sig_key amneziawg: a foreign key widens what the kernel trusts, and the module still does not load.$tail"
+        # The file format is known only when it was read (with no sig_key there is
+        # nothing to compare): a PEM file is converted to DER as in the match branch.
+        local imp="$check" conv="" inform="-inform DER "
+        if [[ -z "$unread" ]] && ! openssl x509 -inform DER -in "$root$check" -noout >/dev/null 2>&1; then
+            imp=/root/dkms-mok.der
+            conv="sudo openssl x509 -in $check -outform DER -out $imp && "
+            inform=""
+        fi
+        printf '%s' "$head Turn Secure Boot off in the UEFI settings or enroll the DKMS key: ${conv}sudo mokutil --import $imp${how} This file could not be checked against the module signature, so before enrolling it make sure the number from openssl x509 ${inform}-in $check -noout -serial matches modinfo -F sig_key amneziawg (for a PEM file - without -inform DER): a foreign key widens what the kernel trusts, and the module still does not load.$tail"
     else
         printf '%s' "$head Turn Secure Boot off in the UEFI settings or enroll that key in MOK (mokutil --import).$tail"
     fi

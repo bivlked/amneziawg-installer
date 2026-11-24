@@ -521,3 +521,34 @@ STUB
     [ "$output" = "0" ]
 }
 @test "regen on 3.1 whose removal fails half way puts the whole previous set back" { _both _regen_31_removal_fails_set_back; }
+
+# regen of several clients where the first one fails its 3.1 set: the lock of
+# the failed one is released, the next client is regenerated, not refused.
+_regen_many_first_fails() {
+    local s="$1"
+    _gen 3.1
+    _m "$s" add alice
+    _ok
+    _m "$s" add bob
+    _ok
+    cat > "$TEST_DIR/bin/qrencode" << STUB
+#!/bin/bash
+out=""
+while [ \$# -gt 0 ]; do
+    case "\$1" in -o) out="\$2"; shift ;; esac
+    shift
+done
+in=\$(cat)
+[[ "\$in" == *"Address = 10.9.9.2/"* ]] && exit 1
+[ -n "\$out" ] && printf 'PNG' > "\$out"
+exit 0
+STUB
+    chmod +x "$TEST_DIR/bin/qrencode"
+    sed -i "s/^export AWG_ENDPOINT=.*/export AWG_ENDPOINT='203.0.113.9'/" "$A/awgsetup_cfg.init"
+    _m "$s" regen alice bob
+    _fail
+    grep -q '203.0.113.5' "$A/alice.conf" || { echo "alice: the previous set did not come back" >&2; return 1; }
+    grep -q '203.0.113.9' "$A/bob.conf" || { echo "bob was not regenerated" >&2; return 1; }
+    [[ "$output$stderr" != *"config lock"* && "$output$stderr" != *"блокировку конфига"* ]] || { echo "bob hit the lock" >&2; return 1; }
+}
+@test "regen of two clients, the first with an incomplete 3.1 set: the second is still regenerated" { _both _regen_many_first_fails; }

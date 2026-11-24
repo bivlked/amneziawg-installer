@@ -3882,12 +3882,13 @@ change_exit_ip() {
 
 # manage block-ru [status|on|off|update]: клиентам VPN закрыт выход на российские
 # IPv4-адреса (D#418). manage пишет помощник awg-block-ru.sh и юнит awg-block-ru,
-# привязанный к awg-quick@awg0 (PartOf + WantedBy): после каждого старта awg0
-# помощник ставит правило REJECT наверх FORWARD, выше ACCEPT из PostUp. Юнит НЕ
-# вызывает manage: exit-ip и port держат блокировку конфига, пока запускают
-# awg-quick, а старт awg-quick тянет этот юнит - вызов manage из юнита ждал бы ту
-# же блокировку. Старт юнита берёт список из кэша (сеть - только если кэша нет),
-# reload (cron раз в неделю, manage block-ru update) скачивает свежий.
+# привязанный к awg-quick@awg0 (PartOf + Requisite + WantedBy): после каждого
+# старта awg0 помощник ставит правило REJECT наверх FORWARD, выше ACCEPT из
+# PostUp. Юнит НЕ вызывает manage: exit-ip и port держат блокировку конфига, пока
+# запускают awg-quick, а старт awg-quick тянет этот юнит - вызов manage из юнита
+# ждал бы ту же блокировку. Старт юнита берёт список из кэша, а в сеть идёт,
+# только если кэша нет или он негоден. Свежий список скачивает update помощника:
+# по reload юнита (cron раз в неделю) и из manage block-ru update напрямую.
 _BR_UNIT=awg-block-ru.service
 _BR_SET=awg_block_ru
 _br_paths() {
@@ -3903,8 +3904,11 @@ _br_helper_text() {
 #!/bin/bash
 # Создан командой manage block-ru (amneziawg-installer); правки затрутся следующим
 # manage block-ru on. Свои сети и адреса - в block-ru.extra рядом, по одному на строку.
-# apply - список из кэша (скачать, только если кэша нет) и правило наверх FORWARD;
-# update - скачать свежий список и применить; stop - снять правило.
+# apply - список из кэша (скачать, только если кэша нет или он негоден) и правило
+# наверх FORWARD; update - скачать свежий список и применить; prefetch - только
+# скачать список, если его нет; stop - снять правило.
+# Коды: 0 - готово; 1 - ошибка; 3 - свежий список не скачался, действует прежний;
+# 4 - запрет выключен (manage block-ru off), ничего не сделано.
 set -u -o pipefail
 IF=awg0
 DIR='@@DIR@@'
@@ -3913,6 +3917,9 @@ EXTRA="$DIR/block-ru.extra"
 URLS="https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone https://raw.githubusercontent.com/bivlked/amneziawg-installer/v@@VER@@/cascade/ru.zone"
 SET=awg_block_ru
 RULE=(FORWARD -i "$IF" -m set --match-set "$SET" dst -j REJECT --reject-with icmp-admin-prohibited)
+# -w: на iptables-legacy занятая блокировка xtables без него читалась бы как
+# «правила нет».
+IPT=(iptables -w)
 NET='^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$'
 ONE='^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$'
 
@@ -3925,17 +3932,24 @@ fi
 # После manage block-ru off помощника на месте нет: запуск, дождавшийся
 # блокировки уже после off, ничего не возвращает.
 if [ "${1:-}" != stop ] && [ ! -e "$DIR/awg-block-ru.sh" ]; then
-    echo "Запрет выключен (manage block-ru off), ничего не делаю."
-    exit 0
+    echo "Запрет выключен (manage block-ru off), ничего не делаю." >&2
+    exit 4
 fi
 
-# Не меньше 1000 сетей, и каждая непустая строка без # - сеть IPv4.
+# Сети по строке на входе - так же строго, как их примет ipset: октеты 0-255,
+# префикс 1-32 (/0 закрыл бы клиентам весь интернет). Код 1 - есть негодная.
+strict() { awk -F'[./]' 'NF != 5 || $1 > 255 || $2 > 255 || $3 > 255 || $4 > 255 || $5 < 1 || $5 > 32 { bad = 1 } END { exit bad }'; }
+
+# Не меньше 1000 сетей, каждая непустая строка без # - сеть IPv4, и каждая
+# сеть годна для ipset: иначе такой список попал бы в кэш и после перезагрузки
+# не загружался бы никогда.
 list_ok() {
     local n bad
     n=$(grep -cE "$NET" "$1")
     bad=$(grep -vE "$NET" "$1" | grep -cvE '^[[:space:]]*(#.*)?$')
-    [ "$n" -ge 1000 ] && [ "$bad" -eq 0 ]
+    [ "$n" -ge 1000 ] && [ "$bad" -eq 0 ] && grep -E "$NET" "$1" | strict
 }
+cache_ok() { [ -s "$LIST" ] && list_ok "$LIST"; }
 
 fetch() {
     local url tmp
@@ -3943,13 +3957,13 @@ fetch() {
     for url in $URLS; do
         if curl -fsS --max-time 30 -o "$tmp" "$url"; then
             sed -i 's/\r$//' "$tmp"
-            if list_ok "$tmp"; then
-                if chmod 600 "$tmp" && mv -f "$tmp" "$LIST"; then
-                    echo "Список российских сетей взят: $url"
-                    return 0
-                fi
-            else
+            if ! list_ok "$tmp"; then
                 echo "Ответ $url не похож на список сетей, пропускаю." >&2
+            elif chmod 600 "$tmp" && mv -f "$tmp" "$LIST"; then
+                echo "Список российских сетей взят: $url"
+                return 0
+            else
+                echo "Список с $url не сохранился в $LIST." >&2
             fi
         else
             echo "Не скачалось: $url" >&2
@@ -3960,13 +3974,15 @@ fetch() {
 }
 
 extra_lines() {
-    local line
+    local line net
     [ -r "$EXTRA" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
         line=${line%%#*}
         line=${line//[[:space:]]/}
         [ -n "$line" ] || continue
-        if [[ "$line" =~ $ONE ]]; then
+        net=$line
+        [[ "$net" == */* ]] || net="$net/32"
+        if [[ "$line" =~ $ONE ]] && printf '%s\n' "$net" | strict; then
             printf '%s\n' "$line"
         else
             echo "В $EXTRA пропущена строка, это не адрес и не сеть IPv4: $line" >&2
@@ -3995,8 +4011,8 @@ load() {
 
 rule_off() {
     local n=0
-    while iptables -C "${RULE[@]}" 2> /dev/null; do
-        if (( ++n > 16 )) || ! iptables -D "${RULE[@]}"; then
+    while "${IPT[@]}" -C "${RULE[@]}" 2> /dev/null; do
+        if (( ++n > 16 )) || ! "${IPT[@]}" -D "${RULE[@]}"; then
             echo "ОШИБКА: правило $SET не снимается из FORWARD." >&2
             return 1
         fi
@@ -4006,16 +4022,16 @@ rule_off() {
 # Правило должно стоять первым: awg-quick при старте ставит наверх ACCEPT для
 # всего, что приходит из туннеля, и запрет ниже него не действует.
 rule_on() {
-    [ "$(iptables -S FORWARD 2> /dev/null | sed -n 2p)" = "-A ${RULE[*]}" ] && return 0
+    [ "$("${IPT[@]}" -S FORWARD 2> /dev/null | sed -n 2p)" = "-A ${RULE[*]}" ] && return 0
     rule_off || return 1
-    iptables -I "${RULE[@]}"
+    "${IPT[@]}" -I "${RULE[@]}"
 }
 
 count() { ipset list "$SET" 2> /dev/null | awk -F': ' '/^Number of entries/ {print $2; exit}'; }
 
-# Отказ не снимает запрет: restart юнита уже убрал правило (ExecStop), поэтому
-# при непустом наборе в памяти оно возвращается на нём, а запуск всё равно
-# завершается ошибкой.
+# Отказ не снимает запрет. При restart юнита ExecStop уже убрал правило, при
+# update оно на месте; в обоих случаях при непустом наборе в памяти правило
+# стоит на нём, а запуск всё равно завершается ошибкой.
 fail() {
     if [ "$(count)" -gt 0 ] 2> /dev/null && rule_on; then
         echo "ОШИБКА: $1, запрет держится на прежнем наборе." >&2
@@ -4025,30 +4041,47 @@ fail() {
     exit 1
 }
 
-rc=0
+rc=0 fetched=0
 case "${1:-}" in
     apply)
-        if ! { [ -s "$LIST" ] && list_ok "$LIST"; }; then
+        if ! cache_ok; then
             fetch || fail "списка российских сетей нет и он не скачался"
+            fetched=1
         fi
         ;;
     update)
-        if ! fetch; then
-            { [ -s "$LIST" ] && list_ok "$LIST"; } || fail "свежий список не скачался, а прежнего нет"
+        if fetch; then
+            fetched=1
+        else
+            cache_ok || fail "свежий список не скачался, а прежнего нет"
             echo "Свежий список не скачался, действует прежний." >&2
             rc=3
         fi
+        ;;
+    prefetch)
+        if ! cache_ok && ! fetch; then
+            echo "ОШИБКА: списка российских сетей нет и он не скачался." >&2
+            exit 1
+        fi
+        exit 0
         ;;
     stop)
         rule_off
         exit
         ;;
     *)
-        echo "Использование: $0 apply|update|stop" >&2
+        echo "Использование: $0 apply|update|prefetch|stop" >&2
         exit 2
         ;;
 esac
-load || fail "набор $SET не загрузился"
+# Список прошёл проверку, но ipset его не принял: один раз взять свежий.
+if ! load; then
+    if (( fetched == 0 )) && fetch; then
+        load || fail "набор $SET не загрузился"
+    else
+        fail "набор $SET не загрузился"
+    fi
+fi
 if ! rule_on; then
     echo "ОШИБКА: правило в FORWARD не встало, запрет НЕ действует." >&2
     exit 1
@@ -4070,7 +4103,8 @@ Requisite=awg-quick@awg0.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-TimeoutStartSec=180
+TimeoutStartSec=300
+TimeoutStopSec=150
 ExecStart=$_BR_HELPER apply
 ExecReload=$_BR_HELPER update
 ExecStop=$_BR_HELPER stop
@@ -4080,7 +4114,9 @@ WantedBy=awg-quick@awg0.service
 UNIT
 }
 
-# Пишет помощник, юнит и cron атомарно (временный файл + mv).
+# Пишет помощник, юнит и cron атомарно (временный файл + mv). cron делает
+# reload-or-restart: юнит, у которого не удался прошлый старт (сети не было),
+# поднимется, а не откажет, как откажет reload неактивного.
 _br_write_files() {
     local t min
     t=$(mktemp "$AWG_DIR/.awg-block-ru.XXXXXX") || return 1
@@ -4097,7 +4133,7 @@ _br_write_files() {
     # Минута случайная: серверы не идут за списком в одну и ту же секунду.
     min=$(( RANDOM % 60 ))
     t=$(mktemp "${_BR_CRON%/*}/.awg-block-ru.XXXXXX") || return 1
-    if ! { printf '# manage block-ru: свежий список российских сетей раз в неделю\n%s 4 * * 1 root systemctl reload %s\n' "$min" "$_BR_UNIT" > "$t" \
+    if ! { printf '# manage block-ru: свежий список российских сетей раз в неделю\n%s 4 * * 1 root systemctl is-active --quiet awg-quick@awg0 && systemctl reload-or-restart %s\n' "$min" "$_BR_UNIT" > "$t" \
             && chmod 644 "$t" && mv -f "$t" "$_BR_CRON"; }; then
         rm -f "$t"
         return 1
@@ -4130,9 +4166,9 @@ _br_rule_drain() {
     local n=0 r
     r=$(_br_rule)
     # shellcheck disable=SC2086  # правило намеренно делится на слова
-    while iptables -C $r 2> /dev/null; do
+    while iptables -w -C $r 2> /dev/null; do
         # shellcheck disable=SC2086
-        if (( ++n > 16 )) || ! iptables -D $r; then
+        if (( ++n > 16 )) || ! iptables -w -D $r; then
             log_error "Правило $_BR_SET не снимается из FORWARD: iptables -D $r"
             return 1
         fi
@@ -4153,40 +4189,56 @@ _br_need_ipset() {
     return 1
 }
 
-# Заполняет _br_en, _br_act, _br_rule (true/false) и _br_n (число сетей в наборе).
+# Заполняет _br_en, _br_act, _br_rule, _br_first, _br_force (true/false), _br_n
+# (число сетей в наборе) и _br_why (почему включённый запрет не действует).
+# Действует запрет, только если всё сразу: юнит включён и запущен, правило есть
+# и стоит первым, набор не пуст.
 _br_state() {
-    _br_en=false; _br_act=false; _br_rule=false; _br_first=false; _br_n=0
+    _br_en=false; _br_act=false; _br_rule=false; _br_first=false; _br_force=false; _br_n=0; _br_why=""
     if [[ -f "$_BR_UNIT_FILE" ]] && systemctl is-enabled "$_BR_UNIT" > /dev/null 2>&1; then _br_en=true; fi
     if systemctl is-active --quiet "$_BR_UNIT" 2> /dev/null; then _br_act=true; fi
     # shellcheck disable=SC2046  # правило намеренно делится на слова
-    if command -v iptables > /dev/null 2>&1 && iptables -C $(_br_rule) 2> /dev/null; then _br_rule=true; fi
+    if command -v iptables > /dev/null 2>&1 && iptables -w -C $(_br_rule) 2> /dev/null; then _br_rule=true; fi
     # Правило есть, но не первое: ACCEPT из PostUp выше него пропускает клиентов.
-    _br_first=false
-    if [[ "$_br_rule" == true && "$(iptables -S FORWARD 2> /dev/null | sed -n 2p)" == "-A $(_br_rule)" ]]; then _br_first=true; fi
+    if [[ "$_br_rule" == true && "$(iptables -w -S FORWARD 2> /dev/null | sed -n 2p)" == "-A $(_br_rule)" ]]; then _br_first=true; fi
     if command -v ipset > /dev/null 2>&1; then
         _br_n=$(ipset list "$_BR_SET" 2> /dev/null | awk -F': ' '/^Number of entries/ {print $2; exit}')
     fi
     [[ "$_br_n" =~ ^[0-9]+$ ]] || _br_n=0
+    if [[ "$_br_en" != true ]]; then
+        return 0
+    elif ! systemctl is-active --quiet awg-quick@awg0 2> /dev/null; then
+        _br_why="сервис awg-quick@awg0 остановлен, запрет встанет вместе с ним (sudo systemctl start awg-quick@awg0)"
+    elif [[ "$_br_act" != true ]]; then
+        _br_why="юнит awg-block-ru не запущен или его прошлый запуск не удался (journalctl -u awg-block-ru -n 30). Поднять: sudo systemctl restart awg-block-ru"
+    elif [[ "$_br_rule" != true ]]; then
+        _br_why="правила в FORWARD нет. Вернуть: sudo systemctl restart awg-block-ru"
+    elif [[ "$_br_first" != true ]]; then
+        _br_why="правило стоит в FORWARD не первым, и правило выше него пропускает клиентов. Вернуть наверх: sudo systemctl restart awg-block-ru"
+    elif (( _br_n == 0 )); then
+        _br_why="набор $_BR_SET пуст. Загрузить: sudo systemctl restart awg-block-ru"
+    else
+        _br_force=true
+    fi
 }
 _br_json() {
-    json_out "{\"command\":\"block-ru\",\"ok\":true,\"enabled\":${_br_en},\"active\":${_br_act},\"rule\":${_br_rule},\"rule_first\":${_br_first},\"networks\":${_br_n},\"changed\":$1}"
+    json_out "{\"command\":\"block-ru\",\"ok\":true,\"enabled\":${_br_en},\"in_force\":${_br_force},\"active\":${_br_act},\"rule\":${_br_rule},\"rule_first\":${_br_first},\"networks\":${_br_n},\"changed\":$1}"
 }
 
 _block_ru_status() {
     _br_state
-    if [[ "$_br_en" == true ]]; then
-        log "Запрет выхода клиентов на российские адреса: включён, сетей в наборе: ${_br_n}."
-        if [[ "$_br_rule" != true ]]; then
-            log_warn "Правила в FORWARD нет, запрет не действует (обычно, когда awg0 остановлен): systemctl status awg-block-ru"
-        elif [[ "$_br_first" != true ]]; then
-            log_warn "Правило запрета стоит в FORWARD не первым, и правило выше него пропускает клиентов. Вернуть наверх: systemctl restart awg-block-ru"
-        fi
+    if [[ "$_br_force" == true ]]; then
+        log "Запрет выхода клиентов на российские адреса: включён и действует, сетей в наборе: ${_br_n}."
+    elif [[ "$_br_en" == true ]]; then
+        log_warn "Запрет выхода клиентов на российские адреса включён, но НЕ действует: ${_br_why}"
     else
         log "Запрет выхода клиентов на российские адреса: выключен (включить: manage block-ru on)."
     fi
     _br_json false
 }
 
+# on на сервере, где запрет уже был, при сбое старта прежнее не снимает: файлы
+# остаются, а помощник держит правило на наборе в памяти (fail).
 _block_ru_on() {
     local was_on=0 v6 dns d
     [[ -f "$_BR_UNIT_FILE" ]] && was_on=1
@@ -4211,10 +4263,16 @@ _block_ru_on() {
     systemctl daemon-reload >&2 || true
     local started=1
     systemctl enable "$_BR_UNIT" >&2 || started=0
-    # awg0 остановлен: юнит, запущенный сейчас, при старте awg0 уже не
-    # перезапустится, и ACCEPT из PostUp встанет выше запрета. Поэтому только
-    # enable: запрет поднимется вместе с awg0 (Requisite и WantedBy в юните).
+    # awg0 остановлен: юнит с Requisite=awg-quick@awg0 сейчас не запустится, он
+    # поднимется вместе с awg0. Список скачивается уже сейчас: при старте awg0
+    # (часто это загрузка сервера) сети может ещё не быть, и запрет не встал бы.
     if (( started )) && ! systemctl is-active --quiet awg-quick@awg0; then
+        if ! "$_BR_HELPER" prefetch >&2; then
+            _JSON_ERR="list of Russian networks not downloaded"
+            log_error "Список российских сетей не скачался, запрет не включён. Проверьте доступ сервера к ipdeny.com и raw.githubusercontent.com и повторите."
+            (( was_on == 0 )) && _br_remove_files
+            return 1
+        fi
         log_warn "Сервис awg-quick@awg0 сейчас остановлен: запрет включён и встанет вместе с ним (sudo systemctl start awg-quick@awg0)."
         _br_state
         _br_json "$([[ $was_on == 1 ]] && echo false || echo true)"
@@ -4232,8 +4290,8 @@ _block_ru_on() {
         return 1
     fi
     _br_state
-    if [[ "$_br_rule" != true ]]; then
-        log_warn "Юнит запущен, но правила в FORWARD нет: systemctl status awg-block-ru"
+    if [[ "$_br_force" != true ]]; then
+        log_warn "Юнит запущен, но запрет НЕ действует: ${_br_why}"
     fi
     v6=$(ALLOW_IPV6_TUNNEL=""; safe_load_config "$CONFIG_FILE" > /dev/null 2>&1; printf '%s' "${ALLOW_IPV6_TUNNEL:-0}")
     if grep -E '^[[:space:]]*Address[[:space:]]*=' "$SERVER_CONF_FILE" | grep -q ':'; then v6=1; fi
@@ -4259,7 +4317,7 @@ _block_ru_off() {
     # shellcheck disable=SC2046  # правило намеренно делится на слова
     if [[ ! -f "$_BR_UNIT_FILE" && ! -f "$_BR_CRON" && ! -f "$_BR_HELPER" ]] \
         && ! ipset list "$_BR_SET" > /dev/null 2>&1 \
-        && ! iptables -C $(_br_rule) 2> /dev/null; then
+        && ! iptables -w -C $(_br_rule) 2> /dev/null; then
         log "Запрет выхода на российские адреса и так выключен."
         _br_state; _br_json false
         return 0
@@ -4275,6 +4333,8 @@ _block_ru_off() {
         log_warn "Набор $_BR_SET не удалился (на него ещё ссылается правило?): ipset destroy $_BR_SET"
         rc=1
     fi
+    # Временный набор остаётся, если помощника прервали посреди загрузки.
+    ipset destroy "${_BR_SET}_new" 2> /dev/null || true
     if (( rc != 0 )); then
         _JSON_ERR="block-ru removed incompletely"
         return 1
@@ -4284,6 +4344,7 @@ _block_ru_off() {
     _br_state; _br_json true
 }
 
+# Помощник запускается напрямую, а не через reload: так его вывод виден здесь.
 _block_ru_update() {
     local rc=0
     if [[ ! -f "$_BR_UNIT_FILE" || ! -x "$_BR_HELPER" ]]; then
@@ -4293,16 +4354,20 @@ _block_ru_update() {
     fi
     if ! systemctl is-active --quiet "$_BR_UNIT"; then
         _JSON_ERR="block-ru unit is not active"
-        log_error "Юнит awg-block-ru не активен (обычно, когда awg0 остановлен): systemctl status awg-block-ru"
+        log_error "Юнит awg-block-ru не активен: awg0 остановлен или прошлый запуск помощника не удался (journalctl -u awg-block-ru -n 30). Поднять: sudo systemctl restart awg-block-ru"
         return 1
     fi
     "$_BR_HELPER" update >&2 || rc=$?
     case "$rc" in
         0) log "Список российских сетей обновлён." ;;
         3) log_warn "Свежий список не скачался, действует прежний." ;;
+        4)
+            _JSON_ERR="block-ru is off"
+            log_error "Запрет выключили, пока шло обновление: обновлять нечего."
+            return 1 ;;
         *)
             _JSON_ERR="block-ru update failed"
-            log_error "Обновить запрет не удалось: journalctl -u awg-block-ru -n 30"
+            log_error "Обновить запрет не удалось (подробности выше)."
             return 1 ;;
     esac
     _br_state; _br_json "$([[ $rc == 0 ]] && echo true || echo false)"
@@ -4310,6 +4375,11 @@ _block_ru_update() {
 
 block_ru_cmd() {
     _br_paths
+    if (( $# > 1 )); then
+        _JSON_ERR="too many block-ru arguments"
+        log_error "block-ru принимает один аргумент (status, on, off или update), получено: $*"
+        return 1
+    fi
     case "${1:-status}" in
         status) _block_ru_status ;;
         on)     _block_ru_on ;;
@@ -4894,7 +4964,7 @@ case $COMMAND in
         change_server_port "$CLIENT_NAME" || exit 1
         ;;
     block-ru)
-        block_ru_cmd "$CLIENT_NAME" || _cmd_rc=1
+        block_ru_cmd "${ARGS[@]}" || _cmd_rc=1
         ;;
     restart)
         log "Перезапуск сервиса..."

@@ -29,7 +29,7 @@ make_list() {
 
 setup_block_env() {
     # each_manage runs both scripts in one test: no stub switch carries over.
-    unset STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL
+    unset STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE
     MGMT_DIR=$(mktemp -d)
     mkdir -p "$MGMT_DIR/bin" "$MGMT_DIR/awg/keys" "$MGMT_DIR/systemd" "$MGMT_DIR/cron" "$MGMT_DIR/web"
     export CALLS="$MGMT_DIR/calls"; : > "$CALLS"
@@ -49,7 +49,7 @@ run_exec() {
     local line
     line=$(sed -n "s/^$1=//p" "$unit" | head -1)
     [[ -n "$line" ]] || return 1
-    eval "$line"
+    timeout 10 bash -c "$line"
 }
 case "$1" in
     is-enabled) [[ -e "$CALLS.enabled" ]] && { echo enabled; exit 0; }; echo disabled; exit 1 ;;
@@ -61,7 +61,10 @@ case "$1" in
     daemon-reload) exit 0 ;;
     enable)  [[ -e "$unit" ]] || exit 1; : > "$CALLS.enabled" ;;
     disable) rm -f "$CALLS.enabled"
-             if [[ " $* " == *" --now "* && -e "$CALLS.active" ]]; then run_exec ExecStop; rm -f "$CALLS.active"; fi ;;
+             if [[ " $* " == *" --now "* && -e "$CALLS.active" ]]; then
+                 rm -f "$CALLS.active"
+                 run_exec ExecStop || exit 1
+             fi ;;
     start|restart)
         [[ "$*" == *awg-block-ru* ]] || exit 0
         [[ -n "${STUB_START_FAIL:-}" ]] && exit 1
@@ -78,13 +81,15 @@ STUB
 #!/bin/bash
 echo "iptables $*" >> "$CALLS.ipt"
 F="$CALLS.fw"; touch "$F"
+[[ "$1" == -w ]] && shift
 op="$1"; shift
 case "$op" in
     -C) grep -qxF -- "$*" "$F" ;;
     -I) [[ -n "${STUB_IPT_I_FAIL:-}" ]] && exit 1
         { echo "$*"; cat "$F"; } > "$F.n"; mv "$F.n" "$F" ;;
     -A) echo "$*" >> "$F" ;;
-    -D) n=$(grep -nxF -- "$*" "$F" | head -1 | cut -d: -f1)
+    -D) if [[ $# -eq 2 && "$2" =~ ^[0-9]+$ ]]; then sed -i "${2}d" "$F"; exit; fi
+        n=$(grep -nxF -- "$*" "$F" | head -1 | cut -d: -f1)
         [[ -n "$n" ]] || exit 1
         sed -i "${n}d" "$F" ;;
     -S) echo "-P FORWARD DROP"; sed 's/^/-A /' "$F" ;;
@@ -102,6 +107,7 @@ case "$1" in
     swap)    [[ -e "$S/$2" && -e "$S/$3" ]] || exit 1
              mv "$S/$2" "$S/.t"; mv "$S/$3" "$S/$2"; mv "$S/.t" "$S/$3" ;;
     restore) if [[ -n "${STUB_IPSET_RESTORE_FAIL:-}" ]]; then cat > /dev/null; exit 1; fi
+             if [[ -e "$CALLS.restore_fail_once" ]]; then rm -f "$CALLS.restore_fail_once"; cat > /dev/null; exit 1; fi
              while read -r a n v; do
                  [[ "$a" == add && -e "$S/$n" ]] || { echo "restore: bad line '$a $n $v'" >&2; exit 1; }
                  echo "$v" >> "$S/$n"
@@ -138,6 +144,8 @@ STUB
 #!/bin/bash
 echo "apt-get $*" >> "$CALLS.apt"
 [[ -n "${STUB_APT_FAIL:-}" ]] && exit 100
+[[ "$1" == update ]] && : > "$CALLS.apt_updated"
+[[ -n "${STUB_APT_NEEDS_UPDATE:-}" && " $* " == *" install "* && ! -e "$CALLS.apt_updated" ]] && exit 100
 [[ " $* " == *" install "* ]] && cp "$STUB_IPSET_REAL" "$(dirname "$0")/ipset"
 exit 0
 STUB
@@ -168,7 +176,7 @@ CONF
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
     unset AWG_SKIP_APPLY CALLS STUB_WEB AWG_SYSTEMD_DIR AWG_CRON_DIR STUB_START_FAIL STUB_IPT_I_FAIL \
-        STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL
+        STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE
 }
 
 manage() {
@@ -209,7 +217,7 @@ _on_writes_and_applies() {
     unit | grep -qxF "Requisite=awg-quick@awg0.service" || { echo "$1: Requisite"; return 1; }
     unit | grep -qxF "WantedBy=awg-quick@awg0.service" || { echo "$1: WantedBy"; return 1; }
     unit | grep -qxF "After=awg-quick@awg0.service network-online.target" || { echo "$1: After"; return 1; }
-    grep -qE '^[0-9]{1,2} 4 \* \* 1 root systemctl reload awg-block-ru\.service$' "$AWG_CRON_DIR/awg-block-ru" \
+    grep -qE '^[0-9]{1,2} 4 \* \* 1 root systemctl is-active --quiet awg-quick@awg0 && systemctl reload-or-restart awg-block-ru\.service$' "$AWG_CRON_DIR/awg-block-ru" \
         || { echo "$1: cron: $(cat "$AWG_CRON_DIR/awg-block-ru" 2>&1)"; return 1; }
     grep -qxF "systemctl enable awg-block-ru.service" "$CALLS" || { echo "$1: not enabled: $(cat "$CALLS")"; return 1; }
     # The rule is on top of FORWARD, once, and the set holds the whole list.
@@ -340,6 +348,8 @@ _off_removes() {
     manage "$1" block-ru off
     [ "$status" -eq 0 ] || { echo "$1: off failed: $stderr"; return 1; }
     grep -qF "systemctl disable --now awg-block-ru.service" "$CALLS" || { echo "$1: no disable --now"; return 1; }
+    # ExecStop ran and succeeded: manage took the helper lock only after it.
+    [[ "$stderr" != *"disable --now awg-block-ru.service"* ]] || { echo "$1: ExecStop failed: $stderr"; return 1; }
     [ "$(fw | grep -cF awg_block_ru)" = "0" ] || { echo "$1: rule left: $(fw)"; return 1; }
     [ ! -e "$CALLS.sets/$SET" ] || { echo "$1: set left"; return 1; }
     local f
@@ -375,6 +385,7 @@ _status() {
     [ "$(jq -r '.active' <<< "$output")" = "true" ] || return 1
     [ "$(jq -r '.rule' <<< "$output")" = "true" ] || return 1
     [ "$(jq -r '.networks' <<< "$output")" = "1200" ] || return 1
+    [ "$(jq -r '.in_force' <<< "$output")" = "true" ] || { echo "$1: '$output'"; return 1; }
 }
 @test "block-ru status: off and then on, as JSON" {
     command -v jq >/dev/null || skip "jq not available"
@@ -600,14 +611,21 @@ _uninstall_block_ru() {
 # ---------- review round: start order, failed reload, off against update ----------
 
 _on_awg_down() {
+    local json
     export STUB_AWG_DOWN=1
     manage "$1" block-ru on --json
     [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    json=$output
     [ -e "$CALLS.enabled" ] || { echo "$1: not enabled"; return 1; }
     run grep -c "systemctl restart awg-block-ru" "$CALLS"
     [ "$output" = "0" ] || { echo "$1: started while awg0 is down"; return 1; }
     [ "$(fw | grep -cF awg_block_ru)" = "0" ] || return 1
     [[ "$stderr" == *"awg0"* ]] || { echo "$1: no word on awg0: $stderr"; return 1; }
+    [ "$(grep -c . "$MGMT_DIR/awg/block-ru.zone")" = "1200" ] || { echo "$1: the list was not downloaded now"; return 1; }
+    [ "$(jq -r '.in_force' <<< "$json")" = "false" ] || { echo "$1: in force with awg0 down: $json"; return 1; }
+    manage "$1" block-ru --json
+    [ "$(jq -r '.in_force' <<< "$output")" = "false" ] || return 1
+    [[ "$stderr" == *"awg-quick@awg0"* ]] || { echo "$1: status names no reason: $stderr"; return 1; }
 }
 @test "block-ru on while awg0 is stopped: enabled, not started, the block comes with awg0" {
     command -v jq >/dev/null || skip "jq not available"
@@ -660,7 +678,7 @@ _helper_after_off() {
     cp "$MGMT_DIR/awg/awg-block-ru.sh" "$MGMT_DIR/copy.sh"
     rm -f "$MGMT_DIR/awg/awg-block-ru.sh"
     run --separate-stderr "$MGMT_DIR/copy.sh" update
-    [ "$status" -eq 0 ] || { echo "$1: rc $status"; return 1; }
+    [ "$status" -eq 4 ] || { echo "$1: rc $status, want 4"; return 1; }
     [ "$(fw | grep -cF awg_block_ru)" = "0" ] || { echo "$1: a run after off put the rule back"; return 1; }
     [ ! -e "$CALLS.sets/$SET" ] || { echo "$1: a run after off created the set"; return 1; }
 }
@@ -698,4 +716,158 @@ _off_without_lock() {
 }
 @test "block-ru off cannot take the helper lock: it stops before removing anything and says to repeat" {
     each_manage _off_without_lock
+}
+
+# ---------- review round 3 ----------
+
+# A list that passes the shape check but has a network ipset refuses would go
+# to the cache and never load after a reboot: it is refused at download.
+_strict_list() {
+    local bad
+    for bad in '300.1.2.0/24' '10.0.0.0/0' '10.0.0.0/33' '1.2.3.256/24'; do
+        make_list "$STUB_WEB/ru-aggregated.zone" 1200
+        on_then "$1" || return 1
+        make_list "$STUB_WEB/ru-aggregated.zone" 1200
+        echo "$bad" >> "$STUB_WEB/ru-aggregated.zone"
+        rm -f "$STUB_WEB/ru.zone"
+        helper apply
+        [ "$status" -ne 0 ] || { echo "$1: '$bad' accepted"; return 1; }
+        [ ! -e "$MGMT_DIR/awg/block-ru.zone" ] || { echo "$1: '$bad' went to the cache"; return 1; }
+    done
+}
+@test "helper: a list with an octet over 255 or a prefix of 0 or over 32 is refused and not cached" {
+    each_manage _strict_list
+}
+
+_strict_extra() {
+    on_then "$1" || return 1
+    printf '203.0.113.0/24\n300.1.1.1\n10.0.0.0/0\n10.1.0.0/33\n' > "$MGMT_DIR/awg/block-ru.extra"
+    helper apply
+    [ "$status" -eq 0 ] || return 1
+    [ "$(set_size $SET)" = "1201" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    local l
+    for l in 300.1.1.1 10.0.0.0/0 10.1.0.0/33; do
+        [[ "$stderr" == *"$l"* ]] || { echo "$1: '$l' not named"; return 1; }
+    done
+}
+@test "helper: own networks with a bad octet or prefix are skipped and named" {
+    each_manage _strict_extra
+}
+
+_refetch_after_failed_load() {
+    on_then "$1" || return 1
+    make_list "$MGMT_DIR/awg/block-ru.zone" 1050
+    : > "$CALLS.restore_fail_once"
+    : > "$CALLS.curl"
+    helper apply
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ -s "$CALLS.curl" ] || { echo "$1: no fresh download after a failed load"; return 1; }
+    [ "$(set_size $SET)" = "1200" ] || return 1
+    [ "$(fw | head -1)" = "$RULE" ] || return 1
+}
+@test "helper apply: the cached list does not load - a fresh one is downloaded once and loaded" {
+    each_manage _refetch_after_failed_load
+}
+
+_on_awg_down_no_list() {
+    export STUB_AWG_DOWN=1
+    rm -f "$STUB_WEB"/*
+    manage "$1" block-ru on
+    [ "$status" -ne 0 ] || { echo "$1: on succeeded with no list"; return 1; }
+    [ ! -e "$AWG_SYSTEMD_DIR/awg-block-ru.service" ] || { echo "$1: unit left"; return 1; }
+    [ ! -e "$CALLS.enabled" ] || return 1
+}
+@test "block-ru on while awg0 is stopped and no list can be downloaded: refused, nothing left" {
+    each_manage _on_awg_down_no_list
+}
+
+_update_inactive() {
+    manage "$1" block-ru on
+    [ "$status" -eq 0 ] || return 1
+    rm -f "$CALLS.active"
+    : > "$CALLS.curl"
+    manage "$1" block-ru update
+    [ "$status" -ne 0 ] || return 1
+    [ ! -s "$CALLS.curl" ] || { echo "$1: downloaded with the unit inactive"; return 1; }
+    [[ "$stderr" == *"systemctl restart awg-block-ru"* ]] || { echo "$1: no way out: $stderr"; return 1; }
+}
+@test "block-ru update with the unit not running: refused with the way to bring it up" {
+    each_manage _update_inactive
+}
+
+_update_kept_old() {
+    manage "$1" block-ru on
+    [ "$status" -eq 0 ] || return 1
+    rm -f "$STUB_WEB"/*
+    manage "$1" block-ru update --json
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ "$(jq -r '.changed' <<< "$output")" = "false" ] || { echo "$1: '$output'"; return 1; }
+    [ "$(jq -r '.in_force' <<< "$output")" = "true" ] || return 1
+    [ "$(set_size $SET)" = "1200" ] || return 1
+}
+@test "block-ru update: nothing downloaded - success with changed false, the previous list in force" {
+    command -v jq >/dev/null || skip "jq not available"
+    each_manage _update_kept_old
+}
+
+_reon_fails_keeps_block() {
+    manage "$1" block-ru on
+    [ "$status" -eq 0 ] || return 1
+    rm -f "$STUB_WEB"/* "$MGMT_DIR/awg/block-ru.zone"
+    manage "$1" block-ru on
+    [ "$status" -ne 0 ] || { echo "$1: second on succeeded with no list"; return 1; }
+    local f
+    for f in "$AWG_SYSTEMD_DIR/awg-block-ru.service" "$AWG_CRON_DIR/awg-block-ru" "$MGMT_DIR/awg/awg-block-ru.sh"; do
+        [ -e "$f" ] || { echo "$1: $f removed by a failed second on"; return 1; }
+    done
+    [ -e "$CALLS.enabled" ] || return 1
+    [ "$(fw | head -1)" = "$RULE" ] || { echo "$1: the block was lifted: $(fw)"; return 1; }
+    [ "$(set_size $SET)" = "1200" ] || return 1
+}
+@test "block-ru on again on a server where it is on: a failed start keeps the block and the files" {
+    each_manage _reon_fails_keeps_block
+}
+
+_off_drains_leftover() {
+    printf '%s\n%s\n' "$RULE" "$RULE" > "$CALLS.fw"
+    mkdir -p "$CALLS.sets"; echo "192.0.2.0/24" > "$CALLS.sets/$SET"
+    manage "$1" block-ru off --json
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ "$(fw | grep -cF awg_block_ru)" = "0" ] || { echo "$1: rule left: $(fw)"; return 1; }
+    [ ! -e "$CALLS.sets/$SET" ] || return 1
+    [ "$(jq -r '.changed' <<< "$output")" = "true" ] || return 1
+}
+@test "block-ru off with no files but a leftover rule and set: both are removed" {
+    command -v jq >/dev/null || skip "jq not available"
+    each_manage _off_drains_leftover
+}
+
+_apt_retry() {
+    mv "$MGMT_DIR/bin/ipset" "$MGMT_DIR/ipset.real"
+    export STUB_IPSET_REAL="$MGMT_DIR/ipset.real" STUB_APT_NEEDS_UPDATE=1
+    manage "$1" block-ru on
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ "$(awk '{print ($2 == "update") ? "update" : "install"}' "$CALLS.apt" | paste -sd' ' -)" = "install update install" ] \
+        || { echo "$1: apt calls: $(cat "$CALLS.apt")"; return 1; }
+    [ "$(fw | head -1)" = "$RULE" ] || return 1
+}
+@test "block-ru on: ipset install fails on stale lists - apt-get update, then the install goes through" {
+    each_manage _apt_retry
+}
+
+_extra_args() {
+    manage "$1" block-ru on off
+    [ "$status" -ne 0 ] || return 1
+    [ ! -e "$CALLS.enabled" ] || { echo "$1: 'on off' turned it on"; return 1; }
+}
+@test "block-ru with two arguments: refused, nothing done" {
+    each_manage _extra_args
+}
+
+@test "the uninstall rule in both installers is the rule manage puts in" {
+    local f r
+    for f in install_amneziawg.sh install_amneziawg_en.sh; do
+        r=$(sed -n 's/^    local rule="\(.*\)"$/\1/p' "$BATS_TEST_DIRNAME/../$f")
+        [ "$r" = "$RULE" ] || { echo "$f: '$r'"; return 1; }
+    done
 }

@@ -70,7 +70,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="7866d877a44989d6fcdbbe6c1402c10af32b4fa22d8e6db550ba579483e26162"
-MANAGE_SCRIPT_SHA256="38fa49ab0a1cfa6ba485fdea1cdc98021017398feaff1789e91a06f232e225c8"
+MANAGE_SCRIPT_SHA256="c277bd807e77700c72d3d474997d0897cb76bc61a3b3dd2134bc93dce04c9f53"
 
 # Пин модуля для ядер старее 6.7 без готового пакета (H0, 31 jul 2026). Модуль
 # из PPA там не используется (см. _kernel_supports_awg3): модуль собирается из
@@ -5449,13 +5449,15 @@ create_diagnostic_report() {
             _br_active=$(systemctl is-active awg-block-ru 2>/dev/null || true)
             _br_enabled=$(systemctl is-enabled awg-block-ru 2>/dev/null || true)
             echo "unit awg-block-ru: active=${_br_active:-N/A}, enabled=${_br_enabled:-N/A}"
-            if _br_out=$(iptables -S FORWARD 2>&1); then
+            if _br_out=$(iptables -w -S FORWARD 2>&1); then
                 _br_pos=$(awk '/^-A / {n++} /match-set awg_block_ru/ {print n; exit}' <<< "$_br_out")
                 if [ -n "$_br_pos" ]; then echo "правило FORWARD: есть, позиция ${_br_pos}"; else echo "правило FORWARD: нет"; fi
             else
                 echo "правило FORWARD: ПРОВЕРИТЬ НЕ УДАЛОСЬ: $(head -1 <<< "$_br_out")"
             fi
-            if _br_out=$(ipset list awg_block_ru 2>&1); then
+            if ! command -v ipset >/dev/null 2>&1; then
+                echo "ipset: команды нет (пакет ipset не установлен)"
+            elif _br_out=$(ipset list awg_block_ru 2>&1); then
                 grep "Number of entries" <<< "$_br_out" || true
             else
                 echo "ipset awg_block_ru: набора нет"
@@ -5540,8 +5542,11 @@ _uninstall_block_ru() {
     fi
     rm -f "${AWG_CRON_DIR:-/etc/cron.d}/awg-block-ru"
     # shellcheck disable=SC2086  # правило намеренно делится на слова
-    while (( n++ < 16 )) && iptables -C $rule 2>/dev/null; do iptables -D $rule 2>/dev/null || break; done
-    if command -v ipset >/dev/null 2>&1; then ipset destroy awg_block_ru >/dev/null 2>&1 || true; fi
+    while (( n++ < 16 )) && iptables -w -C $rule 2>/dev/null; do iptables -w -D $rule 2>/dev/null || break; done
+    if command -v ipset >/dev/null 2>&1; then
+        ipset destroy awg_block_ru >/dev/null 2>&1 || true
+        ipset destroy awg_block_ru_new >/dev/null 2>&1 || true
+    fi
 }
 
 step_uninstall() {
@@ -9445,7 +9450,8 @@ _awg_modprobe_hint() {
     signer="${signer:+ «${signer}»}"
     # Файл ключа на диске сверяется с подписью модуля по серийному номеру
     # сертификата (sig_key у modinfo). Совпал - точная команда для этого файла;
-    # ни один не совпал - регистрация файла с диска не поможет, общий совет;
+    # все прочитались и ни один не совпал - отдельное сообщение «ключ на диске
+    # другой» без команды, только номер подписи для поиска нужного сертификата;
     # сверить нечем (нет sig_key, openssl не прочитал файл) - команда с оговоркой,
     # и называется в ней непрочитанный файл, а не тот, что уже не совпал.
     local cand want serial unread="" readable=""
@@ -9473,7 +9479,15 @@ _awg_modprobe_hint() {
     elif [[ -n "$want" && -n "$readable" && -z "$unread" ]]; then
         printf '%s' "$head Ключ DKMS на диске - другой, не тот, которым подписан модуль, поэтому его регистрация не поможет. Выключите Secure Boot в настройках UEFI либо зарегистрируйте в MOK сертификат того ключа, которым подписан модуль (его серийный номер: modinfo -F sig_key amneziawg).$tail"
     elif [[ -n "$check" ]]; then
-        printf '%s' "$head Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ DKMS: sudo mokutil --import $check${how} Сверить этот файл с подписью модуля не удалось, поэтому до регистрации проверьте, что номер из openssl x509 -inform DER -in $check -noout -serial совпадает с modinfo -F sig_key amneziawg: чужой ключ расширит доверие ядра, а модуль так и не загрузится.$tail"
+        # Формат файла известен, только если он прочитался (без sig_key сверять
+        # не с чем): PEM переводится в DER так же, как в ветке совпадения.
+        local imp="$check" conv="" inform="-inform DER "
+        if [[ -z "$unread" ]] && ! openssl x509 -inform DER -in "$root$check" -noout >/dev/null 2>&1; then
+            imp=/root/dkms-mok.der
+            conv="sudo openssl x509 -in $check -outform DER -out $imp && "
+            inform=""
+        fi
+        printf '%s' "$head Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ DKMS: ${conv}sudo mokutil --import $imp${how} Сверить этот файл с подписью модуля не удалось, поэтому до регистрации проверьте, что номер из openssl x509 ${inform}-in $check -noout -serial совпадает с modinfo -F sig_key amneziawg (для файла в PEM - без -inform DER): чужой ключ расширит доверие ядра, а модуль так и не загрузится.$tail"
     else
         printf '%s' "$head Выключите Secure Boot в настройках UEFI либо зарегистрируйте этот ключ в MOK (mokutil --import).$tail"
     fi
