@@ -64,6 +64,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 - [📱 MTU and Mobile Clients](#mtu-mobile-adv)
 - [🚧 Host Unreachable from Russia (Hetzner): AS-based Blocking](#as-blocking-adv)
 - [🔀 A Separate Exit Address: Entry and Exit on Different IPs](#exit-ip-adv)
+- [🚫 Blocking Client Access to Russian Addresses (block-ru)](#block-ru-adv)
 - [🛡️ Active Probing and Obfuscation Without a Proxy](#active-probing-adv)
 - [📋 Client Compatibility](#client-compat-adv)
   - [Which AmneziaWG generation a client speaks](#client-gen-adv)
@@ -1218,6 +1219,7 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 * **`qr <name> [--vpn]`:** Print the client's QR code right in the terminal, to scan it with a phone without copying a picture off the server. Without the flag - the config QR for the AmneziaWG app, with `--vpn` - the `vpn://` link QR for Amnezia VPN. A 3.1 config QR takes about 90-110 characters in width and 45-55 lines, a `vpn://` link QR about 120 by 60; if the window is smaller, the command warns up front, and then make the terminal font smaller. The code holds the client's private key: show it when nobody can see the screen, and run `clear` after scanning. `--json` is not supported.
 * **`port <number>`:** Change the UDP port of a running server: the new port goes into `ListenPort` of `awg0.conf` and `AWG_PORT` of `awgsetup_cfg.init`, if ufw is installed, the new port is opened in it before the restart and the old one closed after (even with UFW off), then every client is regenerated (the port is part of the `Endpoint`). If the server does not come up on the new port, the command puts the old port and both files back. A client that could not be regenerated is named and the command ends with an error, while the port stays new. The clients need the new configs or QR codes, and a port forward on a router or the host's firewall has to be changed by hand. A busy or invalid port changes nothing. Neither does the current port, with one exception: if `awgsetup_cfg.init` holds a different port, an invalid one or none (this happens after a manual edit of `awg0.conf`), the command writes the current one there and touches neither the server nor UFW nor the clients.
 * **`exit-ip <IPv4|off>`:** Set the address client traffic leaves to the internet from, or remove it (`off`). Clients do not change, the service restarts. Details - [A separate exit address](#exit-ip-adv).
+* **`block-ru [on|off|update]`:** Block client access to Russian IPv4 addresses, remove the block (`off`) or download a fresh list right away (`update`); with no argument, show the state. Clients do not change, the service is not restarted. Details - [Blocking client access to Russian addresses](#block-ru-adv).
 * **`restart`:** Restart the AmneziaWG service.
 * **`diagnose [--carrier=NAME]`:** Self-troubleshooting: checks the kernel module, sysctl and UFW; with `--carrier=NAME` it compares AWG parameters against a mobile carrier profile. Names: `beeline_msk`, `yota_msk`, `tele2_msk`, `tele2_krasnoyarsk`, `tattelecom`, `megafon_regions`, `tmobile_us` (the last name is historical: it is the Russian T-Mobile, Moscow and region).
 * **`repair-module`** (alias `repair`): Rebuild/restore the amneziawg kernel module (DKMS) after a server kernel upgrade; for kernels 7.0.0-38 and later see [Known Limitations](#kernel-70-backport-adv).
@@ -1768,6 +1770,7 @@ The report (`--diagnostic`) includes the following sections:
 | Firewall Status | `ufw status verbose` |
 | Routing Table | Output of `ip route` |
 | Cascade / Split Routing | The `awg-routing` unit, the `ip rule` by mark, table 100, `ipset` sets, the cascade `mangle` and `nat` rules; "not configured" when there is no cascade |
+| Block RU (manage block-ru) | The `awg-block-ru` unit, the position of the rule in FORWARD, the number of networks in the `awg_block_ru` set, the date of the list; "not enabled" when there is no block |
 | Kernel Params | `net.ipv4.ip_forward`, `net.ipv6.conf.all.disable_ipv6` |
 | AWG Journal (last 50) | Last 50 lines of the `awg-quick@awg0` journal |
 | Client List | Client names |
@@ -2291,6 +2294,35 @@ Better to give `--endpoint` explicitly here: with two addresses the installer ma
 **How it works.** A `SNAT --to-source <exit address>` rule for the client subnet goes into the server's `PostUp`, above the usual MASQUERADE; the server's own traffic (updates, DNS) still leaves from the main address. If the exit address disappears from the interface, the rule still sets it as the source, so client traffic does not leave through the entry address. What happens next depends on the host. Usually its router finds the address by ARP: while it remembers the address the connection goes on, and when it asks again the server does not answer, replies stop coming back and the connection stops. On my stand this took 9 to 28 seconds in three measurements, not a single packet left from the entry address in that time, and once the address was back the connection returned within a second. If the host routes the address to the server without ARP, the connection may keep working. `manage check` shows a missing address.
 
 **Limits.** IPv4 only: an exit address does not combine with the IPv6 tunnel for clients (`--allow-ipv6-tunnel`), the installer and `manage` refuse it. The exit address cannot be the entry address, the tunnel address or loopback. A second address from the same host is often in the same subnet: while single addresses get blocked, that is enough, but if the subnet is closed, both go. For setups with several servers, see the [cascade](CASCADE.en.md).
+
+---
+
+<a id="block-ru-adv"></a>
+## 🚫 Blocking Client Access to Russian Addresses (block-ru)
+
+If the server is abroad and you do not want clients to open Russian sites through it (for example, to keep the VPS address out of the logs of Russian services), one command turns the block on. The request came in [D#418](https://github.com/bivlked/amneziawg-installer/discussions/418).
+
+```bash
+sudo bash /root/awg/manage_amneziawg.sh block-ru on       # turn on
+sudo bash /root/awg/manage_amneziawg.sh block-ru          # show the state
+sudo bash /root/awg/manage_amneziawg.sh block-ru update   # download a fresh list now
+sudo bash /root/awg/manage_amneziawg.sh block-ru off      # remove
+```
+
+A client gets the refusal at once instead of waiting for the browser to give up: on my test server ya.ru was refused within a millisecond while github.com opened as usual. Client configs do not change, the AmneziaWG service is not restarted. If the `ipset` package is missing, the command installs it.
+
+**How it works.** The command puts a helper `awg-block-ru.sh` and a list of Russian networks `block-ru.zone` into `/root/awg/`, and a systemd unit `awg-block-ru` tied to `awg-quick@awg0`. The helper loads the list into the ipset `awg_block_ru` and puts a REJECT rule for client traffic to these addresses first in the FORWARD chain. First, because on every start of `awg0` the installer puts a rule on top that lets everything from clients through. The unit restarts together with `awg0` and puts the block back on top, so it survives `manage restart`, a port change, `ufw reload` and a server reboot.
+
+The list comes from ipdeny.com, and when that site is down, from the `cascade/ru.zone` snapshot in this repository for the installed version. At start the unit uses the saved list and does not go to the network. A fresh list is downloaded once a week (`/etc/cron.d/awg-block-ru`) and on `block-ru update`; if the download fails, the previous list stays in force. An answer that does not look like a list of networks (fewer than 1000 networks or foreign lines) is not accepted.
+
+**Your own addresses.** The list is built by the country an address is registered to, so a Russian site behind Cloudflare or another foreign CDN gets through. Put such addresses and subnets into `/root/awg/block-ru.extra`, one per line (`#` starts a comment), then run `sudo systemctl restart awg-block-ru`. `block-ru off` does not remove this file.
+
+**What to check.**
+- Client DNS. If `CLIENT_DNS` points to a Russian resolver (for example, Yandex 77.88.8.8), the block closes it too, and names stop resolving for clients. The command warns about this when it turns on.
+- IPv6. The list is IPv4 only. With a regular install client IPv6 goes into the tunnel and is dropped there; with `--allow-ipv6-tunnel` Russian IPv6 addresses stay open, and the command warns about that too.
+- Cascade. If this server sends client traffic to Russia directly under the [CASCADE.en.md](CASCADE.en.md) scheme, the block rejects it.
+
+`block-ru --json` returns the fields `enabled`, `active`, `rule`, `networks` and `changed`. The state of the block is also in the `--diagnostic` report, and uninstalling with the installer removes the unit, the cron file and the set.
 
 ---
 <a id="active-probing-adv"></a>
