@@ -12,6 +12,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.10] - 2026-11-25
+
+**v6.3.10** - a new `manage block-ru` command keeps VPN clients away from Russian IPv4 addresses, the Secure Boot hint checks the DKMS key against the module signature, and `manage add` and `manage regen` build QR and `vpn://` under the config lock.
+
+### Added
+
+- **New command `manage block-ru`: VPN clients can be kept away from Russian IPv4 addresses.** `block-ru on` turns the block on, `off` removes it, `update` downloads a fresh list right away, and with no argument the command shows the state. The list of Russian networks goes into an ipset and the REJECT rule sits first in FORWARD, so a client is refused at once. The block survives a service restart, a port change, `ufw reload` and a reboot. The list is refreshed weekly, own addresses (for example, sites behind a foreign CDN) go to `/root/awg/block-ru.extra`, and the command installs the `ipset` package itself. Requested in D#418, details in ADVANCED, section `#block-ru-adv`.
+
+### Fixed
+
+- **`manage add` and `manage regen` hold the config lock while they build QR and `vpn://`.** The lock used to be released right after the `.conf` was written, so a `manage modify` of the same client started in that fraction of a second could rewrite the config while the QR and `vpn://` next to it were built from the old one. Now the other command waits, and on 3.1 the put-back of the previous set after an incomplete build happens under the same lock.
+- **The Secure Boot hint offers to enroll the DKMS key only when the module is signed with it.** When the kernel refuses a signed module, the installer compares the certificate serial number in `/var/lib/dkms/mok.pub` or `/var/lib/shim-signed/mok/MOK.der` with the module signature (`modinfo -F sig_key`). A match gives the exact `mokutil --import` command for that file (a PEM key is converted to DER first: `mokutil` takes no other format). A different key on disk gives no command: enrolling it would widen what the kernel trusts while the module still would not load. With nothing to compare (no `openssl` or no signature number) the command comes with a caveat on how to check the key yourself.
+
 ### Documentation
 
 - **The ADVANCED section on a separate exit address now links to a step-by-step Habr article (in Russian).** It covers a second IPv4 on the VPS with netplan and ifupdown, checking the exit address and replacing a blocked one.
@@ -2371,7 +2384,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.9...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.10...HEAD
+[6.3.10]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.9...v6.3.10
 [6.3.9]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...v6.3.9
 [6.3.8]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...v6.3.8
 [6.3.7]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.6...v6.3.7

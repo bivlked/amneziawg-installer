@@ -55,12 +55,13 @@ strip_messages() {
             esac
         done < <(code_of "$f" | grep -oE "$APT_RE")
         # installers: 2 upgrades, install_packages, 2 restore passes, 2 netplan
-        # restores, gcc-13, kernel meta package, 6 purges; awg_common: headers.
+        # restores, gcc-13, kernel meta package, 6 purges; awg_common: headers;
+        # manage: ipset for block-ru, the install and its retry after apt-get update.
         # Exact: a new call means updating this number on purpose.
         case "$f" in
             install_*) min=15 ;;
             awg_common*) min=1 ;;
-            *) min=0 ;;
+            *) min=2 ;;
         esac
         [ "$n" -eq "$min" ] || { echo "$f: $n apt calls found, expected $min"; return 1; }
     done
@@ -95,7 +96,7 @@ strip_messages() {
             install_amneziawg.sh) want="35 20" ;;
             install_amneziawg_en.sh) want="34 20" ;;
             awg_common.sh|awg_common_en.sh) want="6 0" ;;
-            manage_amneziawg.sh|manage_amneziawg_en.sh) want="4 3" ;;
+            manage_amneziawg.sh|manage_amneziawg_en.sh) want="7 3" ;;
         esac
         [ "$a $d" = "$want" ] || { echo "$f: apt/dpkg mentions $a $d, expected $want"; return 1; }
     done

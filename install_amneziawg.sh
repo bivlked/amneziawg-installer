@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 3.x (3.1 по умолчанию; 2.0 по флагу, а также на ядрах старее 6.7 и на 32-битном ARM) на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 6.3.9
-# Дата: 2026-11-23
+# Версия: 6.3.10
+# Дата: 2026-11-25
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -39,7 +39,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.9"
+SCRIPT_VERSION="6.3.10"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -69,8 +69,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="bc9bb2af07104bd8a19da69ed73bd5bac06c2716fe7d19fabc0616b77b30dd9f"
-MANAGE_SCRIPT_SHA256="6d80c8a8057f9168aaad324160322098b8e406ada81d3b4656815fc11076cda4"
+COMMON_SCRIPT_SHA256="a889a9b6b9e366d52a7fa12d348731722e26105771401a57d0ac3bdb8712cd51"
+MANAGE_SCRIPT_SHA256="7f4fa097323ab0993319f99ab01a78f81b9010872436d2a69601fd177d1c2231"
 
 # Пин модуля для ядер старее 6.7 без готового пакета (H0, 31 jul 2026). Модуль
 # из PPA там не используется (см. _kernel_supports_awg3): модуль собирается из
@@ -5443,6 +5443,30 @@ create_diagnostic_report() {
             echo "не настроен"
         fi
         echo ""
+        echo "--- Block RU (manage block-ru) ---"
+        if [ -f "${AWG_SYSTEMD_DIR:-/etc/systemd/system}/awg-block-ru.service" ]; then
+            local _br_active _br_enabled _br_out _br_pos
+            _br_active=$(systemctl is-active awg-block-ru 2>/dev/null || true)
+            _br_enabled=$(systemctl is-enabled awg-block-ru 2>/dev/null || true)
+            echo "unit awg-block-ru: active=${_br_active:-N/A}, enabled=${_br_enabled:-N/A}"
+            if _br_out=$(iptables -w 10 -S FORWARD 2>&1); then
+                _br_pos=$(awk '/^-A / {n++} /match-set awg_block_ru/ {print n; exit}' <<< "$_br_out")
+                if [ -n "$_br_pos" ]; then echo "правило FORWARD: есть, позиция ${_br_pos}"; else echo "правило FORWARD: нет"; fi
+            else
+                echo "правило FORWARD: ПРОВЕРИТЬ НЕ УДАЛОСЬ: $(head -1 <<< "$_br_out")"
+            fi
+            if ! command -v ipset >/dev/null 2>&1; then
+                echo "ipset: команды нет (пакет ipset не установлен)"
+            elif _br_out=$(ipset list awg_block_ru 2>&1); then
+                grep "Number of entries" <<< "$_br_out" || true
+            else
+                echo "ipset awg_block_ru: набора нет"
+            fi
+            echo "block-ru.zone: $(stat -c '%y, %s байт' "$AWG_DIR/block-ru.zone" 2>/dev/null || echo 'файла нет')"
+        else
+            echo "не включён"
+        fi
+        echo ""
         echo "--- Kernel Params ---"
         sysctl net.ipv4.ip_forward net.ipv6.conf.all.disable_ipv6 2>/dev/null
         echo ""
@@ -5503,6 +5527,26 @@ _awg_uninstall_ports() {
         out+="${out:+ }$p"
     done
     printf '%s\n' "$out"
+}
+
+# Запрет manage block-ru живёт вне $AWG_DIR: юнит, cron и набор ipset. Правило в
+# FORWARD снимает ExecStop юнита (помощник ещё на месте, $AWG_DIR удаляется позже),
+# остаток - здесь, иначе набор не удалится: на него ссылается правило.
+_uninstall_block_ru() {
+    local unit="${AWG_SYSTEMD_DIR:-/etc/systemd/system}/awg-block-ru.service" n=0
+    local rule="FORWARD -i awg0 -m set --match-set awg_block_ru dst -j REJECT --reject-with icmp-admin-prohibited"
+    if [[ -f "$unit" ]]; then
+        systemctl disable --now awg-block-ru.service >/dev/null 2>&1 || log_warn "Не удалось остановить awg-block-ru.service."
+        rm -f "$unit"
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    rm -f "${AWG_CRON_DIR:-/etc/cron.d}/awg-block-ru"
+    # shellcheck disable=SC2086  # правило намеренно делится на слова
+    while (( n++ < 16 )) && iptables -w 10 -C $rule 2>/dev/null; do iptables -w 10 -D $rule 2>/dev/null || break; done
+    if command -v ipset >/dev/null 2>&1; then
+        ipset destroy awg_block_ru >/dev/null 2>&1 || true
+        ipset destroy awg_block_ru_new >/dev/null 2>&1 || true
+    fi
 }
 
 step_uninstall() {
@@ -5743,6 +5787,7 @@ step_uninstall() {
     sysctl -p --system 2>/dev/null
     rm -f /etc/apt/sources.list.d/*.bak-* "$AWG_DIR"/ubuntu.sources.bak-* 2>/dev/null || true
     log "Удаление cron и скриптов..."
+    _uninstall_block_ru
     rm -f /etc/cron.d/awg-expiry 2>/dev/null
     log "=== ДЕИНСТАЛЛЯЦИЯ ЗАВЕРШЕНА ==="
     # Копируем лог и удаляем рабочую директорию
@@ -9353,6 +9398,21 @@ _awg31_step3_gate() {
     die "Гейт окружения не смог проверить инструменты и модуль для профиля AmneziaWG 3.1 (код возврата ${_awg31_rc}, причина не названа). Установка остановлена: не зная ответа, третью линию не выпускаем.${_tail}"
 }
 
+# Серийный номер сертификата в одном виде: без двоеточий, заглавными, без
+# ведущих нулей (modinfo печатает байты через двоеточие, openssl - число).
+_awg_serial_norm() { tr -d ':[:space:]' | tr 'a-f' 'A-F' | sed 's/^0*//'; }
+# Серийный номер сертификата из файла: DER (так DKMS пишет mok.pub), иначе PEM.
+# Не прочитался или пустой - код 1.
+_awg_cert_serial() {
+    local s
+    command -v openssl >/dev/null 2>&1 || return 1
+    s=$(openssl x509 -inform DER -in "$1" -noout -serial 2>/dev/null) \
+        || s=$(openssl x509 -inform PEM -in "$1" -noout -serial 2>/dev/null) || return 1
+    s=$(printf '%s' "${s#serial=}" | _awg_serial_norm)
+    [[ -n "$s" ]] || return 1
+    printf '%s' "$s"
+}
+
 # Подсказка к отказу modprobe по его собственным словам (#403). Под Secure Boot
 # ядро с принудительной проверкой подписи отвечает "Key was rejected by service"
 # и на неподписанный модуль, и на модуль с незарегистрированным ключом, поэтому
@@ -9388,15 +9448,50 @@ _awg_modprobe_hint() {
     fi
     signer=$(modinfo -F signer amneziawg 2>/dev/null) || signer=""
     signer="${signer:+ «${signer}»}"
-    if [[ -e "$root/var/lib/dkms/mok.pub" ]]; then
-        key=/var/lib/dkms/mok.pub
-    elif [[ -e "$root/var/lib/shim-signed/mok/MOK.der" ]]; then
-        key=/var/lib/shim-signed/mok/MOK.der
-    fi
+    # Файл ключа на диске сверяется с подписью модуля по серийному номеру
+    # сертификата (sig_key у modinfo). Совпал - точная команда для этого файла;
+    # все прочитались и ни один не совпал - отдельное сообщение «ключ на диске
+    # другой» без команды, только номер подписи для поиска нужного сертификата;
+    # сверить нечем (нет sig_key, openssl не прочитал файл) - команда с оговоркой,
+    # и называется в ней непрочитанный файл, а не тот, что уже не совпал; без
+    # sig_key опровергнуть нечего, и тогда берётся файл, который прочитался.
+    local cand want serial unread="" readable=""
+    want=$(modinfo -F sig_key amneziawg 2>/dev/null | _awg_serial_norm) || want=""
+    for cand in /var/lib/dkms/mok.pub /var/lib/shim-signed/mok/MOK.der; do
+        [[ -e "$root$cand" ]] || continue
+        if serial=$(_awg_cert_serial "$root$cand"); then
+            [[ -n "$readable" ]] || readable="$cand"
+            if [[ -n "$want" && "$serial" == "$want" ]]; then key="$cand"; break; fi
+        else
+            [[ -n "$unread" ]] || unread="$cand"
+        fi
+    done
+    local how=" (попросит придумать пароль), перезагрузка, на синем экране MOK Manager выберите Enroll MOK и введите этот пароль. Экран виден только на мониторе машины или в консоли хостера, по ssh этот шаг не пройти."
+    local head=" Модуль подписан ключом${signer}, но ядро этому ключу не доверяет: он не зарегистрирован в MOK, а Secure Boot включён (проверка: mokutil --sb-state)."
+    local check="${unread:-$readable}"
+    [[ -n "$want" ]] || check="${readable:-$unread}"
     if [[ -n "$key" ]]; then
-        printf '%s' " Модуль подписан ключом${signer}, но ядро этому ключу не доверяет: он не зарегистрирован в MOK, а Secure Boot включён (проверка: mokutil --sb-state). Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ DKMS: sudo mokutil --import $key (попросит придумать пароль), перезагрузка, на синем экране MOK Manager выберите Enroll MOK и введите этот пароль. Экран виден только на мониторе машины или в консоли хостера, по ssh этот шаг не пройти.$tail"
+        # mokutil --import принимает только DER: ключ в PEM сначала переводится.
+        local imp="$key" conv=""
+        if ! openssl x509 -inform DER -in "$root$key" -noout >/dev/null 2>&1; then
+            imp=/root/dkms-mok.der
+            conv="sudo openssl x509 -in $key -outform DER -out $imp && "
+        fi
+        printf '%s' "$head Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ DKMS: ${conv}sudo mokutil --import $imp${how}$tail"
+    elif [[ -n "$want" && -n "$readable" && -z "$unread" ]]; then
+        printf '%s' "$head Ключ DKMS на диске - другой, не тот, которым подписан модуль, поэтому его регистрация не поможет. Выключите Secure Boot в настройках UEFI либо зарегистрируйте в MOK сертификат того ключа, которым подписан модуль (его серийный номер: modinfo -F sig_key amneziawg).$tail"
+    elif [[ -n "$check" ]]; then
+        # Формат файла известен, только если он прочитался (без sig_key сверять
+        # не с чем): PEM переводится в DER так же, как в ветке совпадения.
+        local imp="$check" conv="" inform="-inform DER " pemhint=" (для файла в PEM - без -inform DER)"
+        if [[ -n "$readable" && "$check" == "$readable" ]] && ! openssl x509 -inform DER -in "$root$check" -noout >/dev/null 2>&1; then
+            imp=/root/dkms-mok.der
+            conv="sudo openssl x509 -in $check -outform DER -out $imp && "
+            inform="" pemhint=""
+        fi
+        printf '%s' "$head Выключите Secure Boot в настройках UEFI либо зарегистрируйте ключ DKMS: ${conv}sudo mokutil --import $imp${how} Сверить этот файл с подписью модуля не удалось, поэтому до регистрации проверьте, что номер из openssl x509 ${inform}-in $check -noout -serial совпадает с modinfo -F sig_key amneziawg${pemhint}: чужой ключ расширит доверие ядра, а модуль так и не загрузится.$tail"
     else
-        printf '%s' " Модуль подписан ключом${signer}, но ядро этому ключу не доверяет: он не зарегистрирован в MOK, а Secure Boot включён (проверка: mokutil --sb-state). Выключите Secure Boot в настройках UEFI либо зарегистрируйте этот ключ в MOK (mokutil --import).$tail"
+        printf '%s' "$head Выключите Secure Boot в настройках UEFI либо зарегистрируйте этот ключ в MOK (mokutil --import).$tail"
     fi
 }
 

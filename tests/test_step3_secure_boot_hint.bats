@@ -29,11 +29,16 @@ run_step3_load() {
         echo 'update_state() { echo "$1" >> "$STATE_LOG"; }'
         echo 'lsmod() { echo "wireguard 100000 0"; }'
         echo 'modprobe() { echo "LC_ALL=${LC_ALL-}" > "$TEST_DIR/modprobe.env"; [ -n "${MODPROBE_OUT-}" ] && echo "$MODPROBE_OUT" >&2; return ${MODPROBE_RC:-1}; }'
-        echo 'modinfo() { [ "$1" = -F ] && [ "$3" = amneziawg ] || return 9; case "$2" in sig_id) [ -n "${MODINFO_SIGID-}" ] && echo "$MODINFO_SIGID"; return ${MODINFO_RC:-0} ;; signer) [ -n "${MODINFO_SIGNER-}" ] && echo "$MODINFO_SIGNER"; return 0 ;; esac; return 9; }'
+        echo 'modinfo() { [ "$1" = -F ] && [ "$3" = amneziawg ] || return 9; case "$2" in sig_id) [ -n "${MODINFO_SIGID-}" ] && echo "$MODINFO_SIGID"; return ${MODINFO_RC:-0} ;; signer) [ -n "${MODINFO_SIGNER-}" ] && echo "$MODINFO_SIGNER"; return 0 ;; sig_key) [ -n "${MODINFO_SIGKEY-}" ] && echo "$MODINFO_SIGKEY"; return 0 ;; esac; return 9; }'
+        # openssl: a key file holds lines "DER:<serial>" or "PEM:<serial>"; the
+        # stub answers only for the matching -inform, like a real x509 parse.
+        echo 'openssl() { local inform="" in="" s; while [ $# -gt 0 ]; do case "$1" in -inform) inform=$2; shift 2 ;; -in) in=$2; shift 2 ;; *) shift ;; esac; done; s=$(sed -n "s/^${inform}://p" "$in"); [ -n "$s" ] || return 1; echo "serial=$s"; }'
         echo 'mokutil() { [ -n "${SB_STATE-}" ] && echo "$SB_STATE"; return ${MOKUTIL_RC:-0}; }'
         echo 'mkdir() { :; }'
         echo 'grep() { if [ "$1" = "-qxF" ]; then return 0; fi; command grep "$@"; }'
         echo 'sleep() { :; }'
+        # _awg_serial_norm is one line: the range runs on through _awg_cert_serial.
+        func_from "$script" _awg_serial_norm
         func_from "$script" _awg_modprobe_hint
         # step 3 up to "module loaded": what follows (modinfo, vermagic, the 3.1
         # gate) is covered by test_awg31_protocol_flag.bats
@@ -216,4 +221,153 @@ SIGNER="DKMS module signing key"
     [[ "$output" == *"Модуль подписан ключом, но"* ]]
     [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]]
     [[ "$output" != *"Модуль не подписан"* ]]
+}
+
+# ---------- the key on disk is checked against the module signature ----------
+
+# key_file <path under root> <content>
+key_file() { mkdir -p "$TEST_DIR/root$(dirname "$1")" && printf '%s\n' "$2" > "$TEST_DIR/root$1"; }
+
+# each_installer <function>: the case runs on both installers.
+each_installer() {
+    local s seen=0
+    for s in "$INSTALL_RU" "$INSTALL_EN"; do
+        rm -rf "$TEST_DIR/root"
+        "$1" "$s" || return 1
+        seen=$((seen + 1))
+    done
+    [ "$seen" -eq 2 ]
+}
+
+_key_matches() {
+    key_file /var/lib/dkms/mok.pub "DER:0a1b2c3d"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGNER="$SIGNER" MODINFO_SIGKEY="0A:1B:2C:3D" run_step3_load "$1"
+    [ "$status" -eq 1 ] || return 1
+    [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" != *"openssl x509"* ]] || { echo "$1: a caveat on a checked key"; return 1; }
+}
+@test "the DKMS key on disk matches the module signature: the exact command, no caveat" {
+    each_installer _key_matches
+}
+
+_key_leading_zero() {
+    key_file /var/lib/dkms/mok.pub "DER:A1B2"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGKEY="00:a1:b2" run_step3_load "$1"
+    [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" != *"openssl x509"* ]] || return 1
+}
+@test "the serial numbers are compared without colons, case and leading zeros" {
+    each_installer _key_leading_zero
+}
+
+_key_differs() {
+    key_file /var/lib/dkms/mok.pub "DER:DEAD"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGNER="$SIGNER" MODINFO_SIGKEY="BE:EF" run_step3_load "$1"
+    [ "$status" -eq 1 ] || return 1
+    [[ "$output" != *"--import /"* ]] || { echo "$1: offered a key that does not match: $output"; return 1; }
+    [[ "$output" == *"modinfo -F sig_key amneziawg"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" == *"Secure Boot"* ]] || return 1
+}
+@test "the DKMS key on disk is a different key: no command to enroll it, the general way out" {
+    each_installer _key_differs
+}
+
+_second_key_matches() {
+    key_file /var/lib/dkms/mok.pub "DER:DEAD"
+    key_file /var/lib/shim-signed/mok/MOK.der "DER:BEEF"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGKEY="BE:EF" run_step3_load "$1"
+    [[ "$output" == *"sudo mokutil --import /var/lib/shim-signed/mok/MOK.der"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" != *"/var/lib/dkms/mok.pub"* ]] || return 1
+}
+@test "mok.pub differs and MOK.der matches: the command names MOK.der" {
+    each_installer _second_key_matches
+}
+
+# mokutil --import takes DER only: a PEM key is converted first.
+_pem_key() {
+    key_file /var/lib/dkms/mok.pub "PEM:BEEF"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGKEY="BE:EF" run_step3_load "$1"
+    [[ "$output" == *"sudo openssl x509 -in /var/lib/dkms/mok.pub -outform DER -out /root/dkms-mok.der"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" == *"sudo mokutil --import /root/dkms-mok.der"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" != *"--import /var/lib/dkms/mok.pub"* ]] || { echo "$1: mokutil given a PEM file"; return 1; }
+}
+@test "a key file in PEM is read too, and the hint converts it to DER for mokutil" {
+    each_installer _pem_key
+}
+
+_no_sig_key() {
+    key_file /var/lib/dkms/mok.pub "DER:BEEF"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGKEY="" run_step3_load "$1"
+    [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" == *"openssl x509 -inform DER -in /var/lib/dkms/mok.pub -noout -serial"* ]] || { echo "$1: no caveat"; return 1; }
+}
+@test "modinfo shows no sig_key: the command with a caveat on how to check it" {
+    each_installer _no_sig_key
+}
+
+_unread_named() {
+    key_file /var/lib/dkms/mok.pub "DER:DEAD"
+    key_file /var/lib/shim-signed/mok/MOK.der "garbage"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGKEY="BE:EF" run_step3_load "$1"
+    [[ "$output" == *"sudo mokutil --import /var/lib/shim-signed/mok/MOK.der"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" != *"--import /var/lib/dkms/mok.pub"* ]] || { echo "$1: named the key that did not match"; return 1; }
+    [[ "$output" == *"-in /var/lib/shim-signed/mok/MOK.der -noout -serial"* ]] || return 1
+}
+@test "one key differs and the other cannot be read: the caveat names the unread one" {
+    each_installer _unread_named
+}
+
+# With no sig_key the file cannot be checked; when it reads as PEM it is still
+# converted for mokutil, and the caveat drops -inform DER.
+_no_sig_key_pem() {
+    key_file /var/lib/dkms/mok.pub "PEM:BEEF"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGKEY="" run_step3_load "$1"
+    [[ "$output" == *"sudo openssl x509 -in /var/lib/dkms/mok.pub -outform DER -out /root/dkms-mok.der"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" == *"sudo mokutil --import /root/dkms-mok.der"* ]] || return 1
+    [[ "$output" != *"--import /var/lib/dkms/mok.pub"* ]] || { echo "$1: mokutil given a PEM file"; return 1; }
+    [[ "$output" == *"openssl x509 -in /var/lib/dkms/mok.pub -noout -serial"* ]] || { echo "$1: caveat: $output"; return 1; }
+    [[ "$output" != *"-inform DER"* ]] || { echo "$1: -inform DER for a PEM file"; return 1; }
+}
+@test "no sig_key and a PEM key: the command converts it to DER, the caveat has no -inform DER" {
+    each_installer _no_sig_key_pem
+}
+
+# An unreadable file keeps the DER form and the note about PEM.
+_unread_keeps_der() {
+    key_file /var/lib/dkms/mok.pub "garbage"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGKEY="BE:EF" run_step3_load "$1"
+    [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" == *"openssl x509 -inform DER -in /var/lib/dkms/mok.pub -noout -serial"* ]] || return 1
+    [[ "$output" == *"PEM"* ]] || { echo "$1: no note about PEM"; return 1; }
+    [[ "$output" != *"dkms-mok.der"* ]] || return 1
+}
+@test "an unreadable key: the command and the caveat keep the DER form and mention PEM" {
+    each_installer _unread_keeps_der
+}
+
+# With no sig_key nothing rules a file out: the file openssl reads is named, not
+# the one it could not read.
+_no_sig_key_prefers_readable() {
+    key_file /var/lib/dkms/mok.pub "DER:BEEF"
+    key_file /var/lib/shim-signed/mok/MOK.der "garbage"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGKEY="" run_step3_load "$1"
+    [[ "$output" == *"sudo mokutil --import /var/lib/dkms/mok.pub"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" != *"--import /var/lib/shim-signed/mok/MOK.der"* ]] || { echo "$1: unread file offered"; return 1; }
+}
+@test "no sig_key, one key reads and one does not: the command names the readable one" {
+    each_installer _no_sig_key_prefers_readable
+}
+
+# The same with the readable key in PEM: it is converted to DER for mokutil.
+_no_sig_key_readable_pem() {
+    key_file /var/lib/dkms/mok.pub "PEM:BEEF"
+    key_file /var/lib/shim-signed/mok/MOK.der "garbage"
+    MODPROBE_OUT="$REJECTED" MODINFO_SIGID=PKCS#7 MODINFO_SIGKEY="" run_step3_load "$1"
+    [[ "$output" == *"sudo openssl x509 -in /var/lib/dkms/mok.pub -outform DER -out /root/dkms-mok.der"* ]] || { echo "$1: $output"; return 1; }
+    [[ "$output" == *"sudo mokutil --import /root/dkms-mok.der"* ]] || return 1
+    [[ "$output" != *"--import /var/lib/dkms/mok.pub"* ]] || { echo "$1: mokutil given a PEM file"; return 1; }
+    [[ "$output" != *"-inform DER"* ]] || { echo "$1: -inform DER for a PEM file"; return 1; }
+}
+@test "no sig_key, a readable PEM key and an unreadable one: the PEM key is converted to DER" {
+    each_installer _no_sig_key_readable_pem
 }

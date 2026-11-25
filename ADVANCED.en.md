@@ -64,6 +64,7 @@ This is a supplement to the main [README.en.md](README.en.md), containing deeper
 - [📱 MTU and Mobile Clients](#mtu-mobile-adv)
 - [🚧 Host Unreachable from Russia (Hetzner): AS-based Blocking](#as-blocking-adv)
 - [🔀 A Separate Exit Address: Entry and Exit on Different IPs](#exit-ip-adv)
+- [🚫 Blocking Client Access to Russian Addresses (block-ru)](#block-ru-adv)
 - [🛡️ Active Probing and Obfuscation Without a Proxy](#active-probing-adv)
 - [📋 Client Compatibility](#client-compat-adv)
   - [Which AmneziaWG generation a client speaks](#client-gen-adv)
@@ -1218,6 +1219,7 @@ Usage: `sudo bash /root/awg/manage_amneziawg.sh <command>`:
 * **`qr <name> [--vpn]`:** Print the client's QR code right in the terminal, to scan it with a phone without copying a picture off the server. Without the flag - the config QR for the AmneziaWG app, with `--vpn` - the `vpn://` link QR for Amnezia VPN. A 3.1 config QR takes about 90-110 characters in width and 45-55 lines, a `vpn://` link QR about 120 by 60; if the window is smaller, the command warns up front, and then make the terminal font smaller. The code holds the client's private key: show it when nobody can see the screen, and run `clear` after scanning. `--json` is not supported.
 * **`port <number>`:** Change the UDP port of a running server: the new port goes into `ListenPort` of `awg0.conf` and `AWG_PORT` of `awgsetup_cfg.init`, if ufw is installed, the new port is opened in it before the restart and the old one closed after (even with UFW off), then every client is regenerated (the port is part of the `Endpoint`). If the server does not come up on the new port, the command puts the old port and both files back. A client that could not be regenerated is named and the command ends with an error, while the port stays new. The clients need the new configs or QR codes, and a port forward on a router or the host's firewall has to be changed by hand. A busy or invalid port changes nothing. Neither does the current port, with one exception: if `awgsetup_cfg.init` holds a different port, an invalid one or none (this happens after a manual edit of `awg0.conf`), the command writes the current one there and touches neither the server nor UFW nor the clients.
 * **`exit-ip <IPv4|off>`:** Set the address client traffic leaves to the internet from, or remove it (`off`). Clients do not change, the service restarts. Details - [A separate exit address](#exit-ip-adv).
+* **`block-ru [on|off|update]`:** Block client access to Russian IPv4 addresses, remove the block (`off`) or download a fresh list right away (`update`); with no argument, show the state. Clients do not change, the service is not restarted. Details - [Blocking client access to Russian addresses](#block-ru-adv).
 * **`restart`:** Restart the AmneziaWG service.
 * **`diagnose [--carrier=NAME]`:** Self-troubleshooting: checks the kernel module, sysctl and UFW; with `--carrier=NAME` it compares AWG parameters against a mobile carrier profile. Names: `beeline_msk`, `yota_msk`, `tele2_msk`, `tele2_krasnoyarsk`, `tattelecom`, `megafon_regions`, `tmobile_us` (the last name is historical: it is the Russian T-Mobile, Moscow and region).
 * **`repair-module`** (alias `repair`): Rebuild/restore the amneziawg kernel module (DKMS) after a server kernel upgrade; for kernels 7.0.0-38 and later see [Known Limitations](#kernel-70-backport-adv).
@@ -1278,7 +1280,7 @@ The form of any emergency exit (die, bad option, confirmation refusal, signal):
 Field notes:
 
 - `applied` - whether the config was applied to the live interface. `regen` and `modify` have no such field: they do not change server state (keys and IPs are reused). Always `false` under `AWG_SKIP_APPLY=1`.
-- `qr`/`vpnuri` - a path if the file existed at response time. For `add` and `regen`, QR and URI are generated outside the config lock: a parallel operation can remove the file, no freshness guarantee. For `modify` the previous copies are removed before the edit and the rebuild runs under the same lock: a file that could not be built is missing and the field is `null`. `regen` also removes the previous copies before it rewrites the `.conf`, so on 2.0 a file that could not be built is missing rather than left over from the old config; on 3.1 such a regen fails and, unless another operation changed the client meanwhile, puts the whole previous set back. Without a parallel operation on the same client, a path leads to a copy built from the new `.conf`.
+- `qr`/`vpnuri` - a path if the file existed at response time. For `add` and `regen`, QR and URI are built under the config lock, but the field is filled in after it: a parallel operation (for example, `remove`) can remove the file in between. For `modify` the previous copies are removed before the edit and the rebuild runs under the same lock: a file that could not be built is missing and the field is `null`. `regen` also removes the previous copies before it rewrites the `.conf`, so on 2.0 a file that could not be built is missing rather than left over from the old config; on 3.1 such a regen fails and puts the whole previous set back, if the copy of the previous set could be taken. Without a parallel operation on the same client, a path leads to a copy built from the new `.conf`.
 - `results[].allowed_ips` (`add`, entries with status `created`) - the client's applied routes, read from the just-created `.conf`. May differ from the `--allowed-ips` argument: a full-tunnel IPv4 list gets an IPv6 route added (`::/0`, `2000::/3` or the tunnel ULA, the iOS rule). `null` means the value could not be read - the reason goes to the log as an error, like `qr`/`vpnuri`. For an external consumer (a bot) the field removes the verification call after creation (Issue #253).
 - `restore` returns an envelope on failure too (with `error` and `rolled_back` - the bot needs to know whether a rollback happened). With `rolled_back: true` it also carries `rollback_complete`: `false` means the rollback could not return some files, the reasons and the snapshot path are on stderr. `restored.clients` is the number of `[Peer]` blocks in the restored server config, not files in the working directory.
 - `repair-module.rc` - the internal module-check code (0 - module and service OK, 1 - module failed, 2 - module OK, service down), not the process exit code.
@@ -1367,7 +1369,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common_en.sh` and `manage_amneziawg_en.sh` (the Russian installer: `awg_common.sh` and `manage_amneziawg.sh`) from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.9/awg_common_en.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.10/awg_common_en.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -1768,6 +1770,7 @@ The report (`--diagnostic`) includes the following sections:
 | Firewall Status | `ufw status verbose` |
 | Routing Table | Output of `ip route` |
 | Cascade / Split Routing | The `awg-routing` unit, the `ip rule` by mark, table 100, `ipset` sets, the cascade `mangle` and `nat` rules; "not configured" when there is no cascade |
+| Block RU (manage block-ru) | The `awg-block-ru` unit, the position of the rule in FORWARD, the number of networks in the `awg_block_ru` set, the date of the list; "not enabled" when there is no block |
 | Kernel Params | `net.ipv4.ip_forward`, `net.ipv6.conf.all.disable_ipv6` |
 | AWG Journal (last 50) | Last 50 lines of the `awg-quick@awg0` journal |
 | Client List | Client names |
@@ -2291,6 +2294,35 @@ Better to give `--endpoint` explicitly here: with two addresses the installer ma
 **How it works.** A `SNAT --to-source <exit address>` rule for the client subnet goes into the server's `PostUp`, above the usual MASQUERADE; the server's own traffic (updates, DNS) still leaves from the main address. If the exit address disappears from the interface, the rule still sets it as the source, so client traffic does not leave through the entry address. What happens next depends on the host. Usually its router finds the address by ARP: while it remembers the address the connection goes on, and when it asks again the server does not answer, replies stop coming back and the connection stops. On my stand this took 9 to 28 seconds in three measurements, not a single packet left from the entry address in that time, and once the address was back the connection returned within a second. If the host routes the address to the server without ARP, the connection may keep working. `manage check` shows a missing address.
 
 **Limits.** IPv4 only: an exit address does not combine with the IPv6 tunnel for clients (`--allow-ipv6-tunnel`), the installer and `manage` refuse it. The exit address cannot be the entry address, the tunnel address or loopback. A second address from the same host is often in the same subnet: while single addresses get blocked, that is enough, but if the subnet is closed, both go. For setups with several servers, see the [cascade](CASCADE.en.md).
+
+---
+
+<a id="block-ru-adv"></a>
+## 🚫 Blocking Client Access to Russian Addresses (block-ru)
+
+If the server is abroad and you do not want clients to open Russian sites through it (for example, to keep the VPS address out of the logs of Russian services), one command turns the block on. The request came in [D#418](https://github.com/bivlked/amneziawg-installer/discussions/418).
+
+```bash
+sudo bash /root/awg/manage_amneziawg.sh block-ru on       # turn on
+sudo bash /root/awg/manage_amneziawg.sh block-ru          # show the state
+sudo bash /root/awg/manage_amneziawg.sh block-ru update   # download a fresh list now
+sudo bash /root/awg/manage_amneziawg.sh block-ru off      # remove
+```
+
+A client gets the refusal at once instead of waiting for the browser to give up: on my test server ya.ru was refused within a millisecond while github.com opened as usual. Client configs do not change, the AmneziaWG service is not restarted. If the `ipset` package is missing, the command installs it.
+
+**How it works.** The command puts a helper `awg-block-ru.sh` and a list of Russian networks `block-ru.zone` into `/root/awg/`, and a systemd unit `awg-block-ru` tied to `awg-quick@awg0`. The helper loads the list into the ipset `awg_block_ru` and puts a REJECT rule for client traffic to these addresses first in the FORWARD chain. First, because on every start of `awg0` the installer puts a rule on top that lets everything from clients through. The unit restarts together with `awg0` and puts the block back on top, so it survives `manage restart`, a port change, `ufw reload` and a server reboot. There is a short window between the start of `awg0` and the block coming back: after a restart the set is already in memory and the rule goes up at once, after a server reboot - once the list is loaded into ipset. If `awg0` is stopped at the time of `block-ru on`, the command downloads the list right away unless a usable one is already there, and the block comes up together with `awg0`.
+
+The list comes from ipdeny.com, and when that site is down, from the `cascade/ru.zone` snapshot in this repository for the installed version. At start the unit uses the saved list when there is a usable one, and then it does not go to the network. A fresh list is downloaded once a week (`/etc/cron.d/awg-block-ru`) and on `block-ru update`; if the download fails, the previous list stays in force. The cron job also brings the unit up if its last start failed, for example because the network was not up yet. An answer that does not look like a list of networks (fewer than 1000 networks, foreign lines, an octet over 255 or a prefix outside 1-32) is not accepted. If a new list fails to load, the block stays on the previous one.
+
+**Your own addresses.** The list is built by the country an address is registered to, so a Russian site behind Cloudflare or another foreign CDN gets through. Put such addresses and subnets into `/root/awg/block-ru.extra`, one per line (`#` starts a comment), then run `sudo systemctl restart awg-block-ru`. A line that does not look like an address or that ipset refuses is skipped and named in the log (`journalctl -u awg-block-ru`). `block-ru off` does not remove this file.
+
+**What to check.**
+- Client DNS. If `CLIENT_DNS` points to a Russian resolver (for example, Yandex 77.88.8.8), the block closes it too, and names stop resolving for clients. The command warns about this when it turns on.
+- IPv6. The list is IPv4 only. With a regular install client IPv6 goes into the tunnel and is dropped there; with `--allow-ipv6-tunnel` Russian IPv6 addresses stay open, and the command warns about that too.
+- Cascade. If this server sends client traffic to Russia directly under the [CASCADE.en.md](CASCADE.en.md) scheme, the block rejects it.
+
+`block-ru --json` returns the fields `enabled`, `in_force`, `active`, `rule`, `rule_first`, `networks` and `changed`. The one that matters is `in_force`: the block is in force only when the unit is enabled and running, the rule is first in FORWARD and the set is not empty. When the block is on but not in force, `block-ru` with no argument names the reason and the command that brings it back. The state of the block is also in the `--diagnostic` report, and uninstalling with the installer removes the unit, the cron file and the set.
 
 ---
 <a id="active-probing-adv"></a>

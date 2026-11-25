@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on 32-bit ARM) installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 6.3.9
-# Date: 2026-11-23
+# Version: 6.3.10
+# Date: 2026-11-25
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -40,7 +40,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.9"
+SCRIPT_VERSION="6.3.10"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -71,8 +71,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="973c8d3c25a6c195d06b6a6be13e414bbb2c282c8e18030d832377a40b197023"
-MANAGE_SCRIPT_SHA256="0e8ecdf07c39dc0dccfffdc1b51fb5ea2816251f59588a0d9497e482785d9de1"
+COMMON_SCRIPT_SHA256="f36389192f9ecb9f4a0d3cac72e88249d6bacbd3e6d84bd41c12ce91812611db"
+MANAGE_SCRIPT_SHA256="1856efdf04c46edd1f978e9dbfe0524b00145c9735b429f4d3ad4f7baddd160d"
 
 # Module pin for kernels older than 6.7 with no prebuilt (H0, 31 jul 2026). The
 # PPA module is not used there (see _kernel_supports_awg3); the module is built
@@ -5560,6 +5560,30 @@ create_diagnostic_report() {
             echo "not configured"
         fi
         echo ""
+        echo "--- Block RU (manage block-ru) ---"
+        if [ -f "${AWG_SYSTEMD_DIR:-/etc/systemd/system}/awg-block-ru.service" ]; then
+            local _br_active _br_enabled _br_out _br_pos
+            _br_active=$(systemctl is-active awg-block-ru 2>/dev/null || true)
+            _br_enabled=$(systemctl is-enabled awg-block-ru 2>/dev/null || true)
+            echo "unit awg-block-ru: active=${_br_active:-N/A}, enabled=${_br_enabled:-N/A}"
+            if _br_out=$(iptables -w 10 -S FORWARD 2>&1); then
+                _br_pos=$(awk '/^-A / {n++} /match-set awg_block_ru/ {print n; exit}' <<< "$_br_out")
+                if [ -n "$_br_pos" ]; then echo "FORWARD rule: present, position ${_br_pos}"; else echo "FORWARD rule: absent"; fi
+            else
+                echo "FORWARD rule: COULD NOT CHECK: $(head -1 <<< "$_br_out")"
+            fi
+            if ! command -v ipset >/dev/null 2>&1; then
+                echo "ipset: no such command (the ipset package is not installed)"
+            elif _br_out=$(ipset list awg_block_ru 2>&1); then
+                grep "Number of entries" <<< "$_br_out" || true
+            else
+                echo "ipset awg_block_ru: no such set"
+            fi
+            echo "block-ru.zone: $(stat -c '%y, %s bytes' "$AWG_DIR/block-ru.zone" 2>/dev/null || echo 'no file')"
+        else
+            echo "not enabled"
+        fi
+        echo ""
         echo "--- Kernel Params ---"
         sysctl net.ipv4.ip_forward net.ipv6.conf.all.disable_ipv6 2>/dev/null
         echo ""
@@ -5620,6 +5644,26 @@ _awg_uninstall_ports() {
         out+="${out:+ }$p"
     done
     printf '%s\n' "$out"
+}
+
+# manage block-ru lives outside $AWG_DIR: a unit, a cron file and an ipset. ExecStop
+# of the unit removes the FORWARD rule (the helper is still there, $AWG_DIR goes
+# later); a leftover rule is removed here, or the set stays referenced.
+_uninstall_block_ru() {
+    local unit="${AWG_SYSTEMD_DIR:-/etc/systemd/system}/awg-block-ru.service" n=0
+    local rule="FORWARD -i awg0 -m set --match-set awg_block_ru dst -j REJECT --reject-with icmp-admin-prohibited"
+    if [[ -f "$unit" ]]; then
+        systemctl disable --now awg-block-ru.service >/dev/null 2>&1 || log_warn "Could not stop awg-block-ru.service."
+        rm -f "$unit"
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    rm -f "${AWG_CRON_DIR:-/etc/cron.d}/awg-block-ru"
+    # shellcheck disable=SC2086  # the rule is split into words on purpose
+    while (( n++ < 16 )) && iptables -w 10 -C $rule 2>/dev/null; do iptables -w 10 -D $rule 2>/dev/null || break; done
+    if command -v ipset >/dev/null 2>&1; then
+        ipset destroy awg_block_ru >/dev/null 2>&1 || true
+        ipset destroy awg_block_ru_new >/dev/null 2>&1 || true
+    fi
 }
 
 step_uninstall() {
@@ -5862,6 +5906,7 @@ step_uninstall() {
     sysctl -p --system 2>/dev/null
     rm -f /etc/apt/sources.list.d/*.bak-* "$AWG_DIR"/ubuntu.sources.bak-* 2>/dev/null || true
     log "Removing cron and scripts..."
+    _uninstall_block_ru
     rm -f /etc/cron.d/awg-expiry 2>/dev/null
     log "=== UNINSTALL COMPLETED ==="
     # Copy log and remove working directory
@@ -9507,6 +9552,21 @@ _awg31_step3_gate() {
     die "The environment gate could not check the tools and the module for the AmneziaWG 3.1 profile (exit code ${_awg31_rc}, no reason given). The installation stops: without an answer we do not ship the third line.${_tail}"
 }
 
+# A certificate serial number in one form: no colons, upper case, no leading
+# zeros (modinfo prints bytes with colons, openssl prints a number).
+_awg_serial_norm() { tr -d ':[:space:]' | tr 'a-f' 'A-F' | sed 's/^0*//'; }
+# The certificate serial number from a file: DER (the form DKMS writes mok.pub
+# in), otherwise PEM. Unreadable or empty - code 1.
+_awg_cert_serial() {
+    local s
+    command -v openssl >/dev/null 2>&1 || return 1
+    s=$(openssl x509 -inform DER -in "$1" -noout -serial 2>/dev/null) \
+        || s=$(openssl x509 -inform PEM -in "$1" -noout -serial 2>/dev/null) || return 1
+    s=$(printf '%s' "${s#serial=}" | _awg_serial_norm)
+    [[ -n "$s" ]] || return 1
+    printf '%s' "$s"
+}
+
 # A hint for a modprobe failure, keyed on modprobe's own words (#403). Under
 # Secure Boot a kernel that enforces module signatures answers "Key was rejected
 # by service" both for an unsigned module and for one signed with a key that is
@@ -9543,15 +9603,51 @@ _awg_modprobe_hint() {
     fi
     signer=$(modinfo -F signer amneziawg 2>/dev/null) || signer=""
     signer="${signer:+ \"${signer}\"}"
-    if [[ -e "$root/var/lib/dkms/mok.pub" ]]; then
-        key=/var/lib/dkms/mok.pub
-    elif [[ -e "$root/var/lib/shim-signed/mok/MOK.der" ]]; then
-        key=/var/lib/shim-signed/mok/MOK.der
-    fi
+    # The key file on disk is checked against the module signature by the
+    # certificate serial number (sig_key in modinfo). A match - the exact command
+    # for that file; all read and none matches - a separate "the key on disk is a
+    # different one" message with no command, only the signature number to look
+    # the right certificate up by; nothing to check with (no sig_key, openssl cannot read a
+    # file) - the command with a caveat that names the unread file, not one that
+    # already did not match; with no sig_key there is nothing to rule out, and then
+    # the file that was read is taken.
+    local cand want serial unread="" readable=""
+    want=$(modinfo -F sig_key amneziawg 2>/dev/null | _awg_serial_norm) || want=""
+    for cand in /var/lib/dkms/mok.pub /var/lib/shim-signed/mok/MOK.der; do
+        [[ -e "$root$cand" ]] || continue
+        if serial=$(_awg_cert_serial "$root$cand"); then
+            [[ -n "$readable" ]] || readable="$cand"
+            if [[ -n "$want" && "$serial" == "$want" ]]; then key="$cand"; break; fi
+        else
+            [[ -n "$unread" ]] || unread="$cand"
+        fi
+    done
+    local how=" (it asks you to set a password), reboot, and on the blue MOK Manager screen choose Enroll MOK and enter that password. The screen shows only on the machine's monitor or the hoster's console, this step cannot be done over ssh."
+    local head=" The module is signed with the key${signer}, but the kernel does not trust it: the key is not enrolled in MOK and Secure Boot is on (check: mokutil --sb-state)."
+    local check="${unread:-$readable}"
+    [[ -n "$want" ]] || check="${readable:-$unread}"
     if [[ -n "$key" ]]; then
-        printf '%s' " The module is signed with the key${signer}, but the kernel does not trust it: the key is not enrolled in MOK and Secure Boot is on (check: mokutil --sb-state). Turn Secure Boot off in the UEFI settings or enroll the DKMS key: sudo mokutil --import $key (it asks you to set a password), reboot, and on the blue MOK Manager screen choose Enroll MOK and enter that password. The screen shows only on the machine's monitor or the hoster's console, this step cannot be done over ssh.$tail"
+        # mokutil --import takes DER only: a PEM key is converted first.
+        local imp="$key" conv=""
+        if ! openssl x509 -inform DER -in "$root$key" -noout >/dev/null 2>&1; then
+            imp=/root/dkms-mok.der
+            conv="sudo openssl x509 -in $key -outform DER -out $imp && "
+        fi
+        printf '%s' "$head Turn Secure Boot off in the UEFI settings or enroll the DKMS key: ${conv}sudo mokutil --import $imp${how}$tail"
+    elif [[ -n "$want" && -n "$readable" && -z "$unread" ]]; then
+        printf '%s' "$head The DKMS key on disk is a different one, not the key the module is signed with, so enrolling it will not help. Turn Secure Boot off in the UEFI settings or enroll in MOK the certificate of the key the module is signed with (its serial number: modinfo -F sig_key amneziawg).$tail"
+    elif [[ -n "$check" ]]; then
+        # The file format is known only when it was read (with no sig_key there is
+        # nothing to compare): a PEM file is converted to DER as in the match branch.
+        local imp="$check" conv="" inform="-inform DER " pemhint=" (for a PEM file - without -inform DER)"
+        if [[ -n "$readable" && "$check" == "$readable" ]] && ! openssl x509 -inform DER -in "$root$check" -noout >/dev/null 2>&1; then
+            imp=/root/dkms-mok.der
+            conv="sudo openssl x509 -in $check -outform DER -out $imp && "
+            inform="" pemhint=""
+        fi
+        printf '%s' "$head Turn Secure Boot off in the UEFI settings or enroll the DKMS key: ${conv}sudo mokutil --import $imp${how} This file could not be checked against the module signature, so before enrolling it make sure the number from openssl x509 ${inform}-in $check -noout -serial matches modinfo -F sig_key amneziawg${pemhint}: a foreign key widens what the kernel trusts, and the module still does not load.$tail"
     else
-        printf '%s' " The module is signed with the key${signer}, but the kernel does not trust it: the key is not enrolled in MOK and Secure Boot is on (check: mokutil --sb-state). Turn Secure Boot off in the UEFI settings or enroll that key in MOK (mokutil --import).$tail"
+        printf '%s' "$head Turn Secure Boot off in the UEFI settings or enroll that key in MOK (mokutil --import).$tail"
     fi
 }
 
