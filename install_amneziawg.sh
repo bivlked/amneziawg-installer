@@ -9,7 +9,7 @@ fi
 # Скрипт для установки и настройки AmneziaWG 3.x (3.1 по умолчанию; 2.0 по флагу, а также на ядрах старее 6.7 и на 32-битном ARM) на Ubuntu/Debian серверах
 # Автор: @bivlked
 # Версия: 6.3.10
-# Дата: 2026-11-24
+# Дата: 2026-11-25
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -69,8 +69,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="7866d877a44989d6fcdbbe6c1402c10af32b4fa22d8e6db550ba579483e26162"
-MANAGE_SCRIPT_SHA256="526da133fd7b0a5c2e2cd6e7d89a5a337ccf604403633e4d345a753a78a91f05"
+COMMON_SCRIPT_SHA256="a889a9b6b9e366d52a7fa12d348731722e26105771401a57d0ac3bdb8712cd51"
+MANAGE_SCRIPT_SHA256="7f4fa097323ab0993319f99ab01a78f81b9010872436d2a69601fd177d1c2231"
 
 # Пин модуля для ядер старее 6.7 без готового пакета (H0, 31 jul 2026). Модуль
 # из PPA там не используется (см. _kernel_supports_awg3): модуль собирается из

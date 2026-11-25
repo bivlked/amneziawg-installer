@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [6.3.10] - 2026-11-24
+## [6.3.10] - 2026-11-25
 
 **v6.3.10** - a new `manage block-ru` command keeps VPN clients away from Russian IPv4 addresses, the Secure Boot hint checks the DKMS key against the module signature, and `manage add` and `manage regen` build QR and `vpn://` under the config lock.
 
