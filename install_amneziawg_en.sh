@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on 32-bit ARM) installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 6.3.10
-# Date: 2026-11-25
+# Version: 6.3.11
+# Date: 2026-11-26
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -40,7 +40,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.10"
+SCRIPT_VERSION="6.3.11"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -71,8 +71,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="f36389192f9ecb9f4a0d3cac72e88249d6bacbd3e6d84bd41c12ce91812611db"
-MANAGE_SCRIPT_SHA256="1856efdf04c46edd1f978e9dbfe0524b00145c9735b429f4d3ad4f7baddd160d"
+COMMON_SCRIPT_SHA256="91f67eb2586f35db6a51cb02d34a8938e6073d2542b16c445f088fc28a40d38d"
+MANAGE_SCRIPT_SHA256="b3fe89927608f90d2355268581af5e229572c48378e89eef8a9ba8b35431c3c6"
 
 # Module pin for kernels older than 6.7 with no prebuilt (H0, 31 jul 2026). The
 # PPA module is not used there (see _kernel_supports_awg3); the module is built
@@ -87,7 +87,7 @@ AWG2_PIN_TAG="v3.1.20261113-02"
 AWG2_PIN_COMMIT="63ed35de3d3f135b17e8eae0b84949e7700303be"
 
 # CLI flags
-UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PSK=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; NO_REBOOT=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PSK=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 REPAIR_MODULE=0
 IPOPTS_GUARD=0
@@ -345,6 +345,7 @@ while [[ $# -gt 0 ]]; do
                              CLI_PROTOCOL="$2"; shift
                          fi ;;
         --yes|-y)        AUTO_YES=1 ;;
+        --no-reboot)     NO_REBOOT=1 ;;
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
         --no-cps)        NO_CPS=1; CLI_NO_CPS=1 ;;
         --no-psk)        NO_PSK=1; CLI_NO_PSK=1 ;;
@@ -808,6 +809,10 @@ Options:
                         profile.
                         The spaced form is accepted too: --protocol 2.0
   -y, --yes             Auto-confirm (reboots, UFW, etc.)
+  --no-reboot           Do not reboot the server by itself: save the step and
+                        exit with code 75 (usually together with --yes). Ansible
+                        or Puppet reboots, then runs the installer again with
+                        the same parameters
   -f, --force           Force reinstall on top of an already-running AmneziaWG
                         (by default a run on a configured server aborts;
                         ENV: AWG_FORCE_REINSTALL=1 is equivalent to the flag)
@@ -892,6 +897,13 @@ request_reboot() {
     log_warn "!!! sudo bash $0 [with the same parameters, if any]      !!!"
     log_warn "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo "" >> "$LOG_FILE"
+    # --no-reboot (#427): the automation system reboots. Code 75 (EX_TEMPFAIL)
+    # tells "reboot and run again" from the end of the install (0) and from a failure
+    # (any other code: 1, or 2 for bad parameters).
+    if [[ "${NO_REBOOT:-0}" -eq 1 ]]; then
+        log "Reboot skipped (--no-reboot). Reboot the server and run the script again with the same parameters, the install continues from step ${next_step}. Exit code 75."
+        exit 75
+    fi
     local confirm="y"
     if [[ "$AUTO_YES" -eq 0 ]]; then
         read -rp "Reboot now? [y/N]: " confirm < /dev/tty

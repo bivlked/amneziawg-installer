@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # Скрипт для управления пользователями (пирами) AmneziaWG 3.x и 2.0
 # Автор: @bivlked
-# Версия: 6.3.10
-# Дата: 2026-11-25
+# Версия: 6.3.11
+# Дата: 2026-11-26
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Безопасный режим и Константы ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="6.3.10"
+SCRIPT_VERSION="6.3.11"
 set -o pipefail
 # awg show раскрашивает подписи, если в окружении WG_COLOR_MODE=always, даже при
 # выводе в канал. Тогда фильтр секретов не узнаёт «header protection key» и
@@ -3914,7 +3914,7 @@ IF=awg0
 DIR='@@DIR@@'
 LIST="$DIR/block-ru.zone"
 EXTRA="$DIR/block-ru.extra"
-URLS="https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone https://raw.githubusercontent.com/bivlked/amneziawg-installer/v@@VER@@/cascade/ru.zone"
+URLS="https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/ru/ipv4-aggregated.txt https://raw.githubusercontent.com/bivlked/amneziawg-installer/v@@VER@@/cascade/ru.zone"
 SET=awg_block_ru
 RULE=(FORWARD -i "$IF" -m set --match-set "$SET" dst -j REJECT --reject-with icmp-admin-prohibited)
 # -w: на iptables-legacy занятая блокировка xtables без него читалась бы как
@@ -3937,8 +3937,9 @@ if [ "${1:-}" != stop ] && [ ! -e "$DIR/awg-block-ru.sh" ]; then
 fi
 
 # Сети по строке на входе - так же строго, как их примет ipset: октеты 0-255,
-# префикс 1-32 (/0 закрыл бы клиентам весь интернет). Код 1 - есть негодная.
-strict() { awk -F'[./]' 'NF != 5 || $1 > 255 || $2 > 255 || $3 > 255 || $4 > 255 || $5 < 1 || $5 > 32 { bad = 1 } END { exit bad }'; }
+# префикс 8-32 (/0 или /1 закрыл бы клиентам почти весь интернет; самый короткий
+# префикс в настоящих списках /13). Код 1 - есть негодная.
+strict() { awk -F'[./]' 'NF != 5 || $1 > 255 || $2 > 255 || $3 > 255 || $4 > 255 || $5 < 8 || $5 > 32 { bad = 1 } END { exit bad }'; }
 
 # Не меньше 1000 сетей, каждая непустая строка без # - сеть IPv4, и каждая
 # сеть годна для ipset: иначе такой список попал бы в кэш и после перезагрузки
@@ -3997,7 +3998,7 @@ extra_lines() {
         if [[ "$line" =~ $ONE ]] && printf '%s\n' "$net" | strict; then
             printf '%s\n' "$line"
         else
-            echo "В $EXTRA пропущена строка, это не адрес и не сеть IPv4: $line" >&2
+            echo "В $EXTRA пропущена строка, это не адрес IPv4 и не сеть с префиксом от /8 до /32: $line" >&2
         fi
     done < "$EXTRA"
 }
@@ -4161,6 +4162,48 @@ _br_write_files() {
     fi
 }
 
+# Помощник на диске сверяется с текстом этой версии manage: после обновления
+# скриптов включённый запрет иначе работал бы на прежнем помощнике (cron и юнит
+# зовут его напрямую), без новых источников и проверок списка. Переписывается
+# только помощник, атомарно; уже запущенный помощник дочитывает свою копию. Занята
+# блокировка (идёт update или off) - пропуск, сверка будет при следующем запуске.
+_br_refresh_helper() {
+    local t fd
+    _br_paths
+    [[ -f "$_BR_HELPER" ]] || return 0
+    exec {fd}>> "$AWG_DIR/.block-ru.lock" || return 1
+    if ! flock -n "$fd"; then
+        exec {fd}>&-
+        return 0
+    fi
+    if ! t=$(mktemp "$AWG_DIR/.awg-block-ru.XXXXXX"); then
+        exec {fd}>&-
+        return 1
+    fi
+    # Неудачная запись (кончилось место) оставит в $t обрезанный файл: он не
+    # должен заменить помощник, который запускают cron и юнит.
+    if ! _br_helper_text | sed -e "s|@@DIR@@|$AWG_DIR|" -e "s|@@VER@@|$SCRIPT_VERSION|" > "$t"; then
+        rm -f "$t"
+        exec {fd}>&-
+        log_warn "Помощник запрета block-ru (awg-block-ru.sh) не обновился: запрет работает на прежнем. Повторите: manage block-ru on"
+        return 1
+    fi
+    if cmp -s "$t" "$_BR_HELPER"; then
+        rm -f "$t"
+        exec {fd}>&-
+        return 0
+    fi
+    if chmod 700 "$t" && mv -f "$t" "$_BR_HELPER"; then
+        exec {fd}>&-
+        log "Помощник запрета block-ru (awg-block-ru.sh) обновлён до версии $SCRIPT_VERSION."
+        return 0
+    fi
+    rm -f "$t"
+    exec {fd}>&-
+    log_warn "Помощник запрета block-ru (awg-block-ru.sh) не обновился: запрет работает на прежнем. Повторите: manage block-ru on"
+    return 1
+}
+
 _br_remove_files() {
     if [[ -f "$_BR_UNIT_FILE" ]]; then
         systemctl disable --now "$_BR_UNIT" >&2 || log_warn "systemctl disable --now $_BR_UNIT вернул ошибку."
@@ -4202,12 +4245,29 @@ _br_rule_drain() {
 _br_need_ipset() {
     command -v ipset > /dev/null 2>&1 && return 0
     log "Ставлю пакет ipset..."
-    if ! timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset >> "$LOG_FILE" 2>&1; then
-        timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get update >> "$LOG_FILE" 2>&1
-        timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset >> "$LOG_FILE" 2>&1
+    # stdin из /dev/null: timeout ставит себя и apt в новую группу процессов, фоновую
+    # для терминала, а apt с терминалом на stdin переводит его в raw для dpkg и потом
+    # виснет, возвращая его, пока timeout не убьёт (5 минут и сбитый терминал, D#418).
+    local rc=0 to=0
+    timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset < /dev/null >> "$LOG_FILE" 2>&1 || rc=$?
+    # 124 - apt убит по тайм-ауту, возможно посреди dpkg. Второй круг update и install
+    # занял бы ещё до десяти минут и упёрся бы в то же. Пакет при этом мог уже
+    # распаковаться (apt убит на триггерах): решает наличие ipset, а не код.
+    (( rc == 124 )) && to=1
+    if (( rc != 0 && rc != 124 )); then
+        timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get update < /dev/null >> "$LOG_FILE" 2>&1 || { (( $? == 124 )) && to=1; }
+        timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset < /dev/null >> "$LOG_FILE" 2>&1 || { (( $? == 124 )) && to=1; }
     fi
     hash -r
-    command -v ipset > /dev/null 2>&1 && return 0
+    if command -v ipset > /dev/null 2>&1; then
+        (( to )) && log_warn "apt прерван по тайм-ауту, но ipset на месте. Доделайте прерванную установку пакетов: dpkg --configure -a"
+        return 0
+    fi
+    if (( to )); then
+        _JSON_ERR="ipset install timed out"
+        log_error "Пакет ipset не поставился за 300 с (подробности в $LOG_FILE). Проверьте, не занят ли apt другим процессом, и доделайте прерванную установку: dpkg --configure -a && apt update && apt install -y ipset, затем повторите."
+        return 1
+    fi
     _JSON_ERR="ipset is not installed"
     log_error "Пакет ipset не поставился (подробности в $LOG_FILE). Поставьте его вручную и повторите: apt update && apt install -y ipset"
     return 1
@@ -4504,6 +4564,7 @@ cd "$AWG_DIR" || die "Ошибка перехода в $AWG_DIR"
 
 log "Запуск команды '$COMMAND'..."
 _cmd_rc=0
+_br_refresh_helper || true
 
 case $COMMAND in
     add)

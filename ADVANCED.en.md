@@ -1152,6 +1152,7 @@ Options:
   --i1='<b 0x...>'      Set I1 to your own value: tags <b 0xHEX>, <r N>, <rc N>, <rd N>, <t> (N from 1 to 1000, the whole packet at most 1024 bytes). The value is pinned, a reinstall keeps it; --no-cps, --preset, --mobile, --jc, --jmin and --jmax drop it
   --no-prebuilt         On ARM, do not install the prebuilt module package from the arm-packages release; build the module with DKMS
   -y, --yes             Non-interactive mode (all confirmations auto-yes)
+  --no-reboot           Do not reboot the server by itself: save the step and exit with code 75
   -f, --force           Reinstall over a working AWG (ENV: AWG_FORCE_REINSTALL=1)
   --no-tweaks           Skip the system cleanup, the optimization and the hardening
                         (UFW, Fail2Ban); the minimal forwarding sysctl is always applied
@@ -1159,6 +1160,8 @@ Options:
                         the firewall, Fail2Ban and the optimization. Removing snapd
                         takes installed snaps and their data in /var/snap with it
 ```
+
+> **Installing from Ansible or Puppet (`--no-reboot`).** With `--yes` the installer reboots the server twice by itself, and the automation tool loses its connection. With `--yes --no-reboot` it gets to the reboot, saves the step and exits with code 75. The automation tool then reboots the server itself (the `reboot` module in Ansible) and runs the same command again: the install continues from the saved step. Code 0 means the install is finished, 75 means reboot and run again, any other code is an error (1, or 2 for bad parameters). An install takes two reboots.
 
 <a id="manage-cli-adv"></a>
 ### manage_amneziawg.sh
@@ -1369,7 +1372,7 @@ Client keys are stored in `/root/awg/keys/` (permissions 600). Server keys are i
 The installer downloads `awg_common_en.sh` and `manage_amneziawg_en.sh` (the Russian installer: `awg_common.sh` and `manage_amneziawg.sh`) from URLs pinned to the specific version tag:
 
 ```
-https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.10/awg_common_en.sh
+https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.11/awg_common_en.sh
 ```
 
 This provides **supply chain pinning**: downloaded scripts match the installer version, even if `main` has already been updated.
@@ -2313,7 +2316,7 @@ A client gets the refusal at once instead of waiting for the browser to give up:
 
 **How it works.** The command puts a helper `awg-block-ru.sh` and a list of Russian networks `block-ru.zone` into `/root/awg/`, and a systemd unit `awg-block-ru` tied to `awg-quick@awg0`. The helper loads the list into the ipset `awg_block_ru` and puts a REJECT rule for client traffic to these addresses first in the FORWARD chain. First, because on every start of `awg0` the installer puts a rule on top that lets everything from clients through. The unit restarts together with `awg0` and puts the block back on top, so it survives `manage restart`, a port change, `ufw reload` and a server reboot. There is a short window between the start of `awg0` and the block coming back: after a restart the set is already in memory and the rule goes up at once, after a server reboot - once the list is loaded into ipset. If `awg0` is stopped at the time of `block-ru on`, the command downloads the list right away unless a usable one is already there, and the block comes up together with `awg0`.
 
-The list comes from ipdeny.com, and when that site is down, from the `cascade/ru.zone` snapshot in this repository for the installed version. At start the unit uses the saved list when there is a usable one, and then it does not go to the network. A fresh list is downloaded once a week (`/etc/cron.d/awg-block-ru`) and on `block-ru update`; if the download fails, the previous list stays in force. The cron job also brings the unit up if its last start failed, for example because the network was not up yet. An answer that does not look like a list of networks (fewer than 1000 networks, foreign lines, an octet over 255 or a prefix outside 1-32) is not accepted. If a new list fails to load, the block stays on the previous one.
+The list comes from ipdeny.com; when that site is down, from [ipverse/country-ip-blocks](https://github.com/ipverse/country-ip-blocks) (data from the regional internet registries), and when that fails too, from the `cascade/ru.zone` snapshot in this repository for the installed version. At start the unit uses the saved list when there is a usable one, and then it does not go to the network. A fresh list is downloaded once a week (`/etc/cron.d/awg-block-ru`) and on `block-ru update`; if the download fails, the previous list stays in force. The cron job also brings the unit up if its last start failed, for example because the network was not up yet. An answer that does not look like a list of networks (fewer than 1000 networks, foreign lines, an octet over 255 or a prefix outside 8-32) is not accepted. If a new list fails to load, the block stays on the previous one. After a script update the `awg-block-ru.sh` helper is rewritten by itself on the first run of any `manage` command, there is no need to turn the block on again.
 
 **Your own addresses.** The list is built by the country an address is registered to, so a Russian site behind Cloudflare or another foreign CDN gets through. Put such addresses and subnets into `/root/awg/block-ru.extra`, one per line (`#` starts a comment), then run `sudo systemctl restart awg-block-ru`. A line that does not look like an address or that ipset refuses is skipped and named in the log (`journalctl -u awg-block-ru`). `block-ru off` does not remove this file.
 

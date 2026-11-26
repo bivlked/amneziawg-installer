@@ -29,7 +29,7 @@ make_list() {
 
 setup_block_env() {
     # each_manage runs both scripts in one test: no stub switch carries over.
-    unset STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE STUB_CURL_SNAP
+    unset STUB_APT_TIMEOUT STUB_APT_TIMEOUT_ON_UPDATE STUB_APT_TIMEOUT_AFTER_UNPACK STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE STUB_CURL_SNAP
     MGMT_DIR=$(mktemp -d)
     mkdir -p "$MGMT_DIR/bin" "$MGMT_DIR/awg/keys" "$MGMT_DIR/systemd" "$MGMT_DIR/cron" "$MGMT_DIR/web"
     export CALLS="$MGMT_DIR/calls"; : > "$CALLS"
@@ -146,7 +146,12 @@ STUB
     cat > "$MGMT_DIR/bin/apt-get" << 'STUB'
 #!/bin/bash
 echo "apt-get $*" >> "$CALLS.apt"
+# what apt-get reads as stdin: a terminal there made apt hang under timeout
+readlink /proc/self/fd/0 >> "$CALLS.apt_stdin"
 [[ -n "${STUB_APT_FAIL:-}" ]] && exit 100
+[[ -n "${STUB_APT_TIMEOUT:-}" ]] && exit 124
+[[ -n "${STUB_APT_TIMEOUT_ON_UPDATE:-}" && "$1" == update ]] && exit 124
+if [[ -n "${STUB_APT_TIMEOUT_AFTER_UNPACK:-}" && " $* " == *" install "* ]]; then cp "$STUB_IPSET_REAL" "$(dirname "$0")/ipset"; exit 124; fi
 [[ "$1" == update ]] && : > "$CALLS.apt_updated"
 [[ -n "${STUB_APT_NEEDS_UPDATE:-}" && " $* " == *" install "* && ! -e "$CALLS.apt_updated" ]] && exit 100
 [[ " $* " == *" install "* ]] && cp "$STUB_IPSET_REAL" "$(dirname "$0")/ipset"
@@ -179,7 +184,7 @@ CONF
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
     unset AWG_SKIP_APPLY CALLS STUB_WEB AWG_SYSTEMD_DIR AWG_CRON_DIR STUB_START_FAIL STUB_IPT_I_FAIL \
-        STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE
+        STUB_APT_TIMEOUT STUB_APT_TIMEOUT_ON_UPDATE STUB_APT_TIMEOUT_AFTER_UNPACK STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE
 }
 
 manage() {
@@ -456,6 +461,43 @@ _helper_fallback_url() {
     each_manage _helper_fallback_url
 }
 
+# I#221: ipverse (RIR data, on GitHub) is the second source, before the snapshot
+# from the release tag. Its file starts with # comment lines.
+_helper_ipverse_second() {
+    on_then "$1" || return 1
+    printf '<html>not a list</html>\n' > "$STUB_WEB/ru-aggregated.zone"
+    make_list "$MGMT_DIR/nets" 1150
+    { printf '# Country: Russia (RU)\n# Address family: IPv4\n#\n'; cat "$MGMT_DIR/nets"; } > "$STUB_WEB/ipv4-aggregated.txt"
+    make_list "$STUB_WEB/ru.zone" 1100
+    helper apply
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1150" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    [ "$(grep -oE 'https://[^ ]+' "$CALLS.curl" | paste -sd' ' -)" = "https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/ru/ipv4-aggregated.txt" ] \
+        || { echo "$1: urls: $(cat "$CALLS.curl")"; return 1; }
+    grep -qF "ipv4-aggregated.txt" <<< "$output" || { echo "$1: source not named: $output"; return 1; }
+}
+@test "helper: ipdeny gives HTML - the ipverse list is the second source, before the snapshot" {
+    each_manage _helper_ipverse_second
+}
+
+# ipverse answers, but not with a usable list (a captcha page, a short list): the
+# snapshot from the release tag is the third source, tried after both.
+_helper_snapshot_third() {
+    on_then "$1" || return 1
+    printf '<html>not a list</html>\n' > "$STUB_WEB/ru-aggregated.zone"
+    make_list "$STUB_WEB/ipv4-aggregated.txt" 999
+    make_list "$STUB_WEB/ru.zone" 1100
+    helper apply
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1100" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    [ "$(grep -oE 'https://[^ ]+' "$CALLS.curl" | sed -E 's|/v[0-9]+[.][0-9]+[.][0-9]+/|/vX/|' | paste -sd' ' -)" = "https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/ru/ipv4-aggregated.txt https://raw.githubusercontent.com/bivlked/amneziawg-installer/vX/cascade/ru.zone" ] \
+        || { echo "$1: urls: $(cat "$CALLS.curl")"; return 1; }
+    [ "$(grep -c "ipv4-aggregated.txt" <<< "$stderr")" -ge 1 ] || { echo "$1: the refused ipverse answer is not named: $stderr"; return 1; }
+}
+@test "helper: ipdeny and ipverse give no usable list - the release snapshot is the third source" {
+    each_manage _helper_snapshot_third
+}
+
 _helper_rejects_mixed() {
     on_then "$1" || return 1
     make_list "$STUB_WEB/ru-aggregated.zone" 1200
@@ -730,7 +772,7 @@ _off_without_lock() {
 # to the cache and never load after a reboot: it is refused at download.
 _strict_list() {
     local bad
-    for bad in '300.1.2.0/24' '10.0.0.0/0' '10.0.0.0/33' '1.2.3.256/24'; do
+    for bad in '300.1.2.0/24' '10.0.0.0/0' '10.0.0.0/33' '1.2.3.256/24' '0.0.0.0/1' '10.0.0.0/7'; do
         make_list "$STUB_WEB/ru-aggregated.zone" 1200
         on_then "$1" || return 1
         make_list "$STUB_WEB/ru-aggregated.zone" 1200
@@ -741,8 +783,23 @@ _strict_list() {
         [ ! -e "$MGMT_DIR/awg/block-ru.zone" ] || { echo "$1: '$bad' went to the cache"; return 1; }
     done
 }
-@test "helper: a list with an octet over 255 or a prefix of 0 or over 32 is refused and not cached" {
+@test "helper: a list with an octet over 255 or a prefix under 8 or over 32 is refused and not cached" {
     each_manage _strict_list
+}
+
+# The shortest prefix in the real lists is /13 (ipdeny and ipverse, 26 nov 2026). A source
+# that adds 0.0.0.0/1 next to 1000 good lines would otherwise close the internet to
+# every client; /8 is still accepted.
+_prefix_8_accepted() {
+    on_then "$1" || return 1
+    make_list "$STUB_WEB/ru-aggregated.zone" 1200
+    echo "11.0.0.0/8" >> "$STUB_WEB/ru-aggregated.zone"
+    helper apply
+    [ "$status" -eq 0 ] || { echo "$1: a /8 refused: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1201" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+}
+@test "helper: a /8 network in the list is accepted" {
+    each_manage _prefix_8_accepted
 }
 
 _strict_extra() {
@@ -758,6 +815,74 @@ _strict_extra() {
 }
 @test "helper: own networks with a bad octet or prefix are skipped and named" {
     each_manage _strict_extra
+}
+
+# A network wider than /8 in the own list is skipped too, and the message says
+# why: "not an IPv4 address or network" would be wrong for 10.0.0.0/7.
+_extra_wider_than_8() {
+    on_then "$1" || return 1
+    printf '203.0.113.0/24\n10.0.0.0/7\n' > "$MGMT_DIR/awg/block-ru.extra"
+    helper apply
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1201" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    grep -F "10.0.0.0/7" <<< "$stderr" | grep -qF "/8" || { echo "$1: the /8 floor is not named: $stderr"; return 1; }
+}
+@test "helper: an own network wider than /8 is skipped with the /8 floor named" {
+    each_manage _extra_wider_than_8
+}
+
+# ---------- the helper follows manage updates ----------
+
+# block-ru was turned on by an older manage: the helper on disk is the old text
+# (here: without ipverse). Any manage command afterwards rewrites it to the text
+# of this version, since cron and the unit run the helper directly.
+_helper_refreshed() {
+    manage "$1" block-ru on
+    [ "$status" -eq 0 ] || { echo "$1: on failed: $stderr"; return 1; }
+    sed -i 's| https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/ru/ipv4-aggregated.txt||' "$MGMT_DIR/awg/awg-block-ru.sh"
+    ! grep -qF ipverse "$MGMT_DIR/awg/awg-block-ru.sh" || { echo "$1: the old helper was not prepared"; return 1; }
+    manage "$1" list
+    [ "$status" -eq 0 ] || { echo "$1: list failed: $stderr"; return 1; }
+    grep -qF "ipverse/country-ip-blocks" "$MGMT_DIR/awg/awg-block-ru.sh" || { echo "$1: the helper was not rewritten"; return 1; }
+    [ -x "$MGMT_DIR/awg/awg-block-ru.sh" ] || { echo "$1: the rewritten helper is not executable"; return 1; }
+    grep -qF "awg-block-ru" <<< "$output$stderr" || { echo "$1: the rewrite is not reported"; return 1; }
+    # the same text again: nothing to report the second time
+    manage "$1" list
+    ! grep -qF "awg-block-ru" <<< "$output$stderr" || { echo "$1: an unchanged helper was reported again"; return 1; }
+}
+@test "an older block-ru helper is rewritten by the next manage command" {
+    each_manage _helper_refreshed
+}
+
+# The render breaks half way (a full disk): the cut file must not replace the
+# helper that cron and the unit run, and no temporary file stays behind.
+_helper_cut_render_kept() {
+    manage "$1" block-ru on
+    [ "$status" -eq 0 ] || { echo "$1: on failed: $stderr"; return 1; }
+    sed -i 's| https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/ru/ipv4-aggregated.txt||' "$MGMT_DIR/awg/awg-block-ru.sh"
+    cp "$MGMT_DIR/awg/awg-block-ru.sh" "$MGMT_DIR/helper.before"
+    # sed that writes the first 200 bytes and fails, only for the helper render
+    printf '#!/bin/bash\nif [[ "$*" == *@@DIR@@* ]]; then %s "$@" | head -c 200; exit 4; fi\nexec %s "$@"\n' \
+        "$(command -v sed)" "$(command -v sed)" > "$MGMT_DIR/bin/sed"
+    chmod +x "$MGMT_DIR/bin/sed"
+    manage "$1" list
+    rm -f "$MGMT_DIR/bin/sed"
+    [ "$status" -eq 0 ] || { echo "$1: list failed: $stderr"; return 1; }
+    cmp -s "$MGMT_DIR/awg/awg-block-ru.sh" "$MGMT_DIR/helper.before" || { echo "$1: the helper was replaced by a cut render"; return 1; }
+    grep -qF "awg-block-ru.sh" <<< "$stderr" || { echo "$1: no warning: $stderr"; return 1; }
+    [ -z "$(find "$MGMT_DIR/awg" -name '.awg-block-ru.*')" ] || { echo "$1: a temporary file stayed"; return 1; }
+}
+@test "a helper render that breaks half way does not replace the helper" {
+    each_manage _helper_cut_render_kept
+}
+
+_helper_not_created() {
+    manage "$1" list
+    [ "$status" -eq 0 ] || { echo "$1: list failed: $stderr"; return 1; }
+    [ ! -e "$MGMT_DIR/awg/awg-block-ru.sh" ] || { echo "$1: a helper appeared on a server without block-ru"; return 1; }
+}
+@test "manage on a server without block-ru does not create the helper" {
+    each_manage _helper_not_created
 }
 
 _refetch_after_failed_load() {
@@ -863,6 +988,67 @@ _apt_retry() {
 }
 @test "block-ru on: ipset install fails on stale lists - apt-get update, then the install goes through" {
     each_manage _apt_retry
+}
+
+# apt-get under timeout with a terminal on stdin: timeout puts itself and apt in a
+# new process group, a background one for the terminal; apt puts the terminal in raw mode for dpkg and then hangs on
+# giving it back until timeout kills it (5 minutes, the terminal left raw; D#418).
+# Every apt-get call gets /dev/null as stdin, whatever manage itself reads from.
+_apt_stdin_null() {
+    mv "$MGMT_DIR/bin/ipset" "$MGMT_DIR/ipset.real"
+    export STUB_IPSET_REAL="$MGMT_DIR/ipset.real" STUB_APT_NEEDS_UPDATE=1
+    printf 'y\n' > "$MGMT_DIR/stdin.txt"
+    manage "$1" block-ru on < "$MGMT_DIR/stdin.txt"
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ "$(grep -c . "$CALLS.apt_stdin")" = "3" ] || { echo "$1: apt calls: $(cat "$CALLS.apt_stdin" 2>&1)"; return 1; }
+    [ "$(grep -cvxF /dev/null "$CALLS.apt_stdin")" = "0" ] || { echo "$1: apt stdin: $(cat "$CALLS.apt_stdin")"; return 1; }
+}
+@test "block-ru on: every apt-get call reads /dev/null, not the caller's stdin" {
+    each_manage _apt_stdin_null
+}
+
+# The install ran into the 300 s limit (rc 124 from timeout): no second round of
+# update and install (another ten minutes), and the message points at dpkg, which
+# a kill in the middle can leave half configured.
+_apt_timeout_no_retry() {
+    mv "$MGMT_DIR/bin/ipset" "$MGMT_DIR/ipset.real"
+    export STUB_IPSET_REAL="$MGMT_DIR/ipset.real" STUB_APT_TIMEOUT=1
+    manage "$1" block-ru on
+    [ "$status" -ne 0 ] || { echo "$1: succeeded without ipset"; return 1; }
+    [ "$(grep -c . "$CALLS.apt")" = "1" ] || { echo "$1: apt calls: $(cat "$CALLS.apt")"; return 1; }
+    [[ "$stderr" == *"dpkg --configure -a"* ]] || { echo "$1: no dpkg hint: $stderr"; return 1; }
+    [ ! -e "$AWG_SYSTEMD_DIR/awg-block-ru.service" ] || return 1
+}
+@test "block-ru on: the ipset install times out - no retry, the message points at dpkg" {
+    each_manage _apt_timeout_no_retry
+}
+
+# apt was killed by the timeout after ipset was already unpacked (in the
+# triggers): the binary is there, so block-ru goes on, with a warning to finish
+# the interrupted dpkg run.
+_apt_timeout_ipset_there() {
+    mv "$MGMT_DIR/bin/ipset" "$MGMT_DIR/ipset.real"
+    export STUB_IPSET_REAL="$MGMT_DIR/ipset.real" STUB_APT_TIMEOUT_AFTER_UNPACK=1
+    manage "$1" block-ru on
+    [ "$status" -eq 0 ] || { echo "$1: failed with ipset in place: $stderr"; return 1; }
+    [[ "$stderr" == *"dpkg --configure -a"* ]] || { echo "$1: no dpkg warning: $stderr"; return 1; }
+    [ "$(fw | head -1)" = "$RULE" ] || { echo "$1: the block is not on"; return 1; }
+}
+@test "block-ru on: the ipset install times out after unpacking - the block goes on with a dpkg warning" {
+    each_manage _apt_timeout_ipset_there
+}
+
+# The first install fails for another reason and the retry runs into the
+# timeout: the message points at dpkg too.
+_apt_retry_timeout() {
+    mv "$MGMT_DIR/bin/ipset" "$MGMT_DIR/ipset.real"
+    export STUB_IPSET_REAL="$MGMT_DIR/ipset.real" STUB_APT_NEEDS_UPDATE=1 STUB_APT_TIMEOUT_ON_UPDATE=1
+    manage "$1" block-ru on
+    [ "$status" -ne 0 ] || { echo "$1: succeeded without ipset"; return 1; }
+    [[ "$stderr" == *"dpkg --configure -a"* ]] || { echo "$1: no dpkg hint: $stderr"; return 1; }
+}
+@test "block-ru on: the retry runs into the timeout - the message points at dpkg" {
+    each_manage _apt_retry_timeout
 }
 
 _extra_args() {

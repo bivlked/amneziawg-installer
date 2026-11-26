@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 3.x (3.1 по умолчанию; 2.0 по флагу, а также на ядрах старее 6.7 и на 32-битном ARM) на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 6.3.10
-# Дата: 2026-11-25
+# Версия: 6.3.11
+# Дата: 2026-11-26
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -39,7 +39,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.10"
+SCRIPT_VERSION="6.3.11"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -69,8 +69,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="a889a9b6b9e366d52a7fa12d348731722e26105771401a57d0ac3bdb8712cd51"
-MANAGE_SCRIPT_SHA256="7f4fa097323ab0993319f99ab01a78f81b9010872436d2a69601fd177d1c2231"
+COMMON_SCRIPT_SHA256="7ee85cc88fdd5b8de8cb577d2a458799781e18069d1be4e4e1fbdb0b3eb20a6e"
+MANAGE_SCRIPT_SHA256="fb54f8a7a662f60ab44a60c0ff0229b88d933a928f118bca59145ece434efc96"
 
 # Пин модуля для ядер старее 6.7 без готового пакета (H0, 31 jul 2026). Модуль
 # из PPA там не используется (см. _kernel_supports_awg3): модуль собирается из
@@ -85,7 +85,7 @@ AWG2_PIN_TAG="v3.1.20261113-02"
 AWG2_PIN_COMMIT="63ed35de3d3f135b17e8eae0b84949e7700303be"
 
 # Флаги CLI
-UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PSK=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; NO_REBOOT=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PSK=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 REPAIR_MODULE=0
 IPOPTS_GUARD=0
@@ -333,6 +333,7 @@ while [[ $# -gt 0 ]]; do
                              CLI_PROTOCOL="$2"; shift
                          fi ;;
         --yes|-y)        AUTO_YES=1 ;;
+        --no-reboot)     NO_REBOOT=1 ;;
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
         --no-cps)        NO_CPS=1; CLI_NO_CPS=1 ;;
         --no-psk)        NO_PSK=1; CLI_NO_PSK=1 ;;
@@ -786,6 +787,10 @@ show_help() {
                         перевыпуском всех клиентских профилей.
                         Принимается и форма с пробелом: --protocol 2.0
   -y, --yes             Автоматическое подтверждение (перезагрузки, UFW и т.д.)
+  --no-reboot           Не перезагружать сервер самому: сохранить шаг и выйти
+                        с кодом 75 (обычно вместе с --yes). Перезагрузку делает
+                        Ansible или Puppet, затем запускает установщик снова
+                        с теми же параметрами
   -f, --force           Принудительная переустановка поверх уже работающего AmneziaWG
                         (по умолчанию запуск на сконфигурированном сервере прерывается;
                         ENV: AWG_FORCE_REINSTALL=1 эквивалентен флагу)
@@ -868,6 +873,13 @@ request_reboot() {
     log_warn "!!! sudo bash $0 [с теми же параметрами, если были]       !!!"
     log_warn "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo "" >> "$LOG_FILE"
+    # --no-reboot (#427): перезагружает система автоматизации. Код 75 (EX_TEMPFAIL)
+    # отличает «перезагрузите и запустите снова» от конца установки (0) и от ошибки
+    # (любой другой код: 1, или 2 при неверных параметрах).
+    if [[ "${NO_REBOOT:-0}" -eq 1 ]]; then
+        log "Перезагрузка пропущена (--no-reboot). Перезагрузите сервер и запустите скрипт снова с теми же параметрами, установка продолжится с шага ${next_step}. Код выхода 75."
+        exit 75
+    fi
     local confirm="y"
     if [[ "$AUTO_YES" -eq 0 ]]; then
         read -rp "Перезагрузить сейчас? [y/N]: " confirm < /dev/tty

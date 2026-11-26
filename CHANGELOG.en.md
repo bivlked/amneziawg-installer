@@ -12,6 +12,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.11] - 2026-11-26
+
+**v6.3.11** - a `--no-reboot` flag for installs from Ansible and Puppet, `manage block-ru on` installs `ipset` quickly and leaves the terminal alone, and the list of Russian networks gets a second source.
+
+### Added
+
+- Installer flag `--no-reboot` for Ansible, Puppet and other automation tools: the installer does not reboot the server by itself, it saves the step and exits with code 75. The automation tool reboots the server and runs the same command again, and the install continues from the saved step; code 0 means the install is finished. Requested in [#427](https://github.com/bivlked/amneziawg-installer/issues/427).
+
+### Changed
+
+- `manage block-ru`: the list of Russian networks has a second source, [ipverse/country-ip-blocks](https://github.com/ipverse/country-ip-blocks) (data from the regional internet registries). It is used when ipdeny.com is down, and only when it fails too does the `cascade/ru.zone` snapshot from the repository come in. Idea from [#221](https://github.com/bivlked/amneziawg-installer/issues/221).
+- `manage block-ru`: a list with a network shorter than /8 is not accepted from any source. The shortest network in the real lists is /13, and one line like `0.0.0.0/1` would close almost the whole internet to clients.
+- `manage block-ru on`: when the `ipset` install runs into the five-minute timeout, the command does not repeat it but right away suggests checking for a busy apt and finishing the interrupted install (`dpkg --configure -a`). If the package is in place by then, the block goes on and the hint stays a warning.
+- `manage block-ru`: on servers where the block was turned on earlier, the `awg-block-ru.sh` helper updates itself on the first run of any `manage` command after a script update. That way the second list source and the prefix check reach them too, with no need to turn the block on again.
+- A line in `block-ru.extra` with a network wider than /8 is skipped with a clear reason in the log instead of "not an address or network".
+
+### Fixed
+
+- `manage block-ru on` on a server without `ipset` installs the package in seconds and leaves the terminal as it was. Before, installing `ipset` could take about five minutes, and the terminal text drifted to the right afterwards ([D#418](https://github.com/bivlked/amneziawg-installer/discussions/418)).
+
 ## [6.3.10] - 2026-11-25
 
 **v6.3.10** - a new `manage block-ru` command keeps VPN clients away from Russian IPv4 addresses, the Secure Boot hint checks the DKMS key against the module signature, and `manage add` and `manage regen` build QR and `vpn://` under the config lock.
@@ -2384,7 +2404,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.10...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.11...HEAD
+[6.3.11]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.10...v6.3.11
 [6.3.10]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.9...v6.3.10
 [6.3.9]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...v6.3.9
 [6.3.8]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...v6.3.8

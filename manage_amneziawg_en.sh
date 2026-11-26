@@ -8,14 +8,14 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x and 2.0 peer management script
 # Author: @bivlked
-# Version: 6.3.10
-# Date: 2026-11-25
+# Version: 6.3.11
+# Date: 2026-11-26
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
 # --- Safe mode and Constants ---
 # shellcheck disable=SC2034
-SCRIPT_VERSION="6.3.10"
+SCRIPT_VERSION="6.3.11"
 set -o pipefail
 # awg show colours its labels when WG_COLOR_MODE=always is in the environment,
 # even into a pipe. The secrets filter then does not recognise "header
@@ -3970,7 +3970,7 @@ IF=awg0
 DIR='@@DIR@@'
 LIST="$DIR/block-ru.zone"
 EXTRA="$DIR/block-ru.extra"
-URLS="https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone https://raw.githubusercontent.com/bivlked/amneziawg-installer/v@@VER@@/cascade/ru.zone"
+URLS="https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/ru/ipv4-aggregated.txt https://raw.githubusercontent.com/bivlked/amneziawg-installer/v@@VER@@/cascade/ru.zone"
 SET=awg_block_ru
 RULE=(FORWARD -i "$IF" -m set --match-set "$SET" dst -j REJECT --reject-with icmp-admin-prohibited)
 # -w: on iptables-legacy a busy xtables lock would otherwise read as "no rule".
@@ -3992,8 +3992,9 @@ if [ "${1:-}" != stop ] && [ ! -e "$DIR/awg-block-ru.sh" ]; then
 fi
 
 # Networks one per line on input, as strict as ipset takes them: octets 0-255,
-# prefix 1-32 (/0 would close the whole internet to clients). Code 1 - a bad one.
-strict() { awk -F'[./]' 'NF != 5 || $1 > 255 || $2 > 255 || $3 > 255 || $4 > 255 || $5 < 1 || $5 > 32 { bad = 1 } END { exit bad }'; }
+# prefix 8-32 (/0 or /1 would close almost the whole internet to clients; the
+# shortest prefix in the real lists is /13). Code 1 - a bad one.
+strict() { awk -F'[./]' 'NF != 5 || $1 > 255 || $2 > 255 || $3 > 255 || $4 > 255 || $5 < 8 || $5 > 32 { bad = 1 } END { exit bad }'; }
 
 # At least 1000 networks, every non-empty line without # is an IPv4 network,
 # and every network is fit for ipset: otherwise such a list would go to the
@@ -4052,7 +4053,7 @@ extra_lines() {
         if [[ "$line" =~ $ONE ]] && printf '%s\n' "$net" | strict; then
             printf '%s\n' "$line"
         else
-            echo "Skipped a line in $EXTRA, it is not an IPv4 address or network: $line" >&2
+            echo "Skipped a line in $EXTRA, it is not an IPv4 address or a network with a prefix from /8 to /32: $line" >&2
         fi
     done < "$EXTRA"
 }
@@ -4216,6 +4217,48 @@ _br_write_files() {
     fi
 }
 
+# The helper on disk is compared with the text of this manage version: after a
+# script update an enabled block would otherwise keep running the old helper (cron
+# and the unit call it directly), without new sources and list checks. Only the
+# helper is rewritten, atomically; a helper already running reads its own copy.
+# The lock is taken (update or off is running): skipped, checked on the next run.
+_br_refresh_helper() {
+    local t fd
+    _br_paths
+    [[ -f "$_BR_HELPER" ]] || return 0
+    exec {fd}>> "$AWG_DIR/.block-ru.lock" || return 1
+    if ! flock -n "$fd"; then
+        exec {fd}>&-
+        return 0
+    fi
+    if ! t=$(mktemp "$AWG_DIR/.awg-block-ru.XXXXXX"); then
+        exec {fd}>&-
+        return 1
+    fi
+    # A failed render (a full disk) leaves a cut file in $t: it must not replace
+    # the helper that cron and the unit run.
+    if ! _br_helper_text | sed -e "s|@@DIR@@|$AWG_DIR|" -e "s|@@VER@@|$SCRIPT_VERSION|" > "$t"; then
+        rm -f "$t"
+        exec {fd}>&-
+        log_warn "The block-ru helper (awg-block-ru.sh) was not updated: the block runs on the previous one. Repeat: manage block-ru on"
+        return 1
+    fi
+    if cmp -s "$t" "$_BR_HELPER"; then
+        rm -f "$t"
+        exec {fd}>&-
+        return 0
+    fi
+    if chmod 700 "$t" && mv -f "$t" "$_BR_HELPER"; then
+        exec {fd}>&-
+        log "The block-ru helper (awg-block-ru.sh) was updated to version $SCRIPT_VERSION."
+        return 0
+    fi
+    rm -f "$t"
+    exec {fd}>&-
+    log_warn "The block-ru helper (awg-block-ru.sh) was not updated: the block runs on the previous one. Repeat: manage block-ru on"
+    return 1
+}
+
 _br_remove_files() {
     if [[ -f "$_BR_UNIT_FILE" ]]; then
         systemctl disable --now "$_BR_UNIT" >&2 || log_warn "systemctl disable --now $_BR_UNIT returned an error."
@@ -4257,12 +4300,31 @@ _br_rule_drain() {
 _br_need_ipset() {
     command -v ipset > /dev/null 2>&1 && return 0
     log "Installing the ipset package..."
-    if ! timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset >> "$LOG_FILE" 2>&1; then
-        timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get update >> "$LOG_FILE" 2>&1
-        timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset >> "$LOG_FILE" 2>&1
+    # stdin from /dev/null: timeout puts itself and apt in a new process group, a
+    # background one for the terminal, and apt with a terminal on stdin puts it in raw
+    # mode for dpkg and then hangs giving it back until timeout kills it (5 minutes
+    # and a broken terminal, D#418).
+    local rc=0 to=0
+    timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset < /dev/null >> "$LOG_FILE" 2>&1 || rc=$?
+    # 124: timeout killed apt, maybe in the middle of dpkg. Another round of update
+    # and install would take up to ten more minutes and run into the same thing.
+    # The package may be unpacked already (apt killed in the triggers): whether
+    # ipset is there decides, not the code.
+    (( rc == 124 )) && to=1
+    if (( rc != 0 && rc != 124 )); then
+        timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get update < /dev/null >> "$LOG_FILE" 2>&1 || { (( $? == 124 )) && to=1; }
+        timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset < /dev/null >> "$LOG_FILE" 2>&1 || { (( $? == 124 )) && to=1; }
     fi
     hash -r
-    command -v ipset > /dev/null 2>&1 && return 0
+    if command -v ipset > /dev/null 2>&1; then
+        (( to )) && log_warn "apt was stopped by the timeout, but ipset is in place. Finish the interrupted package install: dpkg --configure -a"
+        return 0
+    fi
+    if (( to )); then
+        _JSON_ERR="ipset install timed out"
+        log_error "The ipset package did not install within 300 s (details in $LOG_FILE). Check that apt is not busy with another process and finish the interrupted install: dpkg --configure -a && apt update && apt install -y ipset, then repeat."
+        return 1
+    fi
     _JSON_ERR="ipset is not installed"
     log_error "The ipset package did not install (details in $LOG_FILE). Install it by hand and repeat: apt update && apt install -y ipset"
     return 1
@@ -4561,6 +4623,7 @@ cd "$AWG_DIR" || die "Failed to change to $AWG_DIR"
 
 log "Running command '$COMMAND'..."
 _cmd_rc=0
+_br_refresh_helper || true
 
 case $COMMAND in
     add)

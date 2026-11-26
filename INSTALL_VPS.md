@@ -77,7 +77,7 @@ flowchart LR
 
 The first run asks for the port, the tunnel subnet, IPv6, the routing mode, client isolation and the server name shown in the Amnezia app; Enter takes the value shown in brackets. Two questions are easy to miss. Along the way the script lists the packages it would remove (snapd, unattended-upgrades and others) and asks first; answer `n` or pass `--keep-packages` to keep them. If UFW is not on yet, the third run asks "Enable UFW? [y/N]": answer `y`, because pressing Enter leaves the server without a firewall.
 
-For a non-interactive run pass `--yes`: `sudo bash ./install_amneziawg_en.sh --yes`. The routing mode then falls back to the default, the packages are removed and UFW is enabled without asking.
+For a non-interactive run pass `--yes`: `sudo bash ./install_amneziawg_en.sh --yes`. The routing mode then falls back to the default, the packages are removed and UFW is enabled without asking. From Ansible or Puppet add `--no-reboot`: instead of rebooting by itself the installer exits with code 75, your tool reboots the server and runs the same command again ([details](ADVANCED.en.md#cli-params-adv)).
 
 **Routing modes** (what goes into the tunnel):
 

@@ -21,10 +21,11 @@ jobs:
     # whose apt ships ShellCheck 0.11 and bats 1.13. The gate is tuned to 24.04
     # (ShellCheck 0.9.0, bats 1.10.0); move to 26.04 as a deliberate change.
     runs-on: ubuntu-24.04
-    # Forty, the same budget as test.yml: the preflight runs the whole bats
-    # suite serially, which took 13-18.5 min. At fifteen the v5.37.1 tag was
-    # cancelled at 15m17s and published nothing.
-    timeout-minutes: 40
+    # Sixty, the same budget as test.yml: the preflight runs the whole bats
+    # suite serially, which reached 32 min on 25 nov 2026 (forty until then,
+    # 13-18.5 min in October). At fifteen the v5.37.1 tag was cancelled at
+    # 15m17s and published nothing.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
