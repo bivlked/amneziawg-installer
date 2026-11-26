@@ -92,7 +92,7 @@ sudo bash ./install_amneziawg.sh
 sudo bash ./install_amneziawg.sh --yes --route-all
 ```
 
-Все параметры принимаются автоматически. Подробнее: [ADVANCED.md#cli-params-adv](ADVANCED.md#cli-params-adv)
+Все параметры принимаются автоматически. Для Ansible и Puppet добавьте `--no-reboot`: установщик не перезагружает сервер сам, а выходит с кодом 75, и после перезагрузки ту же команду запускают снова. Подробнее: [ADVANCED.md#cli-params-adv](ADVANCED.md#cli-params-adv)
 </details>
 
 ### 🎯 Выберите свой случай

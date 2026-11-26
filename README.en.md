@@ -91,7 +91,7 @@ The script runs as root. Below are the main changes it makes to the system.
 sudo bash ./install_amneziawg_en.sh --yes --route-all
 ```
 
-All parameters are accepted automatically. Details: [ADVANCED.en.md#cli-params-adv](ADVANCED.en.md#cli-params-adv)
+All parameters are accepted automatically. For Ansible and Puppet add `--no-reboot`: the installer does not reboot the server by itself but exits with code 75, and after the reboot the same command is run again. Details: [ADVANCED.en.md#cli-params-adv](ADVANCED.en.md#cli-params-adv)
 </details>
 
 ### 🎯 Pick your case

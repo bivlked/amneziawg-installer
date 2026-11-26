@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Installer flag `--no-reboot` for Ansible, Puppet and other automation tools: the installer does not reboot the server by itself, it saves the step and exits with code 75. The automation tool reboots the server and runs the same command again, and the install continues from the saved step; code 0 means the install is finished. Requested in [#427](https://github.com/bivlked/amneziawg-installer/issues/427).
+
 ### Changed
 
 - `manage block-ru`: the list of Russian networks has a second source, [ipverse/country-ip-blocks](https://github.com/ipverse/country-ip-blocks) (data from the regional internet registries). It is used when ipdeny.com is down, and only when it fails too does the `cascade/ru.zone` snapshot from the repository come in. Idea from [#221](https://github.com/bivlked/amneziawg-installer/issues/221).

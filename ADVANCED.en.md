@@ -1152,6 +1152,7 @@ Options:
   --i1='<b 0x...>'      Set I1 to your own value: tags <b 0xHEX>, <r N>, <rc N>, <rd N>, <t> (N from 1 to 1000, the whole packet at most 1024 bytes). The value is pinned, a reinstall keeps it; --no-cps, --preset, --mobile, --jc, --jmin and --jmax drop it
   --no-prebuilt         On ARM, do not install the prebuilt module package from the arm-packages release; build the module with DKMS
   -y, --yes             Non-interactive mode (all confirmations auto-yes)
+  --no-reboot           Do not reboot the server by itself: save the step and exit with code 75
   -f, --force           Reinstall over a working AWG (ENV: AWG_FORCE_REINSTALL=1)
   --no-tweaks           Skip the system cleanup, the optimization and the hardening
                         (UFW, Fail2Ban); the minimal forwarding sysctl is always applied
@@ -1159,6 +1160,8 @@ Options:
                         the firewall, Fail2Ban and the optimization. Removing snapd
                         takes installed snaps and their data in /var/snap with it
 ```
+
+> **Installing from Ansible or Puppet (`--no-reboot`).** With `--yes` the installer reboots the server twice by itself, and the automation tool loses its connection. With `--yes --no-reboot` it gets to the reboot, saves the step and exits with code 75. The automation tool then reboots the server itself (the `reboot` module in Ansible) and runs the same command again: the install continues from the saved step. Code 0 means the install is finished, 1 is an error, 75 means reboot and run again. An install takes two reboots.
 
 <a id="manage-cli-adv"></a>
 ### manage_amneziawg.sh

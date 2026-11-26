@@ -85,7 +85,7 @@ AWG2_PIN_TAG="v3.1.20261113-02"
 AWG2_PIN_COMMIT="63ed35de3d3f135b17e8eae0b84949e7700303be"
 
 # Флаги CLI
-UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PSK=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; NO_REBOOT=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PSK=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 REPAIR_MODULE=0
 IPOPTS_GUARD=0
@@ -333,6 +333,7 @@ while [[ $# -gt 0 ]]; do
                              CLI_PROTOCOL="$2"; shift
                          fi ;;
         --yes|-y)        AUTO_YES=1 ;;
+        --no-reboot)     NO_REBOOT=1 ;;
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
         --no-cps)        NO_CPS=1; CLI_NO_CPS=1 ;;
         --no-psk)        NO_PSK=1; CLI_NO_PSK=1 ;;
@@ -786,6 +787,9 @@ show_help() {
                         перевыпуском всех клиентских профилей.
                         Принимается и форма с пробелом: --protocol 2.0
   -y, --yes             Автоматическое подтверждение (перезагрузки, UFW и т.д.)
+  --no-reboot           Не перезагружать сервер самому: сохранить шаг и выйти
+                        с кодом 75. Перезагрузку делает Ansible или Puppet,
+                        затем запускает установщик снова с теми же параметрами
   -f, --force           Принудительная переустановка поверх уже работающего AmneziaWG
                         (по умолчанию запуск на сконфигурированном сервере прерывается;
                         ENV: AWG_FORCE_REINSTALL=1 эквивалентен флагу)
@@ -868,6 +872,12 @@ request_reboot() {
     log_warn "!!! sudo bash $0 [с теми же параметрами, если были]       !!!"
     log_warn "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo "" >> "$LOG_FILE"
+    # --no-reboot (#427): перезагружает система автоматизации. Код 75 (EX_TEMPFAIL)
+    # отличает «перезагрузите и запустите снова» от ошибки (1) и от конца установки (0).
+    if [[ "${NO_REBOOT:-0}" -eq 1 ]]; then
+        log "Перезагрузка пропущена (--no-reboot). Перезагрузите сервер и запустите скрипт снова с теми же параметрами, установка продолжится с шага ${next_step}. Код выхода 75."
+        exit 75
+    fi
     local confirm="y"
     if [[ "$AUTO_YES" -eq 0 ]]; then
         read -rp "Перезагрузить сейчас? [y/N]: " confirm < /dev/tty

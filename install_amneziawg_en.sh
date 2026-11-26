@@ -87,7 +87,7 @@ AWG2_PIN_TAG="v3.1.20261113-02"
 AWG2_PIN_COMMIT="63ed35de3d3f135b17e8eae0b84949e7700303be"
 
 # CLI flags
-UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PSK=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
+UNINSTALL=0; HELP=0; HELP_EXIT_RC=0; NO_REBOOT=0; DIAGNOSTIC=0; VERBOSE=0; NO_COLOR=0; AUTO_YES=0; NO_TWEAKS=0; NO_CPS=0; NO_PSK=0; NO_PREBUILT=0; CLIENT_IPV6_DIRECT=0; KEEP_PACKAGES=""
 FORCE_REINSTALL=0
 REPAIR_MODULE=0
 IPOPTS_GUARD=0
@@ -345,6 +345,7 @@ while [[ $# -gt 0 ]]; do
                              CLI_PROTOCOL="$2"; shift
                          fi ;;
         --yes|-y)        AUTO_YES=1 ;;
+        --no-reboot)     NO_REBOOT=1 ;;
         --no-tweaks)     NO_TWEAKS=1; CLI_NO_TWEAKS=1 ;;
         --no-cps)        NO_CPS=1; CLI_NO_CPS=1 ;;
         --no-psk)        NO_PSK=1; CLI_NO_PSK=1 ;;
@@ -808,6 +809,9 @@ Options:
                         profile.
                         The spaced form is accepted too: --protocol 2.0
   -y, --yes             Auto-confirm (reboots, UFW, etc.)
+  --no-reboot           Do not reboot the server by itself: save the step and
+                        exit with code 75. Ansible or Puppet reboots, then runs
+                        the installer again with the same parameters
   -f, --force           Force reinstall on top of an already-running AmneziaWG
                         (by default a run on a configured server aborts;
                         ENV: AWG_FORCE_REINSTALL=1 is equivalent to the flag)
@@ -892,6 +896,12 @@ request_reboot() {
     log_warn "!!! sudo bash $0 [with the same parameters, if any]      !!!"
     log_warn "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo "" >> "$LOG_FILE"
+    # --no-reboot (#427): the automation system reboots. Code 75 (EX_TEMPFAIL)
+    # tells "reboot and run again" from a failure (1) and from the end of the install (0).
+    if [[ "${NO_REBOOT:-0}" -eq 1 ]]; then
+        log "Reboot skipped (--no-reboot). Reboot the server and run the script again with the same parameters, the install continues from step ${next_step}. Exit code 75."
+        exit 75
+    fi
     local confirm="y"
     if [[ "$AUTO_YES" -eq 0 ]]; then
         read -rp "Reboot now? [y/N]: " confirm < /dev/tty
