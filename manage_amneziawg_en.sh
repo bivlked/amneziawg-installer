@@ -4053,7 +4053,7 @@ extra_lines() {
         if [[ "$line" =~ $ONE ]] && printf '%s\n' "$net" | strict; then
             printf '%s\n' "$line"
         else
-            echo "Skipped a line in $EXTRA, it is not an IPv4 address or network: $line" >&2
+            echo "Skipped a line in $EXTRA, it is not an IPv4 address or a network with a prefix from /8 to /32: $line" >&2
         fi
     done < "$EXTRA"
 }
@@ -4217,6 +4217,40 @@ _br_write_files() {
     fi
 }
 
+# The helper on disk is compared with the text of this manage version: after a
+# script update an enabled block would otherwise keep running the old helper (cron
+# and the unit call it directly), without new sources and list checks. Only the
+# helper is rewritten, atomically; a helper already running reads its own copy.
+# The lock is taken (update or off is running): skipped, checked on the next run.
+_br_refresh_helper() {
+    local t fd
+    _br_paths
+    [[ -f "$_BR_HELPER" ]] || return 0
+    exec {fd}>> "$AWG_DIR/.block-ru.lock" || return 1
+    if ! flock -n "$fd"; then
+        exec {fd}>&-
+        return 0
+    fi
+    if ! t=$(mktemp "$AWG_DIR/.awg-block-ru.XXXXXX"); then
+        exec {fd}>&-
+        return 1
+    fi
+    if _br_helper_text | sed -e "s|@@DIR@@|$AWG_DIR|" -e "s|@@VER@@|$SCRIPT_VERSION|" > "$t" && cmp -s "$t" "$_BR_HELPER"; then
+        rm -f "$t"
+        exec {fd}>&-
+        return 0
+    fi
+    if [[ -s "$t" ]] && chmod 700 "$t" && mv -f "$t" "$_BR_HELPER"; then
+        exec {fd}>&-
+        log "The block-ru helper (awg-block-ru.sh) was updated to version $SCRIPT_VERSION."
+        return 0
+    fi
+    rm -f "$t"
+    exec {fd}>&-
+    log_warn "The block-ru helper (awg-block-ru.sh) was not updated: the block runs on the previous one. Repeat: manage block-ru on"
+    return 1
+}
+
 _br_remove_files() {
     if [[ -f "$_BR_UNIT_FILE" ]]; then
         systemctl disable --now "$_BR_UNIT" >&2 || log_warn "systemctl disable --now $_BR_UNIT returned an error."
@@ -4262,21 +4296,27 @@ _br_need_ipset() {
     # background one for the terminal, and apt with a terminal on stdin puts it in raw
     # mode for dpkg and then hangs giving it back until timeout kills it (5 minutes
     # and a broken terminal, D#418).
-    local rc=0
+    local rc=0 to=0
     timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset < /dev/null >> "$LOG_FILE" 2>&1 || rc=$?
     # 124: timeout killed apt, maybe in the middle of dpkg. Another round of update
     # and install would take up to ten more minutes and run into the same thing.
-    if (( rc == 124 )); then
+    # The package may be unpacked already (apt killed in the triggers): whether
+    # ipset is there decides, not the code.
+    (( rc == 124 )) && to=1
+    if (( rc != 0 && rc != 124 )); then
+        timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get update < /dev/null >> "$LOG_FILE" 2>&1 || { (( $? == 124 )) && to=1; }
+        timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset < /dev/null >> "$LOG_FILE" 2>&1 || { (( $? == 124 )) && to=1; }
+    fi
+    hash -r
+    if command -v ipset > /dev/null 2>&1; then
+        (( to )) && log_warn "apt was stopped by the timeout, but ipset is in place. Finish the interrupted package install: dpkg --configure -a"
+        return 0
+    fi
+    if (( to )); then
         _JSON_ERR="ipset install timed out"
         log_error "The ipset package did not install within 300 s (details in $LOG_FILE). Check that apt is not busy with another process and finish the interrupted install: dpkg --configure -a && apt update && apt install -y ipset, then repeat."
         return 1
     fi
-    if (( rc != 0 )); then
-        timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get update < /dev/null >> "$LOG_FILE" 2>&1
-        timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset < /dev/null >> "$LOG_FILE" 2>&1
-    fi
-    hash -r
-    command -v ipset > /dev/null 2>&1 && return 0
     _JSON_ERR="ipset is not installed"
     log_error "The ipset package did not install (details in $LOG_FILE). Install it by hand and repeat: apt update && apt install -y ipset"
     return 1
@@ -4575,6 +4615,7 @@ cd "$AWG_DIR" || die "Failed to change to $AWG_DIR"
 
 log "Running command '$COMMAND'..."
 _cmd_rc=0
+_br_refresh_helper || true
 
 case $COMMAND in
     add)

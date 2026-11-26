@@ -24,7 +24,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `manage block-ru`: the list of Russian networks has a second source, [ipverse/country-ip-blocks](https://github.com/ipverse/country-ip-blocks) (data from the regional internet registries). It is used when ipdeny.com is down, and only when it fails too does the `cascade/ru.zone` snapshot from the repository come in. Idea from [#221](https://github.com/bivlked/amneziawg-installer/issues/221).
 - `manage block-ru`: a list with a network shorter than /8 is not accepted from any source. The shortest network in the real lists is /13, and one line like `0.0.0.0/1` would close almost the whole internet to clients.
-- `manage block-ru on`: when the `ipset` install runs into the five-minute timeout, the command does not repeat it but right away suggests checking for a busy apt and finishing the interrupted install (`dpkg --configure -a`).
+- `manage block-ru on`: when the `ipset` install runs into the five-minute timeout, the command does not repeat it but right away suggests checking for a busy apt and finishing the interrupted install (`dpkg --configure -a`). If the package is in place by then, the block goes on and the hint stays a warning.
+- `manage block-ru`: on servers where the block was turned on earlier, the `awg-block-ru.sh` helper updates itself on the first run of any `manage` command after a script update. That way the second list source and the prefix check reach them too, with no need to turn the block on again.
+- A line in `block-ru.extra` with a network wider than /8 is skipped with a clear reason in the log instead of "not an address or network".
 
 ### Fixed
 

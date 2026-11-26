@@ -29,7 +29,7 @@ make_list() {
 
 setup_block_env() {
     # each_manage runs both scripts in one test: no stub switch carries over.
-    unset STUB_APT_TIMEOUT STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE STUB_CURL_SNAP
+    unset STUB_APT_TIMEOUT STUB_APT_TIMEOUT_ON_UPDATE STUB_APT_TIMEOUT_AFTER_UNPACK STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE STUB_CURL_SNAP
     MGMT_DIR=$(mktemp -d)
     mkdir -p "$MGMT_DIR/bin" "$MGMT_DIR/awg/keys" "$MGMT_DIR/systemd" "$MGMT_DIR/cron" "$MGMT_DIR/web"
     export CALLS="$MGMT_DIR/calls"; : > "$CALLS"
@@ -150,6 +150,8 @@ echo "apt-get $*" >> "$CALLS.apt"
 readlink /proc/self/fd/0 >> "$CALLS.apt_stdin"
 [[ -n "${STUB_APT_FAIL:-}" ]] && exit 100
 [[ -n "${STUB_APT_TIMEOUT:-}" ]] && exit 124
+[[ -n "${STUB_APT_TIMEOUT_ON_UPDATE:-}" && "$1" == update ]] && exit 124
+if [[ -n "${STUB_APT_TIMEOUT_AFTER_UNPACK:-}" && " $* " == *" install "* ]]; then cp "$STUB_IPSET_REAL" "$(dirname "$0")/ipset"; exit 124; fi
 [[ "$1" == update ]] && : > "$CALLS.apt_updated"
 [[ -n "${STUB_APT_NEEDS_UPDATE:-}" && " $* " == *" install "* && ! -e "$CALLS.apt_updated" ]] && exit 100
 [[ " $* " == *" install "* ]] && cp "$STUB_IPSET_REAL" "$(dirname "$0")/ipset"
@@ -182,7 +184,7 @@ CONF
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
     unset AWG_SKIP_APPLY CALLS STUB_WEB AWG_SYSTEMD_DIR AWG_CRON_DIR STUB_START_FAIL STUB_IPT_I_FAIL \
-        STUB_APT_TIMEOUT STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE
+        STUB_APT_TIMEOUT STUB_APT_TIMEOUT_ON_UPDATE STUB_APT_TIMEOUT_AFTER_UNPACK STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE
 }
 
 manage() {
@@ -815,6 +817,52 @@ _strict_extra() {
     each_manage _strict_extra
 }
 
+# A network wider than /8 in the own list is skipped too, and the message says
+# why: "not an IPv4 address or network" would be wrong for 10.0.0.0/7.
+_extra_wider_than_8() {
+    on_then "$1" || return 1
+    printf '203.0.113.0/24\n10.0.0.0/7\n' > "$MGMT_DIR/awg/block-ru.extra"
+    helper apply
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1201" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    grep -F "10.0.0.0/7" <<< "$stderr" | grep -qF "/8" || { echo "$1: the /8 floor is not named: $stderr"; return 1; }
+}
+@test "helper: an own network wider than /8 is skipped with the /8 floor named" {
+    each_manage _extra_wider_than_8
+}
+
+# ---------- the helper follows manage updates ----------
+
+# block-ru was turned on by an older manage: the helper on disk is the old text
+# (here: without ipverse). Any manage command afterwards rewrites it to the text
+# of this version, since cron and the unit run the helper directly.
+_helper_refreshed() {
+    manage "$1" block-ru on
+    [ "$status" -eq 0 ] || { echo "$1: on failed: $stderr"; return 1; }
+    sed -i 's| https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/ru/ipv4-aggregated.txt||' "$MGMT_DIR/awg/awg-block-ru.sh"
+    ! grep -qF ipverse "$MGMT_DIR/awg/awg-block-ru.sh" || { echo "$1: the old helper was not prepared"; return 1; }
+    manage "$1" list
+    [ "$status" -eq 0 ] || { echo "$1: list failed: $stderr"; return 1; }
+    grep -qF "ipverse/country-ip-blocks" "$MGMT_DIR/awg/awg-block-ru.sh" || { echo "$1: the helper was not rewritten"; return 1; }
+    [ -x "$MGMT_DIR/awg/awg-block-ru.sh" ] || { echo "$1: the rewritten helper is not executable"; return 1; }
+    grep -qF "awg-block-ru" <<< "$output$stderr" || { echo "$1: the rewrite is not reported"; return 1; }
+    # the same text again: nothing to report the second time
+    manage "$1" list
+    ! grep -qF "awg-block-ru" <<< "$output$stderr" || { echo "$1: an unchanged helper was reported again"; return 1; }
+}
+@test "an older block-ru helper is rewritten by the next manage command" {
+    each_manage _helper_refreshed
+}
+
+_helper_not_created() {
+    manage "$1" list
+    [ "$status" -eq 0 ] || { echo "$1: list failed: $stderr"; return 1; }
+    [ ! -e "$MGMT_DIR/awg/awg-block-ru.sh" ] || { echo "$1: a helper appeared on a server without block-ru"; return 1; }
+}
+@test "manage on a server without block-ru does not create the helper" {
+    each_manage _helper_not_created
+}
+
 _refetch_after_failed_load() {
     on_then "$1" || return 1
     make_list "$MGMT_DIR/awg/block-ru.zone" 1050
@@ -951,6 +999,34 @@ _apt_timeout_no_retry() {
 }
 @test "block-ru on: the ipset install times out - no retry, the message points at dpkg" {
     each_manage _apt_timeout_no_retry
+}
+
+# apt was killed by the timeout after ipset was already unpacked (in the
+# triggers): the binary is there, so block-ru goes on, with a warning to finish
+# the interrupted dpkg run.
+_apt_timeout_ipset_there() {
+    mv "$MGMT_DIR/bin/ipset" "$MGMT_DIR/ipset.real"
+    export STUB_IPSET_REAL="$MGMT_DIR/ipset.real" STUB_APT_TIMEOUT_AFTER_UNPACK=1
+    manage "$1" block-ru on
+    [ "$status" -eq 0 ] || { echo "$1: failed with ipset in place: $stderr"; return 1; }
+    [[ "$stderr" == *"dpkg --configure -a"* ]] || { echo "$1: no dpkg warning: $stderr"; return 1; }
+    [ "$(fw | head -1)" = "$RULE" ] || { echo "$1: the block is not on"; return 1; }
+}
+@test "block-ru on: the ipset install times out after unpacking - the block goes on with a dpkg warning" {
+    each_manage _apt_timeout_ipset_there
+}
+
+# The first install fails for another reason and the retry runs into the
+# timeout: the message points at dpkg too.
+_apt_retry_timeout() {
+    mv "$MGMT_DIR/bin/ipset" "$MGMT_DIR/ipset.real"
+    export STUB_IPSET_REAL="$MGMT_DIR/ipset.real" STUB_APT_NEEDS_UPDATE=1 STUB_APT_TIMEOUT_ON_UPDATE=1
+    manage "$1" block-ru on
+    [ "$status" -ne 0 ] || { echo "$1: succeeded without ipset"; return 1; }
+    [[ "$stderr" == *"dpkg --configure -a"* ]] || { echo "$1: no dpkg hint: $stderr"; return 1; }
+}
+@test "block-ru on: the retry runs into the timeout - the message points at dpkg" {
+    each_manage _apt_retry_timeout
 }
 
 _extra_args() {
