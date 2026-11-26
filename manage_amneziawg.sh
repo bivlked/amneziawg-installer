@@ -3937,8 +3937,9 @@ if [ "${1:-}" != stop ] && [ ! -e "$DIR/awg-block-ru.sh" ]; then
 fi
 
 # Сети по строке на входе - так же строго, как их примет ipset: октеты 0-255,
-# префикс 1-32 (/0 закрыл бы клиентам весь интернет). Код 1 - есть негодная.
-strict() { awk -F'[./]' 'NF != 5 || $1 > 255 || $2 > 255 || $3 > 255 || $4 > 255 || $5 < 1 || $5 > 32 { bad = 1 } END { exit bad }'; }
+# префикс 8-32 (/0 или /1 закрыл бы клиентам почти весь интернет; самый короткий
+# префикс в настоящих списках /13). Код 1 - есть негодная.
+strict() { awk -F'[./]' 'NF != 5 || $1 > 255 || $2 > 255 || $3 > 255 || $4 > 255 || $5 < 8 || $5 > 32 { bad = 1 } END { exit bad }'; }
 
 # Не меньше 1000 сетей, каждая непустая строка без # - сеть IPv4, и каждая
 # сеть годна для ipset: иначе такой список попал бы в кэш и после перезагрузки
@@ -4202,10 +4203,19 @@ _br_rule_drain() {
 _br_need_ipset() {
     command -v ipset > /dev/null 2>&1 && return 0
     log "Ставлю пакет ipset..."
-    # stdin из /dev/null: timeout уводит apt в свою группу процессов, а apt с
-    # терминалом на stdin переводит его в raw для dpkg и потом виснет, возвращая
-    # его, пока timeout не убьёт (5 минут и сбитый терминал, D#418).
-    if ! timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset < /dev/null >> "$LOG_FILE" 2>&1; then
+    # stdin из /dev/null: timeout ставит себя и apt в новую группу процессов, фоновую
+    # для терминала, а apt с терминалом на stdin переводит его в raw для dpkg и потом
+    # виснет, возвращая его, пока timeout не убьёт (5 минут и сбитый терминал, D#418).
+    local rc=0
+    timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset < /dev/null >> "$LOG_FILE" 2>&1 || rc=$?
+    # 124 - apt убит по тайм-ауту, возможно посреди dpkg. Второй круг update и install
+    # занял бы ещё до десяти минут и упёрся бы в то же.
+    if (( rc == 124 )); then
+        _JSON_ERR="ipset install timed out"
+        log_error "Пакет ipset не поставился за 300 с (подробности в $LOG_FILE). Проверьте, не занят ли apt другим процессом, и доделайте прерванную установку: dpkg --configure -a && apt update && apt install -y ipset, затем повторите."
+        return 1
+    fi
+    if (( rc != 0 )); then
         timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get update < /dev/null >> "$LOG_FILE" 2>&1
         timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y ipset < /dev/null >> "$LOG_FILE" 2>&1
     fi

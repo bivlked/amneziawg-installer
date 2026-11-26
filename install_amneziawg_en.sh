@@ -72,7 +72,7 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
 COMMON_SCRIPT_SHA256="91f67eb2586f35db6a51cb02d34a8938e6073d2542b16c445f088fc28a40d38d"
-MANAGE_SCRIPT_SHA256="9075ea95e7eba7d326d5a7f07bfbeba9415bee8a0ac6a61c807272e304e45be6"
+MANAGE_SCRIPT_SHA256="e931a33cde4024c5b87684bc0f9651851864f0ae251547f71974786b0bf0b144"
 
 # Module pin for kernels older than 6.7 with no prebuilt (H0, 31 jul 2026). The
 # PPA module is not used there (see _kernel_supports_awg3); the module is built
@@ -809,7 +809,7 @@ Options:
                         profile.
                         The spaced form is accepted too: --protocol 2.0
   -y, --yes             Auto-confirm (reboots, UFW, etc.)
-  --no-reboot           Do not reboot the server by itself: save the step and
+  --no-reboot           With --yes: do not reboot the server by itself, save the step and
                         exit with code 75. Ansible or Puppet reboots, then runs
                         the installer again with the same parameters
   -f, --force           Force reinstall on top of an already-running AmneziaWG
@@ -897,7 +897,8 @@ request_reboot() {
     log_warn "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo "" >> "$LOG_FILE"
     # --no-reboot (#427): the automation system reboots. Code 75 (EX_TEMPFAIL)
-    # tells "reboot and run again" from a failure (1) and from the end of the install (0).
+    # tells "reboot and run again" from the end of the install (0) and from a failure
+    # (any other code: 1, or 2 for bad parameters).
     if [[ "${NO_REBOOT:-0}" -eq 1 ]]; then
         log "Reboot skipped (--no-reboot). Reboot the server and run the script again with the same parameters, the install continues from step ${next_step}. Exit code 75."
         exit 75

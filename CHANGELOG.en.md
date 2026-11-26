@@ -23,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - `manage block-ru`: the list of Russian networks has a second source, [ipverse/country-ip-blocks](https://github.com/ipverse/country-ip-blocks) (data from the regional internet registries). It is used when ipdeny.com is down, and only when it fails too does the `cascade/ru.zone` snapshot from the repository come in. Idea from [#221](https://github.com/bivlked/amneziawg-installer/issues/221).
+- `manage block-ru`: a list with a network shorter than /8 is not accepted from any source. The shortest network in the real lists is /13, and one line like `0.0.0.0/1` would close almost the whole internet to clients.
+- `manage block-ru on`: when the `ipset` install runs into the five-minute timeout, the command does not repeat it but right away suggests checking for a busy apt and finishing the interrupted install (`dpkg --configure -a`).
 
 ### Fixed
 

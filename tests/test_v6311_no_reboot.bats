@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
 # --no-reboot (#427): the installer does not reboot by itself. It saves the next
 # step, says a reboot is needed and exits with 75 (EX_TEMPFAIL), so Ansible or
-# Puppet can tell "reboot and run me again" from a failure (1) and from the end
-# of the install (0), reboot the server themselves and run the same command again.
+# Puppet can tell "reboot and run me again" from the end of the install (0) and
+# from a failure (any other code: 1, or 2 for bad parameters), reboot the server
+# themselves and run the same command again.
 
 load test_helper
 
@@ -47,7 +48,10 @@ _no_reboot_exits_75() {
     [ "$(cat "$T/state")" = "2" ] || { echo "$1: state '$(cat "$T/state" 2>&1)'"; return 1; }
     [[ "$output" == *"--no-reboot"* ]] || { echo "$1: the flag is not named: $output"; return 1; }
     [[ "$output" != *returned* ]] || { echo "$1: request_reboot returned"; return 1; }
-    rm -f "$T/state"
+    # The boot_id is saved before the exit: step 2 refuses a rerun without a reboot.
+    [ "$(cat "$T/.boot_id_before_step2" 2>&1)" = "$(cat /proc/sys/kernel/random/boot_id)" ] \
+        || { echo "$1: no boot_id saved before exit 75"; return 1; }
+    rm -f "$T/state" "$T/.boot_id_before_step2"
 }
 @test "--no-reboot: the next step is saved, no reboot, exit 75 in both installers" {
     _no_reboot_exits_75 install_amneziawg.sh
@@ -82,8 +86,12 @@ _flag_parsed() {
     run bash "$BATS_TEST_DIRNAME/../$1" --no-reboot --help
     [ "$status" -eq 0 ] || { echo "$1: --no-reboot is not accepted (rc $status): ${output:0:300}"; return 1; }
     grep -qE '^  --no-reboot ' <<< "$output" || { echo "$1: --no-reboot not in help"; return 1; }
-    grep -qF 'NO_REBOOT=1' <(sed -n '/^while \[\[ \$# -gt 0 \]\]/,/^done/p' "$BATS_TEST_DIRNAME/../$1") \
+    grep -qxF '        --no-reboot)     NO_REBOOT=1 ;;' <(sed -n '/^while \[\[ \$# -gt 0 \]\]/,/^done/p' "$BATS_TEST_DIRNAME/../$1") \
         || { echo "$1: the parser does not set NO_REBOOT=1"; return 1; }
+    # Only the default and the parser assign it: a later reset (from a saved config,
+    # say) would make the flag silently do nothing.
+    [ "$(grep -cE '(^|[^A-Z_])NO_REBOOT=' "$BATS_TEST_DIRNAME/../$1")" = "2" ] \
+        || { echo "$1: NO_REBOOT assigned elsewhere: $(grep -nE '(^|[^A-Z_])NO_REBOOT=' "$BATS_TEST_DIRNAME/../$1")"; return 1; }
 }
 @test "--no-reboot is parsed and listed in help of both installers" {
     _flag_parsed install_amneziawg.sh

@@ -29,7 +29,7 @@ make_list() {
 
 setup_block_env() {
     # each_manage runs both scripts in one test: no stub switch carries over.
-    unset STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE STUB_CURL_SNAP
+    unset STUB_APT_TIMEOUT STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE STUB_CURL_SNAP
     MGMT_DIR=$(mktemp -d)
     mkdir -p "$MGMT_DIR/bin" "$MGMT_DIR/awg/keys" "$MGMT_DIR/systemd" "$MGMT_DIR/cron" "$MGMT_DIR/web"
     export CALLS="$MGMT_DIR/calls"; : > "$CALLS"
@@ -149,6 +149,7 @@ echo "apt-get $*" >> "$CALLS.apt"
 # what apt-get reads as stdin: a terminal there made apt hang under timeout
 readlink /proc/self/fd/0 >> "$CALLS.apt_stdin"
 [[ -n "${STUB_APT_FAIL:-}" ]] && exit 100
+[[ -n "${STUB_APT_TIMEOUT:-}" ]] && exit 124
 [[ "$1" == update ]] && : > "$CALLS.apt_updated"
 [[ -n "${STUB_APT_NEEDS_UPDATE:-}" && " $* " == *" install "* && ! -e "$CALLS.apt_updated" ]] && exit 100
 [[ " $* " == *" install "* ]] && cp "$STUB_IPSET_REAL" "$(dirname "$0")/ipset"
@@ -181,7 +182,7 @@ CONF
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
     unset AWG_SKIP_APPLY CALLS STUB_WEB AWG_SYSTEMD_DIR AWG_CRON_DIR STUB_START_FAIL STUB_IPT_I_FAIL \
-        STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE
+        STUB_APT_TIMEOUT STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE
 }
 
 manage() {
@@ -463,7 +464,8 @@ _helper_fallback_url() {
 _helper_ipverse_second() {
     on_then "$1" || return 1
     printf '<html>not a list</html>\n' > "$STUB_WEB/ru-aggregated.zone"
-    { printf '# Country: Russia (RU)\n# Address family: IPv4\n#\n'; make_list /dev/stdout 1150; } > "$STUB_WEB/ipv4-aggregated.txt"
+    make_list "$MGMT_DIR/nets" 1150
+    { printf '# Country: Russia (RU)\n# Address family: IPv4\n#\n'; cat "$MGMT_DIR/nets"; } > "$STUB_WEB/ipv4-aggregated.txt"
     make_list "$STUB_WEB/ru.zone" 1100
     helper apply
     [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
@@ -474,6 +476,24 @@ _helper_ipverse_second() {
 }
 @test "helper: ipdeny gives HTML - the ipverse list is the second source, before the snapshot" {
     each_manage _helper_ipverse_second
+}
+
+# ipverse answers, but not with a usable list (a captcha page, a short list): the
+# snapshot from the release tag is the third source, tried after both.
+_helper_snapshot_third() {
+    on_then "$1" || return 1
+    printf '<html>not a list</html>\n' > "$STUB_WEB/ru-aggregated.zone"
+    make_list "$STUB_WEB/ipv4-aggregated.txt" 999
+    make_list "$STUB_WEB/ru.zone" 1100
+    helper apply
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1100" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    [ "$(grep -oE 'https://[^ ]+' "$CALLS.curl" | sed -E 's|/v[0-9]+[.][0-9]+[.][0-9]+/|/vX/|' | paste -sd' ' -)" = "https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/ru/ipv4-aggregated.txt https://raw.githubusercontent.com/bivlked/amneziawg-installer/vX/cascade/ru.zone" ] \
+        || { echo "$1: urls: $(cat "$CALLS.curl")"; return 1; }
+    [ "$(grep -c "ipv4-aggregated.txt" <<< "$stderr")" -ge 1 ] || { echo "$1: the refused ipverse answer is not named: $stderr"; return 1; }
+}
+@test "helper: ipdeny and ipverse give no usable list - the release snapshot is the third source" {
+    each_manage _helper_snapshot_third
 }
 
 _helper_rejects_mixed() {
@@ -750,7 +770,7 @@ _off_without_lock() {
 # to the cache and never load after a reboot: it is refused at download.
 _strict_list() {
     local bad
-    for bad in '300.1.2.0/24' '10.0.0.0/0' '10.0.0.0/33' '1.2.3.256/24'; do
+    for bad in '300.1.2.0/24' '10.0.0.0/0' '10.0.0.0/33' '1.2.3.256/24' '0.0.0.0/1' '10.0.0.0/7'; do
         make_list "$STUB_WEB/ru-aggregated.zone" 1200
         on_then "$1" || return 1
         make_list "$STUB_WEB/ru-aggregated.zone" 1200
@@ -761,8 +781,23 @@ _strict_list() {
         [ ! -e "$MGMT_DIR/awg/block-ru.zone" ] || { echo "$1: '$bad' went to the cache"; return 1; }
     done
 }
-@test "helper: a list with an octet over 255 or a prefix of 0 or over 32 is refused and not cached" {
+@test "helper: a list with an octet over 255 or a prefix under 8 or over 32 is refused and not cached" {
     each_manage _strict_list
+}
+
+# The shortest prefix in the real lists is /13 (ipdeny and ipverse, 26 nov 2026). A source
+# that adds 0.0.0.0/1 next to 1000 good lines would otherwise close the internet to
+# every client; /8 is still accepted.
+_prefix_8_accepted() {
+    on_then "$1" || return 1
+    make_list "$STUB_WEB/ru-aggregated.zone" 1200
+    echo "11.0.0.0/8" >> "$STUB_WEB/ru-aggregated.zone"
+    helper apply
+    [ "$status" -eq 0 ] || { echo "$1: a /8 refused: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1201" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+}
+@test "helper: a /8 network in the list is accepted" {
+    each_manage _prefix_8_accepted
 }
 
 _strict_extra() {
@@ -885,8 +920,8 @@ _apt_retry() {
     each_manage _apt_retry
 }
 
-# apt-get under timeout with a terminal on stdin: timeout puts it in its own
-# process group, apt puts the terminal in raw mode for dpkg and then hangs on
+# apt-get under timeout with a terminal on stdin: timeout puts itself and apt in a
+# new process group, a background one for the terminal; apt puts the terminal in raw mode for dpkg and then hangs on
 # giving it back until timeout kills it (5 minutes, the terminal left raw; D#418).
 # Every apt-get call gets /dev/null as stdin, whatever manage itself reads from.
 _apt_stdin_null() {
@@ -900,6 +935,22 @@ _apt_stdin_null() {
 }
 @test "block-ru on: every apt-get call reads /dev/null, not the caller's stdin" {
     each_manage _apt_stdin_null
+}
+
+# The install ran into the 300 s limit (rc 124 from timeout): no second round of
+# update and install (another ten minutes), and the message points at dpkg, which
+# a kill in the middle can leave half configured.
+_apt_timeout_no_retry() {
+    mv "$MGMT_DIR/bin/ipset" "$MGMT_DIR/ipset.real"
+    export STUB_IPSET_REAL="$MGMT_DIR/ipset.real" STUB_APT_TIMEOUT=1
+    manage "$1" block-ru on
+    [ "$status" -ne 0 ] || { echo "$1: succeeded without ipset"; return 1; }
+    [ "$(grep -c . "$CALLS.apt")" = "1" ] || { echo "$1: apt calls: $(cat "$CALLS.apt")"; return 1; }
+    [[ "$stderr" == *"dpkg --configure -a"* ]] || { echo "$1: no dpkg hint: $stderr"; return 1; }
+    [ ! -e "$AWG_SYSTEMD_DIR/awg-block-ru.service" ] || return 1
+}
+@test "block-ru on: the ipset install times out - no retry, the message points at dpkg" {
+    each_manage _apt_timeout_no_retry
 }
 
 _extra_args() {
