@@ -809,9 +809,10 @@ Options:
                         profile.
                         The spaced form is accepted too: --protocol 2.0
   -y, --yes             Auto-confirm (reboots, UFW, etc.)
-  --no-reboot           With --yes: do not reboot the server by itself, save the step and
-                        exit with code 75. Ansible or Puppet reboots, then runs
-                        the installer again with the same parameters
+  --no-reboot           Do not reboot the server by itself: save the step and
+                        exit with code 75 (usually together with --yes). Ansible
+                        or Puppet reboots, then runs the installer again with
+                        the same parameters
   -f, --force           Force reinstall on top of an already-running AmneziaWG
                         (by default a run on a configured server aborts;
                         ENV: AWG_FORCE_REINSTALL=1 is equivalent to the flag)
