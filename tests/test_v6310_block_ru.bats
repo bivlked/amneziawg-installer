@@ -146,6 +146,8 @@ STUB
     cat > "$MGMT_DIR/bin/apt-get" << 'STUB'
 #!/bin/bash
 echo "apt-get $*" >> "$CALLS.apt"
+# what apt-get reads as stdin: a terminal there made apt hang under timeout
+readlink /proc/self/fd/0 >> "$CALLS.apt_stdin"
 [[ -n "${STUB_APT_FAIL:-}" ]] && exit 100
 [[ "$1" == update ]] && : > "$CALLS.apt_updated"
 [[ -n "${STUB_APT_NEEDS_UPDATE:-}" && " $* " == *" install "* && ! -e "$CALLS.apt_updated" ]] && exit 100
@@ -454,6 +456,24 @@ _helper_fallback_url() {
 }
 @test "helper: the first source gives HTML - the snapshot from the release tag is used" {
     each_manage _helper_fallback_url
+}
+
+# I#221: ipverse (RIR data, on GitHub) is the second source, before the snapshot
+# from the release tag. Its file starts with # comment lines.
+_helper_ipverse_second() {
+    on_then "$1" || return 1
+    printf '<html>not a list</html>\n' > "$STUB_WEB/ru-aggregated.zone"
+    { printf '# Country: Russia (RU)\n# Address family: IPv4\n#\n'; make_list /dev/stdout 1150; } > "$STUB_WEB/ipv4-aggregated.txt"
+    make_list "$STUB_WEB/ru.zone" 1100
+    helper apply
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1150" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    [ "$(grep -oE 'https://[^ ]+' "$CALLS.curl" | paste -sd' ' -)" = "https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/ru/ipv4-aggregated.txt" ] \
+        || { echo "$1: urls: $(cat "$CALLS.curl")"; return 1; }
+    grep -qF "ipv4-aggregated.txt" <<< "$output" || { echo "$1: source not named: $output"; return 1; }
+}
+@test "helper: ipdeny gives HTML - the ipverse list is the second source, before the snapshot" {
+    each_manage _helper_ipverse_second
 }
 
 _helper_rejects_mixed() {
@@ -863,6 +883,23 @@ _apt_retry() {
 }
 @test "block-ru on: ipset install fails on stale lists - apt-get update, then the install goes through" {
     each_manage _apt_retry
+}
+
+# apt-get under timeout with a terminal on stdin: timeout puts it in its own
+# process group, apt puts the terminal in raw mode for dpkg and then hangs on
+# giving it back until timeout kills it (5 minutes, the terminal left raw; D#418).
+# Every apt-get call gets /dev/null as stdin, whatever manage itself reads from.
+_apt_stdin_null() {
+    mv "$MGMT_DIR/bin/ipset" "$MGMT_DIR/ipset.real"
+    export STUB_IPSET_REAL="$MGMT_DIR/ipset.real" STUB_APT_NEEDS_UPDATE=1
+    printf 'y\n' > "$MGMT_DIR/stdin.txt"
+    manage "$1" block-ru on < "$MGMT_DIR/stdin.txt"
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ "$(grep -c . "$CALLS.apt_stdin")" = "3" ] || { echo "$1: apt calls: $(cat "$CALLS.apt_stdin" 2>&1)"; return 1; }
+    [ "$(grep -cvxF /dev/null "$CALLS.apt_stdin")" = "0" ] || { echo "$1: apt stdin: $(cat "$CALLS.apt_stdin")"; return 1; }
+}
+@test "block-ru on: every apt-get call reads /dev/null, not the caller's stdin" {
+    each_manage _apt_stdin_null
 }
 
 _extra_args() {

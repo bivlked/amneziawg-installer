@@ -12,6 +12,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- `manage block-ru`: the list of Russian networks has a second source, [ipverse/country-ip-blocks](https://github.com/ipverse/country-ip-blocks) (data from the regional internet registries). It is used when ipdeny.com is down, and only when it fails too does the `cascade/ru.zone` snapshot from the repository come in. Idea from [#221](https://github.com/bivlked/amneziawg-installer/issues/221).
+
+### Fixed
+
+- `manage block-ru on` on a server without `ipset` installs the package in seconds and leaves the terminal as it was. Before, installing `ipset` could take about five minutes, and the terminal text drifted to the right afterwards ([D#418](https://github.com/bivlked/amneziawg-installer/discussions/418)).
+
 ## [6.3.10] - 2026-11-25
 
 **v6.3.10** - a new `manage block-ru` command keeps VPN clients away from Russian IPv4 addresses, the Secure Boot hint checks the DKMS key against the module signature, and `manage add` and `manage regen` build QR and `vpn://` under the config lock.

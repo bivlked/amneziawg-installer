@@ -12,6 +12,14 @@
 
 ## [Unreleased]
 
+### Изменено
+
+- `manage block-ru`: у списка российских сетей появился второй источник, [ipverse/country-ip-blocks](https://github.com/ipverse/country-ip-blocks) (данные региональных регистраторов). Он берётся, когда ipdeny.com недоступен, и только если не скачался и он, используется снимок `cascade/ru.zone` из репозитория. Идея [#221](https://github.com/bivlked/amneziawg-installer/issues/221).
+
+### Исправлено
+
+- `manage block-ru on` на сервере без `ipset` ставит пакет за секунды и оставляет терминал в порядке. Раньше установка `ipset` могла занять около пяти минут, а текст в терминале после неё уезжал вправо ([D#418](https://github.com/bivlked/amneziawg-installer/discussions/418)).
+
 ## [6.3.10] - 2026-11-25
 
 **v6.3.10** - новая команда `manage block-ru` закрывает клиентам выход на российские IPv4-адреса, подсказка про Secure Boot сверяет ключ DKMS с подписью модуля, а `manage add` и `manage regen` собирают QR и `vpn://` под блокировкой конфига.
