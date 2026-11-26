@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.11] - 2026-11-26
+
+**v6.3.11** - a `--no-reboot` flag for installs from Ansible and Puppet, `manage block-ru on` installs `ipset` quickly and leaves the terminal alone, and the list of Russian networks gets a second source.
+
 ### Added
 
 - Installer flag `--no-reboot` for Ansible, Puppet and other automation tools: the installer does not reboot the server by itself, it saves the step and exits with code 75. The automation tool reboots the server and runs the same command again, and the install continues from the saved step; code 0 means the install is finished. Requested in [#427](https://github.com/bivlked/amneziawg-installer/issues/427).
@@ -2396,7 +2400,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.10...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.11...HEAD
+[6.3.11]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.10...v6.3.11
 [6.3.10]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.9...v6.3.10
 [6.3.9]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...v6.3.9
 [6.3.8]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...v6.3.8

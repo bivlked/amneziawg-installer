@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [6.3.11] - 2026-11-26
+
+**v6.3.11** - флаг `--no-reboot` для установки из Ansible и Puppet, `manage block-ru on` быстро ставит `ipset` и не сбивает терминал, у списка российских сетей появился второй источник.
+
 ### Добавлено
 
 - Флаг установщика `--no-reboot` для Ansible, Puppet и других систем автоматизации: установщик не перезагружает сервер сам, а сохраняет шаг и выходит с кодом 75. Система автоматизации перезагружает сервер и запускает ту же команду снова, установка продолжается с сохранённого шага; код 0 значит, что установка закончена. Просьба из [#427](https://github.com/bivlked/amneziawg-installer/issues/427).
@@ -2396,7 +2400,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.10...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.11...HEAD
+[6.3.11]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.10...v6.3.11
 [6.3.10]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.9...v6.3.10
 [6.3.9]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...v6.3.9
 [6.3.8]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.7...v6.3.8
