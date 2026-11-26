@@ -96,7 +96,7 @@ strip_messages() {
             install_amneziawg.sh) want="35 20" ;;
             install_amneziawg_en.sh) want="34 20" ;;
             awg_common.sh|awg_common_en.sh) want="6 0" ;;
-            manage_amneziawg.sh|manage_amneziawg_en.sh) want="7 3" ;;
+            manage_amneziawg.sh|manage_amneziawg_en.sh) want="8 4" ;;
         esac
         [ "$a $d" = "$want" ] || { echo "$f: apt/dpkg mentions $a $d, expected $want"; return 1; }
     done
