@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Вход и выход VPN на разных IP в AmneziaWG: один сервер, два адреса</title>
+<meta name="description" content="Клиенты подключаются к одному IPv4 сервера AmneziaWG, сайты видят другой. Флаг установщика или одна команда на работающем сервере, а заблокированный выход меняется без перевыпуска клиентских конфигов.">
+<link rel="canonical" href="https://bivlked.github.io/amneziawg-installer/ru/exit-ip/">
+<link rel="alternate" hreflang="en" href="https://bivlked.github.io/amneziawg-installer/exit-ip/">
+<link rel="alternate" hreflang="ru" href="https://bivlked.github.io/amneziawg-installer/ru/exit-ip/">
+<link rel="alternate" hreflang="x-default" href="https://bivlked.github.io/amneziawg-installer/exit-ip/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Один сервер AmneziaWG, два IP: вход для клиентов, выход для сайтов">
+<meta property="og:description" content="Клиенты подключаются к адресу входа, а трафик через VPN сайты видят только с адреса выхода. Заблокировали выход - меняете один адрес, конфиги клиентов остаются прежними.">
+<meta property="og:url" content="https://bivlked.github.io/amneziawg-installer/ru/exit-ip/">
+<meta property="og:site_name" content="amneziawg-installer">
+<meta property="og:image" content="https://bivlked.github.io/amneziawg-installer/assets/og-exit-ip-ru.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Клиенты подключаются к адресу входа сервера AmneziaWG, сайты видят только адрес выхода">
+<meta property="og:locale" content="ru_RU">
+<meta property="og:locale:alternate" content="en_US">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://bivlked.github.io/amneziawg-installer/assets/og-exit-ip-ru.png">
+<meta name="twitter:title" content="Один сервер AmneziaWG, два IP: вход для клиентов, выход для сайтов">
+<meta name="twitter:description" content="Клиенты подключаются к одному IP, сайты видят другой. Заблокированный выход меняется без новых конфигов.">
+<meta name="theme-color" content="#0e1116">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../../assets/apple-touch-icon.png">
+<link rel="stylesheet" href="../../assets/style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Нужны ли клиентам новые конфиги, если сменить адрес выхода?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Нет, конфиги клиентов остаются прежними: в них записан только адрес входа. Адрес выхода задан одним правилом на сервере, и его смена - одна команда, manage exit-ip с новым адресом. Клиенты теряют связь на несколько секунд, пока перезапускается сервис."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Что делать, если адрес выхода заблокировали?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Поменять только выход: взять у хостера новый IPv4, прописать его на интерфейсе сервера и выполнить manage exit-ip с новым адресом. Вход прежний, поэтому никому ничего переимпортировать не нужно. Если закрыли всю подсеть хостера, другой адрес из неё не поможет, и нужен сервер в другом месте или каскад."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Это работает с обычным WireGuard?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Да, механизм не привязан к AmneziaWG: это одно правило SNAT в Linux для подсети клиентов, выше правила MASQUERADE. Мой установщик настраивает его только для AmneziaWG, но то же правило работает в PostUp конфига wg-quick; ручной вариант разобран в статье на Хабре."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Чем это отличается от каскада?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Отдельному выходу нужен один сервер с двумя IPv4, а каскад связывает два сервера. При двух адресах на одном сервере оба принадлежат одному хостеру и обычно одной стране. Каскад выносит выход на другую машину: вход может быть в России, а выход за границей, ценой второго VPS. В моей инструкции по каскаду российский трафик намеренно уходит прямо с сервера-входа."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Что будет, если адрес выхода пропадёт с сервера?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Пока правило SNAT на месте, трафик клиентов не уйдёт через адрес входа: правило всё равно ставит источником адрес выхода. Обычно связь просто встаёт. На моём тестовом сервере это заняло от 9 до 28 секунд, а после возврата адреса связь вернулась за пару секунд. Пропавший адрес выхода показывает manage check."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Может ли адрес выхода быть IPv6?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Нет, адрес выхода только IPv4, и с IPv6-туннелем клиентов (--allow-ipv6-tunnel) он не сочетается: установщик и manage откажут. В конфигах моего установщика с полным туннелем (выданы или перевыпущены начиная с v5.31.0) IPv6 устройства уходит в туннель и там останавливается, поэтому мимо выхода не идёт. Старые конфиги и раздельный туннель (--route-amnezia, --route-custom) лучше проверить самому."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Где взять второй IP-адрес?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "У хостера: дополнительный IPv4 для того же VPS обычно продаётся платной опцией. Иногда хостер только выделяет адрес, а прописать его на интерфейсе нужно самому, например через netplan. Прежде чем делать адрес выходом, проверьте командой ip -br addr, что он действительно на интерфейсе."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Что будет с уже открытыми соединениями при смене выхода?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Открытые соединения сами на новый адрес выхода не переходят. Если на сервере есть conntrack, manage exit-ip пытается удалить их записи, и приложениям приходится подключиться заново через новый выход. Без утилиты долгая загрузка или звонок сохраняют прежний адрес до переподключения. Поставьте её заранее: sudo apt update && sudo apt install conntrack."
+      }
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "amneziawg-installer",
+      "item": "https://bivlked.github.io/amneziawg-installer/ru/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Вход и выход на разных IP",
+      "item": "https://bivlked.github.io/amneziawg-installer/ru/exit-ip/"
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Вход и выход VPN на разных IP: один сервер AmneziaWG, два адреса",
+  "description": "Как amneziawg-installer выпускает трафик клиентов со второго IPv4 того же сервера одним правилом SNAT: флаг установщика, команда manage, проверки, замена заблокированного выхода и что происходит, если адрес выхода пропал.",
+  "inLanguage": "ru",
+  "image": "https://bivlked.github.io/amneziawg-installer/assets/og-exit-ip-ru.png",
+  "datePublished": "2026-11-26",
+  "dateModified": "2026-11-26",
+  "author": {
+    "@type": "Person",
+    "name": "bivlked"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "amneziawg-installer",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://bivlked.github.io/amneziawg-installer/assets/apple-touch-icon.png"
+    }
+  },
+  "mainEntityOfPage": "https://bivlked.github.io/amneziawg-installer/ru/exit-ip/",
+  "isPartOf": "https://bivlked.github.io/amneziawg-installer/"
+}
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">К содержимому</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/amneziawg-installer/ru/">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#3ddc97"/><path d="M16 6l8 4v6c0 5-3.4 8.2-8 10-4.6-1.8-8-5-8-10v-6l8-4z" fill="#07120c"/></svg>
+      amneziawg-installer
+    </a>
+    <nav class="nav-right" aria-label="Навигация по сайту">
+      <span class="lang-switch"><a aria-label="English" href="/amneziawg-installer/exit-ip/">EN</a><a class="active" aria-current="page" aria-label="Русский" href="/amneziawg-installer/ru/exit-ip/">RU</a></span>
+      <a class="btn btn-sm" href="https://github.com/bivlked/amneziawg-installer">Поставить звезду</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero">
+  <div class="wrap">
+    <h1>Вход и выход VPN на разных IP: один сервер AmneziaWG, два адреса</h1>
+    <p class="lede">Если у сервера AmneziaWG два публичных IPv4, клиенты могут подключаться к одному, а в интернет их трафик будет уходить со второго. Для трафика через VPN сайты и приложения видят только адрес выхода. Заблокировали выход - меняете этот один адрес, и все клиентские конфиги продолжают работать. amneziawg-installer настраивает это флагом при установке или одной командой на работающем сервере.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.md#exit-ip-adv">Подробно в документации</a>
+      <a class="btn" href="#how">Как это работает</a>
+    </div>
+    <div class="trust">
+      <span>Один сервер, два IPv4</span>
+      <span>Конфиги клиентов не меняются</span>
+      <span>Если выход пропал, трафик не уходит через вход</span>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <h2>Как это работает</h2>
+    <p class="sub">Клиенты знают только адрес входа. Выход задаётся одним правилом на сервере.</p>
+    <figure class="diagram">
+      <svg viewBox="0 0 820 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Схема: клиент подключается к адресу входа сервера AmneziaWG, поэтому провайдер видит только вход; сервер подменяет источник трафика клиентов на адрес выхода, поэтому сайты и приложения видят только выход." font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+        <defs><marker id="exa" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0 0l6 3-6 3z" fill="#3ddc97"/></marker></defs>
+        <rect x="24" y="112" width="150" height="70" rx="12" fill="#1b222c" stroke="#4a5563"/>
+        <text x="99" y="142" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">Клиент</text>
+        <text x="99" y="162" text-anchor="middle" font-size="12" fill="#9aa7b4">Endpoint = вход</text>
+        <line x1="176" y1="147" x2="262" y2="147" stroke="#3ddc97" stroke-width="2" marker-end="url(#exa)"/>
+        <text x="218" y="118" text-anchor="middle" font-size="12" fill="#9aa7b4">Провайдер</text>
+        <text x="218" y="134" text-anchor="middle" font-size="12" fill="#9aa7b4">видит вход</text>
+        <rect x="250" y="40" width="270" height="260" rx="14" fill="#10261c" stroke="#2bbd80"/>
+        <g transform="translate(264 52) scale(0.7)"><path d="M16 6l8 4v6c0 5-3.4 8.2-8 10-4.6-1.8-8-5-8-10v-6l8-4z" fill="#3ddc97"/></g>
+        <text x="385" y="70" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">Ваш сервер</text>
+        <rect x="270" y="112" width="230" height="70" rx="10" fill="#1b222c" stroke="#4a5563"/>
+        <text x="385" y="140" text-anchor="middle" font-size="13" font-weight="700" fill="#9aa7b4" letter-spacing="1">ВХОД</text>
+        <text x="385" y="164" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3" font-family="ui-monospace, SFMono-Regular, Consolas, monospace">198.51.100.2</text>
+        <line x1="385" y1="184" x2="385" y2="208" stroke="#3ddc97" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#exa)"/>
+        <text x="400" y="201" font-size="12" fill="#9aa7b4">SNAT</text>
+        <rect x="270" y="212" width="230" height="70" rx="10" fill="#0f3324" stroke="#3ddc97"/>
+        <text x="385" y="240" text-anchor="middle" font-size="13" font-weight="700" fill="#3ddc97" letter-spacing="1">ВЫХОД</text>
+        <text x="385" y="264" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3" font-family="ui-monospace, SFMono-Regular, Consolas, monospace">203.0.113.7</text>
+        <line x1="502" y1="247" x2="588" y2="247" stroke="#3ddc97" stroke-width="2" marker-end="url(#exa)"/>
+        <rect x="592" y="212" width="204" height="70" rx="12" fill="#1b222c" stroke="#4a5563"/>
+        <text x="694" y="242" text-anchor="middle" font-size="14" font-weight="600" fill="#e6edf3">Сайты и приложения</text>
+        <text x="694" y="262" text-anchor="middle" font-size="12" fill="#9aa7b4">видят 203.0.113.7</text>
+      </svg>
+      <figcaption>Один сервер, два адреса. Клиент подключается ко входу, его трафик уходит с выхода, а собственный трафик сервера (обновления, DNS) по-прежнему идёт с основного адреса.</figcaption>
+    </figure>
+    <div class="tablewrap">
+      <table class="dtable">
+        <caption>Кто какой адрес видит</caption>
+        <thead><tr><th scope="col">Кто</th><th scope="col">Видит</th></tr></thead>
+        <tbody>
+          <tr><td>Провайдер клиента и его DPI</td><td>адрес входа</td></tr>
+          <tr><td>Сайты и приложения, для трафика внутри туннеля</td><td>адрес выхода</td></tr>
+          <tr><td>Хостер сервера</td><td>оба</td></tr>
+          <tr><td>Сервисы, к которым ходит сам сервер (обновления, DNS, NTP)</td><td>основной адрес, обычно вход</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="grid mt">
+      <div class="card">
+        <div class="ico" aria-hidden="true">&#128256;</div>
+        <h3>Одно правило SNAT</h3>
+        <p>Установщик добавляет правило для подсети клиентов, которое подменяет источник на адрес выхода. Оно стоит выше обычного MASQUERADE, поэтому срабатывает для трафика клиентов и не трогает собственные соединения сервера.</p>
+      </div>
+      <div class="card">
+        <div class="ico" aria-hidden="true">&#128241;</div>
+        <h3>Клиенты знают только вход</h3>
+        <p>В <code>Endpoint</code> каждого клиентского конфига стоит адрес входа. Адреса выхода на стороне клиента нет нигде, поэтому его смена никогда не требует перевыпуска конфигов и QR-кодов.</p>
+      </div>
+      <div class="card">
+        <div class="ico" aria-hidden="true">&#128274;</div>
+        <h3>Без тихого отката на вход</h3>
+        <p>Если адрес выхода пропадёт с сервера, а правило останется, оно всё равно ставит этот адрес источником. Трафик клиентов не уходит потихоньку с адреса входа: обычно связь просто встаёт, пока адрес не вернётся. Без правила трафик снова пойдёт с основного адреса, так и работает <code>exit-ip off</code>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="why">
+  <div class="wrap">
+    <h2>Когда это нужно</h2>
+    <p class="sub">Одна причина новая и про Россию, другая старая, как сами адреса дата-центров.</p>
+    <p>Осенью 2026 года из России стали приходить отчёты, что у зарубежного VPN-сервера блокируют только адрес, с которого трафик уходит в интернет, а адрес, к которому подключаются клиенты, продолжает работать (<a href="https://github.com/net4people/bbs/issues/671">net4people #671</a>). Почему так, никто не доказал. Но если вход и выход совпадают, блокировка выхода выключает и VPN. С разными адресами теряется только выход, а его замена - одна команда.</p>
+    <p>Вторая причина - репутация. Адреса дата-центров попадают в чёрные списки и под капчу. С отдельным выходом можно сменить адрес, который видят сайты, и не трогать клиентов. Это важно, когда VPN стоит на телефонах у родных, которые конфиг заново импортировать не станут.</p>
+    <div class="card lead mt">
+      <div class="ico" aria-hidden="true">&#9888;&#65039;</div>
+      <h3>Чего это не даёт</h3>
+      <p>Оба адреса обычно от одного хостера и часто из одной подсети. Пока блокируют отдельные адреса, этого хватает. Если оба адреса окажутся в закрытой подсети, пропадут оба, и тогда нужен сервер в другом месте или <a href="/amneziawg-installer/ru/cascade/">каскад</a>.</p>
+      <p>Выход только IPv4 и не сочетается с IPv6-туннелем клиентов (<code>--allow-ipv6-tunnel</code>). В конфигах моего установщика с полным туннелем IPv6 устройства останавливается в туннеле и мимо выхода не идёт; подробнее в частых вопросах ниже.</p>
+      <p>Адрес выхода должен уже стоять на внешнем интерфейсе сервера и отличаться от адреса входа (туннели и loopback не в счёт); установщик и <code>manage</code> это проверяют.</p>
+    </div>
+  </div>
+</section>
+
+<section id="steps">
+  <div class="wrap">
+    <h2>Как настроить</h2>
+    <p class="sub">Есть начиная с версии 6.3.0. Адреса в примерах: вход 198.51.100.2, выход 203.0.113.7.</p>
+    <ol class="steps">
+      <li class="step"><span class="n" aria-hidden="true"></span><div><strong>Пропишите второй IPv4 на сервере.</strong><p>Хостер его выдаёт, но прописывать на интерфейсе иногда приходится самому. В Ubuntu с netplan берите тот же ключ интерфейса, что в вашем файле в <code>/etc/netplan/</code> (обычно это имя из <code>ip -br addr</code>, но не всегда). Debian с ifupdown разобран в пошаговой статье.</p>
+        <div class="codeblock"><pre># /etc/netplan/60-exit-ip.yaml
+network:
+  version: 2
+  ethernets:
+    ens3:
+      addresses: [203.0.113.7/32]</pre></div>
+        <p>Затем <code>sudo netplan apply</code>. До установки проверьте адрес: <code>curl -s --interface 203.0.113.7 https://api.ipify.org</code> должен вернуть <code>203.0.113.7</code>. На моём тестовом сервере адрес заработал только после перезагрузки из панели хостера. После установки этот способ проверки не годится: правило MASQUERADE установщика переписывает собственный трафик сервера на основной адрес.</p></div></li>
+      <li class="step"><span class="n" aria-hidden="true"></span><div><strong>На новом сервере: два флага.</strong><p><code>--endpoint</code> - адрес, который получат клиенты, <code>--exit-ip</code> - адрес, с которого уйдёт их трафик. <code>--endpoint</code> лучше указать явно: без него установщик берёт адрес, с которым сервер виден в интернете, обычно основной, а это не всегда тот, к которому должны подключаться клиенты.</p>
+        <div class="codeblock"><pre>sudo bash install_amneziawg.sh --endpoint=198.51.100.2 --exit-ip=203.0.113.7</pre></div></div></li>
+      <li class="step"><span class="n" aria-hidden="true"></span><div><strong>На работающем сервере: одна команда.</strong><p>Конфиги клиентов не меняются. Сервис перезапускается, и клиенты теряют связь на несколько секунд (на моём тестовом сервере около 13). <code>exit-ip off</code> снимает выход, а с <code>--json</code> команда отвечает одной строкой для скриптов.</p>
+        <div class="codeblock"><pre>sudo bash /root/awg/manage_amneziawg.sh exit-ip 203.0.113.7</pre></div>
+        <p>Уже открытые соединения (долгая загрузка, звонок) сами на новый адрес не переходят. Если на сервере есть <code>conntrack</code>, команда пытается удалить их записи, и приложениям приходится подключиться заново через новый выход; без утилиты они сохраняют прежний адрес до переподключения. Поставьте её до смены выхода: <code>sudo apt update &amp;&amp; sudo apt install conntrack</code> (установщик в конце очищает списки пакетов).</p></div></li>
+      <li class="step"><span class="n" aria-hidden="true"></span><div><strong>Проверьте с клиента и меняйте выход, когда нужно.</strong><p><code>curl -4 ifconfig.me</code> на подключённом устройстве должен вернуть адрес выхода. Заблокировали выход - возьмите у хостера новый адрес, пропишите его на интерфейсе и выполните <code>exit-ip</code> с ним. Вход прежний, поэтому никому ничего переимпортировать не нужно. Пропавший с интерфейса адрес выхода показывает <code>manage check</code>.</p></div></li>
+    </ol>
+  </div>
+</section>
+
+<section id="trust">
+  <div class="wrap">
+    <h2>Проверено на моём сервере</h2>
+    <p class="sub">Включая неприятный случай.</p>
+    <p>Я снимал адрес выхода с интерфейса работающего тестового сервера и смотрел, что происходит. В трёх прогонах соединения клиентов вставали через 9-28 секунд, разброс, видимо, от ARP-кэша роутера хостера. В прогоне с полным захватом пакетов с адреса входа не ушло ни одного пакета клиентов, а в более поздней проверке связь вернулась за 2 секунды после возврата адреса. Если хостер направляет адрес на сервер маршрутом, без ARP, связь может и не прерваться. В пошаговой статье на Хабре подробнее: правило SNAT вручную для обычного WireGuard, сервер, поднятый приложением Amnezia VPN, и все проверки по шагам.</p>
+    <div class="cta-row">
+      <a class="btn" href="https://habr.com/ru/articles/1111468/">Пошаговая статья на Хабре</a>
+      <a class="btn" href="https://github.com/bivlked/amneziawg-installer/issues/384">Запрос #384</a>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <h2>Частые вопросы</h2>
+    <div class="faq">
+      <details><summary>Нужны ли клиентам новые конфиги, если сменить адрес выхода?</summary><div class="answer">Нет, конфиги клиентов остаются прежними: в них записан только адрес входа. Адрес выхода задан одним правилом на сервере, и его смена - одна команда, <code>manage exit-ip</code> с новым адресом. Клиенты теряют связь на несколько секунд, пока перезапускается сервис.</div></details>
+      <details><summary>Что делать, если адрес выхода заблокировали?</summary><div class="answer">Поменять только выход: взять у хостера новый IPv4, прописать его на интерфейсе сервера и выполнить <code>manage exit-ip</code> с новым адресом. Вход прежний, поэтому никому ничего переимпортировать не нужно. Если закрыли всю подсеть хостера, другой адрес из неё не поможет, и нужен сервер в другом месте или <a href="/amneziawg-installer/ru/cascade/">каскад</a>.</div></details>
+      <details><summary>Это работает с обычным WireGuard?</summary><div class="answer">Да, механизм не привязан к AmneziaWG: это одно правило SNAT в Linux для подсети клиентов, выше правила MASQUERADE. Мой установщик настраивает его только для AmneziaWG, но то же правило работает в <code>PostUp</code> конфига <code>wg-quick</code>; ручной вариант разобран в <a href="https://habr.com/ru/articles/1111468/">статье на Хабре</a>.</div></details>
+      <details><summary>Чем это отличается от каскада?</summary><div class="answer">Отдельному выходу нужен один сервер с двумя IPv4, а <a href="/amneziawg-installer/ru/cascade/">каскад</a> связывает два сервера. При двух адресах на одном сервере оба принадлежат одному хостеру и обычно одной стране. Каскад выносит выход на другую машину: вход может быть в России, а выход за границей, ценой второго VPS. В моей инструкции по каскаду российский трафик намеренно уходит прямо с сервера-входа.</div></details>
+      <details><summary>Что будет, если адрес выхода пропадёт с сервера?</summary><div class="answer">Пока правило SNAT на месте, трафик клиентов не уйдёт через адрес входа: правило всё равно ставит источником адрес выхода. Обычно связь просто встаёт. На моём тестовом сервере это заняло от 9 до 28 секунд, а после возврата адреса связь вернулась за пару секунд. Пропавший адрес выхода показывает <code>manage check</code>.</div></details>
+      <details><summary>Может ли адрес выхода быть IPv6?</summary><div class="answer">Нет, адрес выхода только IPv4, и с IPv6-туннелем клиентов (<code>--allow-ipv6-tunnel</code>) он не сочетается: установщик и <code>manage</code> откажут. В конфигах моего установщика с полным туннелем (выданы или перевыпущены начиная с v5.31.0) IPv6 устройства уходит в туннель и там останавливается, поэтому мимо выхода не идёт. Старые конфиги и раздельный туннель (<code>--route-amnezia</code>, <code>--route-custom</code>) лучше проверить самому.</div></details>
+      <details><summary>Где взять второй IP-адрес?</summary><div class="answer">У хостера: дополнительный IPv4 для того же VPS обычно продаётся платной опцией. Иногда хостер только выделяет адрес, а прописать его на интерфейсе нужно самому, например через netplan. Прежде чем делать адрес выходом, проверьте командой <code>ip -br addr</code>, что он действительно на интерфейсе.</div></details>
+      <details><summary>Что будет с уже открытыми соединениями при смене выхода?</summary><div class="answer">Открытые соединения сами на новый адрес выхода не переходят. Если на сервере есть <code>conntrack</code>, <code>manage exit-ip</code> пытается удалить их записи, и приложениям приходится подключиться заново через новый выход. Без утилиты долгая загрузка или звонок сохраняют прежний адрес до переподключения. Поставьте её заранее: <code>sudo apt update &amp;&amp; sudo apt install conntrack</code>.</div></details>
+    </div>
+  </div>
+</section>
+
+<section id="related" class="related">
+  <div class="wrap">
+    <h2>Смотрите также</h2>
+    <div class="grid">
+      <div class="card">
+        <div class="ico" aria-hidden="true">&#128279;</div>
+        <h3>Каскад из двух серверов</h3>
+        <p>Когда выход нужен в другой стране или у другого хостера: вход в России, выход за границей, а заблокированный выход можно заменить, не меняя клиентские конфиги.</p>
+        <a class="go" href="/amneziawg-installer/ru/cascade/">Как устроен каскад &#8594;</a>
+      </div>
+      <div class="card">
+        <div class="ico" aria-hidden="true">&#128221;</div>
+        <h3>Пошаговая статья</h3>
+        <p>Подробная версия на Хабре: отчёты о блокировках выхода, правило вручную для WireGuard, сервер от приложения Amnezia и все проверки.</p>
+        <a class="go" href="https://habr.com/ru/articles/1111468/">Читать статью &#8594;</a>
+      </div>
+      <div class="card">
+        <div class="ico" aria-hidden="true">&#128640;</div>
+        <h3>С чего начать</h3>
+        <p>Одна команда превращает чистый VPS в рабочий сервер AmneziaWG: по умолчанию 3.1, а 2.0 там, где этого требуют ядро или старые клиенты и роутеры.</p>
+        <a class="go" href="/amneziawg-installer/ru/#quick-start">Быстрый старт &#8594;</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="cols">
+      <div>
+        <div class="foot-links">
+          <a href="/amneziawg-installer/ru/">Главная</a>
+          <a href="/amneziawg-installer/ru/compare/">Сравнение с приложением</a>
+          <a href="/amneziawg-installer/ru/cascade/">Каскад из двух серверов</a>
+          <a href="/amneziawg-installer/ru/manage/">Управление клиентами</a>
+          <a href="/amneziawg-installer/ru/awg3/">Версии AmneziaWG</a>
+        </div>
+        <div class="foot-links">
+          <a href="/amneziawg-installer/ru/">Главная</a>
+          <a href="https://github.com/bivlked/amneziawg-installer">Репозиторий</a>
+          <a href="https://github.com/bivlked/amneziawg-installer/blob/main/INSTALL_VPS.ru.md">Гайд по установке</a>
+          <a href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.md">Расширенно</a>
+          <a href="https://github.com/bivlked/amneziawg-installer/blob/main/CHANGELOG.md">Изменения</a>
+        </div>
+        <p class="note">Открытый код под лицензией MIT. Если проект помог - звезда на GitHub помогает другим его найти.</p>
+      </div>
+      <div class="lang-switch"><a aria-label="English" href="/amneziawg-installer/exit-ip/">EN</a> <a class="active" aria-current="page" aria-label="Русский" href="/amneziawg-installer/ru/exit-ip/">RU</a></div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

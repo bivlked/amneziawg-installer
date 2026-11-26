@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Separate entry and exit IPs on one AmneziaWG server</title>
+<meta name="description" content="Clients connect to one IPv4 address of your AmneziaWG server, websites see another. An installer flag or one command on a running server, and a blocked exit can be swapped without new client configs.">
+<link rel="canonical" href="https://bivlked.github.io/amneziawg-installer/exit-ip/">
+<link rel="alternate" hreflang="en" href="https://bivlked.github.io/amneziawg-installer/exit-ip/">
+<link rel="alternate" hreflang="ru" href="https://bivlked.github.io/amneziawg-installer/ru/exit-ip/">
+<link rel="alternate" hreflang="x-default" href="https://bivlked.github.io/amneziawg-installer/exit-ip/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="One AmneziaWG server, two IPs: entry for clients, exit for websites">
+<meta property="og:description" content="Clients keep connecting to the entry address, and for VPN traffic websites see only the exit. When the exit gets blocked, swap that one address and keep every client config.">
+<meta property="og:url" content="https://bivlked.github.io/amneziawg-installer/exit-ip/">
+<meta property="og:site_name" content="amneziawg-installer">
+<meta property="og:image" content="https://bivlked.github.io/amneziawg-installer/assets/og-exit-ip.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Clients connect to the entry IP of an AmneziaWG server, websites see only the exit IP">
+<meta property="og:locale" content="en_US">
+<meta property="og:locale:alternate" content="ru_RU">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://bivlked.github.io/amneziawg-installer/assets/og-exit-ip.png">
+<meta name="twitter:title" content="One AmneziaWG server, two IPs: entry for clients, exit for websites">
+<meta name="twitter:description" content="Clients connect to one IP, websites see another. Swap a blocked exit without new client configs.">
+<meta name="theme-color" content="#0e1116">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+<link rel="stylesheet" href="../assets/style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Do clients need new configs when I change the exit IP?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No, client configs stay the same, because they only contain the entry address. The exit address lives in a single rule on the server, so changing it is one command, manage exit-ip with the new address. Clients lose the connection for a few seconds while the service restarts."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What do I do if the exit IP gets blocked?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Swap only the exit: get a new IPv4 from the hoster, put it on the server interface and run manage exit-ip with the new address. The entry stays the same, so nobody has to reimport anything. If the hoster's whole range gets blocked, another address from it will not help, and you need a server elsewhere or a cascade."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does this work with plain WireGuard?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes, the mechanism is not specific to AmneziaWG: it is one Linux SNAT rule for the client subnet, placed above the MASQUERADE rule. My installer sets it up only for AmneziaWG, but the same rule works in the PostUp of a wg-quick config; the step-by-step article shows the manual version."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How is this different from a cascade?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "A separate exit needs one server with two IPv4 addresses, while a cascade links two servers. With two addresses on one server both belong to the same hoster and usually the same country. A cascade puts the exit on another machine, so the entry can be in Russia and the exit abroad, at the cost of a second VPS. In my cascade guide Russian traffic leaves straight from the entry server on purpose."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What happens if the exit address disappears from the server?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Client traffic does not fall back to the entry address while the SNAT rule is in place: the rule keeps the exit as the source. Usually the connection just stops. On my test server it stalled after 9 to 28 seconds and came back within a couple of seconds once the address returned. manage check reports a missing exit address."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can the exit address be IPv6?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No, the exit address is IPv4 only, and it does not combine with the IPv6 tunnel for clients (--allow-ipv6-tunnel): the installer and manage refuse that combination. In full-tunnel configs from my installer (issued or regenerated since v5.31.0) device IPv6 goes into the tunnel and stops there, so it does not bypass the exit. Older configs and split-tunnel setups (--route-amnezia, --route-custom) are worth checking yourself."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Where do I get a second IP address?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "A second IPv4 address for the same server comes from your hosting provider, usually as a paid add-on. Sometimes the hoster only assigns it, and you add it to the interface yourself, for example with netplan. Check that the address is really there with ip -br addr before setting it as the exit."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What happens to connections that are already open when the exit changes?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Open connections do not move to the new exit address on their own. If conntrack is on the server, manage exit-ip tries to drop their entries, and apps have to reconnect through the new exit. Without it a long download or a call keeps the old address until it reconnects. Install it beforehand with sudo apt update && sudo apt install conntrack."
+      }
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "amneziawg-installer",
+      "item": "https://bivlked.github.io/amneziawg-installer/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Separate entry and exit IPs",
+      "item": "https://bivlked.github.io/amneziawg-installer/exit-ip/"
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Separate entry and exit IPs on one AmneziaWG server",
+  "description": "How amneziawg-installer puts client traffic on a second IPv4 address of the same server with one SNAT rule: install flag, manage command, checks, swapping a blocked exit and what happens when the exit address disappears.",
+  "inLanguage": "en",
+  "image": "https://bivlked.github.io/amneziawg-installer/assets/og-exit-ip.png",
+  "datePublished": "2026-11-26",
+  "dateModified": "2026-11-26",
+  "author": {
+    "@type": "Person",
+    "name": "bivlked"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "amneziawg-installer",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://bivlked.github.io/amneziawg-installer/assets/apple-touch-icon.png"
+    }
+  },
+  "mainEntityOfPage": "https://bivlked.github.io/amneziawg-installer/exit-ip/",
+  "isPartOf": "https://bivlked.github.io/amneziawg-installer/"
+}
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/amneziawg-installer/">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#3ddc97"/><path d="M16 6l8 4v6c0 5-3.4 8.2-8 10-4.6-1.8-8-5-8-10v-6l8-4z" fill="#07120c"/></svg>
+      amneziawg-installer
+    </a>
+    <nav class="nav-right" aria-label="Site navigation">
+      <span class="lang-switch"><a class="active" aria-current="page" aria-label="English" href="/amneziawg-installer/exit-ip/">EN</a><a aria-label="Русский" href="/amneziawg-installer/ru/exit-ip/">RU</a></span>
+      <a class="btn btn-sm" href="https://github.com/bivlked/amneziawg-installer">Star on GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero">
+  <div class="wrap">
+    <h1>Separate entry and exit IPs on one AmneziaWG server</h1>
+    <p class="lede">If your AmneziaWG server has two public IPv4 addresses, clients can connect to one while their traffic leaves to the internet from the other. For traffic that goes through the VPN, websites and apps see only the exit address. When the exit gets blocked, you swap that one address and every client config keeps working. amneziawg-installer sets this up with a flag at install time or one command on a running server.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.en.md#exit-ip-adv">Full reference in the docs</a>
+      <a class="btn" href="#how">How it works</a>
+    </div>
+    <div class="trust">
+      <span>One server, two IPv4 addresses</span>
+      <span>Client configs stay the same</span>
+      <span>No fallback to the entry if the exit disappears</span>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <h2>How it works</h2>
+    <p class="sub">Clients only know the entry address. The exit lives in one rule on the server.</p>
+    <figure class="diagram">
+      <svg viewBox="0 0 820 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Traffic flow: the client connects to the entry address of the AmneziaWG server, so the ISP sees only the entry; the server rewrites client traffic to the exit address, so websites and apps see only the exit." font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+        <defs><marker id="exa" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0 0l6 3-6 3z" fill="#3ddc97"/></marker></defs>
+        <rect x="24" y="112" width="150" height="70" rx="12" fill="#1b222c" stroke="#4a5563"/>
+        <text x="99" y="142" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">Client</text>
+        <text x="99" y="162" text-anchor="middle" font-size="12" fill="#9aa7b4">Endpoint = entry</text>
+        <line x1="176" y1="147" x2="262" y2="147" stroke="#3ddc97" stroke-width="2" marker-end="url(#exa)"/>
+        <text x="218" y="118" text-anchor="middle" font-size="12" fill="#9aa7b4">ISP sees</text>
+        <text x="218" y="134" text-anchor="middle" font-size="12" fill="#9aa7b4">the entry</text>
+        <rect x="250" y="40" width="270" height="260" rx="14" fill="#10261c" stroke="#2bbd80"/>
+        <g transform="translate(264 52) scale(0.7)"><path d="M16 6l8 4v6c0 5-3.4 8.2-8 10-4.6-1.8-8-5-8-10v-6l8-4z" fill="#3ddc97"/></g>
+        <text x="385" y="70" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">Your server</text>
+        <rect x="270" y="112" width="230" height="70" rx="10" fill="#1b222c" stroke="#4a5563"/>
+        <text x="385" y="140" text-anchor="middle" font-size="13" font-weight="700" fill="#9aa7b4" letter-spacing="1">ENTRY</text>
+        <text x="385" y="164" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3" font-family="ui-monospace, SFMono-Regular, Consolas, monospace">198.51.100.2</text>
+        <line x1="385" y1="184" x2="385" y2="208" stroke="#3ddc97" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#exa)"/>
+        <text x="400" y="201" font-size="12" fill="#9aa7b4">SNAT</text>
+        <rect x="270" y="212" width="230" height="70" rx="10" fill="#0f3324" stroke="#3ddc97"/>
+        <text x="385" y="240" text-anchor="middle" font-size="13" font-weight="700" fill="#3ddc97" letter-spacing="1">EXIT</text>
+        <text x="385" y="264" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3" font-family="ui-monospace, SFMono-Regular, Consolas, monospace">203.0.113.7</text>
+        <line x1="502" y1="247" x2="588" y2="247" stroke="#3ddc97" stroke-width="2" marker-end="url(#exa)"/>
+        <rect x="592" y="212" width="204" height="70" rx="12" fill="#1b222c" stroke="#4a5563"/>
+        <text x="694" y="242" text-anchor="middle" font-size="14" font-weight="600" fill="#e6edf3">Websites and apps</text>
+        <text x="694" y="262" text-anchor="middle" font-size="12" fill="#9aa7b4">see 203.0.113.7</text>
+      </svg>
+      <figcaption>One server, two addresses. The client connects to the entry; client traffic leaves from the exit; the server's own traffic (updates, DNS) keeps using the main address.</figcaption>
+    </figure>
+    <div class="tablewrap">
+      <table class="dtable">
+        <caption>Who sees which address</caption>
+        <thead><tr><th scope="col">Who</th><th scope="col">Sees</th></tr></thead>
+        <tbody>
+          <tr><td>The client's ISP and its DPI</td><td>the entry address</td></tr>
+          <tr><td>Websites and apps, for traffic inside the tunnel</td><td>the exit address</td></tr>
+          <tr><td>Your hosting provider</td><td>both</td></tr>
+          <tr><td>Services the server itself talks to (updates, DNS, NTP)</td><td>the main address, usually the entry</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="grid mt">
+      <div class="card">
+        <div class="ico" aria-hidden="true">&#128256;</div>
+        <h3>One SNAT rule</h3>
+        <p>The installer adds a rule for the client subnet that rewrites the source to the exit address. It sits above the usual MASQUERADE, so it wins for client traffic and leaves the server's own connections alone.</p>
+      </div>
+      <div class="card">
+        <div class="ico" aria-hidden="true">&#128241;</div>
+        <h3>Clients only know the entry</h3>
+        <p>The <code>Endpoint</code> in every client config is the entry address. The exit appears nowhere on the client side, so changing it never means reissuing configs or QR codes.</p>
+      </div>
+      <div class="card">
+        <div class="ico" aria-hidden="true">&#128274;</div>
+        <h3>No silent fallback</h3>
+        <p>If the exit address disappears from the server while the rule is in place, the rule still uses it as the source. Client traffic does not quietly leave from the entry; the connection usually just stops until the address is back. Without the rule, traffic goes back to the main address, and that is how <code>exit-ip off</code> works.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="why">
+  <div class="wrap">
+    <h2>When this helps</h2>
+    <p class="sub">One reason is new and specific to Russia, the other is as old as datacenter IPs.</p>
+    <p>In autumn 2026 people in Russia started reporting that only the outgoing address of a foreign VPN server got banned, while the address clients connected to kept working (<a href="https://github.com/net4people/bbs/issues/671">net4people #671</a>). Nobody has proven why. But if entry and exit are the same address, losing the exit means losing the VPN. With separate addresses you lose only the exit, and swapping it is one command.</p>
+    <p>The other reason is reputation. Datacenter addresses end up on blocklists and behind CAPTCHAs. With a separate exit you can change the address websites see and leave clients alone, which matters once your VPN runs on the phones of people who will never reimport a config.</p>
+    <div class="card lead mt">
+      <div class="ico" aria-hidden="true">&#9888;&#65039;</div>
+      <h3>What it does not give you</h3>
+      <p>Both addresses usually come from the same hoster and often from the same subnet. While addresses are blocked one by one, that is enough. If both addresses are in a range that gets blocked, both go down, and you need a server elsewhere or a <a href="/amneziawg-installer/cascade/">cascade</a>.</p>
+      <p>The exit is IPv4 only and does not combine with the IPv6 tunnel for clients (<code>--allow-ipv6-tunnel</code>). In full-tunnel configs from my installer device IPv6 stops inside the tunnel, so it does not bypass the exit; the FAQ below has the details.</p>
+      <p>The exit has to be already on an external interface of the server and differ from the entry (tunnels and loopback do not count); the installer and <code>manage</code> check this.</p>
+    </div>
+  </div>
+</section>
+
+<section id="steps">
+  <div class="wrap">
+    <h2>Setting it up</h2>
+    <p class="sub">Available since version 6.3.0. Example addresses: entry 198.51.100.2, exit 203.0.113.7.</p>
+    <ol class="steps">
+      <li class="step"><span class="n" aria-hidden="true"></span><div><strong>Put the second IPv4 on the server.</strong><p>The hoster assigns it, but sometimes you have to add it to the interface yourself. On Ubuntu with netplan, use the same interface key as in your existing file in <code>/etc/netplan/</code> (usually the name from <code>ip -br addr</code>, but not always). Debian with ifupdown is covered in the step-by-step article.</p>
+        <div class="codeblock"><pre># /etc/netplan/60-exit-ip.yaml
+network:
+  version: 2
+  ethernets:
+    ens3:
+      addresses: [203.0.113.7/32]</pre></div>
+        <p>Then <code>sudo netplan apply</code>. Before installing, check the address: <code>curl -s --interface 203.0.113.7 https://api.ipify.org</code> should print <code>203.0.113.7</code>. On my test server the address only started working after a reboot from the hoster's panel. After the install this check no longer works: the installer's MASQUERADE rule rewrites the server's own traffic to the main address.</p></div></li>
+      <li class="step"><span class="n" aria-hidden="true"></span><div><strong>On a new server: two flags.</strong><p><code>--endpoint</code> is the address clients get, <code>--exit-ip</code> the one their traffic leaves from. Set <code>--endpoint</code> explicitly: without it the installer takes the address the server is seen from on the internet, usually the main one, and that is not always the one you want clients to use.</p>
+        <div class="codeblock"><pre>sudo bash install_amneziawg_en.sh --endpoint=198.51.100.2 --exit-ip=203.0.113.7</pre></div></div></li>
+      <li class="step"><span class="n" aria-hidden="true"></span><div><strong>On a running server: one command.</strong><p>Client configs do not change. The service restarts and clients lose the connection for a few seconds (about 13 on my test server). <code>exit-ip off</code> removes the exit, and <code>--json</code> gives a one-line answer for scripts.</p>
+        <div class="codeblock"><pre>sudo bash /root/awg/manage_amneziawg.sh exit-ip 203.0.113.7</pre></div>
+        <p>Open connections (a long download, a call) do not move to the new address on their own. If <code>conntrack</code> is on the server, the command tries to drop their entries, and apps then have to reconnect through the new exit; without it they keep the old address until they reconnect. Install it before changing the exit: <code>sudo apt update &amp;&amp; sudo apt install conntrack</code> (the installer clears the package lists at the end).</p></div></li>
+      <li class="step"><span class="n" aria-hidden="true"></span><div><strong>Check from a client, and swap when needed.</strong><p><code>curl -4 ifconfig.me</code> on a connected device should print the exit address. When the exit gets blocked, get a new address from the hoster, put it on the interface and run <code>exit-ip</code> with it. The entry stays the same, so nobody has to reimport anything. <code>manage check</code> reports an exit address that is missing from the interface.</p></div></li>
+    </ol>
+  </div>
+</section>
+
+<section id="trust">
+  <div class="wrap">
+    <h2>Tested on my own server</h2>
+    <p class="sub">Including the unpleasant case.</p>
+    <p>I removed the exit address from the interface of a running test server and watched what happened. In three runs client connections stalled after 9 to 28 seconds; the spread probably comes from the ARP cache of the hoster's router. In the run with a full packet capture not a single client packet left from the entry address, and in a later check the connection came back within two seconds of the address returning. If your hoster routes the address to the server without ARP, the connection may even keep working. The step-by-step article goes further: the manual SNAT rule for plain WireGuard, a server set up by the Amnezia VPN app, and every check along the way.</p>
+    <div class="cta-row">
+      <a class="btn" href="https://dev.to/bivlked/separate-entry-and-exit-ips-on-one-amneziawg-or-wireguard-server-b4l">Step-by-step article</a>
+      <a class="btn" href="https://github.com/bivlked/amneziawg-installer/issues/384">Feature request #384</a>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <h2>Frequently asked</h2>
+    <div class="faq">
+      <details><summary>Do clients need new configs when I change the exit IP?</summary><div class="answer">No, client configs stay the same, because they only contain the entry address. The exit address lives in a single rule on the server, so changing it is one command, <code>manage exit-ip</code> with the new address. Clients lose the connection for a few seconds while the service restarts.</div></details>
+      <details><summary>What do I do if the exit IP gets blocked?</summary><div class="answer">Swap only the exit: get a new IPv4 from the hoster, put it on the server interface and run <code>manage exit-ip</code> with the new address. The entry stays the same, so nobody has to reimport anything. If the hoster's whole range gets blocked, another address from it will not help, and you need a server elsewhere or a <a href="/amneziawg-installer/cascade/">cascade</a>.</div></details>
+      <details><summary>Does this work with plain WireGuard?</summary><div class="answer">Yes, the mechanism is not specific to AmneziaWG: it is one Linux SNAT rule for the client subnet, placed above the MASQUERADE rule. My installer sets it up only for AmneziaWG, but the same rule works in the <code>PostUp</code> of a <code>wg-quick</code> config; the <a href="https://dev.to/bivlked/separate-entry-and-exit-ips-on-one-amneziawg-or-wireguard-server-b4l">step-by-step article</a> shows the manual version.</div></details>
+      <details><summary>How is this different from a cascade?</summary><div class="answer">A separate exit needs one server with two IPv4 addresses, while a <a href="/amneziawg-installer/cascade/">cascade</a> links two servers. With two addresses on one server both belong to the same hoster and usually the same country. A cascade puts the exit on another machine, so the entry can be in Russia and the exit abroad, at the cost of a second VPS. In my cascade guide Russian traffic leaves straight from the entry server on purpose.</div></details>
+      <details><summary>What happens if the exit address disappears from the server?</summary><div class="answer">Client traffic does not fall back to the entry address while the SNAT rule is in place: the rule keeps the exit as the source. Usually the connection just stops. On my test server it stalled after 9 to 28 seconds and came back within a couple of seconds once the address returned. <code>manage check</code> reports a missing exit address.</div></details>
+      <details><summary>Can the exit address be IPv6?</summary><div class="answer">No, the exit address is IPv4 only, and it does not combine with the IPv6 tunnel for clients (<code>--allow-ipv6-tunnel</code>): the installer and <code>manage</code> refuse that combination. In full-tunnel configs from my installer (issued or regenerated since v5.31.0) device IPv6 goes into the tunnel and stops there, so it does not bypass the exit. Older configs and split-tunnel setups (<code>--route-amnezia</code>, <code>--route-custom</code>) are worth checking yourself.</div></details>
+      <details><summary>Where do I get a second IP address?</summary><div class="answer">A second IPv4 address for the same server comes from your hosting provider, usually as a paid add-on. Sometimes the hoster only assigns it, and you add it to the interface yourself, for example with netplan. Check that the address is really there with <code>ip -br addr</code> before setting it as the exit.</div></details>
+      <details><summary>What happens to connections that are already open when the exit changes?</summary><div class="answer">Open connections do not move to the new exit address on their own. If <code>conntrack</code> is on the server, <code>manage exit-ip</code> tries to drop their entries, and apps have to reconnect through the new exit. Without it a long download or a call keeps the old address until it reconnects. Install it beforehand with <code>sudo apt update &amp;&amp; sudo apt install conntrack</code>.</div></details>
+    </div>
+  </div>
+</section>
+
+<section id="related" class="related">
+  <div class="wrap">
+    <h2>See also</h2>
+    <div class="grid">
+      <div class="card">
+        <div class="ico" aria-hidden="true">&#128279;</div>
+        <h3>Two-server cascade</h3>
+        <p>When the exit has to be in another country or with another hoster: the entry in Russia, the exit abroad, and a blocked exit replaced without touching clients.</p>
+        <a class="go" href="/amneziawg-installer/cascade/">How a cascade works &#8594;</a>
+      </div>
+      <div class="card">
+        <div class="ico" aria-hidden="true">&#128221;</div>
+        <h3>Step-by-step article</h3>
+        <p>The long version on dev.to: reports of blocked exits, the manual rule for WireGuard, a server set up by the Amnezia app, and every check.</p>
+        <a class="go" href="https://dev.to/bivlked/separate-entry-and-exit-ips-on-one-amneziawg-or-wireguard-server-b4l">Read the article &#8594;</a>
+      </div>
+      <div class="card">
+        <div class="ico" aria-hidden="true">&#128640;</div>
+        <h3>Get started</h3>
+        <p>One command turns a clean VPS into a working AmneziaWG server: 3.1 by default, 2.0 where the kernel or older clients and routers need it.</p>
+        <a class="go" href="/amneziawg-installer/#quick-start">Quick start &#8594;</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="cols">
+      <div>
+        <div class="foot-links">
+          <a href="/amneziawg-installer/">Home</a>
+          <a href="/amneziawg-installer/compare/">Compare with the app</a>
+          <a href="/amneziawg-installer/cascade/">Two-server cascade</a>
+          <a href="/amneziawg-installer/manage/">Client management</a>
+          <a href="/amneziawg-installer/awg3/">AmneziaWG versions</a>
+        </div>
+        <div class="foot-links">
+          <a href="/amneziawg-installer/">Home</a>
+          <a href="https://github.com/bivlked/amneziawg-installer">Repository</a>
+          <a href="https://github.com/bivlked/amneziawg-installer/blob/main/INSTALL_VPS.md">Install guide</a>
+          <a href="https://github.com/bivlked/amneziawg-installer/blob/main/ADVANCED.en.md">Advanced</a>
+          <a href="https://github.com/bivlked/amneziawg-installer/blob/main/CHANGELOG.en.md">Changelog</a>
+        </div>
+        <p class="note">Open source under the MIT license. If the project helped you, a star on GitHub helps others find it.</p>
+      </div>
+      <div class="lang-switch"><a class="active" aria-current="page" aria-label="English" href="/amneziawg-installer/exit-ip/">EN</a> <a aria-label="Русский" href="/amneziawg-installer/ru/exit-ip/">RU</a></div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

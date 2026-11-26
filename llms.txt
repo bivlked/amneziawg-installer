@@ -40,6 +40,7 @@ sudo bash ./install_amneziawg_en.sh
 - [Two-server cascade VPN](https://bivlked.github.io/amneziawg-installer/cascade/): Russian sites from a Russian IP, the rest through a foreign exit
 - [Russian sites that fail through a VPN](https://bivlked.github.io/amneziawg-installer/warp-ru/): a separate route through Cloudflare WARP
 - [AmneziaWG 3.1 and 3.0 on your own server](https://bivlked.github.io/amneziawg-installer/awg3/): what a new install gets, how to check it, how to go back to 2.0
+- [Separate entry and exit IPs on one server](https://bivlked.github.io/amneziawg-installer/exit-ip/): clients connect to one IPv4, traffic leaves from another, a blocked exit is swapped without new client configs
 
 ## Russian
 

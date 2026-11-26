@@ -237,3 +237,7 @@ a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px soli
 
 /* многоабзацная карточка-врезка (используется только на warp-ru) */
 .card p + p { margin-top: 14px; }
+
+/* steps with code blocks (exit-ip): let the text column shrink, wrap long inline commands */
+.step, .step > div { min-width: 0; }
+.step p code { overflow-wrap: anywhere; }
