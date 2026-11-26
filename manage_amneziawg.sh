@@ -4180,12 +4180,20 @@ _br_refresh_helper() {
         exec {fd}>&-
         return 1
     fi
-    if _br_helper_text | sed -e "s|@@DIR@@|$AWG_DIR|" -e "s|@@VER@@|$SCRIPT_VERSION|" > "$t" && cmp -s "$t" "$_BR_HELPER"; then
+    # Неудачная запись (кончилось место) оставит в $t обрезанный файл: он не
+    # должен заменить помощник, который запускают cron и юнит.
+    if ! _br_helper_text | sed -e "s|@@DIR@@|$AWG_DIR|" -e "s|@@VER@@|$SCRIPT_VERSION|" > "$t"; then
+        rm -f "$t"
+        exec {fd}>&-
+        log_warn "Помощник запрета block-ru (awg-block-ru.sh) не обновился: запрет работает на прежнем. Повторите: manage block-ru on"
+        return 1
+    fi
+    if cmp -s "$t" "$_BR_HELPER"; then
         rm -f "$t"
         exec {fd}>&-
         return 0
     fi
-    if [[ -s "$t" ]] && chmod 700 "$t" && mv -f "$t" "$_BR_HELPER"; then
+    if chmod 700 "$t" && mv -f "$t" "$_BR_HELPER"; then
         exec {fd}>&-
         log "Помощник запрета block-ru (awg-block-ru.sh) обновлён до версии $SCRIPT_VERSION."
         return 0

@@ -854,6 +854,28 @@ _helper_refreshed() {
     each_manage _helper_refreshed
 }
 
+# The render breaks half way (a full disk): the cut file must not replace the
+# helper that cron and the unit run, and no temporary file stays behind.
+_helper_cut_render_kept() {
+    manage "$1" block-ru on
+    [ "$status" -eq 0 ] || { echo "$1: on failed: $stderr"; return 1; }
+    sed -i 's| https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/ru/ipv4-aggregated.txt||' "$MGMT_DIR/awg/awg-block-ru.sh"
+    cp "$MGMT_DIR/awg/awg-block-ru.sh" "$MGMT_DIR/helper.before"
+    # sed that writes the first 200 bytes and fails, only for the helper render
+    printf '#!/bin/bash\nif [[ "$*" == *@@DIR@@* ]]; then %s "$@" | head -c 200; exit 4; fi\nexec %s "$@"\n' \
+        "$(command -v sed)" "$(command -v sed)" > "$MGMT_DIR/bin/sed"
+    chmod +x "$MGMT_DIR/bin/sed"
+    manage "$1" list
+    rm -f "$MGMT_DIR/bin/sed"
+    [ "$status" -eq 0 ] || { echo "$1: list failed: $stderr"; return 1; }
+    cmp -s "$MGMT_DIR/awg/awg-block-ru.sh" "$MGMT_DIR/helper.before" || { echo "$1: the helper was replaced by a cut render"; return 1; }
+    grep -qF "awg-block-ru.sh" <<< "$stderr" || { echo "$1: no warning: $stderr"; return 1; }
+    [ -z "$(find "$MGMT_DIR/awg" -name '.awg-block-ru.*')" ] || { echo "$1: a temporary file stayed"; return 1; }
+}
+@test "a helper render that breaks half way does not replace the helper" {
+    each_manage _helper_cut_render_kept
+}
+
 _helper_not_created() {
     manage "$1" list
     [ "$status" -eq 0 ] || { echo "$1: list failed: $stderr"; return 1; }

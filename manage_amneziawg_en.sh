@@ -4235,12 +4235,20 @@ _br_refresh_helper() {
         exec {fd}>&-
         return 1
     fi
-    if _br_helper_text | sed -e "s|@@DIR@@|$AWG_DIR|" -e "s|@@VER@@|$SCRIPT_VERSION|" > "$t" && cmp -s "$t" "$_BR_HELPER"; then
+    # A failed render (a full disk) leaves a cut file in $t: it must not replace
+    # the helper that cron and the unit run.
+    if ! _br_helper_text | sed -e "s|@@DIR@@|$AWG_DIR|" -e "s|@@VER@@|$SCRIPT_VERSION|" > "$t"; then
+        rm -f "$t"
+        exec {fd}>&-
+        log_warn "The block-ru helper (awg-block-ru.sh) was not updated: the block runs on the previous one. Repeat: manage block-ru on"
+        return 1
+    fi
+    if cmp -s "$t" "$_BR_HELPER"; then
         rm -f "$t"
         exec {fd}>&-
         return 0
     fi
-    if [[ -s "$t" ]] && chmod 700 "$t" && mv -f "$t" "$_BR_HELPER"; then
+    if chmod 700 "$t" && mv -f "$t" "$_BR_HELPER"; then
         exec {fd}>&-
         log "The block-ru helper (awg-block-ru.sh) was updated to version $SCRIPT_VERSION."
         return 0
