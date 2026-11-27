@@ -1022,8 +1022,8 @@ _e11_resume_force() {
         case "$st" in
             1)        [[ "$general$named$damaged$step4" == 0100 ]] ;;
             7|99)     [[ "$general$named$damaged$step4" == 0101 ]] ;;
-            8|junk)   [[ "$general$named$damaged$step4" == 0010 ]] ;;
-            empty|none) [[ "$general$named$damaged$step4" == 1000 ]] ;;
+            8|junk|empty) [[ "$general$named$damaged$step4" == 0010 ]] ;;
+            none)     [[ "$general$named$damaged$step4" == 1000 ]] ;;
         esac || { echo "state $st: general/named/damaged/step4 = $general$named$damaged$step4" >&2; return 1; }
     done
     # and the route the message promises is the route --force takes

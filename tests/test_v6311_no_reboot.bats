@@ -51,6 +51,7 @@ _no_reboot_exits_75() {
     # The boot_id is saved before the exit: step 2 refuses a rerun without a reboot.
     [ "$(cat "$T/.boot_id_before_step2" 2>&1)" = "$(cat /proc/sys/kernel/random/boot_id)" ] \
         || { echo "$1: no boot_id saved before exit 75"; return 1; }
+    ! grep -qE '^WARN: .*boot_id' <<< "$output" || { echo "$1: a boot_id warning on a good write: $output"; return 1; }
     rm -f "$T/state" "$T/.boot_id_before_step2"
 }
 @test "--no-reboot: the next step is saved, no reboot, exit 75 in both installers" {
@@ -107,6 +108,7 @@ _boot_id_write_fails_warns() {
     [ "$status" -eq 75 ] || { echo "$1: rc $status: $output"; return 1; }
     grep -E '^WARN: .*boot_id' <<< "$output" | grep -qF ".boot_id_before_step2" \
         || { echo "$1: no warning about the boot_id file: $output"; return 1; }
+    [[ "$output" != *"Is a directory"* ]] || { echo "$1: a raw bash error is shown: $output"; return 1; }
     rmdir "$T/.boot_id_before_step2"
     rm -f "$T/state"
 }

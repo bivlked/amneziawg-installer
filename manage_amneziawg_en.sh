@@ -4006,6 +4006,7 @@ list_ok() {
     [ "$n" -ge 1000 ] && [ "$bad" -eq 0 ] && grep -E "$NET" "$1" | strict
 }
 cache_ok() { [ -s "$LIST" ] && list_ok "$LIST"; }
+cache_snap() { case "$(head -n 1 "$LIST" 2> /dev/null)" in "# source: https://raw.githubusercontent.com/bivlked/amneziawg-installer/"*/cascade/ru.zone) return 0 ;; esac; return 1; }
 
 # The downloaded list stays aside ($NEW) and becomes the cache (keep) only once
 # ipset has taken it: a bad list does not overwrite a usable cache. A run cut off
@@ -4022,6 +4023,7 @@ fetch() {
             sed -i 's/\r$//' "$NEW"
             if list_ok "$NEW"; then
                 echo "List of Russian networks taken from: $url"
+                sed -i "1i # source: $url" "$NEW"
                 [ "$url" = "${URLS##* }" ] && SNAP=1
                 return 0
             fi
@@ -4127,14 +4129,16 @@ case "${1:-}" in
     update)
         # Only the snapshot from the release tag answered: it is older than a cache
         # taken from ipdeny or ipverse, so a usable cache stays and the run ends with 3.
-        if fetch && { [ "$SNAP" -eq 0 ] || ! cache_ok; }; then
+        # A cache that itself came from a snapshot gives way: the new one is not older.
+        # A cache without the source line (from a helper before it) counts as live.
+        if fetch && { [ "$SNAP" -eq 0 ] || ! cache_ok || cache_snap; }; then
             fetched=1 src="$NEW"
         else
             [ -z "$NEW" ] || rm -f "$NEW"
             NEW=""
             cache_ok || fail "a fresh list could not be downloaded and there is no previous one"
             if [ "$SNAP" -eq 1 ]; then
-                echo "ipdeny.com and ipverse did not answer, and the release snapshot is older than the previous list: the previous one stays in force." >&2
+                echo "No fresh list came from ipdeny.com or ipverse, and the release snapshot is older than the previous list: the previous one stays in force." >&2
             else
                 echo "A fresh list could not be downloaded, the previous one stays in force." >&2
             fi
@@ -4163,6 +4167,10 @@ esac
 if ! load "$src"; then
     if (( fetched == 0 )) && fetch; then
         rc=0 fetched=1
+        if [ "${1:-}" = update ] && [ "$SNAP" -eq 1 ]; then
+            echo "ipset did not take the previous list, the release snapshot is used: a fresh list could not be downloaded." >&2
+            rc=3
+        fi
         load "$NEW" || fail "the $SET set did not load"
     else
         fail "the $SET set did not load"
@@ -4518,7 +4526,7 @@ _block_ru_update() {
     "$_BR_HELPER" update >&2 || rc=$?
     case "$rc" in
         0) log "The list of Russian networks is updated." ;;
-        3) log_warn "A fresh list could not be downloaded, the previous one stays in force." ;;
+        3) log_warn "A fresh list could not be downloaded, the block runs on the list named above." ;;
         4)
             _JSON_ERR="block-ru is off"
             log_error "The block was turned off while the update ran: nothing to update."

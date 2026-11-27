@@ -109,3 +109,36 @@ assert_way_back() {
         [[ "$output" != *--uninstall* ]]
     done
 }
+
+# The "already installed" guard exits 0 only when no state file is left, so a
+# finished install must remove it: otherwise every rerun from Ansible on a
+# finished server would read as a failure (code 1).
+_finish_removes_state() {
+    local f="$1" d out
+    d=$(mktemp -d)
+    out=$(
+        eval "$(extract_func "$f" _awg31_fallback_reason)"
+        eval "$(extract_func "$f" _awg_generation_summary)"
+        eval "$(extract_func "$f" step99_finish)"
+        log() { :; }; log_warn() { echo "WARN: $*"; }; log_error() { :; }
+        cleanup_apt() { :; }
+        _awg31_host_arch() { echo amd64; }
+        AWG_PROTOCOL=3.1 AWG_PROTOCOL_SOURCE=default AWG_PROTOCOL_FALLBACK=""
+        AWG_DIR="$d" CONFIG_FILE="$d/init" STATE_FILE="$d/state" LOG_FILE="$d/log"
+        BOOT_CRITICAL_SNAPSHOT_FILE="$d/snap" MANAGE_SCRIPT_PATH="$d/manage.sh"
+        : > "$CONFIG_FILE"
+        printf '99\n' > "$STATE_FILE"; : > "$STATE_FILE.lock"
+        declare -F step99_finish > /dev/null || { echo "EXTRACT FAILED"; exit 97; }
+        step99_finish
+    ) 2>&1
+    local rc=$? left=0
+    [ -e "$d/state" ] && left=1
+    rm -rf "$d"
+    [ "$rc" -eq 0 ] || { echo "$f: rc $rc: $out"; return 1; }
+    [ "$left" -eq 0 ] || { echo "$f: the state file is left after the finish: $out"; return 1; }
+    [[ "$out" != *WARN:* ]] || { echo "$f: a warning on a clean finish: $out"; return 1; }
+}
+@test "a finished install removes its state file in both installers" {
+    _finish_removes_state "$(RU_INSTALL)"
+    _finish_removes_state "$(EN_INSTALL)"
+}

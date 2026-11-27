@@ -3951,6 +3951,7 @@ list_ok() {
     [ "$n" -ge 1000 ] && [ "$bad" -eq 0 ] && grep -E "$NET" "$1" | strict
 }
 cache_ok() { [ -s "$LIST" ] && list_ok "$LIST"; }
+cache_snap() { case "$(head -n 1 "$LIST" 2> /dev/null)" in "# source: https://raw.githubusercontent.com/bivlked/amneziawg-installer/"*/cascade/ru.zone) return 0 ;; esac; return 1; }
 
 # Скачанный список лежит отдельно ($NEW) и становится кэшем (keep), только когда
 # ipset его принял: годный прежний кэш негодным не затирается. Прерванный запуск
@@ -3967,6 +3968,7 @@ fetch() {
             sed -i 's/\r$//' "$NEW"
             if list_ok "$NEW"; then
                 echo "Список российских сетей взят: $url"
+                sed -i "1i # source: $url" "$NEW"
                 [ "$url" = "${URLS##* }" ] && SNAP=1
                 return 0
             fi
@@ -4072,14 +4074,16 @@ case "${1:-}" in
     update)
         # Ответил только снимок с тега релиза: он старше кэша, взятого с ipdeny
         # или ipverse, поэтому годный кэш остаётся, а запуск кончается кодом 3.
-        if fetch && { [ "$SNAP" -eq 0 ] || ! cache_ok; }; then
+        # Кэш, который сам взят из снимка, уступает: новый снимок не старше его.
+        # Кэш без строки источника (от помощника до неё) считается живым.
+        if fetch && { [ "$SNAP" -eq 0 ] || ! cache_ok || cache_snap; }; then
             fetched=1 src="$NEW"
         else
             [ -z "$NEW" ] || rm -f "$NEW"
             NEW=""
             cache_ok || fail "свежий список не скачался, а прежнего нет"
             if [ "$SNAP" -eq 1 ]; then
-                echo "ipdeny.com и ipverse не ответили, а снимок из релиза старее прежнего списка: действует прежний." >&2
+                echo "С ipdeny.com и ipverse свежего списка не получено, а снимок из релиза старее прежнего списка: действует прежний." >&2
             else
                 echo "Свежий список не скачался, действует прежний." >&2
             fi
@@ -4108,6 +4112,10 @@ esac
 if ! load "$src"; then
     if (( fetched == 0 )) && fetch; then
         rc=0 fetched=1
+        if [ "${1:-}" = update ] && [ "$SNAP" -eq 1 ]; then
+            echo "Прежний список ipset не принял, взят снимок из релиза: свежий список не скачался." >&2
+            rc=3
+        fi
         load "$NEW" || fail "набор $SET не загрузился"
     else
         fail "набор $SET не загрузился"
@@ -4460,7 +4468,7 @@ _block_ru_update() {
     "$_BR_HELPER" update >&2 || rc=$?
     case "$rc" in
         0) log "Список российских сетей обновлён." ;;
-        3) log_warn "Свежий список не скачался, действует прежний." ;;
+        3) log_warn "Свежий список не скачался, запрет действует на списке, названном выше." ;;
         4)
             _JSON_ERR="block-ru is off"
             log_error "Запрет выключили, пока шло обновление: обновлять нечего."

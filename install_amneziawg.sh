@@ -864,6 +864,7 @@ request_reboot() {
         if cat /proc/sys/kernel/random/boot_id 2>/dev/null > "$AWG_DIR/.boot_id_before_step2"; then
             log_debug "boot_id captured before reboot"
         else
+            rm -f "$AWG_DIR/.boot_id_before_step2" 2>/dev/null
             log_warn "Не удалось сохранить boot_id в $AWG_DIR/.boot_id_before_step2: на шаге 2 установщик не сможет проверить, что сервер перезагружен."
         fi
     fi
@@ -10030,7 +10031,7 @@ step99_finish() {
     # установку, стал бы стареть. Устаревшее имя (пакет переименован сменой
     # выпуска) останавливало бы следующую установку без внятной причины.
     rm -f "$STATE_FILE" "${STATE_FILE}.lock" "$AWG_DIR/.boot_id_before_step2" \
-          "$BOOT_CRITICAL_SNAPSHOT_FILE" || log_warn "Не удалось удалить $STATE_FILE"
+          "$BOOT_CRITICAL_SNAPSHOT_FILE" || log_warn "Не удалось удалить $STATE_FILE: пока он на месте, повторный запуск установщика выходит с кодом 1. Удалите его вручную: rm -f $STATE_FILE"
     log "Установка полностью завершена. Лог: $LOG_FILE"
     log "=============================================================================="
 }
@@ -10083,6 +10084,8 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
         fi
     elif [[ -n "$_resume_state" ]]; then
         log_error "В $STATE_FILE значение '${_resume_state:0:40}', которое установщик не пишет: файл повреждён. Проверьте его, прежде чем запускать с --force."
+    elif [[ -e "$STATE_FILE" || -L "$STATE_FILE" ]]; then
+        log_error "Файл $STATE_FILE пуст или не читается: он повреждён или прошлый запуск оборвался. Проверьте его, прежде чем запускать с --force."
     else
         log_error "Чтобы переустановить - добавьте --force (или AWG_FORCE_REINSTALL=1)."
         log_error "ВНИМАНИЕ: переустановка снова прогонит шаги 1 (sysctl/swap/BBR) и 7 (рестарт сервиса)."
@@ -10100,7 +10103,7 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
     # автоматизации (--no-reboot). Законченная установка свой файл состояния
     # удаляет, поэтому любой оставшийся (недоделанный шаг, пустой или
     # испорченный) - код 1.
-    [[ ! -e "$STATE_FILE" ]] || exit 1
+    [[ ! -e "$STATE_FILE" && ! -L "$STATE_FILE" ]] || exit 1
     exit 0
 fi
 

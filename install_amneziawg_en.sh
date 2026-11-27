@@ -888,6 +888,7 @@ request_reboot() {
         if cat /proc/sys/kernel/random/boot_id 2>/dev/null > "$AWG_DIR/.boot_id_before_step2"; then
             log_debug "boot_id captured before reboot"
         else
+            rm -f "$AWG_DIR/.boot_id_before_step2" 2>/dev/null
             log_warn "Could not save boot_id to $AWG_DIR/.boot_id_before_step2: at step 2 the installer cannot check that the server was rebooted."
         fi
     fi
@@ -10193,7 +10194,7 @@ step99_finish() {
     # package renamed by a release upgrade) would stop the next install for no
     # reason the user can see.
     rm -f "$STATE_FILE" "${STATE_FILE}.lock" "$AWG_DIR/.boot_id_before_step2" \
-          "$BOOT_CRITICAL_SNAPSHOT_FILE" || log_warn "Failed to remove $STATE_FILE"
+          "$BOOT_CRITICAL_SNAPSHOT_FILE" || log_warn "Failed to remove $STATE_FILE: while it is there, a rerun of the installer exits with code 1. Remove it by hand: rm -f $STATE_FILE"
     log "Installation fully completed. Log: $LOG_FILE"
     log "=============================================================================="
 }
@@ -10246,6 +10247,8 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
         fi
     elif [[ -n "$_resume_state" ]]; then
         log_error "$STATE_FILE holds '${_resume_state:0:40}', a value the installer never writes: the file is damaged. Check it before running with --force."
+    elif [[ -e "$STATE_FILE" || -L "$STATE_FILE" ]]; then
+        log_error "$STATE_FILE is empty or unreadable: it is damaged or the previous run was cut off. Check it before running with --force."
     else
         log_error "To reinstall - pass --force (or AWG_FORCE_REINSTALL=1)."
         log_error "WARNING: a reinstall will rerun Step 1 (sysctl/swap/BBR) and Step 7 (service restart)."
@@ -10262,7 +10265,7 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
     # Code 0 only for a finished install: that is how automation reads it
     # (--no-reboot). A finished install removes its state file, so any file
     # left (an unfinished step, empty or broken) gives 1.
-    [[ ! -e "$STATE_FILE" ]] || exit 1
+    [[ ! -e "$STATE_FILE" && ! -L "$STATE_FILE" ]] || exit 1
     exit 0
 fi
 

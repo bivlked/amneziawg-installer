@@ -196,6 +196,7 @@ run_real_guard() {
     case "$2" in
         none)  ;;
         empty) : > "$d/setup_state" ;;
+        link)  ln -s "$d/nowhere" "$d/setup_state" ;;
         *)     printf '%s\n' "$2" > "$d/setup_state" ;;
     esac
     cat > "$d/run.sh" << RUN
@@ -218,7 +219,7 @@ _guard_codes() {
     [ "$status" -eq 0 ] || { echo "$1: finished server: rc $status"; return 1; }
     [[ "$output" != *"passed the guard"* ]] || { echo "$1: guard not taken"; return 1; }
     local s
-    for s in 1 4 7 99 garbage empty; do
+    for s in 1 4 7 99 garbage empty link; do
         run_real_guard "$1" "$s" || return 1
         [ "$status" -eq 1 ] || { echo "$1: state $s: rc $status, want 1: $output"; return 1; }
         [[ "$output" != *"passed the guard"* ]] || { echo "$1: state $s: guard not taken"; return 1; }
