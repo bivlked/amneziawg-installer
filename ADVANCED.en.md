@@ -2290,7 +2290,7 @@ Then `sudo netplan apply`. Before the install, check that the address works: `cu
 sudo bash install_amneziawg_en.sh --endpoint=198.51.100.2 --exit-ip=203.0.113.7
 ```
 
-Better to give `--endpoint` explicitly here: with two addresses the installer may detect either of them.
+Better to give `--endpoint` explicitly here: without it the installer takes the address the server is seen at on the internet (usually the primary one), and that may not be the address you picked for the entry.
 
 **On a running server:** `sudo bash /root/awg/manage_amneziawg.sh exit-ip 203.0.113.7`, to remove it `exit-ip off`. Client configs do not change, the service restarts, and clients lose the connection for a few seconds. To check from a client: `curl -s ifconfig.me` returns the exit address. Connections already open (a long download, a call) are flushed through `conntrack` if that tool is on the server (`apt update && apt install conntrack`); without it they keep the old address until they reconnect.
 
