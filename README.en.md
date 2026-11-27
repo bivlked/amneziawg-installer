@@ -101,6 +101,7 @@ All parameters are accepted automatically. For Ansible and Puppet add `--no-rebo
 | Plain cheap VPS, you just need a VPN | Nothing - the command above already does it |
 | Mobile data, DPI cuts the link (TSPU, Iran, school or office) | During install, add `--mobile` - the obfuscation preset plus port 443/udp in one go ([tested carriers](#carriers)) |
 | ARM: Raspberry Pi, Oracle Ampere, Hetzner CAX | Same command. On 64-bit ARM (ARM64) AmneziaWG 3.1 is installed since v6.2.0, with the module built through DKMS; 32-bit ARM stays on AmneziaWG 2.0 (with ready-made kernel modules on Raspberry Pi OS), and clients there need 2.0 support ([here is why](#awg3)) |
+| The exit IP keeps getting blocked, or websites should see a different IP than clients connect to | A second IPv4 on the server: at install time add `--endpoint=` with the entry address and `--exit-ip=` with the second one, on a running server use `sudo bash /root/awg/manage_amneziawg.sh exit-ip <IPv4>` ([how it works](https://bivlked.github.io/amneziawg-installer/exit-ip/)) |
 | Time-limited access for a friend or guest | After install: `sudo bash /root/awg/manage_amneziawg.sh add guest --expires=7d` |
 
 ---
@@ -644,6 +645,11 @@ For selectively routing the Russian segment through Cloudflare WARP via a BGP fe
 <details>
   <summary><strong>Q: Can I make Russian traffic go directly while the rest exits abroad?</strong></summary>
   <b>A:</b> Yes, via a two-server cascade: the client connects to an entry server (ideally in Russia), Russian traffic exits directly from it, and everything else goes through a second server abroad. The split is on the server side, nothing special is needed on the client. Step-by-step guide in <a href="CASCADE.en.md">CASCADE.en.md</a>.
+</details>
+
+<details>
+  <summary><strong>Q: Can clients connect to one IP while their traffic leaves from another?</strong></summary>
+  <b>A:</b> Yes, if the server has a second public IPv4 (since v6.3.0). At install time set <code>--endpoint=</code> to the entry address and <code>--exit-ip=</code> to the second one, or run <code>sudo bash /root/awg/manage_amneziawg.sh exit-ip</code> with that address on a running server. Unless the server is part of a cascade or uses WARP, websites see only the exit address. When it gets blocked, the same command swaps it, and client configs stay the same. Details are in <a href="ADVANCED.en.md#exit-ip-adv">ADVANCED.en.md → A separate exit address</a> and on the <a href="https://bivlked.github.io/amneziawg-installer/exit-ip/">project site</a>.
 </details>
 
 <details>

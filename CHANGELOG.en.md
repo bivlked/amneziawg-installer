@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **README: a separate exit address in "Pick your case" and in the FAQ.** A new table row and a question on how clients can connect to one IP while their traffic leaves from another, with links to the ADVANCED section and the site page. The same ADVANCED section now says which address the installer takes without `--endpoint`: the one the server is seen at on the internet, usually the primary one.
+
 ## [6.3.11] - 2026-11-26
 
 **v6.3.11** - a `--no-reboot` flag for installs from Ansible and Puppet, `manage block-ru on` installs `ipset` quickly and leaves the terminal alone, and the list of Russian networks gets a second source.
