@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+## [6.3.12] - 2026-11-27
+
+**v6.3.12** - код 1 для недоделанной установки, чтобы система автоматизации с `--no-reboot` отличала её от законченной; `manage block-ru update` держит свежий список, а не снимок из релиза.
+
 ### Исправлено
 
 - Установщик на работающем сервере выходит с кодом 1, если прошлый запуск не завершился (в `/root/awg/setup_state` остался шаг) или файл состояния испорчен. Раньше код был 0, и система автоматизации с `--no-reboot` считала такую установку законченной. Пустой или нечитаемый файл состояния теперь назван в сообщении. Повторный запуск на законченной установке по-прежнему даёт 0.
@@ -2414,7 +2418,8 @@ Hardening-фиксы надёжности и безопасности по ре�
 - Диагностический отчет (`--diagnostic`).
 - Полная деинсталляция (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.11...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.12...HEAD
+[6.3.12]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.11...v6.3.12
 [6.3.11]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.10...v6.3.11
 [6.3.10]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.9...v6.3.10
 [6.3.9]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...v6.3.9
