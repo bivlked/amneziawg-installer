@@ -3963,8 +3963,9 @@ _br_helper_text() {
 # apply - the cached list (downloaded only when there is none or it is unusable)
 # and the rule on top of FORWARD; update - download a fresh list and apply it;
 # prefetch - only download the list when there is none or it is unusable; stop - remove the rule.
-# Codes: 0 - done; 1 - error; 3 - a fresh list was not downloaded, the previous
-# one is in force; 4 - the block is off (manage block-ru off), nothing done.
+# Codes: 0 - done; 1 - error; 3 - no fresh list from ipdeny or ipverse, the previous
+# list or the release snapshot is in force (the output says which); 4 - the block
+# is off (manage block-ru off), nothing done.
 set -u -o pipefail
 IF=awg0
 DIR='@@DIR@@'
@@ -4133,6 +4134,10 @@ case "${1:-}" in
         # A cache without the source line (from a helper before it) counts as live.
         if fetch && { [ "$SNAP" -eq 0 ] || ! cache_ok || cache_snap; }; then
             fetched=1 src="$NEW"
+            if [ "$SNAP" -eq 1 ]; then
+                echo "No fresh list came from ipdeny.com or ipverse, the release snapshot is used." >&2
+                rc=3
+            fi
         else
             [ -z "$NEW" ] || rm -f "$NEW"
             NEW=""
@@ -4526,7 +4531,7 @@ _block_ru_update() {
     "$_BR_HELPER" update >&2 || rc=$?
     case "$rc" in
         0) log "The list of Russian networks is updated." ;;
-        3) log_warn "A fresh list could not be downloaded, the block runs on the list named above." ;;
+        3) log_warn "No fresh list came from ipdeny.com or ipverse (details above), the block stays in force." ;;
         4)
             _JSON_ERR="block-ru is off"
             log_error "The block was turned off while the update ran: nothing to update."

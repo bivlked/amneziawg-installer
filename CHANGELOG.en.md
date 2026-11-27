@@ -15,7 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - On a running server the installer exits with code 1 when the previous run did not finish (a step is left in `/root/awg/setup_state`) or the state file is broken. The code used to be 0, and an automation tool running with `--no-reboot` took such an install as finished. An empty or unreadable state file is now named in the message. A rerun on a finished install still gives 0.
-- `manage block-ru update`: when ipdeny.com and ipverse do not answer and only the release snapshot downloads, a usable previous list from ipdeny.com or ipverse stays, and the command says the fresh list did not come. The snapshot is older than such a list and no longer replaces it. The helper writes the source of the list as the first line of the cache, so an earlier snapshot gives way to the snapshot of a newer version.
+- `manage block-ru update`: when ipdeny.com and ipverse do not answer and only the release snapshot downloads, a usable previous list from ipdeny.com or ipverse stays, and the command says the fresh list did not come. The snapshot is older than such a list and no longer replaces it. The helper writes the source of the list as the first line of the cache, so an earlier snapshot gives way to the snapshot of a newer version. When the snapshot does load, because no usable list from ipdeny.com or ipverse is there, `update` also says the fresh list did not come and exits with 3.
 - The installer warns when it cannot save the boot_id before a reboot: without it step 2 cannot check that the server was really rebooted. This used to be a debug line only.
 
 ### Documentation

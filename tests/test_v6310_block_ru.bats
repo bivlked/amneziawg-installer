@@ -585,17 +585,21 @@ _helper_update_snapshot_keeps_cache() {
     each_manage _helper_update_snapshot_keeps_cache
 }
 
-# Without a usable cache the snapshot is still better than nothing: it loads.
+# Without a usable cache the snapshot is still better than nothing: it loads,
+# and the run says the live sources gave nothing (rc 3).
 _helper_update_snapshot_no_cache() {
     on_then "$1" || return 1
     rm -f "$STUB_WEB"/*
     make_list "$STUB_WEB/ru.zone" 1100
     helper update
-    [ "$status" -eq 0 ] || { echo "$1: rc $status, want 0: $stderr"; return 1; }
+    [ "$status" -eq 3 ] || { echo "$1: rc $status, want 3: $stderr"; return 1; }
+    local want="С ipdeny.com и ipverse свежего списка не получено, взят снимок из релиза."
+    [ "$1" = manage_amneziawg_en.sh ] && want="No fresh list came from ipdeny.com or ipverse, the release snapshot is used."
+    grep -qxF "$want" <<< "$stderr" || { echo "$1: no snapshot message: $stderr"; return 1; }
     [ "$(set_size $SET)" = "1100" ] || { echo "$1: set $(set_size $SET)"; return 1; }
     [ "$(grep -c '^[0-9]' "$MGMT_DIR/awg/block-ru.zone")" = "1100" ] || { echo "$1: the snapshot is not cached"; return 1; }
 }
-@test "helper update: no cache and only the release snapshot answers - the snapshot loads" {
+@test "helper update: no cache and only the release snapshot answers - the snapshot loads, rc 3" {
     each_manage _helper_update_snapshot_no_cache
 }
 
@@ -606,10 +610,13 @@ _helper_update_snapshot_bad_cache() {
     rm -f "$STUB_WEB"/*
     make_list "$STUB_WEB/ru.zone" 1100
     helper update
-    [ "$status" -eq 0 ] || { echo "$1: rc $status, want 0: $stderr"; return 1; }
+    [ "$status" -eq 3 ] || { echo "$1: rc $status, want 3: $stderr"; return 1; }
+    local want="С ipdeny.com и ipverse свежего списка не получено, взят снимок из релиза."
+    [ "$1" = manage_amneziawg_en.sh ] && want="No fresh list came from ipdeny.com or ipverse, the release snapshot is used."
+    grep -qxF "$want" <<< "$stderr" || { echo "$1: no snapshot message: $stderr"; return 1; }
     [ "$(set_size $SET)" = "1100" ] || { echo "$1: set $(set_size $SET)"; return 1; }
 }
-@test "helper update: a broken cache and only the release snapshot answers - the snapshot loads" {
+@test "helper update: a broken cache and only the release snapshot answers - the snapshot loads, rc 3" {
     each_manage _helper_update_snapshot_bad_cache
 }
 
@@ -623,13 +630,16 @@ _helper_update_snapshot_over_snapshot() {
     rm -f "$STUB_WEB"/*
     make_list "$STUB_WEB/ru.zone" 1100
     helper update
-    [ "$status" -eq 0 ] || { echo "$1: rc $status, want 0: $stderr"; return 1; }
+    [ "$status" -eq 3 ] || { echo "$1: rc $status, want 3: $stderr"; return 1; }
+    local want="С ipdeny.com и ipverse свежего списка не получено, взят снимок из релиза."
+    [ "$1" = manage_amneziawg_en.sh ] && want="No fresh list came from ipdeny.com or ipverse, the release snapshot is used."
+    grep -qxF "$want" <<< "$stderr" || { echo "$1: no snapshot message: $stderr"; return 1; }
     [ "$(set_size $SET)" = "1100" ] || { echo "$1: set $(set_size $SET)"; return 1; }
     head -n 1 "$MGMT_DIR/awg/block-ru.zone" | grep -qxE "# source: https://raw\.githubusercontent\.com/bivlked/amneziawg-installer/v[0-9]+\.[0-9]+\.[0-9]+/cascade/ru\.zone" \
         || { echo "$1: source line: $(head -n 1 "$MGMT_DIR/awg/block-ru.zone")"; return 1; }
     ! head -n 1 "$MGMT_DIR/awg/block-ru.zone" | grep -qF "/v6.3.0/" || { echo "$1: the old snapshot stays"; return 1; }
 }
-@test "helper update: a cache from an older release snapshot gives way to the current snapshot" {
+@test "helper update: a cache from an older release snapshot gives way to the current snapshot, rc 3" {
     each_manage _helper_update_snapshot_over_snapshot
 }
 
