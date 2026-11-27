@@ -12,6 +12,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.12] - 2026-11-27
+
+**v6.3.12** - exit code 1 for an unfinished install, so automation with `--no-reboot` can tell it from a finished one; `manage block-ru update` keeps a fresh list over the release snapshot.
+
+### Fixed
+
+- On a running server the installer exits with code 1 when the previous run did not finish (a step is left in `/root/awg/setup_state`) or the state file is broken. The code used to be 0, and an automation tool running with `--no-reboot` took such an install as finished. An empty or unreadable state file is now named in the message. A rerun on a finished install still gives 0.
+- `manage block-ru update`: when ipdeny.com and ipverse do not answer and only the release snapshot downloads, a usable previous list from ipdeny.com or ipverse stays, and the command says the fresh list did not come. The snapshot is older than such a list and no longer replaces it. The helper writes the source of the list as the first line of the cache, so an earlier snapshot gives way to the snapshot of a newer version. When the snapshot does load, because no usable list from ipdeny.com or ipverse is there, `update` also says the fresh list did not come and exits with 3.
+- The installer warns when it cannot save the boot_id before a reboot: without it step 2 cannot check that the server was really rebooted. This used to be a debug line only.
+
 ### Documentation
 
 - **README: a separate exit address in "Pick your case" and in the FAQ.** A new table row and a question on how clients can connect to one IP while their traffic leaves from another, with links to the ADVANCED section and the site page. The same ADVANCED section now says which address the installer takes without `--endpoint`: the one the server is seen at on the internet, usually the primary one.
@@ -2408,7 +2418,8 @@ Major security and reliability update after several consecutive code audits. The
 - Diagnostic report (`--diagnostic`).
 - Full uninstall (`--uninstall`).
 
-[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.11...HEAD
+[Unreleased]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.12...HEAD
+[6.3.12]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.11...v6.3.12
 [6.3.11]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.10...v6.3.11
 [6.3.10]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.9...v6.3.10
 [6.3.9]: https://github.com/bivlked/amneziawg-installer/compare/v6.3.8...v6.3.9

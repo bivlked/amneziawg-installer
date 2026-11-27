@@ -183,3 +183,49 @@ run_guard() {
     [ "$ru_count" -eq "$en_count" ]
     [ "$ru_count" -ge 4 ]   # init + CLI flag + env bridge + guard
 }
+
+# ---------- the real guard block: exit code ----------
+
+# run_real_guard <installer> <state or "none">: runs the guard block of that
+# installer with a configured, active server and stubbed logging.
+run_real_guard() {
+    local d; d=$(mktemp -d)
+    sed -n '/^_resume_state=""$/,/^fi$/p' "$BATS_TEST_DIRNAME/../$1" > "$d/guard.sh"
+    [ -s "$d/guard.sh" ] || { echo "guard block not found in $1"; return 1; }
+    : > "$d/awg0.conf"
+    case "$2" in
+        none)  ;;
+        empty) : > "$d/setup_state" ;;
+        link)  ln -s "$d/nowhere" "$d/setup_state" ;;
+        *)     printf '%s\n' "$2" > "$d/setup_state" ;;
+    esac
+    cat > "$d/run.sh" << RUN
+STATE_FILE="$d/setup_state"; SERVER_CONF_FILE="$d/awg0.conf"; FORCE_REINSTALL=0
+APT_NORETRY_CONF="$d/no-such-file"; MANAGE_SCRIPT_PATH=/root/awg/manage_amneziawg.sh
+systemctl() { return 0; }
+log_error() { echo "ERROR: \$*"; }
+log_warn() { echo "WARN: \$*"; }
+source "$d/guard.sh"
+echo "passed the guard"
+RUN
+    run bash "$d/run.sh"
+    rm -rf "$d"
+}
+
+# "0 = the install is finished" (ADVANCED, --no-reboot): a server that is up but
+# whose last run stopped at a step is not finished, and automation must see it.
+_guard_codes() {
+    run_real_guard "$1" none || return 1
+    [ "$status" -eq 0 ] || { echo "$1: finished server: rc $status"; return 1; }
+    [[ "$output" != *"passed the guard"* ]] || { echo "$1: guard not taken"; return 1; }
+    local s
+    for s in 1 4 7 99 garbage empty link; do
+        run_real_guard "$1" "$s" || return 1
+        [ "$status" -eq 1 ] || { echo "$1: state $s: rc $status, want 1: $output"; return 1; }
+        [[ "$output" != *"passed the guard"* ]] || { echo "$1: state $s: guard not taken"; return 1; }
+    done
+}
+@test "force-guard: finished server exits 0, an unfinished or broken state exits 1, in both installers" {
+    _guard_codes install_amneziawg.sh
+    _guard_codes install_amneziawg_en.sh
+}

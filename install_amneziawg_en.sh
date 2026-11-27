@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # AmneziaWG 3.x (3.1 by default; 2.0 by flag and on kernels older than 6.7 and on 32-bit ARM) installation and configuration script for Ubuntu/Debian servers
 # Author: @bivlked
-# Version: 6.3.11
-# Date: 2026-11-26
+# Version: 6.3.12
+# Date: 2026-11-27
 # Repository: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -40,7 +40,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.11"
+SCRIPT_VERSION="6.3.12"
 
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
@@ -71,8 +71,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Verified in step5_download_scripts() after curl.
 # Verification is skipped when AWG_BRANCH is overridden (test branch).
 # Format: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="91f67eb2586f35db6a51cb02d34a8938e6073d2542b16c445f088fc28a40d38d"
-MANAGE_SCRIPT_SHA256="b3fe89927608f90d2355268581af5e229572c48378e89eef8a9ba8b35431c3c6"
+COMMON_SCRIPT_SHA256="bda074e398c10ce7ea711d7db7e323f8ba523e13490e43993bd610aaca84a8b7"
+MANAGE_SCRIPT_SHA256="3dca0aff9a31f8e45bd5addb65d78a0ee0360cbcf873251e297b393950a92d64"
 
 # Module pin for kernels older than 6.7 with no prebuilt (H0, 31 jul 2026). The
 # PPA module is not used there (see _kernel_supports_awg3); the module is built
@@ -885,8 +885,11 @@ request_reboot() {
     # the module against the old kernel and modprobe would fail after
     # the next reboot. Fail fast instead.
     if [[ "$next_step" == "2" ]] && [[ -r /proc/sys/kernel/random/boot_id ]]; then
-        if cat /proc/sys/kernel/random/boot_id > "$AWG_DIR/.boot_id_before_step2" 2>/dev/null; then
+        if cat /proc/sys/kernel/random/boot_id 2>/dev/null > "$AWG_DIR/.boot_id_before_step2"; then
             log_debug "boot_id captured before reboot"
+        else
+            rm -f "$AWG_DIR/.boot_id_before_step2" 2>/dev/null
+            log_warn "Could not save boot_id to $AWG_DIR/.boot_id_before_step2: at step 2 the installer cannot check that the server was rebooted."
         fi
     fi
 
@@ -10191,7 +10194,7 @@ step99_finish() {
     # package renamed by a release upgrade) would stop the next install for no
     # reason the user can see.
     rm -f "$STATE_FILE" "${STATE_FILE}.lock" "$AWG_DIR/.boot_id_before_step2" \
-          "$BOOT_CRITICAL_SNAPSHOT_FILE" || log_warn "Failed to remove $STATE_FILE"
+          "$BOOT_CRITICAL_SNAPSHOT_FILE" || log_warn "Failed to remove $STATE_FILE: while it is there, a rerun of the installer exits with code 1. Remove it by hand: rm -f $STATE_FILE"
     log "Installation fully completed. Log: $LOG_FILE"
     log "=============================================================================="
 }
@@ -10244,6 +10247,8 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
         fi
     elif [[ -n "$_resume_state" ]]; then
         log_error "$STATE_FILE holds '${_resume_state:0:40}', a value the installer never writes: the file is damaged. Check it before running with --force."
+    elif [[ -e "$STATE_FILE" || -L "$STATE_FILE" ]]; then
+        log_error "$STATE_FILE is empty or unreadable: it is damaged or the previous run was cut off. Check it before running with --force."
     else
         log_error "To reinstall - pass --force (or AWG_FORCE_REINSTALL=1)."
         log_error "WARNING: a reinstall will rerun Step 1 (sysctl/swap/BBR) and Step 7 (service restart)."
@@ -10257,6 +10262,10 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
     if [[ -e "$APT_NORETRY_CONF" ]]; then
         log_warn "$APT_NORETRY_CONF was left by a cut-short run: apt on this machine does not retry downloads. If the installer is not running now, delete it: rm -f $APT_NORETRY_CONF"
     fi
+    # Code 0 only for a finished install: that is how automation reads it
+    # (--no-reboot). A finished install removes its state file, so any file
+    # left (an unfinished step, empty or broken) gives 1.
+    [[ ! -e "$STATE_FILE" && ! -L "$STATE_FILE" ]] || exit 1
     exit 0
 fi
 

@@ -29,7 +29,7 @@ make_list() {
 
 setup_block_env() {
     # each_manage runs both scripts in one test: no stub switch carries over.
-    unset STUB_APT_TIMEOUT STUB_APT_TIMEOUT_ON_UPDATE STUB_APT_TIMEOUT_AFTER_UNPACK STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE STUB_CURL_SNAP
+    unset STUB_APT_TIMEOUT STUB_APT_TIMEOUT_ON_UPDATE STUB_APT_TIMEOUT_AFTER_UNPACK STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE STUB_CURL_SNAP STUB_SED_FAIL
     MGMT_DIR=$(mktemp -d)
     mkdir -p "$MGMT_DIR/bin" "$MGMT_DIR/awg/keys" "$MGMT_DIR/systemd" "$MGMT_DIR/cron" "$MGMT_DIR/web"
     export CALLS="$MGMT_DIR/calls"; : > "$CALLS"
@@ -124,6 +124,17 @@ case "$1" in
              [[ " ${STUB_IPSET_HAS:-} " == *" $3 "* ]] ;;
 esac
 STUB
+    # sed: the real one, except that with STUB_SED_FAIL the insertion of the source
+    # line fails, as it would on a full disk.
+    _real_sed=$(PATH=/usr/bin:/bin command -v sed)
+    cat > "$MGMT_DIR/bin/sed" << STUB
+#!/bin/bash
+if [[ -n "\${STUB_SED_FAIL:-}" ]]; then
+    for a in "\$@"; do [[ "\$a" == "1i # source:"* ]] && exit 4; done
+fi
+exec "$_real_sed" "\$@"
+STUB
+    chmod +x "$MGMT_DIR/bin/sed"
     # curl: the file for a URL is $STUB_WEB/<last path element>; no file = failure.
     cat > "$MGMT_DIR/bin/curl" << 'STUB'
 #!/bin/bash
@@ -184,7 +195,7 @@ CONF
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
     unset AWG_SKIP_APPLY CALLS STUB_WEB AWG_SYSTEMD_DIR AWG_CRON_DIR STUB_START_FAIL STUB_IPT_I_FAIL \
-        STUB_APT_TIMEOUT STUB_APT_TIMEOUT_ON_UPDATE STUB_APT_TIMEOUT_AFTER_UNPACK STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE
+        STUB_APT_TIMEOUT STUB_APT_TIMEOUT_ON_UPDATE STUB_APT_TIMEOUT_AFTER_UNPACK STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE STUB_SED_FAIL
 }
 
 manage() {
@@ -233,7 +244,7 @@ _on_writes_and_applies() {
     [ "$(fw | grep -cxF "$RULE")" = "1" ] || { echo "$1: rule count"; return 1; }
     [ "$(set_size $SET)" = "1200" ] || { echo "$1: set size $(set_size $SET)"; return 1; }
     [ ! -e "$CALLS.sets/${SET}_new" ] || { echo "$1: temporary set left"; return 1; }
-    [ "$(grep -c . "$MGMT_DIR/awg/block-ru.zone")" = "1200" ] || { echo "$1: no cached list"; return 1; }
+    [ "$(grep -c '^[0-9]' "$MGMT_DIR/awg/block-ru.zone")" = "1200" ] || { echo "$1: no cached list"; return 1; }
 }
 @test "block-ru on: helper, unit and cron are written, the rule is on top, the set is full" {
     each_manage _on_writes_and_applies
@@ -561,6 +572,168 @@ _helper_update_keeps_old() {
     each_manage _helper_update_keeps_old
 }
 
+# ipdeny and ipverse are down and only the snapshot from the release tag answers:
+# the snapshot is older than a cache taken from a live source, so update keeps
+# the cache (set and file) and says the fresh list did not come (rc 3).
+_helper_update_snapshot_keeps_cache() {
+    on_then "$1" || return 1
+    make_list "$MGMT_DIR/awg/block-ru.zone" 1050
+    cp "$MGMT_DIR/awg/block-ru.zone" "$MGMT_DIR/cache.before"
+    rm -f "$STUB_WEB"/*
+    make_list "$STUB_WEB/ru.zone" 1100
+    helper update
+    [ "$status" -eq 3 ] || { echo "$1: rc $status, want 3: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1050" ] || { echo "$1: set $(set_size $SET), want the cached 1050"; return 1; }
+    cmp -s "$MGMT_DIR/cache.before" "$MGMT_DIR/awg/block-ru.zone" || { echo "$1: the cache was overwritten by the snapshot"; return 1; }
+    grep -qF "/cascade/ru.zone" "$CALLS.curl" || { echo "$1: the snapshot was not tried: $(cat "$CALLS.curl")"; return 1; }
+    [ "$(fw | head -1)" = "$RULE" ] || { echo "$1: rule: $(fw)"; return 1; }
+    [ -z "$(find "$MGMT_DIR/awg" -name '.block-ru.??????')" ] || { echo "$1: a temporary list stays behind"; return 1; }
+    local want="С ipdeny.com и ipverse свежего списка не получено, а снимок из релиза старее прежнего списка: действует прежний."
+    [ "$1" = manage_amneziawg_en.sh ] && want="No fresh list came from ipdeny.com or ipverse, and the release snapshot is older than the previous list: the previous one stays in force."
+    grep -qxF "$want" <<< "$stderr" || { echo "$1: no snapshot message: $stderr"; return 1; }
+}
+@test "helper update: only the release snapshot answers - the cache stays, rc 3" {
+    each_manage _helper_update_snapshot_keeps_cache
+}
+
+# Without a usable cache the snapshot is still better than nothing: it loads,
+# and the run says the live sources gave nothing (rc 3).
+_helper_update_snapshot_no_cache() {
+    on_then "$1" || return 1
+    rm -f "$STUB_WEB"/*
+    make_list "$STUB_WEB/ru.zone" 1100
+    helper update
+    [ "$status" -eq 3 ] || { echo "$1: rc $status, want 3: $stderr"; return 1; }
+    local want="С ipdeny.com и ipverse свежего списка не получено, взят снимок из релиза."
+    [ "$1" = manage_amneziawg_en.sh ] && want="No fresh list came from ipdeny.com or ipverse, the release snapshot is used."
+    grep -qxF "$want" <<< "$stderr" || { echo "$1: no snapshot message: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1100" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    [ "$(grep -c '^[0-9]' "$MGMT_DIR/awg/block-ru.zone")" = "1100" ] || { echo "$1: the snapshot is not cached"; return 1; }
+}
+@test "helper update: no cache and only the release snapshot answers - the snapshot loads, rc 3" {
+    each_manage _helper_update_snapshot_no_cache
+}
+
+# A broken cache does not stand in the way of the snapshot either.
+_helper_update_snapshot_bad_cache() {
+    on_then "$1" || return 1
+    make_list "$MGMT_DIR/awg/block-ru.zone" 999
+    rm -f "$STUB_WEB"/*
+    make_list "$STUB_WEB/ru.zone" 1100
+    helper update
+    [ "$status" -eq 3 ] || { echo "$1: rc $status, want 3: $stderr"; return 1; }
+    local want="С ipdeny.com и ipverse свежего списка не получено, взят снимок из релиза."
+    [ "$1" = manage_amneziawg_en.sh ] && want="No fresh list came from ipdeny.com or ipverse, the release snapshot is used."
+    grep -qxF "$want" <<< "$stderr" || { echo "$1: no snapshot message: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1100" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+}
+@test "helper update: a broken cache and only the release snapshot answers - the snapshot loads, rc 3" {
+    each_manage _helper_update_snapshot_bad_cache
+}
+
+# A cache that itself came from the snapshot of an older release gives way to the
+# snapshot of this one: otherwise it would stay for as long as ipdeny and ipverse
+# are down.
+_helper_update_snapshot_over_snapshot() {
+    on_then "$1" || return 1
+    make_list "$MGMT_DIR/nets" 1050
+    { echo "# source: https://raw.githubusercontent.com/bivlked/amneziawg-installer/v6.3.0/cascade/ru.zone"; cat "$MGMT_DIR/nets"; } > "$MGMT_DIR/awg/block-ru.zone"
+    rm -f "$STUB_WEB"/*
+    make_list "$STUB_WEB/ru.zone" 1100
+    helper update
+    [ "$status" -eq 3 ] || { echo "$1: rc $status, want 3: $stderr"; return 1; }
+    local want="С ipdeny.com и ipverse свежего списка не получено, взят снимок из релиза."
+    [ "$1" = manage_amneziawg_en.sh ] && want="No fresh list came from ipdeny.com or ipverse, the release snapshot is used."
+    grep -qxF "$want" <<< "$stderr" || { echo "$1: no snapshot message: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1100" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    head -n 1 "$MGMT_DIR/awg/block-ru.zone" | grep -qxE "# source: https://raw\.githubusercontent\.com/bivlked/amneziawg-installer/v[0-9]+\.[0-9]+\.[0-9]+/cascade/ru\.zone" \
+        || { echo "$1: source line: $(head -n 1 "$MGMT_DIR/awg/block-ru.zone")"; return 1; }
+    ! head -n 1 "$MGMT_DIR/awg/block-ru.zone" | grep -qF "/v6.3.0/" || { echo "$1: the old snapshot stays"; return 1; }
+}
+@test "helper update: a cache from an older release snapshot gives way to the current snapshot, rc 3" {
+    each_manage _helper_update_snapshot_over_snapshot
+}
+
+# With a usable cache, ipdeny down and ipverse up, update takes ipverse: only the
+# snapshot is held back, not every source after the first.
+_helper_update_ipverse_over_cache() {
+    on_then "$1" || return 1
+    make_list "$MGMT_DIR/awg/block-ru.zone" 1050
+    printf '<html>not a list</html>\n' > "$STUB_WEB/ru-aggregated.zone"
+    make_list "$MGMT_DIR/nets" 1150
+    { printf '# Country: Russia (RU)\n'; cat "$MGMT_DIR/nets"; } > "$STUB_WEB/ipv4-aggregated.txt"
+    make_list "$STUB_WEB/ru.zone" 1100
+    helper update
+    [ "$status" -eq 0 ] || { echo "$1: rc $status, want 0: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1150" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    [ "$(head -n 1 "$MGMT_DIR/awg/block-ru.zone")" = "# source: https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/ru/ipv4-aggregated.txt" ] \
+        || { echo "$1: source line: $(head -n 1 "$MGMT_DIR/awg/block-ru.zone")"; return 1; }
+}
+@test "helper update: ipdeny down, ipverse up, a usable cache - ipverse replaces the cache" {
+    each_manage _helper_update_ipverse_over_cache
+}
+
+# The source line cannot be written (a full disk): the answer counts as a failed
+# source, the cache stays and the run ends with 3, so a snapshot can never become
+# a cache that looks live.
+_helper_source_line_fails() {
+    on_then "$1" || return 1
+    make_list "$MGMT_DIR/awg/block-ru.zone" 1050
+    cp "$MGMT_DIR/awg/block-ru.zone" "$MGMT_DIR/cache.before"
+    make_list "$STUB_WEB/ru-aggregated.zone" 1300
+    make_list "$STUB_WEB/ru.zone" 1100
+    export STUB_SED_FAIL=1
+    helper update
+    unset STUB_SED_FAIL
+    [ "$status" -eq 3 ] || { echo "$1: rc $status, want 3: $stderr"; return 1; }
+    cmp -s "$MGMT_DIR/cache.before" "$MGMT_DIR/awg/block-ru.zone" || { echo "$1: the cache was replaced"; return 1; }
+    [ "$(set_size $SET)" = "1050" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    local want="Список с https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone не записался на диск, пропускаю."
+    [ "$1" = manage_amneziawg_en.sh ] && want="The list from https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone could not be written to disk, skipping."
+    grep -qxF "$want" <<< "$stderr" || { echo "$1: no message: $stderr"; return 1; }
+    [ -z "$(find "$MGMT_DIR/awg" -name '.block-ru.??????')" ] || { echo "$1: a temporary list stays behind"; return 1; }
+}
+@test "helper update: the source line cannot be written - the source counts as failed, the cache stays, rc 3" {
+    each_manage _helper_source_line_fails
+}
+
+# ipset refuses the usable cache and only the snapshot answers again: the snapshot
+# loads (nothing better is there), but the run says the fresh list did not come.
+_helper_update_snapshot_after_failed_load() {
+    on_then "$1" || return 1
+    make_list "$MGMT_DIR/awg/block-ru.zone" 1050
+    rm -f "$STUB_WEB"/*
+    make_list "$STUB_WEB/ru.zone" 1100
+    : > "$CALLS.restore_fail_once"
+    helper update
+    [ "$status" -eq 3 ] || { echo "$1: rc $status, want 3: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1100" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    [ "$(fw | head -1)" = "$RULE" ] || { echo "$1: rule: $(fw)"; return 1; }
+    local want="Прежний список ipset не принял, взят снимок из релиза: свежий список не скачался."
+    [ "$1" = manage_amneziawg_en.sh ] && want="ipset did not take the previous list, the release snapshot is used: a fresh list could not be downloaded."
+    grep -qxF "$want" <<< "$stderr" || { echo "$1: no message: $stderr"; return 1; }
+}
+@test "helper update: the cache does not load and only the snapshot answers - snapshot loads, rc 3" {
+    each_manage _helper_update_snapshot_after_failed_load
+}
+
+# manage reads 3 from the snapshot path as success with nothing changed.
+_update_snapshot_json() {
+    manage "$1" block-ru on
+    [ "$status" -eq 0 ] || return 1
+    rm -f "$STUB_WEB"/*
+    make_list "$STUB_WEB/ru.zone" 1100
+    manage "$1" block-ru update --json
+    [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
+    [ "$(jq -r '.changed' <<< "$output")" = "false" ] || { echo "$1: '$output'"; return 1; }
+    [ "$(jq -r '.in_force' <<< "$output")" = "true" ] || return 1
+    [ "$(set_size $SET)" = "1200" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+}
+@test "block-ru update --json: only the snapshot answers - changed false, the previous list in force" {
+    command -v jq >/dev/null || skip "jq not available"
+    each_manage _update_snapshot_json
+}
+
 _helper_extra() {
     on_then "$1" || return 1
     printf '203.0.113.0/24\n# comment\n\n198.51.100.7\nnot-a-net\n' > "$MGMT_DIR/awg/block-ru.extra"
@@ -666,7 +839,7 @@ _on_awg_down() {
     [ "$output" = "0" ] || { echo "$1: started while awg0 is down"; return 1; }
     [ "$(fw | grep -cF awg_block_ru)" = "0" ] || return 1
     [[ "$stderr" == *"awg0"* ]] || { echo "$1: no word on awg0: $stderr"; return 1; }
-    [ "$(grep -c . "$MGMT_DIR/awg/block-ru.zone")" = "1200" ] || { echo "$1: the list was not downloaded now"; return 1; }
+    [ "$(grep -c '^[0-9]' "$MGMT_DIR/awg/block-ru.zone")" = "1200" ] || { echo "$1: the list was not downloaded now"; return 1; }
     [ "$(jq -r '.in_force' <<< "$json")" = "false" ] || { echo "$1: in force with awg0 down: $json"; return 1; }
     manage "$1" block-ru --json
     [ "$(jq -r '.in_force' <<< "$output")" = "false" ] || return 1
@@ -840,7 +1013,7 @@ _helper_refreshed() {
     manage "$1" block-ru on
     [ "$status" -eq 0 ] || { echo "$1: on failed: $stderr"; return 1; }
     sed -i 's| https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/ru/ipv4-aggregated.txt||' "$MGMT_DIR/awg/awg-block-ru.sh"
-    ! grep -qF ipverse "$MGMT_DIR/awg/awg-block-ru.sh" || { echo "$1: the old helper was not prepared"; return 1; }
+    ! grep -qF "ipverse/country-ip-blocks" "$MGMT_DIR/awg/awg-block-ru.sh" || { echo "$1: the old helper was not prepared"; return 1; }
     manage "$1" list
     [ "$status" -eq 0 ] || { echo "$1: list failed: $stderr"; return 1; }
     grep -qF "ipverse/country-ip-blocks" "$MGMT_DIR/awg/awg-block-ru.sh" || { echo "$1: the helper was not rewritten"; return 1; }
@@ -863,7 +1036,7 @@ _helper_cut_render_kept() {
     cp "$MGMT_DIR/awg/awg-block-ru.sh" "$MGMT_DIR/helper.before"
     # sed that writes the first 200 bytes and fails, only for the helper render
     printf '#!/bin/bash\nif [[ "$*" == *@@DIR@@* ]]; then %s "$@" | head -c 200; exit 4; fi\nexec %s "$@"\n' \
-        "$(command -v sed)" "$(command -v sed)" > "$MGMT_DIR/bin/sed"
+        "$(PATH=/usr/bin:/bin command -v sed)" "$(PATH=/usr/bin:/bin command -v sed)" > "$MGMT_DIR/bin/sed"
     chmod +x "$MGMT_DIR/bin/sed"
     manage "$1" list
     rm -f "$MGMT_DIR/bin/sed"
@@ -896,7 +1069,7 @@ _refetch_after_failed_load() {
     [ "$(set_size $SET)" = "1200" ] || return 1
     [ "$(fw | head -1)" = "$RULE" ] || return 1
     # the list that loaded replaces the cache ipset refused
-    cmp -s "$MGMT_DIR/awg/block-ru.zone" "$STUB_WEB/ru-aggregated.zone" || { echo "$1: the refused cache was kept"; return 1; }
+    cmp -s <(sed 1d "$MGMT_DIR/awg/block-ru.zone") "$STUB_WEB/ru-aggregated.zone" || { echo "$1: the refused cache was kept"; return 1; }
     run bash -c "ls -A '$MGMT_DIR/awg' | grep -E '^\.block-ru\.[A-Za-z0-9]{6}$'"
     [ -z "$output" ] || { echo "$1: temporary file left: $output"; return 1; }
 }
@@ -1099,7 +1272,9 @@ _update_good_saves() {
     make_list "$STUB_WEB/ru-aggregated.zone" 1300
     helper update
     [ "$status" -eq 0 ] || { echo "$1: $stderr"; return 1; }
-    cmp -s "$MGMT_DIR/awg/block-ru.zone" "$STUB_WEB/ru-aggregated.zone" || { echo "$1: the loaded list is not the cache"; return 1; }
+    cmp -s <(sed 1d "$MGMT_DIR/awg/block-ru.zone") "$STUB_WEB/ru-aggregated.zone" || { echo "$1: the loaded list is not the cache"; return 1; }
+    [ "$(head -n 1 "$MGMT_DIR/awg/block-ru.zone")" = "# source: https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone" ] \
+        || { echo "$1: no source line: $(head -n 1 "$MGMT_DIR/awg/block-ru.zone")"; return 1; }
     [ "$(set_size $SET)" = "1300" ] || return 1
 }
 @test "helper update: the fresh list that loaded becomes the cache" {

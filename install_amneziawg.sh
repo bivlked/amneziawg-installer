@@ -8,8 +8,8 @@ fi
 # ==============================================================================
 # Скрипт для установки и настройки AmneziaWG 3.x (3.1 по умолчанию; 2.0 по флагу, а также на ядрах старее 6.7 и на 32-битном ARM) на Ubuntu/Debian серверах
 # Автор: @bivlked
-# Версия: 6.3.11
-# Дата: 2026-11-26
+# Версия: 6.3.12
+# Дата: 2026-11-27
 # Репозиторий: https://github.com/bivlked/amneziawg-installer
 # ==============================================================================
 
@@ -39,7 +39,7 @@ _awg_ensure_sbin_path() {
 }
 _awg_ensure_sbin_path
 
-SCRIPT_VERSION="6.3.11"
+SCRIPT_VERSION="6.3.12"
 AWG_DIR="/root/awg"
 CONFIG_FILE="$AWG_DIR/awgsetup_cfg.init"
 STATE_FILE="$AWG_DIR/setup_state"
@@ -69,8 +69,8 @@ MANAGE_SCRIPT_PATH="$AWG_DIR/manage_amneziawg.sh"
 # Проверяются в step5_download_scripts() после curl.
 # Если AWG_BRANCH переопределён (не v$SCRIPT_VERSION), проверка пропускается.
 # Формат: sha256sum output (hex, 64 chars).
-COMMON_SCRIPT_SHA256="7ee85cc88fdd5b8de8cb577d2a458799781e18069d1be4e4e1fbdb0b3eb20a6e"
-MANAGE_SCRIPT_SHA256="fb54f8a7a662f60ab44a60c0ff0229b88d933a928f118bca59145ece434efc96"
+COMMON_SCRIPT_SHA256="4bffc460594480a783b69576d68af82c45c84b4eaca0685744eb034ad95adc91"
+MANAGE_SCRIPT_SHA256="4148ba924508f4669298a3cbe2d56f32c89987a6aad9d0f38d4e4dc9c0126c22"
 
 # Пин модуля для ядер старее 6.7 без готового пакета (H0, 31 jul 2026). Модуль
 # из PPA там не используется (см. _kernel_supports_awg3): модуль собирается из
@@ -861,8 +861,11 @@ request_reboot() {
     # и DKMS соберёт модуль под старое ядро (которое после следующего
     # reboot будет уже обновлённым на шаге 1 и не подхватит модуль).
     if [[ "$next_step" == "2" ]] && [[ -r /proc/sys/kernel/random/boot_id ]]; then
-        if cat /proc/sys/kernel/random/boot_id > "$AWG_DIR/.boot_id_before_step2" 2>/dev/null; then
+        if cat /proc/sys/kernel/random/boot_id 2>/dev/null > "$AWG_DIR/.boot_id_before_step2"; then
             log_debug "boot_id captured before reboot"
+        else
+            rm -f "$AWG_DIR/.boot_id_before_step2" 2>/dev/null
+            log_warn "Не удалось сохранить boot_id в $AWG_DIR/.boot_id_before_step2: на шаге 2 установщик не сможет проверить, что сервер перезагружен."
         fi
     fi
 
@@ -10028,7 +10031,7 @@ step99_finish() {
     # установку, стал бы стареть. Устаревшее имя (пакет переименован сменой
     # выпуска) останавливало бы следующую установку без внятной причины.
     rm -f "$STATE_FILE" "${STATE_FILE}.lock" "$AWG_DIR/.boot_id_before_step2" \
-          "$BOOT_CRITICAL_SNAPSHOT_FILE" || log_warn "Не удалось удалить $STATE_FILE"
+          "$BOOT_CRITICAL_SNAPSHOT_FILE" || log_warn "Не удалось удалить $STATE_FILE: пока он на месте, повторный запуск установщика выходит с кодом 1. Удалите его вручную: rm -f $STATE_FILE"
     log "Установка полностью завершена. Лог: $LOG_FILE"
     log "=============================================================================="
 }
@@ -10081,6 +10084,8 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
         fi
     elif [[ -n "$_resume_state" ]]; then
         log_error "В $STATE_FILE значение '${_resume_state:0:40}', которое установщик не пишет: файл повреждён. Проверьте его, прежде чем запускать с --force."
+    elif [[ -e "$STATE_FILE" || -L "$STATE_FILE" ]]; then
+        log_error "Файл $STATE_FILE пуст или не читается: он повреждён или прошлый запуск оборвался. Проверьте его, прежде чем запускать с --force."
     else
         log_error "Чтобы переустановить - добавьте --force (или AWG_FORCE_REINSTALL=1)."
         log_error "ВНИМАНИЕ: переустановка снова прогонит шаги 1 (sysctl/swap/BBR) и 7 (рестарт сервиса)."
@@ -10094,6 +10099,11 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
     if [[ -e "$APT_NORETRY_CONF" ]]; then
         log_warn "Остался $APT_NORETRY_CONF от оборванного запуска: apt на этой машине не повторяет скачивание. Если установщик сейчас не работает, удалите его: rm -f $APT_NORETRY_CONF"
     fi
+    # Код 0 - только для законченной установки: так его читает система
+    # автоматизации (--no-reboot). Законченная установка свой файл состояния
+    # удаляет, поэтому любой оставшийся (недоделанный шаг, пустой или
+    # испорченный) - код 1.
+    [[ ! -e "$STATE_FILE" && ! -L "$STATE_FILE" ]] || exit 1
     exit 0
 fi
 

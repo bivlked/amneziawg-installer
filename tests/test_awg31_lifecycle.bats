@@ -994,9 +994,10 @@ _e11_resume_force() {
         _run_ok
         [[ "$output" == *"STEP0_DONE step=$st"* ]]
     done
-    # anything else on a live server is not a resume: the guard stands, exits 0
-    # and names --force (a stuck 1, 7 or 99, a value the installer never writes,
-    # garbage, an empty file, no file)
+    # anything else on a live server is not a resume: the guard stands and names
+    # --force (a stuck 1, 7 or 99, a value the installer never writes, garbage, an
+    # empty file, no file). Only a finished install (no file) exits 0: "0 = the
+    # install is finished" is what automation reads with --no-reboot.
     for st in 1 7 99 8 junk empty none; do
         case "$st" in
             empty) : > "$A/setup_state" ;;
@@ -1004,7 +1005,9 @@ _e11_resume_force() {
             *)     printf '%s\n' "$st" > "$A/setup_state" ;;
         esac
         _inst_run "$inst" --yes --ssh-port=22
-        [ "$status" -eq 0 ] || { echo "state $st: rc $status" >&2; return 1; }
+        local want_rc=1
+        [ "$st" = none ] && want_rc=0
+        [ "$status" -eq "$want_rc" ] || { echo "state $st: rc $status, want $want_rc" >&2; return 1; }
         [[ "$output" != *STEP0_DONE* ]] || { echo "state $st: the install ran" >&2; return 1; }
         [[ "$output$stderr" == *--force* ]] || { echo "state $st: no guard text" >&2; return 1; }
         # a step the installer itself leaves is named, and the general warning
@@ -1019,8 +1022,8 @@ _e11_resume_force() {
         case "$st" in
             1)        [[ "$general$named$damaged$step4" == 0100 ]] ;;
             7|99)     [[ "$general$named$damaged$step4" == 0101 ]] ;;
-            8|junk)   [[ "$general$named$damaged$step4" == 0010 ]] ;;
-            empty|none) [[ "$general$named$damaged$step4" == 1000 ]] ;;
+            8|junk|empty) [[ "$general$named$damaged$step4" == 0010 ]] ;;
+            none)     [[ "$general$named$damaged$step4" == 1000 ]] ;;
         esac || { echo "state $st: general/named/damaged/step4 = $general$named$damaged$step4" >&2; return 1; }
     done
     # and the route the message promises is the route --force takes
