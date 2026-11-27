@@ -102,7 +102,7 @@ sudo bash ./install_amneziawg.sh --yes --route-all
 | Обычный дешёвый VPS, просто нужен VPN | Ничего - команда выше уже всё делает |
 | Мобильный интернет, DPI режет (ТСПУ, Иран, школа или корпоратив) | При установке добавьте `--mobile` - пресет обфускации + порт 443/udp разом ([проверенные операторы](#operatory)) |
 | ARM: Raspberry Pi, Oracle Ampere, Hetzner CAX | Та же команда. На 64-битном ARM (ARM64) с v6.2.0 ставится AmneziaWG 3.1, модуль собирается через DKMS; на 32-битном ARM остаётся AmneziaWG 2.0 (на Raspberry Pi OS с готовыми модулями ядра), и клиентам там нужна поддержка 2.0 ([почему](#awg3)) |
-| Адрес выхода блокируют, или сайты должны видеть не тот IP, к которому подключаются клиенты | Второй IPv4 на сервере: при установке добавьте `--endpoint=` с адресом входа и `--exit-ip=` со вторым, на работающем сервере - `manage_amneziawg.sh exit-ip` ([как это устроено](https://bivlked.github.io/amneziawg-installer/ru/exit-ip/)) |
+| Адрес выхода блокируют, или сайты должны видеть не тот IP, к которому подключаются клиенты | Второй IPv4 на сервере: при установке добавьте `--endpoint=` с адресом входа и `--exit-ip=` со вторым, на работающем сервере - `sudo bash /root/awg/manage_amneziawg.sh exit-ip <IPv4>` ([как это устроено](https://bivlked.github.io/amneziawg-installer/ru/exit-ip/)) |
 | Доступ другу или гостю на время | После установки: `sudo bash /root/awg/manage_amneziawg.sh add guest --expires=7d` |
 
 ---
@@ -650,7 +650,7 @@ sudo bash /root/awg/manage_amneziawg.sh restart              # Перезапу�
 
 <details>
   <summary><strong>В: Можно ли, чтобы клиенты подключались к одному IP, а трафик уходил с другого?</strong></summary>
-  <b>О:</b> Да, если у сервера есть второй публичный IPv4 (начиная с v6.3.0). При установке укажите в <code>--endpoint=</code> адрес входа, а в <code>--exit-ip=</code> второй адрес, или на работающем сервере выполните <code>sudo bash /root/awg/manage_amneziawg.sh exit-ip</code> с этим адресом. Для трафика через VPN сайты видят только адрес выхода. Если его заблокируют, та же команда его заменит, а конфиги клиентов останутся прежними. Подробно - в <a href="ADVANCED.md#exit-ip-adv">ADVANCED.md → Отдельный адрес выхода</a> и на <a href="https://bivlked.github.io/amneziawg-installer/ru/exit-ip/">сайте проекта</a>.
+  <b>О:</b> Да, если у сервера есть второй публичный IPv4 (начиная с v6.3.0). При установке укажите в <code>--endpoint=</code> адрес входа, а в <code>--exit-ip=</code> второй адрес, или на работающем сервере выполните <code>sudo bash /root/awg/manage_amneziawg.sh exit-ip</code> с этим адресом. Если сервер не в каскаде и без WARP, сайты видят только адрес выхода. Если его заблокируют, та же команда его заменит, а конфиги клиентов останутся прежними. Подробно - в <a href="ADVANCED.md#exit-ip-adv">ADVANCED.md → Отдельный адрес выхода</a> и на <a href="https://bivlked.github.io/amneziawg-installer/ru/exit-ip/">сайте проекта</a>.
 </details>
 
 <details>
