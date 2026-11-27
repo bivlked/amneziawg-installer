@@ -29,7 +29,7 @@ make_list() {
 
 setup_block_env() {
     # each_manage runs both scripts in one test: no stub switch carries over.
-    unset STUB_APT_TIMEOUT STUB_APT_TIMEOUT_ON_UPDATE STUB_APT_TIMEOUT_AFTER_UNPACK STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE STUB_CURL_SNAP
+    unset STUB_APT_TIMEOUT STUB_APT_TIMEOUT_ON_UPDATE STUB_APT_TIMEOUT_AFTER_UNPACK STUB_START_FAIL STUB_IPT_I_FAIL STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE STUB_CURL_SNAP STUB_SED_FAIL
     MGMT_DIR=$(mktemp -d)
     mkdir -p "$MGMT_DIR/bin" "$MGMT_DIR/awg/keys" "$MGMT_DIR/systemd" "$MGMT_DIR/cron" "$MGMT_DIR/web"
     export CALLS="$MGMT_DIR/calls"; : > "$CALLS"
@@ -124,6 +124,17 @@ case "$1" in
              [[ " ${STUB_IPSET_HAS:-} " == *" $3 "* ]] ;;
 esac
 STUB
+    # sed: the real one, except that with STUB_SED_FAIL the insertion of the source
+    # line fails, as it would on a full disk.
+    _real_sed=$(PATH=/usr/bin:/bin command -v sed)
+    cat > "$MGMT_DIR/bin/sed" << STUB
+#!/bin/bash
+if [[ -n "\${STUB_SED_FAIL:-}" ]]; then
+    for a in "\$@"; do [[ "\$a" == "1i # source:"* ]] && exit 4; done
+fi
+exec "$_real_sed" "\$@"
+STUB
+    chmod +x "$MGMT_DIR/bin/sed"
     # curl: the file for a URL is $STUB_WEB/<last path element>; no file = failure.
     cat > "$MGMT_DIR/bin/curl" << 'STUB'
 #!/bin/bash
@@ -184,7 +195,7 @@ CONF
 teardown() {
     rm -rf "$TEST_DIR" "${MGMT_DIR:-}"
     unset AWG_SKIP_APPLY CALLS STUB_WEB AWG_SYSTEMD_DIR AWG_CRON_DIR STUB_START_FAIL STUB_IPT_I_FAIL \
-        STUB_APT_TIMEOUT STUB_APT_TIMEOUT_ON_UPDATE STUB_APT_TIMEOUT_AFTER_UNPACK STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE
+        STUB_APT_TIMEOUT STUB_APT_TIMEOUT_ON_UPDATE STUB_APT_TIMEOUT_AFTER_UNPACK STUB_IPSET_RESTORE_FAIL STUB_IPSET_HAS STUB_APT_FAIL STUB_IPSET_REAL STUB_AWG_DOWN STUB_FLOCK_FAIL STUB_APT_NEEDS_UPDATE STUB_SED_FAIL
 }
 
 manage() {
@@ -662,6 +673,30 @@ _helper_update_ipverse_over_cache() {
     each_manage _helper_update_ipverse_over_cache
 }
 
+# The source line cannot be written (a full disk): the answer counts as a failed
+# source, the cache stays and the run ends with 3, so a snapshot can never become
+# a cache that looks live.
+_helper_source_line_fails() {
+    on_then "$1" || return 1
+    make_list "$MGMT_DIR/awg/block-ru.zone" 1050
+    cp "$MGMT_DIR/awg/block-ru.zone" "$MGMT_DIR/cache.before"
+    make_list "$STUB_WEB/ru-aggregated.zone" 1300
+    make_list "$STUB_WEB/ru.zone" 1100
+    export STUB_SED_FAIL=1
+    helper update
+    unset STUB_SED_FAIL
+    [ "$status" -eq 3 ] || { echo "$1: rc $status, want 3: $stderr"; return 1; }
+    cmp -s "$MGMT_DIR/cache.before" "$MGMT_DIR/awg/block-ru.zone" || { echo "$1: the cache was replaced"; return 1; }
+    [ "$(set_size $SET)" = "1050" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    local want="Список с https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone не записался на диск, пропускаю."
+    [ "$1" = manage_amneziawg_en.sh ] && want="The list from https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone could not be written to disk, skipping."
+    grep -qxF "$want" <<< "$stderr" || { echo "$1: no message: $stderr"; return 1; }
+    [ -z "$(find "$MGMT_DIR/awg" -name '.block-ru.??????')" ] || { echo "$1: a temporary list stays behind"; return 1; }
+}
+@test "helper update: the source line cannot be written - the source counts as failed, the cache stays, rc 3" {
+    each_manage _helper_source_line_fails
+}
+
 # ipset refuses the usable cache and only the snapshot answers again: the snapshot
 # loads (nothing better is there), but the run says the fresh list did not come.
 _helper_update_snapshot_after_failed_load() {
@@ -1001,7 +1036,7 @@ _helper_cut_render_kept() {
     cp "$MGMT_DIR/awg/awg-block-ru.sh" "$MGMT_DIR/helper.before"
     # sed that writes the first 200 bytes and fails, only for the helper render
     printf '#!/bin/bash\nif [[ "$*" == *@@DIR@@* ]]; then %s "$@" | head -c 200; exit 4; fi\nexec %s "$@"\n' \
-        "$(command -v sed)" "$(command -v sed)" > "$MGMT_DIR/bin/sed"
+        "$(PATH=/usr/bin:/bin command -v sed)" "$(PATH=/usr/bin:/bin command -v sed)" > "$MGMT_DIR/bin/sed"
     chmod +x "$MGMT_DIR/bin/sed"
     manage "$1" list
     rm -f "$MGMT_DIR/bin/sed"

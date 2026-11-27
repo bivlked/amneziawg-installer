@@ -3968,8 +3968,13 @@ fetch() {
         if curl -fsS --max-time 30 -o "$NEW" "$url"; then
             sed -i 's/\r$//' "$NEW"
             if list_ok "$NEW"; then
+                # Без строки источника кэш из снимка считался бы живым и
+                # держался бы против новых снимков: такой ответ - отказ.
+                if ! sed -i "1i # source: $url" "$NEW"; then
+                    echo "Список с $url не записался на диск, пропускаю." >&2
+                    continue
+                fi
                 echo "Список российских сетей взят: $url"
-                sed -i "1i # source: $url" "$NEW"
                 [ "$url" = "${URLS##* }" ] && SNAP=1
                 return 0
             fi

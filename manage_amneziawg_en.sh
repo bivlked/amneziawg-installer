@@ -4023,8 +4023,13 @@ fetch() {
         if curl -fsS --max-time 30 -o "$NEW" "$url"; then
             sed -i 's/\r$//' "$NEW"
             if list_ok "$NEW"; then
+                # Without the source line a cache from the snapshot would count
+                # as live and hold out against newer snapshots: treat it as a failure.
+                if ! sed -i "1i # source: $url" "$NEW"; then
+                    echo "The list from $url could not be written to disk, skipping." >&2
+                    continue
+                fi
                 echo "List of Russian networks taken from: $url"
-                sed -i "1i # source: $url" "$NEW"
                 [ "$url" = "${URLS##* }" ] && SNAP=1
                 return 0
             fi
