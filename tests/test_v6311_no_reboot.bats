@@ -97,3 +97,20 @@ _flag_parsed() {
     _flag_parsed install_amneziawg.sh
     _flag_parsed install_amneziawg_en.sh
 }
+
+# Without the saved boot_id step 2 cannot tell a rerun without a reboot from a
+# resume after one. With --no-reboot nobody watches the run, so a failed write is
+# a warning in the log, not a debug line.
+_boot_id_write_fails_warns() {
+    mkdir "$T/.boot_id_before_step2"
+    run_reboot_gate "$1" 1 1 2 || return 1
+    [ "$status" -eq 75 ] || { echo "$1: rc $status: $output"; return 1; }
+    grep -E '^WARN: .*boot_id' <<< "$output" | grep -qF ".boot_id_before_step2" \
+        || { echo "$1: no warning about the boot_id file: $output"; return 1; }
+    rmdir "$T/.boot_id_before_step2"
+    rm -f "$T/state"
+}
+@test "request_reboot: a boot_id that cannot be saved is a warning in both installers" {
+    _boot_id_write_fails_warns install_amneziawg.sh
+    _boot_id_write_fails_warns install_amneziawg_en.sh
+}

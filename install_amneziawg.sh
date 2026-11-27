@@ -861,8 +861,10 @@ request_reboot() {
     # и DKMS соберёт модуль под старое ядро (которое после следующего
     # reboot будет уже обновлённым на шаге 1 и не подхватит модуль).
     if [[ "$next_step" == "2" ]] && [[ -r /proc/sys/kernel/random/boot_id ]]; then
-        if cat /proc/sys/kernel/random/boot_id > "$AWG_DIR/.boot_id_before_step2" 2>/dev/null; then
+        if cat /proc/sys/kernel/random/boot_id 2>/dev/null > "$AWG_DIR/.boot_id_before_step2"; then
             log_debug "boot_id captured before reboot"
+        else
+            log_warn "Не удалось сохранить boot_id в $AWG_DIR/.boot_id_before_step2: на шаге 2 установщик не сможет проверить, что сервер перезагружен."
         fi
     fi
 
@@ -10094,6 +10096,11 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
     if [[ -e "$APT_NORETRY_CONF" ]]; then
         log_warn "Остался $APT_NORETRY_CONF от оборванного запуска: apt на этой машине не повторяет скачивание. Если установщик сейчас не работает, удалите его: rm -f $APT_NORETRY_CONF"
     fi
+    # Код 0 - только для законченной установки: так его читает система
+    # автоматизации (--no-reboot). Законченная установка свой файл состояния
+    # удаляет, поэтому любой оставшийся (недоделанный шаг, пустой или
+    # испорченный) - код 1.
+    [[ ! -e "$STATE_FILE" ]] || exit 1
     exit 0
 fi
 

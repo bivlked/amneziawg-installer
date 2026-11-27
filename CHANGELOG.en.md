@@ -12,6 +12,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- On a running server the installer exits with code 1 when the previous run did not finish (a step is left in `/root/awg/setup_state`) or the state file is broken. The code used to be 0, and an automation tool running with `--no-reboot` took such an install as finished. A rerun on a finished install still gives 0.
+- `manage block-ru update`: when ipdeny.com and ipverse do not answer and only the release snapshot downloads, a usable previous list stays, and the command says the fresh list did not come. The snapshot is older than a list from ipdeny.com or ipverse and no longer replaces it.
+- The installer warns when it cannot save the boot_id before a reboot: without it step 2 cannot check that the server was really rebooted. This used to be a debug line only.
+
 ### Documentation
 
 - **README: a separate exit address in "Pick your case" and in the FAQ.** A new table row and a question on how clients can connect to one IP while their traffic leaves from another, with links to the ADVANCED section and the site page. The same ADVANCED section now says which address the installer takes without `--endpoint`: the one the server is seen at on the internet, usually the primary one.

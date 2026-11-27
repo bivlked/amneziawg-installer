@@ -561,6 +561,41 @@ _helper_update_keeps_old() {
     each_manage _helper_update_keeps_old
 }
 
+# ipdeny and ipverse are down and only the snapshot from the release tag answers:
+# the snapshot is older than a cache taken from a live source, so update keeps
+# the cache (set and file) and says the fresh list did not come (rc 3).
+_helper_update_snapshot_keeps_cache() {
+    on_then "$1" || return 1
+    make_list "$MGMT_DIR/awg/block-ru.zone" 1050
+    cp "$MGMT_DIR/awg/block-ru.zone" "$MGMT_DIR/cache.before"
+    rm -f "$STUB_WEB"/*
+    make_list "$STUB_WEB/ru.zone" 1100
+    helper update
+    [ "$status" -eq 3 ] || { echo "$1: rc $status, want 3: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1050" ] || { echo "$1: set $(set_size $SET), want the cached 1050"; return 1; }
+    cmp -s "$MGMT_DIR/cache.before" "$MGMT_DIR/awg/block-ru.zone" || { echo "$1: the cache was overwritten by the snapshot"; return 1; }
+    grep -qF "/cascade/ru.zone" "$CALLS.curl" || { echo "$1: the snapshot was not tried: $(cat "$CALLS.curl")"; return 1; }
+    [ "$(fw | head -1)" = "$RULE" ] || { echo "$1: rule: $(fw)"; return 1; }
+    [ -z "$(find "$MGMT_DIR/awg" -name '.block-ru.??????')" ] || { echo "$1: a temporary list stays behind"; return 1; }
+}
+@test "helper update: only the release snapshot answers - the cache stays, rc 3" {
+    each_manage _helper_update_snapshot_keeps_cache
+}
+
+# Without a usable cache the snapshot is still better than nothing: it loads.
+_helper_update_snapshot_no_cache() {
+    on_then "$1" || return 1
+    rm -f "$STUB_WEB"/*
+    make_list "$STUB_WEB/ru.zone" 1100
+    helper update
+    [ "$status" -eq 0 ] || { echo "$1: rc $status, want 0: $stderr"; return 1; }
+    [ "$(set_size $SET)" = "1100" ] || { echo "$1: set $(set_size $SET)"; return 1; }
+    [ "$(grep -c . "$MGMT_DIR/awg/block-ru.zone")" = "1100" ] || { echo "$1: the snapshot is not cached"; return 1; }
+}
+@test "helper update: no cache and only the release snapshot answers - the snapshot loads" {
+    each_manage _helper_update_snapshot_no_cache
+}
+
 _helper_extra() {
     on_then "$1" || return 1
     printf '203.0.113.0/24\n# comment\n\n198.51.100.7\nnot-a-net\n' > "$MGMT_DIR/awg/block-ru.extra"
@@ -840,7 +875,7 @@ _helper_refreshed() {
     manage "$1" block-ru on
     [ "$status" -eq 0 ] || { echo "$1: on failed: $stderr"; return 1; }
     sed -i 's| https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/ru/ipv4-aggregated.txt||' "$MGMT_DIR/awg/awg-block-ru.sh"
-    ! grep -qF ipverse "$MGMT_DIR/awg/awg-block-ru.sh" || { echo "$1: the old helper was not prepared"; return 1; }
+    ! grep -qF "ipverse/country-ip-blocks" "$MGMT_DIR/awg/awg-block-ru.sh" || { echo "$1: the old helper was not prepared"; return 1; }
     manage "$1" list
     [ "$status" -eq 0 ] || { echo "$1: list failed: $stderr"; return 1; }
     grep -qF "ipverse/country-ip-blocks" "$MGMT_DIR/awg/awg-block-ru.sh" || { echo "$1: the helper was not rewritten"; return 1; }

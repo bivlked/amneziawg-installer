@@ -3955,17 +3955,19 @@ cache_ok() { [ -s "$LIST" ] && list_ok "$LIST"; }
 # Скачанный список лежит отдельно ($NEW) и становится кэшем (keep), только когда
 # ipset его принял: годный прежний кэш негодным не затирается. Прерванный запуск
 # (тайм-аут юнита) свой файл за собой убирает.
-NEW=""
+NEW="" SNAP=0
 trap '[ -z "$NEW" ] || rm -f "$NEW"' EXIT
 trap 'exit 1' TERM INT
 fetch() {
     local url
+    SNAP=0
     NEW=$(mktemp "$DIR/.block-ru.XXXXXX") || { NEW=""; return 1; }
     for url in $URLS; do
         if curl -fsS --max-time 30 -o "$NEW" "$url"; then
             sed -i 's/\r$//' "$NEW"
             if list_ok "$NEW"; then
                 echo "Список российских сетей взят: $url"
+                [ "$url" = "${URLS##* }" ] && SNAP=1
                 return 0
             fi
             echo "Ответ $url не похож на список сетей, пропускаю." >&2
@@ -4068,11 +4070,19 @@ case "${1:-}" in
         fi
         ;;
     update)
-        if fetch; then
+        # Ответил только снимок с тега релиза: он старше кэша, взятого с ipdeny
+        # или ipverse, поэтому годный кэш остаётся, а запуск кончается кодом 3.
+        if fetch && { [ "$SNAP" -eq 0 ] || ! cache_ok; }; then
             fetched=1 src="$NEW"
         else
+            [ -z "$NEW" ] || rm -f "$NEW"
+            NEW=""
             cache_ok || fail "свежий список не скачался, а прежнего нет"
-            echo "Свежий список не скачался, действует прежний." >&2
+            if [ "$SNAP" -eq 1 ]; then
+                echo "ipdeny.com и ipverse не ответили, а снимок из релиза старее прежнего списка: действует прежний." >&2
+            else
+                echo "Свежий список не скачался, действует прежний." >&2
+            fi
             rc=3
         fi
         ;;

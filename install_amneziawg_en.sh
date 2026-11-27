@@ -885,8 +885,10 @@ request_reboot() {
     # the module against the old kernel and modprobe would fail after
     # the next reboot. Fail fast instead.
     if [[ "$next_step" == "2" ]] && [[ -r /proc/sys/kernel/random/boot_id ]]; then
-        if cat /proc/sys/kernel/random/boot_id > "$AWG_DIR/.boot_id_before_step2" 2>/dev/null; then
+        if cat /proc/sys/kernel/random/boot_id 2>/dev/null > "$AWG_DIR/.boot_id_before_step2"; then
             log_debug "boot_id captured before reboot"
+        else
+            log_warn "Could not save boot_id to $AWG_DIR/.boot_id_before_step2: at step 2 the installer cannot check that the server was rebooted."
         fi
     fi
 
@@ -10257,6 +10259,10 @@ if [[ "$FORCE_REINSTALL" -ne 1 ]] && [[ "$_resume_state" != 2 && "$_resume_state
     if [[ -e "$APT_NORETRY_CONF" ]]; then
         log_warn "$APT_NORETRY_CONF was left by a cut-short run: apt on this machine does not retry downloads. If the installer is not running now, delete it: rm -f $APT_NORETRY_CONF"
     fi
+    # Code 0 only for a finished install: that is how automation reads it
+    # (--no-reboot). A finished install removes its state file, so any file
+    # left (an unfinished step, empty or broken) gives 1.
+    [[ ! -e "$STATE_FILE" ]] || exit 1
     exit 0
 fi
 

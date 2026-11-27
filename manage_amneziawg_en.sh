@@ -4010,17 +4010,19 @@ cache_ok() { [ -s "$LIST" ] && list_ok "$LIST"; }
 # The downloaded list stays aside ($NEW) and becomes the cache (keep) only once
 # ipset has taken it: a bad list does not overwrite a usable cache. A run cut off
 # (unit timeout) removes its own file.
-NEW=""
+NEW="" SNAP=0
 trap '[ -z "$NEW" ] || rm -f "$NEW"' EXIT
 trap 'exit 1' TERM INT
 fetch() {
     local url
+    SNAP=0
     NEW=$(mktemp "$DIR/.block-ru.XXXXXX") || { NEW=""; return 1; }
     for url in $URLS; do
         if curl -fsS --max-time 30 -o "$NEW" "$url"; then
             sed -i 's/\r$//' "$NEW"
             if list_ok "$NEW"; then
                 echo "List of Russian networks taken from: $url"
+                [ "$url" = "${URLS##* }" ] && SNAP=1
                 return 0
             fi
             echo "The answer from $url does not look like a list of networks, skipping." >&2
@@ -4123,11 +4125,19 @@ case "${1:-}" in
         fi
         ;;
     update)
-        if fetch; then
+        # Only the snapshot from the release tag answered: it is older than a cache
+        # taken from ipdeny or ipverse, so a usable cache stays and the run ends with 3.
+        if fetch && { [ "$SNAP" -eq 0 ] || ! cache_ok; }; then
             fetched=1 src="$NEW"
         else
+            [ -z "$NEW" ] || rm -f "$NEW"
+            NEW=""
             cache_ok || fail "a fresh list could not be downloaded and there is no previous one"
-            echo "A fresh list could not be downloaded, the previous one stays in force." >&2
+            if [ "$SNAP" -eq 1 ]; then
+                echo "ipdeny.com and ipverse did not answer, and the release snapshot is older than the previous list: the previous one stays in force." >&2
+            else
+                echo "A fresh list could not be downloaded, the previous one stays in force." >&2
+            fi
             rc=3
         fi
         ;;

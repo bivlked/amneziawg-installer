@@ -1161,7 +1161,7 @@ Options:
                         takes installed snaps and their data in /var/snap with it
 ```
 
-> **Installing from Ansible or Puppet (`--no-reboot`).** With `--yes` the installer reboots the server twice by itself, and the automation tool loses its connection. With `--yes --no-reboot` it gets to the reboot, saves the step and exits with code 75. The automation tool then reboots the server itself (the `reboot` module in Ansible) and runs the same command again: the install continues from the saved step. Code 0 means the install is finished, 75 means reboot and run again, any other code is an error (1, or 2 for bad parameters). An install takes two reboots.
+> **Installing from Ansible or Puppet (`--no-reboot`).** With `--yes` the installer reboots the server twice by itself, and the automation tool loses its connection. With `--yes --no-reboot` it gets to the reboot, saves the step and exits with code 75. The automation tool then reboots the server itself (the `reboot` module in Ansible) and runs the same command again: the install continues from the saved step. Code 0 means the install is finished, 75 means reboot and run again, any other code is an error (1, or 2 for bad parameters). If the server is already running and the previous run did not finish, the installer does not continue it without `--force` and exits with code 1. An install takes two reboots.
 
 <a id="manage-cli-adv"></a>
 ### manage_amneziawg.sh
